@@ -10,7 +10,11 @@
 # apiGroups/resources here only as new UniFi MR kinds are activated in the
 # ManagedResourceActivationPolicy (resources are enumerated, not "*", to keep
 # the grant least-privilege — the policy currently activates only clients,
-# trafficroutes, and records).
+# trafficroutes, and records). `delete` is the prune grant: the Kustomization
+# prunes what the source removes, and its patches strip the Delete management
+# policy first, so deleting a managed resource never deletes the live UniFi
+# object behind it. The restrict-unifi-management-policies Kyverno policy refuses
+# this SA a delete while the live policies still include Delete.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -34,3 +38,4 @@ rules:
       - create
       - update
       - patch
+      - delete

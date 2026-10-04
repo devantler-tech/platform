@@ -1,0 +1,93 @@
+name: Prove Cilium Default Deny
+
+# Dormant proof plumbing for #3501. Dispatch requires a separately approved
+# main workflow SHA and candidate PR/head. No production access or provider.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: Type RUN_DISPOSABLE_CILIUM_PROOF after approving this run
+        required: true
+        type: string
+      workflow_head:
+        description: Exact approved main SHA containing the proof workflow
+        required: true
+        type: string
+      candidate_pr:
+        description: Trusted same-repository candidate PR number
+        required: true
+        type: string
+      candidate_head:
+        description: Exact 40-character candidate PR head SHA
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prove-cilium-default-deny
+  cancel-in-progress: false
+
+jobs:
+  prove:
+    if: github.repository == 'devantler-tech/platform' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    permissions:
+      contents: read
+      pull-requests: read
+    env:
+      CONFIRM_DISPOSABLE_CILIUM_PROOF: ${{ inputs.confirm }}
+    steps:
+      - name: Bind explicit approval to the workflow code
+        env:
+          APPROVED_WORKFLOW_HEAD: ${{ inputs.workflow_head }}
+        run: |
+          test "$CONFIRM_DISPOSABLE_CILIUM_PROOF" = RUN_DISPOSABLE_CILIUM_PROOF
+          test "$GITHUB_SHA" = "$APPROVED_WORKFLOW_HEAD"
+          [[ "$APPROVED_WORKFLOW_HEAD" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Checkout approved main proof code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Read verified candidate policy data
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_PR: ${{ inputs.candidate_pr }}
+          CANDIDATE_HEAD: ${{ inputs.candidate_head }}
+        run: bash .github/scripts/fetch-cilium-deny-candidate.sh
+
+      - name: Install checksum-verified KSail
+        env:
+          # Audited alongside the runner's Cilium image/digest; update together.
+          KSAIL_VERSION: "7.193.8"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/setup-ksail.sh
+
+      - name: Read the main Kyverno CLI pin
+        id: kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+
+      - name: Install the pinned Kyverno CLI
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.kyverno-version.outputs.release }}
+
+      - name: Prove generated validity and real traffic
+        run: bash scripts/prove-cilium-default-deny.sh run
+
+      - name: Recheck owned cluster cleanup
+        if: always()
+        run: bash scripts/prove-cilium-default-deny.sh cleanup
+
+      - name: Publish the finite proof receipt
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cilium-default-deny-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cilium-deny-proof-${{ github.run_id }}-${{ github.run_attempt }}/receipt/result.json
+          if-no-files-found: error
+          retention-days: 7

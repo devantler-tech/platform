@@ -1,0 +1,142 @@
+# Keeps the live UniFi network objects safe from the devantler-tech/unifi source
+# at admission, where the source cannot reach.
+#
+# Why: the unifi Flux Kustomization prunes, and its patches apply every UniFi
+# managed resource without the Delete management policy, so a prune deletes only
+# the Kubernetes object and never the network object behind it (#3373). Those
+# patches run at render time, inside the source's own kustomization: Flux appends
+# them to the source's root kustomization.yaml, and kustomize runs the source's
+# commonAnnotations, replacements and transformers AFTER them. A source can
+# therefore put Delete back, or attach the observe-only annotation without its
+# narrowing, and the render alone cannot stop it. This policy enforces the same
+# outcome on what is actually applied and deleted:
+#
+# - apply: a managed resource the unifi ServiceAccount creates or updates may not
+#   carry `*` or `Delete`, and one annotated observe-only must be exactly
+#   ["Observe"]. A missing list counts as `*`, the CRD default.
+# - prune: the unifi ServiceAccount may not delete a managed resource whose live
+#   list still carries `*` or `Delete`. That also covers a resource removed from
+#   the source in the same reconcile that first applies the patches: its live
+#   list is still the old one, so Flux's prune is refused instead of letting
+#   Crossplane delete the network object.
+#
+# A refusal fails the Kustomization visibly and Flux prunes nothing in that
+# reconcile. Only the unifi ServiceAccount is matched (the Kustomization
+# impersonates it for apply and prune): Crossplane's own controllers and a
+# platform operator retiring an object deliberately are unaffected.
+#
+# The kinds are exactly the ones the unifi Role grants; the Flux Kustomization
+# prune test fails when the two drift apart. Admission-only (background: false),
+# because the match is on the applying identity.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-unifi-management-policies
+  annotations:
+    policies.kyverno.io/title: Restrict UniFi Management Policies
+    policies.kyverno.io/category: Crossplane
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Record, Client, TrafficRoute
+    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/description: >-
+      Refuses a UniFi managed resource applied by the unifi ServiceAccount with
+      the Delete or "*" management policy, or annotated observe-only without
+      exactly ["Observe"], and refuses that ServiceAccount's deletion of a
+      managed resource whose live policies would delete the UniFi object, so the
+      source repository can never delete live network configuration.
+spec:
+  background: false
+  rules:
+    - name: apply-without-delete
+      match:
+        any:
+          - resources:
+              kinds:
+                - dns.unifi.m.crossplane.io/*/Record
+                - vpn.unifi.m.crossplane.io/*/Client
+                - route.unifi.m.crossplane.io/*/TrafficRoute
+              operations:
+                - CREATE
+                - UPDATE
+              namespaces:
+                - unifi
+            subjects:
+              - kind: ServiceAccount
+                name: unifi
+                namespace: unifi
+      validate:
+        failureAction: Enforce
+        message: >-
+          UniFi managed resources applied from devantler-tech/unifi may not use the
+          Delete or "*" management policy (an omitted list defaults to "*"); the
+          platform applies them as Observe, Create, Update, LateInitialize, or as
+          Observe alone when annotated
+          platform.devantler.tech/unifi-management: observe-only.
+        deny:
+          conditions:
+            any:
+              # contains(), not AnyIn: Kyverno matches "*" in AnyIn as a wildcard.
+              - key: "{{ contains(request.object.spec.managementPolicies || `[\"*\"]`, '*') || contains(request.object.spec.managementPolicies || `[\"*\"]`, 'Delete') }}"
+                operator: Equals
+                value: true
+    - name: observe-only-is-observe
+      match:
+        any:
+          - resources:
+              kinds:
+                - dns.unifi.m.crossplane.io/*/Record
+                - vpn.unifi.m.crossplane.io/*/Client
+                - route.unifi.m.crossplane.io/*/TrafficRoute
+              operations:
+                - CREATE
+                - UPDATE
+              namespaces:
+                - unifi
+              annotations:
+                platform.devantler.tech/unifi-management: observe-only
+            subjects:
+              - kind: ServiceAccount
+                name: unifi
+                namespace: unifi
+      validate:
+        failureAction: Enforce
+        message: >-
+          A UniFi managed resource annotated
+          platform.devantler.tech/unifi-management: observe-only must have
+          spec.managementPolicies exactly ["Observe"]; set the annotation on the
+          resource itself, not through commonAnnotations or a transformer.
+        deny:
+          conditions:
+            any:
+              - key: "{{ length(request.object.spec.managementPolicies || `[]`) != `1` || (request.object.spec.managementPolicies || `[\"\"]`)[0] != 'Observe' }}"
+                operator: Equals
+                value: true
+    - name: prune-only-without-delete
+      match:
+        any:
+          - resources:
+              kinds:
+                - dns.unifi.m.crossplane.io/*/Record
+                - vpn.unifi.m.crossplane.io/*/Client
+                - route.unifi.m.crossplane.io/*/TrafficRoute
+              operations:
+                - DELETE
+              namespaces:
+                - unifi
+            subjects:
+              - kind: ServiceAccount
+                name: unifi
+                namespace: unifi
+      validate:
+        failureAction: Enforce
+        message: >-
+          The unifi ServiceAccount may only delete a UniFi managed resource whose
+          live management policies exclude Delete and "*", so a prune never deletes
+          the UniFi object behind it. Let the platform's patch apply first, or
+          retire the object deliberately as a platform operator.
+        deny:
+          conditions:
+            any:
+              - key: "{{ contains(request.oldObject.spec.managementPolicies || `[\"*\"]`, '*') || contains(request.oldObject.spec.managementPolicies || `[\"*\"]`, 'Delete') }}"
+                operator: Equals
+                value: true

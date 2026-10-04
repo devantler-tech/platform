@@ -78,7 +78,7 @@
     },
     {
       "customType": "regex",
-      "description": "Track the kubelet-serving-cert-approver release in the vendored-resource updater. A version-only bump fails CI's image-version binding until the immutable source commit, SHA-256 and complete vendored resources are refreshed together. Re-check the standalone PDB selector and resource-scoped Checkov dispositions on every bump.",
+      "description": "Track the kubelet-serving-cert-approver release in the vendored-resource updater. A version-only bump fails CI's image-version binding until the immutable source commit, SHA-256 and complete vendored resources are refreshed together. Re-check the resource-scoped Checkov dispositions on every bump; CI checks that the standalone PDB still selects the upstream pod labels.",
       "managerFilePatterns": [
         "/^scripts/update-vendored-operators\\.sh$/"
       ],
@@ -89,6 +89,20 @@
       "depNameTemplate": "alex1989hu/kubelet-serving-cert-approver",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the upstream commit the vendored origin-ca-issuer CRDs are fetched at, as a digest of the trunk branch — the ref the CRDs were rendered from before they were vendored. The flux manager's chart bumps never touch these vendored files. The datasource is github-digest, NOT git-refs: both resolve the branch head, but git-refs reports no release timestamp, and Renovate withholds an undated update whenever a release-age cooldown applies to it. The matching packageRule below turns that cooldown off for this source and says why. A commit-only bump fails CI until scripts/update-vendored-operators.sh --render-remotes has re-fetched both CRDs at the new commit.",
+      "managerFilePatterns": [
+        "/^scripts/update-vendored-operators\\.sh$/"
+      ],
+      "matchStrings": [
+        "readonly origin_ca_issuer_commit='(?<currentDigest>[0-9a-f]{40})'"
+      ],
+      "currentValueTemplate": "trunk",
+      "datasourceTemplate": "github-digest",
+      "depNameTemplate": "cloudflare/origin-ca-issuer",
+      "packageNameTemplate": "cloudflare/origin-ca-issuer"
     },
     {
       "customType": "regex",
@@ -146,6 +160,12 @@
     "automerge": true
   },
   "packageRules": [
+    {
+      "description": "Coroot operator chart 0.10.3 has invalid CEL syntax and 0.10.4 exceeds the Kubernetes CEL cost budget (#4338). Exclude only these broken charts; retain normal updates for corrected releases.",
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["coroot-operator"],
+      "allowedVersions": "!/^0\\.10\\.[34]$/"
+    },
     {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
@@ -266,10 +286,21 @@
       "addLabels": ["vendored-manifest"]
     },
     {
-      "description": "kubelet-serving-cert-approver is vendored as a complete upstream manifest. Keep Renovate visibility through the updater version, but require a reviewed whole-bundle refresh with matching source commit, digest, image and PDB selector. The ghcr.io name covers the kustomization images: pin (tag + digest): a tag or digest update there fails CI's image-pin guard until the updater's version and cert_approver_image_digest move with it. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
+      "description": "kubelet-serving-cert-approver is vendored as a complete upstream manifest. Keep Renovate visibility through the updater version, but require a reviewed whole-bundle refresh with matching source commit, digest and image. The ghcr.io name covers the kustomization images: pin (tag + digest): a tag or digest update there fails CI's image-pin guard until the updater's version and cert_approver_image_digest move with it. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
       "matchPackageNames": ["alex1989hu/kubelet-serving-cert-approver", "ghcr.io/alex1989hu/kubelet-serving-cert-approver"],
       "automerge": false,
       "addLabels": ["security/review-required"]
+    },
+    {
+      "description": "The origin-ca-issuer CRDs are vendored upstream bytes pinned by source commit and SHA-256 (custom manager above). Renovate can only move the commit: the update PR is the signal that upstream moved, and it stays red until the CRDs are re-fetched at that commit. Scoped to the github-digest datasource so the chart, which the flux manager tracks under its own name, keeps its normal updates. minimumReleaseAge is 0 days here, and only here: the age of a branch head is the age of its newest commit, so every upstream commit restarts the repository-wide cooldown and a branch that moves at least weekly would never be proposed at all. Nothing is adopted by raising the PR early, because it cannot merge without the reviewed re-fetch. Digest updates do not automerge by default here; automerge:false is explicit, and must stay the last word on this package, so a later automerge default cannot adopt a commit whose CRDs were never fetched.",
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["cloudflare/origin-ca-issuer"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false,
+      "addLabels": ["vendored-manifest"],
+      "prBodyNotes": [
+        "**This PR cannot go green as opened.** It moves only `origin_ca_issuer_commit`. Run `scripts/update-vendored-operators.sh --render-remotes` on this branch and commit what it changes. If it stops on a CRD digest, review the upstream change to that CRD before recording the new digest."
+      ]
     },
     {
       "description": "Review the Kyverno chart and CI policy engine together. Grouping can produce a one-sided update because their releases are independent; require the chart appVersion to match the shared CLI pin before merging. automerge:false follows the broad controller and major-update rules so they cannot bypass this comparison.",

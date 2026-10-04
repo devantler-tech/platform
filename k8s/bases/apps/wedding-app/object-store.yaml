@@ -1,8 +1,6 @@
-# Active Barman Cloud Plugin ObjectStore for the wedding-db tenant database.
-# It stays on the shared platform archive during the dedicated-store staging
-# phase. The Cluster continues to reference this object as `wedding-db`, so WAL
-# and base-backup continuity are unchanged until the existing catalog has been
-# mirrored and a later reviewed cutover changes that reference.
+# Retained shared archive for Wedding recovery and rollback. The live database
+# archives through wedding-db-dedicated. Keep this store and its credential
+# available until a dedicated-only restore has proved the recovery boundary.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:

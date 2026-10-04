@@ -183,9 +183,11 @@ readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/platform/manifests:latest"
   "devantler-tech/wedding-app/manifests:latest"
   "devantler-tech/ascoachingogvaner/manifests:latest"
+  "devantler-tech/world-at-ruin/zone-manifests:0.114.0"
   "devantler-tech/data-product-controller:latest"
   "devantler-tech/wedding-app:latest"
   "devantler-tech/ascoachingogvaner:latest"
+  "devantler-tech/world-at-ruin/zone:v0.114.0"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
   "devantler-tech/provider-upjet-unifi:v1.0.0"
 )
@@ -199,15 +201,7 @@ readonly -a RUNTIME_CREDENTIAL_PROBE_REPOSITORIES=(
 )
 RUNTIME_CREDENTIAL_PROBE_IMAGES=()
 readonly -a FANOUT_NAMESPACES=(
-  # data-product-controller is staged off in k8s/bases/apps/kustomization.yaml,
-  # so production never reconciles data-product-controller/ghcr-auth and this
-  # entry must stay commented out while that gate is closed. Listing it anyway
-  # fails EVERY prod deploy: the pre-publish invocation defers a missing new
-  # consumer, but the post-reconcile reassertion runs with --reuse-runtime-proof
-  # and has no such exemption, so it marks the fan-out incomplete and exits 1.
-  # Uncomment this in the SAME change that enables the component in the apps
-  # base — scripts/guard-ghcr-fanout-component-gate.sh fails if the two disagree.
-  # "data-product-controller"
+  "data-product-controller"
   "wedding-app"
   "ascoachingogvaner"
   "kyverno"
@@ -365,6 +359,7 @@ flux_controller_restart_patch_file="${work_dir}/flux-controller-restart-patch.js
 flux_controller_result_file="${work_dir}/flux-controller-result.txt"
 flux_controller_pods_before_file="${work_dir}/flux-controller-pods-before.json"
 flux_controller_pods_after_file="${work_dir}/flux-controller-pods-after.json"
+flux_controller_diagnostics_file="${work_dir}/flux-controller-diagnostics.json"
 recovery_nodes_file="${work_dir}/recovery-nodes.json"
 recovery_node_file="${work_dir}/recovery-node.json"
 recovery_targets_file="${work_dir}/recovery-targets.jsonl"
@@ -2418,6 +2413,7 @@ node_schedulability_release_is_complete() {
     --arg uid "${node_uid}" \
     --arg owner_annotation "${CORDON_OWNER_ANNOTATION}" \
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
+    --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
     --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
     --arg scale_down_disabled_annotation "${AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION}" \
     --argjson was_cordoned "${was_cordoned}" \
@@ -2425,6 +2421,7 @@ node_schedulability_release_is_complete() {
     .metadata.uid == $uid
     and (((.metadata.annotations // {})[$owner_annotation] // "") == "")
     and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
+    and (((.metadata.annotations // {}) | has($phase_annotation)) | not)
     and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
     and (if $scale_down_guard_owned == 1 then
       (((.metadata.annotations // {}) | has($scale_down_disabled_annotation)) | not)
@@ -2439,7 +2436,7 @@ restore_node_schedulability_if_needed() {
   local expected_recovery="${7:-}"
   local scale_down_guard_owned="${8:-0}"
   local release_attempt="${9:-1}"
-  local current_resource_version current_recovery
+  local current_resource_version current_recovery current_phase phase_present
   local current_scale_down_owner current_scale_down_disabled
 
   if [[ -z "${owner_token}" ]]; then
@@ -2450,11 +2447,16 @@ restore_node_schedulability_if_needed() {
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     get node "${node_name}" \
+    --ignore-not-found \
     --output json \
     >"${cordon_state_file}" 2>"${result_file}"; then
     echo "::error::Could not re-read Talos node ${node_name}; refusing to uncordon it."
     emit_safe_operation_output "uncordon-read" "${result_file}"
     return 1
+  fi
+  if [[ ! -s "${cordon_state_file}" ]]; then
+    echo "No scheduling fence remains on deleted Talos node ${node_name}."
+    return 0
   fi
   if node_schedulability_release_is_complete \
     "${cordon_state_file}" "${initial_node_uid}" "${was_cordoned}" \
@@ -2482,6 +2484,21 @@ restore_node_schedulability_if_needed() {
     --arg recovery_annotation "${CORDON_RECOVERY_ANNOTATION}" \
     '.metadata.annotations[$recovery_annotation] // ""' \
     "${cordon_state_file}")"
+  current_phase="$(jq -r \
+    --arg annotation "${CORDON_PHASE_ANNOTATION}" \
+    '(.metadata.annotations // {})[$annotation] // ""' \
+    "${cordon_state_file}")"
+  phase_present="$(jq \
+    --arg annotation "${CORDON_PHASE_ANNOTATION}" \
+    '(.metadata.annotations // {}) | has($annotation)' \
+    "${cordon_state_file}")"
+  case "${current_phase}" in
+    ''|claimed|mutating) ;;
+    *)
+      echo "::error::Drain phase changed or was malformed for Talos node ${node_name}; refusing to release it."
+      return 1
+      ;;
+  esac
   current_scale_down_owner="$(jq -r \
     --arg annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" \
     '(.metadata.annotations // {})[$annotation] // ""' \
@@ -2538,6 +2555,9 @@ restore_node_schedulability_if_needed() {
     --arg owner "${owner_token}" \
     --arg recovery_path "${CORDON_RECOVERY_JSON_PATH}" \
     --arg recovery "${current_recovery}" \
+    --arg phase_path "${CORDON_PHASE_JSON_PATH}" \
+    --arg phase "${current_phase}" \
+    --argjson phase_present "${phase_present}" \
     --arg scale_down_path "${AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH}" \
     --arg scale_down_owner_path "${SCALE_DOWN_GUARD_OWNER_JSON_PATH}" \
     --arg scale_down_owner "${current_scale_down_owner}" \
@@ -2562,6 +2582,12 @@ restore_node_schedulability_if_needed() {
           {op: "remove", path: $recovery_path}
         ]
       end)
+    + (if $phase_present then
+        [
+          {op: "test", path: $phase_path, value: $phase},
+          {op: "remove", path: $phase_path}
+        ]
+      else [] end)
     + (if $scale_down_owner == "" then [] else
         [
           {op: "test", path: $scale_down_owner_path, value: $owner},
@@ -2579,6 +2605,22 @@ restore_node_schedulability_if_needed() {
     --type=json \
     --patch-file="${cordon_release_patch_file}" \
     >"${result_file}" 2>&1; then
+    # A failed patch alone cannot prove deletion. Confirm absence through a
+    # successful API read, including when the final patch attempt races deletion.
+    if ! kubectl \
+      --context "${KUBE_CONTEXT}" \
+      get node "${node_name}" \
+      --ignore-not-found \
+      --output json \
+      >"${cordon_state_file}" 2>>"${result_file}"; then
+      echo "::error::Could not re-read Talos node ${node_name} after its failed fence release; refusing to uncordon it."
+      emit_safe_operation_output "uncordon-read" "${result_file}"
+      return 1
+    fi
+    if [[ ! -s "${cordon_state_file}" ]]; then
+      echo "No scheduling fence remains on deleted Talos node ${node_name}."
+      return 0
+    fi
     if ((release_attempt < CORDON_RELEASE_ATTEMPTS)); then
       sleep "${SYNC_INTERVAL}"
       if restore_node_schedulability_if_needed \
@@ -4177,6 +4219,51 @@ validate_talos_node_inventory() {
 # up in the next pass. Two consecutive clean inventories close the common
 # cutover race, and the bounded loop fails before root auth changes if the set
 # never stabilizes.
+reconcile_completed_node_phases() {
+  local inventory_file="$1"
+  local desired_revision="$2"
+  local operator_image="$3"
+  local candidates_file="${work_dir}/completed-phase-candidates.jsonl"
+  local node_file="${work_dir}/completed-phase-node.json"
+  local patch_file="${work_dir}/completed-phase-patch.json"
+  local result_file="${work_dir}/completed-phase-result.txt"
+  local candidate="" node_name="" node_uid=""
+  reconciled_phase_count=0
+
+  jq -c --arg phase "${CORDON_PHASE_ANNOTATION}" '
+    .items[] | select((.metadata.annotations // {}) | has($phase))
+    | select(((.metadata.annotations["platform.devantler.tech/ghcr-auth-drain-owner"] // "") == "")
+      and ((.metadata.annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] // "") == ""))
+    | {name:.metadata.name, uid:.metadata.uid}
+  ' "${inventory_file}" >"${candidates_file}" || return 1
+  while IFS= read -r candidate; do
+    node_name="$(jq -er .name <<<"${candidate}")" || return 1
+    node_uid="$(jq -er .uid <<<"${candidate}")" || return 1
+    assert_sync_lease_held || return 1
+    kubectl --context "${KUBE_CONTEXT}" get node "${node_name}" --output json \
+      >"${node_file}" || return 1
+    jq -e --arg uid "${node_uid}" '.metadata.uid == $uid' \
+      "${node_file}" >/dev/null || return 1
+    if ! completed_node_phase_cleanup_patch \
+      "${node_file}" "${desired_revision}" "${operator_image}" >"${patch_file}"; then
+      echo "::error::Refusing ambiguous historical node phase cleanup."
+      return 1
+    fi
+    if jq -e 'length == 0' "${patch_file}" >/dev/null; then
+      continue
+    fi
+    assert_sync_lease_held || return 1
+    # A lost patch response is accepted only after exact identity and completed
+    # release readback. No retry can erase a successor phase or ownership record.
+    kubectl --context "${KUBE_CONTEXT}" patch node "${node_name}" --type=json \
+      --patch-file "${patch_file}" >"${result_file}" 2>&1 || true
+    kubectl --context "${KUBE_CONTEXT}" get node "${node_name}" --output json \
+      >"${node_file}" || return 1
+    node_schedulability_release_is_complete "${node_file}" "${node_uid}" 0 0 || return 1
+    reconciled_phase_count=$((reconciled_phase_count + 1))
+  done <"${candidates_file}"
+}
+
 sync_talos_registry_auth() {
   local desired_revision="$1"
   local operator_image="$2"
@@ -4258,6 +4345,18 @@ sync_talos_registry_auth() {
           echo "::error::Every Talos node must expose a non-empty unique UID and exactly one non-empty unique InternalIP before GHCR auth can be synchronized."
           return 1
         fi
+      fi
+    fi
+    # Historical phase-only records are reconciled only on the first inventory
+    # while this transaction holds the Lease. Later inventories may contain a
+    # phase this very transaction is using, and must never be cleaned this way.
+    if ((convergence_attempt == 1)); then
+      reconcile_completed_node_phases \
+        "${talos_nodes_file}" "${desired_revision}" "${operator_image}" || return 1
+      if ((reconciled_phase_count > 0)); then
+        kubectl --context "${KUBE_CONTEXT}" get nodes -o json \
+          >"${talos_nodes_file}" || return 1
+        validate_talos_node_inventory "${talos_nodes_file}" || return 1
       fi
     fi
     if ! select_talos_node_targets \
@@ -5359,11 +5458,87 @@ wait_for_flux_policy_parent_quiescence_before_claim() {
   return 1
 }
 
+# One CAS, shared by initial acquisition and bounded post-claim recovery. The
+# caller must prove an ownerless, unsuspended snapshot of the original UID.
+claim_flux_policy_parent_once() {
+  local resource_version annotations_present
+  if [[ "${sync_lease_acquired}" != "true" ||
+    -z "${sync_lease_holder}" || -e "${sync_lease_lost_file}" ]]; then
+    echo "::error::The GHCR synchronization transaction is not locally active; refusing to fence Flux reconciliation."
+    return 1
+  fi
+  resource_version="$(jq -er '.metadata.resourceVersion' \
+    "${flux_policy_parent_state_file}")" || return 1
+  annotations_present="$(jq -r \
+    '(.metadata.annotations? | type) == "object"' \
+    "${flux_policy_parent_state_file}")" || return 1
+  jq -n \
+    --arg resource_version "${resource_version}" \
+    --arg uid "${flux_policy_parent_uid}" \
+    --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
+    --arg owner "${flux_policy_parent_owner}" \
+    --argjson annotations_present "${annotations_present}" '
+    [
+      {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
+      {op: "test", path: "/metadata/uid", value: $uid}
+    ]
+    + (if $annotations_present then [] else
+      [{op: "add", path: "/metadata/annotations", value: {}}]
+    end)
+    + [
+      {op: "add", path: $owner_path, value: $owner},
+      {op: "add", path: "/spec/suspend", value: true}
+    ]
+  ' >"${flux_policy_parent_patch_file}" || return 1
+  kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
+    "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
+    --type=json \
+    --patch-file="${flux_policy_parent_patch_file}" \
+    -o json \
+    >"${flux_policy_parent_state_file}" \
+    2>"${flux_policy_parent_result_file}"
+}
+
+flux_policy_parent_snapshot_is_well_formed() {
+  jq -e --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" '
+    .kind == "Kustomization"
+    and (.metadata.uid | type == "string" and length > 0)
+    and (.metadata.resourceVersion | type == "string" and length > 0)
+    and ((.metadata.annotations // {}) | type == "object")
+    and (if ((.metadata.annotations // {}) | has($annotation)) then
+      (.metadata.annotations[$annotation] | type == "string") else true end)
+    and (.spec | type == "object")
+    and (if (.spec | has("suspend")) then
+      (.spec.suspend | type == "boolean") else true end)
+    and (.status.conditions | type == "array")
+    and all(.status.conditions[]?;
+      type == "object" and (.type | type == "string")
+      and (.status == "True" or .status == "False" or .status == "Unknown"))
+  ' "${flux_policy_parent_state_file}" >/dev/null 2>&1
+}
+
+# Fixed labels and booleans explain the failed tuple without exposing identities.
+report_flux_policy_parent_ownership() {
+  jq -r --arg uid "${flux_policy_parent_uid}" \
+    --arg annotation "${FLUX_POLICY_PARENT_OWNER_ANNOTATION}" \
+    --arg owner "${flux_policy_parent_owner}" '
+    "Parent handoff observation: uidMatch=\(.metadata.uid == $uid)"
+    + " ownerMatch=\(((.metadata.annotations // {})[$annotation] // "") == $owner)"
+    + " ownerPresent=\(((.metadata.annotations // {})[$annotation] // "") != "")"
+    + " suspended=\(.spec.suspend == true)"
+    + " reconciling=\(any(.status.conditions[]?; .type == "Reconciling" and .status == "True"))"
+  ' "${flux_policy_parent_state_file}" 2>/dev/null || true
+}
+
 pause_flux_policy_parent() {
-  local resource_version attempt annotations_present wait_status
+  local resource_version attempt wait_status
   local max_attempts="${FLUX_POLICY_PARENT_CLAIM_MAX_ATTEMPTS:-5}"
   local reread_resource_version
   local wait_started_at
+  local reclaims=0 failed_claim_resource_version="" last_observation="reconciling"
   # The re-read below needs its own stderr sink. Pointed at the result file it would
   # succeed, write nothing, and truncate the rejection that explains why the fence was
   # refused — leaving a bare refusal with no cause in exactly the case that matters
@@ -5444,37 +5619,7 @@ pause_flux_policy_parent() {
   while :; do
     resource_version="$(jq -er '.metadata.resourceVersion' \
       "${flux_policy_parent_state_file}")"
-    annotations_present="$(jq -r \
-      '(.metadata.annotations? | type) == "object"' \
-      "${flux_policy_parent_state_file}")"
-    jq -n \
-      --arg resource_version "${resource_version}" \
-      --arg uid "${flux_policy_parent_uid}" \
-      --arg owner_path "${FLUX_POLICY_PARENT_OWNER_JSON_PATH}" \
-      --arg owner "${flux_policy_parent_owner}" \
-      --argjson annotations_present "${annotations_present}" '
-      [
-        {op: "test", path: "/metadata/resourceVersion", value: $resource_version},
-        {op: "test", path: "/metadata/uid", value: $uid}
-      ]
-      + (if $annotations_present then [] else
-        [{op: "add", path: "/metadata/annotations", value: {}}]
-      end)
-      + [
-        {op: "add", path: $owner_path, value: $owner},
-        {op: "add", path: "/spec/suspend", value: true}
-      ]
-    ' >"${flux_policy_parent_patch_file}"
-    if kubectl \
-      --context "${KUBE_CONTEXT}" \
-      --namespace flux-system \
-      patch "${FLUX_KUSTOMIZATION_RESOURCE}" \
-      "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
-      --type=json \
-      --patch-file="${flux_policy_parent_patch_file}" \
-      -o json \
-      >"${flux_policy_parent_state_file}" \
-      2>"${flux_policy_parent_result_file}"; then
+    if claim_flux_policy_parent_once; then
       flux_policy_parent_acquired=true
       break
     fi
@@ -5552,21 +5697,71 @@ pause_flux_policy_parent() {
   wait_started_at="${SECONDS}"
   for ((attempt = 1; attempt <= PARENT_QUIESCE_ATTEMPTS; attempt++)); do
     sleep "${SYNC_INTERVAL}"
-    if kubectl \
+    if ! kubectl \
       --context "${KUBE_CONTEXT}" \
       --namespace flux-system \
       get "${FLUX_KUSTOMIZATION_RESOURCE}" \
       "${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}" \
-      -o json >"${flux_policy_parent_state_file}" &&
-      flux_policy_parent_is_stable; then
-      return 0
+      -o json >"${flux_policy_parent_state_file}" \
+      2>"${reread_error_file}"; then
+      emit_safe_operation_output "flux-policy-parent-observe" "${reread_error_file}"
+      echo "::error::Could not inspect the parent Flux reconciliation after claiming; refusing child, policy and credential mutation."
+      return 1
+    fi
+    if ! flux_policy_parent_snapshot_is_well_formed; then
+      echo "::error::The parent Flux policy fence changed to an unsafe state after claiming (malformed snapshot); refusing further mutation."
+      return 1
+    fi
+    if flux_policy_parent_is_owned; then
+      flux_policy_parent_acquired=true
+      failed_claim_resource_version=""
+      last_observation="reconciling"
+      flux_policy_parent_is_quiescent && return 0
+    elif flux_policy_parent_is_released; then
+      # Keep the ORIGINAL UID and owner. Re-enter neither pause nor the preclaim
+      # wait: every new observation/reclaim consumes this same finite budget.
+      flux_policy_parent_acquired=false
+      last_observation="released"
+      reread_resource_version="$(jq -er '.metadata.resourceVersion' \
+        "${flux_policy_parent_state_file}")"
+      if [[ -n "${failed_claim_resource_version}" &&
+        "${failed_claim_resource_version}" == "${reread_resource_version}" ]]; then
+        emit_safe_operation_output "flux-policy-parent-reclaim" "${flux_policy_parent_result_file}"
+        echo "::error::Could not atomically reacquire the parent Flux policy handoff; the rejected snapshot did not change."
+        return 1
+      fi
+      if ((attempt < PARENT_QUIESCE_ATTEMPTS && reclaims < max_attempts)) &&
+        flux_policy_parent_is_quiescent; then
+        assert_sync_lease_held || return 1
+        reclaims=$((reclaims + 1))
+        echo "::warning::Observed the original parent Flux object in its released state; reacquiring its policy handoff (${reclaims}/${max_attempts}) within the remaining observation budget."
+        # A lost reclaim response may have applied the patch, so cleanup stays
+        # armed. resume_flux_policy_parent uses the original UID/owner/suspend
+        # CAS tuple; if the patch did not apply, it adopts only the exact
+        # released state after its guarded release fails.
+        flux_policy_parent_acquired=true
+        if claim_flux_policy_parent_once; then
+          failed_claim_resource_version=""
+        else
+          failed_claim_resource_version="${reread_resource_version}"
+        fi
+      fi
+    else
+      report_flux_policy_parent_ownership
+      echo "::error::The parent Flux policy fence changed to an unsafe state after claiming; refusing further mutation."
+      return 1
     fi
   done
 
+  report_flux_policy_parent_ownership
   flux_policy_report_conditions \
     "${flux_policy_parent_state_file}" \
     "kustomization/${IMAGE_VERIFICATION_FLUX_PARENT_KUSTOMIZATION}"
-  echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s)."
+  if [[ "${last_observation}" == "released" ]]; then
+    echo "::error::The parent Flux policy handoff observation budget was exhausted after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s); ownership was released and could not be re-proved."
+  else
+    echo "::error::The parent Flux reconciliation did not quiesce before the image-verification policy handoff after ${PARENT_QUIESCE_ATTEMPTS} attempts (elapsed $((SECONDS - wait_started_at))s)."
+  fi
   return 1
 }
 
@@ -5623,10 +5818,53 @@ flux_policy_handoff_is_owned() {
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
+# The owner is quiescent when no apply can be in flight. Reconciling=True alone
+# does not mean that: the owner health-gates every workload it applies, so one
+# degraded workload keeps it Reconciling indefinitely after its apply finished
+# (#3100). kustomize-controller (v1.8.x, internal/controller) runs a reconcile as
+# fetch -> build -> drift/apply -> prune -> health check, and only the health
+# check stage writes Healthy=Unknown/Progressing, in the same status patch that
+# sets the Reconciling message to "Running health checks for revision <rev> ...".
+# A failed health check then leaves Healthy and Ready HealthCheckFailed and
+# finalizeStatus only relabels Reconciling as ProgressingWithRetry. The next
+# attempt's first patch rewrites the Reconciling message ("Fetching manifests"),
+# so any apply-stage reconcile, including one after a controller restart that
+# left a stale Healthy condition, fails these checks. Note lastAppliedRevision
+# cannot discriminate: it is written only after health checks pass. Anything
+# else, including an unknown future controller wording, stays not quiescent.
+# Suspension does not stop an execution that already started either way;
+# restart_flux_kustomize_controller_for_handoff still replaces the controller.
 flux_policy_handoff_is_quiescent() {
   jq -e '
-    any(.status.conditions[]?;
-      .type == "Reconciling" and .status == "True") | not
+    def only($type):
+      [.status.conditions[]? | select(.type == $type)]
+      | if length == 1 then .[0] else null end;
+    [.status.conditions[]?
+      | select(.type == "Reconciling" and .status == "True")] as $reconciling
+    | if ($reconciling | length) == 0 then true
+      elif ($reconciling | length) > 1 then false
+      else
+        $reconciling[0] as $r
+        | only("Healthy") as $healthy
+        | only("Ready") as $ready
+        | (.status.lastAttemptedRevision // "") as $revision
+        | ($revision | type == "string" and length > 0)
+        and (($r.message // "")
+          | startswith("Running health checks for revision \($revision) "))
+        and $healthy != null
+        and (
+          ($r.reason == "Progressing"
+            and $healthy.status == "Unknown"
+            and $healthy.reason == "Progressing"
+            and $healthy.message == $r.message)
+          or ($r.reason == "ProgressingWithRetry"
+            and $healthy.status == "False"
+            and $healthy.reason == "HealthCheckFailed"
+            and $ready != null
+            and $ready.status == "False"
+            and $ready.reason == "HealthCheckFailed")
+        )
+      end
   ' "${flux_policy_handoff_state_file}" >/dev/null
 }
 
@@ -5809,6 +6047,81 @@ wait_for_flux_controller_handoff_baseline() {
   return 1
 }
 
+# Masks IPv4 addresses and IPv6 addresses (bracketed, compressed with `::`, or of five or more
+# groups, so a clock time such as 12:34:56 is left alone). Diagnostics go to a public CI log, and
+# probe failures, scheduler messages and kubectl errors can name Pod, node or API server addresses
+# that this repository never publishes.
+mask_cluster_addresses() {
+  sed -E \
+    -e 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/<address>/g' \
+    -e 's/\[[0-9A-Fa-f:]*:[0-9A-Fa-f:]*\]/[<address>]/g' \
+    -e 's/[0-9A-Fa-f:]*([0-9A-Fa-f]::|::[0-9A-Fa-f])[0-9A-Fa-f:]*/<address>/g' \
+    -e 's/([0-9A-Fa-f]{1,4}:){4,7}[0-9A-Fa-f]{1,4}/<address>/g'
+}
+
+# Explains a failed kustomize-controller policy handoff restart or rollout (#4178). The failure
+# used to print one line and nothing else, so a scheduling, image-pull, readiness or disruption
+# problem could not be told apart from a regression, and the only recovery was to re-queue on
+# trust. This prints the captured kubectl output, each controller Pod's phase, conditions and
+# container waiting or terminated reasons, and the most recent events for those Pods. Every read
+# is best effort: a diagnostic that cannot be gathered says so and never changes the outcome.
+print_flux_controller_handoff_diagnostics() {
+  echo "::group::kustomize-controller handoff diagnostics"
+  echo "kubectl output:"
+  if [[ -s "${flux_controller_result_file}" ]]; then
+    mask_cluster_addresses <"${flux_controller_result_file}"
+  else
+    echo "  (none captured)"
+  fi
+  echo "kustomize-controller Pods:"
+  if kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get pods \
+    --selector "${FLUX_KUSTOMIZE_CONTROLLER_SELECTOR}" \
+    -o json >"${flux_controller_diagnostics_file}" 2>/dev/null; then
+    jq -r '
+      .items[]
+      | "  \(.metadata.name): phase=\(.status.phase // "unknown")",
+        (.status.conditions // [] | .[]
+          | "    condition \(.type)=\(.status)"
+            + (if .reason then " reason=\(.reason)" else "" end)
+            + (if .message then " message=\(.message)" else "" end)),
+        ((.status.containerStatuses // []) + (.status.initContainerStatuses // []) | .[]
+          | if .state.waiting then
+              "    container \(.name): waiting \(.state.waiting.reason // "unknown")"
+                + (if .state.waiting.message then " message=\(.state.waiting.message)" else "" end)
+            elif .state.terminated then
+              # A terminated message can carry the tail of the container log, so print the
+              # reason and exit code only.
+              "    container \(.name): terminated \(.state.terminated.reason // "unknown")"
+                + " exitCode=\(.state.terminated.exitCode // "unknown")"
+            else empty end)
+    ' "${flux_controller_diagnostics_file}" 2>/dev/null | mask_cluster_addresses ||
+      echo "  (could not read the Pods)"
+  else
+    echo "  (could not read the Pods)"
+  fi
+  echo "Recent events for those Pods:"
+  if kubectl \
+    --context "${KUBE_CONTEXT}" \
+    --namespace flux-system \
+    get events \
+    --field-selector involvedObject.kind=Pod \
+    -o json >"${flux_controller_diagnostics_file}" 2>/dev/null; then
+    jq -r --arg prefix "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}-" '
+      [.items[] | select(.involvedObject.name | startswith($prefix))]
+      | sort_by(.lastTimestamp // .eventTime // .metadata.creationTimestamp // "")
+      | .[-10:][]
+      | "  \(.lastTimestamp // .eventTime // "-") \(.type) \(.reason) \(.involvedObject.name): \(.message // "")"
+    ' "${flux_controller_diagnostics_file}" 2>/dev/null | mask_cluster_addresses ||
+      echo "  (could not read the events)"
+  else
+    echo "  (could not read the events)"
+  fi
+  echo "::endgroup::"
+}
+
 restart_flux_kustomize_controller_for_handoff() {
   local resource_version deployment_uid replicas annotations_present
   local restart_token
@@ -5918,6 +6231,7 @@ restart_flux_kustomize_controller_for_handoff() {
         .metadata.uid == $uid
         and ((.spec.template.metadata.annotations // {})["kubectl.kubernetes.io/restartedAt"] == $restart)
       ' "${flux_controller_deployment_state_file}" >/dev/null; then
+      print_flux_controller_handoff_diagnostics
       echo "::error::Could not atomically restart or adopt the kustomize-controller policy handoff rollout."
       return 1
     fi
@@ -5929,6 +6243,7 @@ restart_flux_kustomize_controller_for_handoff() {
     "deployment.apps/${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
     --timeout="${FLUX_CONTROLLER_ROLLOUT_TIMEOUT}" \
     >"${flux_controller_result_file}" 2>&1; then
+    print_flux_controller_handoff_diagnostics
     echo "::error::kustomize-controller did not complete the policy handoff restart."
     return 1
   fi
@@ -6597,7 +6912,7 @@ ghcr_chain_is_converged_without_writes() {
       --arg phase_annotation "${CORDON_PHASE_ANNOTATION}" \
       --arg scale_down_owner_annotation "${SCALE_DOWN_GUARD_OWNER_ANNOTATION}" '
       all(.items[];
-        (((.metadata.annotations // {})[$phase_annotation] // "") == "")
+        (((.metadata.annotations // {}) | has($phase_annotation)) | not)
         and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == ""))
     ' "${converged_nodes_file}" >/dev/null 2>&1 || return 1
     select_talos_node_targets \

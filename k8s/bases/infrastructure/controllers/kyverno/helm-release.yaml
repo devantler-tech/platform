@@ -88,10 +88,12 @@ spec:
       # The three Kubernetes system namespaces are dropped too, so background
       # scans report on them again (#4234): without this, no Kyverno policy has
       # evaluated anything in them since background scans started honouring the
-      # filters. Admission there is unchanged in effect: the webhooks'
-      # namespaceSelector still skips kube-system, and kube-public and
-      # kube-node-lease hold only ConfigMaps and node Leases (Leases stay filtered
-      # above). Every generate or mutate-existing policy excludes these three
+      # filters. The webhooks' namespaceSelector still skips kube-system.
+      # kube-public and kube-node-lease remain in admission scope: the bootstrap
+      # Role in kube-public matches Enforce audit-privileged-rbac; node Leases
+      # stay resource-filtered above. Other kinds can match other admission rules.
+      # See docs/policy-reports.md for the recorded coverage/admission decision.
+      # Every generate or mutate-existing policy excludes these three
       # namespaces explicitly, so nothing is created or changed in them.
       # `[*/*,kyverno,*]` stays: add-default-deny and add-default-limitrange do not
       # exclude kyverno, so dropping it would generate a default-deny policy in

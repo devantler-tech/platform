@@ -3,8 +3,9 @@
 # the wedding-app namespace, and write the three listings the evaluator judges.
 #
 # Runs in the pod that scripts/mirror-wedding-backup-catalogue.sh creates. It is
-# delivered as a ConfigMap and executed by the digest-pinned mc image, so it is
-# POSIX sh and uses only the tools checked below.
+# delivered as a ConfigMap and executed by the digest-pinned mc image with a
+# static BusyBox toolbox from an init container. It is POSIX sh and uses only
+# the tools checked below; CI exercises those same tools in the mc image.
 #
 # WHY IN THE CLUSTER. Both credentials already live in wedding-app as Secrets,
 # and the tenant's CiliumNetworkPolicy already allows every pod there to reach

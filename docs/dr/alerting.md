@@ -136,6 +136,23 @@ stays quiet by design, exactly as the old Alertmanager did.
   `VolumeAttachment`, because the strand lives in the cloud provider while the
   Kubernetes objects can look consistent; it is read-only, and force-detach
   stays a manual step (#2754).
+- **A Crossview login that cannot work alerts.** Crossview's sign-in was broken
+  for six days in August 2026 while every probe stayed green: its database came
+  back empty, and the chart's only probe (`/api/health`) never touches the
+  database (#3315).
+  `providers/hetzner/infrastructure/coroot/cron-job-crossview-login-alerter.yaml`
+  reads the unauthenticated `/api/auth/check` every 15 minutes. A bootstrapped
+  Crossview always has the admin it creates at startup, so four reads two
+  minutes apart that all answer `"hasAdmin":false` and `"hasUsers":false` post
+  `CrossviewLoginBroken` through the Alertmanager to Slack. One read with
+  either `true` ends the run healthy, and a
+  run that never gets a clear answer fails, which the CronJob failure detector
+  above reports. The same answer comes back when the app cannot reach its
+  database, so the alert's runbook checks the database and the app's database
+  errors first: a Ready database alone does not prove schema loss. A database
+  that returns with its data needs nothing else, while confirmed schema loss
+  needs the app rolled so it re-runs its bootstrap, and the runbook names the
+  annotation to bump.
 - **kube-apiserver audit logs are searchable in Coroot again.** Coroot's
   node-agent ingests container logs/traces, not host audit-log files, so the
   previous alloy-audit → Loki pipeline was removed with the migration. The
@@ -216,8 +233,14 @@ flapping).
 There is no remote-write or SaaS mirror. The persistent Coroot, Prometheus and
 ClickHouse volumes live in the `coroot` namespace, which Velero's `daily-full`
 schedule backs up to R2 every day (`includedNamespaces: ["*"]`, Kopia
-fs-backup). Restore is the standard Velero flow in [runbook.md](./runbook.md);
-backups are filesystem-level and crash-consistent, fine for a 24 h RPO.
+fs-backup). Restore is the standard Velero flow in [runbook.md](./runbook.md).
+
+These copies are taken file by file while the databases run, not from a
+point-in-time snapshot. ClickHouse merges and drops data parts during that
+traversal, so a restored ClickHouse volume can miss parts or hold an
+inconsistent set: treat logs, traces and profiles as best-effort after a
+restore, not as a dependable recovery source. A native ClickHouse backup path is
+tracked in [#3673](https://github.com/devantler-tech/platform/issues/3673).
 
 ## Per-environment setup
 

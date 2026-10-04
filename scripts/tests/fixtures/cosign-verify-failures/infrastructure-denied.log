@@ -1,0 +1,2 @@
+Error: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: DENIED: requested access to the resource is denied
+error during command execution: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: DENIED: requested access to the resource is denied

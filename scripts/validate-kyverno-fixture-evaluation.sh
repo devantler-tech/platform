@@ -35,7 +35,20 @@ finding() {
   findings=$((findings + 1))
 }
 
-mapfile -t test_files < <(find "${tests_dir}" -type f -name kyverno-test.yaml | sort)
+# Bash 3 is still the macOS default. Keep the census portable, and check each
+# listing command before loading it so an unreadable tree cannot look complete.
+if ! find "${tests_dir}" -type f -name kyverno-test.yaml >"${work}/test-files-unsorted"; then
+  echo "::error::could not list kyverno fixtures under ${tests_dir}" >&2
+  exit 2
+fi
+if ! sort "${work}/test-files-unsorted" >"${work}/test-files"; then
+  echo "::error::could not sort kyverno fixtures under ${tests_dir}" >&2
+  exit 2
+fi
+test_files=()
+while IFS= read -r test_file; do
+  test_files+=("${test_file}")
+done <"${work}/test-files"
 if [ "${#test_files[@]}" -eq 0 ]; then
   echo "::error::no kyverno-test.yaml found under ${tests_dir}" >&2
   exit 2

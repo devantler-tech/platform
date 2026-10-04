@@ -12,6 +12,11 @@ resources:
   - cluster.yaml
   - push-secret.yaml
   - vault-dynamic-secret.yaml
+  - vault-dynamic-secret-blue.yaml
+  - vault-dynamic-secret-green.yaml
+  - external-secret-db-active.yaml
+  - external-secret-db-blue.yaml
+  - external-secret-db-green.yaml
   - external-secret-db-rotated.yaml
   - external-secret-db-backup.yaml
   - object-store.yaml

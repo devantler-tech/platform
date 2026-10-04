@@ -4,6 +4,7 @@ kind: ClusterPolicy
 metadata:
   name: audit-privileged-rbac
   annotations:
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/title: Restrict Privileged RBAC
     policies.kyverno.io/category: Security
     policies.kyverno.io/severity: high

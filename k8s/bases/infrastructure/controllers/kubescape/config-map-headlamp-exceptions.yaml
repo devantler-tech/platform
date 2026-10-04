@@ -485,7 +485,7 @@ data:
             "controlID": "^C-0026$"
           }
         ],
-        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy. All CronJobs on this cluster are GitOps-managed platform components delivered by Flux after PR review (the review is the approval): Cilium Hubble cert rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn stale-node cleanup, the observability heartbeat / alerting jobs (CNPG degraded cluster, stranded volume attach, stranded autoscaler node, reconcile-CronJob failure, Crossplane sync, posture-scan staleness, prune-protected orphans, Velero maintenance OOM) / Coroot reconcilers (alert autosuppression, cloud pricing, application health, risk acceptance), the OpenBao raft-snapshot backup, and Umami tenant provisioning. Namespace-scoped to the infrastructure namespaces that run these, so a CronJob in any unexpected namespace still surfaces for review."
+        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy. All CronJobs on this cluster are GitOps-managed platform components delivered by Flux after PR review (the review is the approval): Cilium Hubble cert rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn stale-node cleanup, the observability heartbeat / alerting jobs (CNPG degraded cluster, stranded volume attach, stranded autoscaler node, reconcile-CronJob failure, Crossplane sync, posture-scan staleness, prune-protected orphans, Velero maintenance OOM) / Coroot reconcilers (alert autosuppression, cloud pricing, application health, risk acceptance), the OpenBao raft-snapshot backup, the Umami database-login rotation, and Umami tenant provisioning. Namespace-scoped to the infrastructure namespaces that run these, so a CronJob in any unexpected namespace still surfaces for review."
       },
       {
         "name": "health-probes",
@@ -554,7 +554,7 @@ data:
             "controlID": "^C-0237$"
           }
         ],
-        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at both the Flux OCI source layer and the Talos containerd pull layer (ImageVerificationConfig). Third-party chart images are not all signed and there is no admission-layer signature enforcement, so this cluster-wide control still fails on unsigned workload images."
+        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at Pod admission by Kyverno's verify-app-images policy, at the Talos containerd pull layer (ImageVerificationConfig), and at the Flux OCI source layer. Third-party chart images are not all signed or verified at admission, so this cluster-wide control still fails on unsigned workload images."
       },
       {
         "name": "infrastructure-privileged",
@@ -1274,6 +1274,28 @@ data:
         "reason": "Infrastructure controllers and platform middleware need Kubernetes API access via SA tokens. This includes GitOps controllers, policy engines, certificate managers, autoscalers, monitoring, cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity providers (dex), auth proxies (oauth2-proxy), and config watchers (reloader). The platform uses RBAC to restrict what each SA can do."
       },
       {
+        "name": "umami-db-rotation-service-account-token",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^CronJob$",
+              "name": "^umami-db-rotation$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0034$"
+          }
+        ],
+        "reason": "The Umami database-login rotation CronJob needs its service-account token to authenticate to OpenBao's Kubernetes auth method. Its OpenBao role permits only reading the two login colours' rotation metadata and rotating them, and the ServiceAccount holds no Kubernetes RBAC."
+      },
+      {
         "name": "umami-provisioning-service-account-token",
         "policyType": "postureExceptionPolicy",
         "actions": [
@@ -1404,5 +1426,34 @@ data:
           }
         ],
         "reason": "Flux GitOps controllers and Velero legitimately require cluster-admin / wildcard RBAC by design: arbitrary-manifest reconciliation (Flux) and cluster-wide backup/restore (Velero). The specific bindings are matched by kind+name so C-0187 still catches any new wildcard or cluster-admin grant."
+      },
+      {
+        "name": "world-at-ruin-trial-operator",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^world-at-ruin-zone-trial-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^world-at-ruin-zone-trial-operator$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0002$"
+          }
+        ],
+        "reason": "The configured administrator's private scripted zone trial intentionally grants namespaced exec to run its short-lived admission-token helper while retaining the global reader roles and withholding Secret API access. RBAC cannot constrain exec to one command. The uniquely named trial Role and binding are retired before production credentials or player data are added."
       }
     ]

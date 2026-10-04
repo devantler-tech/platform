@@ -81,6 +81,10 @@ data:
           entryPoints: ["web"]
           middlewares: ["forwarded-proto-https"]
           service: umami
+        data-products:
+          rule: "Host(`data-products.${domain}`)"
+          entryPoints: ["web"]
+          service: data-products
       middlewares:
         # Restores the scheme the client actually used. Traefik derives
         # X-Forwarded-Proto from the entryPoint it received on, and this
@@ -139,3 +143,7 @@ data:
           loadBalancer:
             servers:
               - url: "http://umami-umami-primary.umami.svc.cluster.local:80"
+        data-products:
+          loadBalancer:
+            servers:
+              - url: "http://data-product-controller.data-product-controller.svc.cluster.local:80"

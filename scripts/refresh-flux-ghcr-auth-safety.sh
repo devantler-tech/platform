@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 
 # Safety-critical helpers for refresh-flux-ghcr-auth.sh. Keep these functions
 # side-effect free except where their names explicitly describe an operation so
@@ -7,6 +7,40 @@
 readonly GHCR_PULL_VERIFIED_REVISION_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-revision-v2"
 readonly GHCR_PULL_VERIFIED_IMAGE_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-image-v2"
 readonly GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-node-uid-v2"
+
+# Plan only the obsolete phase of an unowned, healthy node whose immutable
+# identity and current runtime proof agree. Callers must hold the deploy Lease.
+# UID, resourceVersion and phase tests bind every inspected field atomically.
+completed_node_phase_cleanup_patch() {
+  local state_file="$1"
+  local desired_revision="$2"
+  local operator_image="$3"
+
+  jq -e --arg revision "${desired_revision}" --arg image "${operator_image}" '
+    (.metadata.annotations // {}) as $a
+    | "platform.devantler.tech/ghcr-auth-drain-phase" as $phase
+    | if ($a | has($phase) | not) then []
+      elif (($a[$phase] == "claimed" or $a[$phase] == "mutating")
+        and (.metadata.uid | type == "string" and length > 0)
+        and (.metadata.resourceVersion | type == "string" and length > 0)
+        and (.metadata.deletionTimestamp == null)
+        and ((.spec.unschedulable // false) == false)
+        and any(.status.conditions[]?; .type == "Ready" and .status == "True")
+        and (($a["platform.devantler.tech/ghcr-auth-drain-owner"] // "") == "")
+        and (($a["platform.devantler.tech/ghcr-auth-drain-recovery"] // "") == "")
+        and (($a["platform.devantler.tech/ghcr-auth-scale-down-owner"] // "") == "")
+        and $a["platform.devantler.tech/ghcr-pull-verified-revision-v2"] == $revision
+        and $a["platform.devantler.tech/ghcr-pull-verified-image-v2"] == $image
+        and $a["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] == .metadata.uid)
+      then [
+        {op:"test", path:"/metadata/uid", value:.metadata.uid},
+        {op:"test", path:"/metadata/resourceVersion", value:.metadata.resourceVersion},
+        {op:"test", path:"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase", value:$a[$phase]},
+        {op:"remove", path:"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"}
+      ]
+      else error("historical phase lacks safe current runtime proof") end
+  ' "${state_file}"
+}
 
 # Name the nodes that still hold a drain fence, so a refusal is actionable
 # without a live cluster query. A transaction killed before its EXIT trap

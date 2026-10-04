@@ -173,7 +173,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.192.9"
+          KSAIL_VERSION: "7.195.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -430,9 +430,32 @@ jobs:
                   secretName: vault-snapshot-r2
               - name: mc-config
                 emptyDir: {}
+              - name: tools
+                emptyDir:
+                  medium: Memory
+                  sizeLimit: 8Mi
+            initContainers:
+              - name: install-tools
+                image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+                command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
+                securityContext:
+                  allowPrivilegeEscalation: false
+                  capabilities:
+                    drop: ["ALL"]
+                  readOnlyRootFilesystem: true
+                resources:
+                  requests:
+                    cpu: 10m
+                    memory: 8Mi
+                  limits:
+                    cpu: 100m
+                    memory: 32Mi
+                volumeMounts:
+                  - name: tools
+                    mountPath: /tools
             containers:
               - name: fetch
-                image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+                image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f
                 securityContext:
                   runAsNonRoot: true
                   allowPrivilegeEscalation: false
@@ -440,6 +463,8 @@ jobs:
                     drop: ["ALL"]
                   readOnlyRootFilesystem: true
                 env:
+                  - name: PATH
+                    value: /tools:/usr/local/bin:/usr/bin:/bin
                   - name: MC_CONFIG_DIR
                     value: /tmp/.mc
                   - name: R2_ENDPOINT
@@ -466,8 +491,11 @@ jobs:
                     readOnly: true
                   - name: mc-config
                     mountPath: /tmp/.mc
+                  - name: tools
+                    mountPath: /tools
+                    readOnly: true
                 command:
-                  - /bin/sh
+                  - /tools/sh
                   - -ec
                   - |
                     mc alias set backup "$R2_ENDPOINT" \

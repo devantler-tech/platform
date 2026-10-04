@@ -49,11 +49,14 @@ runs:
     - name: 🏷️ Create unique staging reference
       id: staging_reference
       shell: bash
+      env:
+        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
       run: |
         set -euo pipefail
         STAGING_TAG="staging-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-        echo "oci_ref=oci://ghcr.io/devantler-tech/platform/manifests:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"
-        echo "registry_ref=ghcr.io/devantler-tech/platform/manifests:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"
+        echo "subject_name=${SUBJECT_NAME}" >>"${GITHUB_OUTPUT}"
+        echo "oci_ref=oci://${SUBJECT_NAME}:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"
+        echo "registry_ref=${SUBJECT_NAME}:${STAGING_TAG}" >>"${GITHUB_OUTPUT}"
 
     - name: 📦 Push manifests to the staging reference
       id: push_staging
@@ -100,26 +103,28 @@ runs:
       shell: bash
       env:
         COSIGN_YES: "true"
+        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
       run: |
         set -euo pipefail
-        cosign sign --yes --recursive "ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}"
+        cosign sign --yes --recursive "${SUBJECT_NAME}@${STAGING_DIGEST}"
 
     - name: 📋 Generate SBOM (CycloneDX)
       id: generate_sbom
       shell: bash
       env:
+        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
       run: |
         set -euo pipefail
-        syft scan "registry:ghcr.io/devantler-tech/platform/manifests@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json
+        syft scan "registry:${SUBJECT_NAME}@${STAGING_DIGEST}" --output cyclonedx-json=sbom.cdx.json
 
     - name: 🪪 Attest SBOM
       id: attest_sbom
       uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
       with:
         subject-digest: ${{ steps.resolve_staging.outputs.digest }}
-        subject-name: ghcr.io/devantler-tech/platform/manifests
+        subject-name: ${{ steps.staging_reference.outputs.subject_name }}
         sbom-path: sbom.cdx.json
         push-to-registry: true
         create-storage-record: false
@@ -129,7 +134,7 @@ runs:
       uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
       with:
         subject-digest: ${{ steps.resolve_staging.outputs.digest }}
-        subject-name: ghcr.io/devantler-tech/platform/manifests
+        subject-name: ${{ steps.staging_reference.outputs.subject_name }}
         push-to-registry: true
         create-storage-record: false
 
@@ -141,7 +146,7 @@ runs:
         GH_TOKEN: ${{ inputs.ghcr-token }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
-        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
+        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}
         WORKFLOW_REF: ${{ github.workflow_ref }}
       # Every step above can report success while leaving no usable evidence in
       # the registry, and the promotion below is the point of no return: once
@@ -167,7 +172,7 @@ runs:
       shell: bash
       env:
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
-        SUBJECT_NAME: ghcr.io/devantler-tech/platform/manifests
+        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}
       # The step above proves the registry HOLDS the evidence. This one proves
       # the evidence is ACCEPTABLE to the matcher production actually enforces —
       # a different question, and the one #3005 turned on. ci.yaml asks it of
@@ -181,10 +186,10 @@ runs:
       id: promote_latest
       shell: bash
       env:
+        SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
       run: |
         set -euo pipefail
-        SUBJECT_NAME='ghcr.io/devantler-tech/platform/manifests'
         LATEST_REF="${SUBJECT_NAME}:latest"
         docker buildx imagetools create --prefer-index=false \
           --tag "${LATEST_REF}" "${SUBJECT_NAME}@${STAGING_DIGEST}"

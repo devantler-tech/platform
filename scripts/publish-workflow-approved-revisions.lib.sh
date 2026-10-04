@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 # Shared, read-only validation and consumer attribution for the matcher guard and writer.
 # Sourcing validates the complete approved set and source tree before either caller acts.
 
@@ -26,7 +26,7 @@ readonly GENERIC_SUBJECT_FILES=(
 
 # Every registered consumer, application tenants included, is narrowed to its approved revision
 # set: the revision that signed the running artifact, the revision its default branch pins, and,
-# for publish-app consumers, the latest released devantler-tech/actions revision (#3960). A tenant
+# the latest released devantler-tech/actions revision (#3960, #4416). A tenant
 # cannot move its pin ahead of that set: each app tenant runs a required check that refuses a pin
 # the committed approved set does not contain (#3961), so a new shared-workflow revision holds the
 # tenant's dependency PR rather than failing its release.
@@ -61,7 +61,7 @@ lookup() {
 }
 
 # approved_revisions <signer> <pin> <candidate> → each distinct approved revision on its own line,
-# in signer, pin, candidate order. A `-` candidate (publish-manifests rows) names no revision.
+# in signer, pin, candidate order. A legacy `-` manifests candidate names no revision.
 approved_revisions() {
   local seen=" " rev
   for rev in "$@"; do
@@ -124,12 +124,10 @@ while IFS= read -r row; do
   esac
   is_sha "$signer" || refuse "approved set line $line_no ($consumer): applied_signer_sha '$signer' is not a 40-hex commit"
   is_sha "$pin" || refuse "approved set line $line_no ($consumer): main_pin_sha '$pin' is not a 40-hex commit"
-  # The release candidate (#3960) is the latest published devantler-tech/actions release, which
-  # only moves publish-app consumers; any other row must say so explicitly with `-`.
-  if [ "$workflow" = publish-app ]; then
+  # Both publishing workflows can preapprove one released commit. Legacy manifests
+  # rows remain readable until the normal generator refreshes the reviewed set.
+  if [ "$workflow" = publish-app ] || [ "$candidate" != '-' ]; then
     is_sha "$candidate" || refuse "approved set line $line_no ($consumer): release_candidate_sha '$candidate' is not a 40-hex commit"
-  else
-    [ "$candidate" = '-' ] || refuse "approved set line $line_no ($consumer): release_candidate_sha must be '-' for $workflow, got '$candidate'"
   fi
   [ -z "$(lookup "$approved" "$consumer")" ] || refuse "approved set names $consumer twice"
   : "$applied_tag" "$applied_digest"

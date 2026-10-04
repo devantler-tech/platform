@@ -145,7 +145,33 @@ spec:
             optional: true
         - name: mc-config
           emptyDir: {}
+        - name: fetch-tools
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Mi
       initContainers:
+        # The minimal mc image needs static tools for snapshot-name selection.
+        - name: install-fetch-tools
+          image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+          command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+          volumeMounts:
+            - name: fetch-tools
+              mountPath: /tools
         # --- 0. Fetch newest snapshot from the off-cluster mirror (best-effort) ---
         # Pulls ONLY the newest raft snapshot from R2/MinIO into the shared
         # `snapshots` emptyDir so the vault-init container's DR auto-restore can
@@ -155,7 +181,7 @@ spec:
         # abort with its existing "no snapshot available" guidance -- so a missing
         # Secret or an R2 hiccup must NEVER fail this Job.
         - name: fetch-snapshot
-          image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+          image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -168,6 +194,8 @@ spec:
           env:
             - name: MC_CONFIG_DIR
               value: /tmp/.mc
+            - name: PATH
+              value: /tools:/usr/local/bin:/usr/bin:/bin
           resources:
             requests:
               cpu: 10m
@@ -184,8 +212,11 @@ spec:
               readOnly: true
             - name: mc-config
               mountPath: /tmp/.mc
+            - name: fetch-tools
+              mountPath: /tools
+              readOnly: true
           command:
-            - /bin/sh
+            - /tools/sh
             - -ec
             - |
               if [ ! -f /r2/access_key_id ]; then
@@ -444,7 +475,7 @@ spec:
               echo "Unseal phase complete."
         # --- 2. Persist credentials in K8s Secret (only on fresh init) ---
         - name: store-keys
-          image: docker.io/alpine/k8s:1.37.0@sha256:b421c2e9419edb98db39b6ab641669f4db7bb2acf354f22450c6b7e7176d1ff4
+          image: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
@@ -751,9 +782,35 @@ spec:
               # Read the OpenBao-rotated PostgreSQL credential for the umami app
               # user (Database secrets engine static role). Consumed by ESO via
               # the VaultDynamicSecret generator in the umami namespace.
+              # umami-blue / umami-green are the two login colours the
+              # umami-db-rotation CronJob alternates between (#4107).
               bao policy write app-umami-db-readonly - <<'POLICY'
               path "database/static-creds/umami" {
                 capabilities = ["read"]
+              }
+              path "database/static-creds/umami-blue" {
+                capabilities = ["read"]
+              }
+              path "database/static-creds/umami-green" {
+                capabilities = ["read"]
+              }
+              POLICY
+
+              # The umami-db-rotation CronJob (openbao namespace) reads each
+              # colour's static-role METADATA (last_vault_rotation, never the
+              # password) and rotates the idle colour. No static-creds read.
+              bao policy write umami-db-rotator - <<'POLICY'
+              path "database/static-roles/umami-blue" {
+                capabilities = ["read"]
+              }
+              path "database/static-roles/umami-green" {
+                capabilities = ["read"]
+              }
+              path "database/rotate-role/umami-blue" {
+                capabilities = ["update"]
+              }
+              path "database/rotate-role/umami-green" {
+                capabilities = ["update"]
               }
               POLICY
 
@@ -776,6 +833,16 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/wedding-app/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              POLICY
+
+              # The private zone trial seeds and reads only its own admission key.
+              bao policy write app-world-at-ruin - <<'POLICY'
+              path "secret/data/apps/world-at-ruin/*" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/world-at-ruin/*" {
                 capabilities = ["create", "update", "read"]
               }
               POLICY
@@ -1086,6 +1153,12 @@ spec:
                 policies=app-wedding-app \
                 ttl=1h
 
+              bao write auth/kubernetes/role/app-world-at-ruin \
+                bound_service_account_names=world-at-ruin \
+                bound_service_account_namespaces=world-at-ruin \
+                policies=app-world-at-ruin \
+                ttl=1h
+
               # Dedicated tenant role for ascoachingogvaner — same shape as
               # wedding-app above. Authenticates the tenant's own
               # `ascoachingogvaner` ServiceAccount (used by its namespaced
@@ -1103,6 +1176,13 @@ spec:
                 bound_service_account_names=vault-snapshot \
                 bound_service_account_namespaces=openbao \
                 policies=vault-snapshot-readonly \
+                ttl=15m
+
+              # Weekly umami blue/green credential rotation (#4107).
+              bao write auth/kubernetes/role/umami-db-rotator \
+                bound_service_account_names=umami-db-rotator \
+                bound_service_account_namespaces=openbao \
+                policies=umami-db-rotator \
                 ttl=15m
 
               # --- 6. Enable OIDC auth (Dex) ---
@@ -1255,7 +1335,7 @@ spec:
                 echo "Configuring umami PostgreSQL database connection..."
                 if bao write database/config/umami-postgres \
                   plugin_name=postgresql-database-plugin \
-                  allowed_roles="umami" \
+                  allowed_roles="umami,umami-blue,umami-green" \
                   connection_url="postgresql://{{username}}:{{password}}@umami-db-rw.umami.svc.cluster.local:5432/umami?sslmode=require" \
                   username="postgres" \
                   password="$UMAMI_DB_SUPER" 2>/dev/null; then
@@ -1273,6 +1353,38 @@ spec:
                   else
                     echo "umami PostgreSQL static role already exists."
                   fi
+
+                  # Blue/green login colours (#4107). Rotating a static role
+                  # revokes its old password at once, so the app logs in as
+                  # whichever colour was rotated most recently while the other
+                  # colour stays valid for old pods; the umami-db-rotation
+                  # CronJob rotates only the idle (older) colour. Both are
+                  # NOLOGIN-owner `umami` members created by CNPG
+                  # (cluster.yaml), and every rotation also re-asserts
+                  # `SET role = 'umami'` so Prisma migrations keep creating
+                  # objects owned by `umami`. OpenBao requires a rotation_period;
+                  # 504h (21 days) is a BACKSTOP that never fires while the
+                  # weekly CronJob runs (each colour is rotated every 14 days)
+                  # and still bounds a credential's life if the CronJob stops.
+                  for COLOUR in blue green; do
+                    if bao read "database/static-roles/umami-$COLOUR" >/dev/null 2>&1; then
+                      echo "umami-$COLOUR static role already exists."
+                    elif bao write "database/static-roles/umami-$COLOUR" \
+                      db_name=umami-postgres \
+                      username="umami_$COLOUR" \
+                      rotation_period="${umami_db_colour_backstop_period:=504h}" \
+                      rotation_statements="ALTER ROLE \"{{name}}\" WITH PASSWORD '{{password}}'; ALTER ROLE \"{{name}}\" SET role = 'umami';"; then
+                      echo "umami-$COLOUR static role created."
+                    else
+                      # The login role is created by CNPG in the apps layer,
+                      # which reconciles AFTER this Job, and this Job re-runs
+                      # only when its spec changes. So the roles ship in their
+                      # own earlier deploy (#4324) and already exist when this
+                      # runs; a DR rebuild restores these static roles from the
+                      # raft snapshot instead.
+                      echo "umami_$COLOUR PostgreSQL role not ready yet -- skipping umami-$COLOUR."
+                    fi
+                  done
                 else
                   echo "umami PostgreSQL not reachable yet -- skipping DB role config."
                   echo "It will be configured on the next vault-config reconciliation."

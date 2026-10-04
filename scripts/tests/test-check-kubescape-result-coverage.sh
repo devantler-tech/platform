@@ -79,9 +79,11 @@ jq -n "{items: [
 # The LIST surface: the same objects with `.spec` stripped, exactly as the aggregated API serves it.
 jq '{items: [.items[] | del(.spec)]}' "${base}/posture.json" >"${base}/posture-list.json"
 jq -n --arg web "registry.test/web@${DIGEST_WEB}" --arg at "$((NOW - 3600))" '{items: [
-    {metadata: {namespace: "app", name: "deployment-web-web",
+    {metadata: {namespace: "app", name: "deployment-web-web", resourceVersion: "7",
        annotations: {"kubescape.io/image-id": $web, "kubescape.io/timestamp": $at}}}]}' \
   >"${base}/vulnerability.json"
+# The same summaries read back by name: the stored objects, which agree with the listed rows.
+cp "${base}/vulnerability.json" "${base}/vulnerability-stored.json"
 profile='{items: [{metadata: {namespace: "app", name: "replicaset-web-5d8f",
     labels: {"kubescape.io/learning-period": "24h"},
     annotations: {"kubescape.io/status": "completed", "kubescape.io/completion": "complete"}}}]}'
@@ -288,6 +290,26 @@ expect "a vulnerability result older than seven days is stale" 1 "STALE vulnerab
 d="$(variant vuln-future vulnerability.json ".items[0].metadata.annotations[\"kubescape.io/timestamp\"] = \"$((NOW + 3600))\"")"
 expect "a vulnerability result timestamped in the future is UNKNOWN" 2 \
   "vulnerability result timestamp is invalid or in the future" "${d}"
+
+# A summary whose stored object moved ahead of its listed metadata row can never be updated
+# again (#4263), so it fails even while its scan time still looks current.
+d="$(variant vuln-split vulnerability-stored.json '.items[0].metadata.resourceVersion = "8"')"
+expect "a summary whose stored version differs from its listed version is split" 1 \
+  "SPLIT vulnerability app/deployment-web-web listed=7 stored=8" "${d}"
+expect "a split summary is counted on the coverage line" 1 \
+  "COVERAGE vulnerability expected=1 current=1 missing=0 stale=0 split=1" "${d}"
+
+d="$(variant vuln-stored-short vulnerability-stored.json '.items = []')"
+expect "summaries read back short by name are UNKNOWN" 2 \
+  "vulnerability summaries: 1 listed but 0 read back by name" "${d}"
+
+d="$(variant vuln-stored-other vulnerability-stored.json '.items[0].metadata.name = "deployment-web-other"')"
+expect "a summary missing from the by-name read is split, never assumed to agree" 1 \
+  "SPLIT vulnerability app/deployment-web-web listed=7 stored=absent" "${d}"
+
+d="$(variant vuln-unversioned vulnerability.json 'del(.items[0].metadata.resourceVersion)')"
+expect "a summary without a resourceVersion is UNKNOWN" 2 \
+  "vulnerability summary has no resourceVersion: app/deployment-web-web" "${d}"
 
 d="$(variant runtime-missing neighborhoods.json '.items[0].metadata.name = "replicaset-web-other"')"
 expect "a missing half of the runtime pair fails" 1 "MISSING runtime app/replicaset-web-5d8f networkneighborhood" "${d}"

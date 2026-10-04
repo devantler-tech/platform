@@ -54,8 +54,8 @@ env_value() { yq eval "${container_path}.env[] | select(.name == \"$1\") | .valu
   fail 'binding must grant only the detector ServiceAccount'
 pass 'RBAC is get on the one watched CronJob and list on Jobs in umami'
 
-[ "$(env_value WATCH)" = 'umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600 observability/stranded-autoscaler-node-alerter:2:3600' ] ||
-  fail 'watch list must include the Umami and Kubescape reconcile loops and the stranded-node sensor'
+[ "$(env_value WATCH)" = 'umami/umami-provision-tenants:2:3600 kubescape/kubescape-hostdata-cleanup:1:93600 observability/stranded-autoscaler-node-alerter:2:3600 observability/crossview-login-alerter:2:3600' ] ||
+  fail 'watch list must include the Umami and Kubescape reconcile loops and the stranded-node and Crossview login sensors'
 [ "$(yq eval '.metadata.namespace' "$kubescape_role")" = kubescape ] || fail 'Kubescape Role must be namespaced to kubescape'
 [ "$(yq eval '[.rules[] | select(.resources[] == "cronjobs") | .resourceNames[]] | join(",")' "$kubescape_role")" = kubescape-hostdata-cleanup ] ||
   fail 'the Kubescape CronJob grant must name only the host-data cleanup'
@@ -71,8 +71,8 @@ observability_role="${bundle_dir}/role-cronjob-failure-alert-observability.yaml"
 observability_binding="${bundle_dir}/role-binding-cronjob-failure-alert-observability.yaml"
 [ "$(yq eval '.metadata.namespace' "$observability_role")" = observability ] ||
   fail 'observability Role must be namespaced to observability'
-[ "$(yq eval '[.rules[] | select(.resources[] == "cronjobs") | .resourceNames[]] | join(",")' "$observability_role")" = stranded-autoscaler-node-alerter ] ||
-  fail 'the observability CronJob grant must name only the stranded-node sensor'
+[ "$(yq eval '[.rules[] | select(.resources[] == "cronjobs") | .resourceNames[]] | join(",")' "$observability_role")" = stranded-autoscaler-node-alerter,crossview-login-alerter ] ||
+  fail 'the observability CronJob grant must name only the stranded-node and Crossview login sensors'
 [ "$(yq eval '[.rules[] | select(.resources[] == "cronjobs") | .verbs[]] | join(",")' "$observability_role")" = get ] ||
   fail 'the observability CronJob grant must be get only'
 [ "$(yq eval '[.rules[] | select(.resources[] == "jobs") | .verbs[]] | join(",")' "$observability_role")" = list ] ||
@@ -83,7 +83,7 @@ observability_binding="${bundle_dir}/role-binding-cronjob-failure-alert-observab
   fail 'observability binding must have exactly one subject'
 [ "$(yq eval '.subjects[0].namespace + "/" + .subjects[0].name' "$observability_binding")" = observability/cronjob-failure-alert ] ||
   fail 'observability binding must grant only the detector ServiceAccount'
-pass 'the stranded-node sensor has the same narrow read-only alert grant'
+pass 'the observability sensors have the same narrow read-only alert grant'
 
 # Every watched namespace must carry its own grant, or the check fails at 403.
 for target in $(env_value WATCH); do

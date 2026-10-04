@@ -39,7 +39,7 @@ export function fixtures() {
   };
   docs.cluster.spec.plugins = [{
     name: 'barman-cloud.cloudnative-pg.io', enabled: true, isWALArchiver: true,
-    parameters: { barmanObjectName: 'wedding-db', serverName: 'wedding-db-20260909' }
+    parameters: { barmanObjectName: 'wedding-db-dedicated', serverName: 'wedding-db-20260909' }
   }];
   docs.bootstrapSecret.type = docs.projectedSecret.type = 'Opaque';
   docs.bootstrapSecret.data = { access_key_id: enc(id), secret_access_key: enc(secret) };

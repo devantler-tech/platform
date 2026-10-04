@@ -47,11 +47,8 @@ metadata:
   namespace: aws
   labels:
     app.kubernetes.io/managed-by: ksail
-  annotations:
-    # See policy-eks-ci-smoke-boundary.yaml: the `apps` Kustomization runs
-    # force: true, and a force-recreate of a Crossplane MR with the default
-    # deletionPolicy: Delete would DELETE the backing AWS IAM role. Opt out.
-    kustomize.toolkit.fluxcd.io/force: disabled
+  # The owning Flux layer has force=false; an immutable conflict cannot
+  # automatically recreate this managed resource and delete its backing IAM role.
 spec:
   forProvider:
     description: >-

@@ -21,11 +21,31 @@ spec:
   values:
     image:
       repository: ghcr.io/devantler-tech/data-product-controller
-      tag: 1.9.0
-      digest: sha256:64ff3ffe55168d167606d6847bd752802206a0bbdb2fc1ce741b8a66ede2e3e6
+      tag: 1.18.1
+      digest: sha256:dd6e61df99c1e1032f4d0c9a6d54506f1a60e69921d9e4abe0e956979fda43f3
       pullPolicy: IfNotPresent
-    registryUI:
+    uiContract:
       enabled: true
+      additionalHostOrigins:
+        - https://product-ui.${domain}
+    uiAppearance:
+      enabled: true
+    engineProviders:
+      enabled: false
+    provisionedSources:
+      enabled: false
+    httpSource:
+      enabled: false
+    composition:
+      enabled: false
+    dcatCatalog:
+      enabled: false
+    connectorReadiness:
+      enabled: false
+    contractReadiness:
+      enabled: false
+    contractProbe:
+      enabled: false
     route:
       enabled: true
       host: data-products.${domain}
@@ -43,6 +63,7 @@ spec:
           memory: 128Mi
     demoProduct:
       enabled: true
+      publicBaseURL: https://harbour-data.${domain}
       replicas: 2
       resources:
         requests:
@@ -57,6 +78,11 @@ spec:
               kind: Deployment
               name: data-product-controller
             patch: |
+              # Platform admission requires this on each container as well as
+              # the Pod-level default supplied by the portable chart.
+              - op: add
+                path: /spec/template/spec/containers/0/securityContext/runAsNonRoot
+                value: true
               - op: add
                 path: /spec/template/spec/imagePullSecrets
                 value:
@@ -77,6 +103,9 @@ spec:
               name: data-product-controller-harbour
             patch: |
               - op: add
+                path: /spec/template/spec/containers/0/securityContext/runAsNonRoot
+                value: true
+              - op: add
                 path: /spec/template/spec/imagePullSecrets
                 value:
                   - name: ghcr-auth
@@ -95,29 +124,49 @@ spec:
               kind: HTTPRoute
               name: data-product-controller
             patch: |
-              - op: add
-                path: /metadata/annotations
-                value:
-                  gethomepage.dev/enabled: "true"
-                  gethomepage.dev/name: Data Products
-                  gethomepage.dev/description: Discover and explore composable data products.
-                  gethomepage.dev/group: Analytics
-                  gethomepage.dev/icon: mdi-database-search
-                  gethomepage.dev/href: https://data-products.${domain}
-                  gethomepage.dev/pod-selector: app.kubernetes.io/component=controller
-              - op: add
-                path: /spec/rules/0/filters/-
-                value:
-                  type: ResponseHeaderModifier
-                  responseHeaderModifier:
-                    set:
-                      - name: Strict-Transport-Security
-                        value: max-age=63072000; includeSubDomains; preload
-              - op: add
-                path: /spec/rules/1/filters
-                value:
-                  - type: ResponseHeaderModifier
-                    responseHeaderModifier:
-                      set:
-                        - name: Strict-Transport-Security
-                          value: max-age=63072000; includeSubDomains; preload
+              $patch: delete
+              apiVersion: gateway.networking.k8s.io/v1
+              kind: HTTPRoute
+              metadata:
+                name: data-product-controller
+                namespace: data-product-controller
+          # Standard NetworkPolicy allows are additive with Cilium's rules.
+          # Replace the chart's broad allows with component-scoped platform rules.
+          - target:
+              kind: NetworkPolicy
+              name: data-product-controller
+            patch: |
+              $patch: delete
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: data-product-controller
+                namespace: data-product-controller
+          - target:
+              kind: NetworkPolicy
+              name: data-product-controller-harbour
+            patch: |
+              $patch: delete
+              apiVersion: networking.k8s.io/v1
+              kind: NetworkPolicy
+              metadata:
+                name: data-product-controller-harbour
+                namespace: data-product-controller
+          # Helm owns registration after CRD installation, keeping clean rebuilds
+          # independent of a pre-existing DataProduct API.
+          - target:
+              kind: DataProduct
+              name: harbour-observations
+            patch: |
+              - op: replace
+                path: /spec/id
+                value: https://harbour-data.${domain}
+              - op: replace
+                path: /spec/outputs/0/url
+                value: https://harbour-data.${domain}/api/observations
+              - op: replace
+                path: /spec/outputs/0/contractUrl
+                value: https://harbour-data.${domain}/openapi.json
+              - op: replace
+                path: /spec/ui/url
+                value: https://harbour-data.${domain}/ui

@@ -18,11 +18,18 @@ recoverable:
 3. **The `vault-config` Job** — auto-initializes OpenBao on fresh clusters,
    auto-unseals on restarts, and **auto-restores**: when no pod reports an
    initialized barrier but `openbao-unseal` still holds keys AND a snapshot
-   exists on the PVC, it temp-initializes, runs
+   is fetched from the off-cluster mirror into its scratch volume, it
+   temp-initializes, runs
    `bao operator raft snapshot restore -force` with the newest snapshot, and
    unseals with the stored key — no operator action. Only when no snapshot is
    available does it abort and demand explicit data-loss acknowledgement
    (the #1982 guard, unchanged).
+
+The snapshot fetcher uses a pinned MinIO client and pinned static shell tools
+installed before it starts. It selects the newest `.snap` object by name and
+downloads only that object. Missing projected credentials or an empty or
+unreachable mirror listing leave the scratch volume empty. When recovery needs
+a snapshot and none is available, the restore guard refuses re-initialization.
 
 ## Recovery Scenarios
 

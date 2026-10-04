@@ -64,6 +64,8 @@ func fakeKubectlImplementation(args []string) int {
 	case containsSequence(args, "get", "pods") &&
 		flagValue(args, "--selector") == "app=kustomize-controller":
 		return fakeKubectlGetFluxControllerPods(namespace)
+	case containsSequence(args, "get", "events"):
+		return fakeKubectlGetFluxControllerEvents(args, namespace)
 	case containsSequence(args, "get", "namespace"):
 		return fakeKubectlGetNamespace(args)
 	case containsSequence(args, "get", "lease"):
@@ -294,15 +296,29 @@ func fakeFluxPolicyChildObject() map[string]any {
 		}
 		conditions = append(conditions, reconcilingCondition)
 	}
+	// A Healthy condition models the controller's health-check stage: present only
+	// when a test asks for it, so every other test keeps the conditions it had.
+	if healthyStatus := os.Getenv("FAKE_FLUX_POLICY_HEALTHY_STATUS"); healthyStatus != "" {
+		conditions = append(conditions, map[string]any{
+			"type":    "Healthy",
+			"status":  healthyStatus,
+			"reason":  os.Getenv("FAKE_FLUX_POLICY_HEALTHY_REASON"),
+			"message": os.Getenv("FAKE_FLUX_POLICY_HEALTHY_MESSAGE"),
+		})
+	}
+	status := map[string]any{
+		"observedGeneration": 13,
+		"conditions":         conditions,
+	}
+	if revision := os.Getenv("FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION"); revision != "" {
+		status["lastAttemptedRevision"] = revision
+	}
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   metadata,
 		"spec":       spec,
-		"status": map[string]any{
-			"observedGeneration": 13,
-			"conditions":         conditions,
-		},
+		"status":     status,
 	}
 }
 
@@ -459,6 +475,43 @@ func fakeKubectlGetFluxPolicyParent(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid parent Flux Kustomization lookup")
 	}
+	if state := os.Getenv("FAKE_FLUX_PARENT_INITIAL_POST_CLAIM_STATE"); state != "" &&
+		markerExists("flux-policy-parent-patch-returned") &&
+		!markerExists("flux-policy-handoff-suspended") {
+		readCount := parseInt(markerContent("flux-parent-initial-post-claim-reads"), 0) + 1
+		setMarkerContent("flux-parent-initial-post-claim-reads", strconv.Itoa(readCount))
+		budget := parseInt(os.Getenv("FAKE_FLUX_PARENT_INITIAL_RELEASE_COUNT"), 1)
+		if fired := parseInt(markerContent("flux-parent-initial-post-claim-injections"), 0); fired < budget {
+			setMarkerContent("flux-parent-initial-post-claim-injections", strconv.Itoa(fired+1))
+			appendEnvFile("OPERATION_LOG", "flux-parent-initial-post-claim:"+state+"\n")
+			switch state {
+			case "released":
+				removeMarker("flux-policy-parent-owner")
+				removeMarker("flux-policy-parent-suspended")
+				if os.Getenv("FAKE_FLUX_PARENT_LEASE_STOLEN_ON_INITIAL_RELEASE") == "true" {
+					setMarkerContent("sync-lease-holder", "fixture-successor-transaction")
+				}
+			case "foreign-owner":
+				setMarkerContent("flux-policy-parent-owner", "fixture-foreign-transaction")
+			case "replaced":
+				setMarkerContent("flux-policy-parent-uid", "replacement-kustomization-uid")
+			case "malformed":
+				touchMarker("flux-policy-parent-malformed")
+			case "malformed-conditions", "malformed-suspension":
+				setMarkerContent("flux-parent-snapshot-malformation", state)
+			case "ownerless-suspended":
+				removeMarker("flux-policy-parent-owner")
+			case "unsuspended-owned":
+				removeMarker("flux-policy-parent-suspended")
+			case "unreadable":
+				return commandFailure(92, "injected initial parent snapshot read failure")
+			default:
+				return commandFailure(91, "unknown initial post-claim state %q", state)
+			}
+			setMarkerContent("flux-policy-parent-resource-version", incrementDecimal(defaultString(
+				markerContent("flux-policy-parent-resource-version"), "30")))
+		}
+	}
 	fmt.Println(encodeJSON(fakeFluxPolicyParentObject()))
 	return 0
 }
@@ -547,17 +600,25 @@ func fakeFluxPolicyParentObject() map[string]any {
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-stable:flux-system\n")
 		}
 	}
+	spec := map[string]any{
+		"suspend": suspended || os.Getenv("FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED") == "true",
+	}
+	status := map[string]any{
+		"observedGeneration": 1,
+		"conditions":         conditions,
+	}
+	switch markerContent("flux-parent-snapshot-malformation") {
+	case "malformed-conditions":
+		status["conditions"] = map[string]any{"Ready": "True"}
+	case "malformed-suspension":
+		spec["suspend"] = "true"
+	}
 	return map[string]any{
 		"apiVersion": "kustomize.toolkit.fluxcd.io/v1",
 		"kind":       "Kustomization",
 		"metadata":   metadata,
-		"spec": map[string]any{
-			"suspend": suspended || os.Getenv("FAKE_FLUX_POLICY_PARENT_SUSPENDED_UNOWNED") == "true",
-		},
-		"status": map[string]any{
-			"observedGeneration": 1,
-			"conditions":         conditions,
-		},
+		"spec":       spec,
+		"status":     status,
 	}
 }
 
@@ -665,12 +726,28 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 		patch,
 		"test",
 		"/metadata/uid",
-		"flux-system-kustomization-uid",
+		defaultString(markerContent("flux-policy-parent-uid"), "flux-system-kustomization-uid"),
 	) {
 		return commandFailure(56, "parent Flux Kustomization UID test failed")
 	}
 	ownerPath := "/metadata/annotations/platform.devantler.tech~1ghcr-policy-parent-owner"
 	if hasPatchOperation(patch, "add", "/spec/suspend", true) {
+		if markerExists("flux-parent-initial-post-claim-injections") &&
+			!markerExists("flux-parent-reclaim-rejection-fired") {
+			switch os.Getenv("FAKE_FLUX_PARENT_RECLAIM_PATCH_STATE") {
+			case "denied":
+				appendEnvFile("OPERATION_LOG", "flux-parent-reclaim-rejected\n")
+				return commandFailure(56, "Forbidden: injected parent reclaim denial")
+			case "churn", "foreign-owner-on-churn":
+				touchMarker("flux-parent-reclaim-rejection-fired")
+				setMarkerContent("flux-policy-parent-resource-version", incrementDecimal(currentResourceVersion))
+				if os.Getenv("FAKE_FLUX_PARENT_RECLAIM_PATCH_STATE") == "foreign-owner-on-churn" {
+					setMarkerContent("flux-policy-parent-owner", "fixture-foreign-transaction")
+				}
+				appendEnvFile("OPERATION_LOG", "flux-parent-reclaim-rejected\n")
+				return commandFailure(56, "Conflict: parent resourceVersion changed")
+			}
+		}
 		if rejection := os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_REJECTION"); rejection != "" {
 			appendEnvFile("OPERATION_LOG", "flux-policy-parent-patch-rejected\n")
 			return commandFailure(56, "%s", rejection)
@@ -722,12 +799,21 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 			incrementDecimal(currentResourceVersion),
 		)
 		appendEnvFile("OPERATION_LOG", "flux-policy-parent-pause:flux-system\n")
+		if markerExists("flux-parent-initial-post-claim-injections") &&
+			os.Getenv("FAKE_FLUX_PARENT_RECLAIM_PATCH_STATE") == "response-lost" &&
+			!markerExists("flux-parent-reclaim-response-lost") {
+			touchMarker("flux-parent-reclaim-response-lost")
+			return commandFailure(54, "connection reset after parent reclaim applied")
+		}
 		if os.Getenv("FAKE_FLUX_POLICY_PARENT_PATCH_RESPONSE_LOST") == "true" &&
 			!markerExists("flux-policy-parent-patch-response-lost") {
 			touchMarker("flux-policy-parent-patch-response-lost")
 			return commandFailure(54, "connection reset after parent Flux handoff patch")
 		}
-		return fakeKubectlGetFluxPolicyKustomization(
+		// The patch response precedes the first independent post-claim read.
+		// Do not inject a concurrent state change into the response itself.
+		removeMarker("flux-policy-parent-patch-returned")
+		status := fakeKubectlGetFluxPolicyKustomization(
 			[]string{
 				"get",
 				"kustomizations.kustomize.toolkit.fluxcd.io",
@@ -737,6 +823,8 @@ func fakeKubectlPatchFluxPolicyParent(args []string, namespace, patchFile string
 			},
 			namespace,
 		)
+		touchMarker("flux-policy-parent-patch-returned")
+		return status
 	}
 
 	currentOwner := markerContent("flux-policy-parent-owner")
@@ -839,6 +927,9 @@ func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFil
 			"kustomize-controller-deployment-uid",
 		) || restartToken == "" {
 		return commandFailure(56, "invalid or conflicting kustomize-controller restart")
+	}
+	if os.Getenv("FAKE_FLUX_CONTROLLER_RESTART_REJECTED") == "true" {
+		return commandFailure(57, "admission webhook denied the restart from 10.0.0.9")
 	}
 	setMarkerContent("flux-controller-restart-token", restartToken)
 	setMarkerContent("flux-controller-restart-count", strconv.Itoa(restartCount+1))
@@ -1017,16 +1108,17 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 6 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 7 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
+	warZoneAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1045,6 +1137,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			kubescapeNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$"
 		case "publishcorootnodeagent":
 			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
+		case "publishwarzone":
+			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		}
 	}
 	validations, _ := spec["validations"].([]any)
@@ -1054,10 +1148,15 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesKubescapeNodeAgent := false
 	genericExcludesCorootNodeAgent := false
 	dedicatedRoutesCorootNodeAgent := false
+	genericExcludesWarZone := false
+	dedicatedRoutesWarZone := false
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesWarZone = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
 			genericExcludesStorage = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kubescape-storage@')")
@@ -1083,8 +1182,14 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
 		}
+		if strings.Contains(expression, "attestors.publishwarzone") {
+			dedicatedRoutesWarZone = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
 		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||
 		!dedicatedRoutesStorage || !dedicatedRoutesKubescapeNodeAgent || !dedicatedRoutesCorootNodeAgent {
 		return commandFailure(91, "consolidated image-validating policy patch omitted a compatibility publisher identity or exact repository routing")
@@ -1350,6 +1455,21 @@ func fakeKubectlGetSyncLease(args []string, namespace string) int {
 		(!containsArg(args, "-o") && !containsArg(args, "--output")) {
 		return commandFailure(91, "invalid synchronization lease lookup")
 	}
+	// Only release combines this finite timeout with ignore-not-found. Delete a
+	// Lease that was actually acquired just before that read, rather than faking
+	// a failed kubectl command or preventing acquisition in the first place.
+	if os.Getenv("FAKE_SYNC_LEASE_DELETED_BEFORE_RELEASE") == "true" &&
+		containsArg(args, "--request-timeout=30s") && containsArg(args, "--ignore-not-found") &&
+		markerExists("sync-lease-holder") {
+		removeMarker("sync-lease-holder")
+		touchMarker("sync-lease-deleted-before-release")
+	}
+	if markerExists("sync-lease-deleted-before-release") {
+		if !containsArg(args, "--ignore-not-found") {
+			return commandFailure(44, "lease not found")
+		}
+		return 0
+	}
 	// The outage lasts until the script's own API-recovery wait has run, so
 	// every Lease read before recovery fails, however many there are.
 	if os.Getenv("FAKE_TRANSIENT_SYNC_LEASE_API_FAIL_BEFORE_CLAIM") == "true" &&
@@ -1497,6 +1617,7 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	}
 	currentResourceVersion := defaultString(markerContent("sync-lease-resource-version"), "10")
 	currentHolder := markerContent("sync-lease-holder")
+	afterReleaseFixture := os.Getenv("FAKE_SYNC_LEASE_ORPHANED_HEARTBEAT_WRITE_AFTER_RELEASE") == "true"
 
 	// release_sync_lease kills the heartbeat shell, but not a kubectl child that
 	// shell may be blocked in. That orphaned renewal lands after the release has
@@ -1515,11 +1636,14 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	}
 	// A real apiserver evaluates the `test` operations a patch actually carries,
 	// and nothing more -- so honour resourceVersion exactly when it is present.
-	// The holderIdentity test is what makes any write to this Lease safe, so a
-	// caller that omits it is rejected outright. Which writers must ALSO pin
+	// Existing fixtures also require the holder test as a caller policy. The
+	// post-release fixture instead permits missing tests so an applied mutation
+	// must fail through the actual replay semantics, not through that policy.
+	// Which writers must ALSO pin
 	// resourceVersion is a policy question, not an apiserver one, and it is
 	// asserted separately below.
-	if !hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder) {
+	if (hasPatchPath(patch, "test", "/spec/holderIdentity") && !hasPatchOperation(patch, "test", "/spec/holderIdentity", currentHolder)) ||
+		(!afterReleaseFixture && !hasPatchPath(patch, "test", "/spec/holderIdentity")) {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
 	if hasPatchPath(patch, "test", "/metadata/resourceVersion") &&
@@ -1534,7 +1658,7 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 	// of them rather than dropping the check for everyone.
 	releasesTheLease := hasPatchPath(patch, "replace", "/spec/holderIdentity") &&
 		patchValueString(patch, "replace", "/spec/holderIdentity") == ""
-	if !releasesTheLease && !hasPatchPath(patch, "test", "/metadata/resourceVersion") {
+	if !afterReleaseFixture && !releasesTheLease && !hasPatchPath(patch, "test", "/metadata/resourceVersion") {
 		return commandFailure(56, "synchronization lease CAS failed")
 	}
 	for _, path := range []string{"/spec/acquireTime", "/spec/renewTime"} {
@@ -1543,6 +1667,9 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 				return commandFailure(91, `Lease in version "v1" cannot be handled as a Lease: %v`, err)
 			}
 		}
+	}
+	if afterReleaseFixture && !hasPatchPath(patch, "replace", "/spec/holderIdentity") && hasPatchPath(patch, "replace", "/spec/renewTime") {
+		setMarkerContent("sync-lease-delayed-renewal", encodeJSON(delayedLeaseRenewal{Patch: patch, Before: leasePatchSnapshot()}))
 	}
 	if os.Getenv("FAKE_SYNC_LEASE_RENEW_CONFLICT_ONCE") == "true" &&
 		!markerExists("sync-lease-renew-conflict") &&
@@ -1596,6 +1723,11 @@ func fakeKubectlPatchSyncLease(args []string, namespace, patchFile string) int {
 		}
 	}
 	setMarkerContent("sync-lease-resource-version", incrementDecimal(currentResourceVersion))
+	if afterReleaseFixture && releasesTheLease {
+		if err := exerciseDelayedLeaseRenewal(); err != nil {
+			return commandFailure(91, "post-release replay fixture: %v", err)
+		}
+	}
 	fmt.Println("lease.coordination.k8s.io/ghcr-auth-refresh patched")
 	return 0
 }
@@ -1824,6 +1956,9 @@ func fakeInventoryNode(
 	if phase := markerContent("cordon-phase-" + name); phase != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
 	}
+	if name == os.Getenv("FAKE_EMPTY_PHASE_PRESENT_NODE") {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = ""
+	}
 	if recovery := markerContent("cordon-recovery-" + name); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
 	}
@@ -1953,13 +2088,21 @@ func fakeKubectlGetNode(args []string) int {
 		markerExists("cordon-owner-"+nodeName)
 	removedAfterAutoscalerDeletion := nodeName == os.Getenv("FAKE_AUTOSCALER_DELETING_THEN_REMOVED_NODE") &&
 		markerExists("autoscaler-deleted-"+nodeName)
-	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker || removedAfterAutoscalerDeletion ||
+	if wordListContains(os.Getenv("FAKE_NODE_REMOVED_BEFORE_PROCESS"), nodeName) || markerExists("node-deleted-before-release-"+nodeName) || removedAfterQuarantine || removedAfterClaim || removedAfterImageMarker || removedAfterAutoscalerDeletion ||
 		(nodeName == os.Getenv("FAKE_NODE_REMOVED_AFTER_UNCORDON") && markerExists("uncordoned-"+nodeName)) {
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "forbidden" {
 			return commandFailure(1, "Error from server (Forbidden): nodes is forbidden")
 		}
 		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "not-found-error" {
 			return commandFailure(1, "Error from server (NotFound): nodes not found")
+		}
+		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "partial-failure" {
+			fmt.Print(`{"kind":"Node"}`)
+			return commandFailure(92, "connection interrupted after a partial response")
+		}
+		if os.Getenv("FAKE_REMOVAL_CONFIRMATION") == "malformed-success" {
+			fmt.Print("{")
+			return 0
 		}
 		touchMarker("removed-before-process-" + nodeName)
 		if containsArg(args, "--ignore-not-found") {
@@ -2059,6 +2202,9 @@ func fakeKubectlGetNode(args []string) int {
 	}
 	if phase := markerContent("cordon-phase-" + nodeName); phase != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = phase
+	}
+	if nodeName == os.Getenv("FAKE_EMPTY_PHASE_PRESENT_NODE") {
+		annotations["platform.devantler.tech/ghcr-auth-drain-phase"] = ""
 	}
 	if recovery := markerContent("cordon-recovery-" + nodeName); recovery != "" {
 		annotations["platform.devantler.tech/ghcr-auth-drain-recovery"] = recovery
@@ -2328,6 +2474,27 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		return commandFailure(91, "parse node patch: %v", err)
 	}
 	currentResourceVersion := defaultString(markerContent("resource-version-"+nodeName), "10")
+	const phasePath = "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"
+	if len(patch) == 4 && hasPatchPath(patch, "remove", phasePath) {
+		if nodeName == os.Getenv("FAKE_OWNER_BEFORE_HISTORICAL_CLEANUP_NODE") {
+			setMarkerContent("cordon-owner-"+nodeName, "successor")
+			currentResourceVersion = incrementDecimal(currentResourceVersion)
+			setMarkerContent("resource-version-"+nodeName, currentResourceVersion)
+		}
+		if !hasPatchOperation(patch, "test", "/metadata/uid", fakeExpectedNodeUID(nodeName)) ||
+			!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
+			!hasPatchOperation(patch, "test", phasePath, markerContent("cordon-phase-"+nodeName)) {
+			return commandFailure(57, "historical phase changed before cleanup")
+		}
+		removeMarker("cordon-phase-" + nodeName)
+		setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+		appendEnvFile("OPERATION_LOG", "historical-phase-cleanup:"+nodeName+"\n")
+		if nodeName == os.Getenv("FAKE_LOST_HISTORICAL_CLEANUP_RESPONSE_NODE") {
+			return commandFailure(93, "historical cleanup response was lost")
+		}
+		fmt.Printf("node/%s patched\n", nodeName)
+		return 0
+	}
 	isClaim := hasPatchOperation(patch, "add", "/spec/unschedulable", true)
 	isFencePhase := hasPatchPath(
 		patch,
@@ -2417,16 +2584,14 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		appendEnvFile("OPERATION_LOG", "recovery-phase:"+nodeName+":"+phase+"\n")
 		return 0
 	}
-	// Reclaiming a leaked fence is the only patch that REMOVES the phase
-	// annotation -- a claim adds it, a release leaves it alone -- so that is the
-	// discriminator. Without this branch the reclaim falls through to the
-	// release path, whose first test is the owner rather than the uid, and every
-	// reclaim would fail exit 56 with no coverage of the mutation at all.
+	// A normal release pins the resource version; an orphan reclaim instead
+	// pins the pre-mutation phase. Both remove phase, so removal alone cannot
+	// discriminate them.
 	isReclaim := hasPatchPath(
 		patch,
 		"remove",
 		"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase",
-	)
+	) && !hasPatchPath(patch, "test", "/metadata/resourceVersion")
 	if isReclaim {
 		if nodeName == os.Getenv("FAKE_RECLAIM_FAIL_NODE") {
 			return commandFailure(56, "fence changed while being reclaimed")
@@ -2604,6 +2769,17 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		appendEnvFile("OPERATION_LOG", "concurrent-node-resource-version:"+nodeName+"\n")
 		return commandFailure(56, "resourceVersion test failed during cordon release")
 	}
+	if nodeName == os.Getenv("FAKE_NODE_REMOVED_BEFORE_RELEASE_PATCH_NODE") {
+		attempt := parseInt(markerContent("node-release-attempt-"+nodeName), 0) + 1
+		setMarkerContent("node-release-attempt-"+nodeName, fmt.Sprint(attempt))
+		if attempt < parseInt(os.Getenv("FAKE_NODE_RELEASE_DELETE_ATTEMPT"), 1) {
+			setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
+			return commandFailure(56, "resourceVersion test failed after unrelated node write")
+		}
+		touchMarker("node-deleted-before-release-" + nodeName)
+		appendEnvFile("OPERATION_LOG", "node-deleted-before-release:"+nodeName+"\n")
+		return commandFailure(1, "Error from server (NotFound): nodes not found")
+	}
 	if nodeName == os.Getenv("FAKE_UNCORDON_FAIL_NODE") || markerContent("cordon-owner-"+nodeName) != expectedOwner {
 		return commandFailure(56, "cordon ownership changed; refusing to uncordon")
 	}
@@ -2614,6 +2790,10 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 		!hasPatchOperation(patch, "test", "/metadata/resourceVersion", currentResourceVersion) ||
 		!hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-owner") {
 		return commandFailure(56, "invalid atomic cordon release")
+	}
+	removePhase := hasPatchPath(patch, "remove", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase")
+	if removePhase && !hasPatchOperation(patch, "test", "/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase", markerContent("cordon-phase-"+nodeName)) {
+		return commandFailure(56, "atomic cordon release omitted its current phase test")
 	}
 	currentScaleDownOwner := markerContent("scale-down-owner-" + nodeName)
 	if currentScaleDownOwner != "" {
@@ -2663,6 +2843,9 @@ func fakeKubectlPatchNode(args []string, patchFile string) int {
 	setMarkerContent("resource-version-"+nodeName, incrementDecimal(currentResourceVersion))
 	removeMarker("cordon-owner-" + nodeName)
 	removeMarker("cordon-recovery-" + nodeName)
+	if removePhase {
+		removeMarker("cordon-phase-" + nodeName)
+	}
 	if hasPatchOperation(patch, "add", "/spec/unschedulable", false) {
 		appendEnvFile("OPERATION_LOG", "node-uncordon:"+nodeName+"\n")
 		removeMarker("cordoned-" + nodeName)
@@ -3258,5 +3441,35 @@ func fakeKubectlGetNamespaceWorkloads(args []string, namespace string) int {
 		metadata, _ := pod["metadata"].(map[string]any)
 		fmt.Printf("pod/%s\n", metadata["name"])
 	}
+	return 0
+}
+
+// fakeKubectlGetFluxControllerEvents serves the Pod events the handoff diagnostics read
+// (#4178). One event belongs to a kustomize-controller Pod and names a Pod address, which
+// the diagnostics must mask; the other belongs to an unrelated Pod and must be filtered out.
+func fakeKubectlGetFluxControllerEvents(args []string, namespace string) int {
+	if namespace != "flux-system" || flagValue(args, "--field-selector") != "involvedObject.kind=Pod" {
+		return commandFailure(91, "invalid kustomize-controller event lookup")
+	}
+	fmt.Println(encodeJSON(map[string]any{
+		"apiVersion": "v1",
+		"kind":       "List",
+		"items": []any{
+			map[string]any{
+				"type":           "Warning",
+				"reason":         "Unhealthy",
+				"lastTimestamp":  "2026-09-25T13:44:10Z",
+				"message":        `Readiness probe failed: Get "http://10.244.1.5:9440/readyz": connection refused`,
+				"involvedObject": map[string]any{"kind": "Pod", "name": "kustomize-controller-0"},
+			},
+			map[string]any{
+				"type":           "Normal",
+				"reason":         "Pulled",
+				"lastTimestamp":  "2026-09-25T13:44:11Z",
+				"message":        "unrelated-pod-event",
+				"involvedObject": map[string]any{"kind": "Pod", "name": "source-controller-0"},
+			},
+		},
+	}))
 	return 0
 }

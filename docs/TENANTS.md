@@ -250,9 +250,12 @@ carry itself**:
   only example in the repo: `wedding-app`'s CNPG `Cluster` `storage.storageClass: longhorn`
   (local/docker has no longhorn, so the artifact stays class-agnostic and the overlay supplies
   the class).
-- **Operational-safety annotations** — platform-enforced guards such as
-  `kustomize.toolkit.fluxcd.io/{force,prune}: disabled` on a stateful resource to prevent a
-  Flux delete+recreate data-loss event.
+- **Operational-safety settings** — `kustomize.toolkit.fluxcd.io/prune: disabled` preserves
+  a stateful resource when its manifest is removed. Platform and generated tenant Flux layers
+  set `spec.force: false` so immutable conflicts fail rather than replace resources. Jobs that
+  need recreation can opt in with `kustomize.toolkit.fluxcd.io/force: enabled`; persistent claims
+  and database clusters must not opt in. A resource's `force: disabled` annotation cannot
+  override a forcing layer.
 
 **Everything a tenant can express in its own `deploy/` is tenant-owned and must NOT be patched
 here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes, and app config:

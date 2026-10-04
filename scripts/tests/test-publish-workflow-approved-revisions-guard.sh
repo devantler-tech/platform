@@ -477,10 +477,26 @@ else
   expect_refusal 'a publish-app row without a release candidate is refused' \
     "$root" 0 "$app_consumer" 'release_candidate_sha'
 
-  root="$(build_tree set-manifests-candidate pattern)"
+  root="$(build_tree set-manifests-candidate pair)"
   write_set "$root/scripts/approved.tsv" "$manifests_consumer" "$(printf '%s\tpublish-manifests\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$manifests_consumer" "$DIGEST" "$(signer_for "$manifests_consumer")" "$SHA_B" "$SHA_E")"
-  expect_refusal 'a publish-manifests row carrying a release candidate is refused' \
-    "$root" 0 "$manifests_consumer" "must be '-'"
+  write_consumer "$root" "$manifests_consumer" publish-manifests "($(signer_for "$manifests_consumer")|$SHA_B|$SHA_E)"
+  expect_pass 'a publish-manifests row carrying an exact release candidate is readable' "$root" 0
+  expect_pass 'the complete manifests candidate set passes enforcement' "$root" 1
+  for ref in "$(signer_for "$manifests_consumer")|$SHA_B|$SHA_E" \
+    "($(signer_for "$manifests_consumer")|$SHA_B|$SHA_E|$SHA_D)" \
+    "($(signer_for "$manifests_consumer")|$SHA_B|$SHA_E|$SHA_E)"; do
+    write_consumer "$root" "$manifests_consumer" publish-manifests "$ref"
+    expect_refusal 'an ungrouped, foreign or duplicate manifests candidate set is refused' \
+      "$root" 1 "$manifests_consumer" 'not the generated set'
+  done
+  write_consumer "$root" "$manifests_consumer" publish-manifests "($(signer_for "$manifests_consumer")|$SHA_B)"
+  expect_refusal 'a manifests matcher missing its declared candidate is refused' \
+    "$root" 1 "$manifests_consumer" 'not the generated set'
+  for candidate in main deadbeef "$SHA_E|$SHA_D"; do
+    write_set "$root/scripts/approved.tsv" "$manifests_consumer" "$(printf '%s\tpublish-manifests\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$manifests_consumer" "$DIGEST" "$(signer_for "$manifests_consumer")" "$SHA_B" "$candidate")"
+    expect_refusal 'a non-commit manifests candidate is refused' \
+      "$root" 0 "$manifests_consumer" 'release_candidate_sha'
+  done
 
   root="$(build_tree set-seven-field pattern)"
   write_set "$root/scripts/approved.tsv" "$app_consumer" "$(printf '%s\tpublish-app\t1.0.0\t%s\t%s\t%s\t2026-09-03' "$app_consumer" "$DIGEST" "$(signer_for "$app_consumer")" "$SHA_B")"

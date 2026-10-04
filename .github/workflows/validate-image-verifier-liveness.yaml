@@ -12,7 +12,8 @@ name: Validate Image Verifier Liveness
 # materialises each rule into an `ImageVerificationRules.security.talos.dev`
 # resource, and `security.TUFTrustedRootController` maintains the Sigstore TUF
 # trust root keyless verification needs. The fleet check asserts both are live
-# on every node.
+# on every node and compares each complete native rule decision with the
+# declared policy, including signer identities and skip/deny actions.
 #
 # Two read-only questions about the same control live here, and they are
 # different questions. The fleet check asks whether verification CAN enforce at
@@ -87,6 +88,12 @@ jobs:
         run: |
           .github/scripts/setup-talosctl.sh
 
+      - name: ⚙️ Setup Go for complete policy comparison
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: 🔑 Restore kubeconfig
         shell: bash
         env:
@@ -160,7 +167,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.192.9"
+          KSAIL_VERSION: "7.195.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

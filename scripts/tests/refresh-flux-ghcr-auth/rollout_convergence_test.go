@@ -508,6 +508,67 @@ func TestRemovedNodeAfterMutationStillFailsClosed(t *testing.T) {
 	requireNoLine(t, operations, "root-patch")
 }
 
+func TestDeletedNodeHasNoSchedulingFenceToRelease(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER": "prod-worker-1",
+	})
+	requireFailureResult(t, result)
+	requireContains(t, result.stdout+result.stderr, "No scheduling fence remains on deleted Talos node prod-worker-1")
+	operations := readLines(f.operationLog)
+	requireLine(t, operations, "node-claim-cordon:prod-worker-1")
+	requireLine(t, operations, "talos-revision:10.0.0.2")
+	requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+	requireNoLine(t, operations, "root-patch")
+}
+
+func TestRemovedNodeCleanupDoesNotAcceptUnknownReads(t *testing.T) {
+	t.Parallel()
+	for _, phase := range []string{"before-release-read", "before-final-release-patch"} {
+		for _, mode := range []string{"forbidden", "not-found-error", "partial-failure", "malformed-success"} {
+			t.Run(phase+"/"+mode, func(t *testing.T) {
+				t.Parallel()
+				f := newFixture(t)
+				env := map[string]string{"FAKE_REMOVAL_CONFIRMATION": mode}
+				if phase == "before-release-read" {
+					env["FAKE_NODE_REMOVED_AFTER_IMAGE_MARKER"] = "prod-worker-1"
+				} else {
+					env["FAKE_NODE_REMOVED_BEFORE_RELEASE_PATCH_NODE"] = "prod-worker-1"
+					env["FAKE_NODE_RELEASE_DELETE_ATTEMPT"] = "3"
+				}
+				result := f.runHelper(validConfig(), nil, env)
+				requireFailureResult(t, result)
+				requireNotContains(t, result.stdout+result.stderr, "No scheduling fence remains on deleted Talos node")
+				operations := readLines(f.operationLog)
+				requireLine(t, operations, "talos-revision:10.0.0.2")
+				requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+				requireNoLine(t, operations, "root-patch")
+			})
+		}
+	}
+}
+
+func TestNodeDeletedAtCordonReleasePatchIsConfirmedWithoutMutation(t *testing.T) {
+	t.Parallel()
+	for _, attempt := range []string{"1", "3"} {
+		t.Run("release-attempt-"+attempt, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_NODE_REMOVED_BEFORE_RELEASE_PATCH_NODE": "prod-worker-1",
+				"FAKE_NODE_RELEASE_DELETE_ATTEMPT":            attempt,
+			})
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, "No scheduling fence remains on deleted Talos node prod-worker-1")
+			operations := readLines(f.operationLog)
+			requireLine(t, operations, "node-deleted-before-release:prod-worker-1")
+			requireNoLine(t, operations, "node-uncordon:prod-worker-1")
+			requireNoLine(t, operations, "root-patch")
+		})
+	}
+}
+
 func TestRemovedBootstrapOwnedNodeStillFailsClosed(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -2858,4 +2919,169 @@ func TestFluxPolicyHandoffRefusesAReplacementChildFoundByTheContentionReRead(t *
 	if pathExists(filepath.Join(f.syncStateDir, "flux-policy-handoff-suspended")) {
 		t.Fatal("the replacement child was suspended")
 	}
+}
+
+// healthCheckStageMessage is the Reconciling and Healthy message
+// kustomize-controller writes, in one status patch, when a reconcile reaches its
+// health-check stage. Apply has finished by then.
+const (
+	fixtureFluxRevision     = "latest@sha256:fixture"
+	healthCheckStageMessage = "Running health checks for revision " + fixtureFluxRevision + " with a timeout of 20m0s"
+)
+
+// A Kustomization that keeps reconciling only because a workload it applied is
+// unhealthy has no apply in flight, so it must not hold the release path (#3100).
+func TestFluxChildWaitingOnHealthChecksDoesNotBlockPolicyHandoff(t *testing.T) {
+	t.Parallel()
+	cases := map[string]map[string]string{
+		"health check running": {
+			"FAKE_FLUX_POLICY_RECONCILING":         "true",
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": healthCheckStageMessage,
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "Unknown",
+			"FAKE_FLUX_POLICY_HEALTHY_REASON":      "Progressing",
+			"FAKE_FLUX_POLICY_HEALTHY_MESSAGE":     healthCheckStageMessage,
+		},
+		"retrying after a failed health check": {
+			"FAKE_FLUX_POLICY_RECONCILING":         "true",
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "ProgressingWithRetry",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": healthCheckStageMessage,
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "False",
+			"FAKE_FLUX_POLICY_HEALTHY_REASON":      "HealthCheckFailed",
+			"FAKE_FLUX_POLICY_HEALTHY_MESSAGE":     "timeout waiting for: [Cluster/observability/coroot-db status: 'InProgress']",
+			"FAKE_FLUX_POLICY_CHILD_UNHEALTHY":     "timeout waiting for: [Cluster/observability/coroot-db status: 'InProgress']",
+		},
+	}
+	for name, env := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env["FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION"] = fixtureFluxRevision
+			env["FAKE_LOG_FLUX_CONTROLLER_RESTART"] = "true"
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, env)
+			requireSuccessResult(t, result)
+			operations := readLines(f.operationLog)
+			pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+			restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+			policy := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+			resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
+			// The controller is still replaced before any policy write, and the owner
+			// is released afterwards, so the narrowed gate strands nothing.
+			if pause >= restart || restart >= policy || policy >= resume {
+				t.Fatalf(
+					"unsafe handoff ordering: pause=%d restart=%d policy=%d resume=%d",
+					pause, restart, policy, resume,
+				)
+			}
+		})
+	}
+}
+
+// Every state that can still be applying, or that the gate cannot positively
+// place in the health-check stage, keeps the handoff refused.
+func TestFluxChildNotProvablyPastApplyBlocksPolicyHandoff(t *testing.T) {
+	t.Parallel()
+	healthCheckRunning := map[string]string{
+		"FAKE_FLUX_POLICY_HEALTHY_STATUS":  "Unknown",
+		"FAKE_FLUX_POLICY_HEALTHY_REASON":  "Progressing",
+		"FAKE_FLUX_POLICY_HEALTHY_MESSAGE": healthCheckStageMessage,
+	}
+	cases := map[string]map[string]string{
+		// A controller restarted mid-health-check leaves Healthy behind while the
+		// next attempt applies; the Reconciling message names the apply stage.
+		"applying with a stale Healthy condition": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Detecting drift for revision " + fixtureFluxRevision + " with a timeout of 20m0s",
+		},
+		"health-check message for another revision": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Running health checks for revision latest@sha256:older with a timeout of 20m0s",
+		},
+		"health-check stage without a Healthy condition": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "Progressing",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": healthCheckStageMessage,
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "",
+		},
+		"retrying after a failed apply": {
+			"FAKE_FLUX_POLICY_RECONCILING_REASON":  "ProgressingWithRetry",
+			"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Detecting drift for revision " + fixtureFluxRevision + " with a timeout of 20m0s",
+			"FAKE_FLUX_POLICY_HEALTHY_STATUS":      "False",
+			"FAKE_FLUX_POLICY_HEALTHY_REASON":      "HealthCheckFailed",
+		},
+	}
+	for name, overrides := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{
+				"FAKE_FLUX_POLICY_RECONCILING":             "true",
+				"FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION": fixtureFluxRevision,
+			}
+			for key, value := range healthCheckRunning {
+				env[key] = value
+			}
+			for key, value := range overrides {
+				env[key] = value
+			}
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, env)
+			requireFailureResult(t, result)
+			requireContains(
+				t,
+				result.stdout+result.stderr,
+				"did not quiesce before the image-verification policy handoff",
+			)
+			operations := readLines(f.operationLog)
+			requireNoLine(t, operations, "flux-policy-pause:infrastructure")
+			requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+			requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+		})
+	}
+}
+
+// A failed handoff rollout explains itself (#4178): the captured kubectl output, each
+// controller Pod's state and the Pods' recent events are printed, with Pod addresses
+// masked and other Pods' events left out.
+func TestFluxControllerRolloutFailurePrintsHandoffDiagnostics(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "::group::kustomize-controller handoff diagnostics")
+	requireContains(t, output, "kustomize-controller rollout did not converge")
+	requireContains(t, output, "kustomize-controller-0: phase=")
+	requireContains(t, output, "condition Ready=True")
+	requireContains(t, output, `Warning Unhealthy kustomize-controller-0: Readiness probe failed: Get "http://<address>:9440/readyz"`)
+	requireNotContains(t, output, "10.244.1.5")
+	requireNotContains(t, output, "unrelated-pod-event")
+}
+
+// The success path prints none of the failure diagnostics.
+func TestFluxControllerRolloutSuccessPrintsNoHandoffDiagnostics(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART": "true",
+	})
+	requireSuccessResult(t, result)
+	// The handoff restart must actually have run, or this proves nothing about its success path.
+	requireLine(t, readLines(f.operationLog), "flux-controller-old-processes-terminated:kustomize-controller")
+	requireNotContains(t, result.stdout+result.stderr, "handoff diagnostics")
+}
+
+// A restart patch that is rejected and cannot be adopted explains itself too (#4178).
+func TestFluxControllerRestartRejectionPrintsHandoffDiagnostics(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_CONTROLLER_RESTART_REJECTED": "true",
+	})
+	requireFailureResult(t, result)
+	output := result.stdout + result.stderr
+	requireContains(t, output, "Could not atomically restart or adopt")
+	requireContains(t, output, "::group::kustomize-controller handoff diagnostics")
+	requireContains(t, output, "admission webhook denied the restart from <address>")
+	requireNotContains(t, output, "10.0.0.9")
 }

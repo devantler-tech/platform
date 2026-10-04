@@ -1,0 +1,15 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: flux-bootstrap-health-gating-keeps-reliability
+policies:
+  - ../../../k8s/bases/infrastructure/cluster-policies/flux/enforce-flux-best-practices.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: enforce-flux-best-practices
+    rule: kustomization-recommended-settings
+    resources:
+      - github-config/github-config
+    kind: Kustomization
+    result: fail
