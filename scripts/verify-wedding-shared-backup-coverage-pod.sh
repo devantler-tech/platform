@@ -58,9 +58,14 @@ mkdir -p "${work}"
 export MC_CONFIG_DIR="${MC_CONFIG_DIR:-${work}/.mc}"
 mc_err="${work}/mc.err"
 
-# redact_errors prints the last lines of an mc error log without the endpoint host.
+# redact_errors prints the last lines of an mc error log without the endpoint
+# host (with or without its scheme), any IPv4 address, or any long hex token such
+# as an access key ID or request ID. These lines reach a public workflow log.
+host="${ENDPOINT#https://}"
 redact_errors() {
-  sed -e 's#https://[^/ ]*#<endpoint>#g' "${mc_err}" | tail -n 5 >&2
+  sed -e 's#https\{0,1\}://[^/ "`]*#<endpoint>#g' -e "s#${host}#<endpoint>#g" \
+    -e 's/[0-9a-fA-F]\{32,\}/<hex>/g' \
+    -e 's/[0-9]\{1,3\}\(\.[0-9]\{1,3\}\)\{3\}\(:[0-9]\{1,5\}\)\{0,1\}/<ip>/g' "${mc_err}" | tail -n 5 >&2
 }
 
 command="${1:-}"

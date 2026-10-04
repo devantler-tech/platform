@@ -17,8 +17,9 @@ package main
 //
 // The dedicated store applies its retention policy and the shared copy no longer
 // does, so the shared copy can hold objects the dedicated store has since
-// pruned. Such an object is accepted only when it is older than everything the
-// dedicated store still keeps of the same kind in the same server directory.
+// pruned. Such an object is accepted only when it was written before the oldest
+// complete base backup the dedicated store keeps in the same server directory
+// and before the retention window began.
 // Every other shared object must be present with matching content.
 
 import (
@@ -29,6 +30,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 var (
@@ -102,31 +104,48 @@ func ApplySums(objects []Object, r io.Reader) error {
 	return nil
 }
 
-// retentionFloor records, per server directory, the oldest base backup and the
-// oldest WAL segment the dedicated store still keeps. Retention only ever
-// removes from the old end, so anything older than these is gone by design.
-type retentionFloor struct {
-	backup map[string]string
-	wal    map[string]string
-}
+// retentionWindow is the dedicated ObjectStore's retention policy. The runner
+// refuses a store that declares another one.
+const retentionWindow = 30 * 24 * time.Hour
 
-func retentionFloorOf(objects map[string]Object) retentionFloor {
-	floor := retentionFloor{backup: map[string]string{}, wal: map[string]string{}}
-	for key := range objects {
+// emptyDigest is the sha256 of no bytes. A non-empty object that hashes to it
+// was not read.
+const emptyDigest = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+// oldestCompleteBackups returns, per server directory, the start time of the
+// oldest base backup that has both its backup.info and a non-empty data archive.
+func oldestCompleteBackups(objects map[string]Object) map[string]time.Time {
+	hasInfo := map[string]bool{}
+	hasData := map[string]bool{}
+	for key, object := range objects {
+		id := baseBackupIDOf(key)
 		parts := strings.Split(key, "/")
-		server := parts[0]
-		if id := baseBackupIDOf(key); id != "" {
-			if current, ok := floor.backup[server]; !ok || id < current {
-				floor.backup[server] = id
-			}
+		if id == "" || len(parts) != 4 {
+			continue
 		}
-		if segment := walSegmentOf(key); segment != "" {
-			if current, ok := floor.wal[server]; !ok || segment < current {
-				floor.wal[server] = segment
-			}
+		backup := parts[0] + "/" + id
+		switch {
+		case parts[3] == "backup.info":
+			hasInfo[backup] = true
+		case dataArchive.MatchString(parts[3]) && object.Size > 0:
+			hasData[backup] = true
 		}
 	}
-	return floor
+	oldest := map[string]time.Time{}
+	for backup := range hasInfo {
+		if !hasData[backup] {
+			continue
+		}
+		server, id, _ := strings.Cut(backup, "/")
+		started, err := time.Parse("20060102T150405", id)
+		if err != nil {
+			continue
+		}
+		if current, ok := oldest[server]; !ok || started.Before(current) {
+			oldest[server] = started
+		}
+	}
+	return oldest
 }
 
 // baseBackupIDOf returns the backup ID of a key inside a base backup directory.
@@ -156,21 +175,22 @@ func walPositionOf(key string) string {
 	return segment
 }
 
-// prunedByRetention reports whether a shared object the dedicated store lacks is
-// older than everything that store still keeps of its kind in its server
-// directory. A server directory the dedicated store holds nothing of has no
-// floor, so nothing in it is accepted as pruned.
-func (floor retentionFloor) prunedByRetention(key string) bool {
-	server := strings.Split(key, "/")[0]
-	if id := baseBackupIDOf(key); id != "" {
-		oldest, ok := floor.backup[server]
-		return ok && id < oldest
+// prunedByRetention reports whether a shared object the dedicated store lacks
+// can only be missing because retention removed it. Retention never removes
+// anything written at or after the start of the oldest backup it keeps, and
+// never removes anything still inside the retention window, so the object must
+// have been written before both. It is judged by when it was written, not by its
+// name: segment names do not order across timelines, and an object that was
+// never copied has a name just like a pruned one. A server directory with no
+// complete dedicated backup has nothing to measure against, so nothing in it is
+// accepted.
+func prunedByRetention(object Object, oldest map[string]time.Time, listed time.Time) bool {
+	if baseBackupIDOf(object.Key) == "" && walPositionOf(object.Key) == "" {
+		return false
 	}
-	if position := walPositionOf(key); position != "" {
-		oldest, ok := floor.wal[server]
-		return ok && position < oldest
-	}
-	return false
+	started, ok := oldest[strings.Split(object.Key, "/")[0]]
+	return ok && object.LastModified.Before(started) &&
+		object.LastModified.Before(listed.Add(-retentionWindow))
 }
 
 // EvaluateCoverage proves the dedicated catalogue covers the shared one. Every
@@ -195,12 +215,12 @@ func EvaluateCoverage(shared, dedicated Listing) (CoverageSummary, error) {
 		return CoverageSummary{}, ErrEmptySource
 	}
 
-	floor := retentionFloorOf(dedicatedIndex)
+	oldest := oldestCompleteBackups(dedicatedIndex)
 	matched, pruned := 0, 0
 	for key, source := range sharedIndex {
 		copied, ok := dedicatedIndex[key]
 		if !ok {
-			if !floor.prunedByRetention(key) {
+			if !prunedByRetention(source, oldest, dedicated.Started) {
 				return CoverageSummary{}, fmt.Errorf("%w: %s", ErrNotCovered, key)
 			}
 			pruned++
@@ -208,6 +228,9 @@ func EvaluateCoverage(shared, dedicated Listing) (CoverageSummary, error) {
 		}
 		if copied.Size != source.Size {
 			return CoverageSummary{}, fmt.Errorf("%w: %s", ErrPartialCopy, key)
+		}
+		if source.Size > 0 && (source.SHA256 == emptyDigest || copied.SHA256 == emptyDigest) {
+			return CoverageSummary{}, fmt.Errorf("%w: %s was hashed as empty", ErrUnverifiable, key)
 		}
 		if err := sameContent(source, copied); err != nil {
 			return CoverageSummary{}, fmt.Errorf("%w: %s", err, key)

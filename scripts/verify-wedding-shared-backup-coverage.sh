@@ -176,7 +176,7 @@ require_absent() {
 }
 
 # require_unreferenced refuses when any ObjectStore or Cluster in the cluster
-# still names the shared catalogue, in any field: something could then still be
+# still names the shared catalogue or a directory above it, in any field: something could then still be
 # writing to it, and the coverage shown here would not last.
 require_unreferenced() {
   local kind
@@ -186,7 +186,7 @@ require_unreferenced() {
       fail "could not list every ${kind}"
     jq -e --arg path "${shared_catalogue}" '
       (.items | type == "array") and
-      ([.items[].spec | .. | strings | select(. == $path or startswith($path + "/"))] | length == 0)
+      ([.items[].spec | .. | strings | select(. == $path or startswith($path + "/") or (. as $root | $path | startswith($root + "/")))] | length == 0)
     ' "${work_dir}/references.json" >/dev/null 2>&1 ||
       fail "a ${kind} still names the shared Wedding catalogue"
   done
@@ -219,6 +219,10 @@ require_store() {
 
 require_retired
 require_store "${tenant_namespace}" "${dedicated_store}" "s3://${dedicated_bucket}/${catalogue_prefix}" "${dedicated_secret}"
+# The evaluator accepts a shared object the dedicated store lacks only when it
+# is older than this retention window, so the live store must declare the same one.
+jq -e '.spec.retentionPolicy == "30d"' "${work_dir}/store.json" >/dev/null 2>&1 ||
+  fail "the ${dedicated_store} ObjectStore does not keep the reviewed 30-day retention"
 # The Umami store proves which Secret holds the credential for the committed
 # shared bucket. Its own catalogue is a sibling of the Wedding one and is never
 # listed.
@@ -362,9 +366,9 @@ MANIFEST
   manifest="${manifest//__BUCKET__/${bucket}}"
   manifest="${manifest//__PREFIX__/${catalogue_prefix}}"
 
-  created+=("${namespace}/pod")
   printf '%s\n' "${manifest}" | kube "${namespace}" create -f - >/dev/null ||
     fail "could not start the ${role} pod"
+  created+=("${namespace}/pod")
 }
 
 # wait_ready <namespace> <role> waits for the pod to store its credential.
@@ -436,6 +440,8 @@ jq -e '.covered == true and (.sharedObjects | type == "number" and . > 0)' \
 require_retired
 
 cat "${work_dir}/summary.json"
-printf 'COVERED: the dedicated bucket holds every object of the shared Wedding catalogue (%s objects), or has pruned it by retention.\n' \
-  "$(jq -r '.sharedObjects' "${work_dir}/summary.json")"
+printf 'COVERED: of the %s objects in the shared Wedding catalogue, the dedicated bucket holds %s with matching content.\n' \
+  "$(jq -r '.sharedObjects' "${work_dir}/summary.json")" "$(jq -r '.matchedObjects' "${work_dir}/summary.json")"
+printf 'The other %s predate both the oldest backup the dedicated store keeps and its 30-day retention window, so retention has removed them there.\n' \
+  "$(jq -r '.retentionPrunedObjects' "${work_dir}/summary.json")"
 printf 'Nothing was changed. This holds as of this run: the shared copy is no longer written to.\n'

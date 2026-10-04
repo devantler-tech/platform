@@ -72,6 +72,7 @@ set -u
 f="${FAKE_MC}"
 leak() {
   printf 'mc: <ERROR> request to https://abc123.r2.cloudflarestorage.com/x failed\n' >&2
+  printf 'mc: <ERROR> dial tcp: lookup abc123.r2.cloudflarestorage.com on 10.96.0.10:53: no such host\n' >&2
 }
 case "$1" in
   alias)
@@ -179,16 +180,16 @@ readonly base='wedding-db-20260909/base/20260908T030000'
 readonly wal='wedding-db-20260909/wals/0000000200000001/000000020000000100000003.gz'
 readonly later_wal='wedding-db-20260909/wals/0000000300000001/000000030000000100000009.gz'
 
-# record <key> <size> <etag>
+# record <key> <size> <etag> [last-modified]
 record() {
   printf '{"status":"success","type":"file","lastModified":"%s","size":%s,"key":"%s","etag":"%s","url":"%s","versionOrdinal":1,"storageClass":"STANDARD"}\n' \
-    "${old}" "$2" "$1" "$3" "${endpoint}"
+    "${4:-${old}}" "$2" "$1" "$3" "${endpoint}"
 }
 
-# store_json <destination> <secret> [endpoint]
+# store_json <destination> <secret> [endpoint] [retention]
 store_json() {
-  printf '{"metadata":{},"spec":{"configuration":{"destinationPath":"%s","endpointURL":"%s","s3Credentials":{"accessKeyId":{"name":"%s","key":"ACCESS_KEY_ID"},"secretAccessKey":{"name":"%s","key":"SECRET_ACCESS_KEY"}}}}}\n' \
-    "$1" "${3:-${endpoint}}" "$2" "$2"
+  printf '{"metadata":{},"spec":{"retentionPolicy":"%s","configuration":{"destinationPath":"%s","endpointURL":"%s","s3Credentials":{"accessKeyId":{"name":"%s","key":"ACCESS_KEY_ID"},"secretAccessKey":{"name":"%s","key":"SECRET_ACCESS_KEY"}}}}}\n' \
+    "${4:-30d}" "$1" "${3:-${endpoint}}" "$2" "$2"
 }
 
 # cluster_json <archive store>
@@ -264,7 +265,7 @@ require_cleaned() {
 new_case
 run_case --confirm
 [[ "${rc}" -eq 0 ]] || fail "covered: expected exit 0, got ${rc}. stderr: ${err}"
-require_text "${out}" 'COVERED: the dedicated bucket holds every object of the shared Wedding catalogue (3 objects)' 'covered'
+require_text "${out}" 'COVERED: of the 3 objects in the shared Wedding catalogue, the dedicated bucket holds 3 with matching content.' 'covered'
 require_text "${out}" '"sharedObjects":3,"matchedObjects":3,"retentionPrunedObjects":0,"covered":true' 'covered'
 require_cleaned 'covered'
 # One credential per pod, each beside its own namespace's Secret.
@@ -294,7 +295,17 @@ new_case
 run_case --confirm
 [[ "${rc}" -eq 0 ]] || fail "retention: expected exit 0, got ${rc}. stderr: ${err}"
 require_text "${out}" '"sharedObjects":6,"matchedObjects":3,"retentionPrunedObjects":3,"covered":true' 'retention'
+require_text "${out}" 'The other 3 predate both the oldest backup the dedicated store keeps' 'retention'
 printf 'PASS: objects the dedicated store pruned by retention do not block the verdict\n'
+
+# A segment only the shared copy holds, archived after the oldest backup the
+# dedicated store keeps, is needed to restore that backup: it was never copied.
+new_case
+printf '{"status":"success","type":"file","lastModified":"2026-09-20T00:00:00Z","size":3900,"key":"wedding-db-20260909/wals/0000000200000000/0000000200000000000000FE.gz","etag":"p3"}\n' >>"${k}/mc-umami/ls"
+run_case --confirm
+[[ "${rc}" -eq 1 ]] || fail "uncopied WAL: expected exit 1, got ${rc}"
+require_text "${err}" 'NOT COVERED' 'uncopied WAL'
+printf 'PASS: WAL the dedicated store never received is not mistaken for pruned WAL\n'
 
 # After the shared copy is removed, the same proof reports that.
 new_case
@@ -310,7 +321,7 @@ printf 'PASS: an empty shared prefix is reported as empty, not as covered\n'
 # Not covered.
 # ---------------------------------------------------------------------------
 new_case
-record "${later_wal}" 4300 f6 >>"${k}/mc-umami/ls"
+record "${later_wal}" 4300 f6 2026-09-20T00:00:00Z >>"${k}/mc-umami/ls"
 {
   record "${base}/backup.info" 1200 a1
   record "${base}/data.tar.gz" 90000000 ff-4
@@ -348,6 +359,7 @@ run_case --confirm
 [[ "${rc}" -eq 1 ]] || fail "unreadable object: expected exit 1, got ${rc}"
 require_text "${err}" 'the dedicated pod could not hash its objects' 'unreadable object'
 refute_text "${out}${err}" 'abc123' 'unreadable object: endpoint host leaked'
+refute_text "${err}" '10.96.0.10' 'unreadable object: address leaked'
 require_text "${err}" '<endpoint>' 'unreadable object'
 printf 'PASS: an object that cannot be read is not covered, and the endpoint host is redacted\n'
 
@@ -445,6 +457,20 @@ new_case
 store_json s3://other-bucket/cnpg/umami-db umami-db-backup-r2 >"${k}/umami-objectstores.barmancloud.cnpg.io-umami-db.json"
 run_case --confirm
 require_untouched 'shared reference store names another bucket'
+
+new_case
+store_json s3://wedding-db-backups/cnpg/wedding-db wedding-db-backup-r2-dedicated "" 7d \
+  >"${k}/wedding-app-objectstores.barmancloud.cnpg.io-wedding-db-dedicated.json"
+run_case --confirm
+require_untouched 'dedicated store keeps another retention'
+require_text "${err}" 'does not keep the reviewed 30-day retention' 'dedicated store keeps another retention'
+
+# A store rooted above the catalogue can write into it without naming it.
+new_case
+printf '{"items":[{"spec":{"configuration":{"destinationPath":"s3://platform-backups/cnpg"}}}]}\n' \
+  >"${k}/all-objectstores.barmancloud.cnpg.io.json"
+run_case --confirm
+require_untouched 'a store is rooted above the shared catalogue'
 
 new_case
 store_json s3://platform-backups/cnpg/umami-db other-secret >"${k}/umami-objectstores.barmancloud.cnpg.io-umami-db.json"

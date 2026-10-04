@@ -27,6 +27,9 @@ const (
 var (
 	sharedListed    = time.Date(2026, 10, 5, 9, 0, 0, 0, time.UTC)
 	dedicatedListed = sharedListed.Add(time.Minute)
+	// Written before the oldest dedicated base backup started and before the
+	// retention window began.
+	longAgo = time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 )
 
 func sharedCatalogue() Listing {
@@ -58,10 +61,10 @@ func TestEvaluateCoverageProvesTheDedicatedCatalogueCoversTheSharedOne(t *testin
 func TestEvaluateCoverageAcceptsObjectsTheDedicatedStorePrunedByRetention(t *testing.T) {
 	shared := sharedCatalogue()
 	shared.Objects = append(shared.Objects,
-		Object{Key: prunedInfo, Size: 1100, ETag: "p1", LastModified: beforeRun},
-		Object{Key: prunedData, Size: 80_000_000, ETag: "p2-5", LastModified: beforeRun},
-		Object{Key: prunedWAL, Size: 3900, ETag: "p3", LastModified: beforeRun},
-		Object{Key: prunedLabel, Size: 300, ETag: "p4", LastModified: beforeRun},
+		Object{Key: prunedInfo, Size: 1100, ETag: "p1", LastModified: longAgo},
+		Object{Key: prunedData, Size: 80_000_000, ETag: "p2-5", LastModified: longAgo},
+		Object{Key: prunedWAL, Size: 3900, ETag: "p3", LastModified: longAgo},
+		Object{Key: prunedLabel, Size: 300, ETag: "p4", LastModified: longAgo},
 	)
 	summary, err := EvaluateCoverage(shared, dedicatedCatalogue())
 	if err != nil {
@@ -86,13 +89,24 @@ func TestEvaluateCoverageRefusals(t *testing.T) {
 		}, ErrNotCovered},
 		{"a server directory the dedicated store holds nothing of", func(shared, _ *Listing) {
 			shared.Objects = append(shared.Objects,
-				Object{Key: oldServerInfo, Size: 900, ETag: "o1", LastModified: beforeRun},
-				Object{Key: oldServerData, Size: 900, ETag: "o2", LastModified: beforeRun},
-				Object{Key: oldServerWAL, Size: 900, ETag: "o3", LastModified: beforeRun})
+				Object{Key: oldServerInfo, Size: 900, ETag: "o1", LastModified: longAgo},
+				Object{Key: oldServerData, Size: 900, ETag: "o2", LastModified: longAgo},
+				Object{Key: oldServerWAL, Size: 900, ETag: "o3", LastModified: longAgo})
 		}, ErrNotCovered},
 		{"a timeline history file is never pruned", func(shared, _ *Listing) {
-			shared.Objects = append(shared.Objects, Object{Key: history, Size: 80, ETag: "h1", LastModified: beforeRun})
+			shared.Objects = append(shared.Objects, Object{Key: history, Size: 80, ETag: "h1", LastModified: longAgo})
 		}, ErrNotCovered},
+		{"WAL archived after the oldest dedicated backup started", func(shared, _ *Listing) {
+			shared.Objects = append(shared.Objects, Object{Key: prunedWAL, Size: 3900, ETag: "p3", LastModified: beforeRun})
+		}, ErrNotCovered},
+		{"an older backup still inside the retention window", func(shared, _ *Listing) {
+			shared.Objects = append(shared.Objects,
+				Object{Key: prunedInfo, Size: 1100, ETag: "p1", LastModified: time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)})
+		}, ErrNotCovered},
+		{"a non-empty object hashed as empty", func(shared, dedicated *Listing) {
+			shared.Objects[1].SHA256 = emptyDigest
+			dedicated.Objects[1].SHA256 = emptyDigest
+		}, ErrUnverifiable},
 		{"a different size", func(_, dedicated *Listing) {
 			dedicated.Objects[0].Size++
 		}, ErrPartialCopy},
