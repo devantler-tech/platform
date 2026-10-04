@@ -287,7 +287,10 @@ func run(args []string, out, stderr io.Writer) int {
 		fmt.Fprintf(out, "\n%d embedded-JSON violation(s). See scripts/validate-embedded-json/.\n", problems)
 		return 1
 	}
-	fmt.Fprintf(out, "✓ %d embedded JSON blob(s) parse cleanly.\n", checked)
+	if _, err := fmt.Fprintf(out, "✓ %d embedded JSON blob(s) parse cleanly.\n", checked); err != nil {
+		fmt.Fprintf(stderr, "validate-embedded-json: cannot write validation result: %v\n", err)
+		return 1
+	}
 	return 0
 }
 

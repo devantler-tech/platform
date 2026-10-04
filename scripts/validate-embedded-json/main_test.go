@@ -2,12 +2,30 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type failingResultWriter struct{}
+
+func (failingResultWriter) Write([]byte) (int, error) {
+	return 0, errors.New("fixture result output refused")
+}
+
+func TestSuccessfulValidationCannotIgnoreFailedResultOutput(t *testing.T) {
+	root := fixture(t, map[string]string{"config.yaml": "kind: ConfigMap\ndata:\n  config.json: {}\n"})
+	var stderr bytes.Buffer
+	if rc := run([]string{"-root", root}, failingResultWriter{}, &stderr); rc != 1 {
+		t.Fatalf("failed result output returned success: exit=%d stderr=%q", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "cannot write validation result") {
+		t.Fatalf("missing output failure diagnostic: %q", stderr.String())
+	}
+}
 
 func fixture(t *testing.T, files map[string]string) string {
 	t.Helper()

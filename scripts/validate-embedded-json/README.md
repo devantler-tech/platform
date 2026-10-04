@@ -28,3 +28,5 @@ For compatibility, complete unquoted JSON values `NaN`, `Infinity` and
 malformed identifiers are rejected. Errors are sorted by path and include the
 ConfigMap key line, key name and JSON line/column/character position. The native
 Go JSON parser supplies the error wording.
+An incomplete scan or a failed result write exits unsuccessfully; neither
+reports successful validation.
