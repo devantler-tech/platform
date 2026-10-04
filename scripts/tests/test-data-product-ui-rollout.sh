@@ -16,6 +16,24 @@ child="sha256:$(printf 'b%.0s' {1..64})"
 chart="sha256:$(printf 'c%.0s' {1..64})"
 apps="sha256:$(printf 'd%.0s' {1..64})"
 readonly index child chart apps
+real_jq="$(command -v jq)"
+readonly real_jq
+
+# Exercise setup consuming the total deadline separately from cleanup of a
+# plugin that really started. A one-second whole-script budget can expire in
+# preflight before the first kubectl call on a loaded CI runner.
+cat >"${scratch}/bin/jq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${MODE:-}" == hang || "${MODE:-}" == preflight-timeout ]]; then
+  if [[ ! -e "$FIXTURE/slow-preflight" ]]; then
+    : >"$FIXTURE/slow-preflight"
+    sleep 2
+  fi
+fi
+exec "$REAL_JQ" "$@"
+SH
+chmod +x "${scratch}/bin/jq"
 
 cat >"${scratch}/fixtures.jq" <<'JQ'
 def meta($name;$ns): {name:$name,namespace:$ns,uid:($name+"-uid"),generation:3};
@@ -187,7 +205,7 @@ run_case() {
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset ]]; then timeout_seconds=3; fi
-  PATH="${scratch}/bin:$PATH" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+  PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
@@ -209,6 +227,18 @@ run_case() {
     fi
     if [[ "$name" == changed-* ]]; then
       [[ -f "$fixture/urls" && $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: failure preceded the public checks"
+    fi
+  fi
+  if [[ "$mode" == preflight-timeout || "$mode" == hang ]]; then
+    jq -e '.failure == "deadline_exceeded"' "$fixture/stdout" >/dev/null || fail "$name: wrong timeout failure"
+    if [[ "$mode" == preflight-timeout ]]; then
+      [[ ! -e "$fixture/reads" && ! -e "$fixture/child.pid" ]] || fail "$name: plugin started after preflight deadline"
+    else
+      [[ -s "$fixture/child.pid" ]] || fail "$name: hanging plugin never started"
+      local child_pid
+      child_pid=$(cat "$fixture/child.pid")
+      [[ "$child_pid" =~ ^[1-9][0-9]*$ ]] || fail "$name: invalid child PID"
+      if kill -0 "$child_pid" 2>/dev/null; then fail "$name: deadline left a credential-plugin child running"; fi
     fi
   fi
   [[ $(cat "${scratch}/kubeconfig") == 'synthetic dedicated kubeconfig' ]] || fail "$name: kubeconfig changed"
@@ -369,7 +399,8 @@ run_case invalid-policy fail '' 3
 printf '%16385s' ' ' >"${scratch}/apps-verify.json"
 run_case oversized-policy fail '' 3
 cp "${scratch}/saved-policy.json" "${scratch}/apps-verify.json"
-run_case bounded-credential-plugin fail hang 1
-child_pid=$(cat "${scratch}/bounded-credential-plugin/child.pid")
-if kill -0 "$child_pid" 2>/dev/null; then fail 'deadline left a credential-plugin child running'; fi
+run_case bounded-preflight fail preflight-timeout 1
+# Two seconds of deliberate preflight plus a three-second startup/cleanup budget
+# reaches the hanging plugin; the child still sleeps far beyond the deadline.
+run_case bounded-credential-plugin fail hang 5
 printf 'PASS: rollout readback behavior and bounded, read-only request scopes\n'
