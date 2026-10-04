@@ -5,12 +5,20 @@ export const targets = [
   ...['bootstrap','infrastructure','apps'].map(x => [x,'kustomize.toolkit.fluxcd.io/v1','Kustomization','kustomizations.kustomize.toolkit.fluxcd.io','flux-system',x,null]),
   ['seed','external-secrets.io/v1alpha1','PushSecret','pushsecrets.external-secrets.io','flux-system','seed-wedding-db-backup-r2','infrastructure'],
   ['projection','external-secrets.io/v1','ExternalSecret','externalsecrets.external-secrets.io','wedding-app','wedding-db-backup-r2-dedicated','apps'],
-  ['active','barmancloud.cnpg.io/v1','ObjectStore','objectstores.barmancloud.cnpg.io','wedding-app','wedding-db','apps'],
   ['staged','barmancloud.cnpg.io/v1','ObjectStore','objectstores.barmancloud.cnpg.io','wedding-app','wedding-db-dedicated','apps'],
   ['cluster','postgresql.cnpg.io/v1','Cluster','clusters.postgresql.cnpg.io','wedding-app','wedding-db',null],
   ['bootstrapSecret','v1','Secret','secrets','flux-system','wedding-db-backup-r2-bootstrap','bootstrap'],
   ['projectedSecret','v1','Secret','secrets','wedding-app','wedding-db-backup-r2-dedicated',null],
 ].map(([id,apiVersion,kind,resource,namespace,name,owner]) => ({id,apiVersion,kind,resource,namespace,name,owner}));
+
+// Retired with Wedding's shared backup access (#3253). The tenant namespace must
+// not hold the platform-wide backup credential or a store on the shared bucket,
+// so the verifier refuses unless each of these is observed absent.
+export const retired = [
+  ['retiredStore','objectstores.barmancloud.cnpg.io','wedding-app','wedding-db'],
+  ['retiredProjection','externalsecrets.external-secrets.io','wedding-app','wedding-db-backup-r2'],
+  ['retiredSecret','secrets','wedding-app','wedding-db-backup-r2'],
+].map(([id,resource,namespace,name]) => ({id,resource,namespace,name}));
 
 const check = condition => { if (!condition) throw Error('refused'); };
 const keys = (obj, expected) => check(obj && typeof obj === 'object' && !Array.isArray(obj) && Object.keys(obj).sort().join(',') === [...expected].sort().join(','));
@@ -48,7 +56,7 @@ function pair(bootstrap, projected) {
   check(equal(source.access_key_id, result.access_key_id) && equal(source.secret_access_key, result.secret_access_key));
   return result;
 }
-/** Verify controller readiness, credential projection wiring and the dedicated archive reference before reading either Secret. */
+/** Verify controller readiness, credential projection wiring and the dedicated archive reference before reading either Secret. Retired shared access is checked right after, also before either Secret read. */
 function validateControllers(d, options) {
   ready(d.source, true);
   check(d.source.spec.url === 'oci://ghcr.io/devantler-tech/platform/manifests' && d.source.spec.ref?.tag === 'latest' && d.source.spec.verify?.provider === 'cosign');
@@ -73,9 +81,6 @@ function validateControllers(d, options) {
   check(!projection.dataFrom && !projection.target.template.templateFrom && !projection.target.template.stringData);
   check(projection.data?.length === 2);
   for (const [key, property] of [['ACCESS_KEY_ID','access_key_id'], ['SECRET_ACCESS_KEY','secret_access_key']]) check(projection.data.filter(x => x.secretKey === key && x.remoteRef?.key === 'apps/wedding-app/backup/r2' && x.remoteRef.property === property).length === 1);
-  const active = d.active.spec.configuration;
-  check(active?.destinationPath === 's3://platform-backups/cnpg/wedding-db');
-  for (const [key, value] of [['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']]) check(active.s3Credentials?.[key]?.name === 'wedding-db-backup-r2' && active.s3Credentials[key].key === value);
   const staged = d.staged.spec.configuration;
   check(staged?.destinationPath === 's3://wedding-db-backups/cnpg/wedding-db');
   for (const [key, value] of [['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']]) check(staged.s3Credentials?.[key]?.name === 'wedding-db-backup-r2-dedicated' && staged.s3Credentials[key].key === value);
@@ -93,6 +98,8 @@ async function snapshot(options, deps) {
     docs[target.id] = await deps.read(target); identities[target.id] = metadata(docs[target.id], target);
   }
   validateControllers(docs, options);
+  // An absence read returns only whether the object exists, never its content.
+  for (const target of retired) check(await deps.absent(target) === true);
   for (const target of targets.filter(t => t.kind === 'Secret')) {
     docs[target.id] = await deps.read(target); identities[target.id] = metadata(docs[target.id], target);
   }
