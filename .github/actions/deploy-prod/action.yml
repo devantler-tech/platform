@@ -188,6 +188,14 @@ runs:
       shell: bash
       run: bash scripts/guard-coroot-baseline-context.sh before-publish
 
+    - name: 🧭 Validate GitHub bootstrap isolation
+      shell: bash
+      run: |
+        bootstrap_render="$(mktemp)"
+        trap 'rm -f "$bootstrap_render"' EXIT
+        kubectl kustomize k8s/providers/hetzner/apps > "$bootstrap_render"
+        bash scripts/guard-github-bootstrap-isolation.sh "$bootstrap_render"
+
     - name: 💾 Validate live persistence retirement safety
       # A commit parent is not evidence that its protection reached production:
       # two direct pushes can be waiting behind one manual dispatch. Compare the
