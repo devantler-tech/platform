@@ -1,0 +1,65 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-arc-analysis-runner
+  namespace: arc-ksail-analysis
+spec:
+  endpointSelector:
+    matchLabels:
+      platform.devantler.tech/arc-role: runner
+  ingress:
+    - {}
+  egress:
+    # Only dependency/tool downloads and the Actions control plane. No cluster
+    # API, private network, cloud metadata or blanket world egress is allowed.
+    - toFQDNs:
+        - matchName: github.com
+        - matchName: api.github.com
+        - matchName: codeload.github.com
+        - matchName: raw.githubusercontent.com
+        - matchName: objects.githubusercontent.com
+        - matchName: release-assets.githubusercontent.com
+        - matchName: ghcr.io
+        - matchName: pkg-containers.githubusercontent.com
+        - matchPattern: "*.actions.githubusercontent.com"
+        - matchPattern: "*.blob.core.windows.net"
+        - matchName: proxy.golang.org
+        - matchName: sum.golang.org
+        - matchName: storage.googleapis.com
+        - matchName: go.dev
+        - matchName: dl.google.com
+        - matchName: registry.npmjs.org
+        - matchName: nodejs.org
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: UDP
+            - port: "53"
+              protocol: TCP
+          rules:
+            dns:
+              - matchName: github.com
+              - matchName: api.github.com
+              - matchName: codeload.github.com
+              - matchName: raw.githubusercontent.com
+              - matchName: objects.githubusercontent.com
+              - matchName: release-assets.githubusercontent.com
+              - matchName: ghcr.io
+              - matchName: pkg-containers.githubusercontent.com
+              - matchPattern: "*.actions.githubusercontent.com"
+              - matchPattern: "*.blob.core.windows.net"
+              - matchName: proxy.golang.org
+              - matchName: sum.golang.org
+              - matchName: storage.googleapis.com
+              - matchName: go.dev
+              - matchName: dl.google.com
+              - matchName: registry.npmjs.org
+              - matchName: nodejs.org
