@@ -29,10 +29,6 @@ export function fixtures() {
     target: { name: 'wedding-db-backup-r2-dedicated', creationPolicy: 'Owner', template: { data: { ACCESS_KEY_ID: '{{ .ACCESS_KEY_ID }}', SECRET_ACCESS_KEY: '{{ .SECRET_ACCESS_KEY }}', REGION: 'auto' } } },
     data: [['ACCESS_KEY_ID','access_key_id'], ['SECRET_ACCESS_KEY','secret_access_key']].map(([secretKey, property]) => ({ secretKey, remoteRef: { key: 'apps/wedding-app/backup/r2', property } }))
   };
-  docs.active.spec.configuration = {
-    destinationPath: 's3://platform-backups/cnpg/wedding-db', endpointURL: opts.endpoint,
-    s3Credentials: Object.fromEntries([['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']].map(([key, value]) => [key, { name: 'wedding-db-backup-r2', key: value }]))
-  };
   docs.staged.spec.configuration = {
     destinationPath: 's3://wedding-db-backups/cnpg/wedding-db', endpointURL: opts.endpoint,
     s3Credentials: Object.fromEntries([['accessKeyId','ACCESS_KEY_ID'],['secretAccessKey','SECRET_ACCESS_KEY'],['region','REGION']].map(([key, value]) => [key, { name: 'wedding-db-backup-r2-dedicated', key: value }]))
@@ -49,14 +45,16 @@ export function fixtures() {
 }
 export function harness(change = () => {}, invocationPatch = {}) {
   const docs = fixtures(); change(docs);
-  const reads = [], calls = [], receipts = [], bindings = [];
+  const reads = [], calls = [], receipts = [], bindings = [], absences = [];
   const deps = {
     invocation: { ...invocation, ...invocationPatch },
     read: async target => { reads.push(target.id); return structuredClone(docs[target.id]); },
+    // A retired object is present only when a test adds it to docs under its id.
+    absent: async target => { absences.push(target.id); return docs[target.id] === undefined; },
     decrypt: async () => { calls.push('decrypt'); return {access_key_id:id,secret_access_key:secret}; },
     sourceUnchanged: async binding => { bindings.push(structuredClone(binding)); return true; },
     probe: async () => { throw Error('S3 execution is forbidden'); },
     record: async () => { throw Error('Private identity recording is forbidden'); }
   };
-  return { docs, reads, calls, receipts, bindings, deps };
+  return { docs, reads, calls, receipts, bindings, absences, deps };
 }
