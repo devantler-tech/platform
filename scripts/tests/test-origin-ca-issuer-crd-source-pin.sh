@@ -332,6 +332,9 @@ unreadable_record record-empty "empty record" ''
 unreadable_record record-branch "record names a branch" $'trunk\n'
 unreadable_record record-short "record holds an abbreviated commit" "${pinned:0:39}"$'\n'
 unreadable_record record-two "record holds two commits" "$pinned"$'\n'"$pinned"$'\n'
+# Command substitution strips every trailing newline, so these two read back as a bare commit.
+unreadable_record record-blank-line "record holds a commit and a blank line" "$pinned"$'\n\n'
+unreadable_record record-unterminated "record holds a commit with no line ending" "$pinned"
 
 echo "== the pin must be an immutable commit =="
 tree="$(make_tree pin-branch)" || die "cannot build the pin-branch scratch tree"

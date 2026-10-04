@@ -240,12 +240,14 @@ require_origin_ca_issuer_commit_pin() {
 # bytes did not move. Refuse that state: the recorded commit only changes when --render-remotes
 # re-fetches the CRDs at the pinned commit, so a Renovate digest update stays red until it has. A
 # record that is missing or is not exactly one commit is exit 2: it cannot be compared, and must
-# never read as a match.
+# never read as a match. "Exactly" is checked against the file's bytes, because command substitution
+# drops every trailing newline and would accept a commit followed by blank lines.
 validate_origin_ca_issuer_source_commit() {
   local recorded
   local record="${origin_ca_issuer_source_commit_file#"${repo_root}/"}"
   if ! recorded="$(cat "${origin_ca_issuer_source_commit_file}" 2>/dev/null)" ||
-    ! [[ "${recorded}" =~ ${full_commit_sha} ]]; then
+    ! [[ "${recorded}" =~ ${full_commit_sha} ]] ||
+    ! printf '%s\n' "${recorded}" | cmp -s - "${origin_ca_issuer_source_commit_file}"; then
     printf 'could not read exactly one 40-character commit SHA from %s\n' "${record}" >&2
     printf 'Run scripts/update-vendored-operators.sh --render-remotes to record the commit the origin-ca-issuer CRDs are fetched at.\n' >&2
     exit 2
