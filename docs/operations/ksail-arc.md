@@ -14,6 +14,20 @@ zero idle runners and a maximum of one job runner. There is no container mode,
 Docker socket, host volume, privileged container or runner API token. Container
 jobs and Docker actions are deliberately unsupported.
 
+The analysis toolchain source lives in `images/ksail-analysis-runner`. Its
+digest-pinned upstream runner, frozen Ubuntu package snapshot and checksum-checked
+Go and Node archives supply the desktop compiler and headers without job-time
+root access. The publisher builds and exercises the image on pull requests, then
+publishes, attests and signs only on a push to main. Both Kyverno and Talos accept
+that workflow identity only for the exact analysis image repository. The staged
+pool still requires a verified published digest before activation.
+
+The smoke test starts the copied runner and compiles a Go program against GTK
+and WebKit as UID/GID 1001 with a read-only root filesystem and no capabilities.
+The runner home and temporary files use disposable writable storage. Bootstrap
+copies use `cp -R`; preserving the root directory's ownership and timestamps
+would fail on a group-writable Kubernetes volume.
+
 ## Activation gates
 
 Activation requires a separate reviewed change and all of these proofs:
