@@ -21,8 +21,8 @@ spec:
   values:
     image:
       repository: ghcr.io/devantler-tech/data-product-controller
-      tag: 1.18.1
-      digest: sha256:dd6e61df99c1e1032f4d0c9a6d54506f1a60e69921d9e4abe0e956979fda43f3
+      tag: 2.4.3
+      digest: sha256:916b738c325ea597b5e80b8bcfb8cda973bd620c7ac33f301b6d99f5438d2f65
       pullPolicy: IfNotPresent
     uiContract:
       enabled: true

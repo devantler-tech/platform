@@ -367,12 +367,13 @@ Choose the credential by bucket before editing it:
   `seed-wedding-db-backup-r2` PushSecret.
 
 They are independent identities. Wedding archives through its dedicated token;
-Umami, Coroot, and Velero use the shared platform token. Wedding retains shared
-recovery access until a dedicated-only isolated restore and the
-`Verify Wedding Backup Denial` access-denial proof permit its retirement.
-Rotating the dedicated Wedding token does not affect the shared consumers. A
-shared-token rotation must preserve that recovery access as well as verify the
-active shared consumers before revocation.
+Umami, Coroot, and Velero use the shared platform token. Wedding's access to
+the shared token is retired (#3253): a dedicated-only isolated restore and the
+`Verify Wedding Backup Denial` access-denial proof both passed first, and the
+`wedding-app` namespace now holds only the dedicated credential.
+Rotating the dedicated Wedding token does not affect the shared consumers, and
+a shared-token rotation does not affect Wedding; verify the active shared
+consumers before revocation.
 
 ```bash
 set -euo pipefail
@@ -445,28 +446,22 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
 #    catalogue for that completed backup and advancing WAL. A completed CNPG
 #    Backup alone is not proof that the bucket contains a usable catalogue.
 #
-#    During archive cutover, also run Mirror Wedding Backup Catalogue in
-#    catch-up mode with the recorded switch time and require CAUGHT UP.
-#    Require destinationNewestBaseBackup to equal the active server name
-#    followed by / and the fresh Backup receipt's backup ID. This excludes
-#    info-only and empty archives as well as backups from older servers.
-#    The shared catalogue must be quiescent, and the dedicated archive must
-#    continue from its last WAL segment without a gap (see velero-cnpg.md).
-#    Retain shared recovery access until the dedicated-only restore and
-#    denial gates complete; those gates do not retire other platform users.
-#    Do not revoke the shared credential as part of archive cutover.
+#    Wedding's shared access is retired (#3253), so there is no shared
+#    catalogue to mirror or catch up. Do not revoke the shared credential as
+#    part of a Wedding rotation: the other platform consumers still use it.
 
-# 7. For wedding-db-backups, dispatch Verify Wedding Backup Denial on main
-#    with confirm=verify-wedding-backup-denial. Bind its run to the main SHA
-#    as above and require DENIAL OBSERVED: the new token reaches its own
-#    catalogue, and platform-backups refuses its list, read and write with
-#    AccessDenied. Any other result means the new token is scoped wrongly or
-#    the refusal is unproven, so keep the old token active and mint a token
-#    scoped only to wedding-db-backups.
+# 7. For wedding-db-backups, confirm in Cloudflare that the new token is
+#    scoped to Object Read & Write on wedding-db-backups only. Verify Wedding
+#    Backup Denial must then succeed on main with
+#    confirm=verify-wedding-backup-denial. It runs beside the existing shared
+#    platform credential using a temporary dedicated-key copy, and removes
+#    that copy with a UID precondition. Until the workflow succeeds, the new
+#    token's refusal by platform-backups is unproven. Never project the shared
+#    credential back into the tenant namespace to run the proof.
 
 # For a platform-backups credential rotation, observe a new successful Velero
-# backup plus new backups and WAL archives from Umami and Coroot, and verify
-# Wedding's retained shared recovery access before revocation.
+# backup plus new backups and WAL archives from Umami and Coroot before
+# revocation. Wedding no longer uses that credential.
 kubectl -n velero get backups.velero.io -w
 
 # 8. Revoke the old token only after the checks for its active bucket succeed.

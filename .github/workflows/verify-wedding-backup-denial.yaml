@@ -1,8 +1,8 @@
 name: Verify Wedding Backup Denial
 
 # Prove that the dedicated Wedding backup credential is refused by the shared
-# backup destination (#3253). Shared recovery access is retired only after a
-# successful run of this proof.
+# backup destination after cutover or credential rotation. The proof uses the
+# platform's shared credential without restoring shared access to the tenant.
 #
 # DORMANT. There is no schedule and no pull_request trigger, and the operator
 # must type an exact confirmation phrase, so an accidental dispatch does nothing.

@@ -10,7 +10,80 @@ files stay byte-for-byte unchanged. An explicit ID prevents KSail from passing
 extensions to config generation; a whitespace-only ID does not. Auxiliary documents keep
 their values and order; this does not migrate dedicated Talos install documents.
 
-The audited implementations are KSail **7.193.6**, commit
+## Which KSail releases the mirror is valid for
+
+The mirror is valid for a KSail release when the parts of the KSail source the
+fold depends on are byte-identical to a set that was audited against it. Those
+fold inputs are:
+
+| Input | Why it matters |
+| --- | --- |
+| `pkg/fsutil/configmanager/` | Holds the fold itself (`talos/configs.go`) and its distribution caller (`ksail/distribution.go`). |
+| `pkg/fsutil/generator/talos/` | Generates the Talos patches KSail injects into the configuration the fold then reads. |
+| `pkg/apis/` | Defines the cluster configuration the caller reads the extensions and schematic ID from. |
+| `charts/` | Carries the generated `Cluster` schema published from those types; earlier audits compared it, so it stays part of the set. |
+| `go.mod`, `go.sum` | Pin the Talos machinery that encodes the machine configuration. |
+
+`--check-pins` reads all explicit KSail pins in CI, CD and the production
+deployment action. They must be explicit release versions and must all agree.
+It then fetches that release's tag from the public KSail repository, reads the
+git object ID of each input, and passes only when all six equal one set
+recorded in [`audited_inputs.go`](audited_inputs.go). A git tree ID covers every
+file below it, so equal IDs mean equal content.
+
+A KSail bump that leaves the inputs unchanged therefore passes with no edit
+here, whatever the version is called. This includes releases between two
+audited ones: 7.194.6 has the inputs audited at 7.194.7, so it now passes.
+
+The check fails, and names what it could not accept, when:
+
+- any input differs from every audited set (the message lists the changed
+  inputs against the nearest set);
+- the tag cannot be fetched, an input is absent, or an input is not the kind of
+  object expected. A failed or partial read never passes;
+- the pins are missing, malformed, not explicit versions, or disagree.
+
+The check runs in the unconditional changes job and needs network access to
+`github.com`; each fetch has a
+one-minute limit and a failed one is retried twice before the check fails. The fold command itself (three arguments) stays offline: it
+checks that the pins agree and relies on `--check-pins` for the source audit.
+
+### When the inputs change: what an audit must cover
+
+A failing check is a request for a source audit, not for a new entry copied from
+the error message. Before adding a set to `audited_inputs.go`:
+
+1. Diff each changed input between the last audited release and the new one
+   (`git diff v<old> v<new> -- <input>` in a KSail checkout).
+2. In `pkg/fsutil/configmanager/talos/configs.go`, confirm `applySchematic`,
+   `schematicKernelArgs` and `reconcileFoldedKernelArgs` still fold as
+   described at the top of this file: same trigger (normalized extensions and
+   arguments both nonempty), same result on both roles. If they do not, change
+   `fold` in `main.go` and its tests in the same pull request.
+3. In `pkg/fsutil/configmanager/ksail/distribution.go`, confirm an explicit
+   nonblank schematic ID still keeps extensions away from config generation.
+4. For a `pkg/fsutil/generator/talos/` change, confirm no generated patch sets
+   `machine.install.extraKernelArgs` or `grubUseUKICmdline`, which would change
+   when the fold triggers, and review what the changed patch does to this cluster.
+5. For a `pkg/apis/` or `charts/` change, confirm the `spec.cluster.talos`
+   fields this helper reads (`extensions`, `schematicId`) keep their names,
+   types and defaults.
+6. For a `go.mod` or `go.sum` change, confirm whether the Talos machinery
+   version moved, and if so that it still encodes the install section the same
+   way (run `scripts/tests/test-talos-render-kernel-args.sh`).
+7. Record the new set with the release it was audited at, and add a paragraph
+   to the history below saying what changed and why the mirror still holds.
+
+Read the object IDs for the new set from the tag itself:
+
+```bash
+git fetch --depth=1 --filter=blob:none https://github.com/devantler-tech/ksail.git refs/tags/v<version>
+git ls-tree FETCH_HEAD -- pkg/fsutil/configmanager pkg/fsutil/generator/talos pkg/apis charts go.mod go.sum
+```
+
+## Audit history
+
+The first audited implementations are KSail **7.193.6**, commit
 `a0622ef7d0f3072823832248a4f79612ed3a0e69`, **7.193.8**, commit
 `00e671710f10bb251d54ecd71fac3d36634e66be`, **7.194.0**, commit
 `bbe44951bfd0adcc570080c48007866460c709ca`, **7.194.3**, commit
@@ -38,7 +111,7 @@ an upgrade or snapshot uses it. `schematicKernelArgs`, `reconcileFoldedKernelArg
 `resolveInstallerVersion` and `applyInstallerImage` are byte-identical to 7.194.5, as
 are the distribution caller, the cluster API tree, `go.mod` and `go.sum`; 7.194.7
 itself changes only Hetzner bootstrap code. The intermediate 7.194.6 was never
-deployed and stays refused.
+deployed; it now passes because its inputs equal the set audited at 7.194.7.
 
 **7.194.8**, commit `82a359d423a2c1f13a13560b6af0aed9031354c8`, is audited as the
 range 7.194.7 → 7.194.8. The configuration-manager tree
@@ -60,7 +133,11 @@ refreshed, and the Talos ingress-firewall generator adds the default pod CIDR
 sets. That last change does reach this cluster, because KSail injects those
 rules at runtime when its own generated patch files are absent, as they are here. It
 widens nothing in practice: `talos/*/allow-internal-nodepod-ingress.yaml` already
-admits the pod CIDR to the kubelet port, and the rule count is unchanged.
+admits the pod CIDR to the kubelet port, and the rule count is unchanged. This is the
+only audited release that changes `pkg/fsutil/generator/talos/`
+(`8959ca398398f7bde09c312c362de7fb80936073` → `25c9c416e06b77937e68e71a213c1b2e9ed61205`).
+No patch it generates sets `machine.install.extraKernelArgs` or
+`grubUseUKICmdline`, so the fold triggers exactly as before.
 
 **7.194.10**, commit `40c72e342ec90a5ea5cb50b69be34a5c2e897b90`, is audited as the
 range 7.194.9 → 7.194.10. The configuration-manager tree
@@ -80,7 +157,18 @@ configuration names Kyverno as the policy engine, as both `ksail.yaml` and
 `ksail.prod.yaml` do. So that an explicit opt-out reaches the command, KSail's
 generated assistant tool calls also forward a boolean flag set to false instead
 of dropping it. That changes what this repository's CI and deploy validation
-steps check, not what KSail writes to a cluster. See
+steps check, not what KSail writes to a cluster.
+
+**7.195.1**, commit `74fab4c4d8b7a8348a0542988a83aeeb06bab5a6`, is audited as the
+range 7.195.0 → 7.195.1. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, the chart
+tree, `go.mod` and `go.sum` are byte-identical to 7.195.0, so the mirrored fold
+is unchanged. Its two commits reword what the `Unmanaged` marker in
+`ksail cluster list` means, and fix the kubeadm bootstrap on Hetzner: IPv4
+forwarding is enabled before kubeadm runs, and the bring-up stops waiting once
+cloud-init reports a failure. The Hetzner change lives in the bring-up base that
+only the K3s and kubeadm Hetzner provisioners use; the Talos provisioner this
+cluster runs on does not. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
@@ -94,12 +182,6 @@ go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml w
 go test ./scripts/reconcile-talos-kernel-args
 bash scripts/tests/test-talos-render-kernel-args.sh
 ```
-
-The version check reads all explicit KSail pins in CI, CD and the production
-deployment action. All pins must agree on one of the six audited releases. A
-missing, malformed, divergent or unaudited pin fails the unconditional changes
-job. Another version requires reviewing the owned KSail source and
-updating this contract, rather than silently assuming the fold is unchanged.
 
 The real offline test executes the actual CI render step with the pinned
 `talosctl`: both production roles must lose their arguments and use the UKI

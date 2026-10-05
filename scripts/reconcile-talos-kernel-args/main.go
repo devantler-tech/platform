@@ -1,5 +1,7 @@
-// Mirror the post-installer kernel-argument fold audited in KSail v7.193.6, v7.193.8, v7.194.0, v7.194.3, v7.194.4, v7.194.5, v7.194.7, v7.194.8, v7.194.9, v7.194.10 and v7.195.0,
-// configs.go applySchematic/schematicKernelArgs/reconcileFoldedKernelArgs.
+// Mirror the post-installer kernel-argument fold of KSail,
+// configs.go applySchematic/schematicKernelArgs/reconcileFoldedKernelArgs. The
+// mirror is valid for every KSail release whose fold inputs match a set
+// recorded in audited_inputs.go; see README.md.
 package main
 
 import (
@@ -11,8 +13,6 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
-
-const reviewedKSailVersions = "7.193.6, 7.193.8, 7.194.0, 7.194.3, 7.194.4, 7.194.5, 7.194.7, 7.194.8, 7.194.9, 7.194.10 and 7.195.0"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -33,11 +33,20 @@ func run(args []string) error {
 		}
 		pins = append(pins, data)
 	}
-	if err := verifyPins(pins...); err != nil {
+	version, err := verifyPins(pins...)
+	if err != nil {
 		return err
 	}
 	if len(args) == 1 {
-		fmt.Printf("kernel-argument fold matches audited KSail pins (%s)\n", reviewedKSailVersions)
+		// Only this mode reads the KSail source. The fold mode below stays
+		// offline and relies on this unconditional check having passed.
+		audit, err := verifyFoldInputs(version, func(version string) (map[string]string, error) {
+			return resolveFoldInputs(ksailRepository, version)
+		})
+		if err != nil {
+			return err
+		}
+		fmt.Printf("KSail %s fold inputs match the set audited at %s\n", version, audit)
 		return nil
 	}
 	if args[1] == args[2] {
@@ -271,15 +280,18 @@ func fold(config, cp, worker []byte) ([]byte, []byte, error) {
 	return outputs[0], outputs[1], nil
 }
 
-func verifyPins(inputs ...[]byte) error {
+// verifyPins returns the one KSail release that CI, CD and the production
+// deployment action all pin. It reads no KSail source: whether the mirrored
+// fold is valid for that release is decided by verifyFoldInputs.
+func verifyPins(inputs ...[]byte) (string, error) {
 	if len(inputs) == 0 {
-		return fmt.Errorf("deployment pin evidence absent")
+		return "", fmt.Errorf("deployment pin evidence absent")
 	}
 	selectedVersion := ""
 	for _, data := range inputs {
 		docs, err := documents(data)
 		if err != nil || len(docs) != 1 {
-			return fmt.Errorf("invalid deployment pin document: %v", err)
+			return "", fmt.Errorf("invalid deployment pin document: %v", err)
 		}
 		count := 0
 		var visit func(*yaml.Node) error
@@ -290,8 +302,8 @@ func verifyPins(inputs ...[]byte) error {
 						continue
 					}
 					v := n.Content[i+1]
-					if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || (v.Value != "7.193.6" && v.Value != "7.193.8" && v.Value != "7.194.0" && v.Value != "7.194.3" && v.Value != "7.194.4" && v.Value != "7.194.5" && v.Value != "7.194.7" && v.Value != "7.194.8" && v.Value != "7.194.9" && v.Value != "7.194.10" && v.Value != "7.195.0") {
-						return fmt.Errorf("KSail fold audited at %s; deployment pin %q requires a new source audit", reviewedKSailVersions, v.Value)
+					if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || !releaseVersion.MatchString(v.Value) {
+						return fmt.Errorf("KSail deployment pin %q is not an explicit release version", v.Value)
 					}
 					if selectedVersion != "" && v.Value != selectedVersion {
 						return fmt.Errorf("divergent KSail deployment pins %q and %q", selectedVersion, v.Value)
@@ -308,11 +320,11 @@ func verifyPins(inputs ...[]byte) error {
 			return nil
 		}
 		if err := visit(docs[0]); err != nil {
-			return err
+			return "", err
 		}
 		if count == 0 {
-			return fmt.Errorf("missing explicit KSAIL_VERSION deployment pin")
+			return "", fmt.Errorf("missing explicit KSAIL_VERSION deployment pin")
 		}
 	}
-	return nil
+	return selectedVersion, nil
 }

@@ -8,16 +8,17 @@ import {fixture} from './runtime-fixture.mjs';
 const root=path.resolve(import.meta.dirname,'../..');
 const yaml=p=>JSON.parse(execFileSync('yq',['-o=json','.',path.join(root,p)],{encoding:'utf8'}));
 
-test('production patches select the dedicated archive without replacing the database or its server identity',async t=>{
+for(const store of ['wedding-db-dedicated','tenant-selected-archive'])test('production patches preserve the tenant-selected store and database protections: '+store,async t=>{
  const overlay=yaml('k8s/providers/hetzner/apps/wedding-app/patches/flux-kustomization-protect-wedding-db.yaml');
  const dir=await mkdtemp(path.join(tmpdir(),'wedding-archive-render-'));
  t.after(()=>rm(dir,{recursive:true,force:true}));
- const cluster={apiVersion:'postgresql.cnpg.io/v1',kind:'Cluster',metadata:{name:'wedding-db',namespace:'wedding-app'},spec:{instances:3,plugins:[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:'wedding-db'}}]}};
+ const cluster={apiVersion:'postgresql.cnpg.io/v1',kind:'Cluster',metadata:{name:'wedding-db',namespace:'wedding-app'},spec:{instances:3,plugins:[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:store}}]}};
  await writeFile(path.join(dir,'cluster.yaml'),JSON.stringify(cluster));
  await writeFile(path.join(dir,'kustomization.yaml'),JSON.stringify({apiVersion:'kustomize.config.k8s.io/v1beta1',kind:'Kustomization',resources:['cluster.yaml'],patches:overlay.spec.patches}));
  const rendered=JSON.parse(execFileSync('yq',['-o=json','.'],{input:execFileSync('kubectl',['kustomize',dir],{encoding:'utf8'}),encoding:'utf8'}));
- assert.deepEqual(rendered.spec.plugins,[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:'wedding-db-dedicated',serverName:'wedding-db-20260909'}}]);
+ assert.deepEqual(rendered.spec.plugins,[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:store,serverName:'wedding-db-20260909'}}]);
  assert.equal(rendered.spec.instances,3);
+ assert.deepEqual(rendered.spec.postgresql.synchronous,{method:'any',number:1,dataDurability:'preferred'});
  assert.equal(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/prune'],'disabled');
  assert.notEqual(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/force'],'enabled');
  // Flux has no per-resource force opt-out: the owning layer must disable it.
@@ -51,13 +52,13 @@ for(const flag of [undefined,false])test('actual proposed omitted/false step doe
  const {child,reads}=await executeStep(t,flag);assert.equal(child.status,0);assert.equal(child.stderr,'');assert.equal(reads,'');assert.equal(child.stdout,'');
 });
 test('actual proposed true step uses the publisher digest and succeeds after wait',async t=>{
- const {child,reads}=await executeStep(t,true);assert.equal(child.status,0);assert.equal(child.stderr,'');assert.equal(JSON.parse(child.stdout).projectionEqual,true);assert.equal(reads.trim().split('\n').length,22);
+ const {child,reads}=await executeStep(t,true);assert.equal(child.status,0);assert.equal(child.stderr,'');assert.equal(JSON.parse(child.stdout).projectionEqual,true);assert.equal(reads.trim().split('\n').length,20);
 });
 for(const state of [{wait:'failure'},{publish:'failure'}])test('actual proposed true step refuses failed dependency before API reads '+JSON.stringify(state),async t=>{
  const {child,reads}=await executeStep(t,true,state);assert.equal(child.status,2);assert.equal(child.stderr,'');assert.deepEqual(JSON.parse(child.stdout),{verified:false});assert.equal(reads,'');
 });
 
-test('dedicated ObjectStore and independent credentials retain the shared store for recovery',()=>{
+test('dedicated ObjectStore and credential are the only Wedding backup wiring',async()=>{
  const prodBootstrap=yaml('k8s/clusters/prod/bootstrap/secret-wedding-db-backup-r2.enc.yaml');
  assert.equal(prodBootstrap.metadata.name,'wedding-db-backup-r2-bootstrap');
  assert.deepEqual(Object.keys(prodBootstrap.stringData).sort(),['access_key_id','secret_access_key']);
@@ -83,14 +84,6 @@ test('dedicated ObjectStore and independent credentials retain the shared store 
   ['ACCESS_KEY_ID','apps/wedding-app/backup/r2','access_key_id'],
   ['SECRET_ACCESS_KEY','apps/wedding-app/backup/r2','secret_access_key'],
  ]);
- const active=yaml('k8s/bases/apps/wedding-app/object-store.yaml');
- assert.equal(active.metadata.name,'wedding-db');
- assert.equal(active.spec.configuration.destinationPath,'s3://${r2_bucket}/cnpg/wedding-db');
- assert.deepEqual([
-  active.spec.configuration.s3Credentials.accessKeyId.name,
-  active.spec.configuration.s3Credentials.secretAccessKey.name,
-  active.spec.configuration.s3Credentials.region.name,
- ],['wedding-db-backup-r2','wedding-db-backup-r2','wedding-db-backup-r2']);
  const store=yaml('k8s/bases/apps/wedding-app/object-store-dedicated.yaml');
  assert.equal(store.metadata.name,'wedding-db-dedicated');
  assert.equal(store.spec.configuration.destinationPath,'s3://wedding-db-backups/cnpg/wedding-db');
@@ -102,8 +95,27 @@ test('dedicated ObjectStore and independent credentials retain the shared store 
  const resources=yaml('k8s/bases/apps/wedding-app/kustomization.yaml').resources;
   assert.ok(resources.includes('external-secret-db-backup-dedicated.yaml'));
  assert.ok(resources.includes('object-store-dedicated.yaml'));
- assert.ok(resources.includes('object-store.yaml'),'the active shared ObjectStore stays present during staging');
-  assert.ok(resources.includes('external-secret-db-backup.yaml'),'shared projection remains available for rollback until restore acceptance');
+ // Shared access is retired (#3253): the tenant namespace must not hold the
+ // platform-wide backup credential, nor a store that reads the shared bucket.
+ for(const retired of ['object-store.yaml','external-secret-db-backup.yaml']){
+  assert.ok(!resources.includes(retired),retired+' must stay retired');
+  await assert.rejects(readFile(path.join(root,'k8s/bases/apps/wedding-app',retired)),{code:'ENOENT'});
+ }
+ for(const file of resources.filter(name=>name.endsWith('.yaml'))){
+  const text=await readFile(path.join(root,'k8s/bases/apps/wedding-app',file),'utf8');
+  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}/,file+' must not reach the shared backup credential or bucket');
+ }
+ // The same holds for what production actually renders, whichever file or
+ // overlay patch a regression would arrive through.
+ const rendered=execFileSync('yq',['-o=json','-I=0','.'],{input:execFileSync('kubectl',['kustomize',path.join(root,'k8s/providers/hetzner/apps')],{encoding:'utf8',maxBuffer:64*1024*1024}),encoding:'utf8',maxBuffer:64*1024*1024}).split('\n').filter(Boolean).map(line=>JSON.parse(line));
+ const wedding=rendered.filter(doc=>doc.metadata?.namespace==='wedding-app');
+ assert.ok(wedding.some(doc=>doc.kind==='ObjectStore'&&doc.metadata.name==='wedding-db-dedicated'),'the render must contain the dedicated store, or nothing was examined');
+ assert.ok(rendered.some(doc=>doc.metadata?.namespace!=='wedding-app'&&JSON.stringify(doc).includes('infrastructure/backup/r2')),'the render must contain a shared consumer, or the pattern below matches nothing');
+ for(const doc of wedding){
+  const label=doc.kind+'/'+doc.metadata.name,text=JSON.stringify(doc);
+  assert.ok(!(doc.kind==='ObjectStore'&&doc.metadata.name!=='wedding-db-dedicated'),label+' is not the dedicated store');
+  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}|platform-backups|wedding-db-backup-r2(?!-dedicated)/,label+' reaches the shared backup credential or bucket');
+ }
 });
 
 test('thin local cluster does not advertise an unavailable Wedding backup path',async()=>{

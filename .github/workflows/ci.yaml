@@ -35,6 +35,11 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 💾 Validate storage audit regressions
+        run: |
+          go test ./scripts/audit-storage-retention
+          shellcheck scripts/audit-storage-retention/capture.sh
+
       - name: 💾 Validate Flux replacement safety
         run: |
           go test ./scripts/validate-flux-force-safety
@@ -46,6 +51,11 @@ jobs:
           shellcheck scripts/guard-github-bootstrap-isolation.sh scripts/tests/test-github-bootstrap-isolation.sh
           bash scripts/tests/test-github-bootstrap-isolation.sh
           bash scripts/tests/test-crossplane-sync-alerter.sh
+
+      - name: 🚩 Validate runtime flag definitions
+        run: |
+          go test ./scripts/validate-feature-flags
+          go run ./scripts/validate-feature-flags
 
       - name: 🛡️ Validate preserved policy failure actions
         run: |
@@ -120,13 +130,8 @@ jobs:
           go test ./scripts/reconcile-talos-kernel-args
           go run ./scripts/reconcile-talos-kernel-args --check-pins
 
-      # The Wedding backup catalogue must be proven complete before the database
-      # switches to its dedicated bucket, and continuous after it. The evaluator's
-      # refusals (credential reuse, wrong destination, partial copy, source changed
-      # mid-run, and for the catch-up a stale destination object or a WAL gap
-      # across the switch) are the only thing standing between a bad copy and a
-      # cutover with lost history.
-      - name: 💒 Validate Wedding backup mirror evaluator
+      # The read-only shared-catalogue coverage proof still uses this evaluator.
+      - name: 💒 Validate Wedding backup catalogue evaluator
         run: go test ./scripts/mirror-wedding-backup-catalogue
 
       - name: 💒 Validate isolated Wedding bootstrap proof
@@ -138,27 +143,30 @@ jobs:
       - name: 🔎 Validate finite runtime-log evidence
         run: go test ./scripts/analyze-cri-logs
 
-      # The copy that feeds the evaluator: each mode must refuse a Cluster that
-      # archives through the wrong store or a drifted store, never reuse one
-      # credential, and hand the evaluator listings it actually accepts. The
-      # converging paths run the real pod script into the real evaluator, so the
-      # two cannot drift apart on the listing format.
-      - name: 💒 Validate Wedding backup mirror copy
-        run: |
-          shellcheck scripts/mirror-wedding-backup-catalogue.sh scripts/mirror-wedding-backup-catalogue-pod.sh scripts/tests/test-mirror-wedding-backup-catalogue.sh scripts/tests/test-mirror-wedding-backup-runtime.sh
-          bash scripts/tests/test-mirror-wedding-backup-catalogue.sh
-          bash scripts/tests/test-mirror-wedding-backup-runtime.sh
+      - name: 🛑 Validate inactive ARC staging boundaries
+        run: go test ./scripts/tests/arc-staging
 
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
       # keep an accepted access, a wrong bucket or a network failure from passing
-      # as isolation. The runtime test above also runs them in the pinned images and
+      # as isolation. The runtime test also runs them in the pinned images and
       # feeds the pinned mc's own output for a refused request through the proof.
       - name: 💒 Validate Wedding backup denial proof
         run: |
           shellcheck scripts/verify-wedding-backup-denial.sh scripts/verify-wedding-backup-denial-pod.sh scripts/tests/test-verify-wedding-backup-denial.sh
           bash scripts/tests/test-verify-wedding-backup-denial.sh
+          shellcheck scripts/tests/test-wedding-backup-denial-runtime.sh
+          bash scripts/tests/test-wedding-backup-denial-runtime.sh
+
+      # The stale shared copy of the Wedding catalogue is removed on this proof's
+      # word, and that cannot be undone. These cases keep a missing object,
+      # different bytes, a live writer or an unreviewed bucket from passing as
+      # covered, and pin the pod script to commands that only read.
+      - name: 💒 Validate Wedding shared backup coverage proof
+        run: |
+          shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
+          bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
 
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
@@ -445,7 +453,6 @@ jobs:
           shellcheck scripts/verify-wedding-backup-cutover.sh scripts/tests/test-verify-wedding-backup-cutover.sh
           bash scripts/tests/test-verify-wedding-backup-cutover.sh
           go test ./scripts/verify-wedding-dedicated-restore
-          node --test tests/wedding-db-incident-recovery/*.test.mjs
 
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
@@ -459,7 +466,8 @@ jobs:
               - '.sops.yaml'
               - 'talos*/**'
               - '.github/manifest-naming.yaml'
-              - 'scripts/validate-embedded-json.py'
+              - 'scripts/validate-embedded-json/**'
+              - 'scripts/validate-embedded-json.sh'
               - 'scripts/validate-policy-actions/**'
               - 'tests/policy-failure-actions.json'
               - '.github/scripts/setup-ksail.sh'
@@ -576,6 +584,7 @@ jobs:
               # The bookmark validator and its tests guard the same ConfigMap (#2909).
               - 'scripts/validate-homepage-bookmarks.sh'
               - 'scripts/tests/test-validate-homepage-bookmarks.sh'
+              - 'scripts/tests/homepage-bookmarks/**'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
               - 'scripts/tests/test-kyverno-github-team-report-rbac.sh'
               - 'scripts/tests/test-tenant-route-hostname-boundary.sh'
@@ -1253,7 +1262,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.0"
+          KSAIL_VERSION: "7.195.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1323,8 +1332,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup Go
-        # Needed by the Kubescape exceptions generator below (Go, per the
-        # bash-or-Go scripting standard) — the scan step shells out to it.
+        # Used by the embedded-JSON validator and Kubescape exceptions generator.
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -1414,10 +1422,12 @@ jobs:
         # Headlamp Kubescape exceptions ConfigMap's exceptionPolicies) are opaque
         # strings to schema validation, so a stray comma ships silently and only
         # surfaces at consumption time — where an empty exceptions view reads
-        # identical to a clean posture. Pure Python stdlib, runs in under a
-        # second, so it goes first — before the ksail download. See
-        # scripts/validate-embedded-json.py (#2480).
-        run: python3 scripts/validate-embedded-json.py
+        # identical to a clean posture. Local Go tests and validation need no
+        # cluster or credentials. See scripts/validate-embedded-json/ (#2480).
+        run: |
+          shellcheck scripts/validate-embedded-json.sh
+          go test ./scripts/validate-embedded-json
+          bash scripts/validate-embedded-json.sh
 
       - name: 🧷 Validate vendored operator Checkov dispositions
         if: needs.changes.outputs.k8s == 'true'
@@ -2366,7 +2376,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.0"
+          KSAIL_VERSION: "7.195.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3361,7 +3371,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.0"
+          KSAIL_VERSION: "7.195.1"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

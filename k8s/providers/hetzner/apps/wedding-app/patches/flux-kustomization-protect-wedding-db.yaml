@@ -7,7 +7,8 @@ spec:
   patches:
     # wedding-app is Hetzner-only, so its storageClass (longhorn-wffc) is hardcoded
     # in the source artifact rather than overridden here; this overlay patches only
-    # operational protections, replication and the dedicated backup destination.
+    # operational protections, replication and the archive identity. The tenant
+    # source selects its backup ObjectStore.
     # HA (spec.instances: 3, for the PDB / node-drain reasons documented on the
     # umami-db Cluster) is owned by the wedding-app source repo, so it is
     # deliberately NOT patched here.
@@ -43,8 +44,8 @@ spec:
         group: postgresql.cnpg.io
         kind: Cluster
         name: wedding-db
-      # The dedicated ObjectStore governs this tenant's backup destination.
-      # Preserve the database incarnation so mirrored base backups and WAL stay
+      # The tenant selects its backup ObjectStore. Preserve the database
+      # incarnation so mirrored base backups and WAL stay
       # recoverable. Advance it only for a reviewed replacement or restore.
       # The tenant contract currently requires Barman to be plugin index zero,
       # and the production backup verifier checks the resulting live Cluster.
@@ -52,9 +53,6 @@ spec:
         - op: add
           path: /spec/plugins/0/parameters/serverName
           value: wedding-db-20260909
-        - op: add
-          path: /spec/plugins/0/parameters/barmanObjectName
-          value: wedding-db-dedicated
     # NOTE: the tenant's public hostnames (wedding.platform.devantler.tech + the
     # wedding.platform.lan dev host) and its gethomepage.dev/* dashboard
     # annotations are NOT patched here — they are tenant self-presentation and

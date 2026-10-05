@@ -70,7 +70,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 8cc1b89c7760cbd9f65a1
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager 4ee4b8a2fc512253c45182114812f6b5ccf3b33492091169ac1f5a9bf5610e21
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape ac042dabaebb79fc3ca9e19b1bafba76d8e1c49bc3db0e6b0bb72ea0c97efad4
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 8bde48f99574dfe813f2997d56de3c30f5f97b09d10eb7ecbc2fb1ec5004e5c4
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 3a6ac464cd62f30e69068309e14d7d7409cd0ff395c4fbac735d514e0b8616a8
 
@@ -120,7 +120,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi e3b3caea1b9c5a3fc994d9f68c9609d7f77843f24dae91c567e4dd7b5051868a
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 93ed553970290529db7159ccc4cc138d429d7b9072f3da334b4a55c9d928228f
+kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app dbb1fefbf97f8d4947b418ad604503cda9504f2e097b1d6ac5e0a8c8685e0a1c
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin 9c3f8221e384c5bb93de6056be60f16f69de3b08898efc4f3760944f225d15b2
 
@@ -166,6 +166,8 @@ rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-hostdata-cleanup a54d
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-security-exceptions-reader 5477884d858618e5676bd4a8774014d2764031f4ac306954ac44ab10797499eb
 
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubescape-storage-scan-record-cleanup b7edb6f131a2ad3cdc8245957c57a2b4aad99fb74b433d52a2a53fb64fbfd1b4
+
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||longhorn-stale-node-cleanup 32a8c8df2b6fa88abf3dcf22f679009058edb8699a7ff84ae78712fd10b748e6
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||oidc-cluster-reader 34201cedeaffda9421ea61847cf168d050e501b5080477f9721f4779c37f3678
@@ -209,6 +211,8 @@ rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 412caf635a5fc723cffab8c
 rbac.authorization.k8s.io/v1|ClusterRole||kubescape-hostdata-cleanup b047f9796da7c8c6d7fa9ae09d559c701219e6ce308c2cc1a5fe155649c52f6f
 
 rbac.authorization.k8s.io/v1|ClusterRole||kubescape-security-exceptions-reader 3d85c7c184381722aef7fa31b93af90827111aab2e26af2b3d6cc4adc56d19da
+
+rbac.authorization.k8s.io/v1|ClusterRole||kubescape-storage-scan-record-cleanup dbafd3f5af841c22e7b893cd530f3938b8e089107fd3c2ee9ddbccdbf8ef7d72
 
 rbac.authorization.k8s.io/v1|ClusterRole||longhorn-stale-node-cleanup dbe01ecf21a1b493056dcca2d29870eb4464db6a83dbe93fcb229d8053061af2
 
