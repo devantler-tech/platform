@@ -108,3 +108,20 @@ spec:
       name: admins
       policy:
         resolve: Always
+---
+# Unchanged identity, but the repository is stated under initProvider, where it could be moved unseen.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: unchanged-init-provider-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail"
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+  initProvider:
+    repository: platform

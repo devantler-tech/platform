@@ -26,5 +26,6 @@ results:
       - github-config/retargeted-team
       - github-config/retargeted-subject
       - github-config/from-wildcard
+      - github-config/unchanged-init-provider-subject
     kind: TeamMembership
     result: fail

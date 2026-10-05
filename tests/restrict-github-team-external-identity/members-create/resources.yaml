@@ -187,3 +187,38 @@ spec:
       name: maintainers
       policy:
         resolve: Always
+---
+# The username under initProvider is not what this rule reads, so it may not accompany a stored identity.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: init-provider-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:devantler"
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+  initProvider:
+    username: devantler
+---
+# Nor next to a declared one.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: init-provider-second-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+  initProvider:
+    username: someone-else

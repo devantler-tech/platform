@@ -31,5 +31,7 @@ results:
       - github-config/wildcard-subject
       - github-config/longer-subject
       - github-config/undeclared-subject
+      - github-config/init-provider-subject
+      - github-config/init-provider-second-subject
     kind: TeamRepository
     result: fail
