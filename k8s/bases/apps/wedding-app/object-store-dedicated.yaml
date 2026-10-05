@@ -1,5 +1,5 @@
-# The only Wedding archive. The platform's production tenant overlay selects
-# this ObjectStore and preserves the mirrored database server identity.
+# The only Wedding archive. The tenant source selects this ObjectStore;
+# the platform overlay preserves the mirrored database server identity.
 apiVersion: barmancloud.cnpg.io/v1
 kind: ObjectStore
 metadata:

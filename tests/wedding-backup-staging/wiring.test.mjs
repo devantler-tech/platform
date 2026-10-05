@@ -8,16 +8,17 @@ import {fixture} from './runtime-fixture.mjs';
 const root=path.resolve(import.meta.dirname,'../..');
 const yaml=p=>JSON.parse(execFileSync('yq',['-o=json','.',path.join(root,p)],{encoding:'utf8'}));
 
-test('production patches select the dedicated archive without replacing the database or its server identity',async t=>{
+for(const store of ['wedding-db-dedicated','tenant-selected-archive'])test('production patches preserve the tenant-selected store and database protections: '+store,async t=>{
  const overlay=yaml('k8s/providers/hetzner/apps/wedding-app/patches/flux-kustomization-protect-wedding-db.yaml');
  const dir=await mkdtemp(path.join(tmpdir(),'wedding-archive-render-'));
  t.after(()=>rm(dir,{recursive:true,force:true}));
- const cluster={apiVersion:'postgresql.cnpg.io/v1',kind:'Cluster',metadata:{name:'wedding-db',namespace:'wedding-app'},spec:{instances:3,plugins:[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:'wedding-db'}}]}};
+ const cluster={apiVersion:'postgresql.cnpg.io/v1',kind:'Cluster',metadata:{name:'wedding-db',namespace:'wedding-app'},spec:{instances:3,plugins:[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:store}}]}};
  await writeFile(path.join(dir,'cluster.yaml'),JSON.stringify(cluster));
  await writeFile(path.join(dir,'kustomization.yaml'),JSON.stringify({apiVersion:'kustomize.config.k8s.io/v1beta1',kind:'Kustomization',resources:['cluster.yaml'],patches:overlay.spec.patches}));
  const rendered=JSON.parse(execFileSync('yq',['-o=json','.'],{input:execFileSync('kubectl',['kustomize',dir],{encoding:'utf8'}),encoding:'utf8'}));
- assert.deepEqual(rendered.spec.plugins,[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:'wedding-db-dedicated',serverName:'wedding-db-20260909'}}]);
+ assert.deepEqual(rendered.spec.plugins,[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:store,serverName:'wedding-db-20260909'}}]);
  assert.equal(rendered.spec.instances,3);
+ assert.deepEqual(rendered.spec.postgresql.synchronous,{method:'any',number:1,dataDurability:'preferred'});
  assert.equal(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/prune'],'disabled');
  assert.notEqual(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/force'],'enabled');
  // Flux has no per-resource force opt-out: the owning layer must disable it.
