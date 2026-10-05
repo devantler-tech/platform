@@ -1,4 +1,4 @@
-// Mirror the post-installer kernel-argument fold audited in KSail v7.193.6, v7.193.8, v7.194.0, v7.194.3, v7.194.4, v7.194.5, v7.194.7, v7.194.8, v7.194.9, v7.194.10 and v7.195.0,
+// Mirror the post-installer kernel-argument fold audited in KSail v7.193.6, v7.193.8, v7.194.0, v7.194.3, v7.194.4, v7.194.5, v7.194.7, v7.194.8, v7.194.9, v7.194.10, v7.195.0 and v7.195.1,
 // configs.go applySchematic/schematicKernelArgs/reconcileFoldedKernelArgs.
 package main
 
@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const reviewedKSailVersions = "7.193.6, 7.193.8, 7.194.0, 7.194.3, 7.194.4, 7.194.5, 7.194.7, 7.194.8, 7.194.9, 7.194.10 and 7.195.0"
+const reviewedKSailVersions = "7.193.6, 7.193.8, 7.194.0, 7.194.3, 7.194.4, 7.194.5, 7.194.7, 7.194.8, 7.194.9, 7.194.10, 7.195.0 and 7.195.1"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -290,7 +290,7 @@ func verifyPins(inputs ...[]byte) error {
 						continue
 					}
 					v := n.Content[i+1]
-					if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || (v.Value != "7.193.6" && v.Value != "7.193.8" && v.Value != "7.194.0" && v.Value != "7.194.3" && v.Value != "7.194.4" && v.Value != "7.194.5" && v.Value != "7.194.7" && v.Value != "7.194.8" && v.Value != "7.194.9" && v.Value != "7.194.10" && v.Value != "7.195.0") {
+					if v.Kind != yaml.ScalarNode || v.Tag != "!!str" || (v.Value != "7.193.6" && v.Value != "7.193.8" && v.Value != "7.194.0" && v.Value != "7.194.3" && v.Value != "7.194.4" && v.Value != "7.194.5" && v.Value != "7.194.7" && v.Value != "7.194.8" && v.Value != "7.194.9" && v.Value != "7.194.10" && v.Value != "7.195.0" && v.Value != "7.195.1") {
 						return fmt.Errorf("KSail fold audited at %s; deployment pin %q requires a new source audit", reviewedKSailVersions, v.Value)
 					}
 					if selectedVersion != "" && v.Value != selectedVersion {
