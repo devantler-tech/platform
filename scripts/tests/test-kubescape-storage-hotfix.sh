@@ -269,12 +269,44 @@ done
   fail 'the storage scan-record cleanup role may only read single objects'
 [[ "$(yq -er '[.rules[] | select(has("resourceNames") or has("nonResourceURLs"))] | length' "${cleanup_role}")" == '0' ]] ||
   fail 'the storage scan-record cleanup role must stay a plain resource grant'
-if [[ "$(yq -er '[.rules[].resources[], .rules[].apiGroups[]] | map(select(test("\\*"))) | length' "${cleanup_role}")" != '0' ]]; then
-  fail 'the storage scan-record cleanup role must name its resources, not use a wildcard'
-fi
-if [[ "$(yq -er '[.rules[].resources[] | select(test("^secrets(/|$)"))] | length' "${cleanup_role}")" != '0' ]]; then
-  fail 'the storage scan-record cleanup role must not read secrets'
-fi
+[[ "$(yq -er 'keys | join(",")' "${cleanup_role}")" == 'apiVersion,kind,metadata,rules' ]] ||
+  fail 'the storage scan-record cleanup role must be a plain list of rules, with no aggregation'
+# Every grant is listed, so widening what the storage pod can read is a reviewed change here.
+# Secrets and ConfigMaps must never appear: reading one by name returns its contents.
+expected_grants="$(
+  cat <<'GRANTS'
+/endpoints
+/nodes
+/persistentvolumeclaims
+/persistentvolumes
+/podtemplates
+/serviceaccounts
+apiregistration.k8s.io/apiservices
+autoscaling/horizontalpodautoscalers
+cilium.io/ciliumclusterwidenetworkpolicies
+cilium.io/ciliumnetworkpolicies
+coordination.k8s.io/leases
+discovery.k8s.io/endpointslices
+gateway.networking.k8s.io/httproutes
+networking.k8s.io/ingresses
+networking.k8s.io/networkpolicies
+policy/poddisruptionbudgets
+rbac.authorization.k8s.io/clusterrolebindings
+rbac.authorization.k8s.io/clusterroles
+rbac.authorization.k8s.io/rolebindings
+rbac.authorization.k8s.io/roles
+storage.k8s.io/csistoragecapacities
+storage.k8s.io/storageclasses
+GRANTS
+)"
+readonly expected_grants
+# $group is a yq variable, not a shell one.
+# shellcheck disable=SC2016
+actual_grants="$(yq -er '.rules[] | .apiGroups[] as $group | .resources[] | $group + "/" + .' "${cleanup_role}" | LC_ALL=C sort)" ||
+  fail 'could not read the storage scan-record cleanup grants'
+readonly actual_grants
+[[ "${actual_grants}" == "${expected_grants}" ]] ||
+  fail 'the storage scan-record cleanup role must grant exactly the reviewed resources'
 [[ "$(yq -er '.roleRef.kind + "/" + .roleRef.name' "${cleanup_binding}")" == "ClusterRole/$(yq -er '.metadata.name' "${cleanup_role}")" ]] ||
   fail 'the storage scan-record cleanup binding must reference its role'
 [[ "$(yq -er '[.subjects[] | .kind + "/" + .namespace + "/" + .name] | join(",")' "${cleanup_binding}")" == 'ServiceAccount/kubescape/storage' ]] ||

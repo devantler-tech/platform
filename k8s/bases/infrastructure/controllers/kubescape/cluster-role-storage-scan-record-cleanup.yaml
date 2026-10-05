@@ -5,9 +5,13 @@
 # only when the API server answers that the object does not exist; a refused
 # read keeps the record.
 #
-# `get` only: nothing is listed, watched or changed. Secrets are deliberately
-# absent, because RBAC cannot grant an existence check on a Secret without
-# also granting its contents. Their scan records are kept.
+# `get` only: nothing is listed, watched or changed. Secrets and ConfigMaps are
+# deliberately absent, because RBAC cannot grant an existence check on either
+# without also granting its contents. Their scan records are kept.
+#
+# The resources are the kinds found in production scan records on 2026-10-05
+# that the chart's own storage role does not already cover. Adding one widens
+# what the storage pod can read by name, so the contract test lists them exactly.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -15,7 +19,6 @@ metadata:
 rules:
   - apiGroups: [""]
     resources:
-      - configmaps
       - endpoints
       - nodes
       - persistentvolumeclaims
