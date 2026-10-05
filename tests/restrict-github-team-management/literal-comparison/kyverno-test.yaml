@@ -98,6 +98,7 @@ results:
     rule: teamrepositories-reference-allow-listed-teams
     resources:
       - github-config/repo-ref-namespace-own
+      - github-config/repo-ref-namespace-empty
     kind: TeamRepository
     result: pass
   - policy: restrict-github-team-management

@@ -306,7 +306,7 @@ spec:
                 - github-config
       validate:
         failureAction: Enforce
-        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, may name no namespace other than github-config in that reference, and may grant only pull, triage or push permission, in forProvider and initProvider.
+        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, may name no namespace other than github-config in that reference, and may grant only the pull, triage, push, maintain or admin permission, in forProvider and initProvider; the maintainers team is capped below admin by a separate rule.
         deny:
           conditions:
             any:

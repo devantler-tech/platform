@@ -684,3 +684,22 @@ spec:
     teamIdRef:
       name: admins
       namespace: ""
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-ref-namespace-empty
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: ""
+    repository: platform
+    permission: push
+  initProvider:
+    teamIdRef:
+      name: admins
+      namespace: ""
