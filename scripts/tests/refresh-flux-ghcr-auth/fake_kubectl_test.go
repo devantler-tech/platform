@@ -1139,7 +1139,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		case "publishcorootnodeagent":
 			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
 		case "publishksailanalysis":
-			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
+			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
 		case "publishwarzone":
 			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		}
@@ -1171,9 +1171,9 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			genericExcludesCorootNodeAgent = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
-			genericExcludesAnalysis = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-ksail-analysis-runner'") &&
-				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner:')") &&
-				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner@')")
+			genericExcludesAnalysis = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/ksail-analysis-runner'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@')")
 		}
 		if strings.Contains(expression, "attestors.publishkubescapestorage") {
 			dedicatedRoutesStorage = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
@@ -1196,9 +1196,9 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
 		}
 		if strings.Contains(expression, "attestors.publishksailanalysis") {
-			dedicatedRoutesAnalysis = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-ksail-analysis-runner'") &&
-				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner:')") &&
-				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner@')")
+			dedicatedRoutesAnalysis = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/ksail-analysis-runner'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@')")
 		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
