@@ -5,10 +5,14 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin" "$scratch/scripts" "$scratch/k8s/providers/hetzner/infrastructure/controllers" \
-  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners"
+  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners" \
+  "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller"
 cp "$root/scripts/verify-ksail-arc-runtime.sh" "$scratch/scripts/"
 cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
+cp "$root/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml" \
+  "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/"
+yq -i '.spec.suspend=false' "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml"
 go build -o "$scratch/verifier" "$root/scripts/verify-ksail-arc-runtime"
 export ARC_TEST_ROOT="$scratch"
 printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}' >"$scratch/runtime-image"
@@ -20,7 +24,7 @@ digest="sha256:$(shasum -a 256 "$scratch/image" | cut -d' ' -f1)"
 export digest
 image="ghcr.io/devantler-tech/ksail-analysis-runner@$digest"
 image="$image" yq -i '.spec.values.template.spec.containers[0].image=strenv(image) |
-  .spec.values.template.spec.initContainers[0].image=strenv(image)' \
+  .spec.values.template.spec.initContainers[0].image=strenv(image) | .spec.suspend=false' \
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml"
 yq -o=json '.spec.values' "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
   | jq '{metadata:{generation:1,annotations:{"runner-scale-set-id":"1"}},
@@ -63,7 +67,31 @@ SH
 cat >"$scratch/bin/kubectl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "${1:-}" == kustomize ]]; then
+  [[ "${ARC_TEST_CASE:-}" != source-render-failure ]] || exit 1
+  case "$2" in
+    k8s/providers/hetzner/infrastructure/controllers)
+      aggregate="$ARC_TEST_ROOT/$2/kustomization.yaml"
+      release="$ARC_TEST_ROOT/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml"
+      reference='actions-runner-controller' ;;
+    k8s/providers/hetzner/infrastructure)
+      aggregate="$ARC_TEST_ROOT/$2/kustomization.yaml"
+      release="$ARC_TEST_ROOT/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml"
+      reference='ksail-analysis-runners' ;;
+    *) exit 0 ;;
+  esac
+  references=$(yq -o=json '(.resources // []) + (.bases // [])' "$aggregate")
+  if jq -e --arg component "$reference" 'any(.[]; contains($component))' <<<"$references" >/dev/null; then
+    case "${ARC_TEST_CASE:-}" in
+      rendered-suspended) yq '.spec.suspend=true' "$release" ;;
+      rendered-wrong-image) yq '.spec.values.template.spec.containers[0].image="unverified:latest"' "$release" ;;
+      *) cat "$release" ;;
+    esac
+  fi
+  exit 0
+fi
 [[ "$1" == --context && "$2" == admin@prod ]] || exit 94
+touch "$ARC_TEST_ROOT/runtime-access"
 shift 3 # context pair and request-timeout
 args="$*"
 case "$args" in
@@ -177,7 +205,7 @@ chmod +x "$scratch/bin/"*
 
 run_case() {
   local name=$1 expected=$2 code=0
-  rm -f "$scratch/live-pod" "$scratch/deleted" "$scratch/replacement-preserved"
+  rm -f "$scratch/live-pod" "$scratch/deleted" "$scratch/replacement-preserved" "$scratch/runtime-access"
   (
     cd "$scratch"
     PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform \
@@ -205,6 +233,7 @@ printf 'resources: []\n' >"$scratch/k8s/providers/hetzner/infrastructure/kustomi
   PATH="$scratch/bin:$PATH" bash scripts/verify-ksail-arc-runtime.sh --if-active
 ) >"$scratch/inactive"
 rg -q 'inactive source; no runtime access' "$scratch/inactive"
+[[ ! -e "$scratch/runtime-access" ]]
 printf 'resources: ["../../../../bases/infrastructure/controllers/actions-runner-controller/"]\n' \
   >"$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 printf 'resources: ["../../../bases/infrastructure/ksail-analysis-runners/"]\n' \
@@ -213,6 +242,18 @@ if (cd "$scratch"; PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=false bash scripts/v
   >"$scratch/unauthorized-out" 2>"$scratch/unauthorized-error"; then exit 1; fi
 rg -q 'FAIL at deployment-identity' "$scratch/unauthorized-error"
 run_case complete-proof pass
+cp "$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" "$scratch/controller-aggregate"
+cp "$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml" "$scratch/runner-aggregate"
+sed 's/^resources:/bases:/' "$scratch/controller-aggregate" >"$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+sed 's/^resources:/bases:/' "$scratch/runner-aggregate" >"$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml"
+run_case rendered-hidden-activation fail
+[[ ! -e "$scratch/runtime-access" ]]
+cp "$scratch/controller-aggregate" "$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+cp "$scratch/runner-aggregate" "$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml"
+for name in source-render-failure rendered-suspended rendered-wrong-image; do
+  run_case "$name" fail
+  [[ ! -e "$scratch/runtime-access" ]]
+done
 # Hetzner formats rand.Int63 with %x, so valid suffixes contain one to sixteen
 # hex digits. Exercise the complete lifecycle with the shortest legal name.
 cp "$scratch/bin/kubectl" "$scratch/kubectl-original"

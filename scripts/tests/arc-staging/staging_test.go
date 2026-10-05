@@ -46,14 +46,13 @@ func equal(t *testing.T, value, want any) {
 	}
 }
 
-func TestStagedReleasesAreSuspendedAndPinned(t *testing.T) {
+func TestReleasesUsePinnedCharts(t *testing.T) {
 	for _, component := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller",
 		"k8s/bases/infrastructure/ksail-analysis-runners",
 	} {
 		t.Run(filepath.Base(component), func(t *testing.T) {
 			release := readYAML(t, component+"/helm-release.yaml")
-			equal(t, field(t, release, "spec", "suspend"), true)
 			equal(t, field(t, release, "spec", "chartRef", "kind"), "OCIRepository")
 			source := readYAML(t, component+"/oci-repository.yaml")
 			equal(t, field(t, source, "spec", "ref", "tag"), "0.15.0")
@@ -86,7 +85,8 @@ func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing
 	runner := containers[0]
 	equal(t, field(t, runner, "name"), "runner")
 	image, ok := field(t, runner, "image").(string)
-	if !ok || !strings.HasPrefix(image, "ghcr.io/actions/actions-runner@sha256:") {
+	if !ok || (!strings.HasPrefix(image, "ghcr.io/actions/actions-runner@sha256:") &&
+		!strings.HasPrefix(image, analysisRepository+"@sha256:")) {
 		t.Fatal("runner image must be digest-pinned")
 	}
 	for _, name := range []string{"privileged", "allowPrivilegeEscalation"} {
@@ -186,37 +186,6 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 		}
 	}
 	t.Fatal("missing unconditional staging guard")
-}
-
-func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
-	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if entry.IsDir() || entry.Name() != "kustomization.yaml" || strings.Contains(path, "/actions-runner-controller/") || strings.Contains(path, "/ksail-analysis-runners/") {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		var document struct {
-			Resources  []string `yaml:"resources"`
-			Components []string `yaml:"components"`
-		}
-		if err := yaml.Unmarshal(data, &document); err != nil {
-			return err
-		}
-		for _, reference := range append(document.Resources, document.Components...) {
-			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "ksail-analysis-runners") {
-				t.Errorf("%s activates ARC through %q", path, reference)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {

@@ -9,11 +9,34 @@ readonly controller_overlay=k8s/providers/hetzner/infrastructure/controllers/kus
 readonly pool_overlay=k8s/providers/hetzner/infrastructure/kustomization.yaml
 controller_active=$(yq '[.resources[] | select(. == "../../../../bases/infrastructure/controllers/actions-runner-controller/")] | length' "$controller_overlay")
 pool_active=$(yq '[.resources[] | select(. == "../../../bases/infrastructure/ksail-analysis-runners/")] | length' "$pool_overlay")
-if [[ "$controller_active" == 0 && "$pool_active" == 0 ]]; then
+# Render every independently reconciled production layer before deciding to
+# skip. Legacy bases, aliases and overlay patches cannot activate ARC unseen.
+source_scratch=$(mktemp -d)
+trap 'rm -rf "$source_scratch"' EXIT
+for overlay in k8s/providers/hetzner/apps k8s/providers/hetzner/infrastructure \
+  k8s/providers/hetzner/infrastructure/controllers k8s/clusters/prod/bootstrap k8s/clusters/prod; do
+  timeout 95s kubectl kustomize "$overlay" >>"$source_scratch/rendered.yaml" \
+    2>"$source_scratch/render-error" || fail source-render
+  printf '\n---\n' >>"$source_scratch/rendered.yaml"
+done
+yq ea -o=json -I=0 '[select(.kind == "HelmRelease" and
+  ((.metadata.namespace == "arc-systems" and .metadata.name == "arc-controller") or
+   (.metadata.namespace == "arc-ksail-analysis" and .metadata.name == "ksail-analysis-runners")))]' \
+  "$source_scratch/rendered.yaml" >"$source_scratch/releases.json"
+rendered_controller=$(jq '[.[] | select(.metadata.namespace == "arc-systems")] | length' "$source_scratch/releases.json")
+rendered_pool=$(jq '[.[] | select(.metadata.namespace == "arc-ksail-analysis")] | length' "$source_scratch/releases.json")
+if [[ "$controller_active" == 0 && "$pool_active" == 0 && "$rendered_controller" == 0 && "$rendered_pool" == 0 ]]; then
   printf 'ARC acceptance: inactive source; no runtime access\n'
   exit 0
 fi
-[[ "$controller_active" == 1 && "$pool_active" == 1 ]] || fail partial-activation
+[[ "$controller_active" == 1 && "$pool_active" == 1 && "$rendered_controller" == 1 && "$rendered_pool" == 1 ]] || fail partial-activation
+source_image=$(yq '.spec.values.template.spec.containers[0].image' k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml)
+jq -e --arg image "$source_image" 'all(.[]; .spec.suspend == false) and
+  all(.[] | select(.metadata.namespace == "arc-ksail-analysis");
+    .spec.values.template.spec.containers[0].image == $image and
+    .spec.values.template.spec.initContainers[0].image == $image)' "$source_scratch/releases.json" >/dev/null || fail rendered-source-state
+rm -rf "$source_scratch"
+trap - EXIT
 [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform ]] || fail deployment-identity
 [[ "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]{0,2}$ ]] || fail run-identity
 [[ "${PLATFORM_MANIFEST_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail revision
