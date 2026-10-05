@@ -80,7 +80,18 @@ configuration names Kyverno as the policy engine, as both `ksail.yaml` and
 `ksail.prod.yaml` do. So that an explicit opt-out reaches the command, KSail's
 generated assistant tool calls also forward a boolean flag set to false instead
 of dropping it. That changes what this repository's CI and deploy validation
-steps check, not what KSail writes to a cluster. See
+steps check, not what KSail writes to a cluster.
+
+**7.195.1**, commit `74fab4c4d8b7a8348a0542988a83aeeb06bab5a6`, is audited as the
+range 7.195.0 → 7.195.1. The configuration-manager tree
+(`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the cluster API tree, the chart
+tree, `go.mod` and `go.sum` are byte-identical to 7.195.0, so the mirrored fold
+is unchanged. Its two commits reword what the `Unmanaged` marker in
+`ksail cluster list` means, and fix the kubeadm bootstrap on Hetzner: IPv4
+forwarding is enabled before kubeadm runs, and the bring-up stops waiting once
+cloud-init reports a failure. The Hetzner change lives in the bring-up base that
+only the K3s and kubeadm Hetzner provisioners use; the Talos provisioner this
+cluster runs on does not. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
