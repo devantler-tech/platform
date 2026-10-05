@@ -43,6 +43,10 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# The canonical-publisher approvals are a separate record with its own suite; this one runs
+# against a record that approves nothing, so a real approval cannot move these cases.
+readonly CANONICAL_NONE="$WORK/canonical-none.tsv"
+printf 'consumer\tworkflow\trepository\tcommit\n' >"$CANONICAL_NONE"
 
 # The registered consumers, from the report itself, so this test cannot drift from the list
 # the guard enforces. Each row: <repo>\t<workflow>.
@@ -221,7 +225,8 @@ build_tree() {
 # run_guard <root> <enforce> — runs the guard against the fixture; prints combined output, returns its status.
 run_guard() {
   local root="$1" enforce="$2"
-  APPROVED_REVISIONS_FILE="$root/scripts/approved.tsv" PUBLISH_CONSUMER_ROOT="$root" \
+  APPROVED_REVISIONS_FILE="$root/scripts/approved.tsv" CANONICAL_APPROVALS_FILE="$CANONICAL_NONE" \
+    PUBLISH_CONSUMER_ROOT="$root" \
     APPROVED_REVISIONS_ENFORCE="$enforce" bash "$GUARD" 2>&1
 }
 
