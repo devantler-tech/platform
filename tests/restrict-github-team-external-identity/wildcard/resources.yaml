@@ -1,0 +1,24 @@
+---
+# Kyverno's own comparison operators read * as "anything", which would match the approved identity. The rule compares literally, so this is refused.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "*"
+spec:
+  forProvider:
+    privacy: closed
+---
+# The same for a single-character wildcard.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "1704660?"
+spec:
+  forProvider:
+    privacy: closed
