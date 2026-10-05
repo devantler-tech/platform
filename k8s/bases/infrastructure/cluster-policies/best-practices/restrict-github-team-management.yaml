@@ -87,12 +87,11 @@ spec:
     # obvious counterpart to the binding above, but it breaks legitimate
     # re-adoption: after a rebuild, or whenever a Team CR is recreated, the
     # existing GitHub team must be adopted by the numeric team ID the provider
-    # itself writes into this annotation — and refusing that makes Crossplane
-    # try to create a team that already exists, so github-config cannot recover
-    # its own teams. Constraining it safely needs a way to tell our teams'
-    # numeric identities from a foreign one, plus the provider ServiceAccount
-    # excluded so its post-create write still succeeds. Tracked in #3144 rather
-    # than half-closed here.
+    # itself writes into this annotation. It is constrained in
+    # restrict-github-team-external-identity instead, which approves each
+    # team's numeric identity and exempts the provider's own write. That rule
+    # depends on the writing identity, so it cannot live in this
+    # background-scanned policy.
     #
     # #4511: a nested team inherits every repository grant of its parent, and
     # that inheritance happens on GitHub — it never passes through the

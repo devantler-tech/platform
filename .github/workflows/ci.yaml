@@ -40,6 +40,9 @@ jobs:
           go test ./scripts/audit-storage-retention
           shellcheck scripts/audit-storage-retention/capture.sh
 
+      - name: 🧯 Validate private recovery field extraction
+        run: go test -race ./scripts/validate-break-glass
+
       - name: 💾 Validate Flux replacement safety
         run: |
           go test ./scripts/validate-flux-force-safety
@@ -2550,11 +2553,11 @@ jobs:
         # the COMBINED score across the frameworks listed above. The Kubescape
         # compliance score has historically been environment-dependent (Linux CI
         # runner vs macOS) and shifts with the ksail render, so CI is the source
-        # of truth: the observed CI score with exceptions applied is 98.87%
-        # (2026-07-11, ksail 7.165.2, NSA only). Locally on ksail 7.178.20
-        # (2026-08-10) NSA reads 99.28 and MITRE 96.03, combining to 97 — so the
-        # margin over this floor is thinner than it was under NSA alone. Re-baseline
-        # against a CI run, not a local one, and never lower the floor to
+        # of truth. Three Linux CI runs on 2026-10-05 with ksail 7.195.1 report
+        # 98.78% combined (NSA 99.75%, MITRE 98.14%): runs 37263913110,
+        # 37264739448 and 37279505685. The combined floor is 98%, preserving
+        # measured margin without treating the score as complete compliance.
+        # Re-baseline against CI, not a local run, and never lower the floor to
         # accommodate a finding. (NB it may also need re-baselining after a ksail
         # version bump.)
         #
@@ -2582,7 +2585,7 @@ jobs:
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif,json -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 98 --format sarif,json -o "${RUNNER_TEMP}/kubescape.sarif"
 
       - name: 📊 Report the Kubescape compliance score
         # Runs whether the gate above passed or failed, so the log and the job

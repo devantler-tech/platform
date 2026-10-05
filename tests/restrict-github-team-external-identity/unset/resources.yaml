@@ -1,0 +1,22 @@
+---
+# The live shape of admins as authored: no identity, the provider creates the team. (On create this is also "unchanged"; update-cleared is the case that isolates the empty value.)
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+---
+# An empty value adopts nothing and is the same as no annotation.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: ""
+spec:
+  forProvider:
+    privacy: closed

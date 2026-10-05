@@ -1,0 +1,12 @@
+---
+# The provider records the identity of a team it has just created. That value cannot be approved in advance, so the provider is exempt.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "88888888"
+spec:
+  forProvider:
+    privacy: closed
