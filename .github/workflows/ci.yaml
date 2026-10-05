@@ -40,6 +40,9 @@ jobs:
           go test ./scripts/audit-storage-retention
           shellcheck scripts/audit-storage-retention/capture.sh
 
+      - name: 🧯 Validate private recovery field extraction
+        run: go test -race ./scripts/validate-break-glass
+
       - name: 💾 Validate Flux replacement safety
         run: |
           go test ./scripts/validate-flux-force-safety
