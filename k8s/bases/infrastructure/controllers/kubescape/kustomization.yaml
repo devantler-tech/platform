@@ -14,4 +14,8 @@ resources:
   - cluster-role-hostdata-cleanup.yaml
   - cluster-role-binding-hostdata-cleanup.yaml
   - cron-job-hostdata-cleanup.yaml
+  # Kubescape storage keeps the scan record of every deleted object that is not a
+  # workload. The patched image looks the object up before removing its record.
+  - cluster-role-storage-scan-record-cleanup.yaml
+  - cluster-role-binding-storage-scan-record-cleanup.yaml
   - config-map-headlamp-exceptions.yaml
