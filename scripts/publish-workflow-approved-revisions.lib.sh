@@ -36,6 +36,24 @@ readonly SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/wo
 # shellcheck disable=SC2034
 readonly PATTERN_REF='[0-9a-f]{40}'
 
+# ── Publisher families (#4502) ──────────────────────────────────────────────────────────
+# A manifest artifact may additionally accept ONE reviewed commit of the canonical manifest
+# workflow, which lives in a second repository. That approval is a fixed, hand-reviewed record
+# rather than a column of the generated set, so the daily regeneration can never move it.
+# The matcher stays a single identity entry: one anchored subject whose only top-level group
+# holds the legacy family first and the canonical family second. A second identity entry
+# would be an OR beside the pair, which the attribution below already refuses.
+readonly CANONICAL_SET="${CANONICAL_APPROVALS_FILE:-$REPO_ROOT/scripts/publish-workflow-canonical-approvals.tsv}"
+readonly CANONICAL_HEADER=$'consumer\tworkflow\trepository\tcommit'
+readonly CANONICAL_REPOSITORY='devantler-tech/.github'
+readonly CANONICAL_WORKFLOW='publish-manifests'
+readonly FAMILY_PREFIX='^https://github\.com/devantler-tech/('
+readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
+readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
+# SUBJECT_PATTERN with an optional group opener before the legacy repository, so the scan
+# finds a two-family subject as well as a legacy-only one. Every legacy-only match is unchanged.
+readonly FAMILY_SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
+
 refuse() {
   printf 'guard-publish-workflow-approved-revisions: %s\n' "$*" >&2
   exit 1
@@ -148,6 +166,55 @@ while IFS=$'\t' read -r consumer _rest; do
   [ "$known" -eq 1 ] || refuse "approved set names $consumer, which is not a registered consumer"
 done <<<"$approved"
 
+# ── 1b. The canonical approvals, read strictly ──────────────────────────────────────────
+# One row approves one reviewed commit of the canonical manifest workflow for one manifest
+# consumer. Anything this reader cannot place exactly is refused: an approval it skipped would
+# be an identity nobody rendered, and one it guessed at would be an identity nobody reviewed.
+[ -f "$CANONICAL_SET" ] || refuse "canonical approvals not found at $CANONICAL_SET; the file must exist even when it approves nothing"
+# `|| [ -n … ]` keeps a final row that has no trailing newline: dropping it would read a
+# present approval as absent.
+canonical_header=""
+IFS= read -r canonical_header <"$CANONICAL_SET" || [ -n "$canonical_header" ] || refuse "canonical approvals at $CANONICAL_SET are empty"
+[ "$canonical_header" = "$CANONICAL_HEADER" ] || refuse "canonical approvals header is not 'consumer<TAB>workflow<TAB>repository<TAB>commit'; refusing to read it"
+
+# consumer → "commit"
+canonical=""
+line_no=0
+while IFS= read -r row || [ -n "$row" ]; do
+  line_no=$((line_no + 1))
+  [ "$line_no" -gt 1 ] || continue  # the header, checked above
+  tabs="${row//[!$'\t']/}"
+  [ "${#tabs}" -eq 3 ] || refuse "canonical approvals line $line_no does not have exactly four fields"
+  IFS=$'\t' read -r consumer workflow repository commit <<<"$row"
+  { [ -n "$consumer" ] && [ -n "$workflow" ] && [ -n "$repository" ] && [ -n "$commit" ]; } ||
+    refuse "canonical approvals line $line_no has an empty field"
+  plausible_repo "$consumer" || refuse "canonical approvals line $line_no names an implausible consumer '$consumer'"
+  [ "$repository" = "$CANONICAL_REPOSITORY" ] ||
+    refuse "canonical approvals line $line_no ($consumer): '$repository' is not a known publisher family; only $CANONICAL_REPOSITORY is"
+  [ "$workflow" = "$CANONICAL_WORKFLOW" ] ||
+    refuse "canonical approvals line $line_no ($consumer): '$workflow' is not the canonical manifest workflow; only $CANONICAL_WORKFLOW is"
+  is_sha "$commit" || refuse "canonical approvals line $line_no ($consumer): commit '$commit' is not a 40-hex commit"
+  set_record="$(lookup "$approved" "$consumer")"
+  [ -n "$set_record" ] || refuse "canonical approvals line $line_no names $consumer, which is not a registered consumer"
+  [ "${set_record%%$'\t'*}" = "$CANONICAL_WORKFLOW" ] ||
+    refuse "canonical approvals line $line_no: $consumer publishes with ${set_record%%$'\t'*}, and only $CANONICAL_WORKFLOW consumers may accept the canonical publisher"
+  [ -z "$(lookup "$canonical" "$consumer")" ] ||
+    refuse "canonical approvals name $consumer twice; a consumer accepts at most one canonical commit"
+  canonical="${canonical}${consumer}"$'\t'"${commit}"$'\n'
+done <"$CANONICAL_SET"
+
+# approved_subject <workflow> <legacy-ref> <canonical-commit-or-empty> → the whole matcher subject.
+# Without a canonical commit this is the legacy subject, byte for byte.
+approved_subject() {
+  local name="${1#publish-}"
+  if [ -z "$3" ]; then
+    printf '%s%s\\.yaml@%s$' "$SUBJECT_PREFIX" "$name" "$2"
+  else
+    printf '%s%s%s\\.yaml@%s|%s%s\\.yaml@%s)$' \
+      "$FAMILY_PREFIX" "$LEGACY_FAMILY" "$name" "$2" "$CANONICAL_FAMILY" "$name" "$3"
+  fi
+}
+
 # ── 2. Every shared-workflow subject in the tree, attributed or excluded ─────────────────
 [ -d "$SCAN_ROOT" ] || refuse "scan root $SCAN_ROOT is not a directory"
 for generic in "${GENERIC_SUBJECT_FILES[@]}"; do
@@ -158,10 +225,10 @@ done
 # this tree — so descending into it reports every generic subject a second time from a path the
 # exclusion list does not name, and the guard refuses a correct repository. `.git` for the same
 # reason a packed ref or a stray object file must never be read as a manifest.
-subject_files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' --exclude-dir=.git --exclude-dir=.claude "$SCAN_ROOT" 2>/dev/null | sort -u || true)"
+subject_files="$(grep -rlE "$FAMILY_SUBJECT_PATTERN" --include='*.yaml' --exclude-dir=.git --exclude-dir=.claude "$SCAN_ROOT" 2>/dev/null | sort -u || true)"
 [ -n "$subject_files" ] || refuse "no shared-publish-workflow subject found under $SCAN_ROOT; the scan, not the tree, is the likely cause"
 
-# consumer → "file<TAB>workflow<TAB>ref"
+# consumer → "file<TAB>workflow<TAB>ref<TAB>canonical-commit-or-dash"
 observed=""
 while IFS= read -r file; do
   [ -n "$file" ] || continue
@@ -188,7 +255,7 @@ while IFS= read -r file; do
   docs="$(yq eval -r '
     select(.kind == "OCIRepository") |
     (.spec.verify.matchOIDCIdentity // []) as $ids |
-    ($ids | map(.subject // "") | map(select(test("devantler-tech/actions/.{1,2}github/workflows/publish-(app|manifests)")))) as $shared |
+    ($ids | map(.subject // "") | map(select(test("devantler-tech/[(]?actions/.{1,2}github/workflows/publish-(app|manifests)")))) as $shared |
     [(.spec.url // "-"), ($ids | length), ($shared | length), ($shared[0] // "-")] | @tsv
   ' "$file" 2>/dev/null)" || refuse "$rel could not be read as YAML"
   [ -n "$docs" ] || refuse "$rel carries a shared-publish-workflow subject but no OCIRepository document owns it; attribute it to a consumer or add it to GENERIC_SUBJECT_FILES"
@@ -203,7 +270,7 @@ while IFS= read -r file; do
   # The line scan that discovered this file and the document read above must agree: a shared-
   # workflow subject in a SECOND document (a policy appended after `---`) is invisible to the
   # OCIRepository selection, and would otherwise pass unjudged.
-  line_count="$(grep -cE "$SUBJECT_PATTERN" "$file" || true)"
+  line_count="$(grep -cE "$FAMILY_SUBJECT_PATTERN" "$file" || true)"
   [ "$line_count" = "1" ] || refuse "$rel: $line_count shared-publish-workflow subject lines found but exactly one OCIRepository entry was read; a subject outside the OCIRepository document is unjudged"
   repo="${url#oci://ghcr.io/devantler-tech/}"; repo="${repo%%/*}"
   repo="$(oci_name_to_repo "$repo")"
@@ -212,20 +279,52 @@ while IFS= read -r file; do
   prior="$(lookup "$observed" "$repo")"
   [ -z "$prior" ] || refuse "consumer $repo has an OCIRepository in both $rel and ${prior%%$'\t'*}"
 
+  canonical_ref='-'
   case "$subject" in
-    "$SUBJECT_PREFIX"*) ;;
+    "$SUBJECT_PREFIX"*)
+      rest="${subject#"$SUBJECT_PREFIX"}"          # <workflow>\.yaml@<ref>$
+      case "$rest" in
+        *'$') rest="${rest%\$}" ;;
+        *) refuse "$rel: subject is not anchored with a trailing \$: $subject" ;;
+      esac
+      ;;
+    "$FAMILY_PREFIX"*)
+      # ^…/(<legacy family><workflow>\.yaml@<ref>|<canonical family><workflow>\.yaml@<commit>)$
+      # Legacy first, canonical second, each exactly once: any other arrangement is refused
+      # rather than interpreted, so there is one spelling for the writer to produce and for
+      # the guard to compare.
+      inner="${subject#"$FAMILY_PREFIX"}"
+      case "$inner" in
+        *')$') inner="${inner%')$'}" ;;
+        *) refuse "$rel: two-family subject does not end with ')\$': $subject" ;;
+      esac
+      family_boundary='|'"$CANONICAL_FAMILY"
+      case "$inner" in
+        "$LEGACY_FAMILY"*"$family_boundary"*) ;;
+        *) refuse "$rel: two-family subject is not the legacy family followed by the canonical family: $subject" ;;
+      esac
+      canonical_part="${inner#*"$family_boundary"}"   # <workflow>\.yaml@<commit>
+      legacy_part="${inner%"$family_boundary$canonical_part"}"
+      case "$canonical_part" in
+        *"$CANONICAL_FAMILY"* | *"$LEGACY_FAMILY"*) refuse "$rel: two-family subject names a publisher family more than once: $subject" ;;
+      esac
+      case "$canonical_part" in
+        *'\.yaml@'*) ;;
+        *) refuse "$rel: canonical family has no '\\.yaml@' boundary: $subject" ;;
+      esac
+      canonical_ref="${canonical_part#*\\.yaml@}"
+      is_sha "$canonical_ref" || refuse "$rel: canonical family pins '@$canonical_ref', which is not one 40-hex commit"
+      rest="${legacy_part#"$LEGACY_FAMILY"}"          # <workflow>\.yaml@<ref>
+      [ "publish-${canonical_part%%\\.yaml@*}" = "publish-${rest%%\\.yaml@*}" ] ||
+        refuse "$rel: the two publisher families name different workflows: $subject"
+      ;;
     *) refuse "$rel: subject does not start with the shared-workflow identity prefix: $subject" ;;
   esac
-  rest="${subject#"$SUBJECT_PREFIX"}"          # <workflow>\.yaml@<ref>$
   case "$rest" in
     *'\.yaml@'*) ;;
     *) refuse "$rel: subject has no '\\.yaml@' boundary: $subject" ;;
   esac
   workflow="publish-${rest%%\\.yaml@*}"
   ref="${rest#*\\.yaml@}"
-  case "$ref" in
-    *'$') ref="${ref%\$}" ;;
-    *) refuse "$rel: subject is not anchored with a trailing \$: $subject" ;;
-  esac
-  observed="${observed}${repo}"$'\t'"${rel}"$'\t'"${workflow}"$'\t'"${ref}"$'\n'
+  observed="${observed}${repo}"$'\t'"${rel}"$'\t'"${workflow}"$'\t'"${ref}"$'\t'"${canonical_ref}"$'\n'
 done <<<"$subject_files"

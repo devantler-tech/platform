@@ -338,8 +338,10 @@ jobs:
           shellcheck -x scripts/write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
+          shellcheck scripts/tests/test-publish-workflow-canonical-approvals.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
+          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
 
       - name: 🔐 Enforce approved publication signers
         env:
@@ -814,6 +816,9 @@ jobs:
               - 'scripts/write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
+              # The fixed canonical-publisher approvals the same library reads, and their test (#4502).
+              - 'scripts/publish-workflow-canonical-approvals.tsv'
+              - 'scripts/tests/test-publish-workflow-canonical-approvals.sh'
               # The generator that writes the set the guard above reads, and its test — both
               # halves, so editing either alone still runs the fail-closed proof (an unresolved
               # consumer writes nothing) that step 🔐 Validate the approved-revisions generator pins.
