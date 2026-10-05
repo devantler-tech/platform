@@ -51,8 +51,8 @@ jobs:
           docker run --rm --platform linux/amd64 --user 1001:1001 \
             --read-only --cap-drop ALL --security-opt no-new-privileges \
             --memory 4g --cpus 2 --env HOME=/runner-data \
-            --tmpfs /runner-data:rw,uid=1001,gid=1001,size=2g \
-            --tmpfs /tmp:rw,uid=1001,gid=1001,size=1g \
+            --tmpfs /runner-data:rw,exec,nosuid,nodev,uid=1001,gid=1001,size=2g \
+            --tmpfs /tmp:rw,exec,nosuid,nodev,uid=1001,gid=1001,size=1g \
             ksail-analysis:verify /usr/local/bin/ksail-analysis-smoke
 
   publish:
