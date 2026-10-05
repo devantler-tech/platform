@@ -202,6 +202,8 @@ for job in verify publish; do
   # shellcheck disable=SC2016
   [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" ' ]] ||
     fail "the ${job} job must apply the compatibility patch and then the cleanup patch, once each"
+  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '4' ]] ||
+    fail "the ${job} job must run exactly one check and one apply for each of the two patches"
   # shellcheck disable=SC2016
   grep -qF 'git apply --check "${CLEANUP_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the cleanup patch before applying it"
@@ -233,9 +235,16 @@ grep -qF 'TestObjectPresenceForEverySkippedKind' "${cleanup_patch_file}" ||
   fail 'the cleanup patch must prove removal and retention for every previously skipped kind'
 grep -qF 'TestObjectPresenceIsUnknownWhenTheLookupProvesNothing' "${cleanup_patch_file}" ||
   fail 'the cleanup patch must prove a failed lookup keeps the record'
+grep -qF '"workloadconfigurationscans":          {deleteScanRecordByWlid},' "${cleanup_patch_file}" ||
+  fail 'the object lookup must be registered for configuration scan records'
+if grep -E '^\+' "${cleanup_patch_file}" | grep -F 'deleteScanRecordByWlid}' | grep -vqF '"workloadconfigurationscan'; then
+  fail 'the object lookup must not be registered for any other record type'
+fi
+grep -qF 'TestObjectPresenceAgainstRealServerAnswers' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove how real server answers are classified'
 grep -qF '"truncated name label"' "${cleanup_patch_file}" ||
   fail 'the cleanup patch must prove a truncated name label never selects an object'
-if grep -qE '^\+.*\.(Delete|DeleteCollection|Update|Patch|Create)\(' "${cleanup_patch_file}"; then
+if grep -qE '^\+.*\.(Delete|DeleteCollection|Update|Patch|Apply|Create)\(' "${cleanup_patch_file}"; then
   fail 'the cleanup patch must only read from the cluster'
 fi
 

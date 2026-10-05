@@ -16,9 +16,20 @@ index ff75e379..045f5047 100644
  	relevancyEnabled := clusterData.RelevantImageVulnerabilitiesEnabled != nil && *clusterData.RelevantImageVulnerabilitiesEnabled
  
 diff --git a/pkg/registry/file/cleanup.go b/pkg/registry/file/cleanup.go
-index 7c846b2e..acb51505 100644
+index 7c846b2e..14b6518a 100644
 --- a/pkg/registry/file/cleanup.go
 +++ b/pkg/registry/file/cleanup.go
+@@ -65,8 +65,8 @@ func initResourceToKindHandler(relevancyEnabled bool) map[string][]TypeCleanupHa
+ 		"sbomsyftfiltered":                    {deleteByInstanceId},
+ 		"seccompprofiles":                     {deleteByTemplateHashOrWlid},
+ 		"vulnerabilitymanifestsummaries":      {deleteByWlidAndContainer},
+-		"workloadconfigurationscans":          {deleteByWlid},
+-		"workloadconfigurationscansummaries":  {deleteByWlid},
++		"workloadconfigurationscans":          {deleteScanRecordByWlid},
++		"workloadconfigurationscansummaries":  {deleteScanRecordByWlid},
+ 	}
+ 
+ 	// only if relevancy is enabled, we need to delete application profiles with missing instanceId or wlid annotations
 @@ -126,6 +126,8 @@ func (h *ResourcesCleanupHandler) CleanupTask(ctx context.Context, resourceToKin
  	// cluster level sets to aggregate data from all namespaces
  	clusterRunningContainerImageIds := mapset.NewSet[string]()
@@ -53,27 +64,27 @@ index 7c846b2e..acb51505 100644
 +	}
 +	return memoizeObjectPresence(func(ref ObjectRef) ObjectPresence {
 +		return checker.ObjectPresence(ctx, ref)
-+	})
++	}, time.Now().Add(objectPresencePassBudget))
 +}
 +
  func (h *ResourcesCleanupHandler) cleanupNamespace(ctx context.Context, ns string, resourceToKindHandler map[string][]TypeCleanupHandlerFunc, conn *sqlite.Conn, resources ResourceMaps) error {
  	for resourceKind, handlers := range resourceToKindHandler {
  		v1beta1ApiVersionPath := filepath.Join(h.root, softwarecomposition.GroupName, resourceKind, ns)
-@@ -275,14 +289,24 @@ func deleteByWlid(_, _ string, metadata *metav1.ObjectMeta, resourceMaps Resourc
- 	wlid, ok := metadata.Annotations[helpersv1.WlidMetadataKey]
- 	kind := strings.ToLower(wlidPkg.GetKindFromWlid(wlid))
- 	if !isCleanableWlidKind(kind) {
--		if kind != "" {
--			logger.L().Debug("skipping unknown kind", helpers.String("kind", kind))
--		}
--		return false
-+		// Other kinds are not in the workload discovery, so the object itself is looked up.
-+		// Only a positive absent answer removes the record.
-+		return scannedObjectIsAbsent(metadata, resourceMaps)
- 	}
+@@ -283,6 +297,28 @@ func deleteByWlid(_, _ string, metadata *metav1.ObjectMeta, resourceMaps Resourc
  	return !ok || !resourceMaps.RunningWlidsToContainerNames.Has(wlidWithoutClusterName(wlid))
  }
  
++// deleteScanRecordByWlid is deleteByWlid for configuration scan records. Those also describe
++// objects the workload discovery does not list, so such an object is looked up by itself and
++// its record removed only on a positive absent answer.
++func deleteScanRecordByWlid(kind, path string, metadata *metav1.ObjectMeta, resourceMaps ResourceMaps) bool {
++	wlidKind := strings.ToLower(wlidPkg.GetKindFromWlid(metadata.Annotations[helpersv1.WlidMetadataKey]))
++	if wlidKind == "" || isCleanableWlidKind(wlidKind) {
++		return deleteByWlid(kind, path, metadata, resourceMaps)
++	}
++	return scannedObjectIsAbsent(metadata, resourceMaps)
++}
++
 +func scannedObjectIsAbsent(metadata *metav1.ObjectMeta, resourceMaps ResourceMaps) bool {
 +	if resourceMaps.ObjectPresence == nil {
 +		return false
@@ -129,10 +140,10 @@ index 74e1de92..aab4e8c6 100644
  }
 diff --git a/pkg/registry/file/object_presence.go b/pkg/registry/file/object_presence.go
 new file mode 100644
-index 00000000..07162b23
+index 00000000..9597918e
 --- /dev/null
 +++ b/pkg/registry/file/object_presence.go
-@@ -0,0 +1,239 @@
+@@ -0,0 +1,269 @@
 +package file
 +
 +import (
@@ -186,6 +197,10 @@ index 00000000..07162b23
 +}
 +
 +const objectPresenceLookupTimeout = 10 * time.Second
++
++// objectPresencePassBudget bounds the lookups of one cleanup pass. Records not reached within it
++// are kept and looked at again on the next pass.
++const objectPresencePassBudget = 10 * time.Minute
 +
 +// MetadataObjectPresenceChecker answers ObjectPresence with metadata-only GET requests.
 +type MetadataObjectPresenceChecker struct {
@@ -276,12 +291,19 @@ index 00000000..07162b23
 +	if details == nil || details.Name != ref.Name || details.Kind != resource.Resource || details.Group != resource.Group {
 +		return ObjectPresenceUnknown
 +	}
++	// a response the client could not decode is described with the request it made, not by the server
++	for _, cause := range details.Causes {
++		if cause.Type == metav1.CauseTypeUnexpectedServerResponse {
++			return ObjectPresenceUnknown
++		}
++	}
 +	return ObjectPresenceAbsent
 +}
 +
 +// memoizeObjectPresence answers repeated lookups of one object within a single cleanup pass
-+// from the first answer, so a scan record and its summary cost one request.
-+func memoizeObjectPresence(lookup ObjectPresenceFunc) ObjectPresenceFunc {
++// from the first answer, so a scan record and its summary cost one request. After the deadline
++// it stops asking, so a slow or unreachable API server cannot hold the pass open.
++func memoizeObjectPresence(lookup ObjectPresenceFunc, deadline time.Time) ObjectPresenceFunc {
 +	if lookup == nil {
 +		return nil
 +	}
@@ -292,6 +314,9 @@ index 00000000..07162b23
 +		defer mu.Unlock()
 +		if presence, ok := seen[ref]; ok {
 +			return presence
++		}
++		if !time.Now().Before(deadline) {
++			return ObjectPresenceUnknown
 +		}
 +		presence := lookup(ref)
 +		seen[ref] = presence
@@ -347,12 +372,28 @@ index 00000000..07162b23
 +		return ObjectRef{}, false
 +	}
 +	ref, isBinding := bindingKinds[kind]
-+	if !isBinding {
++	if !isBinding || !recordIsAboutBinding(metadata, kind, ref.Group) {
 +		return ObjectRef{}, false
 +	}
 +	ref.Namespace = namespace
 +	ref.Name = name
 +	return ref, true
++}
++
++// recordIsAboutBinding reports whether the record itself says its workload id names an RBAC
++// binding: either it describes that binding, or it is a relation record filed under one. A
++// kind that merely shares the name in another API group is neither.
++func recordIsAboutBinding(metadata *metav1.ObjectMeta, wlidKind, rbacGroup string) bool {
++	if strings.ToLower(metadata.Labels[helpersv1.RelatedKindMetadataKey]) == wlidKind {
++		return metadata.Labels[helpersv1.ApiGroupMetadataKey] == rbacGroup
++	}
++	if metadata.Labels[helpersv1.RbacResourceMetadataKey] != "true" {
++		return false
++	}
++	if wlidKind == "clusterrolebinding" {
++		return metadata.Labels[helpersv1.ClusterRoleBindingNameMetadataKey] != ""
++	}
++	return metadata.Labels[helpersv1.RoleBindingNameMetadataKey] != ""
 +}
 +
 +// splitWlid returns the namespace and the "<kind>-<name>" tail of
@@ -374,17 +415,20 @@ index 00000000..07162b23
 +}
 diff --git a/pkg/registry/file/object_presence_test.go b/pkg/registry/file/object_presence_test.go
 new file mode 100644
-index 00000000..02121150
+index 00000000..0925780d
 --- /dev/null
 +++ b/pkg/registry/file/object_presence_test.go
-@@ -0,0 +1,346 @@
+@@ -0,0 +1,448 @@
 +package file
 +
 +import (
 +	"context"
 +	"errors"
++	"net/http"
++	"net/http/httptest"
 +	"strings"
 +	"testing"
++	"time"
 +
 +	mapset "github.com/deckarep/golang-set/v2"
 +	"github.com/goradd/maps"
@@ -396,7 +440,9 @@ index 00000000..02121150
 +	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 +	"k8s.io/apimachinery/pkg/runtime"
 +	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/client-go/metadata"
 +	metadatafake "k8s.io/client-go/metadata/fake"
++	"k8s.io/client-go/rest"
 +	clienttesting "k8s.io/client-go/testing"
 +	"zombiezen.com/go/sqlite"
 +)
@@ -492,6 +538,12 @@ index 00000000..02121150
 +		"resource type not found":        &apierrors.StatusError{ErrStatus: metav1.Status{Status: metav1.StatusFailure, Code: 404, Reason: metav1.StatusReasonNotFound, Message: "the server could not find the requested resource"}},
 +		"not found for another object":   apierrors.NewNotFound(schema.GroupResource{Group: role.group, Resource: role.resource}, "someone-else"),
 +		"not found for another resource": apierrors.NewNotFound(schema.GroupResource{Group: role.group, Resource: "rolebindings"}, ref.Name),
++		"not found in another group":     apierrors.NewNotFound(schema.GroupResource{Group: "iam.example.io", Resource: role.resource}, ref.Name),
++		"not found built from an undecodable response": func() error {
++			notFound := apierrors.NewNotFound(schema.GroupResource{Group: role.group, Resource: role.resource}, ref.Name)
++			notFound.ErrStatus.Details.Causes = []metav1.StatusCause{{Type: metav1.CauseTypeUnexpectedServerResponse, Message: "404 page not found"}}
++			return notFound
++		}(),
 +	}
 +	for name, failure := range failures {
 +		t.Run(name, func(t *testing.T) {
@@ -538,6 +590,8 @@ index 00000000..02121150
 +		resource := schema.GroupVersionResource{Group: role.group, Version: "v1", Resource: role.resource}
 +		assert.Equal(t, ObjectPresenceUnknown, classifyObjectLookup(ref, resource, liveObject(role, "unifi", "other"), nil))
 +		assert.Equal(t, ObjectPresenceUnknown, classifyObjectLookup(ref, resource, nil, nil))
++		assert.Equal(t, ObjectPresenceUnknown, classifyObjectLookup(ref, resource, liveObject(role, "elsewhere", ref.Name), nil))
++		assert.Equal(t, ObjectPresencePresent, classifyObjectLookup(ref, resource, liveObject(role, ref.Namespace, ref.Name), nil))
 +	})
 +}
 +
@@ -558,6 +612,12 @@ index 00000000..02121150
 +	if namespace != "" {
 +		labels[helpersv1.RelatedNamespaceMetadataKey] = namespace
 +	}
++	return labels
++}
++
++func relationLabels(labels map[string]string, bindingNameKey, bindingName string) map[string]string {
++	labels[helpersv1.RbacResourceMetadataKey] = "true"
++	labels[bindingNameKey] = bindingName
 +	return labels
 +}
 +
@@ -582,11 +642,11 @@ index 00000000..02121150
 +			ObjectRef{Group: rbac, Version: "v1", Kind: "ClusterRoleBinding", Name: "flux-web-admins"},
 +		},
 +		"relation record resolves to its binding": {
-+			scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", objectLabels("", "", "ServiceAccount", "tf-runner", "unifi")),
++			scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "unifi"), helpersv1.RoleBindingNameMetadataKey, "tf-runner")),
 +			ObjectRef{Group: rbac, Version: "v1", Kind: "RoleBinding", Namespace: "unifi", Name: "tf-runner"},
 +		},
 +		"relation record resolves to its cluster binding": {
-+			scanRecord("wlid://cluster-prod/namespace-/clusterrolebinding-crossplane:provider:aws:system", objectLabels("", "", "ServiceAccount", "provider-aws", "crossplane-system")),
++			scanRecord("wlid://cluster-prod/namespace-/clusterrolebinding-crossplane:provider:aws:system", relationLabels(objectLabels("", "", "ServiceAccount", "provider-aws", "crossplane-system"), helpersv1.ClusterRoleBindingNameMetadataKey, "crossplane-provider-aws-system")),
 +			ObjectRef{Group: rbac, Version: "v1", Kind: "ClusterRoleBinding", Name: "crossplane:provider:aws:system"},
 +		},
 +		"binding with a truncated name label resolves from the full workload id": {
@@ -605,20 +665,23 @@ index 00000000..02121150
 +	unresolved := map[string]*metav1.ObjectMeta{
 +		"nil metadata": nil,
 +		// production carries these: the label is capped at 63 characters, the object name is not
-+		"truncated name label":             scanRecord("wlid://cluster-prod/namespace-cilium-secrets/secret-"+longName, objectLabels("", "v1", "Secret", longName[:63], "cilium-secrets")),
-+		"name label for another object":    scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf", "unifi")),
-+		"kind label for another kind":      scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels("", "v1", "Secret", "tf-runner", "unifi")),
-+		"namespace label disagrees":        scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "other")),
-+		"no version label":                 scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "", "Role", "tf-runner", "unifi")),
-+		"no labels and not a binding":      scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", nil),
-+		"no workload id":                   {Labels: objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")},
-+		"workload id without scheme":       scanRecord("cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id with too few parts":   scanRecord("wlid://cluster-prod/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id with too many parts":  scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner/extra", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id without namespace":    scanRecord("wlid://cluster-prod/unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id without cluster":      scanRecord("wlid://prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"binding workload id without name": scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-", nil),
-+		"binding kind without separator":   scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding", nil),
++		"truncated name label":                scanRecord("wlid://cluster-prod/namespace-cilium-secrets/secret-"+longName, objectLabels("", "v1", "Secret", longName[:63], "cilium-secrets")),
++		"name label for another object":       scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf", "unifi")),
++		"kind label for another kind":         scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels("", "v1", "Secret", "tf-runner", "unifi")),
++		"namespace label disagrees":           scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "other")),
++		"no version label":                    scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "", "Role", "tf-runner", "unifi")),
++		"no labels and not a binding":         scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", nil),
++		"no workload id":                      {Labels: objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")},
++		"workload id without scheme":          scanRecord("cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id with too few parts":      scanRecord("wlid://cluster-prod/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id with too many parts":     scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner/extra", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id without namespace":       scanRecord("wlid://cluster-prod/unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id without cluster":         scanRecord("wlid://prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"binding-named kind in another group": scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-"+longName, objectLabels("iam.example.io", "v1", "RoleBinding", longName[:63], "unifi")),
++		"relation labels without the marker":  scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", objectLabels("", "", "ServiceAccount", "tf-runner", "unifi")),
++		"relation marker without its binding": scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "unifi"), helpersv1.ClusterRoleBindingNameMetadataKey, "tf-runner")),
++		"binding workload id without name":    scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-", nil),
++		"binding kind without separator":      scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding", nil),
 +	}
 +	for name, record := range unresolved {
 +		t.Run(name, func(t *testing.T) {
@@ -637,7 +700,7 @@ index 00000000..02121150
 +	}
 +}
 +
-+func TestDeleteByWlidRemovesOnlyPositivelyAbsentObjects(t *testing.T) {
++func TestDeleteScanRecordByWlidRemovesOnlyPositivelyAbsentObjects(t *testing.T) {
 +	const rbac = "rbac.authorization.k8s.io"
 +	record := scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi"))
 +	want := ObjectRef{Group: rbac, Version: "v1", Kind: "Role", Namespace: "unifi", Name: "tf-runner"}
@@ -651,10 +714,10 @@ index 00000000..02121150
 +		return resources
 +	}
 +
-+	assert.True(t, deleteByWlid("", "", record, answer(ObjectPresenceAbsent)))
-+	assert.False(t, deleteByWlid("", "", record, answer(ObjectPresencePresent)))
-+	assert.False(t, deleteByWlid("", "", record, answer(ObjectPresenceUnknown)))
-+	assert.False(t, deleteByWlid("", "", record, emptyResourceMaps()), "no lookup available keeps the record")
++	assert.True(t, deleteScanRecordByWlid("", "", record, answer(ObjectPresenceAbsent)))
++	assert.False(t, deleteScanRecordByWlid("", "", record, answer(ObjectPresencePresent)))
++	assert.False(t, deleteScanRecordByWlid("", "", record, answer(ObjectPresenceUnknown)))
++	assert.False(t, deleteScanRecordByWlid("", "", record, emptyResourceMaps()), "no lookup available keeps the record")
 +
 +	t.Run("a record that does not identify one object is kept without a lookup", func(t *testing.T) {
 +		resources := emptyResourceMaps()
@@ -663,7 +726,31 @@ index 00000000..02121150
 +			return ObjectPresenceAbsent
 +		}
 +		truncated := scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner-with-a-longer-name", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi"))
-+		assert.False(t, deleteByWlid("", "", truncated, resources))
++		assert.False(t, deleteScanRecordByWlid("", "", truncated, resources))
++	})
++
++	t.Run("other record types keep the upstream rule and are never looked up", func(t *testing.T) {
++		resources := emptyResourceMaps()
++		resources.ObjectPresence = func(ObjectRef) ObjectPresence {
++			t.Fatal("only configuration scan records may be looked up")
++			return ObjectPresenceAbsent
++		}
++		assert.False(t, deleteByWlid("", "", record, resources))
++		assert.False(t, deleteByTemplateHashOrWlid("", "", record, resources))
++		handlers := initResourceToKindHandler(true)
++		for resourceKind, registered := range handlers {
++			scanRecords := resourceKind == "workloadconfigurationscans" || resourceKind == "workloadconfigurationscansummaries"
++			if scanRecords {
++				continue
++			}
++			for _, handler := range registered {
++				handler(resourceKind, "", record.DeepCopy(), resources)
++			}
++		}
++		for _, resourceKind := range []string{"workloadconfigurationscans", "workloadconfigurationscansummaries"} {
++			require.Len(t, handlers[resourceKind], 1)
++			assert.True(t, handlers[resourceKind][0](resourceKind, "", record, answer(ObjectPresenceAbsent)))
++		}
 +	})
 +
 +	t.Run("workload kinds keep using the workload discovery", func(t *testing.T) {
@@ -673,14 +760,14 @@ index 00000000..02121150
 +			return ObjectPresencePresent
 +		}
 +		deployment := scanRecord("wlid://cluster-prod/namespace-unifi/deployment-web", objectLabels("apps", "v1", "Deployment", "web", "unifi"))
-+		assert.True(t, deleteByWlid("", "", deployment, resources))
++		assert.True(t, deleteScanRecordByWlid("", "", deployment, resources))
 +		resources.RunningWlidsToContainerNames.Set("namespace-unifi/deployment-web", mapset.NewSet[string]("web"))
-+		assert.False(t, deleteByWlid("", "", deployment, resources))
++		assert.False(t, deleteScanRecordByWlid("", "", deployment, resources))
 +	})
 +}
 +
 +func TestMemoizeObjectPresence(t *testing.T) {
-+	assert.Nil(t, memoizeObjectPresence(nil))
++	assert.Nil(t, memoizeObjectPresence(nil, time.Now().Add(time.Hour)))
 +
 +	calls := map[ObjectRef]int{}
 +	lookup := memoizeObjectPresence(func(ref ObjectRef) ObjectPresence {
@@ -689,7 +776,7 @@ index 00000000..02121150
 +			return ObjectPresenceAbsent
 +		}
 +		return ObjectPresencePresent
-+	})
++	}, time.Now().Add(time.Hour))
 +	gone := ObjectRef{Version: "v1", Kind: "Secret", Namespace: "unifi", Name: "gone"}
 +	here := ObjectRef{Version: "v1", Kind: "Secret", Namespace: "unifi", Name: "here"}
 +	for range 3 {
@@ -697,6 +784,14 @@ index 00000000..02121150
 +		assert.Equal(t, ObjectPresencePresent, lookup(here))
 +	}
 +	assert.Equal(t, map[ObjectRef]int{gone: 1, here: 1}, calls)
++
++	t.Run("after the pass budget nothing is asked and nothing is absent", func(t *testing.T) {
++		expired := memoizeObjectPresence(func(ObjectRef) ObjectPresence {
++			t.Fatal("no lookup may be made after the pass budget")
++			return ObjectPresenceAbsent
++		}, time.Now())
++		assert.Equal(t, ObjectPresenceUnknown, expired(gone))
++	})
 +}
 +
 +type presenceFetcher struct {
@@ -723,4 +818,52 @@ index 00000000..02121150
 +
 +	withoutLookup := &ResourcesCleanupHandler{fetcher: &ResourcesFetchMock{}}
 +	assert.Nil(t, withoutLookup.objectPresenceLookup(context.Background()))
++}
++
++// The fake client cannot show how the real client reports a response that is not an API
++// status, which is what an unserved resource type or a proxy in the way returns.
++func TestObjectPresenceAgainstRealServerAnswers(t *testing.T) {
++	role := skippedKinds[0]
++	ref := refFor(role, "tf-runner")
++	objectNotFound := `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404,` +
++		`"message":"roles.rbac.authorization.k8s.io \"tf-runner\" not found",` +
++		`"details":{"name":"tf-runner","group":"rbac.authorization.k8s.io","kind":"roles"}}`
++	live := `{"kind":"PartialObjectMetadata","apiVersion":"meta.k8s.io/v1","metadata":{"name":"tf-runner","namespace":"unifi"}}`
++
++	answers := map[string]struct {
++		code        int
++		contentType string
++		body        string
++		want        ObjectPresence
++	}{
++		"object-level not found":          {http.StatusNotFound, "application/json", objectNotFound, ObjectPresenceAbsent},
++		"object read back":                {http.StatusOK, "application/json", live, ObjectPresencePresent},
++		"plain text not found":            {http.StatusNotFound, "text/plain", "404 page not found\n", ObjectPresenceUnknown},
++		"empty not found":                 {http.StatusNotFound, "", "", ObjectPresenceUnknown},
++		"status not found without detail": {http.StatusNotFound, "application/json", `{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404}`, ObjectPresenceUnknown},
++		"gone":                            {http.StatusGone, "text/plain", "gone", ObjectPresenceUnknown},
++		"forbidden":                       {http.StatusForbidden, "text/plain", "forbidden", ObjectPresenceUnknown},
++		"bad gateway":                     {http.StatusBadGateway, "text/html", "<html>bad gateway</html>", ObjectPresenceUnknown},
++	}
++	for name, answer := range answers {
++		t.Run(name, func(t *testing.T) {
++			var requested string
++			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				requested = r.Method + " " + r.URL.Path
++				if answer.contentType != "" {
++					w.Header().Set("Content-Type", answer.contentType)
++				}
++				w.WriteHeader(answer.code)
++				_, _ = w.Write([]byte(answer.body))
++			}))
++			defer server.Close()
++
++			client, err := metadata.NewForConfig(&rest.Config{Host: server.URL})
++			require.NoError(t, err)
++			checker := NewMetadataObjectPresenceChecker(client, testMapper())
++
++			assert.Equal(t, answer.want, checker.ObjectPresence(context.Background(), ref))
++			assert.Equal(t, "GET /apis/rbac.authorization.k8s.io/v1/namespaces/unifi/roles/tf-runner", requested, "exactly one object is read, nothing is listed or written")
++		})
++	}
 +}
