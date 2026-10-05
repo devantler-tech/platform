@@ -186,6 +186,11 @@ case "$url" in
   https://product-ui.example.com/kit.css) printf ':root { color-scheme: light; }\n' >"$body" ;;
   *) exit 102 ;;
 esac
+if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
+  : >"$FIXTURE/public-failed-once"
+  printf '503'
+  exit 0
+fi
 case "${MODE:-}" in
   http-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
@@ -343,6 +348,17 @@ jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scr
 run_case settled-wrong fail '' 3
 jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"]' "${scratch}/settled-wrong/stdout" >/dev/null ||
   fail 'settled-wrong: a rollout that settled into a wrong state was not refused with the change named'
+# Public checks that fail once while the rollout moves are retaken with it.
+mkdir -p "${scratch}/moving-public/after"
+cp "${scratch}/healthy/"*.json "${scratch}/moving-public/"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/moving-public/after/apps.json"
+expected_urls=10
+run_case moving-public pass flaky-public
+expected_urls=9
+# Against a rollout that holds still, one failed public check refuses the deploy.
+run_case still-public fail flaky-public 3
+jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
+  fail 'still-public: a failed public check against an unchanged rollout was not refused as such'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
 mutate_case foreign-source-namespace apps '.spec.sourceRef.namespace="foreign"' 3
 mutate_case root-advanced root '.status.artifact.revision="latest@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' 3

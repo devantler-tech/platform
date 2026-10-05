@@ -425,6 +425,8 @@ name_changes() {
 # An ordinary reconcile can start between the two snapshots, so a pair that
 # differs is retaken from the start, public checks included, at most three
 # times. A rollout that never holds still is refused and the changes are named.
+# Public checks that fail while the rollout moves are retaken with it; they
+# refuse the deploy once the rollout they failed against is known to be still.
 attempt=0
 while :; do
   attempt=$((attempt + 1))
@@ -434,12 +436,20 @@ while :; do
     remaining
     sleep 0.2
   done
-  bounded quiet_public_checks || fail public_contract_incomplete
+  public_ok=1
+  bounded quiet_public_checks || public_ok=0
+  ((public_ok || deadline - SECONDS > 0)) || fail public_contract_incomplete
   collect "$scratch/after"
-  if bounded check "$scratch/after" && bounded cmp -s "$scratch/before/snapshot" "$scratch/after/snapshot"; then break; fi
+  if bounded check "$scratch/after" && bounded cmp -s "$scratch/before/snapshot" "$scratch/after/snapshot"; then
+    ((public_ok)) || fail public_contract_incomplete
+    break
+  fi
   bounded name_changes || fail read_incomplete
   changed=$(<"$scratch/changed")
-  ((attempt < 3)) || fail rollout_changed
+  if ((attempt >= 3)); then
+    ((public_ok)) || fail public_contract_incomplete
+    fail rollout_changed
+  fi
   remaining
   sleep 0.2
 done
