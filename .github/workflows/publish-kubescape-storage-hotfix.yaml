@@ -6,12 +6,14 @@ on:
     paths:
       - .github/workflows/publish-kubescape-storage-hotfix.yaml
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   push:
     branches: [main]
     paths:
       - .github/workflows/publish-kubescape-storage-hotfix.yaml
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   workflow_dispatch:
 
@@ -24,8 +26,9 @@ concurrency:
 env:
   KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
-  IMAGE_TAG: v0.0.297-sqlite-contention.6-${{ github.sha }}
+  IMAGE_TAG: v0.0.297-sqlite-contention.7-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
+  CLEANUP_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
 
 jobs:
   verify:
@@ -63,11 +66,14 @@ jobs:
         env:
           EXPECTED_SOURCE_COMMIT: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+          CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
+          git apply --check "${CLEANUP_PATCH}"
+          git apply "${CLEANUP_PATCH}"
           git diff --check
           go test ./pkg/registry/file
 
@@ -115,11 +121,14 @@ jobs:
         env:
           EXPECTED_SOURCE_COMMIT: ${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+          CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
+          git apply --check "${CLEANUP_PATCH}"
+          git apply "${CLEANUP_PATCH}"
           git diff --check
 
       - name: Set up Buildx container driver

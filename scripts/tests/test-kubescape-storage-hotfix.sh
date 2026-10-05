@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly workflow="${root_dir}/.github/workflows/publish-kubescape-storage-hotfix.yaml"
 readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch"
+readonly cleanup_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
@@ -19,6 +20,7 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 [[ -f "${workflow}" ]] || fail 'the Kubescape storage compatibility-image workflow is missing'
 [[ -f "${patch_file}" ]] || fail 'the Kubescape storage compatibility patch is missing'
+[[ -f "${cleanup_patch_file}" ]] || fail 'the Kubescape storage scan-record cleanup patch is missing'
 
 [[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
   fail 'the hotfix workflow must deny permissions by default'
@@ -35,8 +37,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.6-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the separated connection-lifetime revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.7-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the scan-record cleanup revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -185,6 +187,56 @@ grep -qF 'persistence can run between maintenance writes' "${patch_file}" ||
   fail 'container-profile maintenance must release SQLite between idempotent artifact writes'
 if grep -qF 'ImmediateTransaction' "${patch_file}"; then
   fail 'read-heavy profile transactions must not reserve SQLite write access before their write phase'
+fi
+
+# Both patches must reach the tested source and the published image, in the same order.
+[[ "$(yq -er '.env.CLEANUP_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch' ]] ||
+  fail 'the workflow must apply the reviewed scan-record cleanup patch'
+for job in verify publish; do
+  job_script="$(JOB="${job}" yq -er '
+    [.jobs[strenv(JOB)].steps[] | select((.run // "") | contains("git apply")) | .run] | join("\n")
+  ' "${workflow}")" || fail "could not read how the ${job} job applies its patches"
+  # The literal shell variables are the contract.
+  # shellcheck disable=SC2016
+  apply_order="$(grep -E '^\s*git apply "\$\{(HOTFIX|CLEANUP)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
+  # shellcheck disable=SC2016
+  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" ' ]] ||
+    fail "the ${job} job must apply the compatibility patch and then the cleanup patch, once each"
+  # shellcheck disable=SC2016
+  grep -qF 'git apply --check "${CLEANUP_PATCH}"' <<<"${job_script}" ||
+    fail "the ${job} job must check the cleanup patch before applying it"
+done
+for trigger in pull_request push; do
+  TRIGGER="${trigger}" yq -e '
+    .on[strenv(TRIGGER)].paths |
+    contains(["k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"])
+  ' "${workflow}" >/dev/null ||
+    fail "a cleanup patch change must start the workflow on ${trigger}"
+done
+
+[[ "$(grep -c '^diff --git ' "${cleanup_patch_file}")" == '5' ]] ||
+  fail 'the cleanup patch must touch only its wiring, implementation and regression-test files'
+for touched in main.go pkg/registry/file/cleanup.go pkg/registry/file/discovery.go \
+  pkg/registry/file/object_presence.go pkg/registry/file/object_presence_test.go; do
+  grep -qF "diff --git a/${touched} b/${touched}" "${cleanup_patch_file}" ||
+    fail "the cleanup patch no longer changes ${touched}"
+done
+grep -qF 'return resourceMaps.ObjectPresence(ref) == ObjectPresenceAbsent' "${cleanup_patch_file}" ||
+  fail 'a scan record may be removed only on a positive absent answer'
+grep -qF 'ObjectPresenceUnknown ObjectPresence = iota' "${cleanup_patch_file}" ||
+  fail 'an unset lookup answer must be unknown, never absent'
+grep -qF 'details.Name != ref.Name' "${cleanup_patch_file}" ||
+  fail 'only a not-found answer that names the object may prove absence'
+grep -qF 'tail == strings.ToLower(labelKind)+"-"+labelName' "${cleanup_patch_file}" ||
+  fail 'a record must be resolved from its labels only when the workload id spells the same object'
+grep -qF 'TestObjectPresenceForEverySkippedKind' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove removal and retention for every previously skipped kind'
+grep -qF 'TestObjectPresenceIsUnknownWhenTheLookupProvesNothing' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove a failed lookup keeps the record'
+grep -qF '"truncated name label"' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove a truncated name label never selects an object'
+if grep -qE '^\+.*\.(Delete|DeleteCollection|Update|Patch|Create)\(' "${cleanup_patch_file}"; then
+  fail 'the cleanup patch must only read from the cluster'
 fi
 
 storage_repository="$(yq -er '
