@@ -583,6 +583,7 @@ jobs:
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               # The bookmark validator and its tests guard the same ConfigMap (#2909).
               - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/validate-homepage-bookmarks/**'
               - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/homepage-bookmarks/**'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -1623,6 +1624,7 @@ jobs:
         # the real ConfigMap (#2909).
         run: |
           shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          go test ./scripts/validate-homepage-bookmarks
           bash scripts/tests/test-validate-homepage-bookmarks.sh
           bash scripts/validate-homepage-bookmarks.sh
 
