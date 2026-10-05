@@ -298,7 +298,7 @@ jobs:
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 98 --format sarif -o "${RUNNER_TEMP}/kubescape.sarif"
 
       - name: 🧭 Make the SARIF paths repo-root-relative
         # Kubescape reports paths relative to the directory it scanned; Code
