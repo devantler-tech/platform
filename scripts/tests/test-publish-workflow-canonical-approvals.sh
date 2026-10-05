@@ -125,9 +125,10 @@ write_record() {
 }
 record_row() { printf '%s\tpublish-manifests\t%s\t%s' "$1" "$CANONICAL_REPOSITORY" "$2"; }
 
-run_in() { # <root> <script> — enforcing, against the fixture
+ENFORCE=1  # the cases below run enforcing unless a block says otherwise
+run_in() { # <root> <script> — against the fixture, in the current switch state
   APPROVED_REVISIONS_FILE="$1/scripts/approved.tsv" CANONICAL_APPROVALS_FILE="$1/scripts/canonical.tsv" \
-    PUBLISH_CONSUMER_ROOT="$1" APPROVED_REVISIONS_ENFORCE=1 bash "$2" 2>&1
+    PUBLISH_CONSUMER_ROOT="$1" APPROVED_REVISIONS_ENFORCE="$ENFORCE" bash "$2" 2>&1
 }
 
 expect_pass() { # <case> <root>
@@ -175,7 +176,7 @@ root="$(build_tree record-legacy-family)"
 write_record "$root" "$(printf '%s\tpublish-manifests\tdevantler-tech/actions\t%s' "$manifest_consumer" "$SHA_K")"
 expect_refusal 'the legacy repository is not a canonical family' "$root" 'not a known publisher family'
 
-for floating in main v7.1.2 refs/heads/main '[0-9a-f]{40}' "${SHA_K%?}" "${SHA_K}0" "$(printf '%s' "$SHA_K" | tr 'a-f6' 'A-F6')A"; do
+for floating in main v7.1.2 refs/heads/main '[0-9a-f]{40}' "${SHA_K%?}" "${SHA_K}0" 'ABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD' 'abcdefabcdefabcdefabcdefabcdefabcdefabcG'; do
   root="$(build_tree record-floating)"
   write_record "$root" "$(record_row "$manifest_consumer" "$floating")"
   expect_refusal "a commit of '$floating' is refused as not a 40-hex commit" "$root" "$manifest_consumer" 'is not a 40-hex commit'
@@ -296,13 +297,13 @@ root="$(build_tree family-reversed)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$manifest_consumer" \
   "^https://github\\.com/devantler-tech/(\\.github/\\.github/workflows/publish-manifests\\.yaml@$SHA_K|actions/\\.github/workflows/publish-manifests\\.yaml@$LEGACY_SET)\$"
-expect_refusal 'canonical-first is not the rendered spelling and is refused' "$root" "$manifest_consumer"
+expect_refusal 'canonical-first is not the rendered spelling and is refused' "$root" 'legacy family followed by the canonical family'
 
 root="$(build_tree family-canonical-only)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$manifest_consumer" \
   "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-manifests\\.yaml@$SHA_K\$"
-expect_refusal 'a canonical-only matcher drops every legacy approval and is refused' "$root" "$manifest_consumer"
+expect_refusal 'a canonical-only matcher drops every legacy approval and is refused' "$root" 'does not start with the shared-workflow identity prefix'
 
 root="$(build_tree family-unanchored)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
@@ -313,13 +314,52 @@ expect_refusal 'an unanchored two-family matcher is refused' "$root" "does not e
 root="$(build_tree family-trailing)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$manifest_consumer" "${subject%\$}.*\$"
-expect_refusal 'a suffix after the group is refused' "$root" "$manifest_consumer"
+expect_refusal 'a suffix after the group is refused' "$root" "does not end with ')\$'"
 
 root="$(build_tree family-second-identity)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$manifest_consumer" "$subject"
 printf "      - issuer: '.*'\n        subject: '.*'\n" >>"$root/$(manifest_path "$manifest_consumer")"
 expect_refusal 'a second identity entry beside a two-family matcher is refused' "$root" 'exactly one is allowed'
+
+# A subject naming ONLY the canonical repository must be found to be judged. Beside a correct
+# matcher it would otherwise sit unseen in a second file or a second document.
+canonical_only="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-manifests\\.yaml@.*\$"
+root="$(build_tree stray-second-file)"
+mkdir -p "$root/k8s/extra"
+sed "s|subject: .*|subject: '$canonical_only'|" "$root/$(manifest_path "$manifest_consumer")" >"$root/k8s/extra/oci-repository.yaml"
+expect_refusal 'a canonical-only subject in a second file for the same artifact is refused' "$root" 'k8s/extra/oci-repository.yaml'
+
+root="$(build_tree stray-second-document)"
+printf -- '---\napiVersion: kyverno.io/v1\nkind: ClusterPolicy\nmetadata:\n  name: stray\nspec:\n  rules:\n    - subjectRegExp: %s\n' "$canonical_only" >>"$root/$(manifest_path "$manifest_consumer")"
+expect_refusal 'a canonical-only subject in a second document is refused' "$root" 'subject outside the OCIRepository document is unjudged'
+
+root="$(build_tree family-empty-legacy)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests '' "$SHA_K")"
+expect_refusal 'an empty legacy ref is refused by name' "$root" 'names no revision'
+
+# ── switch OFF: the canonical family has no pattern form to fall back to ──────────────────
+ENFORCE=0
+root="$(build_tree off-recorded)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K")"
+expect_pass 'switch off: the legacy pattern form beside the recorded commit passes' "$root"
+
+root="$(build_tree off-unrecorded)"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K")"
+expect_refusal 'switch off: an unrecorded canonical family is still refused' "$root" "$SHA_K" 'record none'
+
+root="$(build_tree off-other-commit)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_X")"
+expect_refusal 'switch off: another canonical commit is still refused' "$root" "$SHA_X" "$SHA_K"
+
+root="$(build_tree off-missing)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(legacy_subject publish-manifests "$PATTERN")"
+expect_refusal 'switch off: a recorded approval the matcher does not carry is still refused' "$root" 'does not accept the canonical publisher'
+ENFORCE=1
 
 # ── the writer ────────────────────────────────────────────────────────────────────────────
 subject_in() { yq eval -r 'select(.kind == "OCIRepository") | .spec.verify.matchOIDCIdentity[0].subject' "$1"; }

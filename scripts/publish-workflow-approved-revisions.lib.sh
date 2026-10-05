@@ -50,9 +50,12 @@ readonly CANONICAL_WORKFLOW='publish-manifests'
 readonly FAMILY_PREFIX='^https://github\.com/devantler-tech/('
 readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
 readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
-# SUBJECT_PATTERN with an optional group opener before the legacy repository, so the scan
-# finds a two-family subject as well as a legacy-only one. Every legacy-only match is unchanged.
-readonly FAMILY_SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
+# SUBJECT_PATTERN widened to either family, with an optional group opener, so the scan finds a
+# two-family subject and a canonical-only one as well as a legacy-only one. A subject naming
+# only the canonical repository must be FOUND to be refused: unseen, a second file or a second
+# document carrying one would sit beside a correct matcher unjudged. Every legacy-only match
+# is unchanged. The generic subject files stay excluded by name, as before.
+readonly FAMILY_SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
 
 refuse() {
   printf 'guard-publish-workflow-approved-revisions: %s\n' "$*" >&2
@@ -255,7 +258,7 @@ while IFS= read -r file; do
   docs="$(yq eval -r '
     select(.kind == "OCIRepository") |
     (.spec.verify.matchOIDCIdentity // []) as $ids |
-    ($ids | map(.subject // "") | map(select(test("devantler-tech/[(]?actions/.{1,2}github/workflows/publish-(app|manifests)")))) as $shared |
+    ($ids | map(.subject // "") | map(select(test("devantler-tech/[(]?(actions|.{0,1}[.]github)/.{1,2}github/workflows/publish-(app|manifests)")))) as $shared |
     [(.spec.url // "-"), ($ids | length), ($shared | length), ($shared[0] // "-")] | @tsv
   ' "$file" 2>/dev/null)" || refuse "$rel could not be read as YAML"
   [ -n "$docs" ] || refuse "$rel carries a shared-publish-workflow subject but no OCIRepository document owns it; attribute it to a consumer or add it to GENERIC_SUBJECT_FILES"
@@ -326,5 +329,7 @@ while IFS= read -r file; do
   esac
   workflow="publish-${rest%%\\.yaml@*}"
   ref="${rest#*\\.yaml@}"
+  # An empty ref would also shift the tab-separated record below by one field.
+  [ -n "$ref" ] || refuse "$rel: subject names no revision after '\\.yaml@': $subject"
   observed="${observed}${repo}"$'\t'"${rel}"$'\t'"${workflow}"$'\t'"${ref}"$'\t'"${canonical_ref}"$'\n'
 done <<<"$subject_files"
