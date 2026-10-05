@@ -43,7 +43,9 @@ expect_fail() {
     fail "$1: expected exit $3, got ${rc}:"$'\n'"${output}"
     return
   fi
-  if ! printf '%s\n' "${output}" | grep -qF -- "$4"; then
+  # A here-string, not a pipe: grep -q stops at the first match, and a long
+  # report still being written into a pipe then fails the whole test.
+  if ! grep -qF -- "$4" <<<"${output}"; then
     fail "$1: exit $3 but missing \"$4\":"$'\n'"${output}"
     return
   fi
