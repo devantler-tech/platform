@@ -5,15 +5,20 @@
 # REASON=Excluded and counts it as passing whatever the row declared. A rule
 # that matches nothing, or one that was deleted or renamed, therefore leaves
 # the suite green (#3145, #3152, #3392). A declared resource that does not
-# exist gets no row at all, so it drops out of the run the same way. Three
-# checks close those gaps:
+# exist gets no row at all, so it drops out of the run the same way. A policy
+# kyverno cannot load is the same gap at its widest: every row of it is skipped
+# as "Invalid Policy" and still counted as passing (#4530). Four checks close
+# those gaps:
 #   1. every rule a fixture names exists in a policy that fixture loads, so a
 #      deleted or renamed rule fails even where only `skip` rows name it, and an
 #      autogen rule the policy never generates fails too;
 #   2. every Excluded row declares `result: skip`, the way a fixture marks a
 #      resource the rule is meant to leave alone;
 #   3. every resource a results entry names produced a row, and every trigger
-#      of a generated object produced its own.
+#      of a generated object produced its own;
+#   4. every row reports that its rule ran (Ok) or left the resource alone
+#      (Excluded). Any other reason on a run kyverno called green means the
+#      row asserted nothing.
 #
 # Usage: validate-kyverno-fixture-evaluation.sh [tests-dir]
 # Exit: 0 every fixture evaluates what it declares; 1 a finding or a failing
@@ -231,6 +236,17 @@ for file_marker in "${work}"/section-*.file; do
         | select($row | answers($e; $r)) | $e.result ] | unique as $results
     | select($results != ["skip"])
     | [$row.POLICY, $row.RULE, $row.RESOURCE, ($results | join(","))] | @tsv' "${rows}")
+
+  # Check 4: a row kyverno counted as passing for any reason but these two asserted
+  # nothing. The known case is a policy that fails to load, whose every row reads
+  # "Invalid Policy"; one finding per policy and reason, not one per row. Naming the
+  # reasons that ARE an assertion means a reason kyverno adds later fails here too.
+  while IFS=$'\t' read -r policy reason count; do
+    finding "${test_file}: kyverno did not evaluate ${count} row(s) of ${policy} (reason: ${reason}) and still counted them as passing. fix: run kyverno apply on the policy to see why it does not load, and correct it."
+  done < <(jq -r '
+    [.[] | select((.REASON // "") != "Ok" and (.REASON // "") != "Excluded")]
+    | group_by([.POLICY, (.REASON // "")])[]
+    | [.[0].POLICY, (.[0].REASON // "" | if . == "" then "none given" else . end), length] | @tsv' "${rows}")
 
   # Check 3: a declared resource kyverno never loaded produces no row and no failure.
   while IFS=$'\t' read -r policy rule kind resource; do

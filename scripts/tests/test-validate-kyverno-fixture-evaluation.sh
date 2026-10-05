@@ -279,6 +279,24 @@ if kyverno_passes "a rule the policy itself names autogen-*" "${root}" fixture; 
   expect_pass "a rule the policy itself names autogen-*" "${root}" fixture
 fi
 
+# #4530: a policy kyverno cannot load has every row skipped as "Invalid Policy" and
+# counted as passing. A bare JSON literal is not a variable kyverno accepts.
+root="$(copy invalid-policy)"
+# shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
+yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ `true` }}"' \
+  "${root}/${policies}/restrict-github-team-management.yaml"
+if kyverno_passes "a policy that does not load" "${root}"; then
+  expect_fail "a policy that does not load" "${root}" 1 "of restrict-github-team-management (reason: Invalid Policy) and still counted them as passing"
+fi
+
+# The control: the same edit with an expression kyverno accepts loads, and is judged by
+# the rows instead (the allow-list no longer refuses anything).
+root="$(copy valid-constant-policy)"
+# shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
+yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ request.object.metadata.name == `\"\"` }}"' \
+  "${root}/${policies}/restrict-github-team-management.yaml"
+expect_fail "a loadable policy that no longer refuses" "${root}" 1 "kyverno test tests failed"
+
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation)"
 yq -i '(.results[] | select(.result == "fail") | .result) = "pass"' \
