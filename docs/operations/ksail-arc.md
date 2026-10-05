@@ -14,11 +14,12 @@ zero idle runners and a maximum of one job runner. There is no container mode,
 Docker socket, host volume, privileged container or runner API token. Container
 jobs and Docker actions are deliberately unsupported.
 
-The analysis toolchain source lives in `images/ksail-analysis-runner`. Its
+The analysis toolchain source lives in the KSail repository's
+`images/ksail-analysis-runner`. Its
 digest-pinned upstream runner, frozen Ubuntu package snapshot and checksum-checked
 Go and Node archives supply the desktop compiler and headers without job-time
 root access. The publisher builds and exercises the image on pull requests, then
-publishes, attests and signs only on a push to main. Both Kyverno and Talos accept
+publishes, attests and signs only on a push to KSail main. Both Kyverno and Talos accept
 that workflow identity only for the exact analysis image repository. The staged
 pool still requires a verified published digest before activation.
 

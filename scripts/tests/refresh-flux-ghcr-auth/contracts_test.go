@@ -656,9 +656,9 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"image == 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"verifyImageSignatures(image, [attestors.publishcorootnodeagent])",
-		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$",
-		"image != 'ghcr.io/devantler-tech/platform-ksail-analysis-runner'",
-		"image == 'ghcr.io/devantler-tech/platform-ksail-analysis-runner'",
+		"^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/ksail-analysis-runner'",
+		"image == 'ghcr.io/devantler-tech/ksail-analysis-runner'",
 		"verifyImageSignatures(image, [attestors.publishksailanalysis])",
 		"image.startsWith('ghcr.io/devantler-tech/ksail')",
 	} {

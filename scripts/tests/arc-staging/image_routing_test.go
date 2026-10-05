@@ -22,7 +22,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		repository, attestor, subject string
 	}{
 		{analysisRepository, "publishksailanalysis", analysisPublisher},
-		{analysisRepository + "-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("a", 40)},
+		{analysisRepository + "-other", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/wedding-app", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/platform-kubescape-storage", "publishkubescapestorage", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-storage-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-kubescape-node-agent", "publishkubescapenodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-node-agent-hotfix.yaml@refs/heads/main"},
@@ -30,6 +30,7 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		{"ghcr.io/devantler-tech/world-at-ruin/zone", "publishwarzone", "https://github.com/devantler-tech/world-at-ruin/.github/workflows/server-cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/provider-upjet-unifi", "publishprovider", "https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/ksail", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
+		{"ghcr.io/devantler-tech/ksail-steer", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/actions/actions-runner", "", ""},
 	}
 	for _, fixture := range tests {

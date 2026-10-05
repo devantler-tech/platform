@@ -109,7 +109,7 @@ spec:
         keyless:
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
+              subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
     # The private scripted zone trial has its own repository-owned release
     # workflow. This attestor is used only for that exact image repository.
     - name: publishwarzone
@@ -186,9 +186,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-coroot-node-agent' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@') &&
-          image != 'ghcr.io/devantler-tech/platform-ksail-analysis-runner' &&
-          !image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner:') &&
-          !image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner@'))
+          image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
+          !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
+          !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
         .map(image, verifyImageSignatures(image, [attestors.publishapp]))
         .all(e, e > 0)
       message: >-
@@ -242,9 +242,9 @@ spec:
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
-          image == 'ghcr.io/devantler-tech/platform-ksail-analysis-runner' ||
-          image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner:') ||
-          image.startsWith('ghcr.io/devantler-tech/platform-ksail-analysis-runner@'))
+          image == 'ghcr.io/devantler-tech/ksail-analysis-runner' ||
+          image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') ||
+          image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
         .map(image, verifyImageSignatures(image, [attestors.publishksailanalysis]))
         .all(e, e > 0)
       message: >-
@@ -260,7 +260,11 @@ spec:
         publish-provider-package workflow from a release tag (keyless cosign)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
-        .filter(image, image.startsWith('ghcr.io/devantler-tech/ksail'))
+        .filter(image,
+          image.startsWith('ghcr.io/devantler-tech/ksail') &&
+          image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
+          !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
+          !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
         .map(image, verifyImageSignatures(image, [attestors.ksailcd]))
         .all(e, e > 0)
       message: >-

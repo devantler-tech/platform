@@ -260,12 +260,12 @@ real="${repo_root}/talos/cluster/verify-first-party-images.yaml"
 # macOS ships bash 3.2, which has no `mapfile` — read the globs without it.
 real_globs="$(yq -r '.rules[].image' "$real")"
 expected_globs="$(printf '%s\n' \
+  'ghcr.io/devantler-tech/ksail-analysis-runner' \
   'ghcr.io/devantler-tech/ksail*' \
   'ghcr.io/devantler-tech/provider-upjet-*' \
   'ghcr.io/devantler-tech/platform-kubescape-storage' \
   'ghcr.io/devantler-tech/platform-kubescape-node-agent' \
   'ghcr.io/devantler-tech/platform-coroot-node-agent' \
-  'ghcr.io/devantler-tech/platform-ksail-analysis-runner' \
   'ghcr.io/devantler-tech/world-at-ruin/zone' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
@@ -412,8 +412,8 @@ fi
 # clause of the identity. Same parity rule as section 12: admission (Kyverno) and the kubelet
 # pull (Talos) must carry the same identity AND issuer, or a ksail image accepted by one is
 # refused by the other as an ImagePullBackOff neither file explains alone.
-talos_ksail_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/ksail*") | .keyless.subjectRegex' "$real")"
-talos_ksail_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/ksail*") | .keyless.issuer' "$real")"
+talos_ksail_identity="$(yq -r '.rules[] | select(.image | test("^ghcr\\.io/devantler-tech/ksail\\*$")) | .keyless.subjectRegex' "$real")"
+talos_ksail_issuer="$(yq -r '.rules[] | select(.image | test("^ghcr\\.io/devantler-tech/ksail\\*$")) | .keyless.issuer' "$real")"
 kyverno_ksail_identity="$(yq -r '.spec.attestors[] | select(.name == "ksailcd") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
 kyverno_ksail_issuer="$(yq -r '.spec.attestors[] | select(.name == "ksailcd") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
 
