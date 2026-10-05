@@ -48,14 +48,17 @@ metadata:
     policies.kyverno.io/title: Restrict GitHub Team External Identity
     policies.kyverno.io/category: Security, GitHub
     policies.kyverno.io/severity: high
-    policies.kyverno.io/subject: Team
+    policies.kyverno.io/subject: Team, TeamMembership, TeamRepository
     policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
       Refuses a github-config Team whose crossplane.io/external-name is set or
       changed to anything other than the approved numeric identity of that team,
       so an allow-listed Team object cannot be pointed at a different GitHub
-      team after it was admitted. The provider's own record of a team it
-      created is exempt.
+      team after it was admitted, and a TeamMembership or TeamRepository whose
+      crossplane.io/external-name disagrees with the team and the user or
+      repository the object declares, so a compliant-looking membership or
+      grant cannot stand for another one. The provider's own records are
+      exempt.
 spec:
   background: false
   rules:
@@ -115,5 +118,156 @@ spec:
               # are checked as a pair, so the approved identity of one team
               # cannot be used on the other object.
               - key: "{{ externalName == '' || externalName == previousExternalName || contains(['admins/18573307', 'maintainers/17046606'], join('/', [request.object.metadata.name, externalName])) }}"
+                operator: Equals
+                value: false
+    # A membership or repository grant has a stored identity of its own:
+    # "<team id>:<username>" or "<team id>:<repository>" (#4518). Read from the
+    # released sources of the provider version prod runs (provider-upjet-github
+    # v0.20.0, terraform-provider-github v6.13.0, upjet v2.2.0):
+    #
+    # - a repository grant is read, updated and removed by that stored identity
+    #   alone, so a grant object that satisfies every rule in
+    #   restrict-github-team-management could change or remove the access of a
+    #   different team than the one it references;
+    # - a membership refuses an update when its stored identity names another
+    #   team or user, but its removal acts on what was read through that
+    #   identity.
+    #
+    # So the stored identity has to agree with what the object itself declares.
+    # From anyone but the provider it may be absent, exactly what the object
+    # already carries while it keeps referencing the same team and the same
+    # repository or user, or the approved identity of the referenced team
+    # followed by the declared repository or user. The two team identities are
+    # the ones the Team rule approves, repeated here for the reason given at the
+    # top of this file: a change of one is a change of all three rules.
+    #
+    # "Unchanged" covers the team reference and the repository or user as well
+    # as the identity, so an object cannot keep an identity while being
+    # re-declared to stand for something else. The provider records identities
+    # in exactly the approved shape (measured on prod 2026-10-05: all 49
+    # memberships and grants), so the artifact's routine re-apply passes either
+    # way.
+    - name: teamrepositories-external-name-matches-declared-grant
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/TeamRepository
+              operations:
+                - CREATE
+                - UPDATE
+              namespaces:
+                - github-config
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: provider-upjet-github-*
+                namespace: crossplane-system
+      context:
+        - name: externalName
+          variable:
+            jmesPath: request.object.metadata.annotations."crossplane.io/external-name"
+            default: ""
+        - name: teamRef
+          variable:
+            jmesPath: request.object.spec.forProvider.teamIdRef.name
+            default: ""
+        - name: subject
+          variable:
+            jmesPath: request.object.spec.forProvider.repository
+            default: ""
+        - name: previousExternalName
+          variable:
+            jmesPath: request.oldObject.metadata.annotations."crossplane.io/external-name"
+            default: ""
+        - name: previousTeamRef
+          variable:
+            jmesPath: request.oldObject.spec.forProvider.teamIdRef.name
+            default: ""
+        - name: previousSubject
+          variable:
+            jmesPath: request.oldObject.spec.forProvider.repository
+            default: ""
+      validate:
+        failureAction: Enforce
+        # As on the Team rule: an object that already fails must not be waved
+        # through on update.
+        allowExistingViolations: false
+        message: >-
+          The crossplane.io/external-name of a github-config TeamRepository may
+          only be left unset, left unchanged together with its team reference
+          and repository, or set to the approved numeric identity of the referenced
+          team followed by a colon and spec.forProvider.repository.
+        deny:
+          conditions:
+            all:
+              # One literal JMESPath expression, for the reason given on the
+              # Team rule. Every part is compared on its own rather than as one
+              # joined string, so no value can borrow a separator to look like
+              # another pair. An empty repository is never an approved identity.
+              - key: "{{ externalName == '' || (externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))) }}"
+                operator: Equals
+                value: false
+    - name: teammemberships-external-name-matches-declared-member
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/TeamMembership
+              operations:
+                - CREATE
+                - UPDATE
+              namespaces:
+                - github-config
+      exclude:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: provider-upjet-github-*
+                namespace: crossplane-system
+      context:
+        - name: externalName
+          variable:
+            jmesPath: request.object.metadata.annotations."crossplane.io/external-name"
+            default: ""
+        - name: teamRef
+          variable:
+            jmesPath: request.object.spec.forProvider.teamIdRef.name
+            default: ""
+        - name: subject
+          variable:
+            jmesPath: request.object.spec.forProvider.username
+            default: ""
+        - name: previousExternalName
+          variable:
+            jmesPath: request.oldObject.metadata.annotations."crossplane.io/external-name"
+            default: ""
+        - name: previousTeamRef
+          variable:
+            jmesPath: request.oldObject.spec.forProvider.teamIdRef.name
+            default: ""
+        - name: previousSubject
+          variable:
+            jmesPath: request.oldObject.spec.forProvider.username
+            default: ""
+      validate:
+        failureAction: Enforce
+        # As on the Team rule: an object that already fails must not be waved
+        # through on update.
+        allowExistingViolations: false
+        message: >-
+          The crossplane.io/external-name of a github-config TeamMembership may
+          only be left unset, left unchanged together with its team reference
+          and username, or set to the approved numeric identity of the referenced
+          team followed by a colon and spec.forProvider.username.
+        deny:
+          conditions:
+            all:
+              # One literal JMESPath expression, for the reason given on the
+              # Team rule. Every part is compared on its own rather than as one
+              # joined string, so no value can borrow a separator to look like
+              # another pair. An empty username is never an approved identity.
+              - key: "{{ externalName == '' || (externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))) }}"
                 operator: Equals
                 value: false

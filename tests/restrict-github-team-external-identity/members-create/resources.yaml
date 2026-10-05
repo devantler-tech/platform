@@ -1,0 +1,189 @@
+---
+# Recovery after a rebuild: the artifact states the identity the provider would record.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: admins-approved
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The same for the other approved team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: maintainers-approved
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# The usual shape: no identity, the provider creates and records it.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: unset
+  namespace: github-config
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# References admins but stands for the maintainers team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: swapped-team
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Names one username and stands for another.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: other-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:someone-else"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# A team that is not approved at all.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: foreign-team
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The provider also accepts a team slug; only the approved numeric identity is.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: slug-identity
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "admins:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# A wildcard is not an identity.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: wildcard
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "*"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Nor is a wildcard in place of the username.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: wildcard-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:*"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The declared username is only a prefix of the stored one.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: longer-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:devantler-other"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Nothing declared under forProvider, so nothing can be approved.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: undeclared-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:"
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# References maintainers but stands for the admins team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: swapped-team-reverse
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always

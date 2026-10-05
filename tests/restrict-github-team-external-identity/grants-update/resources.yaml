@@ -1,0 +1,110 @@
+---
+# An identity the provider recorded in a shape this rule would not approve is left as it is by the next apply, which must not be refused.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: unchanged-unusual
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail-as-recorded"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Removing the identity makes the provider create the declared one again.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: cleared
+  namespace: github-config
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Stating the approved identity on an object that had none.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: set-approved
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# The identity moves to another team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: changed
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# The identity stays, the team reference moves to admins.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: retargeted-team
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The identity stays, the declared repository moves.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: retargeted-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:ksail"
+spec:
+  forProvider:
+    repository: platform
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# A wildcard as the previous identity does not make every new one unchanged.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: from-wildcard
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
