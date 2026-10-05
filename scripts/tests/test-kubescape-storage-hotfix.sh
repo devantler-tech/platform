@@ -237,9 +237,14 @@ grep -qF 'TestObjectPresenceIsUnknownWhenTheLookupProvesNothing' "${cleanup_patc
   fail 'the cleanup patch must prove a failed lookup keeps the record'
 grep -qF '"workloadconfigurationscans":          {deleteScanRecordByWlid},' "${cleanup_patch_file}" ||
   fail 'the object lookup must be registered for configuration scan records'
-if grep -E '^\+' "${cleanup_patch_file}" | grep -F 'deleteScanRecordByWlid}' | grep -vqF '"workloadconfigurationscan'; then
+grep -qF '"workloadconfigurationscansummaries":  {deleteScanRecordByWlid},' "${cleanup_patch_file}" ||
+  fail 'the object lookup must be registered for configuration scan summaries'
+if grep -E '^\+' "${cleanup_patch_file}" | grep -E '\{[^}]*deleteScanRecordByWlid[^}]*\},' |
+  grep -vqE '"workloadconfigurationscan(s|summaries)": +\{deleteScanRecordByWlid\},'; then
   fail 'the object lookup must not be registered for any other record type'
 fi
+grep -qF 'TestObjectPresenceAsksADeniedResourceOnlyOnce' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove a refused resource is not asked for again and again'
 grep -qF 'TestObjectPresenceAgainstRealServerAnswers' "${cleanup_patch_file}" ||
   fail 'the cleanup patch must prove how real server answers are classified'
 grep -qF '"truncated name label"' "${cleanup_patch_file}" ||

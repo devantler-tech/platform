@@ -140,10 +140,10 @@ index 74e1de92..aab4e8c6 100644
  }
 diff --git a/pkg/registry/file/object_presence.go b/pkg/registry/file/object_presence.go
 new file mode 100644
-index 00000000..9597918e
+index 00000000..0c81e757
 --- /dev/null
 +++ b/pkg/registry/file/object_presence.go
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,329 @@
 +package file
 +
 +import (
@@ -161,6 +161,7 @@ index 00000000..9597918e
 +	"k8s.io/client-go/discovery"
 +	"k8s.io/client-go/discovery/cached/memory"
 +	"k8s.io/client-go/metadata"
++	"k8s.io/client-go/rest"
 +	"k8s.io/client-go/restmapper"
 +)
 +
@@ -198,6 +199,16 @@ index 00000000..9597918e
 +
 +const objectPresenceLookupTimeout = 10 * time.Second
 +
++// objectPresenceDeniedFor is how long a refused resource is not asked for again. It is shorter
++// than a cleanup interval, so each pass spends one request finding out whether access changed.
++const objectPresenceDeniedFor = time.Hour
++
++// The lookups are single-object reads made once per cleanup pass.
++const (
++	objectPresenceQPS   = 50
++	objectPresenceBurst = 100
++)
++
 +// objectPresencePassBudget bounds the lookups of one cleanup pass. Records not reached within it
 +// are kept and looked at again on the next pass.
 +const objectPresencePassBudget = 10 * time.Minute
@@ -206,12 +217,21 @@ index 00000000..9597918e
 +type MetadataObjectPresenceChecker struct {
 +	client metadata.Interface
 +	mapper meta.RESTMapper
++
++	mu     sync.Mutex
++	denied map[deniedLookup]time.Time
++}
++
++// deniedLookup is a resource and namespace the checker was refused access to.
++type deniedLookup struct {
++	resource  schema.GroupVersionResource
++	namespace string
 +}
 +
 +var _ ObjectPresenceChecker = (*MetadataObjectPresenceChecker)(nil)
 +
 +func NewMetadataObjectPresenceChecker(client metadata.Interface, mapper meta.RESTMapper) *MetadataObjectPresenceChecker {
-+	return &MetadataObjectPresenceChecker{client: client, mapper: mapper}
++	return &MetadataObjectPresenceChecker{client: client, mapper: mapper, denied: map[deniedLookup]time.Time{}}
 +}
 +
 +// NewInClusterObjectPresenceChecker builds the checker from the same cluster config as the
@@ -221,6 +241,9 @@ index 00000000..9597918e
 +	if err != nil {
 +		return nil, fmt.Errorf("failed to get cluster config: %w", err)
 +	}
++	clusterConfig = rest.CopyConfig(clusterConfig)
++	clusterConfig.QPS = objectPresenceQPS
++	clusterConfig.Burst = objectPresenceBurst
 +	metadataClient, err := metadata.NewForConfig(clusterConfig)
 +	if err != nil {
 +		return nil, fmt.Errorf("failed to create metadata client: %w", err)
@@ -265,10 +288,41 @@ index 00000000..9597918e
 +		return ObjectPresenceUnknown
 +	}
 +
++	deniedKey := deniedLookup{resource: mapping.Resource, namespace: ref.Namespace}
++	if c.recentlyDenied(deniedKey) {
++		return ObjectPresenceUnknown
++	}
++
 +	ctx, cancel := context.WithTimeout(ctx, objectPresenceLookupTimeout)
 +	defer cancel()
 +	found, err := getter.Get(ctx, ref.Name, metav1.GetOptions{})
++	if apierrors.IsForbidden(err) {
++		c.rememberDenied(deniedKey)
++	}
 +	return classifyObjectLookup(ref, mapping.Resource, found, err)
++}
++
++func (c *MetadataObjectPresenceChecker) recentlyDenied(key deniedLookup) bool {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	until, ok := c.denied[key]
++	if !ok {
++		return false
++	}
++	if time.Now().Before(until) {
++		return true
++	}
++	delete(c.denied, key)
++	return false
++}
++
++func (c *MetadataObjectPresenceChecker) rememberDenied(key deniedLookup) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if c.denied == nil {
++		c.denied = map[deniedLookup]time.Time{}
++	}
++	c.denied[key] = time.Now().Add(objectPresenceDeniedFor)
 +}
 +
 +func classifyObjectLookup(ref ObjectRef, resource schema.GroupVersionResource, found *metav1.PartialObjectMetadata, err error) ObjectPresence {
@@ -372,7 +426,7 @@ index 00000000..9597918e
 +		return ObjectRef{}, false
 +	}
 +	ref, isBinding := bindingKinds[kind]
-+	if !isBinding || !recordIsAboutBinding(metadata, kind, ref.Group) {
++	if !isBinding || !recordIsAboutBinding(metadata, kind, namespace, ref.Group) {
 +		return ObjectRef{}, false
 +	}
 +	ref.Namespace = namespace
@@ -383,8 +437,12 @@ index 00000000..9597918e
 +// recordIsAboutBinding reports whether the record itself says its workload id names an RBAC
 +// binding: either it describes that binding, or it is a relation record filed under one. A
 +// kind that merely shares the name in another API group is neither.
-+func recordIsAboutBinding(metadata *metav1.ObjectMeta, wlidKind, rbacGroup string) bool {
++func recordIsAboutBinding(metadata *metav1.ObjectMeta, wlidKind, wlidNamespace, rbacGroup string) bool {
 +	if strings.ToLower(metadata.Labels[helpersv1.RelatedKindMetadataKey]) == wlidKind {
++		labelNamespace, hasLabelNamespace := metadata.Labels[helpersv1.RelatedNamespaceMetadataKey]
++		if hasLabelNamespace && labelNamespace != wlidNamespace {
++			return false
++		}
 +		return metadata.Labels[helpersv1.ApiGroupMetadataKey] == rbacGroup
 +	}
 +	if metadata.Labels[helpersv1.RbacResourceMetadataKey] != "true" {
@@ -393,7 +451,9 @@ index 00000000..9597918e
 +	if wlidKind == "clusterrolebinding" {
 +		return metadata.Labels[helpersv1.ClusterRoleBindingNameMetadataKey] != ""
 +	}
-+	return metadata.Labels[helpersv1.RoleBindingNameMetadataKey] != ""
++	// the subject may live elsewhere, so the binding namespace has its own label
++	bindingNamespace, hasBindingNamespace := metadata.Labels[helpersv1.RoleBindingNamespaceMetadataKey]
++	return hasBindingNamespace && bindingNamespace == wlidNamespace && metadata.Labels[helpersv1.RoleBindingNameMetadataKey] != ""
 +}
 +
 +// splitWlid returns the namespace and the "<kind>-<name>" tail of
@@ -415,10 +475,10 @@ index 00000000..9597918e
 +}
 diff --git a/pkg/registry/file/object_presence_test.go b/pkg/registry/file/object_presence_test.go
 new file mode 100644
-index 00000000..0925780d
+index 00000000..4cd65a2e
 --- /dev/null
 +++ b/pkg/registry/file/object_presence_test.go
-@@ -0,0 +1,448 @@
+@@ -0,0 +1,521 @@
 +package file
 +
 +import (
@@ -615,6 +675,11 @@ index 00000000..0925780d
 +	return labels
 +}
 +
++func withLabel(labels map[string]string, key, value string) map[string]string {
++	labels[key] = value
++	return labels
++}
++
 +func relationLabels(labels map[string]string, bindingNameKey, bindingName string) map[string]string {
 +	labels[helpersv1.RbacResourceMetadataKey] = "true"
 +	labels[bindingNameKey] = bindingName
@@ -642,7 +707,7 @@ index 00000000..0925780d
 +			ObjectRef{Group: rbac, Version: "v1", Kind: "ClusterRoleBinding", Name: "flux-web-admins"},
 +		},
 +		"relation record resolves to its binding": {
-+			scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "unifi"), helpersv1.RoleBindingNameMetadataKey, "tf-runner")),
++			scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", withLabel(relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "flux-system"), helpersv1.RoleBindingNameMetadataKey, "tf-runner"), helpersv1.RoleBindingNamespaceMetadataKey, "unifi")),
 +			ObjectRef{Group: rbac, Version: "v1", Kind: "RoleBinding", Namespace: "unifi", Name: "tf-runner"},
 +		},
 +		"relation record resolves to its cluster binding": {
@@ -665,23 +730,26 @@ index 00000000..0925780d
 +	unresolved := map[string]*metav1.ObjectMeta{
 +		"nil metadata": nil,
 +		// production carries these: the label is capped at 63 characters, the object name is not
-+		"truncated name label":                scanRecord("wlid://cluster-prod/namespace-cilium-secrets/secret-"+longName, objectLabels("", "v1", "Secret", longName[:63], "cilium-secrets")),
-+		"name label for another object":       scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf", "unifi")),
-+		"kind label for another kind":         scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels("", "v1", "Secret", "tf-runner", "unifi")),
-+		"namespace label disagrees":           scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "other")),
-+		"no version label":                    scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "", "Role", "tf-runner", "unifi")),
-+		"no labels and not a binding":         scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", nil),
-+		"no workload id":                      {Labels: objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")},
-+		"workload id without scheme":          scanRecord("cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id with too few parts":      scanRecord("wlid://cluster-prod/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id with too many parts":     scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner/extra", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id without namespace":       scanRecord("wlid://cluster-prod/unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"workload id without cluster":         scanRecord("wlid://prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
-+		"binding-named kind in another group": scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-"+longName, objectLabels("iam.example.io", "v1", "RoleBinding", longName[:63], "unifi")),
-+		"relation labels without the marker":  scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", objectLabels("", "", "ServiceAccount", "tf-runner", "unifi")),
-+		"relation marker without its binding": scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "unifi"), helpersv1.ClusterRoleBindingNameMetadataKey, "tf-runner")),
-+		"binding workload id without name":    scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-", nil),
-+		"binding kind without separator":      scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding", nil),
++		"truncated name label":                                    scanRecord("wlid://cluster-prod/namespace-cilium-secrets/secret-"+longName, objectLabels("", "v1", "Secret", longName[:63], "cilium-secrets")),
++		"name label for another object":                           scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf", "unifi")),
++		"kind label for another kind":                             scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels("", "v1", "Secret", "tf-runner", "unifi")),
++		"namespace label disagrees":                               scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "other")),
++		"no version label":                                        scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "", "Role", "tf-runner", "unifi")),
++		"no labels and not a binding":                             scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner", nil),
++		"no workload id":                                          {Labels: objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")},
++		"workload id without scheme":                              scanRecord("cluster-prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id with too few parts":                          scanRecord("wlid://cluster-prod/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id with too many parts":                         scanRecord("wlid://cluster-prod/namespace-unifi/role-tf-runner/extra", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id without namespace":                           scanRecord("wlid://cluster-prod/unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"workload id without cluster":                             scanRecord("wlid://prod/namespace-unifi/role-tf-runner", objectLabels(rbac, "v1", "Role", "tf-runner", "unifi")),
++		"binding-named kind in another group":                     scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-"+longName, objectLabels("iam.example.io", "v1", "RoleBinding", longName[:63], "unifi")),
++		"relation labels without the marker":                      scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", objectLabels("", "", "ServiceAccount", "tf-runner", "unifi")),
++		"relation filed under another namespace than its binding": scanRecord("wlid://cluster-prod/namespace-flux-system/rolebinding-tf-runner", withLabel(relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "flux-system"), helpersv1.RoleBindingNameMetadataKey, "tf-runner"), helpersv1.RoleBindingNamespaceMetadataKey, "unifi")),
++		"relation without a binding namespace":                    scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "unifi"), helpersv1.RoleBindingNameMetadataKey, "tf-runner")),
++		"binding whose namespace label disagrees":                 scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-"+longName, objectLabels(rbac, "v1", "RoleBinding", longName[:63], "other")),
++		"relation marker without its binding":                     scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-tf-runner", relationLabels(objectLabels("", "", "ServiceAccount", "tf-runner", "unifi"), helpersv1.ClusterRoleBindingNameMetadataKey, "tf-runner")),
++		"binding workload id without name":                        scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding-", nil),
++		"binding kind without separator":                          scanRecord("wlid://cluster-prod/namespace-unifi/rolebinding", nil),
 +	}
 +	for name, record := range unresolved {
 +		t.Run(name, func(t *testing.T) {
@@ -866,4 +934,69 @@ index 00000000..0925780d
 +			assert.Equal(t, "GET /apis/rbac.authorization.k8s.io/v1/namespaces/unifi/roles/tf-runner", requested, "exactly one object is read, nothing is listed or written")
 +		})
 +	}
++}
++
++func TestObjectPresenceReadsClusterScopedObjectsFromTheRealClient(t *testing.T) {
++	binding := skippedKinds[2]
++	ref := refFor(binding, "flux-web-admins")
++	var requested []string
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requested = append(requested, r.Method+" "+r.URL.Path)
++		w.Header().Set("Content-Type", "application/json")
++		w.WriteHeader(http.StatusNotFound)
++		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404,` +
++			`"details":{"name":"flux-web-admins","group":"rbac.authorization.k8s.io","kind":"clusterrolebindings"}}`))
++	}))
++	defer server.Close()
++
++	client, err := metadata.NewForConfig(&rest.Config{Host: server.URL})
++	require.NoError(t, err)
++	checker := NewMetadataObjectPresenceChecker(client, testMapper())
++
++	assert.Equal(t, ObjectPresenceAbsent, checker.ObjectPresence(context.Background(), ref))
++	assert.Equal(t, []string{"GET /apis/rbac.authorization.k8s.io/v1/clusterrolebindings/flux-web-admins"}, requested)
++}
++
++func TestObjectPresenceAsksADeniedResourceOnlyOnce(t *testing.T) {
++	secret := skippedKinds[4]
++	requests := map[string]int{}
++	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		requests[r.URL.Path]++
++		w.Header().Set("Content-Type", "application/json")
++		if strings.Contains(r.URL.Path, "/secrets/") {
++			w.WriteHeader(http.StatusForbidden)
++			_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"Forbidden","code":403}`))
++			return
++		}
++		w.WriteHeader(http.StatusNotFound)
++		_, _ = w.Write([]byte(`{"kind":"Status","apiVersion":"v1","status":"Failure","reason":"NotFound","code":404,` +
++			`"details":{"name":"gone","kind":"configmaps"}}`))
++	}))
++	defer server.Close()
++
++	client, err := metadata.NewForConfig(&rest.Config{Host: server.URL})
++	require.NoError(t, err)
++	checker := NewMetadataObjectPresenceChecker(client, testMapper())
++	ctx := context.Background()
++
++	for _, name := range []string{"one", "two", "three"} {
++		assert.Equal(t, ObjectPresenceUnknown, checker.ObjectPresence(ctx, refFor(secret, name)))
++	}
++	assert.Equal(t, map[string]int{"/api/v1/namespaces/unifi/secrets/one": 1}, requests, "a refused resource is asked once, and never answered as absent")
++
++	elsewhere := refFor(secret, "four")
++	elsewhere.Namespace = "other"
++	assert.Equal(t, ObjectPresenceUnknown, checker.ObjectPresence(ctx, elsewhere))
++	assert.Equal(t, 1, requests["/api/v1/namespaces/other/secrets/four"], "a refusal in one namespace says nothing about another")
++
++	// control: a resource that was not refused is still asked and still answered
++	assert.Equal(t, ObjectPresenceAbsent, checker.ObjectPresence(ctx, refFor(skippedKinds[5], "gone")))
++
++	checker.mu.Lock()
++	for key := range checker.denied {
++		checker.denied[key] = time.Now().Add(-time.Second)
++	}
++	checker.mu.Unlock()
++	assert.Equal(t, ObjectPresenceUnknown, checker.ObjectPresence(ctx, refFor(secret, "five")))
++	assert.Equal(t, 1, requests["/api/v1/namespaces/unifi/secrets/five"], "access is asked for again once the refusal has aged out")
 +}
