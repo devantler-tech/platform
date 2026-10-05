@@ -46,6 +46,8 @@ func TestBootstrapParametersAcceptOnlyUniqueLiteralArguments(t *testing.T) {
 		"policies=safe;true",
 		"policies='safe'",
 		"policies=safe\npolicies=other",
+		"policies=infra-arc-app-readonly\\\nttl=1h",
+		"policies=safe\u00a0ttl=1h",
 		"policies=",
 		"policies",
 	} {

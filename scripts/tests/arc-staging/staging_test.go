@@ -166,7 +166,9 @@ func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T)
 // Reject shell syntax and duplicate keys instead of evaluating or overwriting
 // configuration while checking the credential boundary.
 func parseBootstrapParameters(write, path string) (map[string]string, error) {
-	arguments := strings.Fields(strings.ReplaceAll(write, "\\\n", " "))
+	arguments := strings.FieldsFunc(strings.ReplaceAll(write, "\\\n", ""), func(character rune) bool {
+		return character == ' ' || character == '\t' || character == '\n'
+	})
 	literalPath := regexp.MustCompile(`^auth/kubernetes/role/[a-zA-Z0-9_-]+$`)
 	if !literalPath.MatchString(path) || len(arguments) < 4 || arguments[0] != "bao" || arguments[1] != "write" || arguments[2] != path {
 		return nil, fmt.Errorf("invalid bootstrap write header")
