@@ -141,6 +141,11 @@ func TestFoldRejectsAmbiguousOrMalformedInputs(t *testing.T) {
 	}
 }
 
+func init() {
+	// Failed fetches are retried; the tests that provoke them need not wait.
+	fetchBackoff = 0
+}
+
 func pin(version string) []byte {
 	return []byte("env:\n  KSAIL_VERSION: '" + version + "'\n")
 }
@@ -253,7 +258,7 @@ func TestAnyChangedFoldInputFailsAndIsNamed(t *testing.T) {
 		all[input.path] = other
 	}
 	_, err := verifyFoldInputs("7.999.0", func(string) (map[string]string, error) { return all, nil })
-	if err == nil || !strings.Contains(err.Error(), "charts, go.mod, go.sum, pkg/apis, pkg/fsutil/configmanager") {
+	if err == nil || !strings.Contains(err.Error(), "charts, go.mod, go.sum, pkg/apis, pkg/fsutil/configmanager, pkg/fsutil/generator/talos") {
 		t.Fatalf("fully changed inputs: %v", err)
 	}
 }
@@ -302,6 +307,7 @@ func sourceRepository(t *testing.T) (string, func(args ...string) string) {
 	git("init", "--quiet")
 	for path, data := range map[string]string{
 		"pkg/fsutil/configmanager/talos/configs.go": "package talos\n",
+		"pkg/fsutil/generator/talos/firewall.go":    "package talos\n",
 		"pkg/apis/cluster/v1alpha1/types.go":        "package v1alpha1\n",
 		"charts/ksail/Chart.yaml":                   "name: ksail\n",
 		"go.mod":                                    "module example.invalid/ksail\n",
@@ -428,21 +434,78 @@ func TestResolveFoldInputsFailsOnAnythingItCannotRead(t *testing.T) {
 	}
 }
 
-func TestCheckPinsFailsClosedWithoutReadingAnAuditedSet(t *testing.T) {
-	// The command reads the real source only in --check-pins mode. Pointed at
-	// pins it cannot resolve, it must fail rather than report a match.
-	dir := t.TempDir()
-	t.Chdir(dir)
+// checkPinsAt runs the command's --check-pins mode with every deployment pin at
+// version and the release source replaced by resolve.
+func checkPinsAt(t *testing.T, version string, resolve func(string) (map[string]string, error)) error {
+	t.Helper()
+	original := resolvePinnedInputs
+	resolvePinnedInputs = resolve
+	t.Cleanup(func() { resolvePinnedInputs = original })
+	t.Chdir(t.TempDir())
 	for _, path := range []string{".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml"} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, pin("not-a-release"), 0o600); err != nil {
+		if err := os.WriteFile(path, pin(version), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := run([]string{"--check-pins"}); err == nil || !strings.Contains(err.Error(), "not an explicit release version") {
+	return run([]string{"--check-pins"})
+}
+
+func TestCheckPinsDecidesOnTheSourceItRead(t *testing.T) {
+	dir, _ := sourceRepository(t)
+	local := func(version string) (map[string]string, error) { return resolveFoldInputs(dir, version) }
+	// The local source is real but unaudited, so only a read that reached the
+	// comparison can produce this error.
+	if err := checkPinsAt(t, "1.2.3", local); err == nil || !strings.Contains(err.Error(), "requires a new source audit") {
+		t.Fatalf("unaudited source accepted: %v", err)
+	}
+	if err := checkPinsAt(t, "9.9.9", local); err == nil || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("unreadable release accepted: %v", err)
+	}
+	absent := func(version string) (map[string]string, error) {
+		return resolveFoldInputs(filepath.Join(dir, "absent"), version)
+	}
+	if err := checkPinsAt(t, "1.2.3", absent); err == nil || !strings.Contains(err.Error(), "could not be read") {
+		t.Fatalf("absent source accepted: %v", err)
+	}
+	asked := ""
+	audited := func(version string) (map[string]string, error) {
+		asked = version
+		return latestAudited(), nil
+	}
+	if err := checkPinsAt(t, "7.999.0", audited); err != nil || asked != "7.999.0" {
+		t.Fatalf("audited inputs at the pinned release: resolved %q, error %v", asked, err)
+	}
+	if err := checkPinsAt(t, "not-a-release", audited); err == nil || !strings.Contains(err.Error(), "not an explicit release version") {
 		t.Fatalf("unresolvable pin accepted: %v", err)
+	}
+}
+
+func TestFetchIsRetriedBeforeItFails(t *testing.T) {
+	dir, _ := sourceRepository(t)
+	bin := t.TempDir()
+	count := filepath.Join(bin, "fetches")
+	real, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fail the first fetch, then hand over to git.
+	script := "#!/bin/sh\nfor a in \"$@\"; do if [ \"$a\" = fetch ]; then echo x >> '" + count + "'; if [ \"$(wc -l < '" + count + "')\" -lt 2 ]; then echo transient >&2; exit 128; fi; fi; done\nexec '" + real + "' \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if _, err := resolveFoldInputs(dir, "1.2.3"); err != nil {
+		t.Fatalf("one transient fetch failure was not retried: %v", err)
+	}
+	if _, err := resolveFoldInputs(dir, "9.9.9"); err == nil {
+		t.Fatal("a fetch that keeps failing passed")
+	}
+	fetches, err := os.ReadFile(count)
+	if err != nil || strings.Count(string(fetches), "x") != 2+fetchAttempts {
+		t.Fatalf("fetch ran %d times, want %d: %v", strings.Count(string(fetches), "x"), 2+fetchAttempts, err)
 	}
 }
 

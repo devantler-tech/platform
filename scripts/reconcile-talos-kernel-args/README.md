@@ -19,6 +19,7 @@ fold inputs are:
 | Input | Why it matters |
 | --- | --- |
 | `pkg/fsutil/configmanager/` | Holds the fold itself (`talos/configs.go`) and its distribution caller (`ksail/distribution.go`). |
+| `pkg/fsutil/generator/talos/` | Generates the Talos patches KSail injects into the configuration the fold then reads. |
 | `pkg/apis/` | Defines the cluster configuration the caller reads the extensions and schematic ID from. |
 | `charts/` | Carries the generated `Cluster` schema published from those types; earlier audits compared it, so it stays part of the set. |
 | `go.mod`, `go.sum` | Pin the Talos machinery that encodes the machine configuration. |
@@ -26,7 +27,7 @@ fold inputs are:
 `--check-pins` reads all explicit KSail pins in CI, CD and the production
 deployment action. They must be explicit release versions and must all agree.
 It then fetches that release's tag from the public KSail repository, reads the
-git object ID of each input, and passes only when all five equal one set
+git object ID of each input, and passes only when all six equal one set
 recorded in [`audited_inputs.go`](audited_inputs.go). A git tree ID covers every
 file below it, so equal IDs mean equal content.
 
@@ -43,7 +44,7 @@ The check fails, and names what it could not accept, when:
 - the pins are missing, malformed, not explicit versions, or disagree.
 
 The check runs in the unconditional changes job and needs network access to
-`github.com`. The fold command itself (three arguments) stays offline: it
+`github.com`; a failed fetch is retried twice before the check fails. The fold command itself (three arguments) stays offline: it
 checks that the pins agree and relies on `--check-pins` for the source audit.
 
 ### When the inputs change: what an audit must cover
@@ -60,20 +61,23 @@ the error message. Before adding a set to `audited_inputs.go`:
    `fold` in `main.go` and its tests in the same pull request.
 3. In `pkg/fsutil/configmanager/ksail/distribution.go`, confirm an explicit
    nonblank schematic ID still keeps extensions away from config generation.
-4. For a `pkg/apis/` or `charts/` change, confirm the `spec.cluster.talos`
+4. For a `pkg/fsutil/generator/talos/` change, confirm no generated patch sets
+   `machine.install.extraKernelArgs` or `grubUseUKICmdline`, which would change
+   when the fold triggers, and review what the changed patch does to this cluster.
+5. For a `pkg/apis/` or `charts/` change, confirm the `spec.cluster.talos`
    fields this helper reads (`extensions`, `schematicId`) keep their names,
    types and defaults.
-5. For a `go.mod` or `go.sum` change, confirm whether the Talos machinery
+6. For a `go.mod` or `go.sum` change, confirm whether the Talos machinery
    version moved, and if so that it still encodes the install section the same
    way (run `scripts/tests/test-talos-render-kernel-args.sh`).
-6. Record the new set with the release it was audited at, and add a paragraph
+7. Record the new set with the release it was audited at, and add a paragraph
    to the history below saying what changed and why the mirror still holds.
 
 Read the object IDs for the new set from the tag itself:
 
 ```bash
 git fetch --depth=1 --filter=blob:none https://github.com/devantler-tech/ksail.git refs/tags/v<version>
-git ls-tree FETCH_HEAD -- pkg/fsutil/configmanager pkg/apis charts go.mod go.sum
+git ls-tree FETCH_HEAD -- pkg/fsutil/configmanager pkg/fsutil/generator/talos pkg/apis charts go.mod go.sum
 ```
 
 ## Audit history
@@ -106,7 +110,7 @@ an upgrade or snapshot uses it. `schematicKernelArgs`, `reconcileFoldedKernelArg
 `resolveInstallerVersion` and `applyInstallerImage` are byte-identical to 7.194.5, as
 are the distribution caller, the cluster API tree, `go.mod` and `go.sum`; 7.194.7
 itself changes only Hetzner bootstrap code. The intermediate 7.194.6 was never
-deployed and stays refused.
+deployed; it now passes because its inputs equal the set audited at 7.194.7.
 
 **7.194.8**, commit `82a359d423a2c1f13a13560b6af0aed9031354c8`, is audited as the
 range 7.194.7 → 7.194.8. The configuration-manager tree
