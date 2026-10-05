@@ -71,12 +71,6 @@ bootstrap proof above had all passed.
 
 ## Shared-destination denial proof
 
-> **Passed once, cannot run now.** Protected `main` run 37234932425 observed
-> the denial on 2026-10-04, and Wedding's shared access was retired on that
-> evidence. The proof mounts the shared credential inside `wedding-app`, where
-> it no longer exists, so a dispatch now refuses before it reaches either bucket.
-> #4482 re-homes it. The rest of this section describes the proof as it ran.
-
 Dispatch **Verify Wedding Backup Denial** from `main` with
 `confirm=verify-wedding-backup-denial`. It shares the production deployment lock
 and touches neither database. It shows what the shared `platform-backups`
@@ -85,16 +79,19 @@ that credential's token was configured.
 
 The job first checks that the Wedding Cluster archives through
 `wedding-db-dedicated`, so the credential under test is the one in use, and that
-both ObjectStores name their reviewed bucket, prefix and Secret at the R2
+the Wedding dedicated ObjectStore and the platform's shared ObjectStore name their reviewed bucket, prefix and Secret at the R2
 endpoint committed in the bootstrap ConfigMap. It then starts a short-lived pod
-in `wedding-app`, where both credentials and R2 egress already exist, from the
-same pinned images as the catalogue mirror. The pod never prints a credential or
+in `observability`, where the platform's shared credential already exists. Only
+the two dedicated credential keys are copied into a temporary Secret owned by
+this run. The tenant never regains shared access. The proof uses digest-pinned
+images and a labelled R2 egress rule. The pod never prints a credential or
 the endpoint host. Inside it:
 
 1. The dedicated credential lists its own catalogue. A refusal observed later
    therefore cannot come from a broken key, endpoint or network path.
-2. The shared credential lists the shared catalogue and names one object in it,
-   so the refused targets exist and a mistyped bucket cannot pass.
+2. The shared credential lists an existing platform backup catalogue and names
+   one object in it, so the refused targets exist and a mistyped bucket cannot
+   pass. This control is independent of Wedding's retired shared catalogue.
 3. With the dedicated credential, the pod lists the shared catalogue, reads that
    object, and writes a run-owned object under `wedding-backup-denial-probe/` in
    `platform-backups`. Each must be refused with `AccessDenied`, which the
@@ -114,7 +111,11 @@ Require the receipt with `dedicatedCatalogueReachable`,
 `sharedCatalogueReferenced`, `listDenied`, `readDenied` and `writeDenied` all
 true, followed by `DENIAL OBSERVED`, in a successful production run bound to its
 source SHA. A new dedicated token must be refused exactly as the one it
-replaces, so this proof belongs after every rotation once #4482 re-homes it.
+replaces, so this proof belongs after every rotation. The job deletes its probe
+pod, script ConfigMap and dedicated credential copy. Secret deletion binds to
+the UID returned by creation, so it cannot delete a replacement with the same
+name. A failed credential cleanup fails the job and needs operator attention;
+the denial receipt alone is insufficient when the workflow did not succeed.
 
 ## Velero namespace drill
 

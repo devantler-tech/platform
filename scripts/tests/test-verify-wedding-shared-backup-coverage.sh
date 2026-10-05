@@ -24,7 +24,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly runner="${root_dir}/scripts/verify-wedding-shared-backup-coverage.sh"
 readonly pod_script="${root_dir}/scripts/verify-wedding-shared-backup-coverage-pod.sh"
-readonly mirror="${root_dir}/scripts/mirror-wedding-backup-catalogue.sh"
+readonly mirror="${root_dir}/scripts/verify-wedding-backup-denial.sh"
 
 work_dir="$(mktemp -d)"
 readonly work_dir

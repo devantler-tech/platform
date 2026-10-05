@@ -128,6 +128,7 @@ resources:
   - coroot/object-store.yaml
   - coroot/scheduled-backup.yaml
   - coroot/cilium-network-policy.yaml
+  - coroot/cilium-network-policy-wedding-backup-denial.yaml
   - coroot/pod-disruption-budget.yaml
   # Prod-only safety-net alerting: a Flux notification-controller Provider + Alert
   # that posts Kustomization reconciliation errors to the SAME Slack webhook the
