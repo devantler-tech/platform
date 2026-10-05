@@ -213,7 +213,7 @@ spec:
               # team identity is a literal prefix, so no value can borrow a
               # separator to look like another pair. An empty repository is never an
               # approved identity, and one stated under initProvider is not
-              # read here, so it may not accompany a stored identity at all
+              # compared here, so it may not accompany a stored identity at all
               # (no object on prod states one: measured 2026-10-05).
               - key: "{{ externalName == '' || (initSubject == '' && ((externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))))) }}"
                 operator: Equals
@@ -284,7 +284,7 @@ spec:
               # team identity is a literal prefix, so no value can borrow a
               # separator to look like another pair. An empty username is never an
               # approved identity, and one stated under initProvider is not
-              # read here, so it may not accompany a stored identity at all
+              # compared here, so it may not accompany a stored identity at all
               # (no object on prod states one: measured 2026-10-05).
               - key: "{{ externalName == '' || (initSubject == '' && ((externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))))) }}"
                 operator: Equals
