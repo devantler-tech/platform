@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,7 +22,14 @@ var groupPattern = regexp.MustCompile(`gethomepage\.dev/group:[\t ]*(.+)`)
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
-func run(args []string, out io.Writer) int {
+func run(args []string, out io.Writer) (status int) {
+	buffer := bufio.NewWriter(out)
+	out = buffer
+	defer func() {
+		if buffer.Flush() != nil {
+			status = 2
+		}
+	}()
 	if len(args) != 2 {
 		fmt.Fprintln(out, "::error::usage: validate-homepage-bookmarks <config-map.yaml> <k8s-root>")
 		return 2
@@ -40,7 +49,11 @@ func run(args []string, out io.Writer) int {
 		fmt.Fprintf(out, "::error::cannot parse %s: %s\n", args[0], err)
 		return 2
 	}
-	values, _ := manifest["data"].(map[string]any)
+	values, ok := manifest["data"].(map[string]any)
+	if manifest == nil || !ok {
+		fmt.Fprintln(out, "::error::manifest and data must be YAML mappings")
+		return 2
+	}
 	parsed := make(map[string]any)
 	for _, key := range []string{"bookmarks.yaml", "settings.yaml", "services.yaml"} {
 		body, ok := values[key].(string)
@@ -75,11 +88,11 @@ func run(args []string, out io.Writer) int {
 			return nil
 		}
 		if !entry.Type().IsRegular() && entry.Type()&os.ModeSymlink == 0 {
-			return fmt.Errorf("unsupported service-group input type")
+			return fmt.Errorf("unsupported service-group input type: %s", path)
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
-			return err
+			return fmt.Errorf("read service-group input %s: %w", path, err)
 		}
 		for _, match := range groupPattern.FindAllSubmatch(body, -1) {
 			name := strings.Trim(strings.TrimSpace(string(match[1])), `"'`)
@@ -120,7 +133,7 @@ func decode(data []byte, target any) error {
 		return err
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err != nil {
 			return err
 		}

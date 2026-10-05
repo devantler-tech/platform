@@ -69,3 +69,34 @@ func TestAnnotationCollisionIsIndependentOfServicesYAML(t *testing.T) {
 		t.Fatalf("annotation must independently constrain groups: status=%d output=%s", status, out.String())
 	}
 }
+
+func TestMalformedManifestShapeIsUnknown(t *testing.T) {
+	for _, input := range []string{"null\n", "{}\n", "data: []\n", "data: false\n"} {
+		t.Run(input, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "config.yaml")
+			if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if status := run([]string{path, root}, &out); status != 2 {
+				t.Fatalf("malformed manifest must be unknown: status=%d output=%s", status, out.String())
+			}
+		})
+	}
+}
+
+type failedWriter struct{}
+
+func (failedWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
+
+func TestFailedOutputIsUnknown(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(path, []byte(validConfig), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if status := run([]string{path, root}, failedWriter{}); status != 2 {
+		t.Fatalf("unpublished verdict must be unknown: status=%d", status)
+	}
+}
