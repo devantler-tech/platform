@@ -81,7 +81,7 @@ var auditedFoldInputs = []struct {
 		"go.mod":                     "b41d0e9d2219f2b1a497d122a4c8926e53d60aa8",
 		"go.sum":                     "c43cb045162b328ad0dd7f9311fb63133336841b",
 	}},
-	{"7.194.9, 7.194.10 and 7.195.0", map[string]string{
+	{"7.194.9, 7.194.10, 7.195.0 and 7.195.1", map[string]string{
 		"pkg/fsutil/configmanager":   "439ee0a33cf6ca597f5773bcb6db316900cb8149",
 		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
 		"pkg/apis":                   "285b0d20d7d8dffdfd7fb003be65c65d6c08c71f",
