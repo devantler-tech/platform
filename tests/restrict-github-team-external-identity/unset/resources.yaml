@@ -1,5 +1,5 @@
 ---
-# The live shape of admins as authored: no identity, the provider creates the team.
+# The live shape of admins as authored: no identity, the provider creates the team. (On create this is also "unchanged"; update-cleared is the case that isolates the empty value.)
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: Team
 metadata:

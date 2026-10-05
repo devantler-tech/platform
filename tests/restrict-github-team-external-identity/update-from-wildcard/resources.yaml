@@ -1,5 +1,5 @@
 ---
-# A previous identity of * must not make every later value count as unchanged. The dependent TeamMembership and TeamRepository resources accept a team slug, so a slug here is a foreign team like any other.
+# A previous identity of * must not make every later value count as unchanged. A name is refused like any other value that is not the approved identity.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: Team
 metadata:

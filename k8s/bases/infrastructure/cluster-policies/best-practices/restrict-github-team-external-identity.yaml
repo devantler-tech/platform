@@ -92,7 +92,7 @@ spec:
         # provider created anew carries an identity that is not approved yet, so
         # its object "already fails" when judged alone, and every later change
         # to its identity would be waved through. An unchanged value is accepted
-        # by the conditions below instead, which is the only tolerance needed.
+        # by the condition below instead, which is the only tolerance needed.
         allowExistingViolations: false
         message: >-
           The crossplane.io/external-name of a github-config Team may only be
@@ -103,10 +103,10 @@ spec:
           conditions:
             all:
               # ONE exact comparison, evaluated by JMESPath, and deliberately
-              # not three Kyverno operators. Kyverno's Equals and AnyNotIn
-              # treat * and ? as wildcards on either side and compare numbers
-              # as quantities, and the annotation is written by the party this
-              # rule constrains: an identity of "*" would match the approved
+              # not three Kyverno operators. AnyNotIn reads * and ? as wildcards
+              # in either operand, Equals reads them in its value and compares
+              # numbers as quantities, and the annotation is written by the party
+              # this rule constrains: an identity of "*" would match the approved
               # one, and any later value would then count as "unchanged" from
               # "*". JMESPath == and contains() compare strings literally.
               #

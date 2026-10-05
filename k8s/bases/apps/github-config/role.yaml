@@ -53,10 +53,10 @@ rules:
       - delete
   # Team resources are high-impact because they change real GitHub org
   # authorization. RBAC alone cannot express which teams this SA may manage, so
-  # the restrict-github-team-management and restrict-github-team-external-identity
-  # Kyverno admission policies constrain the
-  # allowed team identities, reference style, and repository permissions on top
-  # of these verbs.
+  # the restrict-github-team-management and
+  # restrict-github-team-external-identity Kyverno admission policies constrain
+  # the allowed team identities, reference style, and repository permissions on
+  # top of these verbs.
   - apiGroups:
       - team.github.m.upbound.io
     resources:
