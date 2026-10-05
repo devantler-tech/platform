@@ -1,0 +1,667 @@
+# Every object is on the paved road (allow-listed reference that re-resolves,
+# allow-listed member, known role, permitted grant) except for the single field
+# its name says. The * and ? values are the ones a list operator would read as
+# wildcards; the namespace rows are #4525.
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: display-name-star
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+    name: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: display-name-question
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+    name: "display-name-questio?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: init-display-name-star
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+  initProvider:
+    name: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: init-display-name-question
+  namespace: github-config
+spec:
+  forProvider:
+    privacy: closed
+  initProvider:
+    name: "init-display-name-questio?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-name-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "*"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-name-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admin?"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: resolve-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "*"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: resolve-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Alway?"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-team-id-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    teamId: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-team-id-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    teamId: "?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-ref-name-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    teamIdRef:
+      name: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-ref-name-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    teamIdRef:
+      name: "admin?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-namespace-foreign
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "other-namespace"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-namespace-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "*"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-namespace-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "github-confi?"
+    username: devantler
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-ref-namespace-foreign
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    teamIdRef:
+      name: admins
+      namespace: other-namespace
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-namespace-own
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "github-config"
+    username: devantler
+    role: member
+  initProvider:
+    teamIdRef:
+      name: admins
+      namespace: github-config
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: username-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: "*"
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: username-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: "d?vantler"
+    role: member
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-username-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    username: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-only-username-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    role: member
+  initProvider:
+    username: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: role-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: role-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: "membe?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-role-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    role: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: selector-beside-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+    teamIdSelector:
+      matchLabels:
+        team: admins
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: init-selector-beside-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    teamIdSelector:
+      matchLabels:
+        team: admins
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-ref-name-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "*"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-ref-name-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "maintainer?"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-resolve-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "*"
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-init-team-id-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+  initProvider:
+    teamId: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-init-ref-name-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+  initProvider:
+    teamIdRef:
+      name: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-ref-namespace-foreign
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "other-namespace"
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-ref-namespace-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "*"
+    repository: platform
+    permission: push
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-init-ref-namespace-foreign
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+  initProvider:
+    teamIdRef:
+      name: admins
+      namespace: other-namespace
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-ref-namespace-own
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: "github-config"
+    repository: platform
+    permission: push
+  initProvider:
+    teamIdRef:
+      name: admins
+      namespace: github-config
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: permission-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: permission-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: "pus?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: init-permission-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+  initProvider:
+    permission: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: capped-permission-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "maintainers"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: capped-permission-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "maintainers"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: "maintai?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: capped-init-permission-star
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "maintainers"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+  initProvider:
+    permission: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: capped-wildcard-team-admin
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "maintainer?"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: admin
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-selector-beside-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+    teamIdSelector:
+      matchLabels:
+        team: admins
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamRepository
+metadata:
+  name: repo-init-selector-beside-reference
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    repository: platform
+    permission: push
+  initProvider:
+    teamIdSelector:
+      matchLabels:
+        team: admins
