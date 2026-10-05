@@ -42,10 +42,12 @@ restore from the dedicated bucket alone had succeeded, and the shared
 destination had been observed refusing the dedicated credential (protected
 `main` run 37234932425; see restore-drill.md). The shared credential can read
 every shared consumer's backups, so it must not return to a tenant namespace.
-The `Mirror Wedding Backup Catalogue` and `Verify Wedding Backup Denial`
-workflows both need the shared credential inside `wedding-app`, so neither can
-run any more; #4482 re-homes the denial proof and removes the finished cutover
-tooling, and #4481 removes the predecessor catalogue that still sits in the
+`Verify Wedding Backup Denial` runs in the platform's observability namespace,
+using its existing shared credential and a run-owned copy of only the dedicated
+keys. It can be rerun after a rotation without restoring shared tenant access.
+The completed catalogue-copy and incident-specific recovery workflows are
+removed. Their catalogue evaluator remains because the read-only coverage
+proof uses it. #4481 removes the predecessor catalogue that still sits in the
 shared bucket. That copy is no longer written to or pruned, and every holder of
 the shared credential can read it. Before it is removed, dispatch `Verify
 Wedding Shared Backup Coverage` on `main` with

@@ -452,11 +452,12 @@ gh run view "$run_id" --repo devantler-tech/platform --log |
 
 # 7. For wedding-db-backups, confirm in Cloudflare that the new token is
 #    scoped to Object Read & Write on wedding-db-backups only. Verify Wedding
-#    Backup Denial needs the shared credential inside wedding-app, which is
-#    retired, so it cannot run until #4482 re-homes it; until then the new
-#    token's refusal by platform-backups is unproven, not assumed. The token
-#    it replaces was observed being refused in run 37234932425. Never project
-#    the shared credential back into the tenant namespace to run the proof.
+#    Backup Denial must then succeed on main with
+#    confirm=verify-wedding-backup-denial. It runs beside the existing shared
+#    platform credential using a temporary dedicated-key copy, and removes
+#    that copy with a UID precondition. Until the workflow succeeds, the new
+#    token's refusal by platform-backups is unproven. Never project the shared
+#    credential back into the tenant namespace to run the proof.
 
 # For a platform-backups credential rotation, observe a new successful Velero
 # backup plus new backups and WAL archives from Umami and Coroot before

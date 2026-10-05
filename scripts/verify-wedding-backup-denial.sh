@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 
 # Prove that the dedicated Wedding backup credential is refused by the shared
-# backup destination, using the credentials deployed in wedding-app (#3253).
-#
-# Shared recovery access is retired only after this proof passes: until the
-# dedicated identity is observed being refused, its isolation rests on how the
-# token was configured rather than on what the destination enforces.
+# backup destination without restoring shared access to wedding-app (#4482).
 #
 # WHAT IT DOES, in order, refusing at the first thing it cannot prove:
 #   1. Confirms the wedding-db Cluster has a healthy active WAL archiver through
 #      wedding-db-dedicated, so the credential under test is the one in use.
-#   2. Reads both live ObjectStores and requires the reviewed destination and
+#   2. Reads the dedicated and platform-owned shared ObjectStores and requires the reviewed destination and
 #      Secret for each. The shared bucket and the endpoint are pinned to the
 #      committed bootstrap ConfigMap, because both credentials are about to be
 #      handed to that endpoint and the shared bucket is the one under test.
-#   3. Runs scripts/verify-wedding-backup-denial-pod.sh in a short-lived pod in
-#      wedding-app, where both credentials and R2 egress already exist, and
+#   3. Copies only the dedicated keys into a run-owned Secret in observability,
+#      where the shared credential already exists. Runs a short-lived proof pod and
 #      accepts only its complete receipt after rechecking the same healthy
 #      Cluster UID and configuration generation.
 #
@@ -24,13 +20,15 @@
 # proof attempts a write to a production bucket that must be refused.
 
 set -euo pipefail
+umask 077
 
 readonly context='admin@prod'
 readonly namespace='wedding-app'
+readonly probe_namespace='observability'
 readonly cluster='wedding-db'
-readonly shared_store='wedding-db'
+readonly shared_store='coroot-db'
 readonly dedicated_store='wedding-db-dedicated'
-readonly shared_secret='wedding-db-backup-r2'
+readonly shared_secret='coroot-db-backup-r2'
 readonly dedicated_secret='wedding-db-backup-r2-dedicated'
 readonly catalogue_prefix='cnpg/wedding-db'
 readonly dedicated_bucket='wedding-db-backups'
@@ -40,8 +38,7 @@ readonly probe_prefix='wedding-backup-denial-probe'
 readonly plugin='barman-cloud.cloudnative-pg.io'
 readonly ready_marker='==== DENIAL OBSERVED ===='
 readonly receipt='{"dedicatedCatalogueReachable":true,"sharedCatalogueReferenced":true,"listDenied":true,"readDenied":true,"writeDenied":true}'
-# The same digest-pinned images as the catalogue mirror, whose runtime test
-# exercises them; the denial test asserts the two scripts stay identical here.
+# Digest-pinned images exercised by test-wedding-backup-denial-runtime.sh.
 readonly mc_image='quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f'
 readonly tools_image='docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8'
 
@@ -60,19 +57,29 @@ readonly work_dir
 # Cleanup removes only what this run created, never a same-named object it found.
 created_configmap=false
 created_pod=false
+created_secret_uid=''
 name=''
 # Invoked by the EXIT trap below. shellcheck reports this trap-only handler as
 # unused (SC2329 on 0.11) or unreachable (SC2317 on the older CI runner); the
 # test suite asserts both deletions actually happen.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
+  local result=$?
   if [[ "${created_pod}" == true ]]; then
-    kube delete pod "${name}" --ignore-not-found --wait=false >/dev/null 2>&1 || true
+    probe_kube delete pod "${name}" --ignore-not-found --wait=true --timeout=30s >/dev/null 2>&1 || true
   fi
   if [[ "${created_configmap}" == true ]]; then
-    kube delete configmap "${name}" --ignore-not-found >/dev/null 2>&1 || true
+    probe_kube delete configmap "${name}" --ignore-not-found >/dev/null 2>&1 || true
+  fi
+  if [[ -n "${created_secret_uid}" ]]; then
+    jq -n --arg uid "${created_secret_uid}" '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:$uid}}' >"${work_dir}/delete-secret.json"
+    if ! probe_kube delete --raw "/api/v1/namespaces/${probe_namespace}/secrets/${name}" -f "${work_dir}/delete-secret.json" >/dev/null 2>&1; then
+      printf 'verify-wedding-backup-denial: run-owned dedicated Secret cleanup needs operator attention\n' >&2
+      result=1
+    fi
   fi
   rm -rf "${work_dir}"
+  exit "${result}"
 }
 trap cleanup EXIT
 
@@ -93,6 +100,9 @@ readonly name run_id
 
 kube() {
   "${kubectl_bin}" --context "${context}" --namespace "${namespace}" --request-timeout=20s "$@"
+}
+probe_kube() {
+  "${kubectl_bin}" --context "${context}" --namespace "${probe_namespace}" --request-timeout=20s "$@"
 }
 
 # The committed bootstrap ConfigMap names the shared destination and the R2
@@ -147,10 +157,10 @@ readonly source_uid source_generation
 # writes to the reviewed destination through exactly the reviewed Secret keys the
 # pod mounts, at the committed endpoint.
 require_store() {
-  local store="$1" bucket="$2" secret="$3"
-  kube get objectstores.barmancloud.cnpg.io "${store}" -o json >"${work_dir}/${store}.json" 2>/dev/null ||
+  local store="$1" bucket="$2" secret="$3" prefix="$4" reader="$5"
+  "${reader}" get objectstores.barmancloud.cnpg.io "${store}" -o json >"${work_dir}/${store}.json" 2>/dev/null ||
     fail "could not read the ${store} ObjectStore"
-  jq -e --arg path "s3://${bucket}/${catalogue_prefix}" --arg endpoint "${endpoint}" --arg secret "${secret}" '
+  jq -e --arg path "s3://${bucket}/${prefix}" --arg endpoint "${endpoint}" --arg secret "${secret}" '
     .metadata.deletionTimestamp == null and
     .spec.configuration.destinationPath == $path and
     .spec.configuration.endpointURL == $endpoint and
@@ -159,10 +169,29 @@ require_store() {
   ' "${work_dir}/${store}.json" >/dev/null 2>&1 ||
     fail "the ${store} ObjectStore is not wired to the reviewed destination and credential"
 }
-require_store "${shared_store}" "${shared_bucket}" "${shared_secret}"
-require_store "${dedicated_store}" "${dedicated_bucket}" "${dedicated_secret}"
+require_store "${shared_store}" "${shared_bucket}" "${shared_secret}" 'cnpg/coroot-db' probe_kube
+require_store "${dedicated_store}" "${dedicated_bucket}" "${dedicated_secret}" "${catalogue_prefix}" kube
 
-kube create configmap "${name}" --from-file="denial.sh=${pod_script}" >/dev/null ||
+# Read the lower-privilege credential without logging it. Never copy the shared
+# credential into the tenant. create refuses a collision instead of adopting it.
+kube get secret "${dedicated_secret}" -o json >"${work_dir}/dedicated-secret.json" 2>/dev/null ||
+  fail 'could not read the dedicated credential'
+jq -e '
+  .metadata.deletionTimestamp == null and
+  ([.metadata.uid, .metadata.resourceVersion] | all(type == "string" and length > 0)) and
+  ([.data.ACCESS_KEY_ID, .data.SECRET_ACCESS_KEY] | all(type == "string" and length > 0))
+' "${work_dir}/dedicated-secret.json" >/dev/null 2>&1 || fail 'the dedicated credential is incomplete'
+jq --arg name "${name}" --arg namespace "${probe_namespace}" '
+  {apiVersion:"v1",kind:"Secret",type:"Opaque",
+   metadata:{name:$name,namespace:$namespace,labels:{"app.kubernetes.io/managed-by":"verify-wedding-backup-denial"}},
+   data:{ACCESS_KEY_ID:.data.ACCESS_KEY_ID,SECRET_ACCESS_KEY:.data.SECRET_ACCESS_KEY}}
+' "${work_dir}/dedicated-secret.json" |
+  probe_kube create -f - -o json >"${work_dir}/created-secret.json" 2>/dev/null ||
+  fail 'could not create the run-owned dedicated credential copy'
+created_secret_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "${work_dir}/created-secret.json")" ||
+  fail 'the credential copy has no cleanup identity'
+
+probe_kube create configmap "${name}" --from-file="denial.sh=${pod_script}" >/dev/null ||
   fail 'could not stage the denial proof script'
 created_configmap=true
 
@@ -177,7 +206,7 @@ apiVersion: v1
 kind: Pod
 metadata:
   name: __NAME__
-  namespace: wedding-app
+  namespace: observability
   labels:
     app.kubernetes.io/name: wedding-backup-denial
     app.kubernetes.io/managed-by: verify-wedding-backup-denial
@@ -304,7 +333,7 @@ manifest="${manifest//__NAME__/${name}}"
 manifest="${manifest//__IMAGE__/${mc_image}}"
 manifest="${manifest//__TOOLS_IMAGE__/${tools_image}}"
 manifest="${manifest//__SHARED_SECRET__/${shared_secret}}"
-manifest="${manifest//__DEDICATED_SECRET__/${dedicated_secret}}"
+manifest="${manifest//__DEDICATED_SECRET__/${name}}"
 manifest="${manifest//__ENDPOINT__/${endpoint}}"
 manifest="${manifest//__SHARED_BUCKET__/${shared_bucket}}"
 manifest="${manifest//__DEDICATED_BUCKET__/${dedicated_bucket}}"
@@ -313,17 +342,17 @@ manifest="${manifest//__PROBE_ID__/${run_id}}"
 
 # create, never apply: an earlier pod with this name must not have its old
 # phase and log read as this run's result.
-printf '%s\n' "${manifest}" | kube create -f - >/dev/null || fail 'could not start the denial proof pod'
+printf '%s\n' "${manifest}" | probe_kube create -f - >/dev/null || fail 'could not start the denial proof pod'
 created_pod=true
 
 phase=''
 for ((attempt = 0; attempt < poll_limit; attempt++)); do
-  phase="$(kube get pod "${name}" -o 'jsonpath={.status.phase}' 2>/dev/null)" || phase=''
+  phase="$(probe_kube get pod "${name}" -o 'jsonpath={.status.phase}' 2>/dev/null)" || phase=''
   [[ "${phase}" == Succeeded || "${phase}" == Failed ]] && break
   sleep "${poll_interval}"
 done
 
-kube logs "pod/${name}" -c probe >"${work_dir}/log" 2>/dev/null || : >"${work_dir}/log"
+probe_kube logs "pod/${name}" -c probe >"${work_dir}/log" 2>/dev/null || : >"${work_dir}/log"
 if [[ "${phase}" != Succeeded ]]; then
   grep '^denial-pod: ' "${work_dir}/log" >&2 || true
   # The pod removes a probe object that landed, but not if it was stopped first.
@@ -344,6 +373,17 @@ jq -e --arg uid "${source_uid}" --argjson generation "${source_generation}" '
   .metadata.uid == $uid and .metadata.generation == $generation
 ' "${work_dir}/cluster.json" >/dev/null 2>&1 ||
   fail 'the Cluster identity or configuration changed during the denial proof'
+
+kube get secret "${dedicated_secret}" -o json >"${work_dir}/dedicated-secret-after.json" 2>/dev/null ||
+  fail 'could not recheck the dedicated credential'
+jq -e --slurpfile before "${work_dir}/dedicated-secret.json" '
+  .metadata.deletionTimestamp == null and
+  .metadata.uid == $before[0].metadata.uid and
+  .metadata.resourceVersion == $before[0].metadata.resourceVersion and
+  .data.ACCESS_KEY_ID == $before[0].data.ACCESS_KEY_ID and
+  .data.SECRET_ACCESS_KEY == $before[0].data.SECRET_ACCESS_KEY
+' "${work_dir}/dedicated-secret-after.json" >/dev/null 2>&1 ||
+  fail 'the dedicated credential changed during the denial proof'
 
 printf '%s\n' "${receipt}"
 printf 'DENIAL OBSERVED: the dedicated Wedding backup credential reaches its own catalogue, and the shared destination refused its list, read and write with AccessDenied.\n'
