@@ -554,6 +554,21 @@ runs:
       shell: bash
       run: ./scripts/verify-gateway-routes-applied.sh
 
+    - name: Verify the deployed KSail ARC canary
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: |
+        export KUBECONFIG="${HOME}/.kube/config"
+        bash scripts/verify-ksail-arc-runtime.sh --if-active
+
     - name: Verify the deployed data product UI release
       # The protected deployment must prove current Apps/chart/Helm identities,
       # all current Pods and public endpoints before its candidate can merge.

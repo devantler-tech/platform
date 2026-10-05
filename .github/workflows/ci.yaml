@@ -149,6 +149,12 @@ jobs:
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
 
+      - name: 🔬 Validate bounded ARC runtime acceptance
+        run: |
+          go test -race ./scripts/verify-ksail-arc-runtime
+          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/tests/test-verify-ksail-arc-runtime.sh
+          bash scripts/tests/test-verify-ksail-arc-runtime.sh
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
@@ -482,6 +488,9 @@ jobs:
               - '.github/scripts/setup-supply-chain-tools.sh'
               - 'scripts/tests/test-setup-supply-chain-tools.sh'
               - '.github/actions/deploy-prod/action.yml'
+              - 'scripts/verify-ksail-arc-runtime.sh'
+              - 'scripts/verify-ksail-arc-runtime/**'
+              - 'scripts/tests/test-verify-ksail-arc-runtime.sh'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'

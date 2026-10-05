@@ -23,7 +23,7 @@ publishes, attests and signs only on a push to KSail main. Both Kyverno and Talo
 that workflow identity only for the exact analysis image repository. The staged
 pool still requires a verified published digest before activation.
 
-The smoke test starts the copied runner and compiles a Go program against GTK
+The image smoke test executes the copied runner's version command and compiles a Go program against GTK
 and WebKit as UID/GID 1001 with a read-only root filesystem and no capabilities.
 The runner home and temporary files use disposable writable storage. Bootstrap
 copies use `cp -R`; preserving the root directory's ownership and timestamps
@@ -31,7 +31,9 @@ would fail on a group-writable Kubernetes volume.
 
 ## Activation gates
 
-Activation requires a separate reviewed change and all of these proofs:
+Activation uses a separate reviewed change. Complete the preparation checks
+first, then prove bounded runtime acceptance and actual job execution before
+routing managed analysis:
 
 1. Reuse the platform's existing GitHub management App from
    `infrastructure/github/app`. The `arc-ksail-app` ExternalSecret maps its
@@ -71,14 +73,34 @@ Activation requires a separate reviewed change and all of these proofs:
    baked runner into the group-writable home volume as UID/GID 1001. Both the
    bootstrap and job container keep their root filesystems read-only and drop
    every capability. Verify those settings on the generated runner pod.
-   Test admission, API isolation and denied internal egress, not only YAML validity.
-5. Prove the actual managed Go and JavaScript Code Quality jobs on an ephemeral
-   runner. The official runner image is not a hosted-runner software clone. Check
-   the required tools, GitHub proxy, network allowlist and non-root installation
-   path; do not enable sudo/privilege escalation to make setup pass. If a dedicated
-   reproducible tool image is required, deliver and verify it separately.
-6. Read the repository-assigned runner registration, then change managed Code
-   Quality to the verified `ksail-code-quality` label and read configuration back.
+   Publish and verify the KSail-owned analysis image on main before replacing
+   the staging image pin.
+5. Reference and unsuspend the controller in production's controller layer and
+   the pool in production's infrastructure layer. The existing layer dependency
+   creates both namespaces and reconciles controller readiness before the pool.
+   The protected deployment runs `scripts/verify-ksail-arc-runtime.sh --if-active`
+   against its exact published revision. It requires the registered scale-set
+   identity and the unchanged node/runner bounds, verifies the image's main
+   signing identity and selected amd64 manifest, and starts one bounded probe
+   from the actual runner template. The proof checks the complete admitted Pod
+   spec and both runtime image identities, quota and allocatable reservations,
+   toolchain compilation, absent API token and allowed external HTTPS. Restricted
+   admission must reject privileged and host-volume controls. Healthy API and
+   internal endpoints must remain unreachable from the probe, with each attempt
+   correlated to an actual Cilium policy denial at its source, target, port,
+   node and time. A timeout, observer loss or transport failure cannot pass.
+   Cleanup atomically binds deletion to the created Pod UID and verifies the
+   dedicated pool returns to zero. An unknown create outcome or replaced Pod
+   fails cleanup; it never authorizes deletion of an unbound object.
+6. Dispatch KSail's main-only `verify-ksail-arc-delivery.yaml` preflight with
+   `enable_arc=true`. Join that actual registered job to its restricted runner
+   Pod, signed image, allowed network path and cleanup before changing managed
+   Code Quality. The image's version command and the platform probe do not prove
+   an authenticated runner job. Read the repository-assigned registration,
+   then change managed Code Quality to the verified `ksail-code-quality` label
+   and read configuration back. Preserve the other setup fields. Check the
+   required tools, GitHub proxy, network allowlist and non-root installation
+   path; do not enable sudo or privilege escalation to make setup pass.
    Preserve all root, nested-module and desktop extraction/source guards. Meet
    KSail #7131's five consecutive successful managed runs and verify completed
    runner pods and their registration are removed before declaring that bug fixed.
@@ -92,13 +114,15 @@ not activation proof.
 
 ## Rollout and recovery
 
-After the gates above are approved, first reference and unsuspend the controller
-in the controller layer and verify it is healthy. That component creates both
-namespaces before the chart installs its namespace-scoped RBAC. The controller's
-network policy also covers the listener, which ARC creates in that namespace.
-Only then reference the pool in
-the infrastructure layer, where its external secret store already exists. Keep
-the unique analysis label out of ordinary build/test/provider workflows.
+Production activation follows steps 1–5; actual job proof and managed calibration
+follow in step 6. Managed analysis stays on its previous runner configuration
+until the registered-job proof completes. The controller's network policy covers
+the listener, which ARC creates in that namespace. Keep the unique analysis label
+out of ordinary build/test/provider workflows. The runtime verifier has no live
+access while both production references are absent, refuses partial activation,
+and runs only inside the protected Platform deployment. Its offline regression
+suite exercises the complete lifecycle and intercepted negative controls with
+fixtures; those fixtures never count as live acceptance.
 
 To stop admitting jobs, restore managed Code Quality's prior runner configuration
 and verify the readback, then use a reviewed values change to set both runner
