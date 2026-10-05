@@ -23,11 +23,15 @@ results:
       - github-config/wildcard-star
       - github-config/wildcard-question
       - github-config/admins
+      - github-config/typed-false
+      - github-config/typed-empty-list
+      - github-config/whitespace
     kind: Team
     result: fail
   - policy: restrict-github-team-management
     rule: teams-not-nested-or-directory-linked
     resources:
       - github-config/maintainers
+      - github-config/no-spec
     kind: Team
     result: pass

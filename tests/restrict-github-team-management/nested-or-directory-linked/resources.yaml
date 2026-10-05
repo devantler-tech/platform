@@ -127,3 +127,41 @@ spec:
   initProvider:
     parentTeamId: ""
     ldapDn: ""
+---
+# Not text at all. The provider's schema declares these fields as strings and
+# would reject each of these first, but the rule must not depend on that: a
+# value that is merely "empty-looking" is still a value somebody set.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: typed-false
+  namespace: github-config
+spec:
+  forProvider:
+    parentTeamId: false
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: typed-empty-list
+  namespace: github-config
+spec:
+  initProvider:
+    ldapDn: []
+---
+# Blank to a reader, not empty to GitHub.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: whitespace
+  namespace: github-config
+spec:
+  forProvider:
+    parentTeamReadSlug: " "
+---
+# Nothing under spec at all: every field is missing, none is set.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: no-spec
+  namespace: github-config

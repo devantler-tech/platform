@@ -125,12 +125,15 @@ spec:
         failureAction: Enforce
         # Kyverno admits an update by default when the object already failed the
         # rule before it. No object fails it today, and one that somehow did
-        # must not become freely editable for that reason.
+        # must not become freely editable for that reason. The cost: such an
+        # object could not be changed at all, its finalizer included, until
+        # the field is cleared.
         allowExistingViolations: false
         message: >-
-          A github-config Team must not set parentTeamId, parentTeamReadId,
-          parentTeamReadSlug or ldapDn, in forProvider or initProvider. Nesting a
-          team or linking it to a directory group is a reviewed change to
+          A github-config Team must leave parentTeamId, parentTeamReadId,
+          parentTeamReadSlug and ldapDn unset or empty, in forProvider and
+          initProvider. Nesting a team or linking it to a directory group is a
+          reviewed change to
           restrict-github-team-management.yaml.
         deny:
           conditions:
@@ -138,8 +141,11 @@ spec:
               # ONE comparison evaluated by JMESPath rather than eight Kyverno
               # operators: AnyNotIn and Equals read * and ? in an operand as
               # wildcards, and these fields are written by the party this rule
-              # constrains. JMESPath == compares strings literally.
-              - key: "{{ (request.object.spec.forProvider.parentTeamId || '') == '' && (request.object.spec.forProvider.parentTeamReadId || '') == '' && (request.object.spec.forProvider.parentTeamReadSlug || '') == '' && (request.object.spec.forProvider.ldapDn || '') == '' && (request.object.spec.initProvider.parentTeamId || '') == '' && (request.object.spec.initProvider.parentTeamReadId || '') == '' && (request.object.spec.initProvider.parentTeamReadSlug || '') == '' && (request.object.spec.initProvider.ldapDn || '') == '' }}"
+              # constrains. JMESPath == compares strings literally. not_null()
+              # replaces only a missing value with the empty string, so false,
+              # an empty list or an empty object is refused here and not left
+              # to the provider's schema to reject.
+              - key: "{{ not_null(request.object.spec.forProvider.parentTeamId, '') == '' && not_null(request.object.spec.forProvider.parentTeamReadId, '') == '' && not_null(request.object.spec.forProvider.parentTeamReadSlug, '') == '' && not_null(request.object.spec.forProvider.ldapDn, '') == '' && not_null(request.object.spec.initProvider.parentTeamId, '') == '' && not_null(request.object.spec.initProvider.parentTeamReadId, '') == '' && not_null(request.object.spec.initProvider.parentTeamReadSlug, '') == '' && not_null(request.object.spec.initProvider.ldapDn, '') == '' }}"
                 operator: Equals
                 value: false
     - name: teammemberships-reference-allow-listed-teams
