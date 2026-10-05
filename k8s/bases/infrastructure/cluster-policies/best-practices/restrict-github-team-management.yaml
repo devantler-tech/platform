@@ -21,7 +21,8 @@ metadata:
       Restricts provider-upjet-github team resources in the github-config
       namespace to the github-config CODEOWNERS teams, requires TeamMembership and
       TeamRepository resources to reference those Team objects by name, and
-      blocks repository admin grants. This prevents a compromised or unintended
+      blocks repository admin grants. A Team may not be nested under a parent
+      team or linked to a directory group. This prevents a compromised or unintended
       github-config artifact from adding arbitrary users to arbitrary GitHub
       teams or granting privileged repository access.
 spec:
@@ -91,6 +92,61 @@ spec:
     # team's numeric identity and exempts the provider's own write. That rule
     # depends on the writing identity, so it cannot live in this
     # background-scanned policy.
+    #
+    # #4511: a nested team inherits every repository grant of its parent, and
+    # that inheritance happens on GitHub — it never passes through the
+    # TeamRepository rules below, which are what cap this delegation's grants. A
+    # Team that named a parent would hand its members the parent's access with no
+    # grant for those rules to judge. The directory link is refused for the same
+    # reason from the other side: it lets a group outside this cluster decide who
+    # the members are, past the member allow-list.
+    #
+    # All four fields the provider exposes are covered, in both blocks.
+    # parentTeamReadId and parentTeamReadSlug are documented as read-back values,
+    # but the schema accepts them as input, so they are refused rather than
+    # trusted to stay inert. An empty string is what the provider reports for
+    # "none" and is accepted.
+    #
+    # Measured live: neither team sets any of them, and the provider reports all
+    # four empty for both. The provider is NOT exempt. If a team were nested on
+    # GitHub by hand, the provider would try to record the parent on the admins
+    # object, be refused, and report the object out of sync — which is the
+    # signal wanted for a nesting nobody reviewed.
+    - name: teams-not-nested-or-directory-linked
+      match:
+        any:
+          - resources:
+              kinds:
+                - team.github.m.upbound.io/*/Team
+              namespaces:
+                - github-config
+      validate:
+        failureAction: Enforce
+        # Kyverno admits an update by default when the object already failed the
+        # rule before it. No object fails it today, and one that somehow did
+        # must not become freely editable for that reason. The cost: such an
+        # object could not be changed at all, its finalizer included, until
+        # the field is cleared.
+        allowExistingViolations: false
+        message: >-
+          A github-config Team must leave parentTeamId, parentTeamReadId,
+          parentTeamReadSlug and ldapDn unset or empty, in forProvider and
+          initProvider. Nesting a team or linking it to a directory group is a
+          reviewed change to
+          restrict-github-team-management.yaml.
+        deny:
+          conditions:
+            all:
+              # ONE comparison evaluated by JMESPath rather than eight Kyverno
+              # operators: AnyNotIn and Equals read * and ? in an operand as
+              # wildcards, and these fields are written by the party this rule
+              # constrains. JMESPath == compares strings literally. not_null()
+              # replaces only a missing value with the empty string, so false,
+              # an empty list or an empty object is refused here and not left
+              # to the provider's schema to reject.
+              - key: "{{ not_null(request.object.spec.forProvider.parentTeamId, '') == '' && not_null(request.object.spec.forProvider.parentTeamReadId, '') == '' && not_null(request.object.spec.forProvider.parentTeamReadSlug, '') == '' && not_null(request.object.spec.forProvider.ldapDn, '') == '' && not_null(request.object.spec.initProvider.parentTeamId, '') == '' && not_null(request.object.spec.initProvider.parentTeamReadId, '') == '' && not_null(request.object.spec.initProvider.parentTeamReadSlug, '') == '' && not_null(request.object.spec.initProvider.ldapDn, '') == '' }}"
+                operator: Equals
+                value: false
     - name: teammemberships-reference-allow-listed-teams
       match:
         any:
