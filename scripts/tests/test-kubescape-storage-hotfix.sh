@@ -10,7 +10,7 @@ readonly cleanup_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/ku
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
-readonly image_tag='v0.0.297-sqlite-contention.6-75f74568e74d6172f0cd5852c98e6d014ac43896@sha256:e3947c98ca99761a5a932a56b91c6e29a91cdcede6125b863eaad6853c66d826'
+readonly image_tag='v0.0.297-sqlite-contention.7-b6c585af18f3b32cc3fbb6228ab39af765f94abf@sha256:1adc507780a6fc288f01af7fa2d6e093d815776ca8836fc27450f687fe0d5fbc'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -252,6 +252,33 @@ grep -qF '"truncated name label"' "${cleanup_patch_file}" ||
 if grep -qE '^\+.*\.(Delete|DeleteCollection|Update|Patch|Apply|Create)\(' "${cleanup_patch_file}"; then
   fail 'the cleanup patch must only read from the cluster'
 fi
+
+# The lookup the cleanup patch makes needs read access, and nothing beyond it.
+readonly kubescape_base="${root_dir}/k8s/bases/infrastructure/controllers/kubescape"
+readonly cleanup_role="${kubescape_base}/cluster-role-storage-scan-record-cleanup.yaml"
+readonly cleanup_binding="${kubescape_base}/cluster-role-binding-storage-scan-record-cleanup.yaml"
+[[ -f "${cleanup_role}" ]] || fail 'the storage scan-record cleanup role is missing'
+[[ -f "${cleanup_binding}" ]] || fail 'the storage scan-record cleanup role binding is missing'
+for wired in cluster-role-storage-scan-record-cleanup.yaml cluster-role-binding-storage-scan-record-cleanup.yaml; do
+  WIRED="${wired}" yq -e '.resources | contains([strenv(WIRED)])' "${kubescape_base}/kustomization.yaml" >/dev/null ||
+    fail "the Kubescape base does not deploy ${wired}"
+done
+[[ "$(yq -er '.rules | length' "${cleanup_role}")" -gt 0 ]] ||
+  fail 'the storage scan-record cleanup role grants nothing'
+[[ "$(yq -er '[.rules[].verbs[]] | unique | join(",")' "${cleanup_role}")" == 'get' ]] ||
+  fail 'the storage scan-record cleanup role may only read single objects'
+[[ "$(yq -er '[.rules[] | select(has("resourceNames") or has("nonResourceURLs"))] | length' "${cleanup_role}")" == '0' ]] ||
+  fail 'the storage scan-record cleanup role must stay a plain resource grant'
+if [[ "$(yq -er '[.rules[].resources[], .rules[].apiGroups[]] | map(select(test("\\*"))) | length' "${cleanup_role}")" != '0' ]]; then
+  fail 'the storage scan-record cleanup role must name its resources, not use a wildcard'
+fi
+if [[ "$(yq -er '[.rules[].resources[] | select(test("^secrets(/|$)"))] | length' "${cleanup_role}")" != '0' ]]; then
+  fail 'the storage scan-record cleanup role must not read secrets'
+fi
+[[ "$(yq -er '.roleRef.kind + "/" + .roleRef.name' "${cleanup_binding}")" == "ClusterRole/$(yq -er '.metadata.name' "${cleanup_role}")" ]] ||
+  fail 'the storage scan-record cleanup binding must reference its role'
+[[ "$(yq -er '[.subjects[] | .kind + "/" + .namespace + "/" + .name] | join(",")' "${cleanup_binding}")" == 'ServiceAccount/kubescape/storage' ]] ||
+  fail 'the storage scan-record cleanup role must be bound to the storage service account alone'
 
 storage_repository="$(yq -er '
   .spec.values.storage.image.repository |

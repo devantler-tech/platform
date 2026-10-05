@@ -1,0 +1,13 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubescape-storage-scan-record-cleanup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kubescape-storage-scan-record-cleanup
+subjects:
+  - kind: ServiceAccount
+    name: storage
+    namespace: kubescape
