@@ -18,11 +18,18 @@ jobs and Docker actions are deliberately unsupported.
 
 Activation requires a separate reviewed change and all of these proofs:
 
-1. The maintainer approves an App installed only on KSail with the required
-   repository runner-administration permission. A maintainer provisions its three
-   authentication fields in the existing secret system at `github-arc-ksail`.
-   `arc-ksail-app` is an ExternalSecret reference, not a new or broadened shared
-   credential. Do not print, check in or mount the private key in a job runner.
+1. Reuse the platform's existing GitHub management App from
+   `infrastructure/github/app`. The `arc-ksail-app` ExternalSecret maps its
+   `app_id`, `installation_id` and `pem` properties to ARC's three authentication
+   fields. Its namespaced SecretStore authenticates as the dedicated
+   `arc-ksail-app` credential-reader ServiceAccount. The OpenBao role grants read
+   on that exact credential path; the shared ESO role keeps its existing access.
+   Job runners use the chart's separate no-permission identity. Verify the
+   current installation covers KSail and grants repository
+   Administration read/write before activation. The pool's registration URL
+   remains KSail-only; the existing App installation also serves other platform
+   consumers. No new App, credential copy, key rotation or permission expansion
+   is required. Do not print, check in or mount the private key in a job runner.
 2. Establish explicitly approved, isolated analysis capacity. The runner selector
    and toleration name `platform.devantler.tech/ksail-analysis=enabled`; no current
    capacity is assumed to carry that label. New billable capacity requires its
@@ -76,7 +83,8 @@ before uninstalling the pool. **Suspending a HelmRelease alone does not drain an
 installed scale set.** Namespace/release retirement follows the platform's
 two-stage persistence protection; never delete a namespace to cancel a job.
 Verify no listener, runner or GitHub registration remains before deleting approved
-temporary capacity. Retire the App credential only after its consumers are gone.
+temporary capacity. Remove only the ARC ExternalSecret and its materialized
+Secret; retain the shared App credential and its other platform consumers.
 
 Official references: [ARC deployment and security guidance](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets)
 and [App authentication](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/authenticate-to-the-api).
