@@ -435,12 +435,12 @@ func TestResolveFoldInputsFailsOnAnythingItCannotRead(t *testing.T) {
 }
 
 // checkPinsAt runs the command's --check-pins mode with every deployment pin at
-// version and the release source replaced by resolve.
-func checkPinsAt(t *testing.T, version string, resolve func(string) (map[string]string, error)) error {
+// version and repository standing in for the public KSail source.
+func checkPinsAt(t *testing.T, version, repository string) error {
 	t.Helper()
-	original := resolvePinnedInputs
-	resolvePinnedInputs = resolve
-	t.Cleanup(func() { resolvePinnedInputs = original })
+	original := ksailRepository
+	ksailRepository = repository
+	t.Cleanup(func() { ksailRepository = original })
 	t.Chdir(t.TempDir())
 	for _, path := range []string{".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml"} {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -454,32 +454,46 @@ func checkPinsAt(t *testing.T, version string, resolve func(string) (map[string]
 }
 
 func TestCheckPinsDecidesOnTheSourceItRead(t *testing.T) {
-	dir, _ := sourceRepository(t)
-	local := func(version string) (map[string]string, error) { return resolveFoldInputs(dir, version) }
+	if ksailRepository != "https://github.com/devantler-tech/ksail.git" {
+		t.Fatalf("the check reads %q, not the public KSail source", ksailRepository)
+	}
+	dir, git := sourceRepository(t)
 	// The local source is real but unaudited, so only a read that reached the
 	// comparison can produce this error.
-	if err := checkPinsAt(t, "1.2.3", local); err == nil || !strings.Contains(err.Error(), "requires a new source audit") {
+	if err := checkPinsAt(t, "1.2.3", dir); err == nil || !strings.Contains(err.Error(), "requires a new source audit") {
 		t.Fatalf("unaudited source accepted: %v", err)
 	}
-	if err := checkPinsAt(t, "9.9.9", local); err == nil || !strings.Contains(err.Error(), "could not be read") {
+	if err := checkPinsAt(t, "9.9.9", dir); err == nil || !strings.Contains(err.Error(), "could not be read") {
 		t.Fatalf("unreadable release accepted: %v", err)
 	}
-	absent := func(version string) (map[string]string, error) {
-		return resolveFoldInputs(filepath.Join(dir, "absent"), version)
-	}
-	if err := checkPinsAt(t, "1.2.3", absent); err == nil || !strings.Contains(err.Error(), "could not be read") {
+	if err := checkPinsAt(t, "1.2.3", filepath.Join(dir, "absent")); err == nil || !strings.Contains(err.Error(), "could not be read") {
 		t.Fatalf("absent source accepted: %v", err)
 	}
-	asked := ""
-	audited := func(version string) (map[string]string, error) {
-		asked = version
-		return latestAudited(), nil
-	}
-	if err := checkPinsAt(t, "7.999.0", audited); err != nil || asked != "7.999.0" {
-		t.Fatalf("audited inputs at the pinned release: resolved %q, error %v", asked, err)
-	}
-	if err := checkPinsAt(t, "not-a-release", audited); err == nil || !strings.Contains(err.Error(), "not an explicit release version") {
+	if err := checkPinsAt(t, "not-a-release", dir); err == nil || !strings.Contains(err.Error(), "not an explicit release version") {
 		t.Fatalf("unresolvable pin accepted: %v", err)
+	}
+	// Record the local source as audited: the same command, reading the same
+	// way, must now pass, and only for the release whose inputs were recorded.
+	ids := map[string]string{}
+	for _, input := range foldInputs {
+		ids[input.path] = git("rev-parse", "v1.2.3:"+input.path)
+	}
+	original := auditedFoldInputs
+	auditedFoldInputs = append(append(original[:0:0], original...), struct {
+		audit string
+		ids   map[string]string
+	}{"1.2.3", ids})
+	t.Cleanup(func() { auditedFoldInputs = original })
+	if err := checkPinsAt(t, "1.2.3", dir); err != nil {
+		t.Fatalf("audited source rejected: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.invalid/changed\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "--quiet", "--all", "-m", "module change")
+	git("tag", "v1.3.0")
+	if err := checkPinsAt(t, "1.3.0", dir); err == nil || !strings.Contains(err.Error(), "fold input(s) go.mod since the set audited at 1.2.3") {
+		t.Fatalf("changed module file at the next release: %v", err)
 	}
 }
 

@@ -44,7 +44,8 @@ The check fails, and names what it could not accept, when:
 - the pins are missing, malformed, not explicit versions, or disagree.
 
 The check runs in the unconditional changes job and needs network access to
-`github.com`; a failed fetch is retried twice before the check fails. The fold command itself (three arguments) stays offline: it
+`github.com`; each fetch has a
+one-minute limit and a failed one is retried twice before the check fails. The fold command itself (three arguments) stays offline: it
 checks that the pins agree and relies on `--check-pins` for the source audit.
 
 ### When the inputs change: what an audit must cover
@@ -132,7 +133,11 @@ refreshed, and the Talos ingress-firewall generator adds the default pod CIDR
 sets. That last change does reach this cluster, because KSail injects those
 rules at runtime when its own generated patch files are absent, as they are here. It
 widens nothing in practice: `talos/*/allow-internal-nodepod-ingress.yaml` already
-admits the pod CIDR to the kubelet port, and the rule count is unchanged.
+admits the pod CIDR to the kubelet port, and the rule count is unchanged. This is the
+only audited release that changes `pkg/fsutil/generator/talos/`
+(`8959ca398398f7bde09c312c362de7fb80936073` → `25c9c416e06b77937e68e71a213c1b2e9ed61205`).
+No patch it generates sets `machine.install.extraKernelArgs` or
+`grubUseUKICmdline`, so the fold triggers exactly as before.
 
 **7.194.10**, commit `40c72e342ec90a5ea5cb50b69be34a5c2e897b90`, is audited as the
 range 7.194.9 → 7.194.10. The configuration-manager tree

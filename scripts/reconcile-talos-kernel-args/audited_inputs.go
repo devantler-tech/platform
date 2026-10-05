@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,18 +12,17 @@ import (
 	"time"
 )
 
+const (
+	fetchAttempts = 3
+	fetchTimeout  = time.Minute
+)
+
 // ksailRepository is the public source the pinned KSail release is built from.
-const ksailRepository = "https://github.com/devantler-tech/ksail.git"
-
-const fetchAttempts = 3
-
-// fetchBackoff and resolvePinnedInputs are variables so tests can avoid waiting
-// and can stand in a local source for the public one.
+// It and fetchBackoff are variables so tests can stand in a local source and
+// avoid waiting.
 var (
-	fetchBackoff        = 5 * time.Second
-	resolvePinnedInputs = func(version string) (map[string]string, error) {
-		return resolveFoldInputs(ksailRepository, version)
-	}
+	ksailRepository = "https://github.com/devantler-tech/ksail.git"
+	fetchBackoff    = 5 * time.Second
 )
 
 var (
@@ -141,9 +141,11 @@ func resolveFoldInputs(repository, version string) (map[string]string, error) {
 		return nil, err
 	}
 	defer os.RemoveAll(dir)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
+	// Each command gets its own deadline, so one hung fetch cannot use up the
+	// time the retries need.
 	git := func(args ...string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), fetchTimeout)
+		defer cancel()
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 		// Ignore user, system and inherited configuration: a URL rewrite or a
 		// GIT_DIR from the caller would make this read a different source than
@@ -165,17 +167,20 @@ func resolveFoldInputs(repository, version string) (map[string]string, error) {
 	tag := "refs/tags/v" + version
 	// One transient failure must not fail every pull request and deploy, so the
 	// fetch is retried. An exhausted retry is still an error, never a pass.
-	var fetchErr error
+	var fetchErrs []error
 	for attempt := 0; attempt < fetchAttempts; attempt++ {
 		if attempt > 0 {
 			time.Sleep(fetchBackoff * time.Duration(attempt))
 		}
-		if _, fetchErr = git("fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", repository, tag); fetchErr == nil {
+		_, err := git("fetch", "--quiet", "--no-tags", "--depth=1", "--filter=blob:none", repository, tag)
+		if err == nil {
+			fetchErrs = nil
 			break
 		}
+		fetchErrs = append(fetchErrs, err)
 	}
-	if fetchErr != nil {
-		return nil, fetchErr
+	if len(fetchErrs) > 0 {
+		return nil, errors.Join(fetchErrs...)
 	}
 	ids := map[string]string{}
 	for _, input := range foldInputs {

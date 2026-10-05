@@ -40,7 +40,9 @@ func run(args []string) error {
 	if len(args) == 1 {
 		// Only this mode reads the KSail source. The fold mode below stays
 		// offline and relies on this unconditional check having passed.
-		audit, err := verifyFoldInputs(version, resolvePinnedInputs)
+		audit, err := verifyFoldInputs(version, func(version string) (map[string]string, error) {
+			return resolveFoldInputs(ksailRepository, version)
+		})
 		if err != nil {
 			return err
 		}
