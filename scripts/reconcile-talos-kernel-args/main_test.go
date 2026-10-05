@@ -358,7 +358,30 @@ func TestVersionContractForAudited71950(t *testing.T) {
 		{"mixed CI pin", "7.194.10", "7.195.0", "7.195.0", true},
 		{"mixed CD pin", "7.195.0", "7.194.10", "7.195.0", true},
 		{"mixed action pin", "7.195.0", "7.195.0", "7.194.10", true},
-		{"unaudited patch release", "7.195.1", "7.195.1", "7.195.1", true},
+		{"unaudited minor release", "7.196.0", "7.196.0", "7.196.0", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var pins [][]byte
+			for _, version := range []string{test.ci, test.cd, test.action} {
+				pins = append(pins, []byte("env:\n  KSAIL_VERSION: '"+version+"'\n"))
+			}
+			if err := verifyPins(pins...); (err != nil) != test.wantErr {
+				t.Fatalf("verifyPins(%q, %q, %q) error = %v, wantErr %v", test.ci, test.cd, test.action, err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestVersionContractForAudited71951(t *testing.T) {
+	for _, test := range []struct {
+		name, ci, cd, action string
+		wantErr              bool
+	}{
+		{"uniform audited release", "7.195.1", "7.195.1", "7.195.1", false},
+		{"mixed CI pin", "7.195.0", "7.195.1", "7.195.1", true},
+		{"mixed CD pin", "7.195.1", "7.195.0", "7.195.1", true},
+		{"mixed action pin", "7.195.1", "7.195.1", "7.195.0", true},
+		{"unaudited patch release", "7.195.2", "7.195.2", "7.195.2", true},
 		{"unaudited minor release", "7.196.0", "7.196.0", "7.196.0", true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
