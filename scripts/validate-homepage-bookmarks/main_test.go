@@ -143,3 +143,49 @@ func TestDuplicateBookmarkGroupsAreRejected(t *testing.T) {
 		t.Fatalf("status=%d output=%s", status, out.String())
 	}
 }
+
+func TestScalarMappingKeysPreserveAcceptedYAML(t *testing.T) {
+	config := strings.ReplaceAll(validConfig, "Links:", "2026:")
+	config = strings.Replace(config, "      - Docs:", "      - 123:", 1)
+	root := t.TempDir()
+	path := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if status := run([]string{path, root}, &out); status != 0 {
+		t.Fatalf("scalar mapping keys must remain accepted: status=%d output=%s", status, out.String())
+	}
+}
+
+func TestScalarKeysKeepTheirTextAndRejectDuplicates(t *testing.T) {
+	var value any
+	if err := decode([]byte("2026: {1.0: value, true: yes, 2026-10-05: date}\n"), &value); err != nil {
+		t.Fatal(err)
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("mapping keys were not strings: %#v", value)
+	}
+	nested, ok := object["2026"].(map[string]any)
+	if !ok || nested["1.0"] != "value" || nested["true"] != "yes" || nested["2026-10-05"] != "date" {
+		t.Fatalf("scalar key text changed: %#v", value)
+	}
+	for _, input := range []string{"2026: one\n\"2026\": two\n", "? [complex, key]\n: value\n", "self: &self {child: *self}\n"} {
+		if err := decode([]byte(input), &value); err == nil {
+			t.Fatalf("ambiguous or unsupported YAML accepted: %s", input)
+		}
+	}
+}
+
+func TestYAMLAliasesAndMergeKeysRemainSupported(t *testing.T) {
+	var value map[string]any
+	input := "name: &name 2026\ndefaults: &defaults {icon: mdi-book}\n*name: {<<: *defaults, href: https://example.com}\n"
+	if err := decode([]byte(input), &value); err != nil {
+		t.Fatal(err)
+	}
+	merged, ok := value["2026"].(map[string]any)
+	if !ok || merged["icon"] != "mdi-book" || merged["href"] != "https://example.com" || value["name"] != 2026 {
+		t.Fatalf("alias or merge semantics changed: %#v", value)
+	}
+}

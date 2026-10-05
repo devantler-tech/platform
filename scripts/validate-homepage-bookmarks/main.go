@@ -143,7 +143,17 @@ func run(args []string, out io.Writer) (status int) {
 
 func decode(data []byte, target any) error {
 	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
-	if err := decoder.Decode(target); err != nil {
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		return err
+	}
+	// YAML-to-JSON readers preserve scalar mapping keys as their original text.
+	// Normalize keys before decoding so numeric, boolean and date-like names do
+	// not turn otherwise supported mappings into map[any]any.
+	if err := stringMappingKeys(&document, make(map[*yaml.Node]bool)); err != nil {
+		return err
+	}
+	if err := document.Decode(target); err != nil {
 		return err
 	}
 	var extra any
@@ -154,6 +164,34 @@ func decode(data []byte, target any) error {
 		return fmt.Errorf("expected exactly one YAML document")
 	}
 	return nil
+}
+
+func stringMappingKeys(node *yaml.Node, seen map[*yaml.Node]bool) error {
+	if node == nil || seen[node] {
+		return nil
+	}
+	seen[node] = true
+	if node.Kind == yaml.MappingNode {
+		for index := 0; index < len(node.Content); index += 2 {
+			key := node.Content[index]
+			if key.Kind == yaml.AliasNode && key.Alias != nil && key.Alias.Kind == yaml.ScalarNode {
+				// Copy the key rather than changing the anchored value's type.
+				*key = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key.Alias.Value, Line: key.Line, Column: key.Column}
+			}
+			if key.Kind != yaml.ScalarNode {
+				return fmt.Errorf("mapping keys must be scalar values")
+			}
+			if key.Tag != "!!merge" {
+				key.Tag = "!!str"
+			}
+		}
+	}
+	for _, child := range node.Content {
+		if err := stringMappingKeys(child, seen); err != nil {
+			return err
+		}
+	}
+	return stringMappingKeys(node.Alias, seen)
 }
 func sortedKeys(object map[string]any) []string {
 	keys := make([]string, 0, len(object))
