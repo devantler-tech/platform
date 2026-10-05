@@ -152,3 +152,103 @@ spec:
     - backendRefs:
         - name: platform-service
           port: 80
+---
+# #4527: a wildcard hostname that covers an approved name is not that name. A
+# Kyverno list operator reads * and ? as wildcards in either operand, so each of
+# these counted as being on the list.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-covering-approved
+  namespace: wedding-app
+spec:
+  hostnames:
+    - "*.platform.devantler.tech"
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# Every hostname at once.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-everything
+  namespace: wedding-app
+spec:
+  hostnames:
+    - "*"
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# The single-character wildcard. The Gateway API schema refuses this spelling
+# on its own; the rule must not depend on that.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: single-character-wildcard
+  namespace: wedding-app
+spec:
+  hostnames:
+    - "weddin?.platform.lan"
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+# An approved hostname does not carry a wildcard in beside it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-plus-wildcard
+  namespace: wedding-app
+spec:
+  hostnames:
+    - wedding.platform.lan
+    - "*.platform.lan"
+  rules:
+    - backendRefs:
+        - name: wedding-app
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: wildcard-covering-approved
+  namespace: ascoachingogvaner
+spec:
+  hostnames:
+    - "*.ascoachingogvaner.dk"
+  rules:
+    - backendRefs:
+        - name: ascoachingogvaner
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: single-character-wildcard
+  namespace: ascoachingogvaner
+spec:
+  hostnames:
+    - "ww?.ascoachingogvaner.dk"
+  rules:
+    - backendRefs:
+        - name: ascoachingogvaner
+          port: 80
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: approved-plus-wildcard
+  namespace: ascoachingogvaner
+spec:
+  hostnames:
+    - ascoachingogvaner.dk
+    - "*.dk"
+  rules:
+    - backendRefs:
+        - name: ascoachingogvaner
+          port: 80
