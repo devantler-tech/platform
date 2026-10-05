@@ -58,4 +58,10 @@ func TestBootstrapParametersAcceptOnlyUniqueLiteralArguments(t *testing.T) {
 	if _, err := parseBootstrapParameters(header+"policies=safe", "auth/kubernetes/role/other"); err == nil {
 		t.Fatal("accepted a write to a different authentication role")
 	}
+	for _, role := range []string{"$ROLE", "`printf role`", "$(printf role)"} {
+		path := "auth/kubernetes/role/" + role
+		if _, err := parseBootstrapParameters("bao write "+path+" policies=safe", path); err == nil {
+			t.Fatalf("accepted matching but non-literal role path %q", path)
+		}
+	}
 }

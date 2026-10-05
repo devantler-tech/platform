@@ -167,7 +167,8 @@ func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T)
 // configuration while checking the credential boundary.
 func parseBootstrapParameters(write, path string) (map[string]string, error) {
 	arguments := strings.Fields(strings.ReplaceAll(write, "\\\n", " "))
-	if len(arguments) < 4 || arguments[0] != "bao" || arguments[1] != "write" || arguments[2] != path {
+	literalPath := regexp.MustCompile(`^auth/kubernetes/role/[a-zA-Z0-9_-]+$`)
+	if !literalPath.MatchString(path) || len(arguments) < 4 || arguments[0] != "bao" || arguments[1] != "write" || arguments[2] != path {
 		return nil, fmt.Errorf("invalid bootstrap write header")
 	}
 	literal := regexp.MustCompile(`^[a-zA-Z0-9_./,:-]+$`)
