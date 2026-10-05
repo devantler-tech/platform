@@ -1,8 +1,8 @@
 package arcstaging_test
 
 import (
+	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -80,7 +80,11 @@ func TestPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
 	values := field(t, release, "spec", "values")
 	equal(t, field(t, values, "minRunners"), 0)
 	equal(t, field(t, values, "maxRunners"), 1)
-	if _, exists := values.(map[string]any)["containerMode"]; exists {
+	valueMap, ok := values.(map[string]any)
+	if !ok {
+		t.Fatal("runner values must be a mapping")
+	}
+	if _, exists := valueMap["containerMode"]; exists {
 		t.Fatal("container hooks and Docker-in-Docker are outside this pool's scope")
 	}
 	spec := field(t, values, "template", "spec")
@@ -137,8 +141,8 @@ func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
 
 func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T) {
 	secret := readYAML(t, "k8s/bases/infrastructure/actions-runners/external-secret.yaml")
-	entries := field(t, secret, "spec", "data").([]any)
-	if len(entries) != 3 {
+	entries, ok := field(t, secret, "spec", "data").([]any)
+	if !ok || len(entries) != 3 {
 		t.Fatal("only the three App authentication keys are expected")
 	}
 	properties := map[string]string{
@@ -156,6 +160,29 @@ func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T)
 		equal(t, field(t, entry, "remoteRef", "property"), property)
 		delete(properties, key)
 	}
+}
+
+// Only literal key=value arguments are supported in these selected writes.
+// Reject shell syntax and duplicate keys instead of evaluating or overwriting
+// configuration while checking the credential boundary.
+func parseBootstrapParameters(write, path string) (map[string]string, error) {
+	arguments := strings.Fields(strings.ReplaceAll(write, "\\\n", " "))
+	if len(arguments) < 4 || arguments[0] != "bao" || arguments[1] != "write" || arguments[2] != path {
+		return nil, fmt.Errorf("invalid bootstrap write header")
+	}
+	literal := regexp.MustCompile(`^[a-zA-Z0-9_./,:-]+$`)
+	parameters := map[string]string{}
+	for _, argument := range arguments[3:] {
+		key, value, ok := strings.Cut(argument, "=")
+		if !ok || !literal.MatchString(key) || !literal.MatchString(value) {
+			return nil, fmt.Errorf("non-literal bootstrap argument %q", argument)
+		}
+		if _, exists := parameters[key]; exists {
+			return nil, fmt.Errorf("duplicate bootstrap parameter %q", key)
+		}
+		parameters[key] = value
+	}
+	return parameters, nil
 }
 
 // A field mapping is not usable if its authentication role cannot read the
@@ -196,22 +223,9 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	if len(roleWrites) != 1 {
 		t.Fatalf("expected one bootstrap write for auth role %s, got %d", role, len(roleWrites))
 	}
-	runWrite := func(write string) string {
-		t.Helper()
-		result, err := exec.Command("bash", "-ec", `bao() { printf '%s\n' "$@"; if [[ "$1" == policy ]]; then cat; fi; }; `+write).CombinedOutput()
-		if err != nil {
-			t.Fatalf("configuration write failed: %v: %s", err, result)
-		}
-		return string(result)
-	}
-	arguments := strings.Split(strings.TrimSpace(runWrite(roleWrites[0])), "\n")
-	parameters := map[string]string{}
-	for _, argument := range arguments[2:] {
-		key, value, ok := strings.Cut(argument, "=")
-		if !ok {
-			t.Fatalf("invalid auth-role argument %q", argument)
-		}
-		parameters[key] = value
+	parameters, err := parseBootstrapParameters(roleWrites[0], "auth/kubernetes/role/"+role)
+	if err != nil {
+		t.Fatal(err)
 	}
 	equal(t, parameters["bound_service_account_names"], field(t, account, "metadata", "name"))
 	equal(t, parameters["bound_service_account_namespaces"], "arc-runners")
@@ -223,7 +237,11 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	if len(policyWrites) != 1 {
 		t.Fatalf("expected one bootstrap write for policy %s, got %d", policy, len(policyWrites))
 	}
-	policyBody := strings.SplitN(runWrite(policyWrites[0]), "\n", 5)[4]
+	policyLines := strings.Split(policyWrites[0], "\n")
+	if len(policyLines) < 3 || policyLines[0] != "bao policy write "+policy+" - <<'POLICY'" || policyLines[len(policyLines)-1] != "POLICY" {
+		t.Fatal("invalid policy write header or delimiter")
+	}
+	policyBody := strings.Join(policyLines[1:len(policyLines)-1], "\n")
 	// The App path is sufficient; wildcard GitHub paths, writes, and other
 	// infrastructure/application credentials are not part of this identity.
 	access := regexp.MustCompile(`^\s*path\s+"([^"]+)"\s*\{\s*capabilities\s*=\s*\[\s*"([^"]+)"\s*\]\s*\}\s*$`).FindStringSubmatch(policyBody)
@@ -236,13 +254,16 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	if len(sharedWrite) != 1 {
 		t.Fatal("shared ESO auth role must remain independently configured")
 	}
-	for _, argument := range strings.Split(strings.TrimSpace(runWrite(sharedWrite[0])), "\n") {
-		if bundle, ok := strings.CutPrefix(argument, "policies="); ok {
-			for _, name := range strings.Split(bundle, ",") {
-				if name == policy || name == "infra-github-readonly" {
-					t.Fatal("shared ESO identity must not acquire GitHub App access")
-				}
-			}
+	sharedParameters, err := parseBootstrapParameters(sharedWrite[0], "auth/kubernetes/role/external-secrets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sharedParameters["policies"] == "" {
+		t.Fatal("shared ESO policy bundle must remain explicitly configured")
+	}
+	for _, name := range strings.Split(sharedParameters["policies"], ",") {
+		if name == policy || name == "infra-github-readonly" {
+			t.Fatal("shared ESO identity must not acquire GitHub App access")
 		}
 	}
 }

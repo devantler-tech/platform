@@ -37,6 +37,9 @@ Activation requires a separate reviewed change and all of these proofs:
    account in `arc-runners` and read-only access to the single App entry. The
    shared ESO identity gains no GitHub credential access. Verify the
    installed permission and secret synchronization without printing credentials.
+   Prove authenticated, encrypted credential transport and protection against
+   observation by untrusted workloads, including workloads on the same node.
+   Do not activate the store until this transport boundary is verified.
    Reuse does not narrow the shared App's authority: the runner group controls
    job access, not what the App credential can do. Never mount the private key in
    a job runner.
