@@ -213,6 +213,19 @@ if (cd "$scratch"; PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=false bash scripts/v
   >"$scratch/unauthorized-out" 2>"$scratch/unauthorized-error"; then exit 1; fi
 rg -q 'FAIL at deployment-identity' "$scratch/unauthorized-error"
 run_case complete-proof pass
+# Hetzner formats rand.Int63 with %x, so valid suffixes contain one to sixteen
+# hex digits. Exercise the complete lifecycle with the shortest legal name.
+cp "$scratch/bin/kubectl" "$scratch/kubectl-original"
+for suffix in a 0123456789abcdef0 nothex; do
+  sed "s/autoscale-ksail-analysis-0123456789abcdef/autoscale-ksail-analysis-$suffix/g" \
+    "$scratch/kubectl-original" >"$scratch/bin/kubectl"
+  if [[ "$suffix" == a ]]; then run_case short-node-suffix pass
+  else run_case "invalid-node-suffix-$suffix" fail; fi
+done
+sed 's/autoscale-ksail-analysis-0123456789abcdef/autoscale-other-pool-0123456789abcdef/g' \
+  "$scratch/kubectl-original" >"$scratch/bin/kubectl"
+run_case wrong-node-pool fail
+cp "$scratch/kubectl-original" "$scratch/bin/kubectl"
 for name in no-registration bad-signature tampered-image wider-ceiling full-quota stale-quota admission-transport mutated-init \
   unknown-create replacement-race insufficient-memory unhealthy-target curl-transport allowed-egress \
   forwarded-flow wrong-source observer-loss observer-diagnostics failed-node-cleanup; do

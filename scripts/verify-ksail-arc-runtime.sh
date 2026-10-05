@@ -208,7 +208,7 @@ kc get node "$probe_node" -o json >"$scratch/node.json"
 jq -e --slurpfile before "$scratch/nodes.json" '
  .metadata.uid as $uid | ($uid | type == "string" and length > 0) and
  all($before[0].items[]; .metadata.uid != $uid) and
- (.metadata.name | test("^autoscale-ksail-analysis-[0-9a-f]{16}$")) and
+ (.metadata.name | test("^autoscale-ksail-analysis-[0-9a-f]{1,16}$")) and
  .metadata.labels["platform.devantler.tech/ksail-analysis"] == "enabled" and
  .metadata.labels["node.kubernetes.io/instance-type"] == "cx53" and
  .status.nodeInfo.operatingSystem == "linux" and .status.nodeInfo.architecture == "amd64" and
