@@ -62,9 +62,9 @@ spec:
     # static baseline. 9 = the Hetzner account cap (10) MINUS ONE RESERVED SLOT:
     # 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes. KSail
     # passes it to cluster-autoscaler --max-nodes-total, which counts every node,
-    # so this total framing already matches the runtime. Each pool max is 4, so
-    # any single CX type can still fill the autoscaler headroom (or any mix); the
-    # cluster total stays <= 9.
+    # so this total framing already matches the runtime. The general pools each
+    # allow 4 nodes; the isolated analysis pool allows 1. Any mix shares the
+    # same cluster ceiling of 9.
     #
     # THE RESERVED SLOT IS LOAD-BEARING — DO NOT RAISE THIS TO THE ACCOUNT CAP.
     # `deploy-prod` ensures the autoscaler config secret on EVERY deploy, and that
@@ -125,6 +125,19 @@ spec:
             location: fsn1
             min: 0
             max: 4
+          # Zero idle analysis capacity. The taint prevents ordinary workloads
+          # and warm-capacity buffers from keeping this larger worker alive.
+          - name: autoscale-ksail-analysis
+            serverType: cx53
+            location: fsn1
+            min: 0
+            max: 1
+            labels:
+              platform.devantler.tech/ksail-analysis: enabled
+            taints:
+              - key: platform.devantler.tech/ksail-analysis
+                value: enabled
+                effect: NoSchedule
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos

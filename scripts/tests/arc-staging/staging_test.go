@@ -94,12 +94,7 @@ func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing
 	}
 	equal(t, field(t, runner, "resources", "requests", "memory"), "12Gi")
 	equal(t, field(t, runner, "resources", "limits", "memory"), "14Gi")
-	if _, exists := spec.(map[string]any)["volumes"]; exists {
-		t.Fatal("no host, credential or persistent volumes may reach a job runner")
-	}
-	if _, exists := spec.(map[string]any)["initContainers"]; exists {
-		t.Fatal("no privileged bootstrap container is permitted")
-	}
+	assertRunnerStorage(t, spec)
 	listener := field(t, values, "listenerTemplate", "spec", "containers").([]any)
 	if len(listener) != 1 {
 		t.Fatal("listener must be separately bounded")

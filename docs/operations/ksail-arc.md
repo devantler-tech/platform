@@ -44,11 +44,15 @@ Activation requires a separate reviewed change and all of these proofs:
    remains KSail-only; the existing App installation also serves other platform
    consumers. No new App, credential copy, key rotation or permission expansion
    is required. Do not print, check in or mount the private key in a job runner.
-2. Establish explicitly approved, isolated analysis capacity. The runner selector
-   and toleration name `platform.devantler.tech/ksail-analysis=enabled`; no current
-   capacity is assumed to carry that label. New billable capacity requires its
-   own approval and an exact deletion/readback plan. Do not label a busy production
-   worker to make a pending analysis fit.
+2. Use the declared `autoscale-ksail-analysis` CX53 pool for isolated analysis
+   capacity. It has a minimum of zero and maximum of one node, sharing the
+   unchanged cluster ceiling of nine nodes and account ceiling of ten. The
+   selector and NoSchedule taint both name
+   `platform.devantler.tech/ksail-analysis=enabled`; ordinary workloads and the
+   warm-capacity buffer do not tolerate that taint. Verify the label and taint
+   on the actual autoscaled node. Do not label a busy production worker to make
+   a pending analysis fit. After calibration, verify the pool scales back to
+   zero; capacity outside these bounds requires its own approval.
 3. Verify scheduler reservations, node allocatable capacity, ephemeral storage,
    ResourceQuota and LimitRange. Provisional requests are 12Gi/3 CPU for one runner,
    with limits of 14Gi/3.5 CPU in the analysis namespace. The controller and
@@ -61,6 +65,11 @@ Activation requires a separate reviewed change and all of these proofs:
 4. Render both pinned charts, including their CRDs and namespace-scoped RBAC.
    Confirm the App Secret is absent from runner volumes, the no-permission runner
    service account is used, and the chart preserves the listener name and labels.
+   Runner storage consists only of a 40Gi disk emptyDir for its home and a 2Gi
+   disk emptyDir for temporary files. A restricted init container copies the
+   baked runner into the group-writable home volume as UID/GID 1001. Both the
+   bootstrap and job container keep their root filesystems read-only and drop
+   every capability. Verify those settings on the generated runner pod.
    Test admission, API isolation and denied internal egress, not only YAML validity.
 5. Prove the actual managed Go and JavaScript Code Quality jobs on an ephemeral
    runner. The official runner image is not a hosted-runner software clone. Check
