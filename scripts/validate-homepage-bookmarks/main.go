@@ -18,7 +18,7 @@ import (
 
 var iconPattern = regexp.MustCompile(`^[A-Za-z0-9]+(-[A-Za-z0-9]+)*(-#[0-9A-Fa-f]{6})?$`)
 var hrefPattern = regexp.MustCompile(`^https://\S+$`)
-var groupPattern = regexp.MustCompile(`gethomepage\.dev/group:[\t ]*(.+)`)
+var groupPattern = regexp.MustCompile(`(?m)^[\t ]*gethomepage\.dev/group:[\t ]*(.*)$`)
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
@@ -69,14 +69,23 @@ func run(args []string, out io.Writer) (status int) {
 		parsed[key] = value
 	}
 	services := make(map[string]bool)
-	if groups, ok := parsed["services.yaml"].([]any); ok {
-		for _, group := range groups {
-			if object, ok := group.(map[string]any); ok {
-				keys := sortedKeys(object)
-				if len(keys) > 0 {
-					services[keys[0]] = true
-				}
+	serviceGroups, ok := parsed["services.yaml"].([]any)
+	if !ok {
+		fmt.Fprintln(out, "::error::unsupported service group structure")
+		return 2
+	}
+	for _, group := range serviceGroups {
+		object, ok := group.(map[string]any)
+		if !ok || len(object) == 0 {
+			fmt.Fprintln(out, "::error::unsupported service group structure")
+			return 2
+		}
+		for name, value := range object {
+			if _, ok := value.([]any); !ok || strings.TrimSpace(name) == "" {
+				fmt.Fprintln(out, "::error::unsupported service group structure")
+				return 2
 			}
+			services[name] = true
 		}
 	}
 	// Failed observations must not silently erase discovered service groups.
@@ -95,10 +104,15 @@ func run(args []string, out io.Writer) (status int) {
 			return fmt.Errorf("read service-group input %s: %w", path, err)
 		}
 		for _, match := range groupPattern.FindAllSubmatch(body, -1) {
-			name := strings.Trim(strings.TrimSpace(string(match[1])), `"'`)
-			if name != "" {
-				services[name] = true
+			var annotation map[string]any
+			if decode([]byte("gethomepage.dev/group: "+string(match[1])), &annotation) != nil {
+				return fmt.Errorf("unsupported service annotation: %s", path)
 			}
+			name, ok := annotation["gethomepage.dev/group"].(string)
+			if !ok || strings.TrimSpace(name) == "" {
+				return fmt.Errorf("unsupported service annotation: %s", path)
+			}
+			services[name] = true
 		}
 		return nil
 	})
@@ -165,6 +179,10 @@ func validate(value any, services, layout map[string]bool) ([]string, int, int) 
 			continue
 		}
 		name := sortedKeys(group)[0]
+		if groups[name] {
+			problems = append(problems, name+": duplicate bookmark group")
+			continue
+		}
 		groups[name] = true
 		bookmarks, ok := group[name].([]any)
 		if !ok || len(bookmarks) == 0 {

@@ -100,3 +100,46 @@ func TestFailedOutputIsUnknown(t *testing.T) {
 		t.Fatalf("unpublished verdict must be unknown: status=%d", status)
 	}
 }
+
+func TestDiscoveryCannotMissSupportedGroups(t *testing.T) {
+	cases := []struct {
+		name, config, annotation string
+		status                   int
+		diagnostic               string
+	}{
+		{"inline-comment", validConfig, "gethomepage.dev/group: \"Links\" # annotation comment\n", 1, "reuses a service group"},
+		{"all-service-keys", strings.Replace(validConfig, "    - Apps: []", "    - Apps: []\n      Links: []", 1), "", 1, "reuses a service group"},
+		{"partial-services", strings.Replace(validConfig, "    - Apps: []", "    - Apps: []\n    - malformed", 1), "", 2, "unsupported service"},
+		{"wrong-service-list", strings.Replace(validConfig, "    - Apps: []", "    - Apps: invalid", 1), "", 2, "unsupported service"},
+		{"invalid-annotation", validConfig, "gethomepage.dev/group: []\n", 2, "unsupported service"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "annotation.yaml"), []byte(tc.annotation), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if status := run([]string{path, root}, &out); status != tc.status || !strings.Contains(out.String(), tc.diagnostic) {
+				t.Fatalf("status=%d output=%s", status, out.String())
+			}
+		})
+	}
+}
+
+func TestDuplicateBookmarkGroupsAreRejected(t *testing.T) {
+	config := strings.Replace(validConfig, "  settings.yaml:", "    - Links:\n      - Docs:\n        - icon: mdi-book\n          href: https://example.com\n  settings.yaml:", 1)
+	root := t.TempDir()
+	path := filepath.Join(root, "config.yaml")
+	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if status := run([]string{path, root}, &out); status != 1 || !strings.Contains(out.String(), "duplicate bookmark group") {
+		t.Fatalf("status=%d output=%s", status, out.String())
+	}
+}
