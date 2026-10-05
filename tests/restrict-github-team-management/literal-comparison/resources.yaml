@@ -665,3 +665,22 @@ spec:
     teamIdSelector:
       matchLabels:
         team: admins
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
+  name: ref-namespace-empty
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+      namespace: ""
+    username: devantler
+    role: member
+  initProvider:
+    teamIdRef:
+      name: admins
+      namespace: ""

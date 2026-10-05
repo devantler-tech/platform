@@ -20,7 +20,8 @@ metadata:
     policies.kyverno.io/description: >-
       Restricts provider-upjet-github team resources in the github-config
       namespace to the github-config CODEOWNERS teams, requires TeamMembership and
-      TeamRepository resources to reference those Team objects by name, and
+      TeamRepository resources to reference those Team objects by name inside
+      the github-config namespace, and
       blocks repository admin grants. A Team may not be nested under a parent
       team or linked to a directory group. This prevents a compromised or unintended
       github-config artifact from adding arbitrary users to arbitrary GitHub
@@ -161,7 +162,7 @@ spec:
                 - github-config
       validate:
         failureAction: Enforce
-        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, and initProvider must not carry a teamId, selector or non-allow-listed reference.
+        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, a reference may name no namespace other than github-config, and initProvider must not carry a teamId, selector or non-allow-listed reference.
         deny:
           conditions:
             any:
@@ -305,7 +306,7 @@ spec:
                 - github-config
       validate:
         failureAction: Enforce
-        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, and may grant only pull, triage or push permission, in forProvider and initProvider.
+        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, may name no namespace other than github-config in that reference, and may grant only pull, triage or push permission, in forProvider and initProvider.
         deny:
           conditions:
             any:

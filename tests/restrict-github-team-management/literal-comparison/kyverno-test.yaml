@@ -1,10 +1,12 @@
 ---
 # #4517, #4525: every value these rules compare is written by the party they
-# constrain, so each comparison has to be literal. Kyverno's list and equality
-# operators read * and ? in either operand as wildcards; a value of * then
-# matches every entry of an allow-list. Each resource here is on the paved road
-# except for the one field its name says, so a row can only fail on the
-# condition that judges that field.
+# constrain, so each comparison has to be literal. Kyverno's list operators
+# read * and ? in either operand as wildcards; a value of * then matches every
+# entry of an allow-list. Its equality operators read only the policy's own
+# side that way, so the resolve and teamId rows were refused before as well and
+# are here to keep it so. Each resource is on the paved road except for the one
+# field its name says, so a row fails on what judges that field: one condition,
+# or for init-only-username-star the two that both read the merged username.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -53,6 +55,7 @@ results:
     rule: teammemberships-reference-allow-listed-teams
     resources:
       - github-config/ref-namespace-own
+      - github-config/ref-namespace-empty
     kind: TeamMembership
     result: pass
   - policy: restrict-github-team-management
