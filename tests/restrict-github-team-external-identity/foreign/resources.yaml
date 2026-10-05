@@ -11,7 +11,7 @@ spec:
   forProvider:
     privacy: closed
 ---
-# A slug is not an identity the provider accepts, and is not approved.
+# A slug is not an approved identity either, whatever name it spells.
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: Team
 metadata:

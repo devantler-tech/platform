@@ -34,7 +34,9 @@
 # revision (provider-upjet-github-<revision>, read from the running pod), so
 # the name changes with every provider upgrade and is matched by prefix.
 # Creating a ServiceAccount in crossplane-system is a platform-level
-# permission, so the prefix cannot be claimed from a tenant namespace.
+# permission, so the prefix cannot be claimed from a tenant namespace. It would
+# also cover another package whose name starts the same way, should one ever
+# be installed there.
 #
 # Admission-only (background: false), because the exemption is on the writing
 # identity, which a background scan does not have.
@@ -100,16 +102,18 @@ spec:
         deny:
           conditions:
             all:
-              - key: "{{ externalName }}"
-                operator: NotEquals
-                value: ""
-              - key: "{{ externalName }}"
-                operator: NotEquals
-                value: "{{ previousExternalName }}"
-              # Name and identity are checked as a pair, so the approved
-              # identity of one team cannot be used on the other object.
-              - key: "{{ request.object.metadata.name }}/{{ externalName }}"
-                operator: AnyNotIn
-                value:
-                  - admins/18573307
-                  - maintainers/17046606
+              # ONE exact comparison, evaluated by JMESPath, and deliberately
+              # not three Kyverno operators. Kyverno's Equals and AnyNotIn
+              # treat * and ? as wildcards on either side and compare numbers
+              # as quantities, and the annotation is written by the party this
+              # rule constrains: an identity of "*" would match the approved
+              # one, and any later value would then count as "unchanged" from
+              # "*". JMESPath == and contains() compare strings literally.
+              #
+              # Accepted: no identity, the identity the object already has, or
+              # the approved identity of this object name. Name and identity
+              # are checked as a pair, so the approved identity of one team
+              # cannot be used on the other object.
+              - key: "{{ externalName == '' || externalName == previousExternalName || contains(['admins/18573307', 'maintainers/17046606'], join('/', [request.object.metadata.name, externalName])) }}"
+                operator: Equals
+                value: false
