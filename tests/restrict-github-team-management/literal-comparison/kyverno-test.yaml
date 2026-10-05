@@ -73,6 +73,7 @@ results:
       - github-config/role-star
       - github-config/role-question
       - github-config/init-role-star
+      - github-config/init-role-question
     kind: TeamMembership
     result: fail
   - policy: restrict-github-team-management

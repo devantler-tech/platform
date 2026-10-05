@@ -355,6 +355,22 @@ spec:
 apiVersion: team.github.m.upbound.io/v1beta1
 kind: TeamMembership
 metadata:
+  name: init-role-question
+  namespace: github-config
+spec:
+  forProvider:
+    teamIdRef:
+      name: "admins"
+      policy:
+        resolve: "Always"
+    username: devantler
+    role: member
+  initProvider:
+    role: "membe?"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: TeamMembership
+metadata:
   name: selector-beside-reference
   namespace: github-config
 spec:
