@@ -90,6 +90,14 @@ Velero), so the manually-set values are durable without a GitOps source of truth
    (non-working) credential and the provider's auth simply fails — isolated to
    the leaf `apps` layer, blocking nothing else.
 
+## Optional organization runners
+
+The inactive ARC preparation reuses this App for an opt-in organization runner
+pool; it does not create another App or move existing workflows. Its additional
+permission, selected-repository access and activation proofs are described in
+[Organization Linux runners](operations/arc-runners.md). GitHub management remains
+an independent consumer, so retiring ARC must not revoke the shared credential.
+
 ## Adopting an existing repository (Observe-first)
 
 Desired-state manifests live in `devantler-tech/.github` under `deploy/`. Never

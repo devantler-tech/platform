@@ -49,7 +49,7 @@ func equal(t *testing.T, value, want any) {
 func TestStagedReleasesAreSuspendedAndPinned(t *testing.T) {
 	for _, component := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller",
-		"k8s/bases/infrastructure/ksail-analysis-runners",
+		"k8s/bases/infrastructure/actions-runners",
 	} {
 		t.Run(filepath.Base(component), func(t *testing.T) {
 			release := readYAML(t, component+"/helm-release.yaml")
@@ -65,12 +65,17 @@ func TestStagedReleasesAreSuspendedAndPinned(t *testing.T) {
 	}
 }
 
-func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
-	release := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml")
+func TestOrganizationRegistrationUsesAnExplicitOptInRunnerGroup(t *testing.T) {
+	release := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
 	values := field(t, release, "spec", "values")
-	equal(t, field(t, values, "githubConfigUrl"), "https://github.com/devantler-tech/ksail")
-	equal(t, field(t, values, "githubConfigSecret"), "arc-ksail-app")
-	equal(t, field(t, values, "runnerScaleSetName"), "ksail-code-quality")
+	equal(t, field(t, values, "githubConfigUrl"), "https://github.com/devantler-tech")
+	equal(t, field(t, values, "runnerGroup"), "platform")
+	equal(t, field(t, values, "runnerScaleSetName"), "platform-linux")
+}
+
+func TestPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
+	release := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
+	values := field(t, release, "spec", "values")
 	equal(t, field(t, values, "minRunners"), 0)
 	equal(t, field(t, values, "maxRunners"), 1)
 	if _, exists := values.(map[string]any)["containerMode"]; exists {
@@ -78,7 +83,15 @@ func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing
 	}
 	spec := field(t, values, "template", "spec")
 	equal(t, field(t, spec, "automountServiceAccountToken"), false)
-	equal(t, field(t, spec, "nodeSelector", "platform.devantler.tech/ksail-analysis"), "enabled")
+	equal(t, field(t, spec, "nodeSelector", "platform.devantler.tech/ci-runner"), "enabled")
+	tolerations := field(t, spec, "tolerations").([]any)
+	if len(tolerations) != 1 {
+		t.Fatal("runner scheduling must stay on the single isolated CI capacity pool")
+	}
+	equal(t, field(t, tolerations[0], "key"), "platform.devantler.tech/ci-runner")
+	equal(t, field(t, tolerations[0], "operator"), "Equal")
+	equal(t, field(t, tolerations[0], "value"), "enabled")
+	equal(t, field(t, tolerations[0], "effect"), "NoSchedule")
 	containers, ok := field(t, spec, "containers").([]any)
 	if !ok || len(containers) != 1 {
 		t.Fatal("runner must contain exactly one container")
@@ -110,17 +123,36 @@ func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing
 
 func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
 	controller := readYAML(t, "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml")
-	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-ksail-analysis")
-	secret := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/external-secret.yaml")
+	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-runners")
+	pool := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
+	equal(t, field(t, pool, "metadata", "namespace"), "arc-runners")
+	secret := readYAML(t, "k8s/bases/infrastructure/actions-runners/external-secret.yaml")
 	equal(t, field(t, secret, "kind"), "ExternalSecret")
 	equal(t, field(t, secret, "spec", "secretStoreRef", "name"), "openbao")
-	equal(t, field(t, secret, "spec", "target", "name"), "arc-ksail-app")
+	equal(t, field(t, secret, "metadata", "namespace"), "arc-runners")
+	equal(t, field(t, secret, "spec", "target", "name"), field(t, pool, "spec", "values", "githubConfigSecret"))
+}
+
+func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T) {
+	secret := readYAML(t, "k8s/bases/infrastructure/actions-runners/external-secret.yaml")
 	entries := field(t, secret, "spec", "data").([]any)
 	if len(entries) != 3 {
 		t.Fatal("only the three App authentication keys are expected")
 	}
+	properties := map[string]string{
+		"github_app_id":              "app_id",
+		"github_app_installation_id": "installation_id",
+		"github_app_private_key":     "pem",
+	}
 	for _, entry := range entries {
-		equal(t, field(t, entry, "remoteRef", "key"), "github-arc-ksail")
+		key := field(t, entry, "secretKey").(string)
+		property, ok := properties[key]
+		if !ok {
+			t.Fatalf("unexpected or duplicate App authentication key %q", key)
+		}
+		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/github/app")
+		equal(t, field(t, entry, "remoteRef", "property"), property)
+		delete(properties, key)
 	}
 }
 
@@ -142,7 +174,7 @@ func TestControllerLayerCreatesBothNamespacesBeforeItsScopedRBAC(t *testing.T) {
 		equal(t, field(t, namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
 		equal(t, field(t, namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce"), "restricted")
 	}
-	pool := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/kustomization.yaml")
+	pool := readYAML(t, "k8s/bases/infrastructure/actions-runners/kustomization.yaml")
 	for _, resource := range field(t, pool, "resources").([]any) {
 		if strings.HasPrefix(resource.(string), "namespace") {
 			t.Fatal("pool must not duplicate controller-owned namespaces")
@@ -179,7 +211,7 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		if walkErr != nil {
 			return walkErr
 		}
-		if entry.IsDir() || entry.Name() != "kustomization.yaml" || strings.Contains(path, "/actions-runner-controller/") || strings.Contains(path, "/ksail-analysis-runners/") {
+		if entry.IsDir() || entry.Name() != "kustomization.yaml" || strings.Contains(path, "/actions-runner-controller/") || strings.Contains(path, "/actions-runners/") {
 			return nil
 		}
 		data, err := os.ReadFile(path)
@@ -194,7 +226,7 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 			return err
 		}
 		for _, reference := range append(document.Resources, document.Components...) {
-			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "ksail-analysis-runners") {
+			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "actions-runners") {
 				t.Errorf("%s activates ARC through %q", path, reference)
 			}
 		}
@@ -208,7 +240,7 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {
 	for _, path := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller/cilium-network-policy.yaml",
-		"k8s/bases/infrastructure/ksail-analysis-runners/cilium-network-policy-runner.yaml",
+		"k8s/bases/infrastructure/actions-runners/cilium-network-policy-runner.yaml",
 	} {
 		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
 			policy := readYAML(t, path)

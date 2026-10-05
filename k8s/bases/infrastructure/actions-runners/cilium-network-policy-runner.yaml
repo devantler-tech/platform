@@ -1,8 +1,8 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-arc-analysis-runner
-  namespace: arc-ksail-analysis
+  name: allow-arc-linux-runner
+  namespace: arc-runners
 spec:
   endpointSelector:
     matchLabels:
