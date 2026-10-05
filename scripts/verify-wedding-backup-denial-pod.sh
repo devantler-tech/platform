@@ -1,10 +1,10 @@
 #!/bin/sh
-# Prove, from inside the wedding-app namespace, that the dedicated Wedding backup
+# Prove, from a platform-owned pod, that the dedicated Wedding backup
 # credential is refused by the shared backup destination.
 #
 # Runs in the pod that scripts/verify-wedding-backup-denial.sh creates. It is
 # delivered as a ConfigMap and executed by the digest-pinned mc image with a
-# static BusyBox toolbox from an init container, like the catalogue mirror. It is
+# static BusyBox toolbox from an init container. It is
 # POSIX sh and uses only the tools checked below.
 #
 # WHAT IT PROVES, refusing at the first precondition it cannot prove:

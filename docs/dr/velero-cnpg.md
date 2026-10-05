@@ -32,10 +32,10 @@ ExternalSecrets. Wedding's tenant-isolated destination uses a separate
 `wedding-db-backups` bucket and credential, with
 `secret-wedding-db-backup-r2.enc.yaml`, the `seed-wedding-db-backup-r2`
 PushSecret, and the dedicated `apps/wedding-app/backup/r2` OpenBao path. The two
-credential branches rotate independently. The platform's production tenant
-patch selects `wedding-db-dedicated` for the live Wedding Cluster and preserves
-its `wedding-db-20260909` archive identity. That dedicated credential is the
-only backup credential in the `wedding-app` namespace: the shared `wedding-db`
+credential branches rotate independently. The tenant source selects
+`wedding-db-dedicated` for the live Wedding Cluster; the platform's production
+tenant patch preserves its `wedding-db-20260909` archive identity. That dedicated
+credential is the only backup credential in the `wedding-app` namespace: the shared `wedding-db`
 ObjectStore and its projection of the shared credential were retired (#3253)
 once the predecessor catalogue had been mirrored into the dedicated bucket, a
 restore from the dedicated bucket alone had succeeded, and the shared
@@ -283,9 +283,9 @@ run after the retiring deploy calls for a fresh dispatch, not a re-run. Use
 `Verify Wedding Backup Cutover` to take and verify a fresh
 backup after a Wedding credential rotation. The catalogue and WAL checks must
 also pass before retiring the replaced dedicated token. `Verify Wedding Backup
-Denial` cannot prove that `platform-backups` refuses the new token until #4482
-re-homes it, because Wedding's shared access is retired; until then the new
-token's scope is confirmed when it is minted and its denial is unproven. The
+Denial` proves that `platform-backups` refuses the new token from the platform's
+observability namespace, using its existing shared credential as a positive
+control. A successful current-source proof is required to establish denial. The
 shared platform identity still serves other databases and
 Velero. See runbook.md Scenario 7.
 
