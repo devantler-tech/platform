@@ -139,7 +139,7 @@ func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
 	equal(t, field(t, secret, "spec", "target", "name"), field(t, pool, "spec", "values", "githubConfigSecret"))
 }
 
-func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T) {
+func TestPlatformRuntimeAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T) {
 	secret := readYAML(t, "k8s/bases/infrastructure/actions-runners/external-secret.yaml")
 	entries, ok := field(t, secret, "spec", "data").([]any)
 	if !ok || len(entries) != 3 {
@@ -156,7 +156,9 @@ func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T)
 		if !ok {
 			t.Fatalf("unexpected or duplicate App authentication key %q", key)
 		}
-		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/github/app")
+		// This entry belongs to the platform runtime App. The GitHub-management
+		// provider's entry is a different App and must never authenticate ARC.
+		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/arc/github-app")
 		equal(t, field(t, entry, "remoteRef", "property"), property)
 		delete(properties, key)
 	}
@@ -251,7 +253,7 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	if len(access) != 3 {
 		t.Fatal("ARC policy must grant one path and one capability, with no other access")
 	}
-	equal(t, access[1], "secret/data/infrastructure/github/app")
+	equal(t, access[1], "secret/data/infrastructure/arc/github-app")
 	equal(t, access[2], "read")
 	sharedWrite := regexp.MustCompile(`(?m)^bao write auth/kubernetes/role/external-secrets \\\n(?:[^\n]*\\\n)*[^\n]*`).FindAllString(script, -1)
 	if len(sharedWrite) != 1 {

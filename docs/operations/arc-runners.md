@@ -24,19 +24,27 @@ jobs and Docker actions are deliberately unsupported.
 
 Activation requires a separate reviewed change and all of these proofs:
 
-1. Reuse the existing platform GitHub-management App described in
-   [GitHub management](../github-management.md). Organization registration needs
+1. Reuse the production platform App used for GitHub sign-in, identified by
+   `github_app_client_id` in the production bootstrap configuration. This is
+   **not** the provider App described in [GitHub management](../github-management.md).
+   Organization registration needs
    **Organization permissions → Self-hosted runners → Read and write**, plus the
-   existing metadata read permission. The maintainer updates the existing App and
-   approves its installation's permission request; preserve its other consumers'
-   permissions. No new App, installation, private key or secret value is required.
-   The `arc-github-app` ExternalSecret reads the existing
-   `secret/infrastructure/github/app` KV entry and maps `app_id`,
+   existing metadata read permission. Verify the installed permissions before
+   requesting changes; preserve its other consumers' permissions. No new App or
+   installation is required. Its OAuth client secret is not an App private key.
+   The maintainer provisions the existing App's ID, organization installation ID
+   and matching private key through the secret system at
+   `secret/infrastructure/arc/github-app`. Reuse a securely stored key when
+   available; do not assume that GitHub sign-in proves one is available to ARC.
+   The `arc-github-app` ExternalSecret maps this entry's `app_id`,
    `installation_id` and `pem` to ARC's three authentication keys. Its namespaced
    SecretStore authenticates as `arc-secret-reader`, bound only to that service
    account in `arc-runners` and read-only access to the single App entry. The
-   shared ESO identity gains no GitHub credential access. Verify the
-   installed permission and secret synchronization without printing credentials.
+   shared ESO and GitHub-management identities gain no access to this entry.
+   Before activation, authenticate with the key and verify that GitHub reports
+   the expected App client ID and organization installation. A successful secret
+   synchronization alone does not prove the App's identity. Record only the
+   verification outcome, never the key or tokens.
    Prove authenticated, encrypted credential transport and protection against
    observation by untrusted workloads, including workloads on the same node.
    Do not activate the store until this transport boundary is verified.
@@ -137,9 +145,11 @@ before uninstalling the pool. **Suspending a HelmRelease alone does not drain an
 installed scale set.** Namespace/release retirement follows the platform's
 two-stage persistence protection; never delete a namespace to cancel a job.
 Verify no listener, runner or GitHub registration remains before deleting approved
-temporary capacity. Do not revoke or delete the reused platform App credential:
-GitHub management remains an independent consumer. Any shared credential change
-is maintainer-owned and must account for every consumer.
+temporary capacity. Retire only ARC's materialized Secret and dedicated reader
+when the pool is removed. Do not revoke the reused platform App or its key without
+accounting for its other consumers, including GitHub sign-in. GitHub management
+uses a separate App and remains unchanged. Any shared credential change is
+maintainer-owned and must account for every consumer.
 
 Official references: [ARC deployment and security guidance](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets)
 and [App authentication](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/authenticate-to-the-api).

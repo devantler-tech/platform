@@ -92,11 +92,11 @@ Velero), so the manually-set values are durable without a GitOps source of truth
 
 ## Optional organization runners
 
-The inactive ARC preparation reuses this App for an opt-in organization runner
-pool; it does not create another App or move existing workflows. Its additional
-permission, selected-repository access and activation proofs are described in
-[Organization Linux runners](operations/arc-runners.md). GitHub management remains
-an independent consumer, so retiring ARC must not revoke the shared credential.
+The inactive ARC preparation uses the separate production platform App used for
+GitHub sign-in, not this GitHub-management App or its credential entry. Its
+selected-repository access, dedicated credential reader and activation proofs
+are described in [Organization Linux runners](operations/arc-runners.md).
+Retiring ARC does not change this App or GitHub management.
 
 ## Adopting an existing repository (Observe-first)
 

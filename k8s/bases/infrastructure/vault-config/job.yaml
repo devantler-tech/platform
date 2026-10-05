@@ -764,10 +764,11 @@ spec:
               }
               POLICY
 
-              # ARC reuses only the existing App entry, through its own
-              # namespaced identity. Do not grant this path to the shared ESO role.
+              # ARC uses the platform runtime App, not provider-upjet-github.
+              # Keep its entry outside the GitHub-management policy's subtree
+              # and grant it only to the namespaced ARC credential reader.
               bao policy write infra-arc-app-readonly - <<'POLICY'
-              path "secret/data/infrastructure/github/app" {
+              path "secret/data/infrastructure/arc/github-app" {
                 capabilities = ["read"]
               }
               POLICY
