@@ -10,11 +10,16 @@ umask 077
 # Browser authentication and embedding handshakes remain separate acceptance
 # checks. This helper reads no Secrets or authenticated URLs.
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
-runtime_digests=() scratch='' active='' watchdog='' started_at=$SECONDS
+runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
 readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
 fail() {
-  printf '{"complete":false,"failure":"%s"}\n' "$1"
+  # Once a snapshot pair has differed, every later refusal still names what moved.
+  if [[ -n "$changed" ]]; then
+    printf '{"complete":false,"failure":"%s","changed":%s}\n' "$1" "$changed"
+  else
+    printf '{"complete":false,"failure":"%s"}\n' "$1"
+  fi
   exit "${2:-1}"
 }
 cleanup() {
@@ -357,12 +362,6 @@ check() {
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
-while :; do
-  collect "$scratch/before"
-  if bounded check "$scratch/before"; then break; fi
-  remaining
-  sleep 0.2
-done
 
 fetch() {
   local url=$1 result
@@ -411,9 +410,38 @@ public_checks() {
   done
 }
 quiet_public_checks() { public_checks >/dev/null 2>&1; }
-bounded quiet_public_checks || fail public_contract_incomplete
-collect "$scratch/after"
-bounded check "$scratch/after" || fail rollout_changed
-bounded cmp -s "$scratch/before/snapshot" "$scratch/after/snapshot" || fail rollout_changed
+# name_changes: which parts of the rollout differ between the two snapshots, as
+# the helper's own role and field names only. A name that is not plain letters
+# is reduced to its role, so no value read from the cluster reaches the output.
+name_changes() {
+  jq -cn --slurpfile before "$scratch/before/snapshot" --slurpfile after "$scratch/after/snapshot" '
+    def leaves: [paths(type != "object" and type != "array") as $p | {p:$p,v:getpath($p)}];
+    ($before[0]|leaves) as $b | ($after[0]|leaves) as $a |
+    [(($b-$a)+($a-$b))[] | .p | map(select(type=="string")) |
+      if (.[1:3]|all(.[];test("^[A-Za-z]+$"))) then .[:3] else .[:1] end | join(".")] | unique | .[:16]
+  ' >"$scratch/changed" 2>/dev/null
+}
+# The public checks only count when the rollout they ran against did not move.
+# An ordinary reconcile can start between the two snapshots, so a pair that
+# differs is retaken from the start, public checks included, at most three
+# times. A rollout that never holds still is refused and the changes are named.
+attempt=0
+while :; do
+  attempt=$((attempt + 1))
+  while :; do
+    collect "$scratch/before"
+    if bounded check "$scratch/before"; then break; fi
+    remaining
+    sleep 0.2
+  done
+  bounded quiet_public_checks || fail public_contract_incomplete
+  collect "$scratch/after"
+  if bounded check "$scratch/after" && bounded cmp -s "$scratch/before/snapshot" "$scratch/after/snapshot"; then break; fi
+  bounded name_changes || fail read_incomplete
+  changed=$(<"$scratch/changed")
+  ((attempt < 3)) || fail rollout_changed
+  remaining
+  sleep 0.2
+done
 remaining
 printf '{"complete":true,"deployments":3,"pods":6,"routes":3,"publicChecks":9}\n'
