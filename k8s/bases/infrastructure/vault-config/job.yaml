@@ -764,6 +764,14 @@ spec:
               }
               POLICY
 
+              # ARC reuses only the existing App entry, through its own
+              # namespaced identity. Do not grant this path to the shared ESO role.
+              bao policy write infra-arc-app-readonly - <<'POLICY'
+              path "secret/data/infrastructure/github/app" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write app-fleetdm-readonly - <<'POLICY'
               path "secret/data/apps/fleetdm/*" {
                 capabilities = ["read"]
@@ -1111,6 +1119,14 @@ spec:
                 bound_service_account_names=github-config \
                 bound_service_account_namespaces=github-config \
                 policies=infra-github-readonly \
+                ttl=1h
+
+              # Inert until the opt-in ARC component creates this service
+              # account. It may read only the App, not other GitHub/infra secrets.
+              bao write auth/kubernetes/role/arc-secret-reader \
+                bound_service_account_names=arc-secret-reader \
+                bound_service_account_namespaces=arc-runners \
+                policies=infra-arc-app-readonly \
                 ttl=1h
 
               # Dedicated tenant role for the unifi app. Authenticates the app's

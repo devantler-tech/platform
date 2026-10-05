@@ -32,7 +32,10 @@ Activation requires a separate reviewed change and all of these proofs:
    permissions. No new App, installation, private key or secret value is required.
    The `arc-github-app` ExternalSecret reads the existing
    `secret/infrastructure/github/app` KV entry and maps `app_id`,
-   `installation_id` and `pem` to ARC's three authentication keys. Verify the
+   `installation_id` and `pem` to ARC's three authentication keys. Its namespaced
+   SecretStore authenticates as `arc-secret-reader`, bound only to that service
+   account in `arc-runners` and read-only access to the single App entry. The
+   shared ESO identity gains no GitHub credential access. Verify the
    installed permission and secret synchronization without printing credentials.
    Reuse does not narrow the shared App's authority: the runner group controls
    job access, not what the App credential can do. Never mount the private key in
@@ -120,7 +123,8 @@ in the controller layer and verify it is healthy. That component creates both
 namespaces before the chart installs its namespace-scoped RBAC. The controller's
 network policy also covers the listener, which ARC creates in that namespace.
 Only then reference the pool in
-the infrastructure layer, where its external secret store already exists. Keep
+the infrastructure layer, which creates its dedicated secret store and reader
+identity. Verify SecretStore and ExternalSecret readiness before admitting jobs. Keep
 the opt-in runner name out of workflows that have not completed onboarding.
 
 To stop admitting jobs, restore every consumer's prior runner configuration

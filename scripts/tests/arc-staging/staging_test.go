@@ -2,7 +2,9 @@ package arcstaging_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -153,6 +155,95 @@ func TestExistingPlatformAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T)
 		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/github/app")
 		equal(t, field(t, entry, "remoteRef", "property"), property)
 		delete(properties, key)
+	}
+}
+
+// A field mapping is not usable if its authentication role cannot read the
+// credential. Follow the actual store/identity/bootstrap chain, recording only
+// the narrowly selected configuration writes (never run the bootstrap job).
+func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
+	component := "k8s/bases/infrastructure/actions-runners/"
+	secret := readYAML(t, component+"external-secret.yaml")
+	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
+	store := readYAML(t, component+"secret-store.yaml")
+	equal(t, field(t, store, "metadata", "name"), field(t, secret, "spec", "secretStoreRef", "name"))
+	equal(t, field(t, store, "metadata", "namespace"), "arc-runners")
+	vault := field(t, store, "spec", "provider", "vault")
+	equal(t, field(t, vault, "path"), "secret")
+	equal(t, field(t, vault, "version"), "v2")
+	identity := field(t, vault, "auth", "kubernetes")
+	equal(t, field(t, identity, "mountPath"), "kubernetes")
+	role := field(t, identity, "role").(string)
+	account := readYAML(t, component+"service-account.yaml")
+	equal(t, field(t, account, "metadata", "name"), field(t, identity, "serviceAccountRef", "name"))
+	equal(t, field(t, account, "metadata", "namespace"), "arc-runners")
+	equal(t, field(t, account, "automountServiceAccountToken"), false)
+	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
+	for _, needed := range []string{"secret-store.yaml", "service-account.yaml"} {
+		found := false
+		for _, resource := range resources {
+			found = found || resource == needed
+		}
+		if !found {
+			t.Fatalf("credential authentication resource %s is not deployed with the pool", needed)
+		}
+	}
+	job := readYAML(t, "k8s/bases/infrastructure/vault-config/job.yaml")
+	containers := field(t, job, "spec", "template", "spec", "containers").([]any)
+	command := field(t, containers[0], "command").([]any)
+	script := command[len(command)-1].(string)
+	roleWrites := regexp.MustCompile(`(?m)^bao write auth/kubernetes/role/`+regexp.QuoteMeta(role)+` \\\n(?:[^\n]*\\\n)*[^\n]*`).FindAllString(script, -1)
+	if len(roleWrites) != 1 {
+		t.Fatalf("expected one bootstrap write for auth role %s, got %d", role, len(roleWrites))
+	}
+	runWrite := func(write string) string {
+		t.Helper()
+		result, err := exec.Command("bash", "-ec", `bao() { printf '%s\n' "$@"; if [[ "$1" == policy ]]; then cat; fi; }; `+write).CombinedOutput()
+		if err != nil {
+			t.Fatalf("configuration write failed: %v: %s", err, result)
+		}
+		return string(result)
+	}
+	arguments := strings.Split(strings.TrimSpace(runWrite(roleWrites[0])), "\n")
+	parameters := map[string]string{}
+	for _, argument := range arguments[2:] {
+		key, value, ok := strings.Cut(argument, "=")
+		if !ok {
+			t.Fatalf("invalid auth-role argument %q", argument)
+		}
+		parameters[key] = value
+	}
+	equal(t, parameters["bound_service_account_names"], field(t, account, "metadata", "name"))
+	equal(t, parameters["bound_service_account_namespaces"], "arc-runners")
+	policy := parameters["policies"]
+	if policy == "" || strings.Contains(policy, ",") {
+		t.Fatal("ARC identity must carry exactly one dedicated policy")
+	}
+	policyWrites := regexp.MustCompile(`(?m)^bao policy write `+regexp.QuoteMeta(policy)+` - <<'POLICY'\n[\s\S]*?^POLICY$`).FindAllString(script, -1)
+	if len(policyWrites) != 1 {
+		t.Fatalf("expected one bootstrap write for policy %s, got %d", policy, len(policyWrites))
+	}
+	policyBody := strings.SplitN(runWrite(policyWrites[0]), "\n", 5)[4]
+	// The App path is sufficient; wildcard GitHub paths, writes, and other
+	// infrastructure/application credentials are not part of this identity.
+	access := regexp.MustCompile(`^\s*path\s+"([^"]+)"\s*\{\s*capabilities\s*=\s*\[\s*"([^"]+)"\s*\]\s*\}\s*$`).FindStringSubmatch(policyBody)
+	if len(access) != 3 {
+		t.Fatal("ARC policy must grant one path and one capability, with no other access")
+	}
+	equal(t, access[1], "secret/data/infrastructure/github/app")
+	equal(t, access[2], "read")
+	sharedWrite := regexp.MustCompile(`(?m)^bao write auth/kubernetes/role/external-secrets \\\n(?:[^\n]*\\\n)*[^\n]*`).FindAllString(script, -1)
+	if len(sharedWrite) != 1 {
+		t.Fatal("shared ESO auth role must remain independently configured")
+	}
+	for _, argument := range strings.Split(strings.TrimSpace(runWrite(sharedWrite[0])), "\n") {
+		if bundle, ok := strings.CutPrefix(argument, "policies="); ok {
+			for _, name := range strings.Split(bundle, ",") {
+				if name == policy || name == "infra-github-readonly" {
+					t.Fatal("shared ESO identity must not acquire GitHub App access")
+				}
+			}
+		}
 	}
 }
 
