@@ -948,11 +948,21 @@ func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFil
 func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 	restartCount := parseInt(markerContent("flux-controller-restart-count"), 0)
 	rolloutCount := parseInt(markerContent("flux-controller-rollout-count"), 0)
+	budget, err := time.ParseDuration(flagValue(args, "--timeout"))
 	if namespace != "flux-system" ||
 		!containsArg(args, "deployment.apps/kustomize-controller") ||
-		flagValue(args, "--timeout") != "2m" ||
+		err != nil || budget <= 0 ||
 		restartCount != rolloutCount+1 {
 		return commandFailure(91, "invalid kustomize-controller rollout status")
+	}
+	if observed := os.Getenv("FAKE_FLUX_CONTROLLER_ROLLOUT_SECONDS"); observed != "" {
+		seconds, err := strconv.Atoi(observed)
+		if err != nil || seconds < 0 {
+			return commandFailure(91, "invalid simulated controller rollout duration")
+		}
+		if time.Duration(seconds)*time.Second > budget {
+			return commandFailure(56, "timed out waiting for kustomize-controller rollout")
+		}
 	}
 	if os.Getenv("FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL") == "true" {
 		return commandFailure(56, "kustomize-controller rollout did not converge")
