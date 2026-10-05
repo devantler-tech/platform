@@ -6,6 +6,7 @@
   "disallow-latest-tag/validate-image-tag": "Audit",
   "restrict-github-team-management/teams-allow-listed": "Enforce",
   "restrict-github-team-management/teams-bind-provider-identity-to-object-name": "Enforce",
+  "restrict-github-team-management/teams-not-nested-or-directory-linked": "Enforce",
   "restrict-github-team-management/teammemberships-reference-allow-listed-teams": "Enforce",
   "restrict-github-team-management/teammemberships-allow-listed-members": "Enforce",
   "restrict-github-team-management/teammemberships-known-roles": "Enforce",

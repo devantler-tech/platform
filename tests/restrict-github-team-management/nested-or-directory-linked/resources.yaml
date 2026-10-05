@@ -1,0 +1,129 @@
+---
+# A parent team, a read-back parent field, or a directory link — each one alone,
+# in each block the provider reads. Every one of these must be refused. The
+# object names are not on the team allow-list on purpose: this fixture asserts
+# only the nesting rule, which has to refuse them whatever the name.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: forprovider-parentteamid
+  namespace: github-config
+spec:
+  forProvider:
+    parentTeamId: "1234567"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: forprovider-parentteamreadid
+  namespace: github-config
+spec:
+  forProvider:
+    parentTeamReadId: "1234567"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: forprovider-parentteamreadslug
+  namespace: github-config
+spec:
+  forProvider:
+    parentTeamReadSlug: other-team
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: forprovider-ldapdn
+  namespace: github-config
+spec:
+  forProvider:
+    ldapDn: cn=owners,ou=groups,dc=example,dc=com
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: initprovider-parentteamid
+  namespace: github-config
+spec:
+  initProvider:
+    parentTeamId: "1234567"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: initprovider-parentteamreadid
+  namespace: github-config
+spec:
+  initProvider:
+    parentTeamReadId: "1234567"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: initprovider-parentteamreadslug
+  namespace: github-config
+spec:
+  initProvider:
+    parentTeamReadSlug: other-team
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: initprovider-ldapdn
+  namespace: github-config
+spec:
+  initProvider:
+    ldapDn: cn=owners,ou=groups,dc=example,dc=com
+---
+# Kyverno's own operators read * and ? as wildcards, so a parent written as a
+# wildcard is the value most likely to slip past a comparison. It is text like
+# any other and must be refused.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: wildcard-star
+  namespace: github-config
+spec:
+  forProvider:
+    parentTeamId: "*"
+---
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: wildcard-question
+  namespace: github-config
+spec:
+  initProvider:
+    parentTeamReadSlug: "?"
+---
+# An approved forProvider block must not front a parent supplied through
+# initProvider, which upjet merges into any field forProvider leaves unset.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+spec:
+  forProvider:
+    name: Admins
+    privacy: secret
+  initProvider:
+    parentTeamId: "1234567"
+---
+# The provider reports "no parent" and "no directory link" as empty strings.
+# Writing them out changes nothing on GitHub and must stay admitted.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+spec:
+  forProvider:
+    name: maintainers
+    parentTeamId: ""
+    parentTeamReadId: ""
+    parentTeamReadSlug: ""
+    ldapDn: ""
+  initProvider:
+    parentTeamId: ""
+    ldapDn: ""
