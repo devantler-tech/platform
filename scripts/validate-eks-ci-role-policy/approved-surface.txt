@@ -120,7 +120,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|unifi|unifi e3b3caea1b9c5a3fc994d9f68c9609d7f77843f24dae91c567e4dd7b5051868a
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 93ed553970290529db7159ccc4cc138d429d7b9072f3da334b4a55c9d928228f
+kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app dbb1fefbf97f8d4947b418ad604503cda9504f2e097b1d6ac5e0a8c8685e0a1c
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin 9c3f8221e384c5bb93de6056be60f16f69de3b08898efc4f3760944f225d15b2
 
