@@ -1,0 +1,24 @@
+---
+# Each identity is approved for one name only: admins may not front the maintainers team.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606"
+spec:
+  forProvider:
+    privacy: closed
+---
+# And maintainers may not front the admins team, which holds repository admin.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307"
+spec:
+  forProvider:
+    privacy: closed

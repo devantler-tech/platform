@@ -1,0 +1,36 @@
+---
+# The escalation: an allow-listed name created against a foreign team.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed
+---
+# A slug is not an identity the provider accepts, and is not approved.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "admins"
+spec:
+  forProvider:
+    privacy: closed
+---
+# An approved identity under a name it does not belong to (the name itself is refused by restrict-github-team-management).
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: other
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606"
+spec:
+  forProvider:
+    privacy: closed
