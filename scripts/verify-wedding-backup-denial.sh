@@ -31,6 +31,7 @@ readonly dedicated_store='wedding-db-dedicated'
 readonly shared_secret='coroot-db-backup-r2'
 readonly dedicated_secret='wedding-db-backup-r2-dedicated'
 readonly catalogue_prefix='cnpg/wedding-db'
+readonly shared_catalogue_prefix='cnpg/coroot-db'
 readonly dedicated_bucket='wedding-db-backups'
 # The pod script names its probe objects under the same prefix; the test
 # asserts the two stay identical.
@@ -169,7 +170,7 @@ require_store() {
   ' "${work_dir}/${store}.json" >/dev/null 2>&1 ||
     fail "the ${store} ObjectStore is not wired to the reviewed destination and credential"
 }
-require_store "${shared_store}" "${shared_bucket}" "${shared_secret}" 'cnpg/coroot-db' probe_kube
+require_store "${shared_store}" "${shared_bucket}" "${shared_secret}" "${shared_catalogue_prefix}" probe_kube
 require_store "${dedicated_store}" "${dedicated_bucket}" "${dedicated_secret}" "${catalogue_prefix}" kube
 
 # Read the lower-privilege credential without logging it. Never copy the shared
@@ -293,7 +294,7 @@ spec:
         - name: SHARED_BUCKET
           value: "__SHARED_BUCKET__"
         - name: SHARED_PREFIX
-          value: "__PREFIX__"
+          value: "__SHARED_PREFIX__"
         - name: DEDICATED_BUCKET
           value: "__DEDICATED_BUCKET__"
         - name: DEDICATED_PREFIX
@@ -338,6 +339,7 @@ manifest="${manifest//__ENDPOINT__/${endpoint}}"
 manifest="${manifest//__SHARED_BUCKET__/${shared_bucket}}"
 manifest="${manifest//__DEDICATED_BUCKET__/${dedicated_bucket}}"
 manifest="${manifest//__PREFIX__/${catalogue_prefix}}"
+manifest="${manifest//__SHARED_PREFIX__/${shared_catalogue_prefix}}"
 manifest="${manifest//__PROBE_ID__/${run_id}}"
 
 # create, never apply: an earlier pod with this name must not have its old

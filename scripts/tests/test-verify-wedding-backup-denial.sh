@@ -140,8 +140,8 @@ new_pod_case() {
   printf '{"status":"success","type":"folder","lastModified":"2026-09-09T00:00:00Z","size":0,"key":"wedding-db-20260909/","etag":"","url":"https://%s"}\n' "${host}" >"${dir}/mc/own.out"
   {
     printf '{"status":"success","type":"folder","lastModified":"2026-09-01T00:00:00Z","size":0,"key":"wedding-db/","etag":"","url":"https://%s"}\n' "${host}"
-    file_record 'wedding-db/wals/0000000100000000/000000010000000000000042.gz'
-    file_record 'wedding-db/wals/0000000100000000/000000010000000000000043.gz'
+    file_record 'coroot-db/wals/0000000100000000/000000010000000000000042.gz'
+    file_record 'coroot-db/wals/0000000100000000/000000010000000000000043.gz'
   } >"${dir}/mc/reference.out"
   printf '0' >"${dir}/mc/own.rc"
   printf '0' >"${dir}/mc/reference.rc"
@@ -169,14 +169,14 @@ run_pod() {
       -e PATH=/fake-bin:/tools:/usr/local/bin:/usr/bin:/bin -e "FAKE_MC=${dir}/mc" \
       -e "CREDENTIALS_DIR=${dir}/credentials" -e "WORK_DIR=${dir}/work" \
       -e "ENDPOINT=${ENDPOINT_OVERRIDE:-https://${host}}" \
-      -e "SHARED_BUCKET=${SHARED_OVERRIDE:-platform-backups}" -e SHARED_PREFIX=cnpg/wedding-db \
+      -e "SHARED_BUCKET=${SHARED_OVERRIDE:-platform-backups}" -e SHARED_PREFIX=cnpg/coroot-db \
       -e DEDICATED_BUCKET=wedding-db-backups -e DEDICATED_PREFIX=cnpg/wedding-db \
       -e "PROBE_ID=${probe_id}" \
       "${DENIAL_POD_RUNTIME_IMAGE}" /denial/denial.sh >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
   else
     PATH="${bin}:${PATH}" FAKE_MC="${dir}/mc" CREDENTIALS_DIR="${dir}/credentials" \
       WORK_DIR="${dir}/work" ENDPOINT="${ENDPOINT_OVERRIDE:-https://${host}}" \
-      SHARED_BUCKET="${SHARED_OVERRIDE:-platform-backups}" SHARED_PREFIX=cnpg/wedding-db \
+      SHARED_BUCKET="${SHARED_OVERRIDE:-platform-backups}" SHARED_PREFIX=cnpg/coroot-db \
       DEDICATED_BUCKET=wedding-db-backups DEDICATED_PREFIX=cnpg/wedding-db \
       PROBE_ID="${probe_id}" \
       sh "${pod_script}" >"${dir}/out" 2>"${dir}/err" || pod_rc=$?
@@ -188,7 +188,7 @@ run_pod() {
 
 readonly receipt='{"dedicatedCatalogueReachable":true,"sharedCatalogueReferenced":true,"listDenied":true,"readDenied":true,"writeDenied":true}'
 readonly marker='==== DENIAL OBSERVED ===='
-readonly reference_path='platform-backups/cnpg/wedding-db/wedding-db/wals/0000000100000000/000000010000000000000042.gz'
+readonly reference_path='platform-backups/cnpg/coroot-db/coroot-db/wals/0000000100000000/000000010000000000000042.gz'
 readonly write_path="platform-backups/wedding-backup-denial-probe/${probe_id}"
 
 # --- pod script --------------------------------------------------------------
@@ -201,8 +201,8 @@ run_pod "${dir}"
 require_text "$(cat "${dir}/mc/aliases")" 'shared shared-id' 'the shared alias uses the shared credential'
 require_text "$(cat "${dir}/mc/aliases")" 'dedicated dedicated-id' 'the dedicated alias uses the dedicated credential'
 require_text "${pod_calls}" 'ls --json dedicated/wedding-db-backups/cnpg/wedding-db/' 'the dedicated credential first lists its own catalogue'
-require_text "${pod_calls}" 'ls --json --recursive shared/platform-backups/cnpg/wedding-db/' 'the shared credential names the refused object'
-require_text "${pod_calls}" 'ls --json dedicated/platform-backups/cnpg/wedding-db/' 'the list is attempted with the dedicated credential'
+require_text "${pod_calls}" 'ls --json --recursive shared/platform-backups/cnpg/coroot-db/' 'the shared credential names the refused object'
+require_text "${pod_calls}" 'ls --json dedicated/platform-backups/cnpg/coroot-db/' 'the list is attempted with the dedicated credential'
 require_text "${pod_calls}" "cp --json dedicated/${reference_path} " 'the read targets an object the shared listing named'
 require_text "${pod_calls}" "dedicated/${write_path}" 'the write targets the run-owned probe key'
 [[ "$(grep -c '^ls --json shared/platform-backups/$' <<<"${pod_calls}")" -eq 2 ]] ||
@@ -258,7 +258,7 @@ require_text "${pod_err}" 'listing is incomplete' 'a partial reference listing n
 
 # An accepted list is a broken isolation, and the other accesses are still reported.
 dir="$(new_pod_case list-granted)"
-file_record 'wedding-db/wals/0000000100000000/000000010000000000000042.gz' >"${dir}/mc/list.out"
+file_record 'coroot-db/wals/0000000100000000/000000010000000000000042.gz' >"${dir}/mc/list.out"
 printf '0' >"${dir}/mc/list.rc"
 run_pod "${dir}"
 [[ "${pod_rc}" -ne 0 ]] || fail 'an accepted list must fail the proof'
@@ -444,8 +444,8 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
         "$@" >"${OUT}/${name}.out" 2>&1 </dev/null || rc=$?
         printf "%s" "${rc}" >"${OUT}/${name}.rc"
       }
-      run list mc ls --json dedicated/platform-backups/cnpg/wedding-db/
-      run read mc cp --json dedicated/platform-backups/cnpg/wedding-db/wedding-db/wals/0000000100000000/000000010000000000000042.gz /tmp/read-probe
+      run list mc ls --json dedicated/platform-backups/cnpg/coroot-db/
+      run read mc cp --json dedicated/platform-backups/cnpg/coroot-db/coroot-db/wals/0000000100000000/000000010000000000000042.gz /tmp/read-probe
       printf probe >/tmp/write-probe
       run write mc cp --json /tmp/write-probe dedicated/platform-backups/wedding-backup-denial-probe/4242-1
       [ ! -e /tmp/read-probe ] || exit 71
@@ -462,7 +462,7 @@ if [[ -n "${DENIAL_POD_RUNTIME_IMAGE:-}" ]]; then
   # Every mc process also asks for the bucket location, so only a list-type=2
   # query for the shared catalogue prefix is the listing itself.
   listings="$(grep -E '^GET /platform-backups/\?(.*&)?list-type=2(&|$)' "${real}/requests" || true)"
-  grep -Eq '[?&]prefix=cnpg%2Fwedding-db%2F(&|$)' <<<"${listings}" || fail 'the pinned mc never asked the stub for the listing'
+  grep -Eq '[?&]prefix=cnpg%2Fcoroot-db%2F(&|$)' <<<"${listings}" || fail 'the pinned mc never asked the stub for the listing'
   grep -Eq "^(GET|HEAD) /${reference_path}(\\?.*)?\$" "${real}/requests" || fail 'the pinned mc never asked the stub for the object'
   grep -Eq "^PUT /${write_path}(\\?.*)?\$" "${real}/requests" || fail 'the pinned mc never sent the probe object to the stub'
 
@@ -611,6 +611,8 @@ require_text "$(cat "${CASE}/deleted")" 'secret /api/v1/namespaces/observability
 require_text "${manifest}" "value: \"${endpoint}\"" 'the pod uses the committed endpoint'
 require_text "${manifest}" 'value: "platform-backups"' 'the pod targets the committed shared bucket'
 require_text "${manifest}" 'value: "wedding-db-backups"' 'the pod lists the dedicated bucket'
+[[ "$(yq -r '.spec.containers[0].env[] | select(.name=="SHARED_PREFIX") | .value' "${CASE}/manifest.yaml")" == cnpg/coroot-db ]] ||
+  fail 'the shared positive control must survive retirement of the old Wedding catalogue'
 require_text "${manifest}" 'value: "4242-1"' 'the probe key is owned by this run'
 require_text "${manifest}" 'automountServiceAccountToken: false' 'the pod carries no service account token'
 refute_text "${manifest}" '__' 'every manifest placeholder is replaced'

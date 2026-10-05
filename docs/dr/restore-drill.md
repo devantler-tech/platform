@@ -89,8 +89,9 @@ the endpoint host. Inside it:
 
 1. The dedicated credential lists its own catalogue. A refusal observed later
    therefore cannot come from a broken key, endpoint or network path.
-2. The shared credential lists the shared catalogue and names one object in it,
-   so the refused targets exist and a mistyped bucket cannot pass.
+2. The shared credential lists an existing platform backup catalogue and names
+   one object in it, so the refused targets exist and a mistyped bucket cannot
+   pass. This control is independent of Wedding's retired shared catalogue.
 3. With the dedicated credential, the pod lists the shared catalogue, reads that
    object, and writes a run-owned object under `wedding-backup-denial-probe/` in
    `platform-backups`. Each must be refused with `AccessDenied`, which the
