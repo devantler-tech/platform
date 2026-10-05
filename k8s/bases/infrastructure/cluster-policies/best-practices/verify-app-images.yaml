@@ -248,7 +248,7 @@ spec:
         .map(image, verifyImageSignatures(image, [attestors.publishksailanalysis]))
         .all(e, e > 0)
       message: >-
-        KSail analysis runner image is not signed by the platform repository's
+        KSail analysis runner image is not signed by the KSail repository's
         dedicated main-branch publisher (keyless cosign)
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
