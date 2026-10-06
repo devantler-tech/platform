@@ -248,6 +248,7 @@ func TestRecoveryRequiresAppliedControllerScope(t *testing.T) {
 		ok         bool
 	}{
 		{"recovered", recoveredDeployment, true},
+		{"valid case-sensitive metadata keys", strings.Replace(recoveredDeployment, `"generation":2`, `"generation":2,"labels":{"App":"one","app":"two"},"annotations":{"Description":"one","description":"two"}`, 1), true},
 		{"legacy scope", strings.Replace(recoveredDeployment, "--watch-single-namespace=arc-runners", "--watch-single-namespace=arc-ksail-analysis", 1), false},
 		{"duplicate scope", strings.Replace(recoveredDeployment, `"--watch-single-namespace=arc-runners"`, `"--watch-single-namespace=arc-runners","--watch-single-namespace=arc-ksail-analysis"`, 1), false},
 		{"broad scope", strings.Replace(recoveredDeployment, "--watch-single-namespace=arc-runners", "--watch-namespace=", 1), false},

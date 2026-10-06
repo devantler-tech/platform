@@ -145,10 +145,10 @@ func requireUnambiguousJSON(data []byte) error {
 			for decoder.More() {
 				token, err := decoder.Token()
 				key, ok := token.(string)
-				if err != nil || !ok || seen[strings.ToLower(key)] {
+				if err != nil || !ok || seen[key] {
 					return errors.New("JSON proof contains ambiguous object fields")
 				}
-				seen[strings.ToLower(key)] = true
+				seen[key] = true
 				for _, canonical := range fields[path] {
 					if key != canonical && strings.EqualFold(key, canonical) {
 						return errors.New("JSON proof contains a case-aliased field")
