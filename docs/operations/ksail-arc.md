@@ -14,20 +14,46 @@ zero idle runners and a maximum of one job runner. There is no container mode,
 Docker socket, host volume, privileged container or runner API token. Container
 jobs and Docker actions are deliberately unsupported.
 
+The analysis toolchain source lives in the KSail repository's
+`images/ksail-analysis-runner`. Its
+digest-pinned upstream runner, frozen Ubuntu package snapshot and checksum-checked
+Go and Node archives supply the desktop compiler and headers without job-time
+root access. The publisher builds and exercises the image on pull requests, then
+publishes, attests and signs only on a push to KSail main. Both Kyverno and Talos accept
+that workflow identity only for the exact analysis image repository. The staged
+pool still requires a verified published digest before activation.
+
+The smoke test starts the copied runner and compiles a Go program against GTK
+and WebKit as UID/GID 1001 with a read-only root filesystem and no capabilities.
+The runner home and temporary files use disposable writable storage. Bootstrap
+copies use `cp -R`; preserving the root directory's ownership and timestamps
+would fail on a group-writable Kubernetes volume.
+
 ## Activation gates
 
 Activation requires a separate reviewed change and all of these proofs:
 
-1. The maintainer approves an App installed only on KSail with the required
-   repository runner-administration permission. A maintainer provisions its three
-   authentication fields in the existing secret system at `github-arc-ksail`.
-   `arc-ksail-app` is an ExternalSecret reference, not a new or broadened shared
-   credential. Do not print, check in or mount the private key in a job runner.
-2. Establish explicitly approved, isolated analysis capacity. The runner selector
-   and toleration name `platform.devantler.tech/ksail-analysis=enabled`; no current
-   capacity is assumed to carry that label. New billable capacity requires its
-   own approval and an exact deletion/readback plan. Do not label a busy production
-   worker to make a pending analysis fit.
+1. Reuse the platform's existing GitHub management App from
+   `infrastructure/github/app`. The `arc-ksail-app` ExternalSecret maps its
+   `app_id`, `installation_id` and `pem` properties to ARC's three authentication
+   fields. Its namespaced SecretStore authenticates as the dedicated
+   `arc-ksail-app` credential-reader ServiceAccount. The OpenBao role grants read
+   on that exact credential path; the shared ESO role keeps its existing access.
+   Job runners use the chart's separate no-permission identity. Verify the
+   current installation covers KSail and grants repository
+   Administration read/write before activation. The pool's registration URL
+   remains KSail-only; the existing App installation also serves other platform
+   consumers. No new App, credential copy, key rotation or permission expansion
+   is required. Do not print, check in or mount the private key in a job runner.
+2. Use the declared `autoscale-ksail-analysis` CX53 pool for isolated analysis
+   capacity. It has a minimum of zero and maximum of one node, sharing the
+   unchanged cluster ceiling of nine nodes and account ceiling of ten. The
+   selector and NoSchedule taint both name
+   `platform.devantler.tech/ksail-analysis=enabled`; ordinary workloads and the
+   warm-capacity buffer do not tolerate that taint. Verify the label and taint
+   on the actual autoscaled node. Do not label a busy production worker to make
+   a pending analysis fit. After calibration, verify the pool scales back to
+   zero; capacity outside these bounds requires its own approval.
 3. Verify scheduler reservations, node allocatable capacity, ephemeral storage,
    ResourceQuota and LimitRange. Provisional requests are 12Gi/3 CPU for one runner,
    with limits of 14Gi/3.5 CPU in the analysis namespace. The controller and
@@ -40,6 +66,11 @@ Activation requires a separate reviewed change and all of these proofs:
 4. Render both pinned charts, including their CRDs and namespace-scoped RBAC.
    Confirm the App Secret is absent from runner volumes, the no-permission runner
    service account is used, and the chart preserves the listener name and labels.
+   Runner storage consists only of a 40Gi disk emptyDir for its home and a 2Gi
+   disk emptyDir for temporary files. A restricted init container copies the
+   baked runner into the group-writable home volume as UID/GID 1001. Both the
+   bootstrap and job container keep their root filesystems read-only and drop
+   every capability. Verify those settings on the generated runner pod.
    Test admission, API isolation and denied internal egress, not only YAML validity.
 5. Prove the actual managed Go and JavaScript Code Quality jobs on an ephemeral
    runner. The official runner image is not a hosted-runner software clone. Check
@@ -76,7 +107,8 @@ before uninstalling the pool. **Suspending a HelmRelease alone does not drain an
 installed scale set.** Namespace/release retirement follows the platform's
 two-stage persistence protection; never delete a namespace to cancel a job.
 Verify no listener, runner or GitHub registration remains before deleting approved
-temporary capacity. Retire the App credential only after its consumers are gone.
+temporary capacity. Remove only the ARC ExternalSecret and its materialized
+Secret; retain the shared App credential and its other platform consumers.
 
 Official references: [ARC deployment and security guidance](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets)
 and [App authentication](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/authenticate-to-the-api).

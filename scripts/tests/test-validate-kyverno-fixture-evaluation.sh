@@ -43,8 +43,8 @@ expect_fail() {
     fail "$1: expected exit $3, got ${rc}:"$'\n'"${output}"
     return
   fi
-  # A here-string, not a pipe: grep -q stops at the first match, and a long
-  # report still being written into a pipe then fails the whole test.
+  # A here-string, not a pipe: grep -q stops at the first match, and under pipefail the
+  # writer's broken pipe would then read as "missing" for a fragment early in long output.
   if ! grep -qF -- "$4" <<<"${output}"; then
     fail "$1: exit $3 but missing \"$4\":"$'\n'"${output}"
     return
@@ -280,6 +280,24 @@ EOF
 if kyverno_passes "a rule the policy itself names autogen-*" "${root}" fixture; then
   expect_pass "a rule the policy itself names autogen-*" "${root}" fixture
 fi
+
+# #4530: a policy kyverno loads but refuses to evaluate has every row skipped as
+# "Invalid Policy" and counted as passing. A bare JSON literal is not a variable kyverno accepts.
+root="$(copy invalid-policy)"
+# shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
+yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ `true` }}"' \
+  "${root}/${policies}/restrict-github-team-management.yaml"
+if kyverno_passes "a policy kyverno refuses to evaluate" "${root}"; then
+  expect_fail "a policy kyverno refuses to evaluate" "${root}" 1 "of restrict-github-team-management (result: Skip, reason: Invalid Policy) and still counted them as passing"
+fi
+
+# The control: the same edit with an expression kyverno accepts is evaluated, and the
+# rows judge it (the allow-list now refuses the approved teams as well).
+root="$(copy valid-constant-policy)"
+# shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
+yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ request.object.metadata.name == `\"\"` }}"' \
+  "${root}/${policies}/restrict-github-team-management.yaml"
+expect_fail "an evaluated policy with the same edit" "${root}" 1 "Want pass, got fail"
 
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation)"
