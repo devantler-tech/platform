@@ -5,7 +5,7 @@ resources:
   - ../../../bases/infrastructure/
   # Re-adopt the retained release without activating a runner. Suspension does
   # not drain an installed scale set; runtime acceptance remains a separate gate.
-  - ../../../bases/infrastructure/ksail-analysis-runners/
+  - retained-ksail-analysis/
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers

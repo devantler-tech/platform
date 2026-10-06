@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: arc-runners
+  name: arc-ksail-analysis
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
   labels:

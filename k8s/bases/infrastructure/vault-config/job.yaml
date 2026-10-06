@@ -764,10 +764,11 @@ spec:
               }
               POLICY
 
-              # ARC reuses the existing App with a separate identity. Its
-              # reader can reach this single credential, not the GitHub subtree.
-              bao policy write arc-ksail-app-readonly - <<'POLICY'
-              path "secret/data/infrastructure/github/app" {
+              # ARC uses the platform runtime App, not provider-upjet-github.
+              # Keep its entry outside the GitHub-management policy's subtree
+              # and grant it only to the namespaced ARC credential reader.
+              bao policy write infra-arc-app-readonly - <<'POLICY'
+              path "secret/data/infrastructure/arc/github-app" {
                 capabilities = ["read"]
               }
               POLICY
@@ -1121,12 +1122,12 @@ spec:
                 policies=infra-github-readonly \
                 ttl=1h
 
-              # Only ESO's TokenRequest for this credential-reader identity
-              # authenticates to the ARC store; job runners use another SA.
-              bao write auth/kubernetes/role/arc-ksail-app \
-                bound_service_account_names=arc-ksail-app \
-                bound_service_account_namespaces=arc-ksail-analysis \
-                policies=arc-ksail-app-readonly \
+              # Inert until the opt-in ARC component creates this service
+              # account. It may read only the App, not other GitHub/infra secrets.
+              bao write auth/kubernetes/role/arc-secret-reader \
+                bound_service_account_names=arc-secret-reader \
+                bound_service_account_namespaces=arc-runners \
+                policies=infra-arc-app-readonly \
                 ttl=1h
 
               # Dedicated tenant role for the unifi app. Authenticates the app's
