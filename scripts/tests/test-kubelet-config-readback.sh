@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+readback="$root_dir/scripts/verify-kubelet-config-readback.sh"
+deploy_action="$root_dir/.github/actions/deploy-prod/action.yml"
+ci_workflow="$root_dir/.github/workflows/ci.yaml"
+
+[[ -x "$readback" ]] || {
+  printf 'kubelet settings readback is missing or not executable\n' >&2
+  exit 1
+}
+
+if ! grep -Fq 'scripts/verify-kubelet-config-readback.sh' "$deploy_action" ||
+  ! grep -Fq "'scripts/tests/test-kubelet-config-readback.sh'" "$ci_workflow" ||
+  ! grep -Fq 'bash scripts/tests/test-kubelet-config-readback.sh' "$ci_workflow"; then
+  printf 'CI and deployment must execute the kubelet settings readback contract\n' >&2
+  exit 1
+fi
+
+stability_line=$(grep -nF './scripts/wait-for-prod-api-stability.sh' "$deploy_action" | cut -d: -f1)
+readback_line=$(grep -nF './scripts/verify-kubelet-config-readback.sh' "$deploy_action" | cut -d: -f1)
+if [[ -z "$stability_line" || -z "$readback_line" ]] || (( stability_line >= readback_line )); then
+  printf 'kubelet settings readback must follow cluster update and API stability\n' >&2
+  exit 1
+fi
+
+tmp_dir=$(mktemp -d)
+trap 'rm -rf "$tmp_dir"' EXIT
+
+# The mock answers the two reads the check makes and nothing else. A node's
+# reply is the file named after it; a missing file is a refused read.
+mock_kubectl="$tmp_dir/kubectl"
+cat >"$mock_kubectl" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1 $2 $3" == "--context admin@prod --request-timeout=15s" ]] || exit 64
+shift 3
+if [[ "$*" == "get nodes -o json" ]]; then
+  if [[ -n "${MOCK_FIRST_DIR:-}" && ! -f "$MOCK_DIR/first-used" ]]; then
+    cat "$MOCK_FIRST_DIR/nodes.json"
+  else
+    cat "$MOCK_DIR/nodes.json"
+  fi
+  exit 0
+fi
+[[ "$1 $2" == "get --raw" && "$3" == /api/v1/nodes/*/proxy/configz && $# -eq 3 ]] || exit 64
+node=${3#/api/v1/nodes/}
+node=${node%/proxy/configz}
+dir=$MOCK_DIR
+if [[ -n "${MOCK_FIRST_DIR:-}" && ! -f "$MOCK_DIR/first-used" ]]; then
+  dir=$MOCK_FIRST_DIR
+  [[ "$node" != "${MOCK_LAST_NODE:-}" ]] || : >"$MOCK_DIR/first-used"
+fi
+[[ -f "$dir/$node.json" ]] || { printf 'Error from server (Forbidden)\n' >&2; exit 1; }
+cat "$dir/$node.json"
+MOCK
+chmod +x "$mock_kubectl"
+
+nodes=(prod-control-plane-2 prod-worker-1 autoscale-cx43-example)
+
+# What a healthy kubelet reports for the settings the repository declares
+# today, plus fields the check must ignore.
+healthy='{"kubeletconfig":{
+  "systemReserved":{"memory":"256Mi","cpu":"50m"},
+  "kubeReserved":{"memory":"256Mi"},
+  "evictionSoft":{"memory.available":"500Mi"},
+  "evictionSoftGracePeriod":{"memory.available":"1m30s"},
+  "evictionMinimumReclaim":{"memory.available":"200Mi"},
+  "evictionMaxPodGracePeriod":60,
+  "mergeDefaultEvictionSettings":true,
+  "evictionHard":{"memory.available":"100Mi","nodefs.available":"10%","nodefs.inodesFree":"5%","imagefs.available":"15%","imagefs.inodesFree":"5%"},
+  "imageGCHighThresholdPercent":75,
+  "imageGCLowThresholdPercent":70,
+  "maxPods":110}}'
+# The exact shape #3137 found on two autoscaler nodes.
+drifted=$(jq '.kubeletconfig.mergeDefaultEvictionSettings = false
+  | .kubeletconfig.evictionHard = {"memory.available":"100Mi"}' <<<"$healthy")
+
+new_fixture() { # <dir>: every node healthy
+  mkdir -p "$1"
+  printf '%s\n' "${nodes[@]}" | jq -R '{metadata: {name: .}}' | jq -s '{items: .}' >"$1/nodes.json"
+  for node in "${nodes[@]}"; do printf '%s\n' "$healthy" >"$1/$node.json"; done
+}
+
+run() { # <fixture dir> [env assignments...]: sets rc and output
+  local dir=$1
+  shift
+  rc=0
+  output=$(env KUBECTL_BIN="$mock_kubectl" MOCK_DIR="$dir" \
+    KUBELET_READBACK_ATTEMPTS=1 KUBELET_READBACK_INTERVAL_SECONDS=0 "$@" "$readback" 2>&1) || rc=$?
+}
+
+expect() { # <name> <exit code> <fragment>...
+  local name=$1 want=$2
+  shift 2
+  if [[ "$rc" -ne "$want" ]]; then
+    printf 'FAIL %s: expected exit %s, got %s:\n%s\n' "$name" "$want" "$rc" "$output" >&2
+    exit 1
+  fi
+  for fragment in "$@"; do
+    # A here-string, not a pipe: grep -q stops at the first match.
+    if ! grep -qF -- "$fragment" <<<"$output"; then
+      printf 'FAIL %s: missing "%s":\n%s\n' "$name" "$fragment" "$output" >&2
+      exit 1
+    fi
+  done
+  printf 'ok: %s\n' "$name"
+}
+
+new_fixture "$tmp_dir/healthy"
+run "$tmp_dir/healthy"
+expect 'every node matches the declared settings' 0 \
+  'PASS: 3 node(s), 1 of them autoscaler-provisioned' 'mergeDefaultEvictionSettings'
+
+new_fixture "$tmp_dir/drift"
+printf '%s\n' "$drifted" >"$tmp_dir/drift/autoscale-cx43-example.json"
+run "$tmp_dir/drift"
+expect 'the drift #3137 found on an autoscaler node fails and names it' 1 \
+  'autoscale-cx43-example: mergeDefaultEvictionSettings: declared true, live false' \
+  'autoscale-cx43-example: evictionHard: live has no nodefs.available threshold' \
+  'autoscale-cx43-example: evictionHard: live has no imagefs.available threshold'
+if grep -qF 'prod-worker-1:' <<<"$output"; then
+  printf 'FAIL: a healthy node was reported beside the drifted one:\n%s\n' "$output" >&2
+  exit 1
+fi
+
+new_fixture "$tmp_dir/value"
+jq '.kubeletconfig.evictionSoft["memory.available"] = "100Mi"' <<<"$healthy" >"$tmp_dir/value/prod-worker-1.json"
+run "$tmp_dir/value"
+expect 'a changed value inside a declared map fails' 1 \
+  'prod-worker-1: evictionSoft: declared {"memory.available":"500Mi"}, live {"memory.available":"100Mi"}'
+
+new_fixture "$tmp_dir/absent"
+jq 'del(.kubeletconfig.imageGCHighThresholdPercent)' <<<"$healthy" >"$tmp_dir/absent/prod-worker-1.json"
+run "$tmp_dir/absent"
+expect 'a declared setting the kubelet does not report fails' 1 \
+  'prod-worker-1: imageGCHighThresholdPercent: declared 75, live null'
+
+# The reproduction in #3137 printed nothing on a refused read. That must
+# never read as a pass.
+new_fixture "$tmp_dir/refused"
+rm "$tmp_dir/refused/autoscale-cx43-example.json"
+run "$tmp_dir/refused"
+expect 'a node whose kubelet cannot be read fails' 1 \
+  'autoscale-cx43-example: kubelet configuration could not be read'
+
+new_fixture "$tmp_dir/garbage"
+printf 'not json\n' >"$tmp_dir/garbage/prod-worker-1.json"
+run "$tmp_dir/garbage"
+expect 'a reply that is not JSON fails' 1 'prod-worker-1: kubelet configuration reply is not valid JSON'
+
+new_fixture "$tmp_dir/shapeless"
+printf '{}\n' >"$tmp_dir/shapeless/prod-worker-1.json"
+run "$tmp_dir/shapeless"
+expect 'a reply without a kubelet configuration fails' 1 'prod-worker-1: no kubeletconfig in the reply'
+
+mkdir "$tmp_dir/empty"
+printf '{"items": []}\n' >"$tmp_dir/empty/nodes.json"
+run "$tmp_dir/empty"
+expect 'a cluster reporting no nodes fails' 1 'the cluster reported no nodes'
+
+mkdir "$tmp_dir/unreadable"
+printf 'not json\n' >"$tmp_dir/unreadable/nodes.json"
+run "$tmp_dir/unreadable"
+expect 'an unreadable node list fails' 1 'Kubernetes nodes could not be read from context admin@prod'
+
+mkdir "$tmp_dir/hostile"
+printf '{"items": [{"metadata": {"name": "a/../../b"}}]}\n' >"$tmp_dir/hostile/nodes.json"
+run "$tmp_dir/hostile"
+expect 'a node name that is not a node name is never queried' 1 'unexpected node name; refusing to query it'
+
+# A replacement node that is not answering yet converges within the window.
+new_fixture "$tmp_dir/late-first"
+rm "$tmp_dir/late-first/autoscale-cx43-example.json"
+new_fixture "$tmp_dir/late"
+run "$tmp_dir/late" MOCK_FIRST_DIR="$tmp_dir/late-first" MOCK_LAST_NODE=autoscale-cx43-example \
+  KUBELET_READBACK_ATTEMPTS=3
+expect 'a node that answers on a later attempt passes' 0 'PASS: 3 node(s)'
+[[ -f "$tmp_dir/late/first-used" ]] || {
+  printf 'FAIL: the late-node case never served its first, incomplete reading\n' >&2
+  exit 1
+}
+
+# Observe-only: the finding is reported as a warning and the deploy stays green.
+run "$tmp_dir/drift" KUBELET_READBACK_ENFORCE=false
+expect 'observe-only reports drift as a warning and exits 0' 0 \
+  '::warning title=Kubelet settings readback (observe-only)::' \
+  'autoscale-cx43-example: mergeDefaultEvictionSettings: declared true, live false'
+run "$tmp_dir/healthy" KUBELET_READBACK_ENFORCE=false
+expect 'observe-only still passes a healthy cluster without a warning' 0 'PASS: 3 node(s)'
+if grep -qF '::warning' <<<"$output"; then
+  printf 'FAIL: a healthy observe-only run printed a warning:\n%s\n' "$output" >&2
+  exit 1
+fi
+run "$tmp_dir/healthy" KUBELET_READBACK_ENFORCE=maybe
+expect 'an unknown enforce value is refused' 2 'invalid kubelet readback'
+
+# Nothing declared means nothing was compared; that is not a pass.
+mkdir -p "$tmp_dir/talos-none/cluster"
+printf 'machine:\n  network: {}\n' >"$tmp_dir/talos-none/cluster/other.yaml"
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-none"
+expect 'no declared kubelet settings is refused' 2 'nothing to compare'
+
+mkdir -p "$tmp_dir/talos-missing"
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-missing"
+expect 'a missing patch directory is refused' 2 'no cluster-wide Talos patches found'
+
+mkdir -p "$tmp_dir/talos-role/cluster" "$tmp_dir/talos-role/workers"
+cp "$root_dir/talos/cluster/evict-pods-before-oom.yaml" "$tmp_dir/talos-role/cluster/"
+printf 'machine:\n  kubelet:\n    extraConfig:\n      maxPods: 200\n' >"$tmp_dir/talos-role/workers/more-pods.yaml"
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-role"
+expect 'a per-role kubelet setting is refused, not half-compared' 2 'are not modelled by this check'
+
+printf 'All kubelet settings readback cases passed.\n'
