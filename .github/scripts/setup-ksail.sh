@@ -21,9 +21,10 @@ fi
 # Downloads retry curl's transient failures (timeouts, 408, 429 and 5xx) a few times,
 # because one momentary error from the release host would otherwise fail the job and,
 # in a merge-group deploy, evict the pull request (#4549). Every byte is still checked
-# against both digest sources below, and a persistent failure still stops here.
+# against both digest sources below, and a persistent failure still stops here. The
+# total is capped so a long server-requested wait cannot hold the job.
 download() {
-  curl -fsSL --retry 5 --retry-delay 3 "$@"
+  curl -fsSL --retry 5 --retry-delay 3 --retry-max-time 60 "$@"
 }
 
 download "${release_base}/${asset_name}" -o "${tarball}"

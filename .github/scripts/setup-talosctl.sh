@@ -37,7 +37,7 @@ trap 'rm -f "${target}"' EXIT
 # times, because one momentary error from the release host would otherwise fail the job
 # (#4549). The bytes are still checked against the pin above, and a persistent failure
 # still stops here.
-curl -fsSL --retry 5 --retry-delay 3 "${release_base}/${asset_name}" -o "${target}"
+curl -fsSL --retry 5 --retry-delay 3 --retry-max-time 60 "${release_base}/${asset_name}" -o "${target}"
 
 actual_digest=$(sha256sum "${target}" | cut -d' ' -f1)
 

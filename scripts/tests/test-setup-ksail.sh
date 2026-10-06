@@ -32,7 +32,7 @@ while [ "$#" -gt 0 ]; do
       retry=$2
       shift 2
       ;;
-    --retry-delay)
+    --retry-delay | --retry-max-time)
       shift 2
       ;;
     -o)
