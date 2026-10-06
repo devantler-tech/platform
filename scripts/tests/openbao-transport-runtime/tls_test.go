@@ -97,7 +97,7 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "base.hcl"), []byte(base), 0600); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile("../../../k8s/providers/hetzner/infrastructure/controllers/openbao/transport/listener-config-map.yaml")
+	data, err := os.ReadFile("../../../k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

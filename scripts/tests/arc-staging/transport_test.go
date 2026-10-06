@@ -59,7 +59,7 @@ func TestCredentialTLSHasNarrowCertificateAndTrust(t *testing.T) {
 	if len(names) != 1 || names[0] != "openbao-arc.openbao.svc.cluster.local" {
 		t.Fatal("certificate must bind the one credential service identity")
 	}
-	bundle := readYAML(t, transportPath+"trust-bundle.yaml")
+	bundle := readYAML(t, transportPath+"bundle.yaml")
 	equal(t, field(t, bundle, "metadata", "name"), "arc-openbao-ca")
 	equal(t, field(t, bundle, "spec", "target", "configMap", "key"), "ca.crt")
 	equal(t, field(t, bundle, "spec", "target", "namespaceSelector", "matchLabels", "kubernetes.io/metadata.name"), "arc-runners")
@@ -72,7 +72,7 @@ func TestCredentialTLSHasNarrowCertificateAndTrust(t *testing.T) {
 }
 
 func TestCredentialTLSAppendsListenerWithoutReplacingStorage(t *testing.T) {
-	config := readYAML(t, transportPath+"listener-config-map.yaml")
+	config := readYAML(t, transportPath+"config-map-listener.yaml")
 	text := field(t, config, "data", "listener.hcl").(string)
 	for _, fragment := range []string{"listener \"tcp\"", "0.0.0.0:8204", "127.0.0.1:8205", "tls_min_version = \"tls12\"", "tls_cert_file", "tls_key_file"} {
 		if !strings.Contains(text, fragment) {
@@ -84,12 +84,12 @@ func TestCredentialTLSAppendsListenerWithoutReplacingStorage(t *testing.T) {
 			t.Fatalf("supplemental listener changes existing server setting %s", forbidden)
 		}
 	}
-	patch := readYAML(t, transportPath+"helm-release-patch.yaml")
+	patch := readYAML(t, transportPath+"patches/enable-arc-transport.yaml")
 	equal(t, field(t, patch, "spec", "values", "server", "extraArgs"), "-config=/openbao/arc-transport/listener.hcl")
 }
 
 func TestCertificateReloadDoesNotReceiveAPIOrKeyMounts(t *testing.T) {
-	patch := readYAML(t, transportPath+"helm-release-patch.yaml")
+	patch := readYAML(t, transportPath+"patches/enable-arc-transport.yaml")
 	server := field(t, patch, "spec", "values", "server")
 	renderers := field(t, patch, "spec", "postRenderers").([]any)
 	patches := field(t, renderers[0], "kustomize", "patches").([]any)
