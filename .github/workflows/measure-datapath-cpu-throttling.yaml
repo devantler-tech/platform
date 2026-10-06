@@ -25,8 +25,8 @@ name: Measure Datapath CPU Throttling
 # DORMANT, TWICE OVER. No `schedule:` or `pull_request:` trigger, and an exact confirmation phrase.
 #
 # PUBLIC LOG. The script prints only container names, counts, ratios and the verdict — no node name,
-# pod name or address. The endpoint helper's success line names the API endpoint, so it is
-# discarded.
+# pod name or address. The endpoint helper prints no address either; its standard output is
+# discarded so this log carries the measurement's lines only.
 #
 # scripts/tests/test-measure-datapath-cpu-throttling.sh pins the script's behaviour and the shape of
 # this workflow. It needs no cluster and no secrets, so it runs in ci.yaml's required `validate` job.

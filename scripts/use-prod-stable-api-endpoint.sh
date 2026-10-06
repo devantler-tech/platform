@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Point admin@prod at the KSail-owned Hetzner floating IP before a deployment
 # can roll the control-plane node named by a stale KUBE_CONFIG secret.
+#
+# PUBLIC LOG. This repository's workflow logs are public and this script runs in
+# them, so nothing it prints — on stdout or stderr, on success or failure — may
+# name the endpoint address or the server the restored kubeconfig carried. It
+# reports outcomes only; scripts/tests/test-use-prod-stable-api-endpoint.sh
+# fails if any path prints an address.
 
 set -euo pipefail
 
@@ -95,8 +101,14 @@ updated_server="$(kubectl --kubeconfig "${kubeconfig_path}" config view --raw \
   -o jsonpath="{.clusters[?(@.name==\"${kube_cluster}\")].cluster.server}")"
 readonly updated_server
 if [[ "${updated_server}" != "${stable_server}" ]]; then
-  echo "::error::Failed to persist production API endpoint ${stable_server} in the restored kubeconfig." >&2
+  echo "::error::Failed to persist the stable production API endpoint in the restored kubeconfig." >&2
   exit 1
 fi
 
-echo "✅ Production kubeconfig now uses the stable API endpoint ${stable_ip} (was ${old_server})."
+# Whether the restored kubeconfig was stale is the one thing an operator needs
+# from this line, and it can be said without naming either server.
+if [[ "${old_server}" == "${stable_server}" ]]; then
+  echo "✅ Production kubeconfig already uses the stable API endpoint."
+else
+  echo "✅ Production kubeconfig now uses the stable API endpoint (the restored kubeconfig named a different server)."
+fi
