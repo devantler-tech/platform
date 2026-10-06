@@ -14,6 +14,10 @@
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget adc009b64f2a9da1427f0c9b80f6ea2490607a8b55ceb6e139f73de92399d5da
 
+helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller 5af946415fcf05e49fb79e9a07cd82cd1da6d3c8ee33a6ebbe0483fc6e00afa1
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|backstage|backstage 5ff19be19e3525e641b0a7a22e2a7047e1fbda16ef9ca7b4fa731ce3a61e686a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
@@ -395,6 +399,10 @@ source.toolkit.fluxcd.io/v1|HelmRepository|velero|vmware-tanzu c4f7f1772afa82eeb
 source.toolkit.fluxcd.io/v1|HelmRepository|vertical-pod-autoscaler|vertical-pod-autoscaler 8a3838c20823f33a9ba171c6d8d889dbb6bac5fa68564ba78df4e4460156eb96
 
 source.toolkit.fluxcd.io/v1|HelmRepository|whoami|whoami 28dc88b5a5e69a086e4f7fb87be34d1b8a0cc20a13b21706aaf534a8e5d80cf8
+
+source.toolkit.fluxcd.io/v1|OCIRepository|arc-ksail-analysis|ksail-analysis-runners 5f89c75739fa50d998e046bc2a388ccf9c7fb4413377510e43f9f12ae4ff4c70
+
+source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb325741489bbd5ece40cf2cbf6e4aef3e87e89efea97b7b0f2ec498671fa1
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner e7717c1d618e5d2dd1f3ab32d589ac06205d040e867f33db22ab9651bcb105bc
 

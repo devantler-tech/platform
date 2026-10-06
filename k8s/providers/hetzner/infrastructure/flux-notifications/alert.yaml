@@ -89,6 +89,12 @@ spec:
       namespace: actual-budget
     - kind: HelmRelease
       name: "*"
+      namespace: arc-ksail-analysis
+    - kind: HelmRelease
+      name: "*"
+      namespace: arc-systems
+    - kind: HelmRelease
+      name: "*"
       namespace: backstage
     - kind: HelmRelease
       name: "*"
