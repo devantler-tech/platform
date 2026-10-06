@@ -149,6 +149,9 @@ jobs:
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
 
+      - name: 🛑 Validate ARC recovery metadata proof
+        run: go test -race ./scripts/guard-arc-recovery
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
@@ -814,6 +817,7 @@ jobs:
               # that edits the guard must also run the test that pins its ablations,
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/shared-publish-workflow-matchers.tsv'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               # Both halves, for the same reason as the pin guard above: the guard step itself
               # runs unconditionally, and listing the pair here is what keeps a guard edit

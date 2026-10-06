@@ -8,6 +8,10 @@ resources:
   # local/CI only): no VirtualMachines/DataVolumes exist on Hetzner and
   # virt-handler crash-looped (1000+ restarts) with zero VMs.
   - ../../../../bases/infrastructure/controllers/
+  # Retain the protected ARC namespaces and release in Flux inventory while
+  # registration is repaired. Flux reconciles the controller with its watch
+  # scope limited to arc-runners; the organization pool stays outside aggregates.
+  - ../../../../bases/infrastructure/controllers/actions-runner-controller/
   # Prod-only: a minimal Alertmanager scoped to Kubescape runtime-detection
   # alerts. The Headlamp Kubescape plugin's "Runtime Detection > Alerts" tab
   # reads ONLY from a Prometheus Alertmanager (GET /api/v2/alerts), which the
