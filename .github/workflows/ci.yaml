@@ -530,6 +530,7 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-arc-listener-public-content.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -1677,6 +1678,8 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          shellcheck scripts/tests/test-arc-listener-public-content.sh
+          bash scripts/tests/test-arc-listener-public-content.sh
           shellcheck scripts/tests/test-hcloud-volume-priority.sh
           bash scripts/tests/test-hcloud-volume-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh

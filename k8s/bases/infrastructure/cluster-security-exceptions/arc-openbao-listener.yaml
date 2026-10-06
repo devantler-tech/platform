@@ -1,0 +1,20 @@
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: arc-openbao-listener
+spec:
+  reason: >-
+    C-0012's generic _key_ text pattern matches the mandatory native OpenBao
+    tls_key_file setting. Its value is a public file path to a mounted Secret,
+    never credential content. Enforced restrict-arc-openbao-listener admission
+    and unconditional source tests permit exactly the audited public listener
+    in openbao, reject extra or binary data and reject this name elsewhere.
+    Other ConfigMaps, controls and genuine credentials remain scanned.
+  match:
+    resources:
+      - apiGroup: ""
+        kind: ConfigMap
+        name: ^arc-openbao-listener$
+  posture:
+    - controlID: C-0012
+      action: ignore

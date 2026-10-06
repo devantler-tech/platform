@@ -51,7 +51,33 @@ trap 'printf "ARC transport: FAIL at %s\n" "$stage" >&2' ERR
 trap 'exit 143' INT TERM
 go build -trimpath -o "$scratch/evidence" ./scripts/verify-arc-transport >"$scratch/build-output" 2>"$scratch/build-error"
 
+public_listener_boundary() {
+  kc get clusterpolicy restrict-arc-openbao-listener -o json >"$scratch/listener-policy.json"
+  yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml >"$scratch/listener-spec.json"
+  jq -e --slurpfile expected "$scratch/listener-spec.json" '.spec == $expected[0] and
+    any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/listener-policy.json" >/dev/null
+  kc -n openbao get configmap arc-openbao-listener -o json >"$scratch/listener.json"
+  yq -o=json '.data' k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml >"$scratch/listener-data.json"
+  jq -e --slurpfile expected "$scratch/listener-data.json" '.metadata.name == "arc-openbao-listener" and
+    .metadata.namespace == "openbao" and (.metadata.resourceVersion | type) == "string" and
+    (.metadata.resourceVersion | length) > 0 and .data == $expected[0] and
+    ((.binaryData // {}) | length) == 0' "$scratch/listener.json" >/dev/null
+  quiet kc replace --dry-run=server -f "$scratch/listener.json"
+  for change in '.data["listener.hcl"] += "synthetic PRIVATE KEY content\n"' \
+    '.data.password = "synthetic"' '.binaryData = {credential:"c3ludGhldGlj"}'; do
+    jq "$change" "$scratch/listener.json" >"$scratch/credential-negative.json"
+    if kc replace --dry-run=server -f "$scratch/credential-negative.json" >"$scratch/admission-output" 2>"$scratch/admission-error"; then
+      fail public-listener-admitted-credential
+    fi
+    grep -Fq restrict-arc-openbao-listener "$scratch/kubectl-error" || fail public-listener-admission-unknown
+    grep -Fq public-listener-settings-only "$scratch/kubectl-error" || fail public-listener-admission-unknown
+  done
+}
+
 stage=inactive-credential-boundary
+public_listener_boundary
+jq -Sc '{uid:.metadata.uid,spec:.spec}' "$scratch/listener-policy.json" >"$scratch/listener-policy-before"
+jq -Sc '{uid:.metadata.uid,data:.data,binaryData:.binaryData}' "$scratch/listener.json" >"$scratch/listener-before"
 # Inspect only metadata counts: neither existing App credentials nor JIT data is read.
 kc -n "$namespace" get externalsecrets -o json | jq -e '.items | length == 0' >/dev/null
 kc -n "$namespace" get helmreleases -o json | jq -e 'all(.items[]; .spec.suspend == true)' >/dev/null
@@ -204,6 +230,11 @@ while IFS= read -r node; do
   cleanup_probe || { printf 'ARC transport: FAIL cleanup\n' >&2; exit 4; }
 done <"$scratch/nodes"
 stage=final-bindings
+public_listener_boundary
+jq -Sc '{uid:.metadata.uid,spec:.spec}' "$scratch/listener-policy.json" >"$scratch/after"
+cmp -s "$scratch/listener-policy-before" "$scratch/after" || fail listener-policy-churn
+jq -Sc '{uid:.metadata.uid,data:.data,binaryData:.binaryData}' "$scratch/listener.json" >"$scratch/after"
+cmp -s "$scratch/listener-before" "$scratch/after" || fail listener-configuration-churn
 for object in 'secretstore openbao' 'configmap arc-openbao-ca'; do
   read -r kind name <<<"$object"
   kc -n "$namespace" get "$kind" "$name" -o json | jq -Sc '{uid:.metadata.uid,spec:.spec,data:.data}' >"$scratch/after"

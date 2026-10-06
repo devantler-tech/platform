@@ -11,6 +11,10 @@ readonly head=1111111111111111111111111111111111111111
 export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=refs/heads/main GITHUB_SHA="$head" GITHUB_RUN_ID=12345 GITHUB_RUN_ATTEMPT=1
 yq -o=json '.spec.rules[0]' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
   | jq '{spec:{rules:[.]},status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/policy.json"
+yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
+  | jq '{metadata:{uid:"policy-uid"},spec:.,status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/listener-policy.json"
+yq -o=json '.' k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml \
+  | jq '.metadata.uid="listener-uid" | .metadata.resourceVersion="123"' >"$scratch/listener.json"
 cat >"$scratch/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "${GITHUB_SHA}"
@@ -47,6 +51,13 @@ case "$args" in
   'get secretstore '*) jq -n '{spec:{provider:{vault:{server:"https://openbao-arc.openbao.svc.cluster.local:8204",caProvider:{type:"ConfigMap",name:"arc-openbao-ca",key:"ca.crt"},path:"secret",version:"v2",auth:{kubernetes:{mountPath:"kubernetes",role:"arc-secret-reader",serviceAccountRef:{name:"arc-secret-reader"}}}}}}}' ;;
   'get configmap arc-openbao-ca '*) printf '{"data":{"ca.crt":"-----BEGIN CERTIFICATE-----fixture"}}' ;;
   'get configmap cilium-config '*) printf '{"data":{"cluster-name":"prod"}}' ;;
+  'get configmap arc-openbao-listener '*)
+    if [[ "${PROOF_CASE:-}" == listener_content ]]; then jq '.data.password="synthetic"' "$PROOF_TEST_ROOT/listener.json"
+    elif [[ "${PROOF_CASE:-}" == listener_churn && -e "$state/attempt" ]]; then jq '.metadata.uid="replacement-listener"' "$PROOF_TEST_ROOT/listener.json"
+    else cat "$PROOF_TEST_ROOT/listener.json"; fi ;;
+  'get clusterpolicy restrict-arc-openbao-listener '*)
+    if [[ "${PROOF_CASE:-}" == listener_audit ]]; then jq '.spec.rules[0].validate.failureAction="Audit"' "$PROOF_TEST_ROOT/listener-policy.json"
+    else cat "$PROOF_TEST_ROOT/listener-policy.json"; fi ;;
   'get clusterpolicy '*) cat "$PROOF_TEST_ROOT/policy.json" ;;
   'get kustomization '*) printf '{"metadata":{"generation":1},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conditions":[{"type":"Ready","status":"True"}]}}' ;;
   'get service '*) printf '{"spec":{"selector":{"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"},"ports":[{"name":"arc-tls","port":8204,"targetPort":8204,"protocol":"TCP"}]}}' ;;
@@ -62,6 +73,13 @@ case "$args" in
   'get pod arc-transport-'*)
     [[ -e "$state/created" ]] || exit 0
     if [[ "${PROOF_CASE:-}" == replacement && -e "$state/attempt" ]]; then jq '.metadata.uid="replacement-uid"' "$state/pod.json"; else cat "$state/pod.json"; fi ;;
+  'replace --dry-run=server '*)
+    file=${args##* -f }
+    if jq -e --slurpfile public "$PROOF_TEST_ROOT/listener.json" '.data == $public[0].data and ((.binaryData // {}) | length) == 0' "$file" >/dev/null; then exit 0; fi
+    [[ "${PROOF_CASE:-}" != listener_admit ]] || exit 0
+    if [[ "${PROOF_CASE:-}" == listener_api_error ]]; then printf 'connection refused\n' >&2
+    else printf 'restrict-arc-openbao-listener public-listener-settings-only denied\n' >&2; fi
+    exit 1 ;;
   'create --dry-run=server '*)
     file=${args##* -f }
     if jq -e '.spec.containers[0].securityContext.privileged == true' "$file" >/dev/null; then problem=privileged
@@ -106,13 +124,15 @@ run_case() {
   [[ "$result" == "$expected" ]] || { printf 'FAIL %s: exit %s expected %s\n' "$name" "$result" "$expected"; cat "$scratch/error"; exit 1; }
   # No secret, TokenRequest, JIT, host exec, policy change or node deletion is permitted.
   if [[ -f "$scratch/state/calls" ]] && grep -Eqi 'get secret |tokenrequest|create token|ephemeralrunner|delete node|patch |apply ' "$scratch/state/calls"; then exit 1; fi
+  if [[ -f "$scratch/state/calls" ]] && grep 'replace ' "$scratch/state/calls" | grep -vq 'replace --dry-run=server '; then exit 1; fi
   if [[ "$name" == replacement ]] && grep -q 'delete --raw=' "$scratch/state/calls"; then printf 'FAIL replacement delete\n'; exit 1; fi
   cases=$((cases+1))
 }
 GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
 run_case healthy_denied 0
 run_case tls_error 60
-for name in sealed stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events; do run_case "$name" 1; done
+for name in sealed stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events \
+  listener_content listener_churn listener_audit listener_admit listener_api_error; do run_case "$name" 1; done
 run_case replacement 4
 run_case cleanup_failure 4
 printf 'PASS: %s transport orchestration cases\n' "$cases"

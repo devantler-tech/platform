@@ -7,6 +7,104 @@ import (
 
 const transportPath = "k8s/providers/hetzner/infrastructure/controllers/openbao/transport/"
 
+const publicListenerHCL = `listener "tcp" {
+  address = "0.0.0.0:8204"
+  cluster_address = "127.0.0.1:8205"
+  tls_cert_file = "/openbao/arc-tls/tls.crt"
+  tls_key_file = "/openbao/arc-tls/tls.key"
+  tls_min_version = "tls12"
+  tls_disable_client_certs = true
+}
+`
+
+func TestListenerCredentialFalsePositiveRequiresPublicContentEnforcement(t *testing.T) {
+	config := readYAML(t, transportPath+"config-map-listener.yaml")
+	equal(t, field(t, config, "metadata", "name"), "arc-openbao-listener")
+	equal(t, field(t, config, "metadata", "namespace"), "openbao")
+	data := field(t, config, "data").(map[string]any)
+	if len(data) != 1 {
+		t.Fatal("the excepted ConfigMap may contain only the public listener")
+	}
+	equal(t, data["listener.hcl"], publicListenerHCL)
+	if _, exists := config["binaryData"]; exists {
+		t.Fatal("the excepted ConfigMap must not contain opaque data")
+	}
+	exception := readYAML(t, "k8s/bases/infrastructure/cluster-security-exceptions/arc-openbao-listener.yaml")
+	resources := field(t, exception, "spec", "match", "resources").([]any)
+	controls := field(t, exception, "spec", "posture").([]any)
+	if len(resources) != 1 || len(controls) != 1 {
+		t.Fatal("only this ConfigMap's credential-text false positive may be excepted")
+	}
+	equal(t, field(t, resources[0], "kind"), "ConfigMap")
+	equal(t, field(t, resources[0], "name"), "^arc-openbao-listener$")
+	equal(t, field(t, controls[0], "controlID"), "C-0012")
+	equal(t, field(t, controls[0], "action"), "ignore")
+	policy := readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml")
+	spec := field(t, policy, "spec").(map[string]any)
+	if len(spec) != 2 || spec["background"] != true {
+		t.Fatal("listener admission must retain its default admission mode and background audit")
+	}
+	rules := field(t, policy, "spec", "rules").([]any)
+	if len(rules) != 1 {
+		t.Fatal("public listener admission must have exactly one enforced rule")
+	}
+	rule := rules[0].(map[string]any)
+	if len(rule) != 3 || len(field(t, rule, "validate").(map[string]any)) != 3 {
+		t.Fatal("listener admission must not add a bypass or action override")
+	}
+	for _, forbidden := range []string{"exclude", "preconditions"} {
+		if _, exists := rule[forbidden]; exists {
+			t.Fatalf("public listener admission must not bypass %s", forbidden)
+		}
+	}
+	equal(t, field(t, rule, "validate", "failureAction"), "Enforce")
+	match := field(t, rule, "match", "any").([]any)
+	if len(match) != 1 {
+		t.Fatal("listener admission must have one global resource match")
+	}
+	selector := field(t, match[0], "resources").(map[string]any)
+	if len(selector) != 2 {
+		t.Fatal("listener admission must cover its name in every namespace")
+	}
+	kinds := field(t, selector, "kinds").([]any)
+	names := field(t, selector, "names").([]any)
+	if len(kinds) != 1 || len(names) != 1 {
+		t.Fatal("listener admission resource scope differs from its disposition")
+	}
+	equal(t, kinds[0], "ConfigMap")
+	equal(t, names[0], "arc-openbao-listener")
+	conditions := field(t, rule, "validate", "deny", "conditions", "any").([]any)
+	expected := map[string]any{
+		"{{ request.object.metadata.namespace || '' }}":         "openbao",
+		"{{ length(keys(request.object.data || `{}`)) }}":       1,
+		"{{ length(keys(request.object.binaryData || `{}`)) }}": 0,
+		"{{ request.object.data.\"listener.hcl\" || '' }}":      publicListenerHCL,
+	}
+	if len(conditions) != len(expected) {
+		t.Fatal("listener admission must enforce every public-content premise")
+	}
+	for _, condition := range conditions {
+		key := field(t, condition, "key").(string)
+		want, exists := expected[key]
+		if !exists {
+			t.Fatal("listener admission has an unexpected or duplicate condition")
+		}
+		equal(t, field(t, condition, "operator"), "NotEquals")
+		equal(t, field(t, condition, "value"), want)
+		delete(expected, key)
+	}
+	aggregate := readYAML(t, "k8s/bases/infrastructure/cluster-policies/kustomization.yaml")
+	count := 0
+	for _, resource := range field(t, aggregate, "resources").([]any) {
+		if resource == "best-practices/restrict-arc-openbao-listener.yaml" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatal("both providers must deploy the public-content admission policy once")
+	}
+}
+
 func TestCredentialStoreRequiresDedicatedVerifiedTLS(t *testing.T) {
 	store := readYAML(t, "k8s/bases/infrastructure/actions-runners/credentials/secret-store.yaml")
 	vault := field(t, store, "spec", "provider", "vault")
