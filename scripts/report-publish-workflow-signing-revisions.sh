@@ -38,7 +38,15 @@ readonly REPO_ROOT
 
 # Matches the subject spelling `guard-shared-publish-workflow-pin.sh` validates. Kept
 # textually parallel to that guard: if one moves, the other should be looked at.
-readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
+#
+# The optional group opener admits the two-publisher-family subject (#4502), which holds
+# the legacy family first inside one group: `…/devantler-tech/(actions/…@<ref>|\.github/…@<commit>)$`.
+# Without it a consumer that gains a canonical approval drops out of the scan, and the
+# identity floor then reports a deployed consumer as missing. The legacy family stays the
+# anchor on purpose: every answer this report gives is about the legacy signer, so a
+# subject naming ONLY the canonical family is not selected and its consumer fails the
+# floor rather than being reported with a revision this script never looked up.
+readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
 
 # 🔴 AN IDENTITY FLOOR, NOT A COUNT. A count answers "did I find five things?", which is
 # not the question — "did I find THESE five?" is. With a bare count, one consumer moving

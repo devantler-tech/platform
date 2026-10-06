@@ -1970,8 +1970,135 @@ for floor_ok in '>=2.0' '>=2.5.0'; do
   fi
 done
 
+# ---------------------------------------------------------------------------
+# 31. A TWO-PUBLISHER-FAMILY SUBJECT IS STILL THE SAME CONSUMER (#4502). A manifest
+#     consumer that gains a canonical approval is rendered as one subject holding the
+#     legacy family first and the canonical family second inside a group. The scan
+#     selected files by a pattern that had no group opener, so that consumer left the
+#     set and the floor reported a deployed consumer as missing — which would have failed
+#     every run from the first canonical approval onward.
+#
+#     The report's answers are about the LEGACY signer, so the legacy family stays the
+#     anchor: a subject naming only the canonical family is deliberately not selected,
+#     and its consumer fails the floor by name rather than being reported with a revision
+#     nobody looked up.
+# ---------------------------------------------------------------------------
+write_subject_consumer() { # <file> <name> <artifact> <subject>
+  cat >"$1" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: $2
+spec:
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/$3
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '$4'
+YAML
+}
+readonly FAMILY_LEGACY='actions/\.github/workflows/publish-manifests\.yaml@[0-9a-f]{40}'
+readonly FAMILY_CANONICAL='\.github/\.github/workflows/publish-manifests\.yaml@'"$SHA_C"
+# write_family_consumers <root> <subject> — the registered consumers, with every
+# publish-manifests one carrying the supplied subject and the rest left legacy-only.
+write_family_consumers() {
+  local root="$1" subject="$2" repo workflow _version _artifact oci n=0
+  mkdir -p "$root"
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
+    [ -n "$repo" ] || continue
+    n=$((n + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    if [ "$workflow" = 'publish-manifests' ]; then
+      write_subject_consumer "$root/real-$n.yaml" "r$n" "$oci/manifests" "$subject"
+    else
+      write_consumer "$root/real-$n.yaml" "r$n" "$oci/manifests" "$workflow"
+    fi
+  done <<<"$consumers"
+}
+manifest_consumers="$(printf '%s\n' "$consumers" | awk -F'\t' '$2 == "publish-manifests" { print $1 }')"
+if [ -z "$manifest_consumers" ]; then
+  fail 'no publish-manifests consumer is registered; the two-family cases below would pass vacuously'
+fi
+
+# 31a. The two-family subject yields exactly the rows the legacy subject does, and the
+#      report resolves every consumer.
+legacy_root="$WORK/family-legacy"
+write_real_consumers "$legacy_root" manifests
+family_root="$WORK/family"
+write_family_consumers "$family_root" \
+  '^https://github\.com/devantler-tech/('"$FAMILY_LEGACY"'|'"$FAMILY_CANONICAL"')$'
+legacy_list="$(PUBLISH_CONSUMER_ROOT="$legacy_root" "$SCRIPT" --list-consumers 2>&1 || true)"
+family_list="$(PUBLISH_CONSUMER_ROOT="$family_root" "$SCRIPT" --list-consumers 2>&1 || true)"
+if [ -n "$legacy_list" ] && [ "$family_list" = "$legacy_list" ]; then
+  pass 'a two-family subject is discovered as the same consumer, with the same row'
+else
+  fail "a two-family subject changed consumer discovery: $family_list"
+fi
+family_out="$WORK/family.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$family_root" "$SCRIPT" >"$family_out" 2>&1; then
+  family_insync="$(grep -c '^IN-SYNC' "$family_out" || true)"
+  [ "$family_insync" -eq "$consumer_count" ] ||
+    fail "two-family consumers were not all resolved: expected $consumer_count IN-SYNC, got $family_insync"
+  pass 'the report resolves every consumer on a two-family tree'
+else
+  fail "the report failed on a two-family tree: $(cat "$family_out")"
+fi
+
+# 31b. A subject naming ONLY the canonical family is not a consumer this report can answer
+#      for: it fails the floor and names each one, instead of dropping it silently.
+canonical_only_root="$WORK/family-canonical-only"
+write_family_consumers "$canonical_only_root" \
+  '^https://github\.com/devantler-tech/'"$FAMILY_CANONICAL"'$'
+canonical_only_out="$WORK/family-canonical-only.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$canonical_only_root" "$SCRIPT" >"$canonical_only_out" 2>&1; then
+  fail 'a consumer accepting only the canonical publisher was reported as if its legacy signer had been read'
+else
+  while IFS= read -r repository; do
+    [ -n "$repository" ] || continue
+    grep 'not discovered' "$canonical_only_out" | grep -qF -- " $repository" ||
+      fail "the canonical-only consumer $repository is not named as missing"
+  done <<<"$manifest_consumers"
+  pass 'a canonical-only subject fails the floor and names the consumer'
+fi
+
+# 31c. The canonical family written FIRST is not the reviewed arrangement, so it is not
+#      selected either: the legacy family is the anchor, wherever else it appears.
+reversed_root="$WORK/family-reversed"
+write_family_consumers "$reversed_root" \
+  '^https://github\.com/devantler-tech/('"$FAMILY_CANONICAL"'|'"$FAMILY_LEGACY"')$'
+reversed_out="$WORK/family-reversed.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$reversed_root" "$SCRIPT" >"$reversed_out" 2>&1; then
+  fail 'a two-family subject with the canonical family first was accepted'
+else
+  grep -q 'not discovered' "$reversed_out" ||
+    fail "the reversed two-family subject failed for another reason: $(head -3 "$reversed_out")"
+  pass 'a two-family subject with the canonical family first is not selected'
+fi
+
+# 31d. Two families naming DIFFERENT workflows leave the attribution ambiguous, and the
+#      existing refusal still fires on the new form.
+mixed_root="$WORK/family-mixed"
+write_family_consumers "$mixed_root" \
+  '^https://github\.com/devantler-tech/('"$FAMILY_LEGACY"'|\.github/\.github/workflows/publish-app\.yaml@'"$SHA_C"')$'
+mixed_out="$WORK/family-mixed.out"
+if PUBLISH_REVISION_RESOLVER="$(make_stub "$agree_table" agree)" \
+PUBLISH_CONSUMER_ROOT="$mixed_root" "$SCRIPT" >"$mixed_out" 2>&1; then
+  fail 'a two-family subject naming two different workflows was attributed to one of them'
+else
+  grep -q 'names more than one shared publish workflow' "$mixed_out" ||
+    fail "the mixed-workflow subject failed for another reason: $(head -3 "$mixed_out")"
+  pass 'a two-family subject naming two workflows is refused as ambiguous'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
 fi
-printf '\nPASS: publish-workflow signing-revision report (30 groups)\n'
+printf '\nPASS: publish-workflow signing-revision report (31 groups)\n'
