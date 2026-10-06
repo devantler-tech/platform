@@ -103,22 +103,31 @@ readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
 # the three generic subjects stay legacy-only.
 readonly CANONICAL_WORKFLOW_NAME='manifests'
 
-# A floor, because an empty result from a filtered read is a claim about the FILTER.
-# If a refactor moves these subjects into a generator, a template, or a different key,
-# the grep below returns nothing and — without this — the guard would exit 0 and
-# report a clean repository while checking absolutely nothing. Failing closed on an
-# unexpectedly small match set is what makes a passing run mean something. Raise this
-# when a new consumer is genuinely added, and lower it ONLY after verifying by hand
-# that the scan still matches everything it should — a pattern that quietly stopped
-# matching looks identical to a consumer that was removed.
+# THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
+# An empty result from a filtered read is a claim about the FILTER. If a refactor moves
+# these subjects into a generator, a template, or a different key, the grep below returns
+# less and — without a floor — the guard would exit 0 and report a clean repository while
+# checking nothing.
 #
-# 8 -> 7 on 2026-08-24: the doggy-countdown tenant was decommissioned
-# (devantler-tech/monorepo#3023), removing k8s/bases/apps/doggy-countdown/oci-repository.yaml.
-# Verified by hand before lowering: the remaining 7 subjects are talos verify-first-party-images,
-# the aws and github-config manifests consumers, the tenant RGD template, verify-app-images, and
-# the wedding-app and ascoachingogvaner tenants — i.e. the pattern is intact and the set shrank by
-# exactly the deleted file.
-readonly EXPECTED_MIN_SUBJECTS=7
+# The floor used to be a COUNT, and a count cannot tell which matcher went missing: one
+# rewritten in a spelling the pattern does not select was simply not counted, and any
+# other matcher made the number up. So the floor is the list of files that hold a matcher
+# and how many each holds, one `<count><TAB><path>` per line. Each named file must yield
+# exactly that many, and a matcher in a file the list does not name fails too. Add a line
+# when a consumer is genuinely added, and remove one only with the file it names.
+readonly EXPECTED_MATCHERS_FILE='scripts/shared-publish-workflow-matchers.tsv'
+
+# EVERY SUBJECT IS ACCOUNTED FOR, HOWEVER ITS VALUE IS SPELLED (#4558).
+# SUBJECT_PATTERN and DISCOVERY_PATTERN both recognise the workflow identity by its text,
+# so a matcher whose regex means the same identity in another spelling is selected by
+# neither. This pattern selects by KEY instead: any mapping entry keyed by one of the three
+# subject spellings. Whatever it selects is either judged as a shared-workflow matcher or
+# must be proved to name a different repository (prove_other_identity).
+readonly SUBJECT_KEY_PATTERN='^[[:space:]]*(-[[:space:]]+)*["'\'']?(subject|subjectRegex|subjectRegExp)["'\'']?[[:space:]]*:'
+# The same keys inside a flow mapping, `{issuer: x, subject: y}`, which the line-anchored
+# pattern above cannot see. No manifest here writes one, so the form is refused.
+readonly FLOW_SUBJECT_KEY_PATTERN='[{,][[:space:]]*["'\'']?(subject|subjectRegex|subjectRegExp)["'\'']?[[:space:]]*:[[:space:]]'
+readonly GITHUB_IDENTITY_PREFIX='^https://github\.com/'
 
 # Return the YAML scalar of a `key: value` line, with any inline comment removed.
 #
@@ -378,8 +387,187 @@ judge_family_subject() {
   judge_ref "$location" "$legacy_ref"
 }
 
+# load_expected_matchers — print the floor as `<count><TAB><path>` lines. Returns non-zero,
+# having said why, when the list is missing, empty or holds a line it cannot read: a floor
+# that could not be read is not a floor of zero.
+load_expected_matchers() {
+  local line count path seen=$'\n' listed=0
+  if [ ! -r "$EXPECTED_MATCHERS_FILE" ]; then
+    printf 'guard: %s is missing or unreadable, so there is no list of the files that must hold a matcher.\n' \
+      "$EXPECTED_MATCHERS_FILE" >&2
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '' | '#'*) continue ;;
+    esac
+    count="${line%%$'\t'*}"
+    path="${line#*$'\t'}"
+    case "$path" in
+      '' | "$line" | *$'\t'* | ./* | /*)
+        printf 'guard: %s holds a line that is not <count><TAB><repository-relative path>: %s\n' \
+          "$EXPECTED_MATCHERS_FILE" "$line" >&2
+        return 1
+        ;;
+    esac
+    if ! printf '%s' "$count" | grep -qxE '[1-9][0-9]*'; then
+      printf 'guard: %s gives %s a count that is not a positive number: %s\n' \
+        "$EXPECTED_MATCHERS_FILE" "$path" "$count" >&2
+      return 1
+    fi
+    case "$seen" in
+      *$'\n'"$path"$'\n'*)
+        printf 'guard: %s names %s more than once.\n' "$EXPECTED_MATCHERS_FILE" "$path" >&2
+        return 1
+        ;;
+    esac
+    seen="$seen$path"$'\n'
+    listed=$((listed + 1))
+    printf '%s\t%s\n' "$count" "$path"
+  done <"$EXPECTED_MATCHERS_FILE"
+  if [ "$listed" -eq 0 ]; then
+    printf 'guard: %s names no file, so nothing is required to hold a matcher.\n' \
+      "$EXPECTED_MATCHERS_FILE" >&2
+    return 1
+  fi
+}
+
+# check_named_matchers <expected> <matches> — every named file yields exactly its count,
+# and no matcher sits in a file the list does not name.
+check_named_matchers() {
+  local expected="$1" matches="$2" status=0 count path actual file
+  while IFS=$'\t' read -r count path; do
+    [ -n "$path" ] || continue
+    actual="$(printf '%s\n' "$matches" | grep -cF -- "./$path:" || true)"
+    if [ "$actual" -ne "$count" ]; then
+      printf 'guard: %s holds %d shared-publish-workflow matcher(s) this guard can judge, expected %d.\n' \
+        "$path" "$actual" "$count" >&2
+      status=1
+    fi
+  done <<EOF
+$expected
+EOF
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if ! printf '%s\n' "$expected" | cut -f2- | grep -qxF -- "${file#./}"; then
+      printf 'guard: %s holds a shared-publish-workflow matcher but is not named in %s.\n' \
+        "${file#./}" "$EXPECTED_MATCHERS_FILE" >&2
+      status=1
+    fi
+  done <<EOF
+$(printf '%s\n' "$matches" | cut -d: -f1 | sort -u)
+EOF
+  if [ "$status" -ne 0 ]; then
+    printf 'The scan, not the repository, is the likely cause when a count is short: the matcher may\n' >&2
+    printf 'have moved, or adopted a key or a spelling this guard does not select. Verify by hand,\n' >&2
+    printf 'then fix the matcher or the pattern. Change %s only when a consumer was\n' "$EXPECTED_MATCHERS_FILE" >&2
+    printf 'genuinely added or removed, in the change that adds or removes its file.\n' >&2
+  fi
+  return "$status"
+}
+
+# has_top_level_alternation <regex> — true when a `|` sits outside every group and
+# character class, which splits the whole expression: `^A|B` is `^A` OR `B`, and the
+# second half is anchored to nothing.
+has_top_level_alternation() {
+  local text="$1" depth=0 in_class=0 index char
+  for ((index = 0; index < ${#text}; index++)); do
+    char="${text:index:1}"
+    if [ "$char" = "\\" ]; then
+      index=$((index + 1))
+      continue
+    fi
+    if [ "$in_class" -eq 1 ]; then
+      [ "$char" = ']' ] && in_class=0
+      continue
+    fi
+    case "$char" in
+      '[') in_class=1 ;;
+      '(') depth=$((depth + 1)) ;;
+      ')') depth=$((depth - 1)) ;;
+      '|') [ "$depth" -le 0 ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# prove_other_identity <location> <subject> — the answer for a subject this guard does not
+# judge. Returns non-zero, having said why, unless the subject provably names a repository
+# other than the two that host the shared publish workflows.
+#
+# The proof is a literal prefix. A regex that opens with the anchored literal
+# `^https://github\.com/<owner>/<repository>` and has no alternation outside a group can
+# only match an identity beginning with that text, so one whose owner is not
+# devantler-tech, or whose repository cannot begin `actions`, cannot match a shared
+# workflow however the rest of it is written. Anything else is refused, not skipped: an
+# identity this guard cannot place may be a shared-workflow matcher in a spelling it does
+# not select, which is the gap #4558 closes. Extend this deliberately when a new kind of
+# signer is added.
+prove_other_identity() {
+  local location="$1" subject="$2" rest owner repository hosting='actions'
+  case "$subject" in
+    "$GITHUB_IDENTITY_PREFIX"*) ;;
+    *)
+      printf '%s: subject does not open with the anchored literal %s, so this guard cannot prove it is not a shared-publish-workflow matcher in a spelling it does not judge (subject: %s)\n' \
+        "$location" "$GITHUB_IDENTITY_PREFIX" "$subject" >&2
+      return 1
+      ;;
+  esac
+  # A class that opens with `]` holds it as a literal, which the scan below would read as
+  # the end of the class. No subject here needs one.
+  case "$subject" in
+    *'[]'* | *'[^]'*)
+      printf '%s: subject holds a character class opening with "]", which this guard does not parse (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  if has_top_level_alternation "$subject"; then
+    printf '%s: subject holds an alternation outside a group, so its opening literal does not bound what it matches (subject: %s)\n' \
+      "$location" "$subject" >&2
+    return 1
+  fi
+
+  rest="${subject#"$GITHUB_IDENTITY_PREFIX"}"
+  owner="${rest%%[!A-Za-z0-9-]*}"
+  rest="${rest#"$owner"}"
+  if [ -z "$owner" ] || [ "${rest:0:1}" != '/' ]; then
+    printf '%s: subject does not name one literal owner after %s (subject: %s)\n' \
+      "$location" "$GITHUB_IDENTITY_PREFIX" "$subject" >&2
+    return 1
+  fi
+  [ "$owner" = 'devantler-tech' ] || return 0
+
+  rest="${rest#/}"
+  repository="${rest%%[!a-z0-9-]*}"
+  rest="${rest#"$repository"}"
+  # The literal must END at a `/` or a class: a quantifier there would make its last
+  # character optional or repeated, so the text before it would no longer be a prefix.
+  case "${rest:0:1}" in
+    '/' | '[') ;;
+    *) repository='' ;;
+  esac
+  case "$repository" in
+    '')
+      printf '%s: subject does not open its repository with a literal name, so this guard cannot prove which repository it accepts (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  case "$hosting" in
+    "$repository"*)
+      printf '%s: subject can name the repository that hosts the shared publish workflows but is not written as %s(app|manifests)\\.yaml@<ref>$, so it was not judged (subject: %s)\n' \
+        "$location" "$LEGACY_SUBJECT_PREFIX" "$subject" >&2
+      return 1
+      ;;
+  esac
+}
+
 main() {
   cd "$REPO_ROOT"
+
+  local expected
+  expected="$(load_expected_matchers)" || return 1
 
   local matches
   matches="$(grep -rnE "$SUBJECT_PATTERN" --include='*.yaml' . || true)"
@@ -389,14 +577,7 @@ main() {
     found="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
   fi
 
-  if [ "$found" -lt "$EXPECTED_MIN_SUBJECTS" ]; then
-    printf 'guard: found %d shared-publish-workflow subject(s), expected at least %d.\n' \
-      "$found" "$EXPECTED_MIN_SUBJECTS" >&2
-    printf 'The scan, not the repository, is the likely cause: these subjects may have moved,\n' >&2
-    printf 'been renamed, or adopted a key spelling this guard does not match. Verify by hand,\n' >&2
-    printf 'then either fix the pattern or lower EXPECTED_MIN_SUBJECTS with the reason.\n' >&2
-    return 1
-  fi
+  check_named_matchers "$expected" "$matches" || return 1
 
   # DISCOVER independently of formatting, then require discovery and validation to
   # agree. The floor above only proves that the eight KNOWN subjects are still
@@ -477,12 +658,46 @@ EOF
     printf '%s' "$unvalidated" >&2
     printf 'A consumer written in a form the subject pattern does not match is NOT checked, so it could\n' >&2
     printf 'pin nothing while this guard reports success. Either extend SUBJECT_PATTERN to cover the new\n' >&2
-    printf 'form and raise EXPECTED_MIN_SUBJECTS, or confirm the reference is not a cosign subject.\n' >&2
+    printf 'form and name its file in %s, or confirm the reference is not a cosign subject.\n' "$EXPECTED_MATCHERS_FILE" >&2
+    return 1
+  fi
+
+  local flow_subjects
+  flow_subjects="$(grep -rnE "$FLOW_SUBJECT_KEY_PATTERN" --include='*.yaml' . | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  if [ -n "$flow_subjects" ]; then
+    printf 'guard: a subject is written inside a YAML flow mapping:\n%s\n' "$flow_subjects" >&2
+    printf 'This guard reads one mapping entry per line, so it would never judge that value.\n' >&2
+    printf 'Write the subject as a mapping entry on a line of its own.\n' >&2
     return 1
   fi
 
   local status=0
   local line location subject ref
+
+  # ACCOUNT FOR EVERY SUBJECT THE STRICT PATTERN DID NOT SELECT (#4558). Each is read the
+  # way YAML reads it and must be proved to name another repository. One that cannot be is
+  # refused: it may be a shared-workflow matcher in a spelling nothing above selects.
+  local keyed
+  keyed="$(grep -rnE "$SUBJECT_KEY_PATTERN" --include='*.yaml' . || true)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if printf '%s\n' "$line" | grep -qE "$SUBJECT_PATTERN"; then
+      continue # judged below
+    fi
+    location="${line%%:*}"
+    line="${line#*:}"
+    location="$location:${line%%:*}"
+    subject="${line#*:}"
+    if ! subject="$(yaml_scalar "$subject")"; then
+      printf '%s: could not read the YAML scalar of this subject, so this guard cannot tell which identity it accepts. Write it as a single-quoted or plain scalar.\n' \
+        "$location" >&2
+      status=1
+      continue
+    fi
+    prove_other_identity "$location" "$subject" || status=1
+  done <<EOF
+$keyed
+EOF
   while IFS= read -r line; do
     location="${line%%:*}"
     line="${line#*:}"

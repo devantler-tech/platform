@@ -814,6 +814,7 @@ jobs:
               # that edits the guard must also run the test that pins its ablations,
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/shared-publish-workflow-matchers.tsv'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               # Both halves, for the same reason as the pin guard above: the guard step itself
               # runs unconditionally, and listing the pair here is what keeps a guard edit
@@ -2799,7 +2800,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@498fb4b11f129928d3af9a90e9c5a46f1c4dbd77 # v7.0.0
+        uses: devantler-tech/.github/actions/validate-naming@2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
 
       - name: Confirm naming validation completed
         env:
