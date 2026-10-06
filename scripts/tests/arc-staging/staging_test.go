@@ -319,6 +319,9 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 }
 
 func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
+	const retainedControllerAggregate = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+	const retainedControllerReference = "../../../../bases/infrastructure/controllers/actions-runner-controller/"
+	controllerFound := false
 	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -339,6 +342,14 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		}
 		for _, reference := range append(document.Resources, document.Components...) {
 			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "actions-runners") {
+				relative, err := filepath.Rel(repoRoot, path)
+				if err != nil {
+					return err
+				}
+				if relative == retainedControllerAggregate && reference == retainedControllerReference && !controllerFound {
+					controllerFound = true
+					continue
+				}
 				t.Errorf("%s activates ARC through %q", path, reference)
 			}
 		}
@@ -347,6 +358,21 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !controllerFound {
+		t.Fatal("production must retain the suspended controller in its inventory")
+	}
+}
+
+func TestRetainedAnalysisResourcesCannotActivateOrLosePruneProtection(t *testing.T) {
+	const component = "k8s/providers/hetzner/infrastructure/retained-ksail-analysis/"
+	namespace := readYAML(t, component+"namespace.yaml")
+	equal(t, field(t, namespace, "metadata", "name"), "arc-ksail-analysis")
+	equal(t, field(t, namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+	release := readYAML(t, component+"helm-release.yaml")
+	equal(t, field(t, release, "metadata", "name"), "ksail-analysis-runners")
+	equal(t, field(t, release, "metadata", "namespace"), "arc-ksail-analysis")
+	equal(t, field(t, release, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+	equal(t, field(t, release, "spec", "suspend"), true)
 }
 
 func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {

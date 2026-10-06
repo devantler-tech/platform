@@ -1,5 +1,5 @@
-# Staging only: neither this component nor the runner pool is referenced by an
-# aggregate. Activation is a separate reviewed change; see docs/operations/arc-runners.md.
+# Production retains this suspended release in Flux inventory. The organization
+# pool stays unreferenced; activation is separate. See docs/operations/arc-runners.md.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

@@ -1,10 +1,11 @@
 # Organization Linux runners
 
-The ARC controller and organization Linux pool are prepared but inactive. Neither
-component is referenced by a deployment aggregate, and both HelmReleases are
-suspended. Merging their definitions registers no runner, reads no App credential
-and provisions no server. This is preparation for opt-in organization use (#4529),
-not runtime acceptance of #4462 or a resolution of KSail #7131.
+The organization Linux pool is prepared but inactive and remains outside the
+deployment aggregate. Both HelmReleases are suspended. Production retains the
+controller and the former analysis release in Flux inventory to preserve ownership
+of resources left by failed activation. Suspension stops Helm reconciliation; it
+does not drain an installed scale set. Registration, execution and cleanup still
+need the separate proofs below before KSail #7131 can close.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -124,8 +125,9 @@ Activation requires a separate reviewed change and all of these proofs:
    criteria do not route or onboard other repositories automatically.
 
 For staged validation, run `go test ./scripts/tests/arc-staging` and build both
-component directories directly with `kubectl kustomize`; normal local/prod trees
-must continue to contain no ARC resources. The unconditional CI guard runs on
+component directories directly with `kubectl kustomize`. Local trees exclude ARC;
+production retains the suspended controller and protected legacy analysis resources
+without including the organization pool. The unconditional CI guard runs on
 pull requests and merge groups. A deliberate activation revises that guard in
 the same reviewed change, alongside its evidence; deleting the guard alone is
 not activation proof.
