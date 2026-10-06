@@ -41,10 +41,14 @@ scan justified --exceptions "$scratch/exceptions.json" "$listener"
 jq -e '.summaryDetails.controls[] | select(.controlID == "C-0012") |
   .ResourceCounters.failedResources == 0 and .subStatusCounters.ignoredResources == 1' \
   "$scratch/justified.json" >/dev/null || fail unapplied-disposition
+scan mirror k8s/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml
+jq -e '.summaryDetails.controls[] | select(.controlID == "C-0012") |
+  .ResourceCounters.passedResources == 1 and .ResourceCounters.failedResources == 0 and .subStatusCounters.ignoredResources == 0' \
+  "$scratch/mirror.json" >/dev/null || fail new-mirror-false-positive
 jq '.metadata.name = "synthetic-credential-control" | .data = {password:"synthetic PRIVATE KEY"}' \
   "$scratch/public.json" >"$scratch/credential-input.json"
 scan credential --exceptions "$scratch/exceptions.json" "$scratch/credential-input.json"
 jq -e '.summaryDetails.controls[] | select(.controlID == "C-0012") |
   .ResourceCounters.failedResources == 1 and .subStatusCounters.ignoredResources == 0' \
   "$scratch/credential.json" >/dev/null || fail hidden-genuine-credential
-printf 'ARC public listener: native admission 1 pass/8 denies; scanner false positive, exact disposition and credential control verified.\n'
+printf 'ARC public listener: native admission 1 pass/8 denies; scanner false positive, exact disposition, unexcepted mirror and credential control verified.\n'

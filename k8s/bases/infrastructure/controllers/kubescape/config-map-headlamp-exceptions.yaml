@@ -111,7 +111,7 @@ data:
             "controlID": "^C-0012$"
           }
         ],
-        "reason": "C-0012's generic _key_ text pattern matches the mandatory native OpenBao tls_key_file setting. Its value is a public file path to a mounted Secret, never credential content. Enforced restrict-arc-openbao-listener admission and unconditional source tests permit exactly the audited public listener in openbao, reject extra or binary data and reject this name elsewhere. Other ConfigMaps, controls and genuine credentials remain scanned."
+        "reason": "C-0012's generic credential-text pattern matches the mandatory native OpenBao TLS private-key file setting. Its value is a public path to a mounted Secret, never credential content. Enforced restrict-arc-openbao-listener admission and unconditional source tests permit exactly the audited public listener in openbao, reject extra or binary data and reject this name elsewhere. Other ConfigMaps, controls and genuine credentials remain scanned."
       },
       {
         "name": "batch-workloads",
