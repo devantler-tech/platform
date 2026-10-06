@@ -37,7 +37,7 @@ isolation, stored-key identity, or activation requirements. The separation and
 its evidence limits are recorded in the
 [pre-activation decision](../../docs/adr/arc-pre-activation-evidence.md).
 
-On a protected invocation, the verifier requires agreement between the reviewed
+On a protected identity invocation, the verifier requires agreement between the reviewed
 and live bootstrap App client ID and SecretStore. It accepts a reviewed CA bundle
 or a namespaced ConfigMap CA reference. It verifies the real listener's certificate
 and service hostname through an unchanged TLS session in a loopback port-forward
@@ -64,8 +64,8 @@ all return nonzero. Underlying errors, IDs, keys, tokens and response bodies are
 never printed or uploaded. Redirects, HTTP, certificate bypasses and environment
 proxies are unsupported. Requests and response sizes are bounded.
 
-The current staged store uses HTTP, so its expected preflight is
-`HOLD_TRANSPORT`. WireGuard's cross-node encryption or a verifier-only tunnel does
+An HTTP declaration produces `HOLD_TRANSPORT`. WireGuard's cross-node encryption
+or a verifier-only tunnel does
 not prove the actual SecretStore's same-node transport. The transport owner must
 first deliver authenticated HTTPS and its trusted CA to the listener **and**
 SecretStore. This verifier neither enables that store nor clears the other
