@@ -821,6 +821,7 @@ jobs:
               # that edits the guard must also run the test that pins its ablations,
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/shared-publish-workflow-matchers.tsv'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               # Both halves, for the same reason as the pin guard above: the guard step itself
               # runs unconditionally, and listing the pair here is what keeps a guard edit
