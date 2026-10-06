@@ -131,7 +131,9 @@ fi
 count=0
 [[ ! -f "$FIXTURE/$key.count" ]] || count=$(cat "$FIXTURE/$key.count")
 count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
-if ((count >= 2)) && [[ -f "$FIXTURE/after/$key.json" ]]; then
+# The second and later reads return the changed object; in flap mode only every
+# other read does, so no two snapshots in a row ever agree.
+if [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
   cat "$FIXTURE/after/$key.json"
 else
   cat "$FIXTURE/$key.json"
@@ -184,6 +186,11 @@ case "$url" in
   https://product-ui.example.com/kit.css) printf ':root { color-scheme: light; }\n' >"$body" ;;
   *) exit 102 ;;
 esac
+if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
+  : >"$FIXTURE/public-failed-once"
+  printf '503'
+  exit 0
+fi
 case "${MODE:-}" in
   http-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
@@ -197,6 +204,7 @@ printf '200'
 SH
 chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
 
+expected_urls=9
 run_case() {
   local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-10}
   local fixture="${scratch}/${name}"
@@ -219,14 +227,16 @@ run_case() {
       esac
       fail "$name: healthy live-shaped rollout was not accepted (helper exit $result, $reason)"
     fi
-    [[ $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: public checks were incomplete"
+    [[ $(wc -l <"$fixture/urls") -eq "$expected_urls" ]] || fail "$name: public checks were incomplete"
   else
     if [[ "$result" == 0 ]] || ! jq -e '.complete == false and (.failure | type == "string")' "$fixture/stdout" >/dev/null; then fail "$name: incomplete or unsafe rollout was accepted"; fi
     if [[ "$mode" == unsafe-storage ]]; then
       jq -e '.failure == "public_contract_incomplete"' "$fixture/stdout" >/dev/null || fail "$name: unsafe permissions were not refused during public checks"
     fi
     if [[ "$name" == changed-* ]]; then
-      [[ -f "$fixture/urls" && $(wc -l <"$fixture/urls") -eq 9 ]] || fail "$name: failure preceded the public checks"
+      [[ -f "$fixture/urls" && $(wc -l <"$fixture/urls") -eq "$expected_urls" ]] || fail "$name: the public checks were not repeated for every snapshot pair"
+      jq -e --arg key "${name#changed-}" '.failure == "rollout_changed" and (.changed | type == "array" and length > 0 and any(.[]; . == $key or startswith($key + ".")))' "$fixture/stdout" >/dev/null ||
+        fail "$name: the refusal did not name the object that kept changing"
     fi
   fi
   if [[ "$mode" == preflight-timeout || "$mode" == hang ]]; then
@@ -319,8 +329,36 @@ for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods root prod
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
   jq 'if .kind == "PodList" then .items[5].metadata.uid="recreated-uid" else .metadata.uid="recreated-uid" end' \
     "${scratch}/healthy/$key.json" >"${scratch}/$name/after/$key.json"
-  run_case "$name" fail
+  expected_urls=27
+  run_case "$name" fail flap 20
+  expected_urls=9
 done
+# A change that happens once and then holds is an ordinary reconcile, not a
+# moving rollout: the pair is retaken, public checks included, and accepted.
+mkdir -p "${scratch}/settled-label/after"
+cp "${scratch}/healthy/"*.json "${scratch}/settled-label/"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/settled-label/after/apps.json"
+expected_urls=18
+run_case settled-label pass
+expected_urls=9
+# The same change is still refused when the state it settles into is wrong.
+mkdir -p "${scratch}/settled-wrong/after"
+cp "${scratch}/healthy/"*.json "${scratch}/settled-wrong/"
+jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/settled-wrong/after/apps.json"
+run_case settled-wrong fail '' 3
+jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"]' "${scratch}/settled-wrong/stdout" >/dev/null ||
+  fail 'settled-wrong: a rollout that settled into a wrong state was not refused with the change named'
+# Public checks that fail once while the rollout moves are retaken with it.
+mkdir -p "${scratch}/moving-public/after"
+cp "${scratch}/healthy/"*.json "${scratch}/moving-public/"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/moving-public/after/apps.json"
+expected_urls=10
+run_case moving-public pass flaky-public
+expected_urls=9
+# Against a rollout that holds still, one failed public check refuses the deploy.
+run_case still-public fail flaky-public 3
+jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
+  fail 'still-public: a failed public check against an unchanged rollout was not refused as such'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
 mutate_case foreign-source-namespace apps '.spec.sourceRef.namespace="foreign"' 3
 mutate_case root-advanced root '.status.artifact.revision="latest@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' 3
