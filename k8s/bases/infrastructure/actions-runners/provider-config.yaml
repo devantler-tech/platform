@@ -1,0 +1,14 @@
+# A distinct cache key keeps the runtime App separate from the management App.
+# The namespaced provider reads the existing ARC Secret in this namespace.
+apiVersion: github.m.upbound.io/v1beta1
+kind: ProviderConfig
+metadata:
+  name: arc-runtime-platform-app
+  namespace: arc-runners
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: arc-runners
+      name: arc-github-app
+      key: provider-credentials

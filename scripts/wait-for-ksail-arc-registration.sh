@@ -19,6 +19,28 @@ while ((SECONDS < deadline)); do
       ready=false
     fi
   done
+  # The pinned provider caches by reference name, across namespaces and kinds.
+  # Bind this distinct name to exactly one native configuration and Secret.
+  if ! state=$(kc get providerconfigs.github.m.upbound.io --all-namespaces -o json) ||
+    ! jq -e '
+      [.items[] | select(.metadata.name == "arc-runtime-platform-app")] as $configs |
+      ($configs | length) == 1 and
+      $configs[0].apiVersion == "github.m.upbound.io/v1beta1" and
+      $configs[0].kind == "ProviderConfig" and
+      $configs[0].metadata.namespace == "arc-runners" and
+      $configs[0].metadata.deletionTimestamp == null and
+      $configs[0].spec.credentials == {"source":"Secret","secretRef":{
+        "namespace":"arc-runners","name":"arc-github-app","key":"provider-credentials"}}
+    ' <<<"$state" >/dev/null 2>&1; then
+    ready=false
+  fi
+  for resource in clusterproviderconfigs.github.m.upbound.io providerconfigs.github.upbound.io; do
+    if ! state=$(kc get "$resource" -o json) ||
+      ! jq -e '[.items[] | select(.metadata.name == "arc-runtime-platform-app")] | length == 0' \
+        <<<"$state" >/dev/null 2>&1; then
+      ready=false
+    fi
+  done
   # The provider observation comes from the existing organization's App.
   # Desired selection alone cannot establish the remote access boundary.
   if ! state=$(kc -n arc-runners get runnergroups.actions.github.m.upbound.io platform -o json) ||
@@ -31,13 +53,17 @@ while ((SECONDS < deadline)); do
       ($generation | type == "number" and . > 0) and
       ($id | type == "string" and test("^[1-9][0-9]{0,18}$")) and
       .metadata.annotations["crossplane.io/external-name"] == $id and
-      .spec.providerConfigRef == {"name":"runtime-app","kind":"ProviderConfig"} and
+      .spec.providerConfigRef == {"name":"arc-runtime-platform-app","kind":"ProviderConfig"} and
       .spec.forProvider.name == "platform" and .spec.forProvider.visibility == "selected" and
       .spec.forProvider.selectedRepositoryIds == [737584922] and
       .spec.forProvider.allowsPublicRepositories == true and
+      .spec.forProvider.restrictedToWorkflows == true and
+      .spec.forProvider.selectedWorkflows == ["devantler-tech/ksail/.github/workflows/verify-ksail-arc-delivery.yaml@refs/heads/main"] and
       .status.atProvider.name == "platform" and .status.atProvider.visibility == "selected" and
       .status.atProvider.selectedRepositoryIds == [737584922] and
       .status.atProvider.allowsPublicRepositories == true and
+      .status.atProvider.restrictedToWorkflows == true and
+      .status.atProvider.selectedWorkflows == ["devantler-tech/ksail/.github/workflows/verify-ksail-arc-delivery.yaml@refs/heads/main"] and
       .status.atProvider.default == false and .status.atProvider.inherited == false and
       .status.atProvider.runnersUrl == ("https://api.github.com/orgs/devantler-tech/actions/runner-groups/" + $id + "/runners") and
       .status.atProvider.selectedRepositoriesUrl == ("https://api.github.com/orgs/devantler-tech/actions/runner-groups/" + $id + "/repositories") and

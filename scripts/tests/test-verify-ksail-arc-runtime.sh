@@ -108,6 +108,12 @@ touch "$ARC_TEST_ROOT/runtime-access"
 shift 3 # context pair and request-timeout
 args="$*"
 case "$args" in
+  *'get providerconfigs.github.m.upbound.io --all-namespaces '*)
+    jq -cn '{items:[{apiVersion:"github.m.upbound.io/v1beta1",kind:"ProviderConfig",
+      metadata:{name:"arc-runtime-platform-app",namespace:"arc-runners"},
+      spec:{credentials:{source:"Secret",secretRef:{namespace:"arc-runners",name:"arc-github-app",key:"provider-credentials"}}}}]}' ;;
+  *'get clusterproviderconfigs.github.m.upbound.io '*|*'get providerconfigs.github.upbound.io '*)
+    printf '{"items":[]}' ;;
   *'get deployment cluster-autoscaler-hetzner-cluster-autoscaler '*)
     printf '%s\n' --cloud-provider=hetzner --max-nodes-total=9 --nodes=0:1:cx53:fsn1:autoscale-arc-runners
     [[ "$ARC_TEST_CASE" != wider-ceiling ]] || printf '%s\n' --max-nodes-total=10 ;;
@@ -125,8 +131,8 @@ case "$args" in
   *'get runnergroups.actions.github.m.upbound.io platform '*)
     jq -cn '{apiVersion:"actions.github.m.upbound.io/v1alpha1",kind:"RunnerGroup",
       metadata:{name:"platform",namespace:"arc-runners",uid:"group-uid",generation:2,annotations:{"crossplane.io/external-name":"27"}},
-      spec:{providerConfigRef:{name:"runtime-app",kind:"ProviderConfig"},forProvider:{name:"platform",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[]}},
-      status:{atProvider:{id:"27",name:"platform",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[],
+      spec:{providerConfigRef:{name:"arc-runtime-platform-app",kind:"ProviderConfig"},forProvider:{name:"platform",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:true,selectedRepositoryIds:[737584922],selectedWorkflows:["devantler-tech/ksail/.github/workflows/verify-ksail-arc-delivery.yaml@refs/heads/main"]}},
+      status:{atProvider:{id:"27",name:"platform",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:true,selectedRepositoryIds:[737584922],selectedWorkflows:["devantler-tech/ksail/.github/workflows/verify-ksail-arc-delivery.yaml@refs/heads/main"],
         runnersUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/runners",
         selectedRepositoriesUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/repositories"},
         conditions:[{type:"Ready",status:"True",observedGeneration:2},{type:"Synced",status:"True",observedGeneration:2}]}}' ;;

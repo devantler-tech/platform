@@ -21,4 +21,6 @@ resources:
   - service-account.yaml
   - secret-store.yaml
   - external-secret.yaml
+  - provider-config.yaml
+  - runner-group.yaml
   - cilium-network-policy-runner.yaml
