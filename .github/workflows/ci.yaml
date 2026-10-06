@@ -586,6 +586,7 @@ jobs:
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               # The bookmark validator and its tests guard the same ConfigMap (#2909).
               - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/validate-homepage-bookmarks/**'
               - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/homepage-bookmarks/**'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -1265,7 +1266,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.196.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1626,6 +1627,7 @@ jobs:
         # the real ConfigMap (#2909).
         run: |
           shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          go test ./scripts/validate-homepage-bookmarks
           bash scripts/tests/test-validate-homepage-bookmarks.sh
           bash scripts/validate-homepage-bookmarks.sh
 
@@ -2379,7 +2381,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.196.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2774,7 +2776,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@30882cccda9e41c622f6493e21e7eb6f3339b91f # v4.9.1
+        uses: devantler-tech/.github/actions/validate-naming@498fb4b11f129928d3af9a90e9c5a46f1c4dbd77 # v7.0.0
 
       - name: Confirm naming validation completed
         env:
@@ -3374,7 +3376,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.196.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3496,7 +3498,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@df7fd4f83edade31c121a9de563d9a7b9b1f900d # v13.10.3
+        uses: devantler-tech/actions/aggregate-job-checks@1d726483facb9340655489913f609082677be8f5 # v13.10.6
         with:
           job-results: >-
             ${{ needs.changes.result }}

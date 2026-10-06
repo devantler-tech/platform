@@ -1,0 +1,37 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-github-team-management-nested-or-directory-linked
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-management.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-github-team-management
+    rule: teams-not-nested-or-directory-linked
+    resources:
+      - github-config/forprovider-parentteamid
+      - github-config/forprovider-parentteamreadid
+      - github-config/forprovider-parentteamreadslug
+      - github-config/forprovider-ldapdn
+      - github-config/initprovider-parentteamid
+      - github-config/initprovider-parentteamreadid
+      - github-config/initprovider-parentteamreadslug
+      - github-config/initprovider-ldapdn
+      - github-config/wildcard-star
+      - github-config/wildcard-question
+      - github-config/admins
+      - github-config/typed-false
+      - github-config/typed-empty-list
+      - github-config/whitespace
+    kind: Team
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teams-not-nested-or-directory-linked
+    resources:
+      - github-config/maintainers
+      - github-config/no-spec
+    kind: Team
+    result: pass

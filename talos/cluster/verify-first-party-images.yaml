@@ -57,7 +57,7 @@
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed, but by seven different signing identities, so they need seven rules:
+# signed through eight signing routes:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
@@ -71,13 +71,15 @@
 #      dedicated publish-kubescape-node-agent-hotfix.yaml workflow on main.
 #   5. ghcr.io/devantler-tech/platform-coroot-node-agent — signed by the
 #      dedicated publish-coroot-node-agent-hotfix.yaml workflow on main.
-#   6. the private World at Ruin zone is signed by that repository's server-cd
+#   6. ghcr.io/devantler-tech/ksail-analysis-runner is signed by KSail's
+#      dedicated main-only publish-ksail-analysis-runner.yaml workflow.
+#   7. the private World at Ruin zone is signed by that repository's server-cd
 #      workflow on stable release tags only.
-#   7. the app images (wedding-app, ascoachingogvaner, …) are signed by the
+#   8. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
 #      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
 #      verify-app-images ImageValidatingPolicy pin (#3022).
-# Talos evaluates rules in order, first match wins, so the six specific rules
+# Talos evaluates rules in order, first match wins, so the seven specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
@@ -103,6 +105,11 @@
 apiVersion: v1alpha1
 kind: ImageVerificationConfig
 rules:
+  # The analysis image must precede the broader KSail release-image route.
+  - image: ghcr.io/devantler-tech/ksail-analysis-runner
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/ksail/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
   # ksail-operator image — signed by ksail's OWN release pipeline (cd.yaml),
   # a different keyless identity than publish-app.yaml. MUST precede the
   # catch-all below (first-match-wins). Requires ksail >= the first release
