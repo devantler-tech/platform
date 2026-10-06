@@ -27,7 +27,10 @@ func TestRecoveryMetadataReadsRequireCompleteEmptyMetadataLists(t *testing.T) {
 		{"full pod list", strings.Replace(empty, "PartialObjectMetadataList", "PodList", 1), 200, false},
 		{"full data masquerading as metadata", strings.Replace(empty, `"items":[]`, `"spec":{"token":"synthetic"},"items":[]`, 1), 200, false},
 		{"missing items", strings.Replace(empty, `,"items":[]`, "", 1), 200, false},
-		{"null items", strings.Replace(empty, `"items":[]`, `"items":null`, 1), 200, false},
+		{"native empty null items", strings.Replace(empty, `"items":[]`, `"items":null`, 1), 200, true},
+		{"null items without revision", strings.Replace(strings.Replace(empty, `"items":[]`, `"items":null`, 1), `"resourceVersion":"123"`, `"resourceVersion":""`, 1), 200, false},
+		{"paginated null items", strings.Replace(strings.Replace(empty, `"items":[]`, `"items":null`, 1), `"resourceVersion":"123"`, `"resourceVersion":"123","continue":"next"`, 1), 200, false},
+		{"object items", strings.Replace(empty, `"items":[]`, `"items":{}`, 1), 200, false},
 		{"pagination", strings.Replace(empty, `"resourceVersion":"123"`, `"resourceVersion":"123","continue":"next"`, 1), 200, false},
 		{"missing revision", strings.Replace(empty, `"resourceVersion":"123"`, `"resourceVersion":""`, 1), 200, false},
 		{"wrong api", strings.Replace(empty, "meta.k8s.io/v1", "v1", 1), 200, false},
@@ -52,6 +55,39 @@ func TestRecoveryMetadataReadsRequireCompleteEmptyMetadataLists(t *testing.T) {
 			}
 			if err != nil && strings.Contains(err.Error(), "synthetic") {
 				t.Fatal("response contents escaped into diagnostics")
+			}
+		})
+	}
+}
+
+func TestRecoveryObservesRetainedPoolWithoutConfusingItWithActiveRunners(t *testing.T) {
+	const item = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-analysis-runners","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}`
+	const prefix = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":`
+	for _, tc := range []struct {
+		name, body string
+		ok         bool
+	}{
+		{"not yet installed", prefix + `null}`, true},
+		{"retained declaration", prefix + `[` + item + `]}`, true},
+		{"unexpected pool", prefix + `[` + strings.Replace(item, "ksail-analysis-runners", "other", 1) + `]}`, false},
+		{"foreign namespace", prefix + `[` + strings.Replace(item, "arc-ksail-analysis", "arc-runners", 1) + `]}`, false},
+		{"missing UID", prefix + `[` + strings.Replace(item, `"uid":"retained"`, `"uid":""`, 1) + `]}`, false},
+		{"missing revision", prefix + `[` + strings.Replace(item, `"resourceVersion":"123"`, `"resourceVersion":""`, 1) + `]}`, false},
+		{"multiple pools", prefix + `[` + item + `,` + item + `]}`, false},
+		{"full resource", prefix + `[` + strings.Replace(item, `"metadata":`, `"spec":{"maxRunners":0},"metadata":`, 1) + `]}`, false},
+		{"pagination", strings.Replace(prefix, `"resourceVersion":"123"`, `"resourceVersion":"123","continue":"next"`, 1) + `null}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != "GET" || r.Header.Get("Accept") != metadataAccept {
+					t.Error("retained pool observation widened")
+				}
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer server.Close()
+			err := requireRetainedMetadata(context.Background(), metadataClient(), server.URL)
+			if (err == nil) != tc.ok {
+				t.Fatalf("accepted=%v, want %v: %v", err == nil, tc.ok, err)
 			}
 		})
 	}
@@ -99,14 +135,17 @@ func TestNativeMetadataProxyPreservesAcceptAndRejectsWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal("native metadata-proxy regression requires kubectl")
 	}
-	requests := make(chan string, 16)
+	requests := make(chan string, len(recoveryEndpoints)+1)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Method + " " + r.URL.Path
 		if r.Method != "GET" || r.Header.Get("Accept") != metadataAccept {
 			t.Error("native proxy widened the read")
 		}
+		if r.URL.Path == "/api/v1/namespaces/arc-systems/pods" && r.URL.Query().Get("labelSelector") != "platform.devantler.tech/arc-role=listener" {
+			t.Error("native proxy lost the retained listener selector")
+		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":[]}`))
+		_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":null}`))
 	}))
 	defer server.Close()
 	cert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
@@ -169,7 +208,7 @@ func TestNativeMetadataProxyPreservesAcceptAndRejectsWrites(t *testing.T) {
 }
 
 func TestRecoveryUsesOnlyMetadataEndpoints(t *testing.T) {
-	if len(recoveryEndpoints) != 12 {
+	if len(recoveryEndpoints) != 17 {
 		t.Fatal("incomplete recovery observation set")
 	}
 	for _, path := range recoveryEndpoints {

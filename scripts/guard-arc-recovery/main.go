@@ -24,6 +24,7 @@ import (
 
 const metadataAccept = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
 const controllerDeploymentPath = "/apis/apps/v1/namespaces/arc-systems/deployments/arc-controller"
+const retainedPoolPath = "/apis/actions.github.com/v1alpha1/namespaces/arc-ksail-analysis/autoscalingrunnersets"
 
 // RE2 has no negative lookahead; these alternatives match every nonempty
 // method except the exact GET spelling, including nonstandard methods.
@@ -34,6 +35,10 @@ var recoveryEndpoints = []string{
 	"/apis/actions.github.com/v1alpha1/namespaces/arc-runners/autoscalinglisteners",
 	"/apis/actions.github.com/v1alpha1/namespaces/arc-runners/ephemeralrunnersets",
 	"/apis/actions.github.com/v1alpha1/namespaces/arc-runners/ephemeralrunners",
+	retainedPoolPath,
+	"/apis/actions.github.com/v1alpha1/namespaces/arc-ksail-analysis/autoscalinglisteners",
+	"/apis/actions.github.com/v1alpha1/namespaces/arc-ksail-analysis/ephemeralrunnersets",
+	"/apis/actions.github.com/v1alpha1/namespaces/arc-ksail-analysis/ephemeralrunners",
 	"/apis/actions.github.com/v1alpha1/namespaces/arc-systems/autoscalingrunnersets",
 	"/apis/actions.github.com/v1alpha1/namespaces/arc-systems/autoscalinglisteners",
 	"/apis/actions.github.com/v1alpha1/namespaces/arc-systems/ephemeralrunnersets",
@@ -42,6 +47,7 @@ var recoveryEndpoints = []string{
 	"/apis/external-secrets.io/v1/namespaces/arc-runners/externalsecrets",
 	"/api/v1/namespaces/arc-runners/pods",
 	"/api/v1/namespaces/arc-ksail-analysis/pods",
+	"/api/v1/namespaces/arc-systems/pods?labelSelector=platform.devantler.tech%2Farc-role%3Dlistener",
 }
 
 type release struct {
@@ -102,23 +108,23 @@ func metadataClient() *http.Client {
 	}
 }
 
-func requireEmptyMetadata(ctx context.Context, client *http.Client, endpoint string) error {
+func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]json.RawMessage, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return errors.New("metadata request invalid")
+		return nil, errors.New("metadata request invalid")
 	}
 	request.Header.Set("Accept", metadataAccept)
 	response, err := client.Do(request)
 	if err != nil {
-		return errors.New("metadata read failed")
+		return nil, errors.New("metadata read failed")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return errors.New("metadata read refused or redirected")
+		return nil, errors.New("metadata read refused or redirected")
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
-		return errors.New("metadata response incomplete or oversized")
+		return nil, errors.New("metadata response incomplete or oversized")
 	}
 	var list struct {
 		APIVersion string `json:"apiVersion"`
@@ -128,22 +134,77 @@ func requireEmptyMetadata(ctx context.Context, client *http.Client, endpoint str
 			Continue        string `json:"continue"`
 			Remaining       *int64 `json:"remainingItemCount"`
 		} `json:"metadata"`
-		Items []struct {
-			APIVersion string                     `json:"apiVersion"`
-			Kind       string                     `json:"kind"`
-			Metadata   map[string]json.RawMessage `json:"metadata"`
-		} `json:"items"`
+		Items json.RawMessage `json:"items"`
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&list) != nil || list.APIVersion != "meta.k8s.io/v1" || list.Kind != "PartialObjectMetadataList" || list.Metadata.ResourceVersion == "" || list.Metadata.Continue != "" || list.Items == nil || (list.Metadata.Remaining != nil && *list.Metadata.Remaining != 0) {
-		return errors.New("metadata response is not a complete metadata list")
+	if decoder.Decode(&list) != nil || list.APIVersion != "meta.k8s.io/v1" || list.Kind != "PartialObjectMetadataList" || list.Metadata.ResourceVersion == "" || list.Metadata.Continue != "" || len(list.Items) == 0 || (list.Metadata.Remaining != nil && *list.Metadata.Remaining != 0) {
+		return nil, errors.New("metadata response is not a complete metadata list")
 	}
 	if decoder.Decode(new(any)) != io.EOF {
-		return errors.New("metadata response has trailing data")
+		return nil, errors.New("metadata response has trailing data")
 	}
-	if len(list.Items) != 0 {
+	// Kubernetes encodes a native empty metadata list as null. Keep the field
+	// presence check above so an omitted list cannot prove absence.
+	if bytes.Equal(bytes.TrimSpace(list.Items), []byte("null")) {
+		return nil, nil
+	}
+	var items []json.RawMessage
+	if json.Unmarshal(list.Items, &items) != nil || items == nil {
+		return nil, errors.New("metadata response items is not an array or native null")
+	}
+	return items, nil
+}
+
+func requireEmptyMetadata(ctx context.Context, client *http.Client, endpoint string) error {
+	items, err := readMetadata(ctx, client, endpoint)
+	if err != nil {
+		return err
+	}
+	if len(items) != 0 {
 		return errors.New("ARC recovery found a live pool, credential-sync resource or pod")
+	}
+	return nil
+}
+
+// Helm retains its declared AutoscalingRunnerSet even with both bounds at zero.
+// Observe only that exact declaration; listeners, runner sets and pods must be
+// absent, and after-reconcile independently proves the controller excludes it.
+func requireRetainedMetadata(ctx context.Context, client *http.Client, endpoint string) error {
+	items, err := readMetadata(ctx, client, endpoint)
+	if err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	if len(items) != 1 {
+		return errors.New("retained namespace contains unexpected pools")
+	}
+	var item struct {
+		APIVersion string                     `json:"apiVersion"`
+		Kind       string                     `json:"kind"`
+		Metadata   map[string]json.RawMessage `json:"metadata"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(items[0]))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&item) != nil || item.APIVersion != "meta.k8s.io/v1" || item.Kind != "PartialObjectMetadata" {
+		return errors.New("retained pool response is not metadata")
+	}
+	for key, expected := range map[string]string{"name": "ksail-analysis-runners", "namespace": "arc-ksail-analysis"} {
+		var actual string
+		if json.Unmarshal(item.Metadata[key], &actual) != nil || actual != expected {
+			return errors.New("retained pool identity does not match its declaration")
+		}
+	}
+	for _, key := range []string{"uid", "resourceVersion"} {
+		var value string
+		if json.Unmarshal(item.Metadata[key], &value) != nil || value == "" {
+			return errors.New("retained pool identity is incomplete")
+		}
+	}
+	if value, exists := item.Metadata["deletionTimestamp"]; exists && !bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		return errors.New("retained pool is being deleted")
 	}
 	return nil
 }
@@ -230,7 +291,7 @@ func startMetadataProxy(ctx context.Context, command func(context.Context, ...st
 	childCtx, cancel := context.WithCancel(ctx)
 	paths := make([]string, len(recoveryEndpoints)+1)
 	for i, path := range recoveryEndpoints {
-		paths[i] = regexp.QuoteMeta(path)
+		paths[i] = regexp.QuoteMeta(strings.SplitN(path, "?", 2)[0])
 	}
 	paths[len(recoveryEndpoints)] = regexp.QuoteMeta(controllerDeploymentPath)
 	cmd := command(childCtx, "--context", "admin@prod", "proxy", "--address=127.0.0.1", "--port=0", "--accept-hosts=^127\\.0\\.0\\.1$", "--accept-paths=^("+strings.Join(paths, "|")+")$", "--reject-methods="+rejectNonGET)
@@ -311,11 +372,17 @@ func run(stage string) error {
 		}
 	}
 	for _, endpoint := range recoveryEndpoints {
+		if endpoint == retainedPoolPath {
+			if err := requireRetainedMetadata(ctx, client, base+endpoint); err != nil {
+				return err
+			}
+			continue
+		}
 		if err := requireEmptyMetadata(ctx, client, base+endpoint); err != nil {
 			return err
 		}
 	}
-	fmt.Printf("ARC drain recovery %s: %d complete metadata lists prove zero active organization resources or ARC pods\n", stage, len(recoveryEndpoints))
+	fmt.Printf("ARC drain recovery %s: %d complete metadata lists prove no active organization resources, retained runner children or ARC pods\n", stage, len(recoveryEndpoints))
 	return nil
 }
 
