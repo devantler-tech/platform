@@ -19,8 +19,9 @@ metadata:
       Requires keyless cosign signatures from the matching devantler-tech
       release pipeline on first-party container images at Pod admission:
       publish-app for app images, the platform's dedicated compatibility-image
-      publishers, each Crossplane provider's own package workflow, and KSail's
-      release workflow. Each class is verified only against its own identity;
+      publishers, each Crossplane provider's own package workflow, KSail's
+      publish-ksail-analysis-runner.yaml workflow, and KSail's release workflow.
+      Each class is verified only against its own identity;
       third-party images admit unverified.
 spec:
   failurePolicy: Fail
