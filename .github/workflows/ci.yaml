@@ -649,6 +649,12 @@ jobs:
               - 'scripts/probe-github-team-external-identity.sh'
               - 'scripts/tests/test-probe-github-team-external-identity.sh'
               - '.github/workflows/probe-github-team-external-identity.yaml'
+              # The #3604 user-namespace map read, its test and its workflow are one
+              # contract: the test pins that the script issues one `get` and four
+              # fixed `exec … cat` reads, and that no node-side id reaches the log.
+              - 'scripts/read-actual-budget-userns-maps.sh'
+              - 'scripts/tests/test-read-actual-budget-userns-maps.sh'
+              - '.github/workflows/read-actual-budget-userns-maps.yaml'
               # The #3790 datapath throttling measurement, its test and its workflow
               # are one contract: the test pins that the script stays read-only, its
               # arithmetic, and that no node or pod name reaches the public log.
@@ -1821,6 +1827,16 @@ jobs:
         run: |
           shellcheck scripts/probe-github-team-external-identity.sh scripts/tests/test-probe-github-team-external-identity.sh
           bash scripts/tests/test-probe-github-team-external-identity.sh
+
+      - name: 🪪 Validate Actual Budget user-namespace map read
+        if: needs.changes.outputs.k8s == 'true'
+        # The read needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins what makes dispatching it acceptable: one `get`
+        # and four fixed `exec … cat` reads, an unreadable or unparsable map
+        # never reported as mapped, and no node-side id in the public log.
+        run: |
+          shellcheck scripts/read-actual-budget-userns-maps.sh scripts/tests/test-read-actual-budget-userns-maps.sh
+          bash scripts/tests/test-read-actual-budget-userns-maps.sh
 
       - name: 📏 Validate datapath CPU throttling measurement
         if: needs.changes.outputs.k8s == 'true'
