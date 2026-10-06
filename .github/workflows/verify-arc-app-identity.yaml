@@ -1,0 +1,88 @@
+name: Verify ARC App Identity
+
+# Read-only identity proof; never scheduled, PR-triggered or an activation probe.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-arc-app-identity"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  identity:
+    name: Verify existing ARC App identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    env:
+      ARC_IDENTITY_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require protected invocation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == verify-arc-app-identity && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Test and build verifier without credentials
+        run: |
+          go test -race ./scripts/verify-arc-app-identity
+          go build -o "${RUNNER_TEMP}/verify-arc-app-identity" ./scripts/verify-arc-app-identity
+
+      - name: Require encrypted declared credential transport
+        run: '"${RUNNER_TEMP}/verify-arc-app-identity" --preflight'
+
+      - name: Restore existing protected kubeconfig
+        id: kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Select stable production endpoint without publishing its details
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then
+            echo 'ARC_APP_IDENTITY=HOLD_ENDPOINT'
+            exit 1
+          fi
+
+      - name: Verify existing App and installed organization permission
+        run: '"${RUNNER_TEMP}/verify-arc-app-identity" --verify'
+
+      - name: Remove restored kubeconfig
+        if: ${{ always() && steps.kubeconfig.outcome == 'success' }}
+        shell: bash
+        run: rm -f ~/.kube/config
