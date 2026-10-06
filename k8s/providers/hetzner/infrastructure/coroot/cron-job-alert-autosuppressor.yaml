@@ -635,9 +635,9 @@ spec:
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
                           elif (.fingerprint=="023675248cbc16ad"
                            and ((.application_id // "") | endswith(":longhorn-system:Deployment:csi-provisioner"))
-                           and ((try (($d.Sample // "") | capture(
+                           and ((try (($d.Sample // "") | [capture(
                              "^E[0-9]{4} [0-9:.]+ +1 controller\\.go:(1569|1633)\\] \\\"Volume deletion failed\\\" err=\\\"persistentvolume (?<pv>pvc-[0-9a-f-]{36}) is still attached to node [a-z0-9-]+\\\" PV=\\\"(?<reported>pvc-[0-9a-f-]{36})\\\"$"
-                           )) catch null) as $delete | $delete != null and $delete.pv==$delete.reported)) then "csi-provisioner-clone-delete-retry"
+                           )] | .[0]) catch null) as $delete | $delete != null and $delete.pv==$delete.reported)) then "csi-provisioner-clone-delete-retry"
                           elif (.fingerprint=="7a7736f01bfa9b65"
                            and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-csi-plugin"))
                            and (($d.Sample // "") | test(
@@ -721,9 +721,9 @@ spec:
                            and (($d.Sample // "") | test(" timeElapsed=\"[0-9.]+ms\" method=\"GET\" path=\"/apis/[^\"]+\" result=null$"))) then "apiserver-millisecond-post-timeout"
                           elif (.fingerprint=="023675248cbc16ad"
                            and ((.application_id // "") | endswith(":longhorn-system:Deployment:csi-provisioner"))
-                           and ((try (($d.Sample // "") | capture(
+                           and ((try (($d.Sample // "") | [capture(
                              "^E[0-9]{4} [0-9:.]+ +1 controller\\.go:(1569|1633)\\] \\\"Volume deletion failed\\\" err=\\\"persistentvolume (?<pv>pvc-[0-9a-f-]{36}) is still attached to node [a-z0-9-]+\\\" PV=\\\"(?<reported>pvc-[0-9a-f-]{36})\\\"$"
-                           )) catch null) as $delete | $delete != null and $delete.pv==$delete.reported)) then "csi-provisioner-clone-delete-retry"
+                           )] | .[0]) catch null) as $delete | $delete != null and $delete.pv==$delete.reported)) then "csi-provisioner-clone-delete-retry"
                           elif (.fingerprint=="7a7736f01bfa9b65"
                            and ((.application_id // "") | endswith(":longhorn-system:DaemonSet:longhorn-csi-plugin"))
                            and (($d.Sample // "") | test(

@@ -1143,6 +1143,30 @@ lost="$(jq -r --slurpfile base "${pinned_logs_dir}/suppressed.json" \
   fail "an unreviewed Longhorn source line was suppressed (expected 4 alerts to stay visible, got ${lost})"
 pass "Longhorn exemptions hold at both the 1.12 and 1.13 source lines and at no other line"
 
+# The same four patterns exist a second time, in the path that reopens an
+# already-suppressed alert whose sample stopped matching. Replay the fixtures
+# as suppressed alerts so that copy is exercised too.
+reopened_ids() {
+  local dir="$1"
+  shift
+  longhorn_lines "$@" | sed 's/"suppressed":false/"suppressed":true/' >"${dir}/alerts.json"
+  run_scenario "${dir}" >/dev/null
+  if [ -f "${dir}/reopened.json" ]; then
+    jq -c '.ids | sort' "${dir}/reopened.json"
+  else
+    echo '[]'
+  fi
+}
+held_reopen="$(reopened_ids "$(setup_scenario held-longhorn-lines false)" 305 181 136 1569)"
+upgraded_reopen="$(reopened_ids "$(setup_scenario held-upgraded-longhorn-lines false)" 317 311 139 1633)"
+other_reopen="$(reopened_ids "$(setup_scenario held-other-longhorn-lines false)" 306 312 140 1634)"
+[ "${upgraded_reopen}" = "${held_reopen}" ] ||
+  fail "a suppressed Longhorn alert was reopened at the 1.13.0 source lines: ${upgraded_reopen} vs ${held_reopen}"
+extra="$(jq -n --argjson other "${other_reopen}" --argjson held "${held_reopen}" '$other - $held | length')"
+[ "${extra}" = 4 ] ||
+  fail "a suppressed alert at an unreviewed Longhorn source line was not reopened (expected 4, got ${extra}): ${other_reopen} vs ${held_reopen}"
+pass "suppressed Longhorn alerts stay suppressed at both reviewed line sets and reopen at any other"
+
 changed_controller_dir="$(setup_scenario changed-controller-pattern false)"
 cat >"${changed_controller_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
