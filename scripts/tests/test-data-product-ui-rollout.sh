@@ -42,6 +42,13 @@ def ports: [{name:"http",containerPort:8080,protocol:"TCP"}];
 def chart_verify: {provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/data-product-controller/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]};
 def root_verify: {provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/platform/approved-synthetic-publication$"}]};
 def condition($type): {type:$type,status:"True",observedGeneration:3};
+def probe_labels: {"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":"contract-probe"};
+def probe_container: {name:"contract-probe",image:($repo+"@"+$index),command:["/contract-probe"],args:[],
+  env:[{name:"CONTRACT_PROBE_URL",value:"https://harbour-data.example.com/openapi.json"},{name:"CONTRACT_READINESS_ENABLED",value:"false"}],
+  ports:[{name:"management",containerPort:8081,protocol:"TCP"}],
+  readinessProbe:{httpGet:{path:"/readyz",port:"management",scheme:"HTTP"},timeoutSeconds:7,periodSeconds:30,failureThreshold:1},
+  livenessProbe:{httpGet:{path:"/healthz",port:"management",scheme:"HTTP"},timeoutSeconds:2,periodSeconds:10,failureThreshold:3},
+  securityContext:{runAsNonRoot:true,readOnlyRootFilesystem:true,allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}}};
 def owner($kind;$name): {apiVersion:"apps/v1",kind:$kind,name:$name,uid:($name+"-uid"),controller:true};
 def deployment($name;$container): {apiVersion:"apps/v1",kind:"Deployment",metadata:(meta($name;"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"}}),
   spec:{replicas:2,selector:{matchLabels:labels($name)},template:{metadata:{labels:labels($name)},spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports}]}}},
@@ -60,10 +67,27 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
  chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",ref:{digest:$chart},verify:chart_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
  product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{ui:{url:"https://harbour-data.example.com/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}},status:{observedGeneration:3,conditions:[condition("Ready")]}},
  helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},uiContract:{enabled:true,additionalHostOrigins:["https://product-ui.example.com"]},uiAppearance:{enabled:true},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"data-product-controller",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
- "deployment-controller":deployment("data-product-controller";"controller"),
+ "deployment-controller":(deployment("data-product-controller";"controller") | .spec.template.spec.containers[0].env=[
+   {name:"CONNECTOR_READINESS_ENABLED",value:"false"},{name:"CONTRACT_READINESS_ENABLED",value:"false"}]),
  "deployment-harbour":deployment("data-product-controller-harbour";"product"),
  "deployment-ui-kit":deployment("data-product-controller-ui-kit";"ui-kit"),
- replicasets:{apiVersion:"apps/v1",kind:"ReplicaSetList",items:[rs("data-product-controller";"controller"),rs("data-product-controller-harbour";"product"),rs("data-product-controller-ui-kit";"ui-kit")]},
+ "deployment-probe":{apiVersion:"apps/v1",kind:"Deployment",metadata:meta("data-product-controller-contract-probe";"data-product-controller"),
+   spec:{replicas:0,selector:{matchLabels:probe_labels},template:{metadata:{labels:probe_labels},
+     spec:{serviceAccountName:"data-product-controller-contract-probe",automountServiceAccountToken:false,containers:[probe_container]}}},
+   status:{observedGeneration:3,replicas:0,updatedReplicas:0,readyReplicas:0,availableReplicas:0}},
+ "probe-account":{apiVersion:"v1",kind:"ServiceAccount",metadata:meta("data-product-controller-contract-probe";"data-product-controller"),automountServiceAccountToken:false},
+ "observer-role":{apiVersion:"rbac.authorization.k8s.io/v1",kind:"Role",metadata:meta("data-product-readiness-observer";"data-product-controller"),
+   rules:[{apiGroups:["apps"],resources:["deployments"],resourceNames:["data-product-controller-harbour","data-product-controller-contract-probe"],verbs:["get"]}]},
+ "observer-binding":{apiVersion:"rbac.authorization.k8s.io/v1",kind:"RoleBinding",metadata:meta("data-product-readiness-observer";"data-product-controller"),
+   roleRef:{apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"data-product-readiness-observer"},
+   subjects:[{kind:"ServiceAccount",name:"data-product-controller",namespace:"data-product-controller"}]},
+ "probe-policy":{apiVersion:"cilium.io/v2",kind:"CiliumNetworkPolicy",metadata:meta("allow-data-product-controller-contract-probe";"data-product-controller"),
+   spec:{endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+     egress:[{toFQDNs:[{matchName:"harbour-data.example.com"}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
+       {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
+        toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:"harbour-data.example.com"}]}}]}]}},
+ replicasets:{apiVersion:"apps/v1",kind:"ReplicaSetList",items:[rs("data-product-controller";"controller"),rs("data-product-controller-harbour";"product"),rs("data-product-controller-ui-kit";"ui-kit"),
+   (rs("data-product-controller-contract-probe";"contract-probe") | .metadata.name="dormant-probe-rs" | .metadata.uid="dormant-probe-rs-uid" | .spec.replicas=0 | .status.replicas=0 | .status.readyReplicas=0 | .status.availableReplicas=0)]},
  pods:{apiVersion:"v1",kind:"PodList",items:[pod("data-product-controller";"controller";1),pod("data-product-controller";"controller";2),pod("data-product-controller-harbour";"product";1),pod("data-product-controller-harbour";"product";2),pod("data-product-controller-ui-kit";"ui-kit";1),pod("data-product-controller-ui-kit";"ui-kit";2)]},
  "service-harbour":service("data-product-controller-harbour"),"service-ui-kit":service("data-product-controller-ui-kit"),
  endpoints:{apiVersion:"discovery.k8s.io/v1",kind:"EndpointSliceList",metadata:{},items:[slice("data-product-controller-harbour"),slice("data-product-controller-ui-kit")]},
@@ -98,6 +122,11 @@ case "$namespace:$resource:$name" in
   data-product-controller:deployments.apps:data-product-controller) key=deployment-controller ;;
   data-product-controller:deployments.apps:data-product-controller-harbour) key=deployment-harbour ;;
   data-product-controller:deployments.apps:data-product-controller-ui-kit) key=deployment-ui-kit ;;
+  data-product-controller:deployments.apps:data-product-controller-contract-probe) key=deployment-probe ;;
+  data-product-controller:serviceaccounts:data-product-controller-contract-probe) key=probe-account ;;
+  data-product-controller:roles.rbac.authorization.k8s.io:data-product-readiness-observer) key=observer-role ;;
+  data-product-controller:rolebindings.rbac.authorization.k8s.io:data-product-readiness-observer) key=observer-binding ;;
+  data-product-controller:ciliumnetworkpolicies.cilium.io:allow-data-product-controller-contract-probe) key=probe-policy ;;
   data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-registry) key=route-registry ;;
   data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-harbour) key=route-harbour ;;
   data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-ui-kit) key=route-ui-kit ;;
@@ -127,6 +156,9 @@ if [[ "$key" == chart ]]; then
     empty) exit 0 ;;
     multi) cat "$FIXTURE/chart.json" "$FIXTURE/chart.json"; exit 0 ;;
   esac
+fi
+if [[ "$key" == observer-role && "${MODE:-}" == partial-observer ]]; then
+  cat "$FIXTURE/observer-role.json"; exit 1
 fi
 count=0
 [[ ! -f "$FIXTURE/$key.count" ]] || count=$(cat "$FIXTURE/$key.count")
@@ -218,7 +250,7 @@ run_case() {
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
-    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 3 and .pods == 6 and .routes == 3 and .publicChecks == 9' "$fixture/stdout" >/dev/null; then
+    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 4 and .pods == 6 and .routes == 3 and .publicChecks == 9 and .readinessState == "dormant"' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
       case "$reason" in
@@ -264,6 +296,25 @@ mutate_case() {
 }
 
 run_case healthy pass
+mutate_case helm-unplanned-observation helm '.spec.values.connectorReadiness.enabled=true'
+mutate_case helm-unplanned-contracts helm '.spec.values.contractReadiness.enabled=true'
+mutate_case helm-unplanned-chart-probe helm '.spec.values.contractProbe.enabled=true'
+mutate_case controller-unplanned-observation deployment-controller '.spec.template.spec.containers[0].env[0].value="true"'
+mutate_case dormant-running-probe deployment-probe '.spec.replicas=1'
+mutate_case dormant-stale-probe deployment-probe '.status.observedGeneration=2'
+mutate_case dormant-probe-pod pods '.items += [(.items[0] | .metadata.ownerReferences[0].name="dormant-probe-rs" | .metadata.ownerReferences[0].uid="dormant-probe-rs-uid" | .metadata.name="unexpected-probe-pod" | .metadata.uid="unexpected-probe-pod-uid")]'
+mutate_case probe-token deployment-probe '.spec.template.spec.automountServiceAccountToken=true'
+mutate_case account-token probe-account '.automountServiceAccountToken=true'
+mutate_case probe-wrong-target deployment-probe '.spec.template.spec.containers[0].env[0].value="https://other.example.com/openapi.json"'
+mutate_case probe-target-reference deployment-probe '.spec.template.spec.containers[0].env[0] |= (del(.value) | .valueFrom={secretKeyRef:{name:"environment-canary",key:"url"}})'
+mutate_case probe-health-as-ready deployment-probe '.spec.template.spec.containers[0].readinessProbe.httpGet.path="/healthz"'
+mutate_case observer-list observer-role '.rules[0].verbs += ["list"]'
+mutate_case observer-secret observer-role '.rules += [{apiGroups:[""],resources:["secrets"],verbs:["get"]}]'
+mutate_case observer-unbounded observer-role 'del(.rules[0].resourceNames)'
+mutate_case observer-wrong-account observer-binding '.subjects[0].name="other-controller"'
+mutate_case probe-broad-network probe-policy '.spec.egress += [{toEntities:["world"]}]'
+mutate_case dormant-product-reference product '.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}]'
+run_case partial-observer fail partial-observer
 run_case healthy-acceptance-bound pass '' 3
 run_case orphan-plugin pass orphan
 while IFS= read -r pid; do

@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: data-product-readiness-observer
+  namespace: data-product-controller
+rules:
+  - apiGroups:
+      - apps
+    resources:
+      - deployments
+    resourceNames:
+      - data-product-controller-harbour
+      - data-product-controller-contract-probe
+    verbs:
+      - get
