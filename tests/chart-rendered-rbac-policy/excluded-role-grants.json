@@ -1265,6 +1265,20 @@
       },
       {
         "apiGroups": [
+          "groupsnapshot.storage.k8s.io"
+        ],
+        "resources": [
+          "volumegroupsnapshotclasses",
+          "volumegroupsnapshotcontents",
+          "volumegroupsnapshotcontents/status",
+          "volumegroupsnapshots"
+        ],
+        "verbs": [
+          "*"
+        ]
+      },
+      {
+        "apiGroups": [
           "longhorn.io"
         ],
         "resources": [
@@ -1290,6 +1304,10 @@
           "engines/status",
           "instancemanagers",
           "instancemanagers/status",
+          "instancemanagerupgradecontrols",
+          "instancemanagerupgradecontrols/status",
+          "instancemanagerupgrades",
+          "instancemanagerupgrades/status",
           "nodes",
           "nodes/status",
           "orphans",
@@ -1306,6 +1324,8 @@
           "shards/status",
           "sharemanagers",
           "sharemanagers/status",
+          "snapshotgroups",
+          "snapshotgroups/status",
           "snapshots",
           "snapshots/status",
           "supportbundles",

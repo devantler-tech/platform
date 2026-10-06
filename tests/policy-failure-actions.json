@@ -6,6 +6,8 @@
   "audit-privileged-rbac/privileged-rules": "Enforce",
   "disallow-latest-tag/require-image-tag": "Audit",
   "disallow-latest-tag/validate-image-tag": "Audit",
+  "restrict-github-team-external-identity/teammemberships-external-name-matches-declared-member": "Enforce",
+  "restrict-github-team-external-identity/teamrepositories-external-name-matches-declared-grant": "Enforce",
   "restrict-github-team-external-identity/teams-external-name-is-an-approved-identity": "Enforce",
   "restrict-github-team-management/teams-allow-listed": "Enforce",
   "restrict-github-team-management/teams-bind-provider-identity-to-object-name": "Enforce",

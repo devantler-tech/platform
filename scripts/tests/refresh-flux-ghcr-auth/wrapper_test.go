@@ -43,6 +43,7 @@ func requireWrapperSecretAbsent(t *testing.T, result commandResult, secret strin
 }
 
 func TestKSailLifecycleWrapperUsesOnlySOPSPullToken(t *testing.T) {
+	t.Parallel()
 	info, err := os.Stat(ksailPullWrapperPath)
 	if err != nil {
 		t.Fatalf("stat production KSail wrapper: %v", err)
@@ -82,6 +83,7 @@ func TestKSailLifecycleWrapperUsesOnlySOPSPullToken(t *testing.T) {
 }
 
 func TestKSailPublishWrapperPreservesActionsWriteToken(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	stagingRef := "oci://ghcr.io/devantler-tech/platform/manifests:staging-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-123-2"
 	result := f.runKSailPullWrapper(
@@ -111,6 +113,7 @@ func TestKSailPublishWrapperPreservesActionsWriteToken(t *testing.T) {
 }
 
 func TestKSailPublishWrapperRejectsImplicitOrUnscopedDestinations(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name    string
 		command []string
@@ -140,12 +143,14 @@ func TestKSailPublishWrapperRejectsImplicitOrUnscopedDestinations(t *testing.T) 
 }
 
 func TestProductionConfigKeepsProtectedRegistryTemplate(t *testing.T) {
+	t.Parallel()
 	config := readRepositoryFile(t, "ksail.prod.yaml")
 	requireContains(t, config, `registry: "devantler:${GHCR_TOKEN}@ghcr.io/devantler-tech/platform/manifests"`)
 	requireNotContains(t, config, "${GHCR_USERNAME}:${GHCR_TOKEN}@ghcr.io")
 }
 
 func TestLifecyclePreservesUsernameFromSOPSDockerConfig(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	config := validConfig()
 	config["auths"].(map[string]any)["ghcr.io"].(map[string]any)["username"] = "pull-robot"
@@ -157,6 +162,7 @@ func TestLifecyclePreservesUsernameFromSOPSDockerConfig(t *testing.T) {
 }
 
 func TestCiphertextRotationChangesRevisionWithoutHashingToken(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	config := validConfig()
 	first := f.runKSailPullWrapper(config, []string{"cluster", "update"}, nil)
@@ -186,6 +192,7 @@ func TestCiphertextRotationChangesRevisionWithoutHashingToken(t *testing.T) {
 }
 
 func TestWrapperRejectsArbitraryCommands(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runKSailPullWrapper(validConfig(), []string{"workload", "delete"}, nil)
 
@@ -194,6 +201,7 @@ func TestWrapperRejectsArbitraryCommands(t *testing.T) {
 }
 
 func TestPlaintextRevisionSourceFailsClosed(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	f.writeEncryptedSecret("accidentally-plaintext")
 
@@ -206,6 +214,7 @@ func TestPlaintextRevisionSourceFailsClosed(t *testing.T) {
 }
 
 func TestAcceptsStandardAuthOnlyDockerConfig(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	auth := base64.StdEncoding.EncodeToString([]byte("devantler:fixture-secret-token"))
 	config := map[string]any{
@@ -239,6 +248,7 @@ func TestAcceptsStandardAuthOnlyDockerConfig(t *testing.T) {
 }
 
 func TestAcceptsMatchingExplicitAndEncodedAuth(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	config := validConfig()
 	config["auths"].(map[string]any)["ghcr.io"].(map[string]any)["auth"] = base64.StdEncoding.EncodeToString([]byte("devantler:fixture-secret-token"))
@@ -249,6 +259,7 @@ func TestAcceptsMatchingExplicitAndEncodedAuth(t *testing.T) {
 }
 
 func TestRejectsUnsafeDrainTimeoutBeforeClusterAccess(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FLUX_GHCR_DRAIN_TIMEOUT": "45m --disable-eviction",
@@ -261,6 +272,7 @@ func TestRejectsUnsafeDrainTimeoutBeforeClusterAccess(t *testing.T) {
 }
 
 func TestCheckOnlyPreflightsWithoutPatching(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), []string{"--check-only"}, nil)
 
@@ -270,6 +282,7 @@ func TestCheckOnlyPreflightsWithoutPatching(t *testing.T) {
 }
 
 func TestMissingOrMalformedRegistryAuthFailsClosed(t *testing.T) {
+	t.Parallel()
 	conflictingAuth := base64.StdEncoding.EncodeToString([]byte("devantler:different-token"))
 	tests := []struct {
 		name   string
@@ -322,6 +335,7 @@ func TestMissingOrMalformedRegistryAuthFailsClosed(t *testing.T) {
 }
 
 func TestRegistryDenialPreventsClusterPatch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CURL_DENY_REPOSITORY": "devantler-tech/platform/manifests",
@@ -334,6 +348,7 @@ func TestRegistryDenialPreventsClusterPatch(t *testing.T) {
 }
 
 func TestTokenSuccessWithoutRegistryReadAccessPreventsClusterPatch(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CURL_DENY_REPOSITORY": "devantler-tech/wedding-app",
@@ -346,6 +361,7 @@ func TestTokenSuccessWithoutRegistryReadAccessPreventsClusterPatch(t *testing.T)
 }
 
 func TestWorldZonePackageDenialPreventsClusterPatch(t *testing.T) {
+	t.Parallel()
 	for _, target := range []struct{ repository, tag string }{
 		{"devantler-tech/world-at-ruin/zone", "v0.114.0"},
 		{"devantler-tech/world-at-ruin/zone-manifests", "0.114.0"},
@@ -367,6 +383,7 @@ func TestWorldZonePackageDenialPreventsClusterPatch(t *testing.T) {
 }
 
 func TestClusterPatchFailureIsNotHidden(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_KUBECTL_FAIL": "true"})
 
@@ -375,6 +392,7 @@ func TestClusterPatchFailureIsNotHidden(t *testing.T) {
 }
 
 func TestFreshClusterWithoutVariablesBaseSkipsExistingFanout(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -389,6 +407,7 @@ func TestFreshClusterWithoutVariablesBaseSkipsExistingFanout(t *testing.T) {
 }
 
 func TestMissingVariablesBaseFailsClosedWithoutBootstrapMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_VARIABLES_BASE_ABSENT": "true"})
 
@@ -399,6 +418,7 @@ func TestMissingVariablesBaseFailsClosedWithoutBootstrapMode(t *testing.T) {
 }
 
 func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
+	t.Parallel()
 	missingResources := []string{
 		"pushsecret/flux-system/seed-ghcr",
 		"externalsecret/data-product-controller/ghcr-auth",
@@ -434,6 +454,7 @@ func TestPartialBootstrapRepairsRootWithoutForcingMissingFanout(t *testing.T) {
 }
 
 func TestPartialBootstrapRepairsRootBeforeStagingVariables(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -449,6 +470,7 @@ func TestPartialBootstrapRepairsRootBeforeStagingVariables(t *testing.T) {
 }
 
 func TestPartialFanoutFailsClosedWithoutBootstrapMode(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/kyverno/ghcr-auth",
@@ -463,6 +485,7 @@ func TestPartialFanoutFailsClosedWithoutBootstrapMode(t *testing.T) {
 }
 
 func TestFirstDeployStagesExistingFanoutBeforeNewConsumerNamespaceExists(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -483,6 +506,7 @@ func TestFirstDeployStagesExistingFanoutBeforeNewConsumerNamespaceExists(t *test
 }
 
 func TestAbsentFanoutNamespaceFailsOutsidePrepublishStage(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_MISSING_FANOUT_RESOURCE": "externalsecret/ascoachingogvaner/ghcr-auth",
@@ -498,6 +522,7 @@ func TestAbsentFanoutNamespaceFailsOutsidePrepublishStage(t *testing.T) {
 }
 
 func TestMissingESOCRDsFailsWithoutStagingVariables(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_FANOUT_CRDS_ABSENT": "true"})
 
@@ -509,6 +534,7 @@ func TestMissingESOCRDsFailsWithoutStagingVariables(t *testing.T) {
 }
 
 func TestPartialBootstrapWithoutESOCRDsRepairsRoot(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -523,6 +549,7 @@ func TestPartialBootstrapWithoutESOCRDsRepairsRoot(t *testing.T) {
 }
 
 func TestPushSecretSyncFailureIsNotHidden(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_SYNC_STALL_RESOURCE": "pushsecret/flux-system/seed-ghcr",
@@ -537,6 +564,7 @@ func TestPushSecretSyncFailureIsNotHidden(t *testing.T) {
 }
 
 func TestSameSecondSyncAcceptsControllerResourceVersionEdge(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_SYNC_SAME_REFRESH_TIME": "true"})
 
@@ -545,6 +573,7 @@ func TestSameSecondSyncAcceptsControllerResourceVersionEdge(t *testing.T) {
 }
 
 func TestMaterialisedConsumerMismatchIsNotHidden(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
 		"FAKE_CONSUMER_MISMATCH_NAMESPACE": "wedding-app",
@@ -559,6 +588,7 @@ func TestMaterialisedConsumerMismatchIsNotHidden(t *testing.T) {
 }
 
 func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -580,6 +610,7 @@ func TestFirstDeployStagesNewConsumerWhoseNamespaceSurvivedAFailedAttempt(t *tes
 // TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer verifies that
 // an active consumer without ghcr-auth blocks the pre-publish credential change.
 func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -601,6 +632,7 @@ func TestPrepublishStagingStillFailsClosedForAnEstablishedConsumer(t *testing.T)
 // that a failed candidate's non-running Pod cannot deny every retry when the
 // missing ghcr-auth ExternalSecret is what prevented that Pod from starting.
 func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),
@@ -622,6 +654,7 @@ func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftANonRunningPod(t *tes
 // verifies that a terminating Pod whose phase remains Running cannot recreate
 // the retry deadlock while its deletion grace period elapses.
 func TestFirstDeployStagesNewConsumerWhoseFailedAttemptLeftATerminatingRunningPod(t *testing.T) {
+	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(
 		validConfig(),

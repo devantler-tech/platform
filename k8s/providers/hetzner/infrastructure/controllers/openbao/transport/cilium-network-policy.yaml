@@ -8,7 +8,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: openbao
       app.kubernetes.io/instance: openbao
-      statefulset.kubernetes.io/pod-name: openbao-2
+      platform.devantler.tech/arc-transport: tls
   ingress:
     - fromEndpoints:
         - matchLabels:

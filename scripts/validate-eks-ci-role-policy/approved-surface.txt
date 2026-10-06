@@ -36,7 +36,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane 8faec319d400c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossview|crossview 4e1e58c881413b308d488a91e732cdc7cb5fa43dfc8e92b51ab6ebb50e4d7a54
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex c839c42b7d866fafaa98a1b65a1e58b6cd399d7580646de3bf6755a87c02b55b
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 95040fe2e9f606513ebe779062cce80a8d3fc0581d5187948caabb043a98ab08
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns fa298f48bf949ef686f4203506d8219b3d139e75acab6cef31f5ff17943a89d5
 
@@ -78,7 +78,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 8bde48f99574dfe813f299
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 3a6ac464cd62f30e69068309e14d7d7409cd0ff395c4fbac735d514e0b8616a8
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3b00dfb0ee8e35df0eae516c3e6213cf0641438173b09ea4b8adc93a0d77153e
+helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn c5914be8554123d4821c96d9b18d75d0807c8d797dffd5727c11bb3f029f8629
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|oauth2-proxy|oauth2-proxy d16150bb9a7d264f002fd3cb8d82d459a368d6428207e23fd0b8479e4194f60d
 
@@ -88,7 +88,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator da38c30c19aea0c3e099bb86cda46d89ab6301ff5898b4fad8f020812f8ad800
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao a3e829429965ed7f8c430424564624d176c1ae96be38a05db1bd38d018ebc1d4
+helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 5f42ca30331162fc4ee98a0487fa3651140f0542ff49b573a99a46a343582616
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
 

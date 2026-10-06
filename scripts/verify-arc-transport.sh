@@ -113,6 +113,16 @@ jq -e '.metadata.uid != null and .status.podIP != null and .spec.nodeName != nul
  any(.spec.containers[]; .name == "arc-tls-reload")' "$scratch/bao.json" >/dev/null
 bao_ip=$(jq -er '.status.podIP' "$scratch/bao.json")
 bao_node=$(jq -er '.spec.nodeName' "$scratch/bao.json")
+# Pod labels are not necessarily Cilium identity labels. Bind the retained
+# transport selector to the current Pod before claiming policy isolation.
+kc -n openbao get ciliumendpoint openbao-2 -o json >"$scratch/bao-identity.json"
+jq -e --arg uid "$(jq -er '.metadata.uid' "$scratch/bao.json")" '
+ any(.metadata.ownerReferences[]; .kind == "Pod" and .uid == $uid) and
+ (.status.identity.id | type == "number" and . > 0) and
+ (.status.identity.labels as $labels |
+  all(["k8s:app.kubernetes.io/name=openbao", "k8s:app.kubernetes.io/instance=openbao",
+       "k8s:io.kubernetes.pod.namespace=openbao", "k8s:platform.devantler.tech/arc-transport=tls"][];
+      . as $label | $labels | index($label) != null))' "$scratch/bao-identity.json" >/dev/null
 kc -n openbao get service openbao-arc -o json | jq -e '.spec.selector == {"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"} and
  .spec.ports == [{name:"arc-tls",port:8204,protocol:"TCP",targetPort:8204}]' >/dev/null
 kc -n external-secrets get pods -l app.kubernetes.io/name=external-secrets -o json >"$scratch/eso.json"

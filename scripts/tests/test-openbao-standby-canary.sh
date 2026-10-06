@@ -12,6 +12,22 @@ fail() {
   exit 1
 }
 
+checked_postrenderer_changes() {
+  jq -en --slurpfile before "$1" --slurpfile after "$2" '
+    ($before | length) == 1 and ($after | length) == 1 and
+    $after[0].spec.replicas == 3 and
+    $after[0].spec.updateStrategy == {
+      type: "RollingUpdate", rollingUpdate: {partition: 2}
+    } and
+    $after[0].spec.template.spec.automountServiceAccountToken == false and
+    $before[0].spec.template.metadata.labels["platform.devantler.tech/arc-transport"] == null and
+    $after[0].spec.template.metadata.labels["platform.devantler.tech/arc-transport"] == "tls" and
+    ($before[0].spec | del(.updateStrategy, .template.spec.automountServiceAccountToken)) ==
+    ($after[0].spec | del(.updateStrategy, .template.spec.automountServiceAccountToken,
+                         .template.metadata.labels["platform.devantler.tech/arc-transport"]))
+  ' >/dev/null
+}
+
 resolve_replica_placeholder() {
   OPENBAO_REPLICA_PLACEHOLDER="\${openbao_replicas:=1}" OPENBAO_CANARY_REPLICAS="$2" yq -i '
     (.server.replicas | select(. == strenv(OPENBAO_REPLICA_PLACEHOLDER))) = env(OPENBAO_CANARY_REPLICAS) |
@@ -105,11 +121,30 @@ yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
 yq -e '.spec.template.spec.automountServiceAccountToken == false' "${statefulset}" >/dev/null ||
   fail 'the certificate reload helper must not receive an injected API token'
 
-before="$(yq ea -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "openbao") |
-  .spec | del(.updateStrategy, .template.spec.automountServiceAccountToken)' "${scratch}/rendered.yaml" | jq -cS .)"
-after="$(yq -o=json -I=0 '.spec | del(.updateStrategy, .template.spec.automountServiceAccountToken)' "${statefulset}" | jq -cS .)"
-[[ "${before}" == "${after}" ]] ||
-  fail 'the canary post-renderer must change only partition and the checked token-injection setting'
+yq ea -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "openbao")' \
+  "${scratch}/rendered.yaml" >"${scratch}/before.json"
+yq -o=json -I=0 '.' "${statefulset}" >"${scratch}/after.json"
+checked_postrenderer_changes "${scratch}/before.json" "${scratch}/after.json" ||
+  fail 'the canary post-renderer must change only partition, token injection and the exact TLS identity label'
+
+# Exercise rejected mutations against the actual chart and Flux-rendered Pod.
+# Allowing one retained identity label must not permit other metadata or spec edits.
+for mutation in \
+  'del(.spec.template.metadata.labels["platform.devantler.tech/arc-transport"])' \
+  '.spec.template.metadata.labels["platform.devantler.tech/arc-transport"] = "other"' \
+  '.spec.template.metadata.labels["unreviewed-label"] = "extra"' \
+  '.spec.template.metadata.annotations["unreviewed-annotation"] = "extra"' \
+  '.spec.template.metadata.labels["app.kubernetes.io/name"] = "other"' \
+  '.spec.template.spec.serviceAccountName = "other"' \
+  '.spec.template.spec.automountServiceAccountToken = true' \
+  '.spec.updateStrategy.rollingUpdate.partition = 0' \
+  '.spec.updateStrategy.rollingUpdate.maxUnavailable = 1' \
+  '.spec.replicas = 1'; do
+  jq "$mutation" "${scratch}/after.json" >"${scratch}/mutated.json"
+  if checked_postrenderer_changes "${scratch}/before.json" "${scratch}/mutated.json"; then
+    fail 'the canary post-renderer accepted an unreviewed identity, metadata or Pod-spec mutation'
+  fi
+done
 
 # Validate the actual pinned chart and post-rendered security boundary. An
 # unsupported Helm value must not look like it removed the sidecar's token.

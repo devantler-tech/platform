@@ -167,6 +167,12 @@ jobs:
           shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
           bash scripts/tests/test-verify-arc-transport.sh
 
+      - name: 🔐 Validate ARC transport proof boundaries
+        run: |
+          go test -race ./scripts/verify-arc-transport
+          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
+          bash scripts/tests/test-verify-arc-transport.sh
+
       - name: 🛑 Validate ARC recovery metadata proof
         run: go test -race ./scripts/guard-arc-recovery
 
