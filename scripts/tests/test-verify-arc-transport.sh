@@ -9,8 +9,9 @@ go build -o "$scratch/evidence" ./scripts/verify-arc-transport
 export PROOF_TEST_ROOT="$scratch"
 readonly head=1111111111111111111111111111111111111111
 export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=refs/heads/main GITHUB_SHA="$head" GITHUB_RUN_ID=12345 GITHUB_RUN_ATTEMPT=1
-yq -o=json '.spec.rules[0]' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
-  | jq '{spec:{rules:[.]},status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/policy.json"
+yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
+  | jq '{spec:(. + {admission:true,emitWarning:false,validationFailureAction:"Audit"}),
+      status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/policy.json"
 yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
   | jq '{metadata:{uid:"policy-uid"},spec:(. + {admission:true,emitWarning:false,validationFailureAction:"Audit"}),
       status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/listener-policy.json"
@@ -62,7 +63,12 @@ case "$args" in
     elif [[ "${PROOF_CASE:-}" == listener_failure_open ]]; then jq '.spec.failurePolicy="Ignore"' "$PROOF_TEST_ROOT/listener-policy.json"
     elif [[ "${PROOF_CASE:-}" == listener_override ]]; then jq '.spec.rules[0].validate.failureActionOverrides=[{action:"Audit",namespaces:["openbao"]}]' "$PROOF_TEST_ROOT/listener-policy.json"
     else cat "$PROOF_TEST_ROOT/listener-policy.json"; fi ;;
-  'get clusterpolicy '*) cat "$PROOF_TEST_ROOT/policy.json" ;;
+  'get clusterpolicy '*)
+    if [[ "${PROOF_CASE:-}" == issuance_admission_disabled ]]; then jq '.spec.admission=false' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_exclusion ]]; then jq '.spec.rules[0].exclude={any:[{resources:{namespaces:["arc-runners"]}}]}' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_failure_open ]]; then jq '.spec.failurePolicy="Ignore"' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_override ]]; then jq '.spec.rules[0].validate.failureActionOverrides=[{action:"Audit",namespaces:["arc-runners"]}]' "$PROOF_TEST_ROOT/policy.json"
+    else cat "$PROOF_TEST_ROOT/policy.json"; fi ;;
   'get kustomization '*) printf '{"metadata":{"generation":1},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conditions":[{"type":"Ready","status":"True"}]}}' ;;
   'get service '*) printf '{"spec":{"selector":{"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"},"ports":[{"name":"arc-tls","port":8204,"targetPort":8204,"protocol":"TCP"}]}}' ;;
   'get node '*) printf '{"metadata":{"uid":"node-uid","labels":{}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' ;;
@@ -137,7 +143,7 @@ run_case healthy_denied 0
 run_case tls_error 60
 for name in sealed stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events \
   listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
-  listener_admit listener_api_error; do run_case "$name" 1; done
+  listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override; do run_case "$name" 1; done
 run_case replacement 4
 run_case cleanup_failure 4
 printf 'PASS: %s transport orchestration cases\n' "$cases"
