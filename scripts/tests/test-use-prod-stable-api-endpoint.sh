@@ -6,6 +6,11 @@
 # therefore pins BOTH streams line for line: what a case does not list may not
 # be printed. Every address is a reserved documentation address (RFC 5737) or an
 # `.invalid` name, so this file names no routable host either.
+#
+# The one line allowed to carry the address is the runner command that registers
+# it as a masked value. The cases pin that too: issued on a runner as soon as the
+# address is selected, before any later tool runs, on stderr only, and never
+# into a file the runner would keep.
 
 set -euo pipefail
 
@@ -19,6 +24,8 @@ readonly stale_ip='198.51.100.20'
 readonly stale_host='stale-control-plane.example.invalid'
 readonly kubeconfig_token='fixture-kubeconfig-credential'
 readonly stable_server="https://${floating_ip}:6443"
+readonly mask_line="::add-mask::${floating_ip}"
+readonly arc_workflow="${root_dir}/.github/workflows/verify-arc-app-identity.yaml"
 
 readonly switched_line='✅ Production kubeconfig now uses the stable API endpoint (the restored kubeconfig named a different server).'
 readonly unchanged_line='✅ Production kubeconfig already uses the stable API endpoint.'
@@ -110,6 +117,12 @@ cat >"${work_dir}/kubectl-bin/kubectl" <<'EOF'
 set -euo pipefail
 
 printf '%s\n' "$*" >>"${FAKE_KUBECTL_CALLS}"
+# Whether the runner had already been asked to mask the address when this call was made.
+if grep -q '^::add-mask::' "${FAKE_STDERR}"; then
+  printf 'masked\n' >>"${FAKE_KUBECTL_CALLS}.mask"
+else
+  printf 'unmasked\n' >>"${FAKE_KUBECTL_CALLS}.mask"
+fi
 for arg in "$@"; do
   if [[ "${arg}" == "${FAKE_KUBECTL_SUBCOMMAND}" ]]; then
     if [[ "${FAKE_KUBECTL_MODE}" == "loud" ]]; then
@@ -177,11 +190,24 @@ server_for_prod() {
     -o jsonpath='{.clusters[?(@.name=="prod")].cluster.server}'
 }
 
-# run_endpoint <PATH prefix> [VAR=value ...] — the run's stdout and stderr land in ${work_dir}.
+# The files a runner keeps after the step: nothing the script writes may land in one.
+readonly runner_files=(output env state path step-summary)
+
+# run_endpoint <PATH prefix> [VAR=value ...] — the script runs as a runner step. Its stdout and
+# stderr land in ${work_dir}, with the mask command taken off stderr into ${masked} (see
+# take_mask), and the status returned is the script's own.
 run_endpoint() {
-  local path_prefix="$1"
+  local path_prefix="$1" status=0 name
   shift
+  for name in "${runner_files[@]}"; do : >"${work_dir}/runner-${name}"; done
   env PATH="${path_prefix}:${PATH}" \
+    GITHUB_ACTIONS=true \
+    GITHUB_OUTPUT="${work_dir}/runner-output" \
+    GITHUB_ENV="${work_dir}/runner-env" \
+    GITHUB_STATE="${work_dir}/runner-state" \
+    GITHUB_PATH="${work_dir}/runner-path" \
+    GITHUB_STEP_SUMMARY="${work_dir}/runner-step-summary" \
+    FAKE_STDERR="${work_dir}/stderr" \
     KUBECONFIG="${kubeconfig}" \
     HCLOUD_TOKEN="fixture-hcloud-token" \
     FAKE_FLOATING_IP="${floating_ip}" \
@@ -189,7 +215,30 @@ run_endpoint() {
     FAKE_KUBECTL_CALLS="${work_dir}/kubectl-calls" \
     REAL_KUBECTL="${real_kubectl}" \
     "$@" \
-    "${endpoint_script}" >"${work_dir}/stdout" 2>"${work_dir}/stderr"
+    "${endpoint_script}" >"${work_dir}/stdout" 2>"${work_dir}/stderr" || status=$?
+  for name in "${runner_files[@]}"; do
+    [[ ! -s "${work_dir}/runner-${name}" ]] ||
+      fail "the script wrote to the runner's ${name} file, which outlives the step"
+  done
+  take_mask
+  return "${status}"
+}
+
+# take_mask — the mask command is the one line allowed to carry the address, and only as the
+# first line of stderr. Record whether it was there in ${masked} and remove it, so every check
+# after this one reads streams that may name nothing. The command anywhere else fails here: on
+# stdout a caller that discards stdout would drop it, and a second copy or a later position
+# means it was not issued once, up front.
+take_mask() {
+  masked=no
+  if [[ "$(head -n 1 "${work_dir}/stderr")" == "${mask_line}" ]]; then
+    masked=yes
+    sed -e '1d' "${work_dir}/stderr" >"${work_dir}/stderr.rest"
+    mv "${work_dir}/stderr.rest" "${work_dir}/stderr"
+  fi
+  if grep -q -e '::add-mask::' "${work_dir}/stdout" "${work_dir}/stderr"; then
+    fail 'a mask command was printed somewhere other than the first line of stderr'
+  fi
 }
 
 # expect_stream <stdout|stderr> <line> — true when the last run's stream is exactly that one
@@ -218,6 +267,7 @@ expect_selection() {
   local what="$1" line="$2"
   shift 2
   run_endpoint "$@" || fail "${what} was refused"
+  [[ "${masked}" == yes ]] || fail "${what} did not ask the runner to mask the address"
   [[ "$(server_for_prod "${kubeconfig}")" == "${stable_server}" ]] ||
     fail "${what} did not leave admin@prod on the stable endpoint"
   expect_stream stdout "${line}" || fail "${what} did not print exactly its one outcome line"
@@ -225,21 +275,31 @@ expect_selection() {
   if names_what_it_read; then fail "${what} named something it read in the public log"; fi
 }
 
-# expect_refusal <what> <stderr line> <PATH prefix> [VAR=value ...] — the run must fail, print
-# exactly that line on stderr and nothing on stdout, and leave the kubeconfig as it was.
-expect_refusal() {
-  local what="$1" line="$2"
-  shift 2
+# refuse_with_mask <yes|no> <what> <stderr line> <PATH prefix> [VAR=value ...] — the run must
+# fail, print exactly that line on stderr and nothing on stdout, and leave the kubeconfig as it
+# was. The first argument says whether the mask command must have been issued by then.
+refuse_with_mask() {
+  local want_mask="$1" what="$2" line="$3"
+  shift 3
   cp "${kubeconfig}" "${work_dir}/kubeconfig.before"
   if run_endpoint "$@"; then
     fail "${what} was accepted"
   fi
+  [[ "${masked}" == "${want_mask}" ]] ||
+    fail "${what}: mask command issued=${masked}, expected ${want_mask}"
   expect_stream stderr "${line}" || fail "${what} did not print exactly its one explanation"
   expect_stream stdout '' || fail "${what} still printed to stdout"
   cmp -s "${kubeconfig}" "${work_dir}/kubeconfig.before" ||
     fail "the kubeconfig changed although ${what} was refused"
   if names_what_it_read; then fail "${what} named something it read in the public log"; fi
 }
+
+# A refusal before the address is selected: there is nothing to mask yet.
+expect_refusal() { refuse_with_mask no "$@"; }
+
+# A refusal after the address is selected: the runner must already have been asked to mask it,
+# because the tools that fail from here on are the ones that quote what they were given.
+expect_refusal_after_selection() { refuse_with_mask yes "$@"; }
 
 # A detector that cannot fire proves nothing, so show it firing on each shape, on each stream,
 # and staying silent on the lines the script may print, before relying on it.
@@ -278,6 +338,21 @@ if grep -Fq -- '--raw' "${work_dir}/kubectl-calls"; then
   fail 'the script asked kubectl for unredacted credentials'
 fi
 
+# A mask issued after a tool has run is too late for whatever that tool printed. Every kubectl
+# call in that same run noted whether the command was already out.
+grep -Fxq 'masked' "${work_dir}/kubectl-calls.mask" ||
+  fail 'the recording kubectl never saw the mask command'
+if grep -Fxq 'unmasked' "${work_dir}/kubectl-calls.mask"; then
+  fail 'kubectl was called before the runner had been asked to mask the address'
+fi
+
+# Off a runner nothing reads the command, so it would only print the address to a terminal.
+write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443"
+run_endpoint "${work_dir}/bin" GITHUB_ACTIONS= || fail 'a run off a runner was refused'
+[[ "${masked}" == no ]] || fail 'a run off a runner printed the mask command'
+expect_stream stdout "${switched_line}" || fail 'a run off a runner did not print its one outcome line'
+expect_stream stderr '' || fail 'a run off a runner printed to stderr'
+
 # Every way the script can refuse, in the order it checks them.
 write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443"
 for tool in curl jq kubectl; do
@@ -310,26 +385,44 @@ expect_refusal 'a floating IP owned for another cluster' "${not_owned_line}" \
 expect_refusal 'a floating IP that is not an IPv4 address' \
   '::error::Hetzner floating IP prod-floating-ip returned an invalid IPv4 address.' \
   "${work_dir}/bin" FAKE_FLOATING_IP_MODE=not-ipv4
-expect_refusal 'a kubectl that fails every read by quoting the kubeconfig' "${no_context_line}" \
+expect_refusal_after_selection 'a kubectl that fails every read by quoting the kubeconfig' "${no_context_line}" \
   "${work_dir}/kubectl-bin:${work_dir}/bin" FAKE_KUBECTL_MODE=loud FAKE_KUBECTL_SUBCOMMAND=view
-expect_refusal 'a kubectl that refuses the write by quoting the server' "${not_persisted_line}" \
+expect_refusal_after_selection 'a kubectl that refuses the write by quoting the server' "${not_persisted_line}" \
   "${work_dir}/kubectl-bin:${work_dir}/bin" FAKE_KUBECTL_MODE=loud FAKE_KUBECTL_SUBCOMMAND=set-cluster
-expect_refusal 'an endpoint that was never persisted' "${not_persisted_line}" \
+expect_refusal_after_selection 'an endpoint that was never persisted' "${not_persisted_line}" \
   "${work_dir}/kubectl-bin:${work_dir}/bin" FAKE_KUBECTL_MODE=silent FAKE_KUBECTL_SUBCOMMAND=set-cluster
 
 write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443" 'someone@prod'
-expect_refusal 'a kubeconfig without the admin@prod context' "${no_context_line}" "${work_dir}/bin"
+expect_refusal_after_selection 'a kubeconfig without the admin@prod context' "${no_context_line}" "${work_dir}/bin"
 
 write_kubeconfig_without contexts "${kubeconfig}" "https://${stale_ip}:6443"
-expect_refusal 'a kubeconfig with no contexts at all' "${no_context_line}" "${work_dir}/bin"
+expect_refusal_after_selection 'a kubeconfig with no contexts at all' "${no_context_line}" "${work_dir}/bin"
 
 write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443" 'admin@prod' 'retired'
-expect_refusal 'a context that references an undefined cluster' "${no_cluster_line}" "${work_dir}/bin"
+expect_refusal_after_selection 'a context that references an undefined cluster' "${no_cluster_line}" "${work_dir}/bin"
 
 write_kubeconfig_without clusters "${kubeconfig}" "https://${stale_ip}:6443"
-expect_refusal 'a kubeconfig with no clusters at all' "${no_cluster_line}" "${work_dir}/bin"
+expect_refusal_after_selection 'a kubeconfig with no clusters at all' "${no_cluster_line}" "${work_dir}/bin"
 
 grep -Fq 'run: ./scripts/use-prod-stable-api-endpoint.sh' "${deploy_action}" ||
   fail 'deploy-prod does not invoke the stable-endpoint normalization'
 
-printf 'ok — prod deploy selects only its KSail-owned stable API endpoint, and names nothing it read doing it\n'
+# The mask command reaches the runner only through the step's stderr, so a caller that discards
+# stderr leaves its job unmasked. One caller does, and is listed here rather than changed: its
+# invocation line is being rewritten by an open pull request, and the step after it prints fixed
+# verdict tokens only. Any other caller that hides stderr fails here.
+callers_found=0
+while IFS= read -r caller; do
+  callers_found=$((callers_found + 1))
+  grep -F 'use-prod-stable-api-endpoint.sh' "${caller}" | grep -Fv 'scripts/tests/' >"${work_dir}/invocations"
+  if grep -Eq '(2>|&>)' "${work_dir}/invocations" && [[ "${caller}" != "${arc_workflow}" ]]; then
+    fail "${caller#"${root_dir}/"} hides the endpoint helper's stderr, so the runner never sees the mask command"
+  fi
+done < <(grep -rlE '(run:|if !) .*\./scripts/use-prod-stable-api-endpoint\.sh' \
+  "${root_dir}/.github/workflows" "${root_dir}/.github/actions")
+((callers_found >= 12)) ||
+  fail "found only ${callers_found} callers of the endpoint helper; the wiring check is not reading them all"
+grep -Fq './scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1' "${arc_workflow}" ||
+  fail 'the ARC identity workflow no longer hides the helper stderr: drop its exception from this test'
+
+printf 'ok — prod deploy selects only its KSail-owned stable API endpoint, masks it for the rest of the job, and names nothing it read doing it\n'

@@ -4,8 +4,12 @@
 #
 # PUBLIC LOG. This repository's workflow logs are public and this script runs in
 # them, so nothing it prints — on stdout or stderr, on success or failure — may
-# name the endpoint address or anything the restored kubeconfig carries. Two
+# name the endpoint address or anything the restored kubeconfig carries. Three
 # rules keep that true:
+#   * on a GitHub runner it registers the address as a masked value the moment
+#     it is selected, so the runner redacts it from every later line of the job
+#     whichever tool prints it. That one command carries the address to the
+#     runner, which redacts it in the log line too;
 #   * its own lines report outcomes only, never a value it read;
 #   * jq's and kubectl's own error text never reaches the log, because both can
 #     quote their input — a failed kubectl jsonpath prints the object it was
@@ -89,6 +93,17 @@ readonly stable_ip
 if [[ ! "${stable_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
   echo "::error::Hetzner floating IP ${floating_ip_name} returned an invalid IPv4 address." >&2
   exit 1
+fi
+
+# Tools that run later in the job print the endpoint on their own — the cluster
+# update names it on every deploy, and a failed deploy's diagnostic excerpts can
+# too — so ask the runner to redact it before anything here or after can use
+# it. The command goes to stderr because several callers discard stdout, and it
+# goes nowhere else: the runner redacts the value in this line as well, while a
+# file, a step summary or an artifact would keep it. Off a runner there is
+# nothing to redact and the line would only print the address, so it is skipped.
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  echo "::add-mask::${stable_ip}" >&2
 fi
 
 # kubeconfig_field <jsonpath> — one field of the restored kubeconfig, or nothing
