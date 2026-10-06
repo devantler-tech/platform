@@ -38,6 +38,33 @@ else
 fi
 [[ "${actual_sha}" == "${expected_sha}" ]] || fail 'the pinned OpenBao chart checksum changed'
 
+# Exercise this exact server's listener parsing and SIGHUP reload behavior,
+# without starting Kubernetes, initializing a vault or accessing credentials.
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64)
+    native_asset=openbao_2.6.3_linux_amd64.tar.gz
+    native_sha=c6463ddd4fdc4214b62a7ffdeaa0fc6df170f7e6b75c6dea2c5e525bdc932ed3
+    ;;
+  Darwin/arm64)
+    native_asset=openbao_2.6.3_darwin_arm64.tar.gz
+    native_sha=ed17491ebc6415d075b7b2b2c0ef6b5908b84b161b8e5a50c7da303cd8d15df4
+    ;;
+  *) fail 'the native TLS regression needs a reviewed server archive for this host' ;;
+esac
+curl --proto '=https' --proto-redir '=https' --location --tlsv1.2 --fail --silent --show-error --retry 2 --max-time 120 \
+  "https://github.com/openbao/openbao/releases/download/v2.6.3/${native_asset}" \
+  --output "${scratch}/native.tar.gz"
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_native_sha="$(sha256sum "${scratch}/native.tar.gz" | cut -d ' ' -f 1)"
+else
+  actual_native_sha="$(shasum -a 256 "${scratch}/native.tar.gz" | cut -d ' ' -f 1)"
+fi
+[[ "${actual_native_sha}" == "${native_sha}" ]] || fail 'the pinned native OpenBao archive checksum changed'
+mkdir "${scratch}/native"
+tar -xzf "${scratch}/native.tar.gz" -C "${scratch}/native"
+OPENBAO_TLS_TEST_BINARY="${scratch}/native/bao" go test \
+  "${root_dir}/scripts/tests/openbao-transport-runtime" -count=1
+
 replicas="$(yq -er '.data.openbao_replicas' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")"
 readonly replicas
 [[ "${replicas}" == '3' ]] || fail 'the OpenBao canary requires revalidation when replica count changes'

@@ -38,6 +38,30 @@ and timestamps would fail on a group-writable Kubernetes volume.
 
 ## Activation gates
 
+Production prepares credential transport separately from runner activation.
+The dedicated native TLS listener is served by the already repaired highest
+Raft ordinal; the held partition is unchanged. Standby requests use OpenBao's
+authenticated cluster connection to reach the leader. The existing API listener,
+Raft storage, audit configuration and unseal hook remain in the base configuration.
+An additional listener file is appended through the pinned chart.
+
+The dedicated certificate authority is trusted only in the runner namespace.
+Its issuance policy denies use outside OpenBao. The credential store requires
+HTTPS and that authority, with hostname verification and no plaintext fallback.
+Authentication staging includes only the dedicated reader ServiceAccount and
+SecretStore; it does not synchronize an App key or install a runner pool.
+OpenBao's same-identity reload helper has no credential volume or API token.
+It signals the server after an unsealed health response so certificate renewal
+does not depend on replacing the held Raft replicas.
+
+The pinned-server regression exercises TLS, wrong-name and wrong-authority
+rejection, obsolete-protocol rejection and actual certificate reload against
+an empty synthetic local store. These checks are not production transport,
+stored-key identity, secret synchronization or same-node runner-isolation proof.
+Those observations remain mandatory before credential materialization and ARC
+activation. The production deployment must confirm the listener and dedicated
+store; the protected identity verifier then establishes the actual stored App.
+
 Activation requires a separate reviewed change and all of these proofs:
 
 1. Reuse the production platform App used for GitHub sign-in, identified by
@@ -63,7 +87,9 @@ Activation requires a separate reviewed change and all of these proofs:
    verification outcome, never the key or tokens.
    Prove authenticated, encrypted credential transport and protection against
    observation by untrusted workloads, including workloads on the same node.
-   Do not activate the store until this transport boundary is verified.
+   Do not materialize the App key or activate runners until this transport
+   boundary is verified. Authentication-only staging must use the declared TLS
+   endpoint and its dedicated trust bundle.
    Reuse does not narrow the shared App's authority: the runner group controls
    job access, not what the App credential can do. Never mount the private key in
    a job runner.

@@ -488,6 +488,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'

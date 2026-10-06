@@ -8,12 +8,28 @@ import (
 const transportPath = "k8s/providers/hetzner/infrastructure/controllers/openbao/transport/"
 
 func TestCredentialStoreRequiresDedicatedVerifiedTLS(t *testing.T) {
-	store := readYAML(t, "k8s/bases/infrastructure/actions-runners/secret-store.yaml")
+	store := readYAML(t, "k8s/bases/infrastructure/actions-runners/credentials/secret-store.yaml")
 	vault := field(t, store, "spec", "provider", "vault")
 	equal(t, field(t, vault, "server"), "https://openbao-arc.openbao.svc.cluster.local:8204")
 	equal(t, field(t, vault, "caProvider", "type"), "ConfigMap")
 	equal(t, field(t, vault, "caProvider", "name"), "arc-openbao-ca")
 	equal(t, field(t, vault, "caProvider", "key"), "ca.crt")
+}
+
+func TestCredentialAuthenticationStagingDoesNotReadAppKeys(t *testing.T) {
+	stage := readYAML(t, "k8s/providers/hetzner/infrastructure/arc-credential-transport/kustomization.yaml")
+	resources := field(t, stage, "resources").([]any)
+	if len(resources) != 1 {
+		t.Fatal("credential staging must contain only its authentication component")
+	}
+	equal(t, resources[0], "../../../../bases/infrastructure/actions-runners/credentials/")
+	credentials := readYAML(t, "k8s/bases/infrastructure/actions-runners/credentials/kustomization.yaml")
+	resources = field(t, credentials, "resources").([]any)
+	if len(resources) != 2 {
+		t.Fatal("authentication staging must not include any key reader or runner")
+	}
+	equal(t, resources[0], "service-account.yaml")
+	equal(t, resources[1], "secret-store.yaml")
 }
 
 func TestCredentialTLSDoesNotAdvanceTheHeldRaftRollout(t *testing.T) {
