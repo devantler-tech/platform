@@ -73,6 +73,7 @@ func TestRecoveryObservesRetainedPoolWithoutConfusingItWithActiveRunners(t *test
 		{"foreign namespace", prefix + `[` + strings.Replace(item, "arc-ksail-analysis", "arc-runners", 1) + `]}`, false},
 		{"missing UID", prefix + `[` + strings.Replace(item, `"uid":"retained"`, `"uid":""`, 1) + `]}`, false},
 		{"missing revision", prefix + `[` + strings.Replace(item, `"resourceVersion":"123"`, `"resourceVersion":""`, 1) + `]}`, false},
+		{"being deleted", prefix + `[` + strings.Replace(item, `"uid":"retained"`, `"uid":"retained","deletionTimestamp":"2026-10-06T00:00:00Z"`, 1) + `]}`, false},
 		{"multiple pools", prefix + `[` + item + `,` + item + `]}`, false},
 		{"full resource", prefix + `[` + strings.Replace(item, `"metadata":`, `"spec":{"maxRunners":0},"metadata":`, 1) + `]}`, false},
 		{"pagination", strings.Replace(prefix, `"resourceVersion":"123"`, `"resourceVersion":"123","continue":"next"`, 1) + `null}`, false},
@@ -145,6 +146,10 @@ func TestNativeMetadataProxyPreservesAcceptAndRejectsWrites(t *testing.T) {
 			t.Error("native proxy lost the retained listener selector")
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == retainedPoolPath {
+			_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":[{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-analysis-runners","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}]}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":null}`))
 	}))
 	defer server.Close()
@@ -169,6 +174,12 @@ func TestNativeMetadataProxyPreservesAcceptAndRejectsWrites(t *testing.T) {
 	client := metadataClient()
 	defer client.CloseIdleConnections()
 	for _, path := range recoveryEndpoints {
+		if path == retainedPoolPath {
+			if err := requireRetainedMetadata(ctx, client, base+path); err != nil {
+				t.Fatal(err)
+			}
+			continue
+		}
 		if err := requireEmptyMetadata(ctx, client, base+path); err != nil {
 			t.Fatal(err)
 		}

@@ -8,8 +8,14 @@ zero minimum and maximum runner bounds. Suspension stops Helm reconciliation,
 does not drain an installed scale set, and prevents a failed release from recovering
 its readiness status. Native Flux and Helm health checks stay enabled. The protected
 deploy proves complete, empty metadata lists for organization runner sets, releases,
-credential-sync resources and both runner namespaces' pods before publication and
-after reconciliation. It requests no App credentials, JIT configuration or full
+credential-sync resources, retained runner children, both runner namespaces' pods
+and labeled listeners in the controller namespace before publication and after
+reconciliation. The retained namespace may contain only the exact chart-declared
+AutoscalingRunnerSet; Helm keeps that declaration with both runner bounds at zero.
+After reconciliation the guard also proves the installed controller is fully
+rolled out and excludes that retained namespace. Native empty `items: null` is
+accepted only with a complete current-revision list; missing or paginated items
+cannot prove absence. It requests no App credentials, JIT configuration or full
 Pod responses. Registration, execution and cleanup still
 need the separate proofs below before KSail #7131 can close.
 
