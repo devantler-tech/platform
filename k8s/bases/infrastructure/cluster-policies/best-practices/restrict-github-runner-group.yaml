@@ -35,7 +35,7 @@ spec:
             all:
               # JMESPath compares literal names and the complete numeric set;
               # Kyverno wildcard-aware string operators cannot express this boundary.
-              - key: "{{ request.object.metadata.name == 'ksail-code-quality' && request.object.spec.forProvider.name == 'ksail-code-quality' && request.object.spec.forProvider.visibility == 'selected' && request.object.spec.forProvider.selectedRepositoryIds == `[737584922]` && request.object.spec.forProvider.allowsPublicRepositories == `true` && request.object.spec.forProvider.restrictedToWorkflows == `false` && not_null(request.object.spec.forProvider.selectedWorkflows, `[]`) == `[]` && not_null(request.object.spec.initProvider, `{}`) == `{}` && request.object.spec.providerConfigRef.name == 'default' && not_null(request.object.spec.providerConfigRef.kind, 'ProviderConfig') == 'ProviderConfig' }}"
+              - key: "{{ request.object.metadata.name == 'ksail-code-quality' && request.object.spec.forProvider.name == 'ksail-code-quality' && request.object.spec.forProvider.visibility == 'selected' && request.object.spec.forProvider.selectedRepositoryIds == `[737584922]` && request.object.spec.forProvider.allowsPublicRepositories == `true` && request.object.spec.forProvider.restrictedToWorkflows == `false` && not_null(request.object.spec.forProvider.selectedWorkflows, `[]`) == `[]` && not_null(request.object.spec.initProvider, `{}`) == `{}` && request.object.spec.providerConfigRef.name == 'default' && request.object.spec.providerConfigRef.kind == 'ProviderConfig' }}"
                 operator: Equals
                 value: false
     - name: tenant-cannot-rebind-group
