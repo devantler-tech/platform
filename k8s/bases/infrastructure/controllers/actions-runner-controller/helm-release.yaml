@@ -1,4 +1,4 @@
-# Production retains this suspended release in Flux inventory. The organization
+# Production reconciles this scoped release in Flux inventory. The organization
 # pool stays unreferenced; activation is separate. See docs/operations/arc-runners.md.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -7,10 +7,11 @@ metadata:
   namespace: arc-systems
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
+    platform.devantler.tech/arc-recovery: drain-only
   labels:
     helm.toolkit.fluxcd.io/crds: enabled
 spec:
-  suspend: true
+  suspend: false
   interval: 10m
   timeout: 10m
   chartRef:

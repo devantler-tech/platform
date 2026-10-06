@@ -48,14 +48,14 @@ func equal(t *testing.T, value, want any) {
 	}
 }
 
-func TestStagedReleasesAreSuspendedAndPinned(t *testing.T) {
+func TestRecoveryControllerReconcilesWhileOrganizationPoolStaysSuspended(t *testing.T) {
 	for _, component := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller",
 		"k8s/bases/infrastructure/actions-runners",
 	} {
 		t.Run(filepath.Base(component), func(t *testing.T) {
 			release := readYAML(t, component+"/helm-release.yaml")
-			equal(t, field(t, release, "spec", "suspend"), true)
+			equal(t, field(t, release, "spec", "suspend"), filepath.Base(component) == "actions-runners")
 			equal(t, field(t, release, "spec", "chartRef", "kind"), "OCIRepository")
 			source := readYAML(t, component+"/oci-repository.yaml")
 			equal(t, field(t, source, "spec", "ref", "tag"), "0.15.0")
@@ -359,7 +359,7 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !controllerFound {
-		t.Fatal("production must retain the suspended controller in its inventory")
+		t.Fatal("production must retain the scoped controller in its inventory")
 	}
 }
 
@@ -372,7 +372,37 @@ func TestRetainedAnalysisResourcesCannotActivateOrLosePruneProtection(t *testing
 	equal(t, field(t, release, "metadata", "name"), "ksail-analysis-runners")
 	equal(t, field(t, release, "metadata", "namespace"), "arc-ksail-analysis")
 	equal(t, field(t, release, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
-	equal(t, field(t, release, "spec", "suspend"), true)
+	equal(t, field(t, release, "spec", "suspend"), false)
+	equal(t, field(t, release, "spec", "values", "minRunners"), 0)
+	equal(t, field(t, release, "spec", "values", "maxRunners"), 0)
+	controller := readYAML(t, "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml")
+	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-runners")
+	equal(t, field(t, controller, "metadata", "annotations", "platform.devantler.tech/arc-recovery"), "drain-only")
+}
+
+func TestRecoveryMetadataProofSurroundsPublicationAndReconciliation(t *testing.T) {
+	action := readYAML(t, ".github/actions/deploy-prod/action.yml")
+	before, publish, reconcile, after := -1, -1, -1, -1
+	for index, step := range field(t, action, "runs", "steps").([]any) {
+		value := step.(map[string]any)
+		if value["uses"] == "./.github/actions/deploy-prod/publish-platform-manifests" {
+			publish = index
+		}
+		if value["run"] == "./scripts/reconcile-flux-workloads.sh" {
+			reconcile = index
+		}
+		for stage, target := range map[string]*int{"before-publish": &before, "after-reconcile": &after} {
+			if value["run"] == "go run ./scripts/guard-arc-recovery "+stage {
+				if _, conditional := value["if"]; conditional {
+					t.Fatal("recovery proof must not be skipped")
+				}
+				*target = index
+			}
+		}
+	}
+	if before < 0 || before >= publish || after <= reconcile {
+		t.Fatal("recovery metadata proof must run before publication and after reconciliation")
+	}
 }
 
 func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {
