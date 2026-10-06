@@ -6,7 +6,8 @@
 # oauth2-proxy must not be given a fixed redirect_url, and no route may replace
 # that page with a fixed X-Auth-Request-Redirect. Dex only accepts a
 # callback it has registered exactly, so every host an HTTPRoute sends to
-# oauth2-proxy needs `https://<host>/oauth2/callback` on Dex's public-client.
+# oauth2-proxy needs both exact HTTPS default-port forms on Dex's public-client:
+# `https://<host>/oauth2/callback` and `https://<host>:443/oauth2/callback`.
 # Without it, logging in on that host stops at Dex with "Unregistered
 # redirect_uri". The reverse also holds: an entry whose route is gone is a
 # callback Dex keeps accepting for no reason, so it must be removed with the
@@ -160,6 +161,8 @@ for provider in "${providers[@]}"; do
     [[ -n "${host}" ]] || continue
     grep -qxF -- "https://${host}/oauth2/callback" <<<"${registered}" ||
       missing+=("https://${host}/oauth2/callback")
+    grep -qxF -- "https://${host}:443/oauth2/callback" <<<"${registered}" ||
+      missing+=("https://${host}:443/oauth2/callback")
   done < <(printf '%s\n%s\n' "${hosts}" "${own_hosts}" | sort -u)
 
   if ((${#missing[@]} > 0)); then
@@ -170,14 +173,37 @@ for provider in "${providers[@]}"; do
   printf '%s\n' "${registered}" >"${workdir}/${provider}-registered.txt"
 done
 
+# Extract only the two exact HTTPS default-port callback forms. An arbitrary
+# port, userinfo or wildcard must not be normalized into an authorized host.
+callback_host() {
+  local authority
+  [[ "$1" =~ ^https://([^/]+)/oauth2/callback$ ]] || return 1
+  authority="${BASH_REMATCH[1]}"
+  case "$authority" in
+    *:443) authority="${authority%:443}" ;;
+  esac
+  [[ -n "$authority" && "$authority" != *:* && "$authority" != *@* && "$authority" != *\** ]] || return 1
+  printf '%s\n' "$authority"
+}
+
+for uri in https://fronted.example/oauth2/callback https://fronted.example:443/oauth2/callback; do
+  [[ "$(callback_host "$uri")" == fronted.example ]] || fail 'the callback selector rejected a valid HTTPS default-port form'
+done
+for uri in http://fronted.example/oauth2/callback https://fronted.example:8443/oauth2/callback \
+  https://fronted.example:443:443/oauth2/callback https://user@fronted.example:443/oauth2/callback \
+  'https://*.example:443/oauth2/callback' https://fronted.example:443/other/callback; do
+  if callback_host "$uri" >/dev/null; then fail 'the callback selector admitted an unrelated origin, port or path'; fi
+done
+
 # --- No callback outlives its route ----------------------------------------
 # The Dex client is shared by both providers, so an entry is live while any
 # provider still fronts its host.
 sort -u -o "${all_hosts}" "${all_hosts}"
 stale=()
 while IFS= read -r uri; do
-  [[ "${uri}" =~ ^https://([^/]+)/oauth2/callback$ ]] || continue
-  grep -qxF -- "${BASH_REMATCH[1]}" "${all_hosts}" || stale+=("${uri}")
+  [[ "${uri}" == */oauth2/callback ]] || continue
+  host="$(callback_host "$uri")" || fail "Dex accepts a non-default HTTPS oauth2-proxy callback: ${uri}"
+  grep -qxF -- "${host}" "${all_hosts}" || stale+=("${uri}")
 done < <(sort -u "${workdir}"/*-registered.txt)
 
 if ((${#stale[@]} > 0)); then
