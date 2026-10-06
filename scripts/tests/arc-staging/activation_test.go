@@ -15,9 +15,9 @@ import (
 const controllerAggregate = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 const runnerAggregate = "k8s/providers/hetzner/infrastructure/kustomization.yaml"
 const controllerReference = "../../../../bases/infrastructure/controllers/actions-runner-controller/"
-const runnerReference = "../../../bases/infrastructure/ksail-analysis-runners/"
+const runnerReference = "../../../bases/infrastructure/actions-runners/"
 const controllerRelease = "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml"
-const runnerRelease = "k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml"
+const runnerRelease = "k8s/bases/infrastructure/actions-runners/helm-release.yaml"
 const runtimeAction = ".github/actions/deploy-prod/action.yml"
 
 func TestDeploymentAggregatesKeepARCInsideActivationEnvelope(t *testing.T) {
@@ -109,6 +109,18 @@ func TestActivationEnvelopeRejectsUnboundedOrUnverifiedStates(t *testing.T) {
 	}
 }
 
+func TestActivationEnvelopeRetainsOnlyASuspendedControllerWithoutAPool(t *testing.T) {
+	files := activationFixture(false)
+	files[controllerAggregate].Data = []byte(fmt.Sprintf("resources: [%q]\n", controllerReference))
+	if err := validateARCActivation(files); err != nil {
+		t.Fatalf("suspended controller inventory must remain recoverable: %v", err)
+	}
+	files[controllerRelease].Data = []byte("spec:\n  suspend: false\n")
+	if err := validateARCActivation(files); err == nil {
+		t.Fatal("accepted an active controller without the verified pool")
+	}
+}
+
 func validateARCActivation(files fs.FS) error {
 	counts := map[string]int{controllerAggregate: 0, runnerAggregate: 0}
 	allowed := map[string]string{controllerAggregate: controllerReference, runnerAggregate: runnerReference}
@@ -130,12 +142,12 @@ func validateARCActivation(files fs.FS) error {
 			return err
 		}
 		for _, reference := range append(aggregate.Components, aggregate.Bases...) {
-			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "ksail-analysis-runners") {
+			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "actions-runners") {
 				return fmt.Errorf("ARC activation must be an explicit resource, not a component or legacy base: %s", name)
 			}
 		}
 		for _, reference := range aggregate.Resources {
-			if !strings.Contains(reference, "actions-runner-controller") && !strings.Contains(reference, "ksail-analysis-runners") {
+			if !strings.Contains(reference, "actions-runner-controller") && !strings.Contains(reference, "actions-runners") {
 				continue
 			}
 			if expected, ok := allowed[name]; !ok || reference != expected {
@@ -149,7 +161,8 @@ func validateARCActivation(files fs.FS) error {
 		return err
 	}
 	active := counts[controllerAggregate] == 1 && counts[runnerAggregate] == 1
-	if !active && (counts[controllerAggregate] != 0 || counts[runnerAggregate] != 0) {
+	retainedController := counts[controllerAggregate] == 1 && counts[runnerAggregate] == 0
+	if !active && !retainedController && (counts[controllerAggregate] != 0 || counts[runnerAggregate] != 0) {
 		return fmt.Errorf("partial or duplicate ARC activation")
 	}
 	var image string

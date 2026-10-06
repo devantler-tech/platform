@@ -5,14 +5,14 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin" "$scratch/scripts" "$scratch/k8s/providers/hetzner/infrastructure/controllers" \
-  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners" \
+  "$scratch/k8s/bases/infrastructure/actions-runners" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller"
 cp "$root/scripts/verify-ksail-arc-runtime.sh" "$scratch/scripts/"
 if [[ -e "$root/scripts/wait-for-ksail-arc-registration.sh" ]]; then
   cp "$root/scripts/wait-for-ksail-arc-registration.sh" "$scratch/scripts/"
 fi
-cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
-  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
+cp "$root/k8s/bases/infrastructure/actions-runners/helm-release.yaml" \
+  "$scratch/k8s/bases/infrastructure/actions-runners/"
 cp "$root/scripts/ksail-arc-job-metrics.sh" "$scratch/scripts/"
 cp "$root/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/"
@@ -29,13 +29,13 @@ export digest
 image="ghcr.io/devantler-tech/ksail-analysis-runner@$digest"
 image="$image" yq -i '.spec.values.template.spec.containers[0].image=strenv(image) |
   .spec.values.template.spec.initContainers[0].image=strenv(image) | .spec.suspend=false' \
-  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml"
-yq -o=json '.spec.values' "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
+  "$scratch/k8s/bases/infrastructure/actions-runners/helm-release.yaml"
+yq -o=json '.spec.values' "$scratch/k8s/bases/infrastructure/actions-runners/helm-release.yaml" \
   | jq '{metadata:{generation:1,annotations:{"runner-scale-set-id":"1",
-      "actions.github.com/runner-group-name":"ksail-code-quality",
-      "actions.github.com/runner-scale-set-name":"ksail-code-quality"}},
+      "actions.github.com/runner-group-name":"platform",
+      "actions.github.com/runner-scale-set-name":"platform-linux"}},
     status:{phase:"Running",observedGeneration:1},spec:.} |
-    .spec.template.spec.serviceAccountName="ksail-code-quality-gha-rs-no-permission" |
+    .spec.template.spec.serviceAccountName="platform-linux-gha-rs-no-permission" |
     .spec.template.spec.volumes[2].configMap.name="ksail-arc-job-metrics-abc123xyz4"' >"$scratch/ars"
 cat >"$scratch/scripts/wait-for-platform-flux-revision.sh" <<'SH'
 #!/usr/bin/env bash
@@ -89,8 +89,8 @@ if [[ "${1:-}" == kustomize ]]; then
       reference='actions-runner-controller' ;;
     k8s/providers/hetzner/infrastructure)
       aggregate="$ARC_TEST_ROOT/$2/kustomization.yaml"
-      release="$ARC_TEST_ROOT/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml"
-      reference='ksail-analysis-runners' ;;
+      release="$ARC_TEST_ROOT/k8s/bases/infrastructure/actions-runners/helm-release.yaml"
+      reference='actions-runners' ;;
     *) exit 0 ;;
   esac
   references=$(yq -o=json '(.resources // []) + (.bases // [])' "$aggregate")
@@ -109,7 +109,7 @@ shift 3 # context pair and request-timeout
 args="$*"
 case "$args" in
   *'get deployment cluster-autoscaler-hetzner-cluster-autoscaler '*)
-    printf '%s\n' --cloud-provider=hetzner --max-nodes-total=9 --nodes=0:1:cx53:fsn1:autoscale-ksail-analysis
+    printf '%s\n' --cloud-provider=hetzner --max-nodes-total=9 --nodes=0:1:cx53:fsn1:autoscale-arc-runners
     [[ "$ARC_TEST_CASE" != wider-ceiling ]] || printf '%s\n' --max-nodes-total=10 ;;
   *'get kustomization '*)
     count=0
@@ -122,11 +122,11 @@ case "$args" in
     fi
     jq -n --arg revision "latest@$digest" '{metadata:{generation:1},status:{observedGeneration:1,
       lastAppliedRevision:$revision,conditions:[{type:"Ready",status:"True"}]}}' ;;
-  *'get runnergroups.actions.github.m.upbound.io ksail-code-quality '*)
+  *'get runnergroups.actions.github.m.upbound.io platform '*)
     jq -cn '{apiVersion:"actions.github.m.upbound.io/v1alpha1",kind:"RunnerGroup",
-      metadata:{name:"ksail-code-quality",namespace:"github-config",uid:"group-uid",generation:2,annotations:{"crossplane.io/external-name":"27"}},
-      spec:{providerConfigRef:{name:"default",kind:"ProviderConfig"},forProvider:{name:"ksail-code-quality",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[]}},
-      status:{atProvider:{id:"27",name:"ksail-code-quality",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[],
+      metadata:{name:"platform",namespace:"arc-runners",uid:"group-uid",generation:2,annotations:{"crossplane.io/external-name":"27"}},
+      spec:{providerConfigRef:{name:"runtime-app",kind:"ProviderConfig"},forProvider:{name:"platform",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[]}},
+      status:{atProvider:{id:"27",name:"platform",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[],
         runnersUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/runners",
         selectedRepositoriesUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/repositories"},
         conditions:[{type:"Ready",status:"True",observedGeneration:2},{type:"Synced",status:"True",observedGeneration:2}]}}' ;;
@@ -163,7 +163,7 @@ case "$args" in
     if [[ "$ARC_TEST_CASE" == unknown-create && -e "$ARC_TEST_ROOT/live-pod" ]]; then exit 1; fi
     if [[ "$ARC_TEST_CASE" == replacement-race && -e "$ARC_TEST_ROOT/replacement-preserved" ]]; then exit 1; fi
     if [[ -e "$ARC_TEST_ROOT/live-pod" ]]; then
-      printf '{"items":[{"metadata":{"name":"autoscale-ksail-analysis-0123456789abcdef","uid":"autoscale-ksail-analysis-0123456789abcdef-uid","labels":{"platform.devantler.tech/ksail-analysis":"enabled"}}}]}'
+      printf '{"items":[{"metadata":{"name":"autoscale-arc-runners-0123456789abcdef","uid":"autoscale-arc-runners-0123456789abcdef-uid","labels":{"platform.devantler.tech/ci-runner":"enabled"}}}]}'
     else
       printf '{"items":[{"metadata":{"name":"baseline-node","uid":"baseline-uid","labels":{}}}]}'
     fi ;;
@@ -177,7 +177,7 @@ case "$args" in
   'create -f '*)
     cp "$3" "$ARC_TEST_ROOT/desired-pod"
     jq --arg image "ghcr.io/devantler-tech/ksail-analysis-runner@$digest" '
-      .metadata.uid="owned-uid" | .spec.nodeName="autoscale-ksail-analysis-0123456789abcdef" |
+      .metadata.uid="owned-uid" | .spec.nodeName="autoscale-arc-runners-0123456789abcdef" |
       .status={podIP:"192.0.2.10",
         containerStatuses:[{name:"runner",ready:true,restartCount:0,containerID:"runtime-id",imageID:$image}],
         initContainerStatuses:[{name:"init-runner-home",restartCount:0,imageID:$image,state:{terminated:{exitCode:0}}}]}' \
@@ -197,16 +197,16 @@ case "$args" in
     jq -e '.kind=="DeleteOptions" and .preconditions.uid=="owned-uid" and .gracePeriodSeconds==5' "$4" >/dev/null || exit 96
     rm "$ARC_TEST_ROOT/live-pod"
     touch "$ARC_TEST_ROOT/deleted" ;;
-  'get node autoscale-ksail-analysis-0123456789abcdef '*)
-    jq -n '{metadata:{name:"autoscale-ksail-analysis-0123456789abcdef",uid:"autoscale-ksail-analysis-0123456789abcdef-uid",labels:{"platform.devantler.tech/ksail-analysis":"enabled","node.kubernetes.io/instance-type":"cx53"}},
-      spec:{taints:[{key:"platform.devantler.tech/ksail-analysis",value:"enabled",effect:"NoSchedule"}]},
+  'get node autoscale-arc-runners-0123456789abcdef '*)
+    jq -n '{metadata:{name:"autoscale-arc-runners-0123456789abcdef",uid:"autoscale-arc-runners-0123456789abcdef-uid",labels:{"platform.devantler.tech/ci-runner":"enabled","node.kubernetes.io/instance-type":"cx53"}},
+      spec:{taints:[{key:"platform.devantler.tech/ci-runner",value:"enabled",effect:"NoSchedule"}]},
       status:{nodeInfo:{operatingSystem:"linux",architecture:"amd64"},allocatable:{cpu:"15",memory:"30Gi","ephemeral-storage":"100Gi"},
         conditions:[{type:"Ready",status:"True"}]}}' ;;
-  'get pods -A --field-selector spec.nodeName=autoscale-ksail-analysis-0123456789abcdef '*)
+  'get pods -A --field-selector spec.nodeName=autoscale-arc-runners-0123456789abcdef '*)
     printf 'P\towned-uid\tRunning\nR\t3\t12Gi\t32Gi\nP\tsystem-uid\tRunning\nR\t100m\t1Gi\t1Gi\n'
     if [[ "$ARC_TEST_CASE" == insufficient-memory ]]; then printf 'R\t100m\t25Gi\t1Gi\n'; fi ;;
   *'get pods -l k8s-app=cilium '*)
-    printf '{"items":[{"metadata":{"name":"observer","uid":"observer-uid"},"spec":{"nodeName":"autoscale-ksail-analysis-0123456789abcdef"},
+    printf '{"items":[{"metadata":{"name":"observer","uid":"observer-uid"},"spec":{"nodeName":"autoscale-arc-runners-0123456789abcdef"},
       "status":{"podIP":"192.0.2.11","containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"observer-id"}],"conditions":[{"type":"Ready","status":"True"}]}}]}' ;;
   *'get configmap cilium-config '*)
     printf '{"data":{"cluster-name":"fixture"}}' ;;
@@ -243,13 +243,13 @@ case "$args" in
     [[ "$ARC_TEST_CASE" != wrong-source ]] || source=192.0.2.99
     jq -n --arg verdict "$verdict" --arg source "$source" --arg destination "$destination" --argjson port "$port" \
       --arg target_ns "$target_ns" --arg target_pod "$target_pod" '{flow:{verdict:$verdict,drop_reason_desc:"POLICY_DENIED",
-      traffic_direction:"EGRESS",source:{namespace:"arc-ksail-analysis",pod_name:"arc-proof-123-1"},
+      traffic_direction:"EGRESS",source:{namespace:"arc-runners",pod_name:"arc-proof-123-1"},
       destination:{namespace:$target_ns,pod_name:$target_pod},IP:{source:$source,destination:$destination},
-      l4:{TCP:{destination_port:$port,flags:{SYN:true}}},node_name:"fixture/autoscale-ksail-analysis-0123456789abcdef",time:"2026-10-05T22:00:00Z"}}'
+      l4:{TCP:{destination_port:$port,flags:{SYN:true}}},node_name:"fixture/autoscale-arc-runners-0123456789abcdef",time:"2026-10-05T22:00:00Z"}}'
     [[ "$ARC_TEST_CASE" != observer-loss ]] || printf '{"lost_events":{"num_events_lost":"1"}}'
     [[ "$ARC_TEST_CASE" != observer-diagnostics ]] || printf 'observer warning\n' >&2 ;;
   *'get pod observer '*)
-    printf '{"metadata":{"name":"observer","uid":"observer-uid"},"spec":{"nodeName":"autoscale-ksail-analysis-0123456789abcdef"},
+    printf '{"metadata":{"name":"observer","uid":"observer-uid"},"spec":{"nodeName":"autoscale-arc-runners-0123456789abcdef"},
       "status":{"podIP":"192.0.2.11","containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"observer-id"}]}}' ;;
   *'get pod dns '*)
     printf '{"metadata":{"name":"dns","uid":"dns-uid"},"spec":{"nodeName":"baseline-node"},
@@ -294,7 +294,17 @@ grep -Fq 'inactive source; no runtime access' "$scratch/inactive"
 [[ ! -e "$scratch/runtime-access" ]]
 printf 'resources: ["../../../../bases/infrastructure/controllers/actions-runner-controller/"]\n' \
   >"$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
-printf 'resources: ["../../../bases/infrastructure/ksail-analysis-runners/"]\n' \
+(
+  cd "$scratch"
+  PATH="$scratch/bin:$PATH" ARC_TEST_CASE=rendered-suspended bash scripts/verify-ksail-arc-runtime.sh --if-active
+) >"$scratch/retained-controller"
+grep -Fq 'inactive source; no runtime access' "$scratch/retained-controller"
+[[ ! -e "$scratch/runtime-access" ]]
+if (cd "$scratch"; PATH="$scratch/bin:$PATH" bash scripts/verify-ksail-arc-runtime.sh --if-active) \
+  >"$scratch/active-controller-out" 2>"$scratch/active-controller-error"; then exit 1; fi
+grep -Fq 'FAIL at partial-activation' "$scratch/active-controller-error"
+[[ ! -e "$scratch/runtime-access" ]]
+printf 'resources: ["../../../bases/infrastructure/actions-runners/"]\n' \
   >"$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml"
 if (cd "$scratch"; PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=false bash scripts/verify-ksail-arc-runtime.sh --if-active) \
   >"$scratch/unauthorized-out" 2>"$scratch/unauthorized-error"; then exit 1; fi
@@ -324,12 +334,12 @@ done
 # hex digits. Exercise the complete lifecycle with the shortest legal name.
 cp "$scratch/bin/kubectl" "$scratch/kubectl-original"
 for suffix in a 0123456789abcdef0 nothex; do
-  sed "s/autoscale-ksail-analysis-0123456789abcdef/autoscale-ksail-analysis-$suffix/g" \
+  sed "s/autoscale-arc-runners-0123456789abcdef/autoscale-arc-runners-$suffix/g" \
     "$scratch/kubectl-original" >"$scratch/bin/kubectl"
   if [[ "$suffix" == a ]]; then run_case short-node-suffix pass
   else run_case "invalid-node-suffix-$suffix" fail; fi
 done
-sed 's/autoscale-ksail-analysis-0123456789abcdef/autoscale-other-pool-0123456789abcdef/g' \
+sed 's/autoscale-arc-runners-0123456789abcdef/autoscale-other-pool-0123456789abcdef/g' \
   "$scratch/kubectl-original" >"$scratch/bin/kubectl"
 run_case wrong-node-pool fail
 cp "$scratch/kubectl-original" "$scratch/bin/kubectl"

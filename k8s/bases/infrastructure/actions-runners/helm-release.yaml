@@ -1,10 +1,10 @@
-# Active, uncalibrated analysis-only pool. Do not route managed analysis here until
+# Active, uncalibrated organization Linux pool. Do not route a workflow here until
 # the registration, isolation, toolchain and capacity gates in the runbook pass.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: ksail-analysis-runners
-  namespace: arc-ksail-analysis
+  name: platform-runners
+  namespace: arc-runners
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
@@ -13,16 +13,16 @@ spec:
   timeout: 10m
   chartRef:
     kind: OCIRepository
-    name: ksail-analysis-runners
+    name: platform-runners
   values:
     # Use the controller's built-in scaler defaults for the bounded analysis pool.
     # ARC 0.15's optional tuning object is absent from the public CRD catalog.
     # null is explicitly supported by the pinned chart's values schema.
     listenerConfig: null
     githubConfigUrl: https://github.com/devantler-tech
-    githubConfigSecret: arc-ksail-app
-    runnerGroup: ksail-code-quality
-    runnerScaleSetName: ksail-code-quality
+    githubConfigSecret: arc-github-app
+    runnerGroup: platform
+    runnerScaleSetName: platform-linux
     minRunners: 0
     maxRunners: 1
     controllerServiceAccount:
@@ -35,9 +35,9 @@ spec:
       spec:
         automountServiceAccountToken: false
         nodeSelector:
-          platform.devantler.tech/ksail-analysis: enabled
+          platform.devantler.tech/ci-runner: enabled
         tolerations:
-          - key: platform.devantler.tech/ksail-analysis
+          - key: platform.devantler.tech/ci-runner
             operator: Equal
             value: enabled
             effect: NoSchedule

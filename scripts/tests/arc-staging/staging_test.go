@@ -1,8 +1,10 @@
 package arcstaging_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -49,10 +51,11 @@ func equal(t *testing.T, value, want any) {
 func TestReleasesUsePinnedCharts(t *testing.T) {
 	for _, component := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller",
-		"k8s/bases/infrastructure/ksail-analysis-runners",
+		"k8s/bases/infrastructure/actions-runners",
 	} {
 		t.Run(filepath.Base(component), func(t *testing.T) {
 			release := readYAML(t, component+"/helm-release.yaml")
+			equal(t, field(t, release, "spec", "suspend"), false)
 			equal(t, field(t, release, "spec", "chartRef", "kind"), "OCIRepository")
 			source := readYAML(t, component+"/oci-repository.yaml")
 			equal(t, field(t, source, "spec", "ref", "tag"), "0.15.0")
@@ -64,21 +67,37 @@ func TestReleasesUsePinnedCharts(t *testing.T) {
 	}
 }
 
-func TestKSailOnlyOrganizationGroupCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
-	release := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml")
+func TestOrganizationRegistrationUsesAnExplicitOptInRunnerGroup(t *testing.T) {
+	release := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
 	values := field(t, release, "spec", "values")
 	equal(t, field(t, values, "githubConfigUrl"), "https://github.com/devantler-tech")
-	equal(t, field(t, values, "runnerGroup"), "ksail-code-quality")
-	equal(t, field(t, values, "githubConfigSecret"), "arc-ksail-app")
-	equal(t, field(t, values, "runnerScaleSetName"), "ksail-code-quality")
+	equal(t, field(t, values, "runnerGroup"), "platform")
+	equal(t, field(t, values, "runnerScaleSetName"), "platform-linux")
+}
+
+func TestPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
+	release := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
+	values := field(t, release, "spec", "values")
 	equal(t, field(t, values, "minRunners"), 0)
 	equal(t, field(t, values, "maxRunners"), 1)
-	if _, exists := values.(map[string]any)["containerMode"]; exists {
+	valueMap, ok := values.(map[string]any)
+	if !ok {
+		t.Fatal("runner values must be a mapping")
+	}
+	if _, exists := valueMap["containerMode"]; exists {
 		t.Fatal("container hooks and Docker-in-Docker are outside this pool's scope")
 	}
 	spec := field(t, values, "template", "spec")
 	equal(t, field(t, spec, "automountServiceAccountToken"), false)
-	equal(t, field(t, spec, "nodeSelector", "platform.devantler.tech/ksail-analysis"), "enabled")
+	equal(t, field(t, spec, "nodeSelector", "platform.devantler.tech/ci-runner"), "enabled")
+	tolerations := field(t, spec, "tolerations").([]any)
+	if len(tolerations) != 1 {
+		t.Fatal("runner scheduling must stay on the single isolated CI capacity pool")
+	}
+	equal(t, field(t, tolerations[0], "key"), "platform.devantler.tech/ci-runner")
+	equal(t, field(t, tolerations[0], "operator"), "Equal")
+	equal(t, field(t, tolerations[0], "value"), "enabled")
+	equal(t, field(t, tolerations[0], "effect"), "NoSchedule")
 	containers, ok := field(t, spec, "containers").([]any)
 	if !ok || len(containers) != 1 {
 		t.Fatal("runner must contain exactly one container")
@@ -106,14 +125,20 @@ func TestKSailOnlyOrganizationGroupCannotCreateUnboundedOrPrivilegedRunners(t *t
 
 func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
 	controller := readYAML(t, "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml")
-	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-ksail-analysis")
-	secret := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/external-secret.yaml")
+	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-runners")
+	pool := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
+	equal(t, field(t, pool, "metadata", "namespace"), "arc-runners")
+	secret := readYAML(t, "k8s/bases/infrastructure/actions-runners/external-secret.yaml")
 	equal(t, field(t, secret, "kind"), "ExternalSecret")
 	equal(t, field(t, secret, "spec", "secretStoreRef", "name"), "openbao")
-	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
-	equal(t, field(t, secret, "spec", "target", "name"), "arc-ksail-app")
-	entries := field(t, secret, "spec", "data").([]any)
-	if len(entries) != 3 {
+	equal(t, field(t, secret, "metadata", "namespace"), "arc-runners")
+	equal(t, field(t, secret, "spec", "target", "name"), field(t, pool, "spec", "values", "githubConfigSecret"))
+}
+
+func TestPlatformRuntimeAppFieldsAreMappedToARCAuthenticationKeys(t *testing.T) {
+	secret := readYAML(t, "k8s/bases/infrastructure/actions-runners/external-secret.yaml")
+	entries, ok := field(t, secret, "spec", "data").([]any)
+	if !ok || len(entries) != 3 {
 		t.Fatal("only the three App authentication keys are expected")
 	}
 	properties := map[string]string{
@@ -122,20 +147,125 @@ func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
 		"github_app_private_key":     "pem",
 	}
 	for _, entry := range entries {
-		key, ok := field(t, entry, "secretKey").(string)
-		if !ok {
-			t.Fatal("App credential target key must be a string")
-		}
+		key := field(t, entry, "secretKey").(string)
 		property, ok := properties[key]
 		if !ok {
-			t.Fatalf("unexpected or duplicate App credential target key %q", key)
+			t.Fatalf("unexpected or duplicate App authentication key %q", key)
 		}
-		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/github/app")
+		// This entry belongs to the platform runtime App. The GitHub-management
+		// provider's entry is a different App and must never authenticate ARC.
+		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/arc/github-app")
 		equal(t, field(t, entry, "remoteRef", "property"), property)
 		delete(properties, key)
 	}
-	if len(properties) != 0 {
-		t.Fatalf("missing App credential target keys: %v", properties)
+}
+
+// Only literal key=value arguments are supported in these selected writes.
+// Reject shell syntax and duplicate keys instead of evaluating or overwriting
+// configuration while checking the credential boundary.
+func parseBootstrapParameters(write, path string) (map[string]string, error) {
+	arguments := strings.FieldsFunc(strings.ReplaceAll(write, "\\\n", ""), func(character rune) bool {
+		return character == ' ' || character == '\t' || character == '\n'
+	})
+	literalPath := regexp.MustCompile(`^auth/kubernetes/role/[a-zA-Z0-9_-]+$`)
+	if !literalPath.MatchString(path) || len(arguments) < 4 || arguments[0] != "bao" || arguments[1] != "write" || arguments[2] != path {
+		return nil, fmt.Errorf("invalid bootstrap write header")
+	}
+	literal := regexp.MustCompile(`^[a-zA-Z0-9_./,:-]+$`)
+	parameters := map[string]string{}
+	for _, argument := range arguments[3:] {
+		key, value, ok := strings.Cut(argument, "=")
+		if !ok || !literal.MatchString(key) || !literal.MatchString(value) {
+			return nil, fmt.Errorf("non-literal bootstrap argument %q", argument)
+		}
+		if _, exists := parameters[key]; exists {
+			return nil, fmt.Errorf("duplicate bootstrap parameter %q", key)
+		}
+		parameters[key] = value
+	}
+	return parameters, nil
+}
+
+// A field mapping is not usable if its authentication role cannot read the
+// credential. Follow the actual store/identity/bootstrap chain, recording only
+// the narrowly selected configuration writes (never run the bootstrap job).
+func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
+	component := "k8s/bases/infrastructure/actions-runners/"
+	secret := readYAML(t, component+"external-secret.yaml")
+	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
+	store := readYAML(t, component+"secret-store.yaml")
+	equal(t, field(t, store, "metadata", "name"), field(t, secret, "spec", "secretStoreRef", "name"))
+	equal(t, field(t, store, "metadata", "namespace"), "arc-runners")
+	vault := field(t, store, "spec", "provider", "vault")
+	equal(t, field(t, vault, "path"), "secret")
+	equal(t, field(t, vault, "version"), "v2")
+	identity := field(t, vault, "auth", "kubernetes")
+	equal(t, field(t, identity, "mountPath"), "kubernetes")
+	role := field(t, identity, "role").(string)
+	account := readYAML(t, component+"service-account.yaml")
+	equal(t, field(t, account, "metadata", "name"), field(t, identity, "serviceAccountRef", "name"))
+	equal(t, field(t, account, "metadata", "namespace"), "arc-runners")
+	equal(t, field(t, account, "automountServiceAccountToken"), false)
+	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
+	for _, needed := range []string{"secret-store.yaml", "service-account.yaml"} {
+		found := false
+		for _, resource := range resources {
+			found = found || resource == needed
+		}
+		if !found {
+			t.Fatalf("credential authentication resource %s is not deployed with the pool", needed)
+		}
+	}
+	job := readYAML(t, "k8s/bases/infrastructure/vault-config/job.yaml")
+	containers := field(t, job, "spec", "template", "spec", "containers").([]any)
+	command := field(t, containers[0], "command").([]any)
+	script := command[len(command)-1].(string)
+	roleWrites := regexp.MustCompile(`(?m)^bao write auth/kubernetes/role/`+regexp.QuoteMeta(role)+` \\\n(?:[^\n]*\\\n)*[^\n]*`).FindAllString(script, -1)
+	if len(roleWrites) != 1 {
+		t.Fatalf("expected one bootstrap write for auth role %s, got %d", role, len(roleWrites))
+	}
+	parameters, err := parseBootstrapParameters(roleWrites[0], "auth/kubernetes/role/"+role)
+	if err != nil {
+		t.Fatal(err)
+	}
+	equal(t, parameters["bound_service_account_names"], field(t, account, "metadata", "name"))
+	equal(t, parameters["bound_service_account_namespaces"], "arc-runners")
+	policy := parameters["policies"]
+	if policy == "" || strings.Contains(policy, ",") {
+		t.Fatal("ARC identity must carry exactly one dedicated policy")
+	}
+	policyWrites := regexp.MustCompile(`(?m)^bao policy write `+regexp.QuoteMeta(policy)+` - <<'POLICY'\n[\s\S]*?^POLICY$`).FindAllString(script, -1)
+	if len(policyWrites) != 1 {
+		t.Fatalf("expected one bootstrap write for policy %s, got %d", policy, len(policyWrites))
+	}
+	policyLines := strings.Split(policyWrites[0], "\n")
+	if len(policyLines) < 3 || policyLines[0] != "bao policy write "+policy+" - <<'POLICY'" || policyLines[len(policyLines)-1] != "POLICY" {
+		t.Fatal("invalid policy write header or delimiter")
+	}
+	policyBody := strings.Join(policyLines[1:len(policyLines)-1], "\n")
+	// The App path is sufficient; wildcard GitHub paths, writes, and other
+	// infrastructure/application credentials are not part of this identity.
+	access := regexp.MustCompile(`^\s*path\s+"([^"]+)"\s*\{\s*capabilities\s*=\s*\[\s*"([^"]+)"\s*\]\s*\}\s*$`).FindStringSubmatch(policyBody)
+	if len(access) != 3 {
+		t.Fatal("ARC policy must grant one path and one capability, with no other access")
+	}
+	equal(t, access[1], "secret/data/infrastructure/arc/github-app")
+	equal(t, access[2], "read")
+	sharedWrite := regexp.MustCompile(`(?m)^bao write auth/kubernetes/role/external-secrets \\\n(?:[^\n]*\\\n)*[^\n]*`).FindAllString(script, -1)
+	if len(sharedWrite) != 1 {
+		t.Fatal("shared ESO auth role must remain independently configured")
+	}
+	sharedParameters, err := parseBootstrapParameters(sharedWrite[0], "auth/kubernetes/role/external-secrets")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sharedParameters["policies"] == "" {
+		t.Fatal("shared ESO policy bundle must remain explicitly configured")
+	}
+	for _, name := range strings.Split(sharedParameters["policies"], ",") {
+		if name == policy || name == "infra-github-readonly" {
+			t.Fatal("shared ESO identity must not acquire GitHub App access")
+		}
 	}
 }
 
@@ -157,7 +287,7 @@ func TestControllerLayerCreatesBothNamespacesBeforeItsScopedRBAC(t *testing.T) {
 		equal(t, field(t, namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
 		equal(t, field(t, namespace, "metadata", "labels", "pod-security.kubernetes.io/enforce"), "restricted")
 	}
-	pool := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/kustomization.yaml")
+	pool := readYAML(t, "k8s/bases/infrastructure/actions-runners/kustomization.yaml")
 	for _, resource := range field(t, pool, "resources").([]any) {
 		if strings.HasPrefix(resource.(string), "namespace") {
 			t.Fatal("pool must not duplicate controller-owned namespaces")
@@ -195,7 +325,7 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {
 	for _, path := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller/cilium-network-policy.yaml",
-		"k8s/bases/infrastructure/ksail-analysis-runners/cilium-network-policy-runner.yaml",
+		"k8s/bases/infrastructure/actions-runners/cilium-network-policy-runner.yaml",
 	} {
 		t.Run(filepath.Base(filepath.Dir(path)), func(t *testing.T) {
 			policy := readYAML(t, path)

@@ -51,4 +51,4 @@ metadata:
   labels:
     app.kubernetes.io/name: ksail-arc-job-metrics
   name: ksail-arc-job-metrics-d6e7291092
-  namespace: arc-ksail-analysis
+  namespace: arc-runners

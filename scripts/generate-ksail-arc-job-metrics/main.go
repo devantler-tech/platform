@@ -12,7 +12,7 @@ import (
 
 const (
 	scriptPath   = "scripts/ksail-arc-job-metrics.sh"
-	manifestPath = "k8s/bases/infrastructure/ksail-analysis-runners/config-map-job-metrics.yaml"
+	manifestPath = "k8s/bases/infrastructure/actions-runners/config-map-job-metrics.yaml"
 )
 
 func generate(script []byte) ([]byte, error) {
@@ -25,7 +25,7 @@ func generate(script []byte) ([]byte, error) {
 		"kind":       "ConfigMap",
 		"metadata": map[string]any{
 			"name":        fmt.Sprintf("ksail-arc-job-metrics-%x", sum[:5]),
-			"namespace":   "arc-ksail-analysis",
+			"namespace":   "arc-runners",
 			"labels":      map[string]string{"app.kubernetes.io/name": "ksail-arc-job-metrics"},
 			"annotations": map[string]string{"kustomize.toolkit.fluxcd.io/substitute": "disabled"},
 		},

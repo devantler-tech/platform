@@ -20,13 +20,13 @@ set -euo pipefail
 case "$*" in
   *'get kustomization '*)
     jq -cn --arg revision "latest@$GROUP_DIGEST" '{metadata:{generation:1},status:{observedGeneration:1,lastAppliedRevision:$revision,conditions:[{type:"Ready",status:"True"}]}}' ;;
-  *'get runnergroups.actions.github.m.upbound.io ksail-code-quality '*)
+  *'get runnergroups.actions.github.m.upbound.io platform '*)
     [[ "$GROUP_CASE" != unreadable-group ]] || exit 1
     jq -cn --arg scenario "$GROUP_CASE" '{
       apiVersion:"actions.github.m.upbound.io/v1alpha1",kind:"RunnerGroup",
-      metadata:{name:"ksail-code-quality",namespace:"github-config",uid:"00000000-0000-0000-0000-000000000002",generation:2,annotations:{"crossplane.io/external-name":"27"}},
-      spec:{providerConfigRef:{name:"default",kind:"ProviderConfig"},forProvider:{name:"ksail-code-quality",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[]}},
-      status:{atProvider:{id:"27",name:"ksail-code-quality",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[],
+      metadata:{name:"platform",namespace:"arc-runners",uid:"00000000-0000-0000-0000-000000000002",generation:2,annotations:{"crossplane.io/external-name":"27"}},
+      spec:{providerConfigRef:{name:"runtime-app",kind:"ProviderConfig"},forProvider:{name:"platform",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[]}},
+      status:{atProvider:{id:"27",name:"platform",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[],
         runnersUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/runners",
         selectedRepositoriesUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/repositories"},
         conditions:[{type:"Ready",status:"True",observedGeneration:2},{type:"Synced",status:"True",observedGeneration:2}]}
@@ -40,9 +40,9 @@ case "$*" in
       elif $scenario=="missing-observation" then del(.status.conditions[1].observedGeneration)
       elif $scenario=="unbound-id" then .metadata.annotations["crossplane.io/external-name"]="1"
       else . end' ;;
-  *'get autoscalingrunnerset.actions.github.com ksail-code-quality '*)
-    jq -cn --arg scenario "$GROUP_CASE" '{metadata:{generation:1,annotations:{"runner-scale-set-id":"12","actions.github.com/runner-group-name":"ksail-code-quality","actions.github.com/runner-scale-set-name":"ksail-code-quality"}},
-      spec:{githubConfigUrl:"https://github.com/devantler-tech",runnerGroup:"ksail-code-quality",runnerScaleSetName:"ksail-code-quality"},
+  *'get autoscalingrunnerset.actions.github.com platform-linux '*)
+    jq -cn --arg scenario "$GROUP_CASE" '{metadata:{generation:1,annotations:{"runner-scale-set-id":"12","actions.github.com/runner-group-name":"platform","actions.github.com/runner-scale-set-name":"platform-linux"}},
+      spec:{githubConfigUrl:"https://github.com/devantler-tech",runnerGroup:"platform",runnerScaleSetName:"platform-linux"},
       status:{phase:"Running",observedGeneration:1}} |
       if $scenario=="wrong-registered-group" then .metadata.annotations["actions.github.com/runner-group-name"]="Default" else . end' ;;
   *) exit 93 ;;

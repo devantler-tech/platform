@@ -113,7 +113,7 @@ func run() error {
 		return fmt.Errorf("invalid bounded target")
 	}
 	return verifyDenial(os.Stdin, denialTarget{
-		namespace: "arc-ksail-analysis", pod: *pod, source: *source, destination: *destination,
+		namespace: "arc-runners", pod: *pod, source: *source, destination: *destination,
 		destinationNamespace: *destinationNamespace, destinationPod: *destinationPod,
 		node: *node, port: uint16(*port), since: start, until: end,
 	})

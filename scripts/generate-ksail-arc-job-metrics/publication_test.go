@@ -1,4 +1,4 @@
-package arcstaging_test
+package main
 
 import (
 	"bytes"
@@ -11,6 +11,30 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+const metricsComponent = "k8s/bases/infrastructure/actions-runners"
+
+func field(t *testing.T, value any, path ...string) any {
+	t.Helper()
+	for _, key := range path {
+		mapping, ok := value.(map[string]any)
+		if !ok {
+			t.Fatalf("%s: expected a mapping, got %T", strings.Join(path, "."), value)
+		}
+		value, ok = mapping[key]
+		if !ok {
+			t.Fatalf("missing %s", strings.Join(path, "."))
+		}
+	}
+	return value
+}
+
+func equal(t *testing.T, value, want any) {
+	t.Helper()
+	if value != want {
+		t.Fatalf("got %#v, want %#v", value, want)
+	}
+}
 
 func TestMetricsHookSurvivesPublishedArtifactRender(t *testing.T) {
 	// The real publisher includes manifest files, not arbitrary checkout files.

@@ -8,7 +8,7 @@ fail() { printf 'ARC acceptance: FAIL at %s\n' "$1" >&2; exit 1; }
 readonly controller_overlay=k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml
 readonly pool_overlay=k8s/providers/hetzner/infrastructure/kustomization.yaml
 controller_active=$(yq '[.resources[] | select(. == "../../../../bases/infrastructure/controllers/actions-runner-controller/")] | length' "$controller_overlay")
-pool_active=$(yq '[.resources[] | select(. == "../../../bases/infrastructure/ksail-analysis-runners/")] | length' "$pool_overlay")
+pool_active=$(yq '[.resources[] | select(. == "../../../bases/infrastructure/actions-runners/")] | length' "$pool_overlay")
 # Render every independently reconciled production layer before deciding to
 # skip. Legacy bases, aliases and overlay patches cannot activate ARC unseen.
 source_scratch=$(mktemp -d)
@@ -21,18 +21,28 @@ for overlay in k8s/providers/hetzner/apps k8s/providers/hetzner/infrastructure \
 done
 yq ea -o=json -I=0 '[select(.kind == "HelmRelease" and
   ((.metadata.namespace == "arc-systems" and .metadata.name == "arc-controller") or
+   (.metadata.namespace == "arc-runners" and .metadata.name == "platform-runners") or
    (.metadata.namespace == "arc-ksail-analysis" and .metadata.name == "ksail-analysis-runners")))]' \
   "$source_scratch/rendered.yaml" >"$source_scratch/releases.json"
 rendered_controller=$(jq '[.[] | select(.metadata.namespace == "arc-systems")] | length' "$source_scratch/releases.json")
-rendered_pool=$(jq '[.[] | select(.metadata.namespace == "arc-ksail-analysis")] | length' "$source_scratch/releases.json")
+rendered_pool=$(jq '[.[] | select(.metadata.namespace == "arc-runners")] | length' "$source_scratch/releases.json")
+rendered_legacy=$(jq '[.[] | select(.metadata.namespace == "arc-ksail-analysis")] | length' "$source_scratch/releases.json")
+[[ "$rendered_legacy" -le 1 ]] || fail retained-source-state
+jq -e 'all(.[] | select(.metadata.namespace == "arc-ksail-analysis"); .spec.suspend == true)' \
+  "$source_scratch/releases.json" >/dev/null || fail retained-source-state
 if [[ "$controller_active" == 0 && "$pool_active" == 0 && "$rendered_controller" == 0 && "$rendered_pool" == 0 ]]; then
   printf 'ARC acceptance: inactive source; no runtime access\n'
   exit 0
 fi
+if [[ "$controller_active" == 1 && "$pool_active" == 0 && "$rendered_controller" == 1 && "$rendered_pool" == 0 ]] &&
+  jq -e 'all(.[]; .spec.suspend == true)' "$source_scratch/releases.json" >/dev/null; then
+  printf 'ARC acceptance: inactive source; no runtime access\n'
+  exit 0
+fi
 [[ "$controller_active" == 1 && "$pool_active" == 1 && "$rendered_controller" == 1 && "$rendered_pool" == 1 ]] || fail partial-activation
-source_image=$(yq '.spec.values.template.spec.containers[0].image' k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml)
-jq -e --arg image "$source_image" 'all(.[]; .spec.suspend == false) and
-  all(.[] | select(.metadata.namespace == "arc-ksail-analysis");
+source_image=$(yq '.spec.values.template.spec.containers[0].image' k8s/bases/infrastructure/actions-runners/helm-release.yaml)
+jq -e --arg image "$source_image" 'all(.[] | select(.metadata.namespace != "arc-ksail-analysis"); .spec.suspend == false) and
+  all(.[] | select(.metadata.namespace == "arc-runners");
     .spec.values.template.spec.containers[0].image == $image and
     .spec.values.template.spec.initContainers[0].image == $image)' "$source_scratch/releases.json" >/dev/null || fail rendered-source-state
 rm -rf "$source_scratch"
@@ -40,7 +50,7 @@ trap - EXIT
 [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform ]] || fail deployment-identity
 [[ "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]{0,19}$ && "${GITHUB_RUN_ATTEMPT:-}" =~ ^[1-9][0-9]{0,2}$ ]] || fail run-identity
 [[ "${PLATFORM_MANIFEST_DIGEST:-}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail revision
-readonly context=admin@prod namespace=arc-ksail-analysis
+readonly context=admin@prod namespace=arc-runners
 readonly ownership_label=platform.devantler.tech/arc-runtime-probe
 readonly probe="arc-proof-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
 scratch=$(mktemp -d)
@@ -90,12 +100,12 @@ cleanup() {
     local deadline=$((SECONDS + 1200))
     while ((SECONDS < deadline)); do
       remaining=$(kc get nodes -o json) || { failed=1; break; }
-      if jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ksail-analysis"] != "enabled" and
-        (.metadata.name | startswith("autoscale-ksail-analysis-") | not))' <<<"$remaining" >/dev/null; then break; fi
+      if jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
+        (.metadata.name | startswith("autoscale-arc-runners-") | not))' <<<"$remaining" >/dev/null; then break; fi
       sleep 10
     done
-    jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ksail-analysis"] != "enabled" and
-      (.metadata.name | startswith("autoscale-ksail-analysis-") | not))' <<<"$remaining" >/dev/null || failed=1
+    jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
+      (.metadata.name | startswith("autoscale-arc-runners-") | not))' <<<"$remaining" >/dev/null || failed=1
   fi
   rm -rf "$scratch"
   if [[ "$failed" != 0 ]]; then printf 'ARC acceptance: FAIL cleanup\n' >&2; exit 4; fi
@@ -121,18 +131,18 @@ for layer in infrastructure apps; do
 done
 
 stage=registration-and-bounds
-kc -n "$namespace" get autoscalingrunnerset.actions.github.com ksail-code-quality -o json >"$scratch/ars.json"
+kc -n "$namespace" get autoscalingrunnerset.actions.github.com platform-linux -o json >"$scratch/ars.json"
 jq -e '
   .spec.template.spec.volumes[2].configMap.name as $metrics |
   .status.phase == "Running" and .status.observedGeneration == .metadata.generation and
   ((.metadata.annotations["runner-scale-set-id"] | tonumber) > 0) and
   .spec.githubConfigUrl == "https://github.com/devantler-tech" and
-  .spec.runnerGroup == "ksail-code-quality" and
-  .metadata.annotations["actions.github.com/runner-group-name"] == "ksail-code-quality" and
-  .metadata.annotations["actions.github.com/runner-scale-set-name"] == "ksail-code-quality" and
-  .spec.githubConfigSecret == "arc-ksail-app" and .spec.runnerScaleSetName == "ksail-code-quality" and
+  .spec.runnerGroup == "platform" and
+  .metadata.annotations["actions.github.com/runner-group-name"] == "platform" and
+  .metadata.annotations["actions.github.com/runner-scale-set-name"] == "platform-linux" and
+  .spec.githubConfigSecret == "arc-github-app" and .spec.runnerScaleSetName == "platform-linux" and
   .spec.minRunners == 0 and .spec.maxRunners == 1 and
-  .spec.template.spec.serviceAccountName == "ksail-code-quality-gha-rs-no-permission" and
+  .spec.template.spec.serviceAccountName == "platform-linux-gha-rs-no-permission" and
   .spec.template.spec.automountServiceAccountToken == false and
   .spec.template.spec.securityContext.runAsUser == 1001 and
   .spec.template.spec.securityContext.runAsGroup == 1001 and
@@ -146,8 +156,8 @@ jq -e '
   .spec.template.spec.containers[0].resources.limits.cpu == "3500m" and
   .spec.template.spec.containers[0].resources.requests["ephemeral-storage"] == "32Gi" and
   .spec.template.spec.containers[0].resources.limits["ephemeral-storage"] == "48Gi" and
-  .spec.template.spec.nodeSelector["platform.devantler.tech/ksail-analysis"] == "enabled" and
-  .spec.template.spec.tolerations == [{"key":"platform.devantler.tech/ksail-analysis","operator":"Equal","value":"enabled","effect":"NoSchedule"}] and
+  .spec.template.spec.nodeSelector["platform.devantler.tech/ci-runner"] == "enabled" and
+  .spec.template.spec.tolerations == [{"key":"platform.devantler.tech/ci-runner","operator":"Equal","value":"enabled","effect":"NoSchedule"}] and
   ($metrics | test("^ksail-arc-job-metrics-[a-z0-9]{10}$")) and
   .spec.template.spec.volumes == [{"name":"runner-home","emptyDir":{"sizeLimit":"40Gi"}},{"name":"runner-tmp","emptyDir":{"sizeLimit":"2Gi"}},
     {"name":"runner-metrics","configMap":{"name":$metrics,"defaultMode":365,"items":[{"key":"job-metrics.sh","path":"job-metrics.sh"}]}}] and
@@ -172,7 +182,7 @@ jq -e --rawfile expected scripts/ksail-arc-job-metrics.sh '
   (.data | length) == 1 and (.binaryData // {} | length) == 0 and .data["job-metrics.sh"] == $expected
 ' "$scratch/metrics-config.json" >/dev/null
 image=$(jq -r '.spec.template.spec.containers[0].image' "$scratch/ars.json")
-expected_image=$(yq '.spec.values.template.spec.containers[0].image' k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml)
+expected_image=$(yq '.spec.values.template.spec.containers[0].image' k8s/bases/infrastructure/actions-runners/helm-release.yaml)
 [[ "$image" == "$expected_image" ]] || fail image-drift
 stage=immutable-image
 pinned_digest=${image##*@}
@@ -196,19 +206,19 @@ stage=idle-pool-baseline
 kc -n kube-system get deployment cluster-autoscaler-hetzner-cluster-autoscaler \
   -o jsonpath='{range .spec.template.spec.containers[*].args[*]}{.}{"\n"}{end}' >"$scratch/autoscaler-args"
 declared_ceiling=$(grep '^--max-nodes-total=' "$scratch/autoscaler-args")
-declared_pool=$(grep '^--nodes=.*:autoscale-ksail-analysis$' "$scratch/autoscaler-args")
+declared_pool=$(grep '^--nodes=.*:autoscale-arc-runners$' "$scratch/autoscaler-args")
 declared_provider=$(grep '^--cloud-provider=' "$scratch/autoscaler-args")
 [[ "$declared_ceiling" == --max-nodes-total=9 && \
-   "$declared_pool" == --nodes=0:1:cx53:fsn1:autoscale-ksail-analysis && \
+   "$declared_pool" == --nodes=0:1:cx53:fsn1:autoscale-arc-runners && \
    "$declared_provider" == --cloud-provider=hetzner ]] || fail autoscaler-boundary
 kc -n "$namespace" get pods -l platform.devantler.tech/arc-role=runner -o json \
   | jq -e '.items | length == 0' >/dev/null
 kc -n "$namespace" get pods -l "$ownership_label" -o json \
   | jq -e '.items | length == 0' >/dev/null
 kc get nodes -o json >"$scratch/nodes.json"
-jq -e --arg key platform.devantler.tech/ksail-analysis \
+jq -e --arg key platform.devantler.tech/ci-runner \
   '(.items | length) < 9 and all(.items[]; .metadata.labels[$key] != "enabled" and
-    (.metadata.name | startswith("autoscale-ksail-analysis-") | not) and
+    (.metadata.name | startswith("autoscale-arc-runners-") | not) and
     (.metadata.uid | type == "string" and length > 0))' "$scratch/nodes.json" >/dev/null
 
 stage=restricted-admission
@@ -256,17 +266,17 @@ kc get node "$probe_node" -o json >"$scratch/node.json"
 jq -e --slurpfile before "$scratch/nodes.json" '
  .metadata.uid as $uid | ($uid | type == "string" and length > 0) and
  all($before[0].items[]; .metadata.uid != $uid) and
- (.metadata.name | test("^autoscale-ksail-analysis-[0-9a-f]{1,16}$")) and
- .metadata.labels["platform.devantler.tech/ksail-analysis"] == "enabled" and
+ (.metadata.name | test("^autoscale-arc-runners-[0-9a-f]{1,16}$")) and
+ .metadata.labels["platform.devantler.tech/ci-runner"] == "enabled" and
  .metadata.labels["node.kubernetes.io/instance-type"] == "cx53" and
  .status.nodeInfo.operatingSystem == "linux" and .status.nodeInfo.architecture == "amd64" and
- any(.spec.taints[]; .key == "platform.devantler.tech/ksail-analysis" and .value == "enabled" and .effect == "NoSchedule") and
+ any(.spec.taints[]; .key == "platform.devantler.tech/ci-runner" and .value == "enabled" and .effect == "NoSchedule") and
  any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/node.json" >/dev/null
 node_uid=$(jq -er '.metadata.uid' "$scratch/node.json")
 kc get nodes -o json | jq -e --arg uid "$node_uid" --arg name "$probe_node" \
   '(.items | length) <= 9 and any(.items[]; .metadata.uid == $uid and .metadata.name == $name) and
-   ([.items[] | select(.metadata.labels["platform.devantler.tech/ksail-analysis"] == "enabled" or
-     (.metadata.name | startswith("autoscale-ksail-analysis-")))] | length) == 1' >/dev/null
+   ([.items[] | select(.metadata.labels["platform.devantler.tech/ci-runner"] == "enabled" or
+     (.metadata.name | startswith("autoscale-arc-runners-")))] | length) == 1' >/dev/null
 stage=allocatable-headroom
 # Print only UIDs/phases and resource quantities, never runner environment/JIT data.
 kc get pods -A --field-selector "spec.nodeName=$probe_node" -o jsonpath='{range .items[*]}P{"\t"}{.metadata.uid}{"\t"}{.status.phase}{"\n"}{range .spec.containers[*]}R{"\t"}{.resources.requests.cpu}{"\t"}{.resources.requests.memory}{"\t"}{.resources.requests.ephemeral-storage}{"\n"}{end}{range .spec.initContainers[*]}R{"\t"}{.resources.requests.cpu}{"\t"}{.resources.requests.memory}{"\t"}{.resources.requests.ephemeral-storage}{"\n"}{end}R{"\t"}{.spec.overhead.cpu}{"\t"}{.spec.overhead.memory}{"\t"}{.spec.overhead.ephemeral-storage}{"\n"}{end}' >"$scratch/reservations"

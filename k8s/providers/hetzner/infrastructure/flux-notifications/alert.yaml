@@ -89,7 +89,7 @@ spec:
       namespace: actual-budget
     - kind: HelmRelease
       name: "*"
-      namespace: arc-ksail-analysis
+      namespace: arc-runners
     - kind: HelmRelease
       name: "*"
       namespace: arc-systems
@@ -185,7 +185,7 @@ spec:
       namespace: whoami
     - kind: OCIRepository
       name: "*"
-      namespace: arc-ksail-analysis
+      namespace: arc-runners
     - kind: OCIRepository
       name: "*"
       namespace: arc-systems

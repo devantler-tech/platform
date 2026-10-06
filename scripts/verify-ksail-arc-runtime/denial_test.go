@@ -9,12 +9,12 @@ import (
 func TestPolicyDenialMustBindEveryIdentityAndTheAttemptWindow(t *testing.T) {
 	t.Parallel()
 	expected := denialTarget{
-		namespace: "arc-ksail-analysis", pod: "probe-123", source: "192.0.2.2",
+		namespace: "arc-runners", pod: "probe-123", source: "192.0.2.2",
 		destination: "192.0.2.3", port: 8181, node: "default/worker",
 		since: time.Date(2026, 10, 5, 22, 0, 0, 0, time.UTC),
 		until: time.Date(2026, 10, 5, 22, 0, 10, 0, time.UTC),
 	}
-	valid := `{"flow":{"verdict":"DROPPED","drop_reason_desc":"POLICY_DENIED","traffic_direction":"EGRESS","source":{"namespace":"arc-ksail-analysis","pod_name":"probe-123"},"IP":{"source":"192.0.2.2","destination":"192.0.2.3"},"l4":{"TCP":{"destination_port":8181,"flags":{"SYN":true}}},"node_name":"default/worker","time":"2026-10-05T22:00:05Z"}}`
+	valid := `{"flow":{"verdict":"DROPPED","drop_reason_desc":"POLICY_DENIED","traffic_direction":"EGRESS","source":{"namespace":"arc-runners","pod_name":"probe-123"},"IP":{"source":"192.0.2.2","destination":"192.0.2.3"},"l4":{"TCP":{"destination_port":8181,"flags":{"SYN":true}}},"node_name":"default/worker","time":"2026-10-05T22:00:05Z"}}`
 	cases := []struct {
 		name, input string
 		want        bool
@@ -24,7 +24,7 @@ func TestPolicyDenialMustBindEveryIdentityAndTheAttemptWindow(t *testing.T) {
 		{"malformed observer", "{", false},
 		{"other source", strings.Replace(valid, "192.0.2.2", "192.0.2.4", 1), false},
 		{"same pod prefix", strings.Replace(valid, "probe-123", "probe-123-other", 1), false},
-		{"other namespace", strings.Replace(valid, "arc-ksail-analysis", "other", 1), false},
+		{"other namespace", strings.Replace(valid, "arc-runners", "other", 1), false},
 		{"other destination", strings.Replace(valid, "192.0.2.3", "192.0.2.4", 1), false},
 		{"other port", strings.Replace(valid, "8181", "443", 1), false},
 		{"other node", strings.Replace(valid, "default/worker", "default/other", 1), false},

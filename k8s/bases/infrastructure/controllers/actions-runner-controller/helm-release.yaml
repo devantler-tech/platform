@@ -1,5 +1,5 @@
-# Production analysis controller. The protected deploy proves registration and
-# isolation before managed analysis is routed; see docs/operations/ksail-arc.md.
+# Active controller for the bounded organization pool. Protected deployment must
+# prove registration and isolation before any consumer routes a job here.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -32,7 +32,7 @@ spec:
     flags:
       logLevel: info
       logFormat: json
-      watchSingleNamespace: arc-ksail-analysis
+      watchSingleNamespace: arc-runners
     podSecurityContext:
       runAsNonRoot: true
       seccompProfile:

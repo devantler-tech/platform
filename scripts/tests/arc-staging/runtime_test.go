@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestAnalysisCapacityIsIsolatedAndKeepsTheClusterCeiling(t *testing.T) {
+func TestOrganizationCapacityIsIsolatedAndKeepsTheClusterCeiling(t *testing.T) {
 	config := readYAML(t, "ksail.prod.yaml")
 	node := field(t, config, "spec", "cluster", "autoscaler", "node")
 	equal(t, field(t, node, "maxNodesTotal"), 9)
@@ -13,30 +13,35 @@ func TestAnalysisCapacityIsIsolatedAndKeepsTheClusterCeiling(t *testing.T) {
 	pools := field(t, node, "pools").([]any)
 	count := 0
 	for _, pool := range pools {
-		if field(t, pool, "name") != "autoscale-ksail-analysis" {
+		if field(t, pool, "name") != "autoscale-arc-runners" {
 			continue
 		}
 		count++
 		equal(t, field(t, pool, "serverType"), "cx53")
 		equal(t, field(t, pool, "min"), 0)
 		equal(t, field(t, pool, "max"), 1)
-		equal(t, field(t, pool, "labels", "platform.devantler.tech/ksail-analysis"), "enabled")
+		equal(t, field(t, pool, "labels", "platform.devantler.tech/ci-runner"), "enabled")
 		wantTaints := []any{map[string]any{
-			"key": "platform.devantler.tech/ksail-analysis", "value": "enabled", "effect": "NoSchedule",
+			"key": "platform.devantler.tech/ci-runner", "value": "enabled", "effect": "NoSchedule",
 		}}
 		if !reflect.DeepEqual(field(t, pool, "taints"), wantTaints) {
-			t.Fatal("analysis nodes must reject ordinary workload scheduling")
+			t.Fatal("runner nodes must reject ordinary workload scheduling")
+		}
+		release := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
+		spec := field(t, release, "spec", "values", "template", "spec")
+		if !reflect.DeepEqual(field(t, spec, "nodeSelector"), field(t, pool, "labels")) {
+			t.Fatal("the runner selector must target the declared isolated capacity")
 		}
 	}
 	equal(t, count, 1)
 	buffer := readYAML(t, "k8s/providers/hetzner/infrastructure/overprovisioning/pod-template.yaml")
 	if _, exists := field(t, buffer, "template", "spec").(map[string]any)["tolerations"]; exists {
-		t.Fatal("ordinary warm-capacity buffers must not tolerate the analysis taint")
+		t.Fatal("ordinary warm-capacity buffers must not tolerate the runner taint")
 	}
 }
 
 func TestRunnerHasOnlyBoundedDisposableStorageAndRestrictedBootstrap(t *testing.T) {
-	release := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml")
+	release := readYAML(t, "k8s/bases/infrastructure/actions-runners/helm-release.yaml")
 	spec := field(t, release, "spec", "values", "template", "spec")
 	assertRunnerStorage(t, spec)
 }
