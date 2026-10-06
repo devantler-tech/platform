@@ -8,6 +8,7 @@ listener=k8s/providers/hetzner/infrastructure/controllers/openbao/transport/conf
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 fail() { printf 'ARC public listener: FAIL %s\n' "$1" >&2; exit 1; }
+command -v ksail >/dev/null 2>&1 || fail missing-native-scanner
 yq -o=json '.' "$listener" >"$scratch/public.json"
 kyverno apply "$policy" --resource "$scratch/public.json" --remove-color >"$scratch/admission" 2>&1 || fail public-settings
 grep -Fq 'pass: 1, fail: 0, warn: 0, error: 0, skip: 0' "$scratch/admission" || fail unevaluated-positive

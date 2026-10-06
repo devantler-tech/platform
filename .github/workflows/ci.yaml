@@ -1678,8 +1678,6 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
-          shellcheck scripts/tests/test-arc-listener-public-content.sh
-          bash scripts/tests/test-arc-listener-public-content.sh
           shellcheck scripts/tests/test-hcloud-volume-priority.sh
           bash scripts/tests/test-hcloud-volume-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
@@ -2422,6 +2420,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate ARC listener public-content disposition
+        if: needs.changes.outputs.k8s == 'true'
+        # Use the pinned native scanner installed above. The regression must
+        # prove both admission enforcement and the exact scanner disposition,
+        # including the unexcepted mirror and genuine-credential controls.
+        run: |
+          shellcheck scripts/tests/test-arc-listener-public-content.sh
+          bash scripts/tests/test-arc-listener-public-content.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from

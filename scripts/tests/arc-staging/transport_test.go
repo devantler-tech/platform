@@ -17,6 +17,38 @@ const publicListenerHCL = `listener "tcp" {
 }
 `
 
+func TestPublicListenerNativeScanRunsAfterPinnedKSailSetup(t *testing.T) {
+	workflow := readYAML(t, ".github/workflows/ci.yaml")
+	steps := field(t, workflow, "jobs", "validate", "steps").([]any)
+	setup, scan, scanCount := -1, -1, 0
+	for index, value := range steps {
+		step := value.(map[string]any)
+		run, _ := step["run"].(string)
+		if strings.TrimSpace(run) == ".github/scripts/setup-ksail.sh" {
+			if setup != -1 {
+				t.Fatal("manifest validation must install one pinned KSail release")
+			}
+			setup = index
+			version, ok := field(t, step, "env", "KSAIL_VERSION").(string)
+			if !ok || version == "" {
+				t.Fatal("the native scanner must use the job's pinned KSail release")
+			}
+			if _, conditional := step["if"]; conditional {
+				t.Fatal("the native scanner's KSail installation must be unconditional")
+			}
+		}
+		for _, line := range strings.Split(run, "\n") {
+			if strings.TrimSpace(line) == "bash scripts/tests/test-arc-listener-public-content.sh" {
+				scan, scanCount = index, scanCount+1
+				equal(t, step["if"], "needs.changes.outputs.k8s == 'true'")
+			}
+		}
+	}
+	if setup < 0 || scanCount != 1 || scan <= setup {
+		t.Fatal("the mandatory public-listener native scan must run once after pinned KSail installation")
+	}
+}
+
 func TestListenerCredentialFalsePositiveRequiresPublicContentEnforcement(t *testing.T) {
 	config := readYAML(t, transportPath+"config-map-listener.yaml")
 	equal(t, field(t, config, "metadata", "name"), "arc-openbao-listener")
