@@ -19,6 +19,11 @@ policies:
               namespace: github-config
               annotations:
                 crossplane.io/external-name: "18573307:devantler"
+            spec:
+              forProvider:
+                username: devantler
+                teamIdRef:
+                  name: admins
       - name: set-approved
         values:
           request.oldObject:
@@ -62,3 +67,29 @@ policies:
               namespace: github-config
               annotations:
                 crossplane.io/external-name: "*"
+      - name: cleared-retargeted-team
+        values:
+          request.oldObject:
+            metadata:
+              name: cleared-retargeted-team
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "17046606:devantler"
+            spec:
+              forProvider:
+                username: devantler
+                teamIdRef:
+                  name: maintainers
+      - name: cleared-retargeted-subject
+        values:
+          request.oldObject:
+            metadata:
+              name: cleared-retargeted-subject
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "18573307:someone-else"
+            spec:
+              forProvider:
+                username: someone-else
+                teamIdRef:
+                  name: admins

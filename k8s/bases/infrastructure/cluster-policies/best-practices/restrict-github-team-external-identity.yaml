@@ -200,8 +200,8 @@ spec:
         allowExistingViolations: false
         message: >-
           The crossplane.io/external-name of a github-config TeamRepository may
-          only be left unset, left unchanged together with its team reference
-          and repository, or set to the approved numeric identity of the referenced
+          only be left unset, removed or left unchanged while its team reference
+          and repository stay as they were, or set to the approved numeric identity of the referenced
           team followed by a colon and spec.forProvider.repository. A stored
           identity cannot be combined with spec.initProvider.repository. To point an
           object at another team or repository, delete it and create it again.
@@ -215,7 +215,7 @@ spec:
               # approved identity, and one stated under initProvider is not
               # compared here, so it may not accompany a stored identity at all
               # (no object on prod states one: measured 2026-10-05).
-              - key: "{{ externalName == '' || (initSubject == '' && ((externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))))) }}"
+              - key: "{{ (externalName == '' && (previousExternalName == '' || (teamRef == previousTeamRef && subject == previousSubject))) || (initSubject == '' && ((externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))))) }}"
                 operator: Equals
                 value: false
     - name: teammemberships-external-name-matches-declared-member
@@ -271,8 +271,8 @@ spec:
         allowExistingViolations: false
         message: >-
           The crossplane.io/external-name of a github-config TeamMembership may
-          only be left unset, left unchanged together with its team reference
-          and username, or set to the approved numeric identity of the referenced
+          only be left unset, removed or left unchanged while its team reference
+          and username stay as they were, or set to the approved numeric identity of the referenced
           team followed by a colon and spec.forProvider.username. A stored
           identity cannot be combined with spec.initProvider.username. To point an
           object at another team or username, delete it and create it again.
@@ -286,6 +286,6 @@ spec:
               # approved identity, and one stated under initProvider is not
               # compared here, so it may not accompany a stored identity at all
               # (no object on prod states one: measured 2026-10-05).
-              - key: "{{ externalName == '' || (initSubject == '' && ((externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))))) }}"
+              - key: "{{ (externalName == '' && (previousExternalName == '' || (teamRef == previousTeamRef && subject == previousSubject))) || (initSubject == '' && ((externalName == previousExternalName && teamRef == previousTeamRef && subject == previousSubject) || (subject != '' && ((teamRef == 'admins' && externalName == join('', ['18573307:', subject])) || (teamRef == 'maintainers' && externalName == join('', ['17046606:', subject])))))) }}"
                 operator: Equals
                 value: false

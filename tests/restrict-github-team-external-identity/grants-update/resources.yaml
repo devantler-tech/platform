@@ -125,3 +125,33 @@ spec:
         resolve: Always
   initProvider:
     repository: platform
+---
+# Removing the stored identity while pointing the object somewhere else: the provider
+# may write the old identity back onto an object that now declares another team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: cleared-retargeted-team
+  namespace: github-config
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Removing the stored identity while pointing the object somewhere else: the provider
+# may write the old identity back onto an object that now declares another subject.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: cleared-retargeted-subject
+  namespace: github-config
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
