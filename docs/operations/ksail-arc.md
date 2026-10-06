@@ -48,9 +48,14 @@ routing managed analysis:
    `arc-ksail-app` credential-reader ServiceAccount. The OpenBao role grants read
    on that exact credential path; the shared ESO role keeps its existing access.
    Job runners use the chart's separate no-permission identity. Verify the
-   current installation covers KSail and grants repository
-   Administration read/write before activation. The pool's registration URL
-   remains KSail-only; the existing App installation also serves other platform
+   current installation grants organization self-hosted runners read/write.
+   The GitHub tenant declares the dedicated `ksail-code-quality` organization
+   runner group with selected visibility and KSail as its sole repository.
+   Activation requires the native provider's current-generation Ready and
+   Synced observations to confirm that exact scope, remote organization and
+   group identity. ARC registers at `https://github.com/devantler-tech` with
+   the explicit `ksail-code-quality` group; its actual registration annotations
+   must confirm that group. The existing App also serves other platform
    consumers. No new App, credential copy, key rotation or permission expansion
    is required. Do not print, check in or mount the private key in a job runner.
 2. Use the declared `autoscale-ksail-analysis` CX53 pool for isolated analysis
@@ -116,7 +121,7 @@ routing managed analysis:
    `enable_arc=true`. Join that actual registered job to its restricted runner
    Pod, signed image, allowed network path and cleanup before changing managed
    Code Quality. The image's version command and the platform probe do not prove
-   an authenticated runner job. Read the repository-assigned registration,
+   an authenticated runner job. Read the registration in the verified KSail-only group,
    then change managed Code Quality to the verified `ksail-code-quality` label
    and read configuration back. Preserve the other setup fields. Check the
    required tools, GitHub proxy, network allowlist and non-root installation

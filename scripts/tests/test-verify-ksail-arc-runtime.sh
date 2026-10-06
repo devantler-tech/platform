@@ -31,7 +31,9 @@ image="$image" yq -i '.spec.values.template.spec.containers[0].image=strenv(imag
   .spec.values.template.spec.initContainers[0].image=strenv(image) | .spec.suspend=false' \
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml"
 yq -o=json '.spec.values' "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
-  | jq '{metadata:{generation:1,annotations:{"runner-scale-set-id":"1"}},
+  | jq '{metadata:{generation:1,annotations:{"runner-scale-set-id":"1",
+      "actions.github.com/runner-group-name":"ksail-code-quality",
+      "actions.github.com/runner-scale-set-name":"ksail-code-quality"}},
     status:{phase:"Running",observedGeneration:1},spec:.} |
     .spec.template.spec.serviceAccountName="ksail-code-quality-gha-rs-no-permission" |
     .spec.template.spec.volumes[2].configMap.name="ksail-arc-job-metrics-abc123xyz4"' >"$scratch/ars"
@@ -120,6 +122,14 @@ case "$args" in
     fi
     jq -n --arg revision "latest@$digest" '{metadata:{generation:1},status:{observedGeneration:1,
       lastAppliedRevision:$revision,conditions:[{type:"Ready",status:"True"}]}}' ;;
+  *'get runnergroups.actions.github.m.upbound.io ksail-code-quality '*)
+    jq -cn '{apiVersion:"actions.github.m.upbound.io/v1alpha1",kind:"RunnerGroup",
+      metadata:{name:"ksail-code-quality",namespace:"github-config",uid:"group-uid",generation:2,annotations:{"crossplane.io/external-name":"27"}},
+      spec:{providerConfigRef:{name:"default",kind:"ProviderConfig"},forProvider:{name:"ksail-code-quality",visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[]}},
+      status:{atProvider:{id:"27",name:"ksail-code-quality",default:false,inherited:false,visibility:"selected",allowsPublicRepositories:true,restrictedToWorkflows:false,selectedRepositoryIds:[737584922],selectedWorkflows:[],
+        runnersUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/runners",
+        selectedRepositoriesUrl:"https://api.github.com/orgs/devantler-tech/actions/runner-groups/27/repositories"},
+        conditions:[{type:"Ready",status:"True",observedGeneration:2},{type:"Synced",status:"True",observedGeneration:2}]}}' ;;
   *'get autoscalingrunnerset.actions.github.com '*)
     count=0
     [[ ! -e "$ARC_TEST_ROOT/registration-reads" ]] || count=$(cat "$ARC_TEST_ROOT/registration-reads")

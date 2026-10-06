@@ -64,10 +64,11 @@ func TestReleasesUsePinnedCharts(t *testing.T) {
 	}
 }
 
-func TestRepositoryScopedPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
+func TestKSailOnlyOrganizationGroupCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
 	release := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml")
 	values := field(t, release, "spec", "values")
-	equal(t, field(t, values, "githubConfigUrl"), "https://github.com/devantler-tech/ksail")
+	equal(t, field(t, values, "githubConfigUrl"), "https://github.com/devantler-tech")
+	equal(t, field(t, values, "runnerGroup"), "ksail-code-quality")
 	equal(t, field(t, values, "githubConfigSecret"), "arc-ksail-app")
 	equal(t, field(t, values, "runnerScaleSetName"), "ksail-code-quality")
 	equal(t, field(t, values, "minRunners"), 0)
@@ -178,11 +179,14 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 	}
 	for _, step := range field(t, changes, "steps").([]any) {
 		mapping := step.(map[string]any)
-		if mapping["run"] == "go test ./scripts/tests/arc-staging" {
-			if _, conditional := mapping["if"]; conditional {
-				t.Fatal("staging guard cannot be conditional")
+		run, _ := mapping["run"].(string)
+		for _, line := range strings.Split(run, "\n") {
+			if strings.TrimSpace(line) == "go test ./scripts/tests/arc-staging" {
+				if _, conditional := mapping["if"]; conditional {
+					t.Fatal("staging guard cannot be conditional")
+				}
+				return
 			}
-			return
 		}
 	}
 	t.Fatal("missing unconditional staging guard")

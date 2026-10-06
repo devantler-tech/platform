@@ -147,7 +147,10 @@ jobs:
         run: go test ./scripts/analyze-cri-logs
 
       - name: 🛑 Validate bounded ARC activation boundaries
-        run: go test ./scripts/tests/arc-staging
+        run: |
+          go test ./scripts/tests/arc-staging
+          shellcheck scripts/tests/test-wait-for-ksail-arc-registration.sh
+          bash scripts/tests/test-wait-for-ksail-arc-registration.sh
 
       - name: 🧾 Validate published ARC metrics bytes
         run: go test ./scripts/generate-ksail-arc-job-metrics

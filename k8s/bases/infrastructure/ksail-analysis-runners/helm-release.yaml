@@ -19,8 +19,9 @@ spec:
     # ARC 0.15's optional tuning object is absent from the public CRD catalog.
     # null is explicitly supported by the pinned chart's values schema.
     listenerConfig: null
-    githubConfigUrl: https://github.com/devantler-tech/ksail
+    githubConfigUrl: https://github.com/devantler-tech
     githubConfigSecret: arc-ksail-app
+    runnerGroup: ksail-code-quality
     runnerScaleSetName: ksail-code-quality
     minRunners: 0
     maxRunners: 1

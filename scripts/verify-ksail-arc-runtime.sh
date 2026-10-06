@@ -109,7 +109,10 @@ stage=deployed-revision
 quiet bash scripts/wait-for-platform-flux-revision.sh "$PLATFORM_MANIFEST_DIGEST"
 # Helm readiness precedes asynchronous ARC registration. Await the full
 # revision/generation join before taking the immutable acceptance snapshots.
-quiet timeout 660s bash scripts/wait-for-ksail-arc-registration.sh "$PLATFORM_MANIFEST_DIGEST"
+stage=registration-convergence
+if ! quiet timeout 660s bash scripts/wait-for-ksail-arc-registration.sh "$PLATFORM_MANIFEST_DIGEST"; then
+  fail registration-convergence
+fi
 for layer in infrastructure apps; do
   kc -n flux-system get kustomization "$layer" -o json >"$scratch/layer.json"
   jq -e --arg revision "latest@$PLATFORM_MANIFEST_DIGEST" \
@@ -123,7 +126,10 @@ jq -e '
   .spec.template.spec.volumes[2].configMap.name as $metrics |
   .status.phase == "Running" and .status.observedGeneration == .metadata.generation and
   ((.metadata.annotations["runner-scale-set-id"] | tonumber) > 0) and
-  .spec.githubConfigUrl == "https://github.com/devantler-tech/ksail" and
+  .spec.githubConfigUrl == "https://github.com/devantler-tech" and
+  .spec.runnerGroup == "ksail-code-quality" and
+  .metadata.annotations["actions.github.com/runner-group-name"] == "ksail-code-quality" and
+  .metadata.annotations["actions.github.com/runner-scale-set-name"] == "ksail-code-quality" and
   .spec.githubConfigSecret == "arc-ksail-app" and .spec.runnerScaleSetName == "ksail-code-quality" and
   .spec.minRunners == 0 and .spec.maxRunners == 1 and
   .spec.template.spec.serviceAccountName == "ksail-code-quality-gha-rs-no-permission" and
