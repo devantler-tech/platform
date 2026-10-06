@@ -1,0 +1,17 @@
+# Keep the held lower Raft ordinals untouched. OpenBao forwards standby
+# requests through its native authenticated cluster TLS connection.
+apiVersion: v1
+kind: Service
+metadata:
+  name: openbao-arc
+  namespace: openbao
+spec:
+  selector:
+    app.kubernetes.io/name: openbao
+    app.kubernetes.io/instance: openbao
+    statefulset.kubernetes.io/pod-name: openbao-2
+  ports:
+    - name: arc-tls
+      port: 8204
+      targetPort: 8204
+      protocol: TCP

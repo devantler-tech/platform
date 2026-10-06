@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-openbao-listener
+  namespace: openbao
+data:
+  listener.hcl: |
+    listener "tcp" {
+      address = "0.0.0.0:8204"
+      cluster_address = "127.0.0.1:8205"
+      tls_cert_file = "/openbao/arc-tls/tls.crt"
+      tls_key_file = "/openbao/arc-tls/tls.key"
+      tls_min_version = "tls12"
+      tls_disable_client_certs = true
+    }

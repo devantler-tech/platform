@@ -61,6 +61,7 @@ resources:
   # HelmRelease is included via ../../../../bases/...; this dir only adds the
   # prod-only ConfigMap, and the patch below rewires the HelmRelease.
   - velero/
+  - openbao/transport/
   # Opt-in game-day chaos engineering — uncomment to enable, re-comment when the
   # game day ends (see docs/chaos-engineering.md). Left off by default: the
   # chaos-daemon is a permanently-privileged DaemonSet, so it ships only while
@@ -128,6 +129,7 @@ patches:
   - path: openbao/patches/keep-off-autoscale-nodes.yaml
   # Stage only one OpenBao replica; lower ordinals wait for healthy readback.
   - path: openbao/patches/standby-oidc-canary.yaml
+  - path: openbao/transport/helm-release-patch.yaml
   # Umami's Namespace moved into the preceding controllers layer with its
   # Kyverno Role; keep the prod-only user-namespace label with its new owner.
   - path: kyverno/patches/enable-user-namespaces.yaml

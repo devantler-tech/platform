@@ -1,0 +1,35 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-arc-openbao-certificate
+  annotations:
+    policies.kyverno.io/title: Restrict ARC OpenBao Certificate Issuance
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+spec:
+  background: true
+  rules:
+    - name: only-openbao-may-use-credential-ca
+      match:
+        any:
+          - resources:
+              kinds:
+                - cert-manager.io/v1/Certificate
+                - cert-manager.io/v1/CertificateRequest
+      preconditions:
+        all:
+          - key: "{{ request.object.spec.issuerRef.name || '' }}"
+            operator: Equals
+            value: arc-openbao-ca
+          - key: "{{ request.object.spec.issuerRef.kind || 'Issuer' }}"
+            operator: Equals
+            value: ClusterIssuer
+      validate:
+        failureAction: Enforce
+        message: The dedicated credential-service CA may issue only in OpenBao.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.metadata.namespace || '' }}"
+                operator: NotEquals
+                value: openbao
