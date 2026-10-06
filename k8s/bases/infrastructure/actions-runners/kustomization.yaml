@@ -18,8 +18,7 @@ resources:
   - config-map-job-metrics.yaml
   - oci-repository.yaml
   - helm-release.yaml
-  - service-account.yaml
-  - secret-store.yaml
+  - credentials/
   - external-secret.yaml
   - provider-config.yaml
   - runner-group.yaml

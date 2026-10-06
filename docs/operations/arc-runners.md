@@ -5,7 +5,9 @@ Linux pool. The protected deployment must prove the existing runtime App,
 registration and isolated canary before activation can merge. Initial access
 admits only KSail's main-branch delivery preflight. Managed analysis remains on its
 existing route until actual runner delivery and full-source calibration pass;
-declaring the pool does not resolve KSail #7131.
+declaring the pool does not resolve KSail #7131. The former analysis release stays
+suspended and protected in Flux inventory; suspension does not drain an installed
+scale set.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -39,6 +41,45 @@ and timestamps would fail on a group-writable Kubernetes volume.
 
 ## Activation gates
 
+Production prepares credential transport separately from runner activation.
+The dedicated native TLS listener is served by the already repaired highest
+Raft ordinal; the held partition is unchanged. Standby requests use OpenBao's
+authenticated cluster connection to reach the leader. The existing API listener,
+Raft storage, audit configuration and unseal hook remain in the base configuration.
+An additional listener file is appended through the pinned chart.
+
+The dedicated certificate authority is trusted only in the runner namespace.
+Its issuance policy denies use outside OpenBao. The credential store requires
+HTTPS and that authority, with hostname verification and no plaintext fallback.
+Authentication staging includes only the dedicated reader ServiceAccount and
+SecretStore; it does not synchronize an App key or install a runner pool.
+OpenBao's same-identity reload helper has no credential volume or API token.
+It signals the server after an unsealed health response so certificate renewal
+does not depend on replacing the held Raft replicas.
+
+The pinned-server regression exercises TLS, wrong-name and wrong-authority
+rejection, obsolete-protocol rejection and actual certificate reload against
+an empty synthetic local store. These checks are not production transport,
+stored-key identity, secret synchronization or same-node runner-isolation proof.
+Those observations remain mandatory before credential materialization and ARC
+activation. The production deployment must confirm the listener and dedicated
+store; the protected identity verifier then establishes the actual stored App.
+
+Dispatch `Verify ARC Credential Transport` from the current reviewed main commit
+before that identity verification. It uses the established protected production
+path and serializes with deployments. The challenge verifies the dedicated
+authority, hostname and actual initialized, unsealed canary, then places an
+unprivileged, token-free probe on each current OpenBao-canary and secret-controller
+node. Both legacy HTTP and native TLS connection attempts must time out and have
+a corresponding Hubble `DROPPED / POLICY_DENIED` flow for the exact Pod, addresses,
+node, port and attempt window. A certificate error, unreachable healthy control,
+observer loss or changed workload identity fails the proof. Server admission
+must reject privileged, host-volume, host-network, host-process and `NET_RAW`
+variants. Only the owned probe Pods are created; UID-preconditioned deletion and
+absence readback are mandatory. This workflow reads no App key and requests no
+reader token. Its counts-only result is transport evidence, not stored-key,
+runner-registration or managed-analysis evidence.
+
 Activation and subsequent consumer admission require all of these proofs:
 
 1. Reuse the production platform App used for GitHub sign-in, identified by
@@ -64,7 +105,9 @@ Activation and subsequent consumer admission require all of these proofs:
    verification outcome, never the key or tokens.
    Prove authenticated, encrypted credential transport and protection against
    observation by untrusted workloads, including workloads on the same node.
-   Do not activate the store until this transport boundary is verified.
+   Do not materialize the App key or activate runners until this transport
+   boundary is verified. Authentication-only staging must use the declared TLS
+   endpoint and its dedicated trust bundle.
    Reuse does not narrow the shared App's authority: the runner group controls
    job access, not what the App credential can do. Never mount the private key in
    a job runner.
@@ -142,7 +185,8 @@ ARC. The unconditional guard permits activation only through the two named
 production aggregates, with immutable images and the mandatory protected
 runtime canary. It also permits retention of a suspended controller without a
 pool. It runs on pull requests and merge groups; deleting it is not activation
-proof.
+proof. Credential staging is absorbed by the full pool component at activation,
+so the reader and encrypted store have exactly one reconciled declaration.
 
 ## Repository opt-in
 

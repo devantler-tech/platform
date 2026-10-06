@@ -193,7 +193,7 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	component := "k8s/bases/infrastructure/actions-runners/"
 	secret := readYAML(t, component+"external-secret.yaml")
 	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
-	store := readYAML(t, component+"secret-store.yaml")
+	store := readYAML(t, component+"credentials/secret-store.yaml")
 	equal(t, field(t, store, "metadata", "name"), field(t, secret, "spec", "secretStoreRef", "name"))
 	equal(t, field(t, store, "metadata", "namespace"), "arc-runners")
 	vault := field(t, store, "spec", "provider", "vault")
@@ -202,11 +202,11 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	identity := field(t, vault, "auth", "kubernetes")
 	equal(t, field(t, identity, "mountPath"), "kubernetes")
 	role := field(t, identity, "role").(string)
-	account := readYAML(t, component+"service-account.yaml")
+	account := readYAML(t, component+"credentials/service-account.yaml")
 	equal(t, field(t, account, "metadata", "name"), field(t, identity, "serviceAccountRef", "name"))
 	equal(t, field(t, account, "metadata", "namespace"), "arc-runners")
 	equal(t, field(t, account, "automountServiceAccountToken"), false)
-	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
+	resources := field(t, readYAML(t, component+"credentials/kustomization.yaml"), "resources").([]any)
 	for _, needed := range []string{"secret-store.yaml", "service-account.yaml"} {
 		found := false
 		for _, resource := range resources {
@@ -320,6 +320,79 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 		}
 	}
 	t.Fatal("missing unconditional staging guard")
+}
+
+func TestDeploymentAggregatesRestrictARCToProduction(t *testing.T) {
+	const retainedControllerAggregate = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+	const retainedControllerReference = "../../../../bases/infrastructure/controllers/actions-runner-controller/"
+	controllerFound := false
+	poolFound := false
+	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || entry.Name() != "kustomization.yaml" || strings.Contains(path, "/actions-runner-controller/") || strings.Contains(path, "/actions-runners/") {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var document struct {
+			Resources  []string `yaml:"resources"`
+			Components []string `yaml:"components"`
+		}
+		if err := yaml.Unmarshal(data, &document); err != nil {
+			return err
+		}
+		if strings.HasSuffix(path, "k8s/providers/hetzner/infrastructure/kustomization.yaml") {
+			for _, reference := range document.Resources {
+				if reference == "arc-credential-transport/" {
+					t.Fatal("activation must not duplicate credential staging resources")
+				}
+			}
+		}
+		for _, reference := range append(document.Resources, document.Components...) {
+			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "actions-runners") {
+				relative, err := filepath.Rel(repoRoot, path)
+				if err != nil {
+					return err
+				}
+				if relative == retainedControllerAggregate && reference == retainedControllerReference && !controllerFound {
+					controllerFound = true
+					continue
+				}
+				if relative == "k8s/providers/hetzner/infrastructure/kustomization.yaml" &&
+					reference == "../../../bases/infrastructure/actions-runners/" && !poolFound {
+					poolFound = true
+					continue
+				}
+				t.Errorf("%s activates ARC through %q", path, reference)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !controllerFound {
+		t.Fatal("production must declare its bounded controller")
+	}
+	if !poolFound {
+		t.Fatal("production must declare its bounded pool")
+	}
+}
+
+func TestRetainedAnalysisResourcesCannotActivateOrLosePruneProtection(t *testing.T) {
+	const component = "k8s/providers/hetzner/infrastructure/retained-ksail-analysis/"
+	namespace := readYAML(t, component+"namespace.yaml")
+	equal(t, field(t, namespace, "metadata", "name"), "arc-ksail-analysis")
+	equal(t, field(t, namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+	release := readYAML(t, component+"helm-release.yaml")
+	equal(t, field(t, release, "metadata", "name"), "ksail-analysis-runners")
+	equal(t, field(t, release, "metadata", "namespace"), "arc-ksail-analysis")
+	equal(t, field(t, release, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+	equal(t, field(t, release, "spec", "suspend"), true)
 }
 
 func TestDNSAccessIsLimitedToTheDeclaredExternalDependencies(t *testing.T) {

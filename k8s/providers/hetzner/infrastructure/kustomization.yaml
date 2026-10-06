@@ -5,6 +5,12 @@ resources:
   - ../../../bases/infrastructure/
   # Prod-only: one bounded KSail analysis runner, authenticated by the shared App.
   - ../../../bases/infrastructure/actions-runners/
+  # Re-adopt the retained release without activating a runner. Suspension does
+  # not drain an installed scale set; runtime acceptance remains a separate gate.
+  - retained-ksail-analysis/
+  # Issuance restrictions must be active before credentials or runners are used.
+  # This layer follows installation of the Kyverno admission controller.
+  - cluster-policies/restrict-arc-openbao-certificate.yaml
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers

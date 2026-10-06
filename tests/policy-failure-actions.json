@@ -1,4 +1,5 @@
 {
+  "restrict-arc-openbao-certificate/only-openbao-may-use-credential-ca": "Enforce",
   "require-baseline-workers-for-hcloud-volumes/require-baseline-worker-affinity": "Enforce",
   "require-baseline-workers-for-hcloud-volumes/report-claim-lookup-failure": "Audit",
   "audit-privileged-rbac/privileged-rules": "Enforce",

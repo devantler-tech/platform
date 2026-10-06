@@ -161,6 +161,12 @@ jobs:
           shellcheck scripts/verify-ksail-arc-runtime.sh scripts/wait-for-ksail-arc-registration.sh scripts/tests/test-verify-ksail-arc-runtime.sh scripts/ksail-arc-job-metrics.sh
           bash scripts/tests/test-verify-ksail-arc-runtime.sh
 
+      - name: 🔐 Validate ARC transport proof boundaries
+        run: |
+          go test -race ./scripts/verify-arc-transport
+          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
+          bash scripts/tests/test-verify-arc-transport.sh
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
@@ -504,6 +510,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
@@ -830,6 +837,7 @@ jobs:
               # that edits the guard must also run the test that pins its ablations,
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/shared-publish-workflow-matchers.tsv'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               # Both halves, for the same reason as the pin guard above: the guard step itself
               # runs unconditionally, and listing the pair here is what keeps a guard edit
@@ -979,6 +987,8 @@ jobs:
               - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
               - 'scripts/tests/test-talos-schematic-readback.sh'
+              - 'scripts/verify-kubelet-config-readback.sh'
+              - 'scripts/tests/test-kubelet-config-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
@@ -2813,7 +2823,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@498fb4b11f129928d3af9a90e9c5a46f1c4dbd77 # v7.0.0
+        uses: devantler-tech/.github/actions/validate-naming@2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
 
       - name: Confirm naming validation completed
         env:
@@ -2873,6 +2883,11 @@ jobs:
         run: |
           shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
           bash scripts/tests/test-talos-schematic-readback.sh
+
+      - name: 🧾 Validate kubelet settings readback
+        run: |
+          shellcheck scripts/verify-kubelet-config-readback.sh scripts/tests/test-kubelet-config-readback.sh
+          bash scripts/tests/test-kubelet-config-readback.sh
 
       - name: 🧱 Prove folded Talos render and invalid-patch rejection
         run: |
