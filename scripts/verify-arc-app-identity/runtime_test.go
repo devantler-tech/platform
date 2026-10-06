@@ -162,3 +162,17 @@ func TestListenerTLSRejectsWrongServiceIdentity(t *testing.T) {
 		t.Fatal("listener accepted plaintext")
 	}
 }
+
+func TestForwardedServiceTargetPortCanDiffer(t *testing.T) {
+	if got := forwardingAddress("Forwarding from 127.0.0.1:12345 -> 8202"); got != "https://127.0.0.1:12345" {
+		t.Fatalf("Service port translation rejected: %q", got)
+	}
+}
+
+func TestForwardingReadinessCannotSelectAnotherEndpoint(t *testing.T) {
+	for _, line := range []string{"Forwarding from 0.0.0.0:12345 -> 8202", "Forwarding from other.example:12345 -> 8202", "Forwarding from 127.0.0.1:65536 -> 8202", "Forwarding from 127.0.0.1:01234 -> 8202", "Forwarding from 127.0.0.1:12345 -> 0", "Forwarding from 127.0.0.1:12345 -> 8202 extra"} {
+		if forwardingAddress(line) != "" {
+			t.Fatal("unsafe readiness endpoint was accepted")
+		}
+	}
+}

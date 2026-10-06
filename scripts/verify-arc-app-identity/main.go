@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -176,11 +177,10 @@ func forwardBao(parent context.Context, port int) (string, func(), error) {
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 1024), 4096)
-		pattern := regexp.MustCompile(fmt.Sprintf(`^Forwarding from 127\.0\.0\.1:([0-9]{1,5}) -> %d$`, port))
 		reported := false
 		for scanner.Scan() {
-			if match := pattern.FindStringSubmatch(scanner.Text()); len(match) == 2 && !reported {
-				ready <- "https://127.0.0.1:" + match[1]
+			if endpoint := forwardingAddress(scanner.Text()); endpoint != "" && !reported {
+				ready <- endpoint
 				reported = true
 			}
 		}
@@ -200,4 +200,22 @@ func forwardBao(parent context.Context, port int) (string, func(), error) {
 		stop()
 		return "", nil, fmt.Errorf("transport unavailable")
 	}
+}
+
+func forwardingAddress(line string) string {
+	// kubectl resolves a Service port to its pod targetPort. Only the allocated
+	// loopback endpoint is needed here; the fixed command and TLS hostname/CA
+	// checks bind the destination, rather than this informational target number.
+	pattern := regexp.MustCompile(`^Forwarding from 127\.0\.0\.1:([0-9]{1,5}) -> ([0-9]{1,5})$`)
+	match := pattern.FindStringSubmatch(line)
+	if len(match) != 3 {
+		return ""
+	}
+	for _, value := range match[1:] {
+		port, err := strconv.Atoi(value)
+		if err != nil || port < 1 || port > 65535 || strconv.Itoa(port) != value {
+			return ""
+		}
+	}
+	return "https://127.0.0.1:" + match[1]
 }
