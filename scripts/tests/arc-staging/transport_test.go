@@ -153,15 +153,25 @@ func TestCredentialTLSPoliciesUseCiliumIdentityVisibleSelectors(t *testing.T) {
 		t.Fatal("credential egress must have exactly one rule")
 	}
 	egressRule := egressRules[0].(map[string]any)
-	if _, exists := egressRule["toEndpoints"]; exists {
-		t.Fatal("credential egress must not depend on pod labels excluded from Cilium identities")
+	if _, exists := egressRule["toServices"]; exists {
+		t.Fatal("credential egress must not inherit identity-excluded labels from the Service selector")
 	}
-	services := field(t, egressRule, "toServices").([]any)
-	if len(services) != 1 {
-		t.Fatal("credential egress must target exactly one Kubernetes Service")
+	endpoints := field(t, egressRule, "toEndpoints").([]any)
+	if len(endpoints) != 1 {
+		t.Fatal("credential egress must target exactly one endpoint selector")
 	}
-	equal(t, field(t, services[0], "k8sService", "serviceName"), "openbao-arc")
-	equal(t, field(t, services[0], "k8sService", "namespace"), "openbao")
+	egressSelector := field(t, endpoints[0], "matchLabels").(map[string]any)
+	if len(egressSelector) != 3 {
+		t.Fatal("credential egress must select OpenBao only by stable Cilium identity labels")
+	}
+	equal(t, egressSelector["k8s:io.kubernetes.pod.namespace"], "openbao")
+	equal(t, egressSelector["app.kubernetes.io/name"], "openbao")
+	equal(t, egressSelector["app.kubernetes.io/instance"], "openbao")
+	for _, excluded := range []string{"statefulset.kubernetes.io/pod-name", "apps.kubernetes.io/pod-index"} {
+		if _, exists := egressSelector[excluded]; exists {
+			t.Fatalf("credential egress selector uses identity-excluded label %s", excluded)
+		}
+	}
 	ports := field(t, egressRule, "toPorts").([]any)
 	if len(ports) != 1 {
 		t.Fatal("credential egress must expose exactly one port rule")
