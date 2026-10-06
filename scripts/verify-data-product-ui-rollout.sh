@@ -148,7 +148,7 @@ elif $role == "helm" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{suspend:.spec.suspend,chartRef:.spec.chartRef,values:{image:(.spec.values.image|{repository,tag,digest}),
     uiContract:(.spec.values.uiContract|{enabled,additionalHostOrigins}),uiAppearance:(.spec.values.uiAppearance|{enabled}),
     controller:{replicas:.spec.values.controller.replicas},demoProduct:(.spec.values.demoProduct|{enabled,replicas,publicBaseURL}),route:(.spec.values.route|{enabled,host}),
-    observationFlags:[.spec.values | .connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled | if .==null then false else . end]}},
+    observationFlags:[.spec.values | .connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]}},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),
     lastAttemptedRevision:.status.lastAttemptedRevision,lastAttemptedRevisionDigest:.status.lastAttemptedRevisionDigest,
     lastAttemptedConfigDigest:.status.lastAttemptedConfigDigest,history:[.status.history[]? | {name,namespace,chartName,chartVersion,ociDigest,configDigest,status,version}]}}
