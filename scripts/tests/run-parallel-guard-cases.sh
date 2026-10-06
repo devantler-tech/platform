@@ -8,12 +8,46 @@ die() {
   exit 2
 }
 
+load_expectations() { # <wants-file> <label>; fills the worker's expected array
+  local wants="$1" label="$2" want
+  expected=()
+  if [ ! -f "$wants" ] || [ ! -r "$wants" ] || [ ! -s "$wants" ]; then
+    printf 'FAIL %s: invalid expected output: missing, unreadable or empty wants file\n' "$label" >&2
+    return 1
+  fi
+  while :; do
+    want=''
+    if IFS= read -r -d '' want; then
+      if [ -z "$want" ]; then
+        printf 'FAIL %s: invalid expected output: empty marker\n' "$label" >&2
+        return 1
+      fi
+      expected+=("$want")
+    else
+      if [ -n "$want" ]; then
+        printf 'FAIL %s: invalid expected output: unterminated marker\n' "$label" >&2
+        return 1
+      fi
+      break
+    fi
+  done <"$wants" || {
+    printf 'FAIL %s: invalid expected output: cannot read wants file\n' "$label" >&2
+    return 1
+  }
+  if [ "${#expected[@]}" -eq 0 ]; then
+    printf 'FAIL %s: invalid expected output: no markers\n' "$label" >&2
+    return 1
+  fi
+}
+
 run_worker() { # <guard> <case-dir>
   local guard="$1" case_dir="$2" kind label root out rc=0 want missing=''
+  local -a expected
   kind="$(cat "$case_dir/kind")" || die "cannot read $case_dir/kind"
   label="$(cat "$case_dir/label")" || die "cannot read $case_dir/label"
   root="$(cat "$case_dir/root")" || die "cannot read $case_dir/root"
   out="$root.out"
+  load_expectations "$case_dir/wants" "$label" || return 1
 
   "$guard" "$root" >"$out" 2>&1 || rc=$?
   case "$kind" in
@@ -22,9 +56,9 @@ run_worker() { # <guard> <case-dir>
         printf 'FAIL %s: exited %s on an agreeing tree: %s\n' "$label" "$rc" "$(cat "$out")" >&2
         return 1
       fi
-      while IFS= read -r -d '' want; do
+      for want in "${expected[@]}"; do
         grep -qF -- "$want" "$out" || missing="$missing '$want'"
-      done <"$case_dir/wants"
+      done
       if [ -n "$missing" ]; then
         printf 'FAIL %s: exited 0 without expected output%s: %s\n' "$label" "$missing" "$(cat "$out")" >&2
         return 1
@@ -35,9 +69,9 @@ run_worker() { # <guard> <case-dir>
         printf 'FAIL %s: exited 0, so the case was not refused: %s\n' "$label" "$(cat "$out")" >&2
         return 1
       fi
-      while IFS= read -r -d '' want; do
+      for want in "${expected[@]}"; do
         grep -qF -- "$want" "$out" || missing="$missing '$want'"
-      done <"$case_dir/wants"
+      done
       if [ -n "$missing" ]; then
         printf 'FAIL %s: refused for the wrong reason; missing%s: %s\n' "$label" "$missing" "$(cat "$out")" >&2
         return 1

@@ -79,6 +79,37 @@ grep -qF 'without expected output' "$scratch/missing.out" || {
   exit 1
 }
 
+# Every case needs at least one complete, non-empty NUL-delimited expectation.
+# Run these controls for both success and refusal cases: neither verdict may
+# silently accept a damaged fixture.
+for id in 01 02; do
+  for damage in missing empty unreadable truncated truncated-tail empty-record; do
+    damaged="$scratch/$damage-$id"
+    cp -R "$scratch/cases" "$damaged"
+    wants="$damaged/$id/wants"
+    case "$damage" in
+      missing) rm "$wants" ;;
+      empty) : >"$wants" ;;
+      unreadable) chmod 000 "$wants" ;;
+      truncated) printf '%s' 'not emitted' >"$wants" ;;
+      truncated-tail) printf '%s\0%s' 'expected' 'not emitted' >"$wants" ;;
+      empty-record) printf '%s\0\0' 'expected' >"$wants" ;;
+    esac
+    if bash "$runner" "$fake_guard" "$damaged" 4 >"$scratch/$damage-$id.out" 2>&1; then
+      printf '%s expectations were accepted for case %s\n' "$damage" "$id" >&2
+      exit 1
+    fi
+    grep -qF 'invalid expected output' "$scratch/$damage-$id.out" || {
+      printf '%s expectations were not diagnosed for case %s\n' "$damage" "$id" >&2
+      exit 1
+    }
+    if grep -qF "ok   case $id" "$scratch/$damage-$id.out"; then
+      printf '%s expectations produced a success verdict for case %s\n' "$damage" "$id" >&2
+      exit 1
+    fi
+  done
+done
+
 cp -R "$scratch/cases" "$scratch/wrong-kind"
 printf '%s\n' refusal >"$scratch/wrong-kind/01/kind"
 if bash "$runner" "$fake_guard" "$scratch/wrong-kind" 4 >"$scratch/kind.out" 2>&1; then
