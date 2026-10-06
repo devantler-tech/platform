@@ -296,6 +296,7 @@ mutate_case() {
 }
 
 run_case healthy pass
+mutate_case probe-extra-init deployment-probe '.spec.template.spec.initContainers=[{name:"unexpected",image:"example.invalid/other:latest",envFrom:[{secretRef:{name:"environment-canary"}}]}]'
 mutate_case helm-unplanned-observation helm '.spec.values.connectorReadiness.enabled=true'
 mutate_case helm-unplanned-contracts helm '.spec.values.contractReadiness.enabled=true'
 mutate_case helm-unplanned-chart-probe helm '.spec.values.contractProbe.enabled=true'

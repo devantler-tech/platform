@@ -92,7 +92,7 @@ jq -e '[.[] | select(.kind == "NetworkPolicy" and .metadata.namespace == "data-p
 jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-controller-contract-probe")] as $probe |
   ($probe|length)==1 and $probe[0].spec.replicas==0 and
   ($probe[0].spec.template.spec | .serviceAccountName=="data-product-controller-contract-probe" and .automountServiceAccountToken==false and
-    (.volumes//[])==[] and .imagePullSecrets==[{name:"ghcr-auth"}] and
+    (.volumes//[])==[] and (.initContainers//[])==[] and .imagePullSecrets==[{name:"ghcr-auth"}] and
     (.containers|length)==1 and (.containers[0] | .name=="contract-probe" and .command==["/contract-probe"] and (.args//[])==[] and
       .env==[{name:"CONTRACT_PROBE_URL",value:"https://harbour-data.${domain}/openapi.json"},{name:"CONTRACT_READINESS_ENABLED",value:"false"}] and
       .readinessProbe.httpGet.path=="/readyz" and .livenessProbe.httpGet.path=="/healthz" and

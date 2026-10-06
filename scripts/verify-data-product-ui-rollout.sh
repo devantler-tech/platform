@@ -110,7 +110,7 @@ def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,proto
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,containers:(.spec.template.spec.containers|containers),
     serviceAccountName:.spec.template.spec.serviceAccountName,automountServiceAccountToken:.spec.template.spec.automountServiceAccountToken,
-    volumeCount:(.spec.template.spec.volumes//[]|length)},
+    volumeCount:(.spec.template.spec.volumes//[]|length),initContainerCount:(.spec.template.spec.initContainers//[]|length)},
   status:(.status|{observedGeneration,replicas,updatedReplicas,readyReplicas,availableReplicas})};
 def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.containers|containers)},
   status:{phase:.status.phase,podIP:.status.podIP,podIPs:[.status.podIPs[]? | .ip],conditions:(.status.conditions|conditions),
@@ -222,7 +222,7 @@ def dormant_probe($sets;$pods):
     all($owned[];.spec.replicas==0 and (.status.replicas//0)==0) and
     all($pods[];. as $pod | all($owned[];. as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)|not)));
 def probe_configuration($tag):
-  .spec.serviceAccountName=="data-product-controller-contract-probe" and .spec.automountServiceAccountToken==false and .spec.volumeCount==0 and
+  .spec.serviceAccountName=="data-product-controller-contract-probe" and .spec.automountServiceAccountToken==false and .spec.volumeCount==0 and .spec.initContainerCount==0 and
   .spec.selector.matchLabels=={"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":"contract-probe"} and
   .spec.labels==.spec.selector.matchLabels and (.spec.containers|length)==1 and named_image("contract-probe";$tag) and
   (.spec.containers[0] | .command==["/contract-probe"] and (.args//[])==[] and .envCount==2 and .envFromCount==0 and .volumeMountCount==0 and
