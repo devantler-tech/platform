@@ -1,0 +1,95 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: UPDATE
+# kyverno test presents an update with the previous object equal to the new
+# one. The values below are merged into the previous object, so each row tests
+# a change; "no identity" has to be stated as an empty one.
+policies:
+  - name: restrict-github-team-external-identity
+    resources:
+      - name: cleared
+        values:
+          request.oldObject:
+            metadata:
+              name: cleared
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "18573307:ksail"
+            spec:
+              forProvider:
+                repository: ksail
+                teamIdRef:
+                  name: admins
+      - name: set-approved
+        values:
+          request.oldObject:
+            metadata:
+              name: set-approved
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: ""
+      - name: changed
+        values:
+          request.oldObject:
+            metadata:
+              name: changed
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "17046606:ksail"
+      - name: retargeted-team
+        values:
+          request.oldObject:
+            metadata:
+              name: retargeted-team
+              namespace: github-config
+            spec:
+              forProvider:
+                teamIdRef:
+                  name: maintainers
+      - name: retargeted-subject
+        values:
+          request.oldObject:
+            metadata:
+              name: retargeted-subject
+              namespace: github-config
+            spec:
+              forProvider:
+                repository: ksail
+      - name: from-wildcard
+        values:
+          request.oldObject:
+            metadata:
+              name: from-wildcard
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "*"
+      - name: cleared-retargeted-team
+        values:
+          request.oldObject:
+            metadata:
+              name: cleared-retargeted-team
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "17046606:ksail"
+            spec:
+              forProvider:
+                repository: ksail
+                teamIdRef:
+                  name: maintainers
+      - name: cleared-retargeted-subject
+        values:
+          request.oldObject:
+            metadata:
+              name: cleared-retargeted-subject
+              namespace: github-config
+              annotations:
+                crossplane.io/external-name: "18573307:platform"
+            spec:
+              forProvider:
+                repository: platform
+                teamIdRef:
+                  name: admins

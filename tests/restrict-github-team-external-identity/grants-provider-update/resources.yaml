@@ -1,0 +1,16 @@
+---
+# The provider records whatever GitHub returned; it is exempt.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: provider-recorded
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
