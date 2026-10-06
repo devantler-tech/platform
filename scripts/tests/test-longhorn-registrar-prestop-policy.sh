@@ -11,7 +11,7 @@ readonly longhorn_dir="${repo_root}/k8s/providers/hetzner/infrastructure/control
 readonly helm_release="${longhorn_dir}/helm-release.yaml"
 readonly fixtures="${repo_root}/tests/longhorn-registrar-prestop/resources.yaml"
 readonly grant_name="kyverno:background-controller:mutate-longhorn-csi-plugin"
-readonly expected_chart_version="1.12.1"
+readonly expected_chart_version="1.13.0"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2

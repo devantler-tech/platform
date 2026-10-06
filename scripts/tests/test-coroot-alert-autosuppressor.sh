@@ -1110,6 +1110,63 @@ jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "backstage-controlled-db-
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"
 
+# Longhorn 1.13.0 moves the four pinned upstream source lines (read at the
+# released tags: instance_manager_controller.go 305 -> 317, controller/utils.go
+# 181 -> 311, csi/server.go 136 -> 139, and the provisioner library's
+# controller.go 1569 -> 1633 with csi-provisioner v6.3.0). Both sets are
+# admitted so the exemptions hold on either side of the upgrade; any other
+# line stays visible.
+longhorn_lines() {
+  sed -e "s/instance_manager_controller\\.go:305\\]/instance_manager_controller.go:$1]/" \
+    -e "s/utils\\.go:181/utils.go:$2/" \
+    -e "s/server\\.go:136/server.go:$3/" \
+    -e "s/ controller\\.go:1569\\]/ controller.go:$4]/" \
+    "${pinned_logs_dir}/alerts.json"
+}
+upgraded_lines_dir="$(setup_scenario upgraded-longhorn-lines false)"
+longhorn_lines 317 311 139 1633 >"${upgraded_lines_dir}/alerts.json"
+! cmp -s "${pinned_logs_dir}/alerts.json" "${upgraded_lines_dir}/alerts.json" ||
+  fail "the upgraded-line fixture is identical to the baseline, so it proves nothing"
+run_scenario "${upgraded_lines_dir}" >/dev/null
+[ -f "${upgraded_lines_dir}/suppressed.json" ] ||
+  fail "no alert was suppressed at the Longhorn 1.13.0 source lines"
+jq -e --slurpfile base "${pinned_logs_dir}/suppressed.json" \
+  '(.ids | sort) == ($base[0].ids | sort)' "${upgraded_lines_dir}/suppressed.json" >/dev/null ||
+  fail "the Longhorn 1.13.0 source lines did not keep the same reviewed exemptions"
+
+other_lines_dir="$(setup_scenario other-longhorn-lines false)"
+longhorn_lines 306 312 140 1634 >"${other_lines_dir}/alerts.json"
+run_scenario "${other_lines_dir}" >/dev/null
+lost="$(jq -r --slurpfile base "${pinned_logs_dir}/suppressed.json" \
+  '$base[0].ids - .ids | length' "${other_lines_dir}/suppressed.json")"
+[ "${lost}" = 4 ] ||
+  fail "an unreviewed Longhorn source line was suppressed (expected 4 alerts to stay visible, got ${lost})"
+pass "Longhorn exemptions hold at both the 1.12 and 1.13 source lines and at no other line"
+
+# The same four patterns exist a second time, in the path that reopens an
+# already-suppressed alert whose sample stopped matching. Replay the fixtures
+# as suppressed alerts so that copy is exercised too.
+reopened_ids() {
+  local dir="$1"
+  shift
+  longhorn_lines "$@" | sed 's/"suppressed":false/"suppressed":true/' >"${dir}/alerts.json"
+  run_scenario "${dir}" >/dev/null
+  if [ -f "${dir}/reopened.json" ]; then
+    jq -c '.ids | sort' "${dir}/reopened.json"
+  else
+    echo '[]'
+  fi
+}
+held_reopen="$(reopened_ids "$(setup_scenario held-longhorn-lines false)" 305 181 136 1569)"
+upgraded_reopen="$(reopened_ids "$(setup_scenario held-upgraded-longhorn-lines false)" 317 311 139 1633)"
+other_reopen="$(reopened_ids "$(setup_scenario held-other-longhorn-lines false)" 306 312 140 1634)"
+[ "${upgraded_reopen}" = "${held_reopen}" ] ||
+  fail "a suppressed Longhorn alert was reopened at the 1.13.0 source lines: ${upgraded_reopen} vs ${held_reopen}"
+extra="$(jq -n --argjson other "${other_reopen}" --argjson held "${held_reopen}" '$other - $held | length')"
+[ "${extra}" = 4 ] ||
+  fail "a suppressed alert at an unreviewed Longhorn source line was not reopened (expected 4, got ${extra}): ${other_reopen} vs ${held_reopen}"
+pass "suppressed Longhorn alerts stay suppressed at both reviewed line sets and reopen at any other"
+
 changed_controller_dir="$(setup_scenario changed-controller-pattern false)"
 cat >"${changed_controller_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[
