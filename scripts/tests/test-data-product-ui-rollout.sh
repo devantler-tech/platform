@@ -295,6 +295,10 @@ mutate_case() {
   run_case "$name" fail '' "${4:-3}"
 }
 
+mutate_case probe-supplemental-network probe-policy '.specs=[(.spec | .egress=[{toEntities:["world"]}])]'
+mutate_case probe-object-network probe-policy '.specs={}'
+mutate_case probe-string-network probe-policy '.specs=""'
+mutate_case probe-boolean-network probe-policy '.specs=false'
 mutate_case helm-missing-connector-flag helm 'del(.spec.values.connectorReadiness.enabled)'
 mutate_case helm-missing-contract-flag helm 'del(.spec.values.contractReadiness.enabled)'
 mutate_case helm-missing-probe-flag helm 'del(.spec.values.contractProbe.enabled)'

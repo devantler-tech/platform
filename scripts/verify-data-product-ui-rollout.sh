@@ -162,7 +162,7 @@ elif $role == "gateway" then {apiVersion,kind,metadata:(.metadata|metadata),
 elif $role == "probe-account" then {apiVersion,kind,metadata:(.metadata|metadata),automountServiceAccountToken}
 elif $role == "observer-role" then {apiVersion,kind,metadata:(.metadata|metadata),rules}
 elif $role == "observer-binding" then {apiVersion,kind,metadata:(.metadata|metadata),roleRef,subjects}
-elif $role == "probe-policy" then {apiVersion,kind,metadata:(.metadata|metadata),spec}
+elif $role == "probe-policy" then {apiVersion,kind,metadata:(.metadata|metadata),spec,specs}
 else error("unknown response") end)}
 JQ
 cat >"$scratch/check.jq" <<'JQ'
@@ -243,7 +243,7 @@ def readiness_scaffold($snapshot;$tag):
     .roleRef=={apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"data-product-readiness-observer"} and
     .subjects==[{kind:"ServiceAccount",name:"data-product-controller",namespace:$namespace}]) and
   ($snapshot["probe-policy"]|object_identity("CiliumNetworkPolicy";"cilium.io/v2";"allow-data-product-controller-contract-probe";$namespace) and
-    .spec=={endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+    (.specs==null or .specs==[]) and .spec=={endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
       egress:[{toFQDNs:[{matchName:("harbour-data."+$domain)}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
         {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
          toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:("harbour-data."+$domain)}]}}]}]});

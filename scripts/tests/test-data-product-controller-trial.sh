@@ -106,7 +106,8 @@ jq -e '[.[]|select(.kind=="Role" and .metadata.name=="data-product-readiness-obs
     {roleRef,subjects}]==[{roleRef:{apiGroup:"rbac.authorization.k8s.io",kind:"Role",name:"data-product-readiness-observer"},
       subjects:[{kind:"ServiceAccount",name:"data-product-controller",namespace:"data-product-controller"}]}])' \
 	"${scratch}/apps.json" >/dev/null || fail "${provider}: observation must grant GET on exactly two Deployments to the controller"
-jq -e '[.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|.spec] ==
+jq -e '[.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|(.specs==null or .specs==[])] == [true] and
+  [.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|.spec] ==
   [{endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
     egress:[{toFQDNs:[{matchName:"harbour-data.${domain}"}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
       {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
