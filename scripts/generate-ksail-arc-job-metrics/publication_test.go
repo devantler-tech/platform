@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,21 +42,33 @@ func TestMetricsHookSurvivesPublishedArtifactRender(t *testing.T) {
 	// Render that artifact boundary so a checkout-only dependency cannot pass.
 	component := filepath.Join(repoRoot, metricsComponent)
 	published := t.TempDir()
-	files, err := os.ReadDir(component)
+	err := filepath.WalkDir(component, func(path string, file fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if file.IsDir() {
+			return nil
+		}
+		switch strings.ToLower(filepath.Ext(path)) {
+		case ".yaml", ".yml", ".json":
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			relative, err := filepath.Rel(component, path)
+			if err != nil {
+				return err
+			}
+			destination := filepath.Join(published, relative)
+			if err := os.MkdirAll(filepath.Dir(destination), 0700); err != nil {
+				return err
+			}
+			return os.WriteFile(destination, data, 0600)
+		}
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	for _, file := range files {
-		switch strings.ToLower(filepath.Ext(file.Name())) {
-		case ".yaml", ".yml", ".json":
-			data, err := os.ReadFile(filepath.Join(component, file.Name()))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(published, file.Name()), data, 0600); err != nil {
-				t.Fatal(err)
-			}
-		}
 	}
 	rendered, err := exec.Command("kubectl", "kustomize", published).CombinedOutput()
 	if err != nil {

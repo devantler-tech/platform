@@ -16,6 +16,8 @@ cp "$root/k8s/bases/infrastructure/actions-runners/helm-release.yaml" \
 cp "$root/scripts/ksail-arc-job-metrics.sh" "$scratch/scripts/"
 cp "$root/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/"
+cp "$root/k8s/providers/hetzner/infrastructure/retained-ksail-analysis/helm-release.yaml" \
+  "$scratch/retained-release.yaml"
 yq -i '.spec.suspend=false' "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml"
 go build -o "$scratch/verifier" "$root/scripts/verify-ksail-arc-runtime"
 export ARC_TEST_ROOT="$scratch"
@@ -94,9 +96,27 @@ if [[ "${1:-}" == kustomize ]]; then
     *) exit 0 ;;
   esac
   references=$(yq -o=json '(.resources // []) + (.bases // [])' "$aggregate")
+  if [[ "$2" == k8s/providers/hetzner/infrastructure ]]; then
+    case "${ARC_TEST_CASE:-}" in
+      rendered-retained-drain|rendered-drained-controller|rendered-drained-controller-wrong-scope|retained-active-min|retained-active-max|retained-suspended|retained-missing-bound|retained-wrong-scale-set)
+        printf '\n---\n'
+        case "$ARC_TEST_CASE" in
+          retained-active-min) yq '.spec.values.minRunners=1' "$ARC_TEST_ROOT/retained-release.yaml" ;;
+          retained-active-max) yq '.spec.values.maxRunners=1' "$ARC_TEST_ROOT/retained-release.yaml" ;;
+          retained-suspended) yq '.spec.suspend=true' "$ARC_TEST_ROOT/retained-release.yaml" ;;
+          retained-missing-bound) yq 'del(.spec.values.maxRunners)' "$ARC_TEST_ROOT/retained-release.yaml" ;;
+          retained-wrong-scale-set) yq '.spec.values.runnerScaleSetName="unapproved"' "$ARC_TEST_ROOT/retained-release.yaml" ;;
+          *) cat "$ARC_TEST_ROOT/retained-release.yaml" ;;
+        esac
+        printf '\n---\n'
+        ;;
+    esac
+  fi
   if jq -e --arg component "$reference" 'any(.[]; contains($component))' <<<"$references" >/dev/null; then
     case "${ARC_TEST_CASE:-}" in
       rendered-suspended) yq '.spec.suspend=true' "$release" ;;
+      rendered-drained-controller) yq '.metadata.annotations."platform.devantler.tech/arc-recovery"="drain-only"' "$release" ;;
+      rendered-drained-controller-wrong-scope) yq '.metadata.annotations."platform.devantler.tech/arc-recovery"="drain-only" | .spec.values.flags.watchSingleNamespace="unapproved"' "$release" ;;
       rendered-wrong-image) yq '.spec.values.template.spec.containers[0].image="unverified:latest"' "$release" ;;
       *) cat "$release" ;;
     esac
@@ -306,6 +326,16 @@ printf 'resources: ["../../../../bases/infrastructure/controllers/actions-runner
 ) >"$scratch/retained-controller"
 grep -Fq 'inactive source; no runtime access' "$scratch/retained-controller"
 [[ ! -e "$scratch/runtime-access" ]]
+(
+  cd "$scratch"
+  PATH="$scratch/bin:$PATH" ARC_TEST_CASE=rendered-drained-controller bash scripts/verify-ksail-arc-runtime.sh --if-active
+) >"$scratch/drained-controller"
+grep -Fq 'inactive source; no runtime access' "$scratch/drained-controller"
+[[ ! -e "$scratch/runtime-access" ]]
+if (cd "$scratch"; PATH="$scratch/bin:$PATH" ARC_TEST_CASE=rendered-drained-controller-wrong-scope bash scripts/verify-ksail-arc-runtime.sh --if-active) \
+  >"$scratch/wrong-scope-out" 2>"$scratch/wrong-scope-error"; then exit 1; fi
+grep -Fq 'FAIL at partial-activation' "$scratch/wrong-scope-error"
+[[ ! -e "$scratch/runtime-access" ]]
 if (cd "$scratch"; PATH="$scratch/bin:$PATH" bash scripts/verify-ksail-arc-runtime.sh --if-active) \
   >"$scratch/active-controller-out" 2>"$scratch/active-controller-error"; then exit 1; fi
 grep -Fq 'FAIL at partial-activation' "$scratch/active-controller-error"
@@ -315,6 +345,12 @@ printf 'resources: ["../../../bases/infrastructure/actions-runners/"]\n' \
 if (cd "$scratch"; PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=false bash scripts/verify-ksail-arc-runtime.sh --if-active) \
   >"$scratch/unauthorized-out" 2>"$scratch/unauthorized-error"; then exit 1; fi
 grep -Fq 'FAIL at deployment-identity' "$scratch/unauthorized-error"
+run_case rendered-retained-drain pass
+for name in retained-active-min retained-active-max retained-suspended retained-missing-bound retained-wrong-scale-set; do
+  run_case "$name" fail
+  grep -Fq 'FAIL at retained-source-state' "$scratch/stderr"
+  [[ ! -e "$scratch/runtime-access" && ! -e "$scratch/live-pod" ]]
+done
 run_case complete-proof pass
 run_case delayed-flux pass
 [[ $(cat "$scratch/flux-reads") -gt 2 && -e "$scratch/registration-budget" ]]

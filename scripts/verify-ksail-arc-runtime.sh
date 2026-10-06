@@ -22,20 +22,25 @@ done
 yq ea -o=json -I=0 '[select(.kind == "HelmRelease" and
   ((.metadata.namespace == "arc-systems" and .metadata.name == "arc-controller") or
    (.metadata.namespace == "arc-runners" and .metadata.name == "platform-runners") or
-   (.metadata.namespace == "arc-ksail-analysis" and .metadata.name == "ksail-analysis-runners")))]' \
+   .metadata.namespace == "arc-ksail-analysis"))]' \
   "$source_scratch/rendered.yaml" >"$source_scratch/releases.json"
 rendered_controller=$(jq '[.[] | select(.metadata.namespace == "arc-systems")] | length' "$source_scratch/releases.json")
 rendered_pool=$(jq '[.[] | select(.metadata.namespace == "arc-runners")] | length' "$source_scratch/releases.json")
 rendered_legacy=$(jq '[.[] | select(.metadata.namespace == "arc-ksail-analysis")] | length' "$source_scratch/releases.json")
 [[ "$rendered_legacy" -le 1 ]] || fail retained-source-state
-jq -e 'all(.[] | select(.metadata.namespace == "arc-ksail-analysis"); .spec.suspend == true)' \
+jq -e 'all(.[] | select(.metadata.namespace == "arc-ksail-analysis");
+  .metadata.name == "ksail-analysis-runners" and .spec.suspend == false and
+  .spec.values.runnerScaleSetName == "ksail-code-quality" and
+  .spec.values.minRunners == 0 and .spec.values.maxRunners == 0)' \
   "$source_scratch/releases.json" >/dev/null || fail retained-source-state
 if [[ "$controller_active" == 0 && "$pool_active" == 0 && "$rendered_controller" == 0 && "$rendered_pool" == 0 ]]; then
   printf 'ARC acceptance: inactive source; no runtime access\n'
   exit 0
 fi
 if [[ "$controller_active" == 1 && "$pool_active" == 0 && "$rendered_controller" == 1 && "$rendered_pool" == 0 ]] &&
-  jq -e 'all(.[]; .spec.suspend == true)' "$source_scratch/releases.json" >/dev/null; then
+  jq -e 'all(.[] | select(.metadata.namespace == "arc-systems"); .spec.suspend == true or
+    (.spec.suspend == false and .metadata.annotations["platform.devantler.tech/arc-recovery"] == "drain-only" and
+     .spec.values.flags.watchSingleNamespace == "arc-runners"))' "$source_scratch/releases.json" >/dev/null; then
   printf 'ARC acceptance: inactive source; no runtime access\n'
   exit 0
 fi
