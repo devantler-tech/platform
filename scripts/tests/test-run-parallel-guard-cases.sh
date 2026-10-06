@@ -130,4 +130,9 @@ grep -qF 'positive integer' "$scratch/jobs.out" || {
   exit 1
 }
 
+if ! bash "$repo_root/scripts/tests/test-parallel-guard-cleanup.sh"; then
+  printf 'parallel worker cleanup contract failed\n' >&2
+  exit 1
+fi
+
 printf 'parallel guard-case runner contract passed\n'

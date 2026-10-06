@@ -43,12 +43,32 @@ if ! bash "$REPO_ROOT/scripts/tests/test-run-parallel-guard-cases.sh"; then
 fi
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
 CASES="$WORK/cases"
 mkdir -p "$CASES"
 case_count=0
 next_wait=0
 case_pids=()
+# Give each queued worker its own process group. On failure or interruption,
+# stop/join those workers before deleting the fixtures they are still using.
+set -m
+cleanup_expectations() {
+  local pid
+  for pid in $(jobs -pr); do
+    kill -TERM -- "-$pid" 2>/dev/null || true
+  done
+  # Also join a just-launched job if interruption preceded PID registration.
+  for pid in $(jobs -p); do
+    wait "$pid" 2>/dev/null || true
+  done
+  while [ "$next_wait" -lt "${#case_pids[@]}" ]; do
+    wait "${case_pids[$next_wait]}" 2>/dev/null || true
+    next_wait=$((next_wait + 1))
+  done
+  rm -rf "$WORK"
+}
+trap cleanup_expectations EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # ── The agreeing base fixture ──────────────────────────────────────────────────────────
 # Mirrors the real shape: the prod overlay renders only a Flux Kustomization naming a
@@ -264,6 +284,12 @@ drain_expectations() {
   done
 }
 
+finish_expectations() {
+  drain_expectations
+  printf '\n%d failure(s)\n' "$failures"
+  [ "$failures" -eq 0 ]
+}
+
 # expect_pass <label> <root> <text the success line must carry>
 expect_pass() {
   queue_expectation pass "$@"
@@ -272,7 +298,7 @@ expect_pass() {
 # expect_refusal <label> <root> <text>... — must exit non-zero AND name every <text>, so a
 # refusal for an unrelated reason (a typo in the fixture, a missing tool) can never pass.
 expect_refusal() {
-  local label="$1" root="$2" case_dir
+  local label="$1" root="$2" case_dir witness_index
   # These no-render witnesses inspect a marker immediately after the
   # expectation. Keep only those cases synchronous.
   if [ -n "${REMOTE_RENDER_ATTEMPT:-}${CLOSURE_RENDER_ATTEMPT:-}" ]; then
@@ -284,7 +310,13 @@ expect_refusal() {
     printf '%s\n' "$label" >"$case_dir/label"
     printf '%s\n' "$root" >"$case_dir/root"
     printf '%s\0' "$@" >"$case_dir/wants"
-    "$CASE_RUNNER" --worker "$GUARD" "$case_dir" || failures=$((failures + 1))
+    "$CASE_RUNNER" --worker "$GUARD" "$case_dir" &
+    witness_index="${#case_pids[@]}"
+    case_pids+=("$!")
+    wait "${case_pids[$witness_index]}" || failures=$((failures + 1))
+    # It was joined here so its marker can be inspected immediately. Remove
+    # only this final slot to avoid counting its verdict again during draining.
+    unset "case_pids[$witness_index]"
     return
   fi
   queue_expectation refusal "$@"
@@ -1940,22 +1972,19 @@ SH
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = inline-documents ]; then
   regression_inline_document_bounds
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = inline-replacements ]; then
   regression_inline_replacement_paths
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = legacy-loaders ]; then
   regression_builtin_legacy_paths
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
@@ -1964,8 +1993,7 @@ if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = loaders ]; then
   regression_builtin_legacy_paths
   regression_inline_replacement_paths
   regression_inline_document_bounds
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
@@ -1975,57 +2003,49 @@ if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = closure ]; then
   regression_builtin_legacy_paths
   regression_inline_replacement_paths
   regression_inline_document_bounds
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = identity ]; then
   regression_consumer_identities
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = aliases ]; then
   regression_platform_source_aliases
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = templates ]; then
   regression_controller_template_findings
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = chains ]; then
   regression_runtime_chain_findings
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = native ]; then
   regression_native_admission_findings
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = controller ]; then
   regression_controller_findings
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
 if [ "${CONSUMER_CONSERVATION_REGRESSION:-}" = latest ]; then
   regression_latest_findings
-  printf '\n%d failure(s)\n' "$failures"
-  [ "$failures" -eq 0 ]
+  finish_expectations
   exit
 fi
 
@@ -3093,6 +3113,4 @@ regression_runtime_chain_findings
 regression_controller_template_findings
 regression_platform_source_aliases
 
-drain_expectations
-printf '\n%d failure(s)\n' "$failures"
-[ "$failures" -eq 0 ]
+finish_expectations

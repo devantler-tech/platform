@@ -40,6 +40,16 @@ load_expectations() { # <wants-file> <label>; fills the worker's expected array
   fi
 }
 
+stop_guard() {
+  local pid
+  for pid in $(jobs -pr); do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  for pid in $(jobs -p); do
+    wait "$pid" 2>/dev/null || true
+  done
+}
+
 run_worker() { # <guard> <case-dir>
   local guard="$1" case_dir="$2" kind label root out rc=0 want missing=''
   local -a expected
@@ -48,8 +58,12 @@ run_worker() { # <guard> <case-dir>
   root="$(cat "$case_dir/root")" || die "cannot read $case_dir/root"
   out="$root.out"
   load_expectations "$case_dir/wants" "$label" || return 1
+  trap stop_guard EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
-  "$guard" "$root" >"$out" 2>&1 || rc=$?
+  "$guard" "$root" >"$out" 2>&1 &
+  wait "$!" || rc=$?
   case "$kind" in
     pass)
       if [ "$rc" -ne 0 ]; then
@@ -109,6 +123,26 @@ shopt -u nullglob
 pids=()
 next_wait=0
 failures=0
+# Each background worker owns a process group, so cancellation reaches its
+# guard's descendants too. The worker joins its guard before its parent exits.
+set -m
+stop_workers() {
+  local pid
+  for pid in $(jobs -pr); do
+    kill -TERM -- "-$pid" 2>/dev/null || true
+  done
+  # A signal may arrive between launching a job and recording $! in pids.
+  for pid in $(jobs -p); do
+    wait "$pid" 2>/dev/null || true
+  done
+  while [ "$next_wait" -lt "${#pids[@]}" ]; do
+    wait "${pids[$next_wait]}" 2>/dev/null || true
+    next_wait=$((next_wait + 1))
+  done
+}
+trap stop_workers EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 for case_dir in "${case_dirs[@]}"; do
   "$self" --worker "$guard" "$case_dir" &
   pids+=("$!")
