@@ -25,6 +25,7 @@ import (
 const metadataAccept = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
 const controllerDeploymentPath = "/apis/apps/v1/namespaces/arc-systems/deployments/arc-controller"
 const retainedPoolPath = "/apis/actions.github.com/v1alpha1/namespaces/arc-ksail-analysis/autoscalingrunnersets"
+const retainedPoolName = "ksail-code-quality"
 
 // RE2 has no negative lookahead; these alternatives match every nonempty
 // method except the exact GET spelling, including nonstandard methods.
@@ -89,12 +90,13 @@ func recoveryArmed(root string) (bool, error) {
 		Spec struct {
 			Suspend *bool `yaml:"suspend"`
 			Values  struct {
-				Min *int `yaml:"minRunners"`
-				Max *int `yaml:"maxRunners"`
+				Name string `yaml:"runnerScaleSetName"`
+				Min  *int   `yaml:"minRunners"`
+				Max  *int   `yaml:"maxRunners"`
 			} `yaml:"values"`
 		} `yaml:"spec"`
 	}
-	if yaml.Unmarshal(data, &legacy) != nil || legacy.Spec.Suspend == nil || *legacy.Spec.Suspend || legacy.Spec.Values.Min == nil || legacy.Spec.Values.Max == nil || *legacy.Spec.Values.Min != 0 || *legacy.Spec.Values.Max != 0 {
+	if yaml.Unmarshal(data, &legacy) != nil || legacy.Spec.Suspend == nil || *legacy.Spec.Suspend || legacy.Spec.Values.Name != retainedPoolName || legacy.Spec.Values.Min == nil || legacy.Spec.Values.Max == nil || *legacy.Spec.Values.Min != 0 || *legacy.Spec.Values.Max != 0 {
 		return false, errors.New("legacy pool is not explicitly drained and reconciling")
 	}
 	return true, nil
@@ -272,7 +274,9 @@ func requireRetainedMetadata(ctx context.Context, client *http.Client, endpoint 
 	if decoder.Decode(&item) != nil || item.APIVersion != "meta.k8s.io/v1" || item.Kind != "PartialObjectMetadata" {
 		return errors.New("retained pool response is not metadata")
 	}
-	for key, expected := range map[string]string{"name": "ksail-analysis-runners", "namespace": "arc-ksail-analysis"} {
+	// The pinned chart names this object from runnerScaleSetName, not the
+	// HelmRelease name. recoveryArmed binds that same explicit source value.
+	for key, expected := range map[string]string{"name": retainedPoolName, "namespace": "arc-ksail-analysis"} {
 		var actual string
 		if json.Unmarshal(item.Metadata[key], &actual) != nil || actual != expected {
 			return errors.New("retained pool identity does not match its declaration")
