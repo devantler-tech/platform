@@ -1,10 +1,10 @@
 # KSail analysis runners
 
-The ARC controller and KSail analysis pool are prepared but inactive. Neither
-component is referenced by a deployment aggregate, and both HelmReleases are
-suspended. Merging their definitions registers no runner, reads no App credential
-and provisions no server. This is the preparation slice of #4462, not its runtime
-acceptance or a resolution of KSail #7131.
+Production references the ARC controller and KSail analysis pool, with both
+HelmReleases unsuspended. The protected deployment must prove registration,
+isolation and cleanup at its exact published revision. Managed analysis remains
+on its prior configuration until an actual registered KSail job passes. Activation
+alone is not calibration or a resolution of KSail #7131.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -20,8 +20,14 @@ digest-pinned upstream runner, frozen Ubuntu package snapshot and checksum-check
 Go and Node archives supply the desktop compiler and headers without job-time
 root access. The publisher builds and exercises the image on pull requests, then
 publishes, attests and signs only on a push to KSail main. Both Kyverno and Talos accept
-that workflow identity only for the exact analysis image repository. The staged
-pool still requires a verified published digest before activation.
+that workflow identity only for the exact analysis image repository. The pool pins
+`sha256:1ab01644fd6f67e0b1ab0b456e10b78f58be92ac67e5e06d103cd8c12bbb119b`,
+published by KSail main revision
+`dbefeb5d46e01b2ffb4ac41e8d94f692a0647323` in
+[run 37402941837](https://github.com/devantler-tech/ksail/actions/runs/37402941837).
+That run passed the restricted compiler smoke, runtime smoke, anonymous pull and
+signature gates. Independent anonymous Cosign verification also bound the digest
+to that exact main publisher revision. Publication does not prove registration.
 
 The image smoke test executes the copied runner's version command and compiles a Go program against GTK
 and WebKit as UID/GID 1001 with a read-only root filesystem and no capabilities.
@@ -105,9 +111,10 @@ routing managed analysis:
    KSail #7131's five consecutive successful managed runs and verify completed
    runner pods and their registration are removed before declaring that bug fixed.
 
-For staged validation, run `go test ./scripts/tests/arc-staging` and build both
-component directories directly with `kubectl kustomize`. Inactive local/prod
-trees must contain no ARC resources. The unconditional CI guard runs on pull
+For source validation, run `go test ./scripts/tests/arc-staging` and build both
+component directories directly with `kubectl kustomize`. The local tree must
+contain no ARC resources; production activation must stay inside the reviewed
+envelope. The unconditional CI guard runs on pull
 requests and merge groups. It accepts production activation only through both
 explicit aggregate references, matching unsuspended releases and one verified
 immutable KSail image pin. The protected verifier also renders every production

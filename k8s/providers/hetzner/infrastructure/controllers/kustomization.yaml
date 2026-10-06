@@ -8,6 +8,8 @@ resources:
   # local/CI only): no VirtualMachines/DataVolumes exist on Hetzner and
   # virt-handler crash-looped (1000+ restarts) with zero VMs.
   - ../../../../bases/infrastructure/controllers/
+  # Prod-only: the repository-scoped KSail analysis controller.
+  - ../../../../bases/infrastructure/controllers/actions-runner-controller/
   # Prod-only: a minimal Alertmanager scoped to Kubescape runtime-detection
   # alerts. The Headlamp Kubescape plugin's "Runtime Detection > Alerts" tab
   # reads ONLY from a Prometheus Alertmanager (GET /api/v2/alerts), which the

@@ -3,6 +3,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  # Prod-only: one bounded KSail analysis runner, authenticated by the shared App.
+  - ../../../bases/infrastructure/ksail-analysis-runners/
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers
