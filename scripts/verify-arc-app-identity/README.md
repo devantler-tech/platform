@@ -21,6 +21,11 @@ and service hostname through an unchanged TLS session in a loopback port-forward
 **before** requesting a five-minute token for the existing dedicated reader. It
 does not create the service account, change a policy or use a broader reader.
 
+The endpoint is fixed to the separately reviewed dedicated `openbao-arc` Service
+on port 8204. A ConfigMap trust reference must be `arc-openbao-ca/ca.crt` in the
+runner namespace. Other listeners, names, ports or trust references are rejected;
+the verifier does not change existing OpenBao listeners or select lower replicas.
+
 The reader authenticates only to the declared Kubernetes auth mount and reads
 only the existing ARC App entry. The key stays in process memory. Its RS256 JWT
 authenticates two GitHub reads: the App and its organization installation. Both

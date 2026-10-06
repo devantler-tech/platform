@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-const baoTLSName = "openbao-active.openbao.svc.cluster.local"
+const baoTLSName = "openbao-arc.openbao.svc.cluster.local"
 
 func main() { os.Exit(run(os.Args[1:], ".", os.Stdout, verifyProduction)) }
 
@@ -155,11 +155,11 @@ func listenerTLS(ctx context.Context, endpoint string, ca []byte) error {
 }
 
 func forwardBao(parent context.Context, port int) (string, func(), error) {
-	if port < 1024 || port > 65535 {
+	if port != baoTLSPort {
 		return "", nil, fmt.Errorf("transport unavailable")
 	}
 	ctx, cancel := context.WithCancel(parent)
-	cmd := exec.CommandContext(ctx, "kubectl", "--namespace=openbao", "port-forward", "--address=127.0.0.1", "service/openbao-active", fmt.Sprintf("0:%d", port))
+	cmd := exec.CommandContext(ctx, "kubectl", "--namespace=openbao", "port-forward", "--address=127.0.0.1", "service/openbao-arc", fmt.Sprintf("0:%d", port))
 	cmd.Stderr = io.Discard
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

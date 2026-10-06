@@ -6,11 +6,8 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -18,7 +15,8 @@ import (
 const (
 	bootstrapPath         = "k8s/clusters/prod/bootstrap/config-map.yaml"
 	storePath             = "k8s/bases/infrastructure/actions-runners/secret-store.yaml"
-	baoServer             = "https://openbao-active.openbao.svc.cluster.local:8200"
+	baoServer             = "https://openbao-arc.openbao.svc.cluster.local:8204"
+	baoTLSPort            = 8204
 	failConfig    outcome = "FAIL_CONFIG"
 )
 
@@ -124,7 +122,13 @@ func parseStore(value map[string]any) (storeConfiguration, outcome) {
 		ca := object(vault["caProvider"])
 		config.caName = stringValue(ca["name"])
 		config.caKey = stringValue(ca["key"])
-		if !exactKeys(ca, "type", "name", "key") || stringValue(ca["type"]) != "ConfigMap" || !regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]$`).MatchString(config.caName) || !regexp.MustCompile(`^[A-Za-z0-9_.-]{1,253}$`).MatchString(config.caKey) {
+		namespace := stringValue(ca["namespace"])
+		if value, present := ca["namespace"]; present {
+			if _, ok := value.(string); !ok {
+				return config, holdTransport
+			}
+		}
+		if !exactKeys(ca, "type", "name", "key", "namespace") || stringValue(ca["type"]) != "ConfigMap" || config.caName != "arc-openbao-ca" || config.caKey != "ca.crt" || (namespace != "" && namespace != "arc-runners") {
 			return config, holdTransport
 		}
 	}
@@ -132,12 +136,7 @@ func parseStore(value map[string]any) (storeConfiguration, outcome) {
 }
 
 func baoListenerPort(server string) (int, bool) {
-	u, err := url.Parse(server)
-	if err != nil || !httpsOrigin(server) || u.Hostname() != baoTLSName {
-		return 0, false
-	}
-	port, err := strconv.Atoi(u.Port())
-	return port, err == nil && port >= 1024 && port <= 65535 && strconv.Itoa(port) == u.Port()
+	return baoTLSPort, server == baoServer
 }
 func trustedRoots(ca []byte) *x509.CertPool {
 	roots := x509.NewCertPool()

@@ -16,7 +16,7 @@ func configFixture(t *testing.T) string {
 	ca := base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: f.bao.Certificate().Raw}))
 	root := t.TempDir()
 	writeFixture(t, root, bootstrapPath, "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: variables-cluster\n  namespace: flux-system\ndata:\n  github_app_client_id: Iv1.synthetic\n")
-	writeFixture(t, root, storePath, "apiVersion: external-secrets.io/v1\nkind: SecretStore\nmetadata:\n  name: openbao\n  namespace: arc-runners\nspec:\n  provider:\n    vault:\n      server: https://openbao-active.openbao.svc.cluster.local:8200\n      path: secret\n      version: v2\n      caBundle: "+ca+"\n      auth:\n        kubernetes:\n          mountPath: kubernetes\n          role: arc-secret-reader\n          serviceAccountRef:\n            name: arc-secret-reader\n")
+	writeFixture(t, root, storePath, "apiVersion: external-secrets.io/v1\nkind: SecretStore\nmetadata:\n  name: openbao\n  namespace: arc-runners\nspec:\n  provider:\n    vault:\n      server: "+baoServer+"\n      path: secret\n      version: v2\n      caBundle: "+ca+"\n      auth:\n        kubernetes:\n          mountPath: kubernetes\n          role: arc-secret-reader\n          serviceAccountRef:\n            name: arc-secret-reader\n")
 	return root
 }
 func writeFixture(t *testing.T, root, path, body string) {
@@ -46,15 +46,14 @@ func TestReviewedTLSConfiguration(t *testing.T) {
 	}
 }
 
-func TestSeparateReviewedTLSListenerPort(t *testing.T) {
+func TestDedicatedReviewedTLSListener(t *testing.T) {
 	root := configFixture(t)
-	mutateFixture(t, root, storePath, ":8200", ":8443")
 	config, status := loadConfiguration(root)
 	port, ok := baoListenerPort(config.store.server)
-	if status != pass || !ok || port != 8443 {
+	if status != pass || !ok || port != baoTLSPort {
 		t.Fatal("separate reviewed TLS listener was not accepted")
 	}
-	for _, server := range []string{"https://" + baoTLSName + ":08443", "https://" + baoTLSName + ":443", "https://" + baoTLSName + ":8443/other", "https://" + baoTLSName + ":8443?other"} {
+	for _, server := range []string{"https://" + baoTLSName + ":08204", "https://" + baoTLSName + ":8443", baoServer + "/other", baoServer + "?other", "https://openbao-active.openbao.svc.cluster.local:8204"} {
 		if _, ok := baoListenerPort(server); ok {
 			t.Fatal("invalid listener declaration accepted")
 		}
@@ -66,7 +65,7 @@ func TestConfigurationCannotSelectAnotherIdentityOrTransport(t *testing.T) {
 		want                 outcome
 	}{
 		{"plaintext", storePath, "https://", "http://", holdTransport},
-		{"other server", storePath, "openbao-active.openbao.svc.cluster.local", "other.example", holdTransport},
+		{"other server", storePath, baoTLSName, "other.example", holdTransport},
 		{"other role", storePath, "role: arc-secret-reader", "role: external-secrets", failConfig},
 		{"other account", storePath, "name: arc-secret-reader", "name: external-secrets", failConfig},
 		{"other namespace", storePath, "namespace: arc-runners", "namespace: default", failConfig},

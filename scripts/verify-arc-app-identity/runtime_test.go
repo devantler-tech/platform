@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
@@ -50,6 +51,72 @@ func TestLiveReviewedAgreementUsesOnlyNonsecretReads(t *testing.T) {
 	})
 	if status != pass || trustedRoots(ca) == nil || len(calls) != 2 {
 		t.Fatalf("live configuration got %s, calls %d", status, len(calls))
+	}
+}
+
+func TestDedicatedConfigMapTrustReference(t *testing.T) {
+	for _, tc := range []struct {
+		name, namespace, certificate string
+		want                         outcome
+	}{
+		{"valid bundle", "arc-runners", "valid", pass},
+		{"other namespace", "default", "valid", holdTransport},
+		{"invalid certificate", "arc-runners", "invalid", holdTransport},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := configFixture(t)
+			config, status := loadConfiguration(root)
+			if status != pass {
+				t.Fatal(status)
+			}
+			ca, _ := base64.StdEncoding.DecodeString(config.store.caBundle)
+			mutateFixture(t, root, storePath, "caBundle: "+config.store.caBundle, "caProvider:\n        type: ConfigMap\n        name: arc-openbao-ca\n        key: ca.crt\n        namespace: arc-runners")
+			config, status = loadConfiguration(root)
+			if status != pass {
+				t.Fatal(status)
+			}
+			certificate := string(ca)
+			if tc.certificate == "invalid" {
+				certificate = "sensitive-invalid-certificate-canary"
+			}
+			trust, _ := json.Marshal(map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "arc-openbao-ca", "namespace": tc.namespace}, "data": map[string]any{"ca.crt": certificate}})
+			_, got := liveConfiguration(context.Background(), config, func(_ context.Context, args ...string) ([]byte, error) {
+				call := strings.Join(args, " ")
+				var path string
+				switch call {
+				case "--namespace=flux-system get configmap variables-cluster --output=json":
+					path = bootstrapPath
+				case "--namespace=arc-runners get secretstore openbao --output=json":
+					path = storePath
+				case "--namespace=arc-runners get configmap arc-openbao-ca --output=json":
+					return trust, nil
+				default:
+					t.Fatal("trust lookup escaped fixed reference")
+				}
+				value, err := readYAMLFile(filepath.Join(root, path))
+				if err != nil {
+					t.Fatal(err)
+				}
+				return json.Marshal(value)
+			})
+			if got != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCAReferenceNamespaceCannotWiden(t *testing.T) {
+	for _, namespace := range []string{"default", "false", "[arc-runners]"} {
+		root := configFixture(t)
+		config, status := loadConfiguration(root)
+		if status != pass {
+			t.Fatal(status)
+		}
+		mutateFixture(t, root, storePath, "caBundle: "+config.store.caBundle, "caProvider:\n        type: ConfigMap\n        name: arc-openbao-ca\n        key: ca.crt\n        namespace: "+namespace)
+		if _, got := loadConfiguration(root); got != holdTransport {
+			t.Fatalf("unbounded or malformed CA namespace accepted: %s", got)
+		}
 	}
 }
 func TestLiveConfigurationRejectsDriftAndFailedReads(t *testing.T) {
@@ -112,7 +179,7 @@ func TestRuntimeRequiresTLSBeforeReaderTokenAndAlwaysStopsForward(t *testing.T) 
 					return []byte("synthetic.reader.jwt"), nil
 				},
 				forward: func(_ context.Context, port int) (string, func(), error) {
-					if port != 8200 {
+					if port != baoTLSPort {
 						t.Fatal("forward lost reviewed listener port")
 					}
 					events = append(events, "forward")
