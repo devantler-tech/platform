@@ -108,6 +108,84 @@ func metadataClient() *http.Client {
 	}
 }
 
+// encoding/json accepts duplicate object keys and case-insensitive struct field
+// aliases. Neither can establish absence or an effective controller scope.
+// Check the complete bounded document before any typed decoding; unrelated
+// Deployment fields remain readable without making their spelling a proof gate.
+func requireUnambiguousJSON(data []byte) error {
+	fields := map[string][]string{
+		"":                                {"apiVersion", "kind", "metadata", "items", "spec", "status"},
+		"metadata":                        {"name", "namespace", "uid", "generation", "deletionTimestamp", "resourceVersion", "continue", "remainingItemCount"},
+		"items[]":                         {"apiVersion", "kind", "metadata"},
+		"items[].metadata":                {"name", "namespace", "uid", "resourceVersion", "deletionTimestamp"},
+		"spec":                            {"replicas", "template"},
+		"spec.template":                   {"spec"},
+		"spec.template.spec":              {"containers"},
+		"spec.template.spec.containers[]": {"name", "command", "args"},
+		"status":                          {"observedGeneration", "replicas", "updatedReplicas", "readyReplicas", "availableReplicas", "unavailableReplicas"},
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var walk func(string, int) error
+	walk = func(path string, depth int) error {
+		if depth > 64 {
+			return errors.New("JSON nesting exceeds the proof bound")
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return errors.New("JSON proof is incomplete")
+		}
+		delimiter, composite := token.(json.Delim)
+		if !composite {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				token, err := decoder.Token()
+				key, ok := token.(string)
+				if err != nil || !ok || seen[key] {
+					return errors.New("JSON proof contains ambiguous object fields")
+				}
+				seen[key] = true
+				for _, canonical := range fields[path] {
+					if key != canonical && strings.EqualFold(key, canonical) {
+						return errors.New("JSON proof contains a case-aliased field")
+					}
+				}
+				child := key
+				if path != "" {
+					child = path + "." + key
+				}
+				if err := walk(child, depth+1); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := walk(path+"[]", depth+1); err != nil {
+					return err
+				}
+			}
+		default:
+			return errors.New("JSON proof contains an unexpected delimiter")
+		}
+		end, err := decoder.Token()
+		if err != nil || (delimiter == '{' && end != json.Delim('}')) || (delimiter == '[' && end != json.Delim(']')) {
+			return errors.New("JSON proof is incomplete")
+		}
+		return nil
+	}
+	if err := walk("", 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("JSON proof has trailing data")
+	}
+	return nil
+}
+
 func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]json.RawMessage, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
@@ -125,6 +203,9 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
 		return nil, errors.New("metadata response incomplete or oversized")
+	}
+	if err := requireUnambiguousJSON(data); err != nil {
+		return nil, err
 	}
 	var list struct {
 		APIVersion string `json:"apiVersion"`
@@ -227,6 +308,9 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 	if err != nil || len(data) > 1<<20 {
 		return errors.New("controller scope response incomplete or oversized")
 	}
+	if err := requireUnambiguousJSON(data); err != nil {
+		return err
+	}
 	var deployment struct {
 		APIVersion string `json:"apiVersion"`
 		Kind       string `json:"kind"`
@@ -263,7 +347,11 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 		return errors.New("controller executable differs from the pinned chart")
 	}
 	scope, mode := 0, 0
+	option := regexp.MustCompile(`^--[a-z][a-z0-9-]*(=.*)?$`)
 	for _, arg := range container.Args {
+		if !option.MatchString(arg) {
+			return errors.New("controller arguments contain an option terminator or operand")
+		}
 		switch {
 		case strings.HasPrefix(arg, "--watch-single-namespace"):
 			if arg != "--watch-single-namespace=arc-runners" {
