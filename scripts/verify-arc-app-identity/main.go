@@ -23,6 +23,9 @@ import (
 const baoTLSName = "openbao-arc.openbao.svc.cluster.local"
 
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--preflight-runner-group" || os.Args[1] == "--verify-runner-group") {
+		os.Exit(runRunnerGroup(os.Args[1:], ".", os.Stdout, verifyRunnerGroupProduction))
+	}
 	os.Exit(run(os.Args[1:], ".", os.Stdout, runtimeModes{identity: verifyProduction, transport: verifyTransportProduction}))
 }
 

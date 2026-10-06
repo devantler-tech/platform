@@ -43,6 +43,7 @@ type verificationOptions struct {
 	client                                         *http.Client
 	now                                            func() time.Time
 	baoClient                                      *http.Client
+	afterIdentity                                  func(context.Context, verificationOptions, string, int64) outcome
 }
 
 func secureClient(roots *x509.CertPool, serverName string) *http.Client {
@@ -141,6 +142,9 @@ func verify(ctx context.Context, options verificationOptions) (result outcome) {
 	}
 	if installation.ID != installationID || installation.AppID != appID || installation.ClientID != app.ClientID || installation.Account.Login != "devantler-tech" || installation.Account.Type != "Organization" || installation.TargetType != "Organization" || string(installation.SuspendedAt) != "null" || installation.Permissions["organization_self_hosted_runners"] != "write" || installation.Permissions["metadata"] != "read" {
 		return failIdentity
+	}
+	if options.afterIdentity != nil {
+		return options.afterIdentity(ctx, options, jwt, installation.ID)
 	}
 	return pass
 }
