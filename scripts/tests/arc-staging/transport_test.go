@@ -146,6 +146,47 @@ func TestCredentialStoreRequiresDedicatedVerifiedTLS(t *testing.T) {
 	equal(t, field(t, vault, "caProvider", "key"), "ca.crt")
 }
 
+func TestCredentialTLSPoliciesUseCiliumIdentityVisibleSelectors(t *testing.T) {
+	egressPolicy := readYAML(t, transportPath+"cilium-network-policy-external-secrets.yaml")
+	egressRules := field(t, egressPolicy, "spec", "egress").([]any)
+	if len(egressRules) != 1 {
+		t.Fatal("credential egress must have exactly one rule")
+	}
+	egressRule := egressRules[0].(map[string]any)
+	if _, exists := egressRule["toEndpoints"]; exists {
+		t.Fatal("credential egress must not depend on pod labels excluded from Cilium identities")
+	}
+	services := field(t, egressRule, "toServices").([]any)
+	if len(services) != 1 {
+		t.Fatal("credential egress must target exactly one Kubernetes Service")
+	}
+	equal(t, field(t, services[0], "k8sService", "serviceName"), "openbao-arc")
+	equal(t, field(t, services[0], "k8sService", "namespace"), "openbao")
+	ports := field(t, egressRule, "toPorts").([]any)
+	if len(ports) != 1 {
+		t.Fatal("credential egress must expose exactly one port rule")
+	}
+	portEntries := field(t, ports[0], "ports").([]any)
+	if len(portEntries) != 1 {
+		t.Fatal("credential egress must expose exactly one port")
+	}
+	equal(t, field(t, portEntries[0], "port"), "8204")
+	equal(t, field(t, portEntries[0], "protocol"), "TCP")
+
+	ingressPolicy := readYAML(t, transportPath+"cilium-network-policy.yaml")
+	selector := field(t, ingressPolicy, "spec", "endpointSelector", "matchLabels").(map[string]any)
+	if len(selector) != 2 {
+		t.Fatal("credential ingress must select OpenBao only by stable Cilium identity labels")
+	}
+	equal(t, selector["app.kubernetes.io/name"], "openbao")
+	equal(t, selector["app.kubernetes.io/instance"], "openbao")
+	for _, excluded := range []string{"statefulset.kubernetes.io/pod-name", "apps.kubernetes.io/pod-index"} {
+		if _, exists := selector[excluded]; exists {
+			t.Fatalf("credential ingress selector uses identity-excluded label %s", excluded)
+		}
+	}
+}
+
 func TestCredentialAuthenticationStagingDoesNotReadAppKeys(t *testing.T) {
 	stage := readYAML(t, "k8s/providers/hetzner/infrastructure/arc-credential-transport/kustomization.yaml")
 	resources := field(t, stage, "resources").([]any)
