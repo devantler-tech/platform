@@ -125,6 +125,57 @@ run "$tmp_dir/healthy"
 expect 'every node matches the declared settings' 0 \
   'PASS: 3 node(s), 1 of them autoscaler-provisioned' 'mergeDefaultEvictionSettings'
 
+# Keeping the defaults means their values must match too. Presence alone
+# accepts disabled/changed eviction, and must include image-filesystem inodes.
+for signal in nodefs.available nodefs.inodesFree imagefs.available imagefs.inodesFree; do
+  new_fixture "$tmp_dir/missing-$signal"
+  jq --arg signal "$signal" 'del(.kubeletconfig.evictionHard[$signal])' <<<"$healthy" \
+    >"$tmp_dir/missing-$signal/autoscale-cx43-example.json"
+  run "$tmp_dir/missing-$signal"
+  expect "missing default $signal is drift" 1 "evictionHard: live has no $signal threshold"
+
+  for threshold in '0%' '1%' ''; do
+    new_fixture "$tmp_dir/changed-$signal"
+    jq --arg signal "$signal" --arg threshold "$threshold" \
+      '.kubeletconfig.evictionHard[$signal] = $threshold' <<<"$healthy" \
+      >"$tmp_dir/changed-$signal/autoscale-cx43-example.json"
+    run "$tmp_dir/changed-$signal"
+    expect "changed default $signal=$threshold is drift" 1 \
+      "autoscale-cx43-example: evictionHard: $signal: declared"
+    if grep -qF 'PASS:' <<<"$output"; then
+      printf 'FAIL: changed eviction threshold reported PASS\n' >&2
+      exit 1
+    fi
+  done
+done
+
+run "$tmp_dir/changed-imagefs.inodesFree" KUBELET_READBACK_ENFORCE=false
+expect 'observe-only reports a changed default as a warning rather than PASS' 0 \
+  '::warning title=Kubelet settings readback (observe-only)::' \
+  'evictionHard: imagefs.inodesFree: declared'
+if grep -qF 'PASS:' <<<"$output"; then
+  printf 'FAIL: observe-only drift reported PASS\n' >&2
+  exit 1
+fi
+
+# An explicitly declared threshold overrides the inherited Linux default.
+mkdir -p "$tmp_dir/talos-custom/cluster"
+cp "$root_dir"/talos/cluster/*.yaml "$tmp_dir/talos-custom/cluster/"
+printf 'machine:\n  kubelet:\n    extraConfig:\n      evictionHard:\n        imagefs.inodesFree: "7%%"\n' >"$tmp_dir/talos-custom/cluster/zz-custom-eviction.yaml"
+new_fixture "$tmp_dir/custom"
+for node in "${nodes[@]}"; do
+  jq '.kubeletconfig.evictionHard["imagefs.inodesFree"] = "7%"' <<<"$healthy" \
+    >"$tmp_dir/custom/$node.json"
+done
+run "$tmp_dir/custom" TALOS_CONFIG_DIR="$tmp_dir/talos-custom"
+expect 'declared custom disk threshold overrides the inherited default' 0 'PASS: 3 node(s)'
+
+jq '.kubeletconfig.evictionHard["imagefs.inodesFree"] = "5%"' <<<"$healthy" \
+  >"$tmp_dir/custom/autoscale-cx43-example.json"
+run "$tmp_dir/custom" TALOS_CONFIG_DIR="$tmp_dir/talos-custom"
+expect 'a live default cannot hide drift from an explicit custom threshold' 1 \
+  'evictionHard: imagefs.inodesFree: declared "7%", live "5%"'
+
 new_fixture "$tmp_dir/drift"
 printf '%s\n' "$drifted" >"$tmp_dir/drift/autoscale-cx43-example.json"
 run "$tmp_dir/drift"
