@@ -98,13 +98,24 @@ compare='
       [ $declared | to_entries[] | . as $e
         | select(($live | has($e.key) and (.[$e.key] | covers($e.value))) | not)
         | "\($e.key): declared \($e.value | tojson), live \($live[$e.key] | tojson)" ]
-      # Without these three the kubelet never evicts on disk pressure, which
-      # is the condition #3137 found. They are kubelet defaults, so they are
-      # only expected when the declaration asks for the defaults to be kept.
+      # MergeDefaultEvictionSettings preserves the Linux hard-eviction
+      # defaults for signals not explicitly declared. Compare all four disk
+      # thresholds and their values: mere presence also accepts disabled
+      # eviction. Explicit declarations still override these defaults.
+      # https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/#hard-eviction-thresholds
       + ( if $declared.mergeDefaultEvictionSettings == true then
-            [ ("nodefs.available", "nodefs.inodesFree", "imagefs.available") as $signal
-              | select((($live.evictionHard // {}) | has($signal)) | not)
-              | "evictionHard: live has no \($signal) threshold" ]
+            [ {"nodefs.available":"10%", "nodefs.inodesFree":"5%",
+                "imagefs.available":"15%", "imagefs.inodesFree":"5%"}
+              | to_entries[] | . as $default
+              | $default.key as $signal
+              | ($declared.evictionHard // {}) as $overrides
+              | (if $overrides | has($signal) then $overrides[$signal] else $default.value end) as $want
+              | ($live.evictionHard // {}) as $thresholds
+              | if ($thresholds | has($signal) | not) then
+                  "evictionHard: live has no \($signal) threshold"
+                elif $thresholds[$signal] != $want then
+                  "evictionHard: \($signal): declared \($want | tojson), live \($thresholds[$signal] | tojson)"
+                else empty end ]
           else [] end )
     end
   | .[]'
