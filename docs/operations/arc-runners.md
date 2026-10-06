@@ -5,9 +5,11 @@ Linux pool. The protected deployment must prove the existing runtime App,
 registration and isolated canary before activation can merge. Initial access
 admits only KSail's main-branch delivery preflight. Managed analysis remains on its
 existing route until actual runner delivery and full-source calibration pass;
-declaring the pool does not resolve KSail #7131. The former analysis release stays
-suspended and protected in Flux inventory; suspension does not drain an installed
-scale set.
+declaring the pool does not resolve KSail #7131. The former analysis release
+reconciles with explicit zero minimum and maximum runner bounds and remains
+protected in Flux inventory. The scoped controller excludes its namespace.
+Suspension does not drain an installed scale set and prevents failed Helm
+readiness from recovering. Native Flux, Helm and orphan checks stay enabled.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -183,8 +185,7 @@ For configuration validation, run `go test ./scripts/tests/arc-staging` and buil
 both component directories directly with `kubectl kustomize`. Local trees exclude
 ARC. The unconditional guard permits activation only through the two named
 production aggregates, with immutable images and the mandatory protected
-runtime canary. It also permits retention of a suspended controller without a
-pool. It runs on pull requests and merge groups; deleting it is not activation
+runtime canary. It runs on pull requests and merge groups; deleting it is not activation
 proof. Credential staging is absorbed by the full pool component at activation,
 so the reader and encrypted store have exactly one reconciled declaration.
 
@@ -216,7 +217,10 @@ The controller layer creates both namespaces before namespace-scoped RBAC
 reconciles. Its network policy also covers the listener. The infrastructure
 layer declares the pool, dedicated credential reader and native runner group.
 Verify the stored App identity and encrypted credential boundary before
-activating this layer. The protected canary joins the deployed Flux revision,
+activating this layer. The reviewed activation explicitly retires the controller's
+`platform.devantler.tech/arc-recovery: drain-only` marker: that metadata guard
+refuses a credentialed pool while the marker remains. Its implementation and
+regression tests remain present. The protected canary joins the deployed Flux revision,
 current provider/group observations, ARC registration and exact image before
 it exercises admission, allowed connectivity, intercepted denials and cleanup.
 Verify SecretStore and ExternalSecret readiness before admitting jobs. Keep the

@@ -1,5 +1,6 @@
-# Inactive, uncalibrated analysis-only pool. Do not route a workflow here until
-# the registration, isolation, toolchain and capacity gates in the runbook pass.
+# Retained analysis release reconciles in explicit drain mode. Suspending a
+# failed HelmRelease prevents recovery of its Ready status and blocks Flux.
+# The controller watches only arc-runners, so this legacy namespace is ignored.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -8,7 +9,7 @@ metadata:
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
-  suspend: true
+  suspend: false
   interval: 10m
   timeout: 10m
   chartRef:
@@ -23,7 +24,7 @@ spec:
     githubConfigSecret: arc-ksail-app
     runnerScaleSetName: ksail-code-quality
     minRunners: 0
-    maxRunners: 1
+    maxRunners: 0
     controllerServiceAccount:
       namespace: arc-systems
       name: arc-controller

@@ -167,6 +167,9 @@ jobs:
           shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
           bash scripts/tests/test-verify-arc-transport.sh
 
+      - name: 🛑 Validate ARC recovery metadata proof
+        run: go test -race ./scripts/guard-arc-recovery
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases

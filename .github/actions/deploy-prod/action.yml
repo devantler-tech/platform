@@ -209,6 +209,12 @@ runs:
         shellcheck scripts/tests/test-pvc-prune-safety.sh
         bash scripts/tests/test-pvc-prune-safety.sh
 
+    - name: 🛑 Verify ARC drain recovery has no active pool
+      # Read complete metadata lists before the mutable artifact can move.
+      # No App key, JIT configuration or full Pod response is requested.
+      shell: bash
+      run: go run ./scripts/guard-arc-recovery before-publish
+
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
       # The widened device component deliberately uses OnDelete so the Cilium
@@ -337,6 +343,10 @@ runs:
       env:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
+    - name: 🛑 Verify ARC stayed inactive across recovery
+      shell: bash
+      run: go run ./scripts/guard-arc-recovery after-reconcile
 
     - name: Verify dedicated Wedding backup credential and active archive
       id: verify_wedding_backup_staging
