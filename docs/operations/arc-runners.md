@@ -50,6 +50,15 @@ authenticated cluster connection to reach the leader. The existing API listener,
 Raft storage, audit configuration and unseal hook remain in the base configuration.
 An additional listener file is appended through the pinned chart.
 
+That ConfigMap contains only public settings and paths into a mounted Secret.
+Kubescape's generic credential-text rule matches the mandatory `tls_key_file`
+setting, so its disposition covers only the named ConfigMap and that control.
+Both platform variants enforce its exact public content through admission; source
+tests reject drift, and native scanner controls prove genuine credentials remain
+findings. The protected transport challenge verifies the installed policy and
+configuration, then proves server admission denies synthetic credentials without
+writing them to the cluster.
+
 The dedicated certificate authority is trusted only in the runner namespace.
 Its issuance policy denies use outside OpenBao. The credential store requires
 HTTPS and that authority, with hostname verification and no plaintext fallback.

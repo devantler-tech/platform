@@ -25,6 +25,7 @@ import (
 const metadataAccept = "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"
 const controllerDeploymentPath = "/apis/apps/v1/namespaces/arc-systems/deployments/arc-controller"
 const retainedPoolPath = "/apis/actions.github.com/v1alpha1/namespaces/arc-ksail-analysis/autoscalingrunnersets"
+const retainedPoolName = "ksail-code-quality"
 
 // RE2 has no negative lookahead; these alternatives match every nonempty
 // method except the exact GET spelling, including nonstandard methods.
@@ -89,12 +90,13 @@ func recoveryArmed(root string) (bool, error) {
 		Spec struct {
 			Suspend *bool `yaml:"suspend"`
 			Values  struct {
-				Min *int `yaml:"minRunners"`
-				Max *int `yaml:"maxRunners"`
+				Name string `yaml:"runnerScaleSetName"`
+				Min  *int   `yaml:"minRunners"`
+				Max  *int   `yaml:"maxRunners"`
 			} `yaml:"values"`
 		} `yaml:"spec"`
 	}
-	if yaml.Unmarshal(data, &legacy) != nil || legacy.Spec.Suspend == nil || *legacy.Spec.Suspend || legacy.Spec.Values.Min == nil || legacy.Spec.Values.Max == nil || *legacy.Spec.Values.Min != 0 || *legacy.Spec.Values.Max != 0 {
+	if yaml.Unmarshal(data, &legacy) != nil || legacy.Spec.Suspend == nil || *legacy.Spec.Suspend || legacy.Spec.Values.Name != retainedPoolName || legacy.Spec.Values.Min == nil || legacy.Spec.Values.Max == nil || *legacy.Spec.Values.Min != 0 || *legacy.Spec.Values.Max != 0 {
 		return false, errors.New("legacy pool is not explicitly drained and reconciling")
 	}
 	return true, nil
@@ -106,6 +108,84 @@ func metadataClient() *http.Client {
 		Transport:     &http.Transport{Proxy: nil, DisableKeepAlives: true},
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
+}
+
+// encoding/json accepts duplicate object keys and case-insensitive struct field
+// aliases. Neither can establish absence or an effective controller scope.
+// Check the complete bounded document before any typed decoding; unrelated
+// Deployment fields remain readable without making their spelling a proof gate.
+func requireUnambiguousJSON(data []byte) error {
+	fields := map[string][]string{
+		"":                                {"apiVersion", "kind", "metadata", "items", "spec", "status"},
+		"metadata":                        {"name", "namespace", "uid", "generation", "deletionTimestamp", "resourceVersion", "continue", "remainingItemCount"},
+		"items[]":                         {"apiVersion", "kind", "metadata"},
+		"items[].metadata":                {"name", "namespace", "uid", "resourceVersion", "deletionTimestamp"},
+		"spec":                            {"replicas", "template"},
+		"spec.template":                   {"spec"},
+		"spec.template.spec":              {"containers"},
+		"spec.template.spec.containers[]": {"name", "command", "args"},
+		"status":                          {"observedGeneration", "replicas", "updatedReplicas", "readyReplicas", "availableReplicas", "unavailableReplicas"},
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var walk func(string, int) error
+	walk = func(path string, depth int) error {
+		if depth > 64 {
+			return errors.New("JSON nesting exceeds the proof bound")
+		}
+		token, err := decoder.Token()
+		if err != nil {
+			return errors.New("JSON proof is incomplete")
+		}
+		delimiter, composite := token.(json.Delim)
+		if !composite {
+			return nil
+		}
+		switch delimiter {
+		case '{':
+			seen := map[string]bool{}
+			for decoder.More() {
+				token, err := decoder.Token()
+				key, ok := token.(string)
+				if err != nil || !ok || seen[key] {
+					return errors.New("JSON proof contains ambiguous object fields")
+				}
+				seen[key] = true
+				for _, canonical := range fields[path] {
+					if key != canonical && strings.EqualFold(key, canonical) {
+						return errors.New("JSON proof contains a case-aliased field")
+					}
+				}
+				child := key
+				if path != "" {
+					child = path + "." + key
+				}
+				if err := walk(child, depth+1); err != nil {
+					return err
+				}
+			}
+		case '[':
+			for decoder.More() {
+				if err := walk(path+"[]", depth+1); err != nil {
+					return err
+				}
+			}
+		default:
+			return errors.New("JSON proof contains an unexpected delimiter")
+		}
+		end, err := decoder.Token()
+		if err != nil || (delimiter == '{' && end != json.Delim('}')) || (delimiter == '[' && end != json.Delim(']')) {
+			return errors.New("JSON proof is incomplete")
+		}
+		return nil
+	}
+	if err := walk("", 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return errors.New("JSON proof has trailing data")
+	}
+	return nil
 }
 
 func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]json.RawMessage, error) {
@@ -125,6 +205,9 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
 		return nil, errors.New("metadata response incomplete or oversized")
+	}
+	if err := requireUnambiguousJSON(data); err != nil {
+		return nil, err
 	}
 	var list struct {
 		APIVersion string `json:"apiVersion"`
@@ -191,7 +274,9 @@ func requireRetainedMetadata(ctx context.Context, client *http.Client, endpoint 
 	if decoder.Decode(&item) != nil || item.APIVersion != "meta.k8s.io/v1" || item.Kind != "PartialObjectMetadata" {
 		return errors.New("retained pool response is not metadata")
 	}
-	for key, expected := range map[string]string{"name": "ksail-analysis-runners", "namespace": "arc-ksail-analysis"} {
+	// The pinned chart names this object from runnerScaleSetName, not the
+	// HelmRelease name. recoveryArmed binds that same explicit source value.
+	for key, expected := range map[string]string{"name": retainedPoolName, "namespace": "arc-ksail-analysis"} {
 		var actual string
 		if json.Unmarshal(item.Metadata[key], &actual) != nil || actual != expected {
 			return errors.New("retained pool identity does not match its declaration")
@@ -226,6 +311,9 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil || len(data) > 1<<20 {
 		return errors.New("controller scope response incomplete or oversized")
+	}
+	if err := requireUnambiguousJSON(data); err != nil {
+		return err
 	}
 	var deployment struct {
 		APIVersion string `json:"apiVersion"`
@@ -263,7 +351,11 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 		return errors.New("controller executable differs from the pinned chart")
 	}
 	scope, mode := 0, 0
+	option := regexp.MustCompile(`^--[a-z][a-z0-9-]*(=.*)?$`)
 	for _, arg := range container.Args {
+		if !option.MatchString(arg) {
+			return errors.New("controller arguments contain an option terminator or operand")
+		}
 		switch {
 		case strings.HasPrefix(arg, "--watch-single-namespace"):
 			if arg != "--watch-single-namespace=arc-runners" {

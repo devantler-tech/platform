@@ -47,13 +47,20 @@ type flow struct {
 func verifyHealth(input io.Reader) error {
 	bounded := &io.LimitedReader{R: input, N: 1 << 20}
 	decoder := json.NewDecoder(bounded)
+	var raw json.RawMessage
+	if err := decoder.Decode(&raw); err != nil {
+		return errors.New("invalid health response")
+	}
+	if err := requireTransportJSON(raw, true); err != nil {
+		return err
+	}
 	var health struct {
 		Initialized *bool  `json:"initialized"`
 		Sealed      *bool  `json:"sealed"`
 		Version     string `json:"version"`
 		Cluster     string `json:"cluster_id"`
 	}
-	if err := decoder.Decode(&health); err != nil {
+	if err := json.Unmarshal(raw, &health); err != nil {
 		return errors.New("invalid health response")
 	}
 	var extra any
@@ -71,11 +78,18 @@ func verifyDenial(input io.Reader, expected target) error {
 	decoder := json.NewDecoder(bounded)
 	matched := false
 	for {
-		var response map[string]json.RawMessage
-		if err := decoder.Decode(&response); err != nil {
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
+			return errors.New("malformed observer response")
+		}
+		if err := requireTransportJSON(document, false); err != nil {
+			return err
+		}
+		var response map[string]json.RawMessage
+		if err := json.Unmarshal(document, &response); err != nil {
 			return errors.New("malformed observer response")
 		}
 		for _, field := range []string{"lost_events", "lostEvents", "node_status", "nodeStatus"} {
