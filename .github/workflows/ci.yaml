@@ -152,7 +152,7 @@ jobs:
       - name: 🔬 Validate bounded ARC runtime acceptance
         run: |
           go test -race ./scripts/verify-ksail-arc-runtime
-          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/tests/test-verify-ksail-arc-runtime.sh
+          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/wait-for-ksail-arc-registration.sh scripts/tests/test-verify-ksail-arc-runtime.sh
           bash scripts/tests/test-verify-ksail-arc-runtime.sh
 
       # Shared Wedding backup access is retired on this proof's word, so it must
@@ -489,6 +489,7 @@ jobs:
               - 'scripts/tests/test-setup-supply-chain-tools.sh'
               - '.github/actions/deploy-prod/action.yml'
               - 'scripts/verify-ksail-arc-runtime.sh'
+              - 'scripts/wait-for-ksail-arc-registration.sh'
               - 'scripts/verify-ksail-arc-runtime/**'
               - 'scripts/tests/test-verify-ksail-arc-runtime.sh'
               - '.github/workflows/dr-rebuild.yaml'

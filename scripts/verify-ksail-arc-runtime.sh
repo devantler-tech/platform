@@ -107,6 +107,9 @@ trap 'exit 143' INT TERM
 
 stage=deployed-revision
 quiet bash scripts/wait-for-platform-flux-revision.sh "$PLATFORM_MANIFEST_DIGEST"
+# Helm readiness precedes asynchronous ARC registration. Await the full
+# revision/generation join before taking the immutable acceptance snapshots.
+quiet timeout 660s bash scripts/wait-for-ksail-arc-registration.sh "$PLATFORM_MANIFEST_DIGEST"
 for layer in infrastructure apps; do
   kc -n flux-system get kustomization "$layer" -o json >"$scratch/layer.json"
   jq -e --arg revision "latest@$PLATFORM_MANIFEST_DIGEST" \

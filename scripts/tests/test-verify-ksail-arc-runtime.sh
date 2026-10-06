@@ -8,6 +8,9 @@ mkdir -p "$scratch/bin" "$scratch/scripts" "$scratch/k8s/providers/hetzner/infra
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller"
 cp "$root/scripts/verify-ksail-arc-runtime.sh" "$scratch/scripts/"
+if [[ -e "$root/scripts/wait-for-ksail-arc-registration.sh" ]]; then
+  cp "$root/scripts/wait-for-ksail-arc-registration.sh" "$scratch/scripts/"
+fi
 cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
 cp "$root/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml" \
@@ -37,8 +40,14 @@ SH
 cat >"$scratch/bin/timeout" <<'SH'
 #!/usr/bin/env bash
 export ARC_TEST_TIMEOUT=$1
+if [[ "$1" == 660s ]]; then touch "$ARC_TEST_ROOT/registration-budget"; fi
 shift
 exec "$@"
+SH
+cat >"$scratch/bin/sleep" <<'SH'
+#!/usr/bin/env bash
+[[ "$1" == 10 ]] || exit 98
+case "$ARC_TEST_CASE" in no-registration|registration-timeout|stale-flux) exit 124 ;; esac
 SH
 cat >"$scratch/bin/date" <<'SH'
 #!/usr/bin/env bash
@@ -99,9 +108,25 @@ case "$args" in
     printf '%s\n' --cloud-provider=hetzner --max-nodes-total=9 --nodes=0:1:cx53:fsn1:autoscale-ksail-analysis
     [[ "$ARC_TEST_CASE" != wider-ceiling ]] || printf '%s\n' --max-nodes-total=10 ;;
   *'get kustomization '*)
+    count=0
+    [[ ! -e "$ARC_TEST_ROOT/flux-reads" ]] || count=$(cat "$ARC_TEST_ROOT/flux-reads")
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$ARC_TEST_ROOT/flux-reads"
+    if [[ "$ARC_TEST_CASE" == stale-flux || ( "$ARC_TEST_CASE" == delayed-flux && "$count" -le 2 ) ]]; then
+      printf '{"metadata":{"generation":2},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@old","conditions":[{"type":"Ready","status":"True"}]}}'
+      exit 0
+    fi
     jq -n --arg revision "latest@$digest" '{metadata:{generation:1},status:{observedGeneration:1,
       lastAppliedRevision:$revision,conditions:[{type:"Ready",status:"True"}]}}' ;;
   *'get autoscalingrunnerset.actions.github.com '*)
+    count=0
+    [[ ! -e "$ARC_TEST_ROOT/registration-reads" ]] || count=$(cat "$ARC_TEST_ROOT/registration-reads")
+    count=$((count + 1))
+    printf '%s\n' "$count" >"$ARC_TEST_ROOT/registration-reads"
+    if [[ "$ARC_TEST_CASE" == registration-timeout || ( "$ARC_TEST_CASE" == delayed-registration && "$count" -eq 1 ) ]]; then
+      jq '.status.phase="Pending" | .status.observedGeneration=0 | .metadata.annotations["runner-scale-set-id"]="0"' "$ARC_TEST_ROOT/ars"
+      exit 0
+    fi
     if [[ "$ARC_TEST_CASE" == no-registration ]]; then jq '.metadata.annotations["runner-scale-set-id"]="0"' "$ARC_TEST_ROOT/ars"
     else cat "$ARC_TEST_ROOT/ars"; fi ;;
   *'get resourcequotas '*)
@@ -206,6 +231,7 @@ chmod +x "$scratch/bin/"*
 run_case() {
   local name=$1 expected=$2 code=0
   rm -f "$scratch/live-pod" "$scratch/deleted" "$scratch/replacement-preserved" "$scratch/runtime-access"
+  rm -f "$scratch/flux-reads" "$scratch/registration-reads" "$scratch/registration-budget"
   (
     cd "$scratch"
     PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform \
@@ -242,6 +268,14 @@ if (cd "$scratch"; PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=false bash scripts/v
   >"$scratch/unauthorized-out" 2>"$scratch/unauthorized-error"; then exit 1; fi
 rg -q 'FAIL at deployment-identity' "$scratch/unauthorized-error"
 run_case complete-proof pass
+run_case delayed-flux pass
+[[ $(cat "$scratch/flux-reads") -gt 2 && -e "$scratch/registration-budget" ]]
+run_case delayed-registration pass
+[[ $(cat "$scratch/registration-reads") -gt 2 && -e "$scratch/registration-budget" ]]
+for name in registration-timeout stale-flux; do
+  run_case "$name" fail
+  [[ -e "$scratch/registration-budget" && ! -e "$scratch/live-pod" && ! -e "$scratch/deleted" ]]
+done
 cp "$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" "$scratch/controller-aggregate"
 cp "$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml" "$scratch/runner-aggregate"
 sed 's/^resources:/bases:/' "$scratch/controller-aggregate" >"$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
