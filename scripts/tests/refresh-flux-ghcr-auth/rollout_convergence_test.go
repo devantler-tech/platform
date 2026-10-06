@@ -3038,6 +3038,40 @@ func TestFluxChildNotProvablyPastApplyBlocksPolicyHandoff(t *testing.T) {
 	}
 }
 
+// The first diagnosed production rollout converged after 142 seconds (#4178).
+// Model elapsed time at the kubectl boundary without sleeping: the script must
+// permit that healthy convergence while still rejecting a rollout beyond its bound.
+func TestFluxControllerRolloutAllowsObservedConvergenceWithinFiniteBudget(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		seconds string
+		ready   bool
+	}{
+		{name: "observed healthy convergence", seconds: "142", ready: true},
+		{name: "exhausted finite budget", seconds: "181", ready: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_FLUX_CONTROLLER_ROLLOUT_SECONDS": tc.seconds,
+				"FAKE_LOG_FLUX_CONTROLLER_RESTART":     "true",
+			})
+			if tc.ready {
+				requireSuccessResult(t, result)
+				requireLine(t, readLines(f.operationLog), "flux-controller-old-processes-terminated:kustomize-controller")
+				requireNotContains(t, result.stdout+result.stderr, "handoff diagnostics")
+				return
+			}
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, "timed out waiting for kustomize-controller rollout")
+			requireContains(t, result.stdout+result.stderr, "::group::kustomize-controller handoff diagnostics")
+			requireNoLine(t, readLines(f.operationLog), "flux-controller-old-processes-terminated:kustomize-controller")
+		})
+	}
+}
+
 // A failed handoff rollout explains itself (#4178): the captured kubectl output, each
 // controller Pod's state and the Pods' recent events are printed, with Pod addresses
 // masked and other Pods' events left out.
