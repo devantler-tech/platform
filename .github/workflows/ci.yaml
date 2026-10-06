@@ -963,6 +963,8 @@ jobs:
               - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
               - 'scripts/tests/test-talos-schematic-readback.sh'
+              - 'scripts/verify-kubelet-config-readback.sh'
+              - 'scripts/tests/test-kubelet-config-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
@@ -2857,6 +2859,11 @@ jobs:
         run: |
           shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
           bash scripts/tests/test-talos-schematic-readback.sh
+
+      - name: 🧾 Validate kubelet settings readback
+        run: |
+          shellcheck scripts/verify-kubelet-config-readback.sh scripts/tests/test-kubelet-config-readback.sh
+          bash scripts/tests/test-kubelet-config-readback.sh
 
       - name: 🧱 Prove folded Talos render and invalid-patch rejection
         run: |
