@@ -459,6 +459,22 @@ runs:
       shell: bash
       run: ./scripts/verify-talos-schematic-readback.sh
 
+    - name: 🧾 Read back the kubelet settings on every node
+      # A green machine-config sync does not prove that every running kubelet
+      # took the declared settings: two autoscaler nodes ran without the disk
+      # eviction thresholds for weeks after the fix deployed, and nothing
+      # reported it (#3137). Observe-only for now: the comparison has not yet
+      # been read against production, so a finding is a warning on a green
+      # deploy. Drop KUBELET_READBACK_ENFORCE once one deploy has logged a
+      # clean PASS (tracked on #3137). The check only reads Kubernetes.
+      if: >-
+        steps.cluster_update.outcome == 'success' &&
+        steps.wait_prod_api_stability.outcome == 'success'
+      shell: bash
+      env:
+        KUBELET_READBACK_ENFORCE: "false"
+      run: ./scripts/verify-kubelet-config-readback.sh
+
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the
       # rollout gate skips it. A skipped step inside a green deploy reads as

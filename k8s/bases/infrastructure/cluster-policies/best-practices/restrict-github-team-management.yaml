@@ -20,13 +20,23 @@ metadata:
     policies.kyverno.io/description: >-
       Restricts provider-upjet-github team resources in the github-config
       namespace to the github-config CODEOWNERS teams, requires TeamMembership and
-      TeamRepository resources to reference those Team objects by name, and
+      TeamRepository resources to reference those Team objects by name inside
+      the github-config namespace, and
       blocks repository admin grants. A Team may not be nested under a parent
       team or linked to a directory group. This prevents a compromised or unintended
       github-config artifact from adding arbitrary users to arbitrary GitHub
       teams or granting privileged repository access.
 spec:
   background: true
+  # #4517: every value these rules judge is written by the party they
+  # constrain, so every comparison is LITERAL. Kyverno's list operators (AnyIn,
+  # AnyNotIn, ...) read * and ? in either operand as wildcards, which lets a
+  # value of * match any entry of an allow-list: measured on v1.19.1, 25 such
+  # values were admitted by the rules below. Each condition is therefore one
+  # JMESPath boolean compared with `Equals false` — JMESPath == and contains()
+  # compare text exactly. Write a new condition the same way, and never with a
+  # list operator. not_null() replaces only a missing value with the empty
+  # string, and to_string() keeps a non-text value from being read as empty.
   rules:
     - name: teams-allow-listed
       match:
@@ -42,11 +52,9 @@ spec:
         deny:
           conditions:
             all:
-              - key: "{{ request.object.metadata.name }}"
-                operator: AnyNotIn
-                value:
-                  - admins
-                  - maintainers
+              - key: "{{ contains(['admins', 'maintainers'], request.object.metadata.name) }}"
+                operator: Equals
+                value: false
     # The allow-list above constrains the Kubernetes object name, but the
     # provider takes the real GitHub team from spec.forProvider.name (and
     # spec.initProvider.name). Without this rule a Team object named "admins"
@@ -71,16 +79,12 @@ spec:
         deny:
           conditions:
             any:
-              - key: "{{ to_lower(request.object.spec.forProvider.name || '') }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - "{{ to_lower(request.object.metadata.name) }}"
-              - key: "{{ to_lower(request.object.spec.initProvider.name || '') }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - "{{ to_lower(request.object.metadata.name) }}"
+              - key: "{{ not_null(request.object.spec.forProvider.name, '') == '' || to_lower(to_string(request.object.spec.forProvider.name)) == to_lower(request.object.metadata.name) }}"
+                operator: Equals
+                value: false
+              - key: "{{ not_null(request.object.spec.initProvider.name, '') == '' || to_lower(to_string(request.object.spec.initProvider.name)) == to_lower(request.object.metadata.name) }}"
+                operator: Equals
+                value: false
     # crossplane.io/external-name is the other way the local name can be
     # detached from the remote team, and it is NOT constrained here. A rule
     # accepting only an empty annotation or metadata.name looks like the
@@ -157,7 +161,7 @@ spec:
                 - github-config
       validate:
         failureAction: Enforce
-        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, and initProvider must not carry a teamId, selector or non-allow-listed reference.
+        message: GitHub TeamMembership resources must set spec.forProvider.teamIdRef.name to admins or maintainers with policy.resolve Always, so the reference re-resolves on every reconcile; selectors are not allowed, a reference may name no namespace other than github-config, and initProvider must not carry a teamId, selector or non-allow-listed reference.
         deny:
           conditions:
             any:
@@ -167,33 +171,38 @@ spec:
               # writes the resolved ID into that field, so a deny on it fires on the
               # controller's write and deadlocks the resource. Measured live: all 39
               # TeamMembership/TeamRepository resources carry a populated teamId.
-              - key: "{{ request.object.spec.forProvider.teamIdRef.policy.resolve || '' }}"
-                operator: NotEquals
-                value: Always
-              - key: "{{ request.object.spec.forProvider.teamIdSelector || `{}` }}"
-                operator: NotEquals
-                value: {}
-              - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
-                operator: AnyNotIn
-                value:
-                  - admins
-                  - maintainers
+              - key: "{{ not_null(request.object.spec.forProvider.teamIdRef.policy.resolve, '') == 'Always' }}"
+                operator: Equals
+                value: false
+              - key: "{{ not_null(request.object.spec.forProvider.teamIdSelector, `{}`) == `{}` }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['admins', 'maintainers'], not_null(request.object.spec.forProvider.teamIdRef.name, '')) }}"
+                operator: Equals
+                value: false
+              # #4525: the provider reads the referenced Team from the namespace the
+              # reference names and falls back to this object's own only when that is
+              # empty, so a foreign namespace would resolve to a Team object the team
+              # rules above never judged.
+              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.forProvider.teamIdRef.namespace, '')) }}"
+                operator: Equals
+                value: false
               # upjet merges initProvider into any unset forProvider field, so
               # every constraint above has to hold there too — otherwise an
               # approved forProvider reference fronts a foreign team supplied
               # under initProvider.
-              - key: "{{ request.object.spec.initProvider.teamId || '' }}"
-                operator: NotEquals
-                value: ""
-              - key: "{{ request.object.spec.initProvider.teamIdSelector || `{}` }}"
-                operator: NotEquals
-                value: {}
-              - key: "{{ request.object.spec.initProvider.teamIdRef.name || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - admins
-                  - maintainers
+              - key: "{{ not_null(request.object.spec.initProvider.teamId, '') == '' }}"
+                operator: Equals
+                value: false
+              - key: "{{ not_null(request.object.spec.initProvider.teamIdSelector, `{}`) == `{}` }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'admins', 'maintainers'], not_null(request.object.spec.initProvider.teamIdRef.name, '')) }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.initProvider.teamIdRef.namespace, '')) }}"
+                operator: Equals
+                value: false
     # #3146: the reference rule above constrains WHICH team is written to and
     # nothing constrains WHO is written into it. A TeamMembership naming `admins`
     # with policy.resolve Always, no teamId and no selector satisfies every
@@ -234,19 +243,16 @@ spec:
               # GitHub logins are case-insensitive, so normalise before matching:
               # without it an allow-listed account spelled with different case is
               # refused, which is a false denial rather than a bypass but a real one.
-              - key: "{{ to_lower(request.object.spec.forProvider.username || request.object.spec.initProvider.username || '') }}"
-                operator: AnyNotIn
-                value:
-                  - devantler
+              - key: "{{ contains(['devantler'], to_lower(to_string(request.object.spec.forProvider.username || request.object.spec.initProvider.username || ''))) }}"
+                operator: Equals
+                value: false
               # The initProvider value is constrained on its own as well, so an
               # approved forProvider username cannot front a foreign account if
               # the merge semantics ever widen. Same belt-and-braces the
               # reference conditions above apply to initProvider.teamIdRef.
-              - key: "{{ to_lower(request.object.spec.initProvider.username || '') }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - devantler
+              - key: "{{ contains(['', 'devantler'], to_lower(to_string(not_null(request.object.spec.initProvider.username, '')))) }}"
+                operator: Equals
+                value: false
     # An allow-list, not a deny-list on `maintainer`: the team role is an
     # enumeration the provider passes straight through to GitHub, so a value
     # outside the two documented roles must be refused rather than assumed
@@ -283,18 +289,12 @@ spec:
               # initProvider condition below is what constrains the value the
               # merge would supply. Folding the fallback in would add a conjunct
               # no fixture can isolate.
-              - key: "{{ to_lower(request.object.spec.forProvider.role || '') }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - member
-                  - maintainer
-              - key: "{{ to_lower(request.object.spec.initProvider.role || '') }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - member
-                  - maintainer
+              - key: "{{ contains(['', 'member', 'maintainer'], to_lower(to_string(not_null(request.object.spec.forProvider.role, '')))) }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'member', 'maintainer'], to_lower(to_string(not_null(request.object.spec.initProvider.role, '')))) }}"
+                operator: Equals
+                value: false
     - name: teamrepositories-reference-allow-listed-teams
       match:
         any:
@@ -305,7 +305,7 @@ spec:
                 - github-config
       validate:
         failureAction: Enforce
-        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, and may grant only pull, triage or push permission, in forProvider and initProvider.
+        message: GitHub TeamRepository resources must reference admins or maintainers by spec.forProvider.teamIdRef.name with policy.resolve Always, may name no namespace other than github-config in that reference, and may grant only the pull, triage, push, maintain or admin permission, in forProvider and initProvider; the maintainers team is capped below admin by a separate rule.
         deny:
           conditions:
             any:
@@ -315,55 +315,48 @@ spec:
               # writes the resolved ID into that field, so a deny on it fires on the
               # controller's write and deadlocks the resource. Measured live: all 39
               # TeamMembership/TeamRepository resources carry a populated teamId.
-              - key: "{{ request.object.spec.forProvider.teamIdRef.policy.resolve || '' }}"
-                operator: NotEquals
-                value: Always
-              - key: "{{ request.object.spec.forProvider.teamIdSelector || `{}` }}"
-                operator: NotEquals
-                value: {}
-              - key: "{{ request.object.spec.forProvider.teamIdRef.name || '' }}"
-                operator: AnyNotIn
-                value:
-                  - admins
-                  - maintainers
+              - key: "{{ not_null(request.object.spec.forProvider.teamIdRef.policy.resolve, '') == 'Always' }}"
+                operator: Equals
+                value: false
+              - key: "{{ not_null(request.object.spec.forProvider.teamIdSelector, `{}`) == `{}` }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['admins', 'maintainers'], not_null(request.object.spec.forProvider.teamIdRef.name, '')) }}"
+                operator: Equals
+                value: false
+              # #4525: the provider reads the referenced Team from the namespace the
+              # reference names and falls back to this object's own only when that is
+              # empty, so a foreign namespace would resolve to a Team object the team
+              # rules above never judged.
+              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.forProvider.teamIdRef.namespace, '')) }}"
+                operator: Equals
+                value: false
               # An allow-list, not a deny-list on `admin`: GitHub also offers
               # `maintain` and organization-defined custom repository roles, so
               # denying only `admin` fails open the moment the tenant picks
               # another privileged role. An empty value is the provider default
               # (`pull`).
-              - key: "{{ request.object.spec.forProvider.permission || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - pull
-                  - triage
-                  - push
-                  - maintain
-                  - admin
+              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain', 'admin'], not_null(request.object.spec.forProvider.permission, '')) }}"
+                operator: Equals
+                value: false
               # Same initProvider merge as above: an approved forProvider
               # reference must not be able to front a foreign team or an admin
               # grant supplied under initProvider.
-              - key: "{{ request.object.spec.initProvider.teamId || '' }}"
-                operator: NotEquals
-                value: ""
-              - key: "{{ request.object.spec.initProvider.teamIdSelector || `{}` }}"
-                operator: NotEquals
-                value: {}
-              - key: "{{ request.object.spec.initProvider.teamIdRef.name || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - admins
-                  - maintainers
-              - key: "{{ request.object.spec.initProvider.permission || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - pull
-                  - triage
-                  - push
-                  - maintain
-                  - admin
+              - key: "{{ not_null(request.object.spec.initProvider.teamId, '') == '' }}"
+                operator: Equals
+                value: false
+              - key: "{{ not_null(request.object.spec.initProvider.teamIdSelector, `{}`) == `{}` }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'admins', 'maintainers'], not_null(request.object.spec.initProvider.teamIdRef.name, '')) }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'github-config'], not_null(request.object.spec.initProvider.teamIdRef.namespace, '')) }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain', 'admin'], not_null(request.object.spec.initProvider.permission, '')) }}"
+                operator: Equals
+                value: false
     # #3208: the privilege ceiling is per-team, not flat. A single cap cannot express the
     # intent — capping everything at `push` denies all 37 live grants, while widening it to
     # `admin` lets the maintainers team be granted `admin` and makes the rule vacuous.
@@ -389,28 +382,18 @@ spec:
           # actually reconciled is forProvider's when set and initProvider's otherwise.
           # Keying this precondition on forProvider alone let an initProvider-only
           # maintainers reference skip the rule entirely and take admin.
-          - key: "{{ request.object.spec.forProvider.teamIdRef.name || request.object.spec.initProvider.teamIdRef.name || '' }}"
+          - key: "{{ (request.object.spec.forProvider.teamIdRef.name || request.object.spec.initProvider.teamIdRef.name || '') == 'maintainers' }}"
             operator: Equals
-            value: maintainers
+            value: true
       validate:
         failureAction: Enforce
         message: GitHub TeamRepository resources referencing the maintainers team may grant at most maintain; admin is reserved to the admins team.
         deny:
           conditions:
             any:
-              - key: "{{ request.object.spec.forProvider.permission || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - pull
-                  - triage
-                  - push
-                  - maintain
-              - key: "{{ request.object.spec.initProvider.permission || '' }}"
-                operator: AnyNotIn
-                value:
-                  - ""
-                  - pull
-                  - triage
-                  - push
-                  - maintain
+              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain'], not_null(request.object.spec.forProvider.permission, '')) }}"
+                operator: Equals
+                value: false
+              - key: "{{ contains(['', 'pull', 'triage', 'push', 'maintain'], not_null(request.object.spec.initProvider.permission, '')) }}"
+                operator: Equals
+                value: false
