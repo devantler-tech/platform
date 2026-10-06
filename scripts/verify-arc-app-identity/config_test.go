@@ -46,6 +46,44 @@ func TestReviewedTLSConfiguration(t *testing.T) {
 	}
 }
 
+func TestStagedCredentialLayoutAndAmbiguousSources(t *testing.T) {
+	const stagedPath = "k8s/bases/infrastructure/actions-runners/credentials/secret-store.yaml"
+	for _, tc := range []struct {
+		name, second   string
+		removeOriginal bool
+		want           outcome
+	}{
+		{"staged source", "same", true, pass},
+		{"duplicate sources", "same", false, failConfig},
+		{"invalid staged source", "invalid", false, failConfig},
+		{"wrong staged identity", "other-role", true, failConfig},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := configFixture(t)
+			data, err := os.ReadFile(filepath.Join(root, storePath))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := string(data)
+			if tc.second == "invalid" {
+				body = "spec: ["
+			}
+			if tc.second == "other-role" {
+				body = strings.Replace(body, "role: arc-secret-reader", "role: external-secrets", 1)
+			}
+			writeFixture(t, root, stagedPath, body)
+			if tc.removeOriginal {
+				if err := os.Remove(filepath.Join(root, storePath)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, got := loadConfiguration(root); got != tc.want {
+				t.Fatalf("got %s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestDedicatedReviewedTLSListener(t *testing.T) {
 	root := configFixture(t)
 	config, status := loadConfiguration(root)

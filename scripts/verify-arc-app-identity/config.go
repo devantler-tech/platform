@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/x509"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,11 +14,12 @@ import (
 )
 
 const (
-	bootstrapPath         = "k8s/clusters/prod/bootstrap/config-map.yaml"
-	storePath             = "k8s/bases/infrastructure/actions-runners/secret-store.yaml"
-	baoServer             = "https://openbao-arc.openbao.svc.cluster.local:8204"
-	baoTLSPort            = 8204
-	failConfig    outcome = "FAIL_CONFIG"
+	bootstrapPath           = "k8s/clusters/prod/bootstrap/config-map.yaml"
+	storePath               = "k8s/bases/infrastructure/actions-runners/secret-store.yaml"
+	stagedStorePath         = "k8s/bases/infrastructure/actions-runners/credentials/secret-store.yaml"
+	baoServer               = "https://openbao-arc.openbao.svc.cluster.local:8204"
+	baoTLSPort              = 8204
+	failConfig      outcome = "FAIL_CONFIG"
 )
 
 type storeConfiguration struct{ server, caBundle, caName, caKey string }
@@ -35,13 +37,36 @@ func loadConfiguration(root string) (configuration, outcome) {
 	if status != pass {
 		return configuration{}, status
 	}
-	store, err := readYAMLFile(filepath.Join(root, storePath))
+	store, err := readStoreSource(root)
 	if err != nil {
 		return configuration{}, failConfig
 	}
 	parsed, status := parseStore(store)
 	return configuration{clientID: clientID, store: parsed}, status
 }
+
+func readStoreSource(root string) (map[string]any, error) {
+	var selected map[string]any
+	found := false
+	for _, path := range []string{storePath, stagedStorePath} {
+		value, err := readYAMLFile(filepath.Join(root, path))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		if found {
+			return nil, fmt.Errorf("ambiguous store sources")
+		}
+		selected, found = value, true
+	}
+	if !found {
+		return nil, fmt.Errorf("missing store source")
+	}
+	return selected, nil
+}
+
 func readYAMLFile(path string) (map[string]any, error) {
 	file, err := os.Open(path)
 	if err != nil {

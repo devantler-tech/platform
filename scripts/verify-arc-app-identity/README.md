@@ -5,6 +5,11 @@ root to inspect the reviewed credential-transport configuration without any
 credentials, cluster access or network requests. An encrypted declaration yields
 `TRANSPORT_CONFIG_READY`; this is **not** an identity or runtime transport proof.
 
+The reviewed SecretStore must exist at exactly one of the pool's original
+`secret-store.yaml` location or its staged `credentials/secret-store.yaml`
+location. Missing, malformed or duplicate source declarations stop verification;
+both locations enforce the same fixed reader, role, namespace and transport.
+
 The manual **Verify ARC App Identity** workflow accepts only main, the first
 attempt, and the exact confirmation `verify-arc-app-identity`. It uses the existing
 `prod` environment and deployment concurrency lock. It builds and tests before
