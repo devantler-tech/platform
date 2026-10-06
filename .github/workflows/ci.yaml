@@ -149,11 +149,6 @@ jobs:
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
 
-      - name: Validate KSail runner-group capability acceptance
-        run: |
-          shellcheck scripts/verify-ksail-runner-group-capability.sh scripts/tests/test-verify-ksail-runner-group-capability.sh
-          bash scripts/tests/test-verify-ksail-runner-group-capability.sh
-
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases

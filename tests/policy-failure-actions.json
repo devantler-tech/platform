@@ -5,8 +5,6 @@
   "disallow-latest-tag/require-image-tag": "Audit",
   "disallow-latest-tag/validate-image-tag": "Audit",
   "restrict-github-team-external-identity/teams-external-name-is-an-approved-identity": "Enforce",
-  "restrict-github-runner-group/ksail-only-runner-group": "Enforce",
-  "restrict-github-runner-group/tenant-cannot-rebind-group": "Enforce",
   "restrict-github-team-management/teams-allow-listed": "Enforce",
   "restrict-github-team-management/teams-bind-provider-identity-to-object-name": "Enforce",
   "restrict-github-team-management/teams-not-nested-or-directory-linked": "Enforce",

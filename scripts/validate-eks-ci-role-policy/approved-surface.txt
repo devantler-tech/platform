@@ -14,6 +14,10 @@
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget adc009b64f2a9da1427f0c9b80f6ea2490607a8b55ceb6e139f73de92399d5da
 
+helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners 6d362a8f340a13e3f71293e341a762a590c3fab61eb81e2167bdc1975c67748a
+
+helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller 655a911346c6ea07b14e8561759f735e643090a03454688186e8f31ac898cbf6
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|backstage|backstage 5ff19be19e3525e641b0a7a22e2a7047e1fbda16ef9ca7b4fa731ce3a61e686a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
@@ -284,7 +288,7 @@ rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19364d7341e4952fcb0566f1c1ba16d073b6f1ae4108b0
 
-rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources 90264d4cbeeb5b50f83b74657d924049d6c9110fa95b04072187e77ae1769f44
+rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources acb7434cc52dd53923f047d301c10d0e85ebfe5bb8c3ef8de67de24817e3e6b0
 
 rbac.authorization.k8s.io/v1|Role|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver b73fcea5da2f0aad8552ff6a168372a6d47e9f4fb967c7df741ba89708240c73
 
@@ -395,6 +399,10 @@ source.toolkit.fluxcd.io/v1|HelmRepository|velero|vmware-tanzu c4f7f1772afa82eeb
 source.toolkit.fluxcd.io/v1|HelmRepository|vertical-pod-autoscaler|vertical-pod-autoscaler 8a3838c20823f33a9ba171c6d8d889dbb6bac5fa68564ba78df4e4460156eb96
 
 source.toolkit.fluxcd.io/v1|HelmRepository|whoami|whoami 28dc88b5a5e69a086e4f7fb87be34d1b8a0cc20a13b21706aaf534a8e5d80cf8
+
+source.toolkit.fluxcd.io/v1|OCIRepository|arc-ksail-analysis|ksail-analysis-runners 5f89c75739fa50d998e046bc2a388ccf9c7fb4413377510e43f9f12ae4ff4c70
+
+source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb325741489bbd5ece40cf2cbf6e4aef3e87e89efea97b7b0f2ec498671fa1
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner e7717c1d618e5d2dd1f3ab32d589ac06205d040e867f33db22ab9651bcb105bc
 

@@ -75,7 +75,6 @@ rules:
       - actions.github.m.upbound.io
     resources:
       - repositorypermissions
-      - runnergroups
     verbs:
       - get
       - list
