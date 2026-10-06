@@ -25,6 +25,17 @@ if [[ -z "$stability_line" || -z "$readback_line" ]] || (( stability_line >= rea
   exit 1
 fi
 
+# The deploy step must stay observe-only until the switch is made on purpose,
+# and must run only after a successful update and a stable API.
+step=$(yq -o=json -I=0 '.runs.steps[] | select(.run == "./scripts/verify-kubelet-config-readback.sh")' "$deploy_action")
+if [[ "$(jq -s 'length' <<<"$step")" != 1 ]] ||
+  ! jq -e '.env.KUBELET_READBACK_ENFORCE == "false" and
+    (.if | contains("steps.cluster_update.outcome == \u0027success\u0027") and
+           contains("steps.wait_prod_api_stability.outcome == \u0027success\u0027"))' <<<"$step" >/dev/null; then
+  printf 'the deploy must run the kubelet readback once, observe-only, after a successful update\n' >&2
+  exit 1
+fi
+
 tmp_dir=$(mktemp -d)
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -37,6 +48,7 @@ set -euo pipefail
 [[ "$1 $2 $3" == "--context admin@prod --request-timeout=15s" ]] || exit 64
 shift 3
 if [[ "$*" == "get nodes -o json" ]]; then
+  [[ -z "${MOCK_NODES_FAIL:-}" ]] || exit 1
   if [[ -n "${MOCK_FIRST_DIR:-}" && ! -f "$MOCK_DIR/first-used" ]]; then
     cat "$MOCK_FIRST_DIR/nodes.json"
   else
@@ -145,6 +157,16 @@ run "$tmp_dir/refused"
 expect 'a node whose kubelet cannot be read fails' 1 \
   'autoscale-cx43-example: kubelet configuration could not be read'
 
+# jq prints nothing for an empty document, so an empty reply must be refused
+# before it is compared.
+new_fixture "$tmp_dir/blank"
+: >"$tmp_dir/blank/prod-worker-1.json"
+printf '   \n' >"$tmp_dir/blank/prod-control-plane-2.json"
+run "$tmp_dir/blank"
+expect 'an empty or blank reply fails' 1 \
+  'prod-worker-1: kubelet configuration reply is empty' \
+  'prod-control-plane-2: kubelet configuration reply is empty'
+
 new_fixture "$tmp_dir/garbage"
 printf 'not json\n' >"$tmp_dir/garbage/prod-worker-1.json"
 run "$tmp_dir/garbage"
@@ -165,6 +187,9 @@ printf 'not json\n' >"$tmp_dir/unreadable/nodes.json"
 run "$tmp_dir/unreadable"
 expect 'an unreadable node list fails' 1 'Kubernetes nodes could not be read from context admin@prod'
 
+run "$tmp_dir/healthy" MOCK_NODES_FAIL=1
+expect 'a failed node list read fails' 1 'Kubernetes nodes could not be read from context admin@prod'
+
 mkdir "$tmp_dir/hostile"
 printf '{"items": [{"metadata": {"name": "a/../../b"}}]}\n' >"$tmp_dir/hostile/nodes.json"
 run "$tmp_dir/hostile"
@@ -182,6 +207,12 @@ expect 'a node that answers on a later attempt passes' 0 'PASS: 3 node(s)'
   exit 1
 }
 
+# Drift cannot improve by waiting, so it is reported on the first reading.
+run "$tmp_dir/drift" KUBELET_READBACK_ATTEMPTS=3
+expect 'drift is reported without waiting out the retry window' 1 'did not pass after 1 attempt(s)'
+run "$tmp_dir/refused" KUBELET_READBACK_ATTEMPTS=3
+expect 'an unread node is retried until the last attempt' 1 'did not pass after 3 attempt(s)'
+
 # Observe-only: the finding is reported as a warning and the deploy stays green.
 run "$tmp_dir/drift" KUBELET_READBACK_ENFORCE=false
 expect 'observe-only reports drift as a warning and exits 0' 0 \
@@ -194,7 +225,7 @@ if grep -qF '::warning' <<<"$output"; then
   exit 1
 fi
 run "$tmp_dir/healthy" KUBELET_READBACK_ENFORCE=maybe
-expect 'an unknown enforce value is refused' 2 'invalid kubelet readback'
+expect 'an unknown enforce value is refused' 2 'invalid KUBELET_READBACK_ENFORCE'
 
 # Nothing declared means nothing was compared; that is not a pass.
 mkdir -p "$tmp_dir/talos-none/cluster"
@@ -211,5 +242,26 @@ cp "$root_dir/talos/cluster/evict-pods-before-oom.yaml" "$tmp_dir/talos-role/clu
 printf 'machine:\n  kubelet:\n    extraConfig:\n      maxPods: 200\n' >"$tmp_dir/talos-role/workers/more-pods.yaml"
 run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-role"
 expect 'a per-role kubelet setting is refused, not half-compared' 2 'are not modelled by this check'
+
+# Observe-only must not fail the deploy on a refusal either: a red step skips
+# the steps after it.
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-role" KUBELET_READBACK_ENFORCE=false
+expect 'observe-only reports a refusal as a warning and exits 0' 0 \
+  '::warning title=Kubelet settings readback (observe-only)::' 'are not modelled by this check'
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-missing" KUBELET_READBACK_ENFORCE=false
+expect 'observe-only reports a missing patch directory as a warning' 0 '::warning'
+
+# A role file with several documents and no kubelet settings is not a refusal.
+mkdir -p "$tmp_dir/talos-multi/cluster" "$tmp_dir/talos-multi/workers"
+cp "$root_dir"/talos/cluster/*.yaml "$tmp_dir/talos-multi/cluster/"
+printf 'machine:\n  network: {}\n---\nmachine:\n  sysctls: {}\n' >"$tmp_dir/talos-multi/workers/two-documents.yaml"
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-multi"
+expect 'a multi-document role file without kubelet settings passes' 0 'PASS: 3 node(s)'
+printf 'machine:\n  network: {}\n---\nmachine:\n  kubelet:\n    extraConfig:\n      maxPods: 200\n' >"$tmp_dir/talos-multi/workers/two-documents.yaml"
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-multi"
+expect 'a kubelet setting in a later document of a role file is refused' 2 'are not modelled by this check'
+printf 'machine: [unclosed\n' >"$tmp_dir/talos-multi/workers/two-documents.yaml"
+run "$tmp_dir/healthy" TALOS_CONFIG_DIR="$tmp_dir/talos-multi"
+expect 'a role file that cannot be parsed is refused, not read as empty' 2 'to rule out per-role kubelet settings'
 
 printf 'All kubelet settings readback cases passed.\n'
