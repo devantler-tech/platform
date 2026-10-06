@@ -189,6 +189,11 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 }
 
 func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
+	allowed := map[string]string{
+		"k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml": "../../../../bases/infrastructure/controllers/actions-runner-controller/",
+		"k8s/providers/hetzner/infrastructure/kustomization.yaml":             "../../../bases/infrastructure/ksail-analysis-runners/",
+	}
+	found := map[string]bool{}
 	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -209,13 +214,25 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		}
 		for _, reference := range append(document.Resources, document.Components...) {
 			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "ksail-analysis-runners") {
-				t.Errorf("%s activates ARC through %q", path, reference)
+				relative, err := filepath.Rel(repoRoot, path)
+				if err != nil {
+					return err
+				}
+				if allowed[relative] != reference || found[relative] {
+					t.Errorf("%s has an unexpected or duplicate ARC reference %q", path, reference)
+				}
+				found[relative] = true
 			}
 		}
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	for aggregate := range allowed {
+		if !found[aggregate] {
+			t.Errorf("%s omits the retained suspended ARC inventory", aggregate)
+		}
 	}
 }
 

@@ -1,10 +1,11 @@
 # KSail analysis runners
 
-The ARC controller and KSail analysis pool are prepared but inactive. Neither
-component is referenced by a deployment aggregate, and both HelmReleases are
-suspended. Merging their definitions registers no runner, reads no App credential
-and provisions no server. This is the preparation slice of #4462, not its runtime
-acceptance or a resolution of KSail #7131.
+Production declares the ARC controller, analysis pool and protected namespaces
+in its Flux inventory, with both HelmReleases suspended. This preserves ownership
+of retained resources while registration is repaired. Suspension stops Helm
+reconciliation; it does not drain an installed scale set. Registration, execution
+and cleanup still require the separate activation proofs below and do not resolve
+KSail #7131 until managed calibration completes.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -84,19 +85,19 @@ Activation requires a separate reviewed change and all of these proofs:
    runner pods and their registration are removed before declaring that bug fixed.
 
 For staged validation, run `go test ./scripts/tests/arc-staging` and build both
-component directories directly with `kubectl kustomize`; normal local/prod trees
-must continue to contain no ARC resources. The unconditional CI guard runs on
+component directories directly with `kubectl kustomize`. Local trees exclude ARC;
+production retains its suspended releases and protected namespaces. The unconditional CI guard runs on
 pull requests and merge groups. A deliberate activation revises that guard in
 the same reviewed change, alongside its evidence; deleting the guard alone is
 not activation proof.
 
 ## Rollout and recovery
 
-After the gates above are approved, first reference and unsuspend the controller
+After the gates above are approved, first unsuspend the controller
 in the controller layer and verify it is healthy. That component creates both
 namespaces before the chart installs its namespace-scoped RBAC. The controller's
 network policy also covers the listener, which ARC creates in that namespace.
-Only then reference the pool in
+Only then unsuspend the pool in
 the infrastructure layer, where its external secret store already exists. Keep
 the unique analysis label out of ordinary build/test/provider workflows.
 
