@@ -63,21 +63,21 @@ done
   exit 91
 }
 
-# floating_ip <ip> <ksail.owned> — one Hetzner floating-IP object.
-floating_ip() {
+# floating_ip_object <ip> <ksail.owned> — one Hetzner floating-IP object.
+floating_ip_object() {
   printf '{"name":"prod-floating-ip","ip":"%s","labels":{"ksail.owned":"%s","ksail.cluster.name":"prod"}}' "$1" "$2"
 }
 
 # Every answer carries the address, so a path that echoes its input is caught.
 case "${FAKE_FLOATING_IP_MODE:-owned}" in
-  owned) printf '{"floating_ips":[%s]}\n' "$(floating_ip "${FAKE_FLOATING_IP}" true)" ;;
-  foreign) printf '{"floating_ips":[%s]}\n' "$(floating_ip "${FAKE_FLOATING_IP}" false)" ;;
+  owned) printf '{"floating_ips":[%s]}\n' "$(floating_ip_object "${FAKE_FLOATING_IP}" true)" ;;
+  foreign) printf '{"floating_ips":[%s]}\n' "$(floating_ip_object "${FAKE_FLOATING_IP}" false)" ;;
   duplicate)
     printf '{"floating_ips":[%s,%s]}\n' \
-      "$(floating_ip "${FAKE_FLOATING_IP}" true)" "$(floating_ip "${FAKE_FLOATING_IP}" true)"
+      "$(floating_ip_object "${FAKE_FLOATING_IP}" true)" "$(floating_ip_object "${FAKE_FLOATING_IP}" true)"
     ;;
   malformed) printf '{"floating_ips":[["%s"]]}\n' "${FAKE_FLOATING_IP}" ;;
-  not-ipv4) printf '{"floating_ips":[%s]}\n' "$(floating_ip "${FAKE_FLOATING_IP}/32" true)" ;;
+  not-ipv4) printf '{"floating_ips":[%s]}\n' "$(floating_ip_object "${FAKE_FLOATING_IP}/32" true)" ;;
   unreachable)
     printf 'curl: (7) Failed to connect to the Hetzner API\n' >&2
     exit 7
