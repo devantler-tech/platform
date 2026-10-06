@@ -80,6 +80,10 @@
 # sources, and a finding is reported only when a second read after
 # FLUX_ORPHANS_SETTLE_SECONDS still has it. Even a clean first snapshot must be
 # read again: an in-flight candidate apply may not have created its residue yet.
+# A finding the latest read shows for the first time gets one more read after
+# the same interval, up to four reads in total (#4551); it is then confirmed if
+# it is still there and cleared if it is gone. A clean result always rests on a
+# final read without findings.
 #
 #   exit 0  no orphan to fail on (older orphans, if any, are listed as warnings)
 #   exit 1  an orphan to fail on: it is named, and nothing will update or prune it
@@ -475,35 +479,59 @@ scope() {
   fi
 }
 
-first="${tmp_dir}/first"
-read_with_retry "${first}" || unknown "the cluster could not be read."
-evaluate "${first}" || unknown "the first read examined nothing."
-first_findings="$(grep -Ec '^(orphan|unjudged|stale) ' "${first}/findings.txt" || true)"
+# The check answers on its latest read, compared with the one before it. A
+# finding that read shows for the first time is neither confirmed nor cleared,
+# so one more read is taken after the same settle interval, up to max_reads in
+# total. Without that, a Kustomization that goes briefly not Ready during its
+# own routine reconcile between two reads ended the heal red (#4551).
+readonly max_reads=4
+readonly read_ordinals=('' first second third fourth)
+
+previous="${tmp_dir}/first"
+read_with_retry "${previous}" || unknown "the cluster could not be read."
+evaluate "${previous}" || unknown "the first read examined nothing."
+grep -E '^(orphan|unjudged|stale) ' "${previous}/findings.txt" | cut -d' ' -f2-3 >"${tmp_dir}/earlier-keys.txt" || true
+first_findings="$(wc -l <"${tmp_dir}/earlier-keys.txt" | tr -d ' ')"
 echo "${first_findings} finding(s) on the first read; reading again in ${settle_seconds}s to rule out a reconcile in progress."
-sleep "${settle_seconds}"
 
-second="${tmp_dir}/second"
-read_with_retry "${second}" || unknown "the cluster could not be read a second time."
-evaluate "${second}" || unknown "the second read examined nothing."
+for ((read_number = 2; read_number <= max_reads; read_number++)); do
+  sleep "${settle_seconds}"
+  ordinal="${read_ordinals[read_number]}"
+  current="${tmp_dir}/${ordinal}"
+  read_with_retry "${current}" || unknown "the cluster could not be read a ${ordinal} time."
+  evaluate "${current}" || unknown "the ${ordinal} read examined nothing."
 
-# A finding is confirmed when the same object (UID and inventory ID), or the
-# same Kustomization, has one in both reads; its category is the one the second
-# read gives. A finding only the second read has appeared in between, so it is
-# not confirmed.
-cut -d' ' -f2-3 "${first}/findings.txt" | sort -u >"${tmp_dir}/first-keys.txt"
-: >"${tmp_dir}/confirmed.txt"
-: >"${tmp_dir}/unconfirmed.txt"
-while IFS= read -r line; do
-  if grep -Fxq -- "$(cut -d' ' -f2-3 <<<"${line}")" "${tmp_dir}/first-keys.txt"; then
-    printf '%s\n' "${line}" >>"${tmp_dir}/confirmed.txt"
-  else
-    printf '%s\n' "${line}" >>"${tmp_dir}/unconfirmed.txt"
+  # A finding is confirmed when the same object (UID and inventory ID), or the
+  # same Kustomization, has one in this read and the one before it; its category
+  # is the one this read gives. A finding only this read has appeared in
+  # between, so it is not confirmed.
+  cut -d' ' -f2-3 "${previous}/findings.txt" | sort -u >"${tmp_dir}/previous-keys.txt"
+  : >"${tmp_dir}/confirmed.txt"
+  : >"${tmp_dir}/unconfirmed.txt"
+  while IFS= read -r line; do
+    if grep -Fxq -- "$(cut -d' ' -f2-3 <<<"${line}")" "${tmp_dir}/previous-keys.txt"; then
+      printf '%s\n' "${line}" >>"${tmp_dir}/confirmed.txt"
+    else
+      printf '%s\n' "${line}" >>"${tmp_dir}/unconfirmed.txt"
+    fi
+  done <"${current}/findings.txt"
+  grep '^orphan ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/orphans.txt" || true
+  grep -E '^(unjudged|stale) ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/unjudged.txt" || true
+  grep '^pre-existing ' "${current}/findings.txt" >"${tmp_dir}/pre-existing.txt" || true
+  grep -Ev '^pre-existing ' "${tmp_dir}/unconfirmed.txt" >"${tmp_dir}/unconfirmed-new.txt" || true
+
+  # Only an otherwise clean read is taken again: a confirmed finding already
+  # decides the result, and the last permitted read has to answer.
+  if [[ -s "${tmp_dir}/unconfirmed-new.txt" && ! -s "${tmp_dir}/orphans.txt" && ! -s "${tmp_dir}/unjudged.txt" ]] &&
+    ((read_number < max_reads)); then
+    echo "The ${ordinal} read found these for the first time, so they are neither confirmed nor cleared; reading again in ${settle_seconds}s (read $((read_number + 1)) of at most ${max_reads}):"
+    print_findings "${tmp_dir}/unconfirmed-new.txt"
+    cut -d' ' -f2-3 "${tmp_dir}/unconfirmed-new.txt" >>"${tmp_dir}/earlier-keys.txt"
+    previous="${current}"
+    continue
   fi
-done <"${second}/findings.txt"
-grep '^orphan ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/orphans.txt" || true
-grep -E '^(unjudged|stale) ' "${tmp_dir}/confirmed.txt" >"${tmp_dir}/unjudged.txt" || true
-grep '^pre-existing ' "${second}/findings.txt" >"${tmp_dir}/pre-existing.txt" || true
-grep -Ev '^pre-existing ' "${tmp_dir}/unconfirmed.txt" >"${tmp_dir}/unconfirmed-new.txt" || true
+  break
+done
 
 report_pre_existing "${tmp_dir}/pre-existing.txt"
 
@@ -541,16 +569,23 @@ if [[ -s "${tmp_dir}/unjudged.txt" ]]; then
 fi
 
 if [[ -s "${tmp_dir}/unconfirmed-new.txt" ]]; then
-  echo "The second read found these for the first time, so they are not confirmed and cannot establish a clean result:"
+  echo "The ${ordinal} read found these for the first time, so they are not confirmed and cannot establish a clean result:"
   print_findings "${tmp_dir}/unconfirmed-new.txt"
   : >"${tmp_dir}/error.log"
   unknown "the final read contains findings that have not settled."
 fi
-cleared="${first_findings}"
-if ((cleared == 0)); then
-  echo "✅ No object is outside every inventory across both reads among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
+cleared="$(sort -u "${tmp_dir}/earlier-keys.txt" | wc -l | tr -d ' ')"
+if ((read_number == 2)); then
+  reads_phrase='both reads'
+  cleared_phrase="the ${cleared} finding(s) on the first read had cleared by the second"
 else
-  echo "✅ Nothing stayed outside every inventory across both reads among $(scope): the ${cleared} finding(s) on the first read had cleared by the second (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${second}"))."
+  reads_phrase="all ${read_number} reads"
+  cleared_phrase="the ${cleared} finding(s) on earlier reads had cleared by the ${ordinal}"
+fi
+if ((cleared == 0)); then
+  echo "✅ No object is outside every inventory across ${reads_phrase} among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${current}"))."
+else
+  echo "✅ Nothing stayed outside every inventory across ${reads_phrase} among $(scope): ${cleared_phrase} (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${current}"))."
 fi
 summary "- Flux orphaned objects: none confirmed among $(scope) — ${checked} Flux-applied objects, ${kustomizations} Kustomizations (${cleared} cleared on re-read)."
 exit 0

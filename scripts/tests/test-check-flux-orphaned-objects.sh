@@ -446,12 +446,15 @@ regression_baseline_attribution() {
 regression_always_settle() {
   case_name='clean first snapshot followed by candidate-only object is not GREEN'
   dir="$(scenario initially-clean-late-object)"
-  obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller "${prune_disabled}" | add_objects "${dir}" 2
+  # The candidate's residue is created after the first read and stays. The
+  # further read confirms it, so it is named rather than left as "could not tell".
+  cp "${dir}/objects.json" "${dir}/objects.1.json"
+  obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller "${prune_disabled}" | add_objects "${dir}"
   run "${dir}"
-  expect_status 2
-  expect_reads 2
+  expect_status 1
+  expect_reads 3
   expect_text 'ConfigMap web/late'
-  expect_summary 'UNKNOWN'
+  expect_summary '**1 found**'
   expect_no_text '✅'
 
   case_name='clean first snapshot does not excuse an unreadable settling snapshot'
@@ -871,20 +874,86 @@ expect_reads 2
 expect_text '✅ Nothing stayed outside every inventory across both reads among all Flux-applied objects: the 1 finding(s) on the first read had cleared by the second'
 expect_summary '(1 cleared on re-read)'
 
-# An object that first appears outside every inventory on the second read has
-# not settled. Earlier cleared findings cannot establish a clean final read.
-case_name='finding only on the second read'
-dir="$(scenario second-only)"
-obj v1 ConfigMap web early uid-early flux-system/apps kustomize-controller | add_objects "${dir}"
+# A finding that first appears on the second read is neither confirmed nor
+# cleared, so the check reads once more (#4551). The heal of 2026-10-06 ended red
+# on exactly this: a tenant Kustomization was briefly not Ready during its own
+# routine reconcile when the second read was taken.
+case_name='Kustomization mid-reconcile only on the second read clears on the third'
+dir="$(scenario second-only-clears)"
+cp "${dir}/kustomizations.json" "${dir}/kustomizations.2.json"
+set_ks "${dir}/kustomizations.2.json" flux-system/apps '.status.conditions[0].status = "False"'
+run "${dir}"
+expect_status 0
+expect_reads 3
+expect_text 'The second read found these for the first time, so they are neither confirmed nor cleared; reading again in 0s (read 3 of at most 4):'
+expect_text 'Kustomization flux-system/apps'
+expect_text '✅ Nothing stayed outside every inventory across all 3 reads among all Flux-applied objects: the 1 finding(s) on earlier reads had cleared by the third'
+expect_summary '(1 cleared on re-read)'
+expect_no_text '::error::'
+
+# The same when an earlier finding had already cleared: both count as cleared.
+case_name='object only on the second read clears on the third'
+dir="$(scenario second-only-object-clears)"
+obj v1 ConfigMap web early uid-early flux-system/apps kustomize-controller | add_objects "${dir}" 1
 cp "${dir}/kustomizations.json" "${dir}/kustomizations.2.json"
 record "${dir}/kustomizations.2.json" 'web_early__ConfigMap'
 obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}" 2
 run "${dir}"
-expect_status 2
-expect_text 'not confirmed'
+expect_status 0
+expect_reads 3
 expect_line '  ConfigMap web/late (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
+expect_summary '(2 cleared on re-read)'
+
+# A finding that is still there on the further read is confirmed and fails.
+case_name='object only on the second read persists on the third'
+dir="$(scenario second-only-persists)"
+cp "${dir}/objects.json" "${dir}/objects.1.json"
+obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}"
+run "${dir}"
+expect_status 1
+expect_reads 3
+expect_text '1 object(s) among all Flux-applied objects are in no Kustomization'
+expect_line '  ConfigMap web/late (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
+expect_no_text '✅'
+
+# A Kustomization that stays not Ready is confirmed as unjudgeable: still UNKNOWN.
+case_name='Kustomization not Ready from the second read on stays unknown'
+dir="$(scenario second-only-stale-persists)"
+cp "${dir}/kustomizations.json" "${dir}/kustomizations.1.json"
+set_ks "${dir}/kustomizations.json" flux-system/apps '.status.conditions[0].status = "False"'
+run "${dir}"
+expect_status 2
+expect_reads 3
+expect_text 'the inventories could not be trusted to judge every recent object.'
+expect_no_text '✅'
+expect_summary 'UNKNOWN'
+
+# The reads are bounded. When every read shows a different finding for the
+# first time, the last permitted read still cannot establish a clean result.
+case_name='a new finding on every read is still unsettled on the last read'
+dir="$(scenario new-on-every-read)"
+for read in 2 3 4; do
+  obj v1 ConfigMap web "late-${read}" "uid-late-${read}" flux-system/apps kustomize-controller | add_objects "${dir}" "${read}"
+done
+obj v1 ConfigMap web never-read uid-never-read flux-system/apps kustomize-controller | add_objects "${dir}" 5
+run "${dir}"
+expect_status 2
+expect_reads 4
+expect_text 'The fourth read found these for the first time, so they are not confirmed and cannot establish a clean result:'
+expect_line '  ConfigMap web/late-4 (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
 expect_text 'the final read contains findings that have not settled.'
-expect_no_text '✅ Nothing stayed outside every inventory'
+expect_no_text '✅'
+expect_summary 'UNKNOWN'
+
+# A further read that cannot be taken is UNKNOWN, like the second.
+case_name='further read unreadable'
+dir="$(scenario further-unreadable)"
+obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}" 2
+run "${dir}" FAKE_FAIL_READS=3,4,5
+expect_status 2
+expect_reads 5
+expect_text 'the cluster could not be read a third time.'
+expect_no_text '✅'
 expect_summary 'UNKNOWN'
 
 # An object claimed by a Kustomization that no longer exists is an orphan.
