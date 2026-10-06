@@ -34,6 +34,23 @@ wait_for_file() {
   return 1
 }
 
+wait_for_witness_start() {
+  local file="$1" _
+  # Preparation uses real fixture tools and has its own bounded readiness wait.
+  # Cancellation is measured only after the witness starts; its bounds below
+  # remain unchanged. A failed producer must never look like a ready witness.
+  for _ in $(seq 1 750); do
+    if ! kill -0 "$parent" 2>/dev/null; then
+      printf 'fixture producer exited before witness readiness\n' >&2
+      return 1
+    fi
+    [ ! -f "$file" ] || return 0
+    sleep 0.02
+  done
+  printf 'timed out waiting for fixture witness readiness: %s\n' "$file" >&2
+  return 1
+}
+
 wait_for_parent_exit() {
   local _
   for _ in $(seq 1 150); do
@@ -147,12 +164,24 @@ assert_stopped "$state"
 # Marker witnesses still wait synchronously, but must also be cancellable while
 # their guard blocks. Use the actual selected inline-document family.
 state="$scratch/interrupted-witness"
-mkdir -p "$state"
-PARALLEL_CLEANUP_STATE="$state" CONSUMER_CONSERVATION_REGRESSION=inline-documents \
+mkdir -p "$state" "$scratch/witness-bin"
+# Fixture setup precedes the cancellation measurement. Exercise actual slow
+# preparation without giving the interrupted worker more time to stop.
+real_yq="$(command -v yq)"
+cat >"$scratch/witness-bin/yq" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state="${PARALLEL_CLEANUP_STATE:?}"
+if mkdir "$state/setup-delayed" 2>/dev/null; then sleep 5; fi
+exec "${PARALLEL_CLEANUP_REAL_YQ:?}" "$@"
+EOF
+chmod +x "$scratch/witness-bin/yq"
+PATH="$scratch/witness-bin:$PATH" PARALLEL_CLEANUP_REAL_YQ="$real_yq" \
+  PARALLEL_CLEANUP_STATE="$state" CONSUMER_CONSERVATION_REGRESSION=inline-documents \
   bash "$scratch/fake-repo/scripts/tests/test-guard-consumer-discovery-conservation.sh" \
   >"$state/output" 2>&1 &
 parent=$!
-wait_for_file "$state/witness-started"
+wait_for_witness_start "$state/witness-started"
 kill -TERM "$parent"
 wait_for_parent_exit
 rc=0
@@ -160,6 +189,26 @@ wait "$parent" || rc=$?
 parent=''
 [ "$rc" -eq 143 ] || { printf 'witness cancellation lost its exit code: %s\n' "$rc" >&2; exit 1; }
 assert_stopped "$state"
+
+# A producer that exits before readiness must fail, rather than consuming the
+# setup deadline or allowing the cancellation assertions to inspect nothing.
+state="$scratch/exited-before-witness"
+mkdir -p "$state"
+(exit 42) &
+parent=$!
+if wait_for_witness_start "$state/witness-started" >"$state/output" 2>&1; then
+  printf 'an exited fixture producer was accepted as ready\n' >&2
+  exit 1
+fi
+rc=0
+wait "$parent" || rc=$?
+parent=''
+[ "$rc" -eq 42 ] || { printf 'fixture producer lost its failing exit code\n' >&2; exit 1; }
+grep -qF 'fixture producer exited before witness readiness' "$state/output" || {
+  printf 'fixture exit was mistaken for a readiness timeout\n' >&2
+  cat "$state/output" >&2
+  exit 1
+}
 
 # Selected regression families must join queued cases before choosing a verdict.
 # A high admission bound ensures no scheduling wait can accidentally hide a
