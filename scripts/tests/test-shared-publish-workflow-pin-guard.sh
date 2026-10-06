@@ -552,6 +552,67 @@ grep -q 'did not validate' "${tree}/stderr" ||
   fail "guard rejected an unvalidated canonical reference but not for the discovery reason: $(head -1 "${tree}/stderr")"
 ok "reports a canonical-publisher reference under a key it does not validate"
 
+# --- RED: an alternation over refs must be grouped ------------------------------
+#
+# `@A|B$` is not two refs: it reads as `^…@A` OR `B$`, and the second half is anchored to
+# nothing before it. Splitting the ref on `|` found two well-formed alternatives and
+# accepted a subject whose second half matches ANY identity ending in a commit.
+
+assert_rejected_grouping() { # <label> <subject-line> <slug>
+  assert_line_rejected "$1" "$2" "$3" 'not a fully grouped'
+}
+
+assert_rejected_grouping "an ungrouped alternation of a commit and the commit pattern" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}|${SHA_PATTERN}\$${Q}" \
+  ungrouped-pattern
+
+assert_rejected_grouping "an ungrouped alternation of two commits" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}|${CONCRETE_SHA_2}\$${Q}" \
+  ungrouped-commits
+
+assert_rejected_grouping "a two-family subject whose legacy refs are not grouped" \
+  "$(family_line "${CONCRETE_SHA}|${CONCRETE_SHA_2}" "${CONCRETE_SHA}")" \
+  family-legacy-ungrouped
+
+# --- RED: the scalar judged is the identity the line was selected for -----------
+#
+# The subject pattern selects a LINE and matches anywhere on it. Each case below is
+# selected by text that is not the value's identity — a comment, or the tail of an
+# alternation — while the value itself carries one `@` and a well-formed ref, which is all
+# the guard used to look at. cosign receives the value, not the comment.
+
+assert_rejected_identity() { # <label> <subject-line> <slug>
+  assert_line_rejected "$1" "$2" "$3" 'subject is not exactly'
+}
+
+assert_rejected_identity "a wildcard identity selected by a comment naming the workflow" \
+  "        subject: ${Q}.*@${SHA_PATTERN}${Q} # subject: ${SUBJECT_ID}" \
+  identity-comment
+
+assert_rejected_identity "a wildcard alternative ahead of a workflow-shaped tail" \
+  "        subject: ${Q}.*|subject: ${SUBJECT_ID}${SHA_PATTERN}\$${Q}" \
+  identity-tail
+
+assert_rejected_identity "a canonical-only identity in another spelling, selected by a comment" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/[.]github/[.]github/workflows/publish-manifests[.]yaml@${SHA_PATTERN}\$${Q} # subject: ${SUBJECT_ID}x" \
+  identity-canonical-comment
+
+assert_rejected_identity "a subject with no closing anchor" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}${Q}" \
+  identity-no-end-anchor
+
+assert_rejected_identity "a subject with no opening anchor" \
+  "        subject: ${Q}${SUBJECT_ID#^}${CONCRETE_SHA}\$${Q}" \
+  identity-no-start-anchor
+
+assert_rejected_identity "a subject with unescaped dots" \
+  "        subject: ${Q}^https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@${CONCRETE_SHA}\$${Q}" \
+  identity-bare-dots
+
+assert_rejected_identity "a subject naming another publish workflow" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml.*@${CONCRETE_SHA}\$${Q} # subject: ${SUBJECT_ID}" \
+  identity-workflow-suffix
+
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
 if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then

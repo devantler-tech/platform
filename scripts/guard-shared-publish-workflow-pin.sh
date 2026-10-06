@@ -96,6 +96,8 @@ readonly DISCOVERY_PATTERN='(actions|\\?\.github)/\\?\.github/workflows/publish-
 # literally, so the backslashes are the ones written in the manifest.
 readonly FAMILY_PREFIX='^https://github\.com/devantler-tech/('
 readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
+# The exact opening of a single-family subject, up to the workflow name.
+readonly LEGACY_SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-'
 readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
 # Only the manifest workflow has a canonical family today; the application workflow and
 # the three generic subjects stay legacy-only.
@@ -238,6 +240,16 @@ judge_ref() {
       alternatives="${alternatives%\)}"
       ;;
     '('* | *')')
+      printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
+        "$location" "$ref" >&2
+      return 1
+      ;;
+    *'|'*)
+      # An alternation with no group around it is not an alternation over REFS. `@A|B$`
+      # reads as `^…@A` OR `B$`, and the second half is anchored to nothing before it —
+      # so `@<commit>|[0-9a-f]{40}$` accepts any identity at all that ends in a commit.
+      # Splitting it on `|` and finding two well-formed alternatives is what waved it
+      # through. Several refs must be written `(A|B)`.
       printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
         "$location" "$ref" >&2
       return 1
@@ -527,11 +539,26 @@ EOF
       continue
     fi
 
-    # Everything after the LAST @ in the scalar is the ref constraint; a trailing
-    # $ anchor and any closing quote are not part of it.
+    # THE WHOLE SCALAR, NOT JUST ITS REF. SUBJECT_PATTERN selects a LINE, and it matches
+    # anywhere on it — inside a comment, or after a `|` in the value. Judging only the text
+    # after the single `@` therefore validated subjects whose identity half was never the
+    # shared workflow at all: a value of `.*@[0-9a-f]{40}` followed by a comment naming the
+    # workflow was selected by the comment and passed on its ref. So the scalar itself must
+    # be exactly the anchored legacy identity, a ref, and the closing anchor. Compared
+    # literally: an unescaped dot or a character class in place of `\.` is a wider regex,
+    # not a spelling of this one.
+    case "$subject" in
+      "$LEGACY_SUBJECT_PREFIX"'app\.yaml@'*'$' | "$LEGACY_SUBJECT_PREFIX"'manifests\.yaml@'*'$') ;;
+      *)
+        printf '%s: subject is not exactly %s(app|manifests)\\.yaml@<ref>$, so the identity it accepts is not the one this line was selected for (subject: %s)\n' \
+          "$location" "$LEGACY_SUBJECT_PREFIX" "$subject" >&2
+        status=1
+        continue
+        ;;
+    esac
+
+    # Everything after the single @ is the ref constraint, less the closing anchor.
     ref="${subject##*@}"
-    ref="${ref%\'}"
-    ref="${ref%\"}"
     ref="${ref%$}"
 
     judge_ref "$location" "$ref" || status=1

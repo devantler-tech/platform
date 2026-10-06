@@ -44,8 +44,10 @@ readonly REPO_ROOT
 # Without it a consumer that gains a canonical approval drops out of the scan, and the
 # identity floor then reports a deployed consumer as missing. The legacy family stays the
 # anchor on purpose: every answer this report gives is about the legacy signer, so a
-# subject naming ONLY the canonical family is not selected and its consumer fails the
-# floor rather than being reported with a revision this script never looked up.
+# file whose subjects name ONLY the canonical family is not selected and its consumer
+# fails the floor rather than being reported with a revision this script never looked up.
+# Selection is per FILE: the pin guard, not this scan, is what refuses a canonical-only
+# subject wherever it is written.
 readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
 
 # 🔴 AN IDENTITY FLOOR, NOT A COUNT. A count answers "did I find five things?", which is
