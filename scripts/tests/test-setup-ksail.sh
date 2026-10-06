@@ -25,8 +25,16 @@ set -euo pipefail
 
 output=''
 url=''
+retry=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --retry)
+      retry=$2
+      shift 2
+      ;;
+    --retry-delay)
+      shift 2
+      ;;
     -o)
       output=$2
       shift 2
@@ -44,6 +52,8 @@ while [ "$#" -gt 0 ]; do
       ;;
   esac
 done
+
+printf '%s %s\n' "${retry}" "${url}" >>"${TEST_RETRY_LOG}"
 
 case "${url}" in
   */ksail_7.178.25_linux_amd64.tar.gz)
@@ -88,6 +98,7 @@ run_installer() {
         TEST_FIXTURE_DIR="${fixture_dir}" \
         TEST_AUTH_MARKER="${test_root}/authenticated" \
         TEST_INSTALL_MARKER="${test_root}/installed" \
+        TEST_RETRY_LOG="${test_root}/retries" \
         .github/scripts/setup-ksail.sh 2>&1
   ); then
     status=0
@@ -153,5 +164,26 @@ printf '{"assets":[{"name":"ksail_7.178.25_linux_amd64.tar.gz","digest":"sha256:
 
 run_installer
 assert_rejected_before_install 'release metadata digest mismatch for ksail_7.178.25_linux_amd64.tar.gz'
+
+# One momentary error from the release host must not fail the job (#4549): every
+# download that decides the install asks curl to retry transient failures. Each
+# is asserted by URL, so a download that stops retrying, or one that is no longer
+# made at all, fails here rather than passing unread.
+for url_suffix in \
+  /ksail_7.178.25_linux_amd64.tar.gz \
+  /ksail_7.178.25_checksums.txt \
+  /releases/tags/v7.178.25; do
+  verdict=$(awk -v suffix="${url_suffix}" '
+    substr($2, length($2) - length(suffix) + 1) == suffix { seen = 1; if ($1 !~ /^[1-9][0-9]*$/) bad = 1 }
+    END { print (seen && !bad) ? "retried" : "not-retried" }
+  ' "${test_root}/retries")
+  case "${verdict}" in
+    retried) ;;
+    *)
+      printf 'setup-ksail.sh does not retry transient failures for: %s\n' "${url_suffix}" >&2
+      exit 1
+      ;;
+  esac
+done
 
 printf 'setup-ksail dual-source verification tests passed\n'

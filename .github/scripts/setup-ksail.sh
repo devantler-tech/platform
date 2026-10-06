@@ -18,9 +18,17 @@ if [ -n "${GITHUB_TOKEN:-}" ]; then
   curl_headers+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
 fi
 
-curl -fsSL "${release_base}/${asset_name}" -o "${tarball}"
-curl -fsSL "${release_base}/ksail_${KSAIL_VERSION}_checksums.txt" -o "${checksums}"
-curl -fsSL "${curl_headers[@]}" "${api_url}" -o "${release_json}"
+# Downloads retry curl's transient failures (timeouts, 408, 429 and 5xx) a few times,
+# because one momentary error from the release host would otherwise fail the job and,
+# in a merge-group deploy, evict the pull request (#4549). Every byte is still checked
+# against both digest sources below, and a persistent failure still stops here.
+download() {
+  curl -fsSL --retry 5 --retry-delay 3 "$@"
+}
+
+download "${release_base}/${asset_name}" -o "${tarball}"
+download "${release_base}/ksail_${KSAIL_VERSION}_checksums.txt" -o "${checksums}"
+download "${curl_headers[@]}" "${api_url}" -o "${release_json}"
 
 manifest_digest=$(awk -v asset="${asset_name}" '$2 == asset {print $1}' "${checksums}")
 if [ -z "${manifest_digest}" ]; then
