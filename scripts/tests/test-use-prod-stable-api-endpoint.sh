@@ -407,22 +407,42 @@ expect_refusal_after_selection 'a kubeconfig with no clusters at all' "${no_clus
 grep -Fq 'run: ./scripts/use-prod-stable-api-endpoint.sh' "${deploy_action}" ||
   fail 'deploy-prod does not invoke the stable-endpoint normalization'
 
-# The mask command reaches the runner only through the step's stderr, so a caller that discards
-# stderr leaves its job unmasked. One caller does, and is listed here rather than changed: its
-# invocation line is being rewritten by an open pull request, and the step after it prints fixed
-# verdict tokens only. Any other caller that hides stderr fails here.
-callers_found=0
-while IFS= read -r caller; do
-  callers_found=$((callers_found + 1))
-  grep -F 'use-prod-stable-api-endpoint.sh' "${caller}" | grep -Fv 'scripts/tests/' >"${work_dir}/invocations"
-  if grep -Eq '(2>|&>)' "${work_dir}/invocations" && [[ "${caller}" != "${arc_workflow}" ]]; then
-    fail "${caller#"${root_dir}/"} hides the endpoint helper's stderr, so the runner never sees the mask command"
-  fi
-done < <(grep -rlE '(run:|if !) .*\./scripts/use-prod-stable-api-endpoint\.sh' \
-  "${root_dir}/.github/workflows" "${root_dir}/.github/actions")
-((callers_found >= 12)) ||
-  fail "found only ${callers_found} callers of the endpoint helper; the wiring check is not reading them all"
-grep -Fq './scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1' "${arc_workflow}" ||
-  fail 'the ARC identity workflow no longer hides the helper stderr: drop its exception from this test'
+# The mask command reaches the runner only through the step's stderr, so a caller that hides
+# stderr leaves its job unmasked. There are many ways to spell that, so this does not look for
+# them: every line under .github that names the script must be one of the spellings below, and
+# anything else fails until it is reviewed and added here.
+#
+# One caller does hide stderr and is listed rather than changed: an open pull request is
+# rewriting its invocation line, and the step after it prints fixed verdict tokens only.
+readonly arc_invocation='if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then'
+readonly lint_list_entry="scripts/use-prod-stable-api-endpoint.sh \\"
+invocations=0
+arc_invocations=0
+while IFS= read -r mention; do
+  file="${mention%%:*}"
+  line="${mention#*:}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  case "${line}" in
+    'run: ./scripts/use-prod-stable-api-endpoint.sh' | \
+      'run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null')
+      invocations=$((invocations + 1))
+      ;;
+    "${arc_invocation}")
+      [[ "${file}" == "${arc_workflow}" ]] ||
+        fail "${file#"${root_dir}/"} hides the endpoint helper's stderr, so the runner never sees the mask command"
+      arc_invocations=$((arc_invocations + 1))
+      ;;
+    # Not invocations: the path filter, the lint list and the test's own name in ci.yaml.
+    "- 'scripts/use-prod-stable-api-endpoint.sh'" | "${lint_list_entry}" | \
+      *'scripts/tests/test-use-prod-stable-api-endpoint.sh'*) ;;
+    *)
+      fail "${file#"${root_dir}/"} names the endpoint helper in a form this test has not reviewed: ${line}"
+      ;;
+  esac
+done < <(grep -rF 'use-prod-stable-api-endpoint.sh' "${root_dir}/.github")
+((invocations >= 11)) ||
+  fail "found only ${invocations} reviewed invocations of the endpoint helper; the wiring check is not reading them all"
+((arc_invocations == 1)) ||
+  fail "expected the one listed stderr-hiding invocation in the ARC identity workflow, found ${arc_invocations}: update or drop its exception"
 
 printf 'ok — prod deploy selects only its KSail-owned stable API endpoint, masks it for the rest of the job, and names nothing it read doing it\n'
