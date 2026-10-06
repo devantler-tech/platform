@@ -32,7 +32,7 @@
 #   ENFORCED       every probe above gave the expected answer.
 #   NOT-ENFORCED   a foreign identity was admitted, or this policy refused a legitimate write.
 #   INCONCLUSIVE   anything else: a failed read, the policy not Ready or not enforcing, no Team to
-#                  probe, an identity that is not a number, no single provider ServiceAccount, or
+#                  probe, an identity that is not a number or that the policy does not list as #                  approved for that Team, no single provider ServiceAccount, or
 #                  an answer that could not be attributed to this policy.
 #
 # WHAT IT PRINTS. The workflow log of a public repository is public. Only Team names, probe names
@@ -129,13 +129,13 @@ read_json() {
 read_json "${work_dir}/policy.json" clusterpolicy "${policy}" ||
   inconclusive 'the policy could not be read.'
 jq -e '[.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]' \
-  "${work_dir}/policy.json" >/dev/null ||
+  "${work_dir}/policy.json" >/dev/null 2>&1 ||
   inconclusive 'the policy is not Ready.'
 jq -e '
   (.spec.rules // []) as $rules
   | ($rules | length) > 0
     and all($rules[]; (.validate.failureAction // "") == "Enforce")' \
-  "${work_dir}/policy.json" >/dev/null ||
+  "${work_dir}/policy.json" >/dev/null 2>&1 ||
   inconclusive 'the policy is not set to Enforce on every rule.'
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ read_json "${work_dir}/teams.json" "${team_resource}" --namespace "${team_namesp
   inconclusive 'the Team objects could not be read.'
 jq -r --arg key "${identity_annotation}" '
   .items[]? | [.metadata.name // "", .metadata.annotations[$key] // ""] | @tsv' \
-  "${work_dir}/teams.json" >"${work_dir}/teams.tsv" ||
+  "${work_dir}/teams.json" >"${work_dir}/teams.tsv" 2>/dev/null ||
   inconclusive 'the Team objects could not be parsed.'
 team_count="$(grep -c . "${work_dir}/teams.tsv" || true)"
 [[ "${team_count}" -gt 0 ]] || inconclusive 'there is no Team object to probe.'
@@ -157,6 +157,13 @@ while IFS=$'\t' read -r name identity; do
     inconclusive "Team ${name} carries no numeric identity yet."
   [[ "${identity}" != "${foreign_identity}" ]] ||
     inconclusive "Team ${name} carries the identity this probe uses as the foreign one."
+  # Re-adoption is admitted only under the identity the policy lists for this name. A Team the
+  # provider created anew carries an identity that is not listed until a reviewed change adds
+  # it, and its adoption probe would then be refused by design, not by a defect.
+  jq -e --arg pair "'${name}/${identity}'" \
+    '[.spec.rules[]?.validate.deny | .. | strings] | any(contains($pair))' \
+    "${work_dir}/policy.json" >/dev/null 2>&1 ||
+    inconclusive "Team ${name} carries an identity the policy does not list as approved yet."
 done <"${work_dir}/teams.tsv"
 
 # ---------------------------------------------------------------------------
@@ -169,7 +176,7 @@ provider_accounts="$(jq -r --arg prefix "${provider_prefix}" '
   [.items[]?
     | select(.status.phase == "Running" and .metadata.deletionTimestamp == null)
     | .spec.serviceAccountName // ""
-    | select(startswith($prefix))] | unique | .[]' "${work_dir}/pods.json")" ||
+    | select(startswith($prefix))] | unique | .[]' "${work_dir}/pods.json" 2>/dev/null)" ||
   inconclusive 'the provider pods could not be parsed.'
 [[ -n "${provider_accounts}" && "$(grep -c . <<<"${provider_accounts}")" -eq 1 ]] ||
   inconclusive 'there is not exactly one running GitHub provider ServiceAccount.'
@@ -205,7 +212,7 @@ dry_patch() {
     '{metadata: {annotations: {($key): $value}}}')"
   kubectl --context "${context}" patch "${team_resource}" "$2" --namespace "${team_namespace}" \
     --as "$1" --dry-run=server --type merge --patch "${patch}" \
-    >/dev/null 2>"${work_dir}/errors" || rc=$?
+    </dev/null >/dev/null 2>"${work_dir}/errors" || rc=$?
   classify "${rc}" "${work_dir}/errors"
 }
 
@@ -219,7 +226,7 @@ dry_create() {
                   annotations: {($key): $value}},
        spec}' "${work_dir}/teams.json" >"${work_dir}/manifest.json"
   kubectl --context "${context}" create --as "$1" --dry-run=server \
-    --filename "${work_dir}/manifest.json" >/dev/null 2>"${work_dir}/errors" || rc=$?
+    --filename "${work_dir}/manifest.json" </dev/null >/dev/null 2>"${work_dir}/errors" || rc=$?
   classify "${rc}" "${work_dir}/errors"
 }
 

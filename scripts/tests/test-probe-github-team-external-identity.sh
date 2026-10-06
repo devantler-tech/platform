@@ -120,7 +120,14 @@ elif [[ "${as}" != system:serviceaccount:github-config:github-config ]]; then
 elif [[ "${identity}" == "${current}" ]]; then
   if [[ "${verb}" == create ]]; then class=adoption; answer=exists; else class=unchanged; answer=admitted; fi
 else
-  if [[ "${verb}" == create ]]; then class=re-create; else class=foreign; fi
+  if [[ "${verb}" == create ]]; then
+    class=re-create
+  elif jq -e --arg id "${identity}" --arg key crossplane.io/external-name \
+    'any(.items[]; .metadata.annotations[$key] == $id)' "${FIXTURES}/teams.json" >/dev/null; then
+    class=swapped
+  else
+    class=foreign
+  fi
   answer=refused
 fi
 if [[ -f "${FIXTURES}/answers/${class}" ]]; then
@@ -154,7 +161,9 @@ reset_fixtures() {
   mkdir -p "${fixtures}/answers"
   cat >"${fixtures}/policy.json" <<'JSON'
 {"kind":"ClusterPolicy","spec":{"rules":[{"name":"teams-external-name-is-an-approved-identity",
- "validate":{"failureAction":"Enforce"}}]},"status":{"conditions":[{"type":"Ready","status":"True"}]}}
+ "validate":{"failureAction":"Enforce","deny":{"conditions":{"all":[{"key":
+ "{{ contains(['admins/7000001', 'maintainers/7000002'], join('/', [name, externalName])) }}"}]}}}}]},
+ "status":{"conditions":[{"type":"Ready","status":"True"}]}}
 JSON
   jq -n --arg a "${admins_identity}" --arg m "${maintainers_identity}" '
     def team($name; $id): {apiVersion: "team.github.m.upbound.io/v1alpha1", kind: "Team",
@@ -173,7 +182,7 @@ rc=0
 output=''
 run_probe() {
   rc=0
-  output="$(FIXTURES="${fixtures}" PATH="${fake_bin}:${PATH}" GITHUB_STEP_SUMMARY='' \
+  output="$(FIXTURES="${fixtures}" PATH="${fake_bin}:${PATH}" GITHUB_STEP_SUMMARY="${fixtures}/summary.md" \
     bash "${script}" "$@" 2>&1)" || rc=$?
 }
 
@@ -188,6 +197,10 @@ require_safe_run() {
   refute_text "${maintainers_identity}" "$1: an identity reached the log"
   refute_text "${provider_account}" "$1: the provider ServiceAccount name reached the log"
   refute_text '198.51.100.9' "$1: an address reached the log"
+  if [[ -f "${fixtures}/summary.md" ]] &&
+    grep -Eq "${admins_identity}|${maintainers_identity}|${provider_account}|198\.51\.100\.9" "${fixtures}/summary.md"; then
+    fail "$1: an identity, ServiceAccount name or address reached the step summary"
+  fi
 }
 
 cases_run=0
@@ -215,6 +228,7 @@ reset_fixtures
 run_probe --context admin@prod
 require_rc 0 'a working policy is ENFORCED'
 require_text 'ENFORCED: production admission refused every foreign identity' 'the verdict line is missing'
+grep -Fq 'ENFORCED: production admission refused' "${fixtures}/summary.md" || fail 'the verdict must reach the step summary'
 require_text 'for 2 Team object(s)' 'the verdict must say how many Teams were probed'
 require_safe_run 'ENFORCED'
 # 2 Teams x (unchanged, foreign, swapped, provider) patches and x (re-create, adoption) creates.
@@ -239,7 +253,7 @@ require_safe_run 'single Team'
 case_done 'a single Team skips the swapped probe'
 
 # --- NOT-ENFORCED: one answer differs from the ENFORCED fixture ---------------
-for class in foreign re-create; do
+for class in foreign swapped re-create; do
   reset_fixtures
   printf 'admitted' >"${fixtures}/answers/${class}"
   run_probe --context admin@prod
@@ -342,6 +356,14 @@ jq '.items[0].metadata.annotations["crossplane.io/external-name"] = "*"' \
   "${fixtures}/teams.json" >"${fixtures}/t.json"
 mv "${fixtures}/t.json" "${fixtures}/teams.json"
 precondition 'a Team whose identity is not a number'
+
+# The provider created the Team anew: the policy refuses its re-adoption by design until a
+# reviewed change lists the new identity, so the probe must not call that a defect.
+reset_fixtures
+jq '.items[0].metadata.annotations["crossplane.io/external-name"] = "7000009"' \
+  "${fixtures}/teams.json" >"${fixtures}/t.json"
+mv "${fixtures}/t.json" "${fixtures}/teams.json"
+precondition 'a Team whose identity the policy does not list'
 
 reset_fixtures
 rm "${fixtures}/pods.json"
