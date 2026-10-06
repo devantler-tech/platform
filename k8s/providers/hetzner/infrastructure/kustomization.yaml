@@ -7,6 +7,9 @@ resources:
   # not drain an installed scale set; runtime acceptance remains a separate gate.
   - retained-ksail-analysis/
   - arc-credential-transport/
+  # Issuance restrictions must be active before credentials or runners are used.
+  # This layer follows installation of the Kyverno admission controller.
+  - cluster-policies/restrict-arc-openbao-certificate.yaml
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers

@@ -3,7 +3,7 @@ kind: Test
 metadata:
   name: restrict-arc-openbao-certificate
 policies:
-  - ../../k8s/providers/hetzner/infrastructure/controllers/openbao/transport/certificate-policy.yaml
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml
 resources:
   - resources.yaml
 results:

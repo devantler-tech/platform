@@ -10,4 +10,3 @@ resources:
   - listener-config-map.yaml
   - cilium-network-policy.yaml
   - cilium-network-policy-external-secrets.yaml
-  - certificate-policy.yaml
