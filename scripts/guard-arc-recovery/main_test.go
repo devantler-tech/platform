@@ -67,7 +67,7 @@ func TestRecoveryMetadataReadsRequireCompleteEmptyMetadataLists(t *testing.T) {
 }
 
 func TestRecoveryObservesRetainedPoolWithoutConfusingItWithActiveRunners(t *testing.T) {
-	const item = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-analysis-runners","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}`
+	const item = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-code-quality","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}`
 	const prefix = `{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":`
 	for _, tc := range []struct {
 		name, body string
@@ -75,12 +75,13 @@ func TestRecoveryObservesRetainedPoolWithoutConfusingItWithActiveRunners(t *test
 	}{
 		{"not yet installed", prefix + `null}`, true},
 		{"retained declaration", prefix + `[` + item + `]}`, true},
-		{"unexpected pool", prefix + `[` + strings.Replace(item, "ksail-analysis-runners", "other", 1) + `]}`, false},
+		{"Helm release name is not the pool name", prefix + `[` + strings.Replace(item, "ksail-code-quality", "ksail-analysis-runners", 1) + `]}`, false},
+		{"unexpected pool", prefix + `[` + strings.Replace(item, "ksail-code-quality", "other", 1) + `]}`, false},
 		{"foreign namespace", prefix + `[` + strings.Replace(item, "arc-ksail-analysis", "arc-runners", 1) + `]}`, false},
 		{"missing UID", prefix + `[` + strings.Replace(item, `"uid":"retained"`, `"uid":""`, 1) + `]}`, false},
 		{"missing revision", prefix + `[` + strings.Replace(item, `"resourceVersion":"123"`, `"resourceVersion":""`, 1) + `]}`, false},
 		{"being deleted", prefix + `[` + strings.Replace(item, `"uid":"retained"`, `"uid":"retained","deletionTimestamp":"2026-10-06T00:00:00Z"`, 1) + `]}`, false},
-		{"duplicate retained identity", prefix + `[` + strings.Replace(item, `"name":"ksail-analysis-runners"`, `"name":"foreign","name":"ksail-analysis-runners"`, 1) + `]}`, false},
+		{"duplicate retained identity", prefix + `[` + strings.Replace(item, `"name":"ksail-code-quality"`, `"name":"foreign","name":"ksail-code-quality"`, 1) + `]}`, false},
 		{"aliased retained kind", prefix + `[` + strings.Replace(item, `"kind"`, `"Kind"`, 1) + `]}`, false},
 		{"multiple pools", prefix + `[` + item + `,` + item + `]}`, false},
 		{"full resource", prefix + `[` + strings.Replace(item, `"metadata":`, `"spec":{"maxRunners":0},"metadata":`, 1) + `]}`, false},
@@ -107,12 +108,14 @@ func TestRecoveryDeclarationRefusesSuspensionAndImplicitRunnerBounds(t *testing.
 		name, controller, legacy string
 		ok                       bool
 	}{
-		{"drained", "false", "suspend: false\n  values: {minRunners: 0, maxRunners: 0}", true},
-		{"suspended controller", "true", "suspend: false\n  values: {minRunners: 0, maxRunners: 0}", false},
-		{"suspended legacy", "false", "suspend: true\n  values: {minRunners: 0, maxRunners: 0}", false},
-		{"implicit maximum", "false", "suspend: false\n  values: {minRunners: 0}", false},
-		{"implicit minimum", "false", "suspend: false\n  values: {maxRunners: 0}", false},
-		{"admits one runner", "false", "suspend: false\n  values: {minRunners: 0, maxRunners: 1}", false},
+		{"drained", "false", "suspend: false\n  values: {runnerScaleSetName: ksail-code-quality, minRunners: 0, maxRunners: 0}", true},
+		{"suspended controller", "true", "suspend: false\n  values: {runnerScaleSetName: ksail-code-quality, minRunners: 0, maxRunners: 0}", false},
+		{"suspended legacy", "false", "suspend: true\n  values: {runnerScaleSetName: ksail-code-quality, minRunners: 0, maxRunners: 0}", false},
+		{"implicit maximum", "false", "suspend: false\n  values: {runnerScaleSetName: ksail-code-quality, minRunners: 0}", false},
+		{"implicit minimum", "false", "suspend: false\n  values: {runnerScaleSetName: ksail-code-quality, maxRunners: 0}", false},
+		{"admits one runner", "false", "suspend: false\n  values: {runnerScaleSetName: ksail-code-quality, minRunners: 0, maxRunners: 1}", false},
+		{"implicit pool name", "false", "suspend: false\n  values: {minRunners: 0, maxRunners: 0}", false},
+		{"different pool name", "false", "suspend: false\n  values: {runnerScaleSetName: other, minRunners: 0, maxRunners: 0}", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -155,7 +158,7 @@ func TestNativeMetadataProxyPreservesAcceptAndRejectsWrites(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == retainedPoolPath {
-			_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":[{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-analysis-runners","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}]}`))
+			_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":[{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadata","metadata":{"name":"ksail-code-quality","namespace":"arc-ksail-analysis","uid":"retained","resourceVersion":"123"}}]}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"apiVersion":"meta.k8s.io/v1","kind":"PartialObjectMetadataList","metadata":{"resourceVersion":"123"},"items":null}`))
