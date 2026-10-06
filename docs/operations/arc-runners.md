@@ -77,11 +77,16 @@ Activation requires a separate reviewed change and all of these proofs:
    repository excluded. Do not weaken organization-wide runner restrictions or
    disable GitHub-hosted runners. A failed or unauthorized group read is unknown,
    not permission to use the unrestricted default group.
-3. Establish explicitly approved, isolated CI capacity. The runner selector
-   and toleration name `platform.devantler.tech/ci-runner=enabled`; no current
-   capacity is assumed to carry that label. New billable capacity requires its
-   own approval and an exact deletion/readback plan. Do not label a busy production
-   worker to make a pending analysis fit.
+3. Use the declared `autoscale-arc-runners` CX53 pool for isolated organization
+   runner capacity. It has a minimum of zero and maximum of one node, sharing the
+   unchanged cluster ceiling of nine nodes and account ceiling of ten. The
+   selector and NoSchedule taint both name
+   `platform.devantler.tech/ci-runner=enabled`; ordinary workloads and the
+   warm-capacity buffer do not tolerate that taint. Verify the label and taint
+   on the actual autoscaled node. Do not label a busy production worker to make
+   a pending analysis fit. After calibration, verify the pool scales back to
+   zero. New billable capacity requires its own approval and an exact
+   deletion/readback plan; capacity outside these bounds requires its own approval.
 4. Verify scheduler reservations, node allocatable capacity, ephemeral storage,
    ResourceQuota and LimitRange. Provisional requests are 12Gi/3 CPU for one runner,
    with limits of 14Gi/3.5 CPU in the runner namespace. The controller and
@@ -94,6 +99,11 @@ Activation requires a separate reviewed change and all of these proofs:
 5. Render both pinned charts, including their CRDs and namespace-scoped RBAC.
    Confirm the App Secret is absent from runner volumes, the no-permission runner
    service account is used, and the chart preserves the listener name and labels.
+   Runner storage consists only of a 40Gi disk emptyDir for its home and a 2Gi
+   disk emptyDir for temporary files. A restricted init container copies the
+   baked runner into the group-writable home volume as UID/GID 1001. Both the
+   bootstrap and job container keep their root filesystems read-only and drop
+   every capability. Verify those settings on the generated runner pod.
    Test admission, API isolation and denied internal egress, not only YAML validity.
 6. Prove each proposed first consumer's actual jobs on an ephemeral runner.
    The official runner image is not a hosted-runner software clone. Check its

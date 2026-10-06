@@ -45,8 +45,38 @@ spec:
           runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
+          fsGroup: 1001
           seccompProfile:
             type: RuntimeDefault
+        volumes:
+          - name: runner-home
+            emptyDir:
+              sizeLimit: 40Gi
+          - name: runner-tmp
+            emptyDir:
+              sizeLimit: 2Gi
+        initContainers:
+          - name: init-runner-home
+            image: ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
+            command: ["/bin/sh", "-ec", "cp -R /home/runner/. /runner-data/"]
+            securityContext:
+              allowPrivilegeEscalation: false
+              privileged: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: [ALL]
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+                ephemeral-storage: 1Gi
+              limits:
+                cpu: "1"
+                memory: 512Mi
+                ephemeral-storage: 4Gi
+            volumeMounts:
+              - name: runner-home
+                mountPath: /runner-data
         containers:
           - name: runner
             image: ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
@@ -54,8 +84,14 @@ spec:
             securityContext:
               allowPrivilegeEscalation: false
               privileged: false
+              readOnlyRootFilesystem: true
               capabilities:
                 drop: [ALL]
+            volumeMounts:
+              - name: runner-home
+                mountPath: /home/runner
+              - name: runner-tmp
+                mountPath: /tmp
             resources:
               requests:
                 cpu: "3"
