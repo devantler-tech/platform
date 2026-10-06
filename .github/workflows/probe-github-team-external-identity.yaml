@@ -1,0 +1,127 @@
+name: Probe GitHub Team External Identity
+
+# Obtain the ONE observation #3144 is missing: that production admission really refuses a
+# github-config Team pointed at a foreign GitHub team, on create and on update, and really admits
+# the legitimate writes — the unchanged identity, re-adoption under the identity the object
+# carries, and the provider's own record. The policy's fixtures pass and the policy reads Ready;
+# neither is an answer from the production API server.
+#
+# NOTHING IS STORED. Every write the script sends carries `--dry-run=server`: the API server runs
+# the request through admission and discards it. The requests are sent as the github-config
+# applier and as the GitHub provider by impersonation, because the policy decides on the writing
+# identity. scripts/tests/test-probe-github-team-external-identity.sh pins that the script issues
+# only `get`, and `patch`/`create` with `--dry-run=server`.
+#
+# ACCESS USED — stated plainly because it is broader than the probe. The repository holds no
+# narrower production credential, so this reuses the established mechanism, exactly as
+# diagnose-cilium-ext-authz-ipcache.yaml does:
+#   * KUBE_CONFIG (the `prod` environment secret), context `admin@prod`. That identity is
+#     cluster-admin, which is also what lets it impersonate the two ServiceAccounts.
+#   * HCLOUD_TOKEN, exposed ONLY to the endpoint-selection step, for one read of the KSail-owned
+#     floating IP.
+# What bounds the job is the reviewed script, the main-branch guard, the pinned context, the
+# confirmation phrase and `contents: read` on the GitHub token — not the credentials.
+#
+# REVIEWED CODE ONLY. The first step refuses any ref but `refs/heads/main`, before anything is
+# checked out or restored, and checkout is pinned to that dispatch commit.
+#
+# DORMANT, TWICE OVER. There is no `schedule:` and no `pull_request:` trigger, and the operator
+# must type an exact confirmation phrase, so an accidental dispatch from the UI sends nothing.
+#
+# PUBLIC LOG. The script prints Team names, probe names and outcomes only: no identity, no
+# ServiceAccount name, and never kubectl's own error text. The endpoint helper's success line
+# names the API endpoint, so it is discarded.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: probe-production-team-admission"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  # Serialised with every production deploy path. Dry-run requests change nothing, but a deploy
+  # can roll Kyverno or the policy itself, and an answer taken while the admission webhook is
+  # restarting would be reported as a verdict about the control.
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  probe-github-team-external-identity:
+    name: 🔏 Probe GitHub Team External Identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # KUBE_CONFIG is a `prod` ENVIRONMENT secret, not a repository secret; without this it resolves
+    # to the empty string and the probe ends INCONCLUSIVE instead of reaching the cluster.
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    steps:
+      # Fails closed BEFORE checkout, so nothing from another ref is fetched, let alone run with a
+      # production credential. `github.ref` reaches bash through `env:`, never interpolated.
+      - name: 🛑 Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run: dispatch this workflow from main (got %s).\n' "${RUN_REF}" >&2
+            printf 'Only the script CI tested on main may run with production credentials.\n' >&2
+            exit 1
+          fi
+          printf 'Running from main.\n'
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The dispatch commit on main (guaranteed by the step above). An immutable sha rather
+          # than the branch name, so the script run is the one from the same commit as this file.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # Checked BEFORE the kubeconfig is restored, so a mistyped dispatch cannot reach the cluster.
+      # The input is read through `env:` rather than interpolated into the script, which would be a
+      # shell-injection vector.
+      - name: 🛑 Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != 'probe-production-team-admission' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "probe-production-team-admission".\n' >&2
+            printf 'Nothing has been sent.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔗 Select stable prod API endpoint
+        # Same helper and same position as the deploy composite: resolve the KSail-owned floating
+        # IP, fail closed on missing or foreign ownership, and switch admin@prod before any API
+        # call. Its success line names the endpoint, so stdout is discarded.
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      - name: 🔏 Ask production admission about foreign team identities
+        shell: bash
+        # Exit 2 is NOT-ENFORCED and exit 3 is INCONCLUSIVE; both fail the job on purpose. A probe
+        # that proved nothing must not show green. The context is pinned because the restored
+        # kubeconfig's current-context is not guaranteed to be prod.
+        run: ./scripts/probe-github-team-external-identity.sh --context admin@prod
