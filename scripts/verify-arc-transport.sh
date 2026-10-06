@@ -53,7 +53,10 @@ go build -trimpath -o "$scratch/evidence" ./scripts/verify-arc-transport >"$scra
 
 public_listener_boundary() {
   kc get clusterpolicy restrict-arc-openbao-listener -o json >"$scratch/listener-policy.json"
-  yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml >"$scratch/listener-spec.json"
+  # Include only defaults observed from this production API. Source fields
+  # take precedence; unknown fields and any rule or admission drift still fail.
+  yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
+    | jq '{admission:true,emitWarning:false,validationFailureAction:"Audit"} + .' >"$scratch/listener-spec.json"
   jq -e --slurpfile expected "$scratch/listener-spec.json" '.spec == $expected[0] and
     any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/listener-policy.json" >/dev/null
   kc -n openbao get configmap arc-openbao-listener -o json >"$scratch/listener.json"
