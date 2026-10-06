@@ -171,17 +171,28 @@ func trustedRoots(ca []byte) *x509.CertPool {
 	return roots
 }
 
-func run(args []string, root string, output io.Writer, runtime func(configuration) outcome) int {
+type runtimeModes struct {
+	identity, transport func(configuration) outcome
+}
+
+func run(args []string, root string, output io.Writer, modes runtimeModes) int {
 	result := outcome("HOLD_INVOCATION")
-	if len(args) == 1 && (args[0] == "--preflight" || args[0] == "--verify") {
-		if args[0] == "--preflight" || protectedInvocation() {
+	transport := len(args) == 1 && args[0] == "--transport"
+	confirmation := "verify-arc-app-identity"
+	if transport {
+		confirmation = "verify-arc-app-transport"
+	}
+	if len(args) == 1 && (args[0] == "--preflight" || args[0] == "--verify" || transport) {
+		if args[0] == "--preflight" || protectedInvocation(confirmation) {
 			config, status := loadConfiguration(root)
 			result = status
 			if result == pass {
 				if args[0] == "--preflight" {
 					result = "TRANSPORT_CONFIG_READY"
+				} else if transport {
+					result = modes.transport(config)
 				} else {
-					result = runtime(config)
+					result = modes.identity(config)
 				}
 			}
 		}
@@ -189,18 +200,28 @@ func run(args []string, root string, output io.Writer, runtime func(configuratio
 	// Neither arguments, configuration values, API bodies nor underlying errors
 	// are an output surface, including when an invocation is rejected.
 	switch result {
-	case pass, holdTransport, holdEntry, failTransport, failIdentity, failAPI, failCleanup, failConfig, "HOLD_INVOCATION", "HOLD_READER", "TRANSPORT_CONFIG_READY":
+	case pass, holdTransport, holdEntry, failTransport, failIdentity, failAPI, failCleanup, failConfig, failHealth, "HOLD_INVOCATION", "HOLD_READER", "TRANSPORT_CONFIG_READY":
 	default:
 		result = failAPI
 	}
-	_, _ = fmt.Fprintf(output, "ARC_APP_IDENTITY=%s\n", result)
+	prefix := "ARC_APP_IDENTITY"
+	if transport {
+		prefix = "ARC_APP_TRANSPORT"
+		// Credential-specific outcomes cannot be emitted as transport evidence.
+		switch result {
+		case pass, holdTransport, failTransport, failAPI, failConfig, failHealth, "HOLD_INVOCATION":
+		default:
+			result = failAPI
+		}
+	}
+	_, _ = fmt.Fprintf(output, "%s=%s\n", prefix, result)
 	if result == pass || result == "TRANSPORT_CONFIG_READY" {
 		return 0
 	}
 	return 1
 }
-func protectedInvocation() bool {
-	for name, expected := range map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_REPOSITORY": "devantler-tech/platform", "ARC_IDENTITY_CONFIRM": "verify-arc-app-identity"} {
+func protectedInvocation(confirmation string) bool {
+	for name, expected := range map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_REPOSITORY": "devantler-tech/platform", "ARC_IDENTITY_CONFIRM": confirmation} {
 		if os.Getenv(name) != expected {
 			return false
 		}

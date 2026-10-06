@@ -22,7 +22,9 @@ import (
 
 const baoTLSName = "openbao-arc.openbao.svc.cluster.local"
 
-func main() { os.Exit(run(os.Args[1:], ".", os.Stdout, verifyProduction)) }
+func main() {
+	os.Exit(run(os.Args[1:], ".", os.Stdout, runtimeModes{identity: verifyProduction, transport: verifyTransportProduction}))
+}
 
 type command func(context.Context, ...string) ([]byte, error)
 
@@ -104,6 +106,7 @@ type runtimeOperations struct {
 	forward   func(context.Context, int) (string, func(), error)
 	handshake func(context.Context, string, []byte) error
 	identity  func(context.Context, verificationOptions) outcome
+	health    func(context.Context, string, []byte) outcome
 }
 
 func verifyRuntime(ctx context.Context, reviewed configuration, operations runtimeOperations) outcome {
