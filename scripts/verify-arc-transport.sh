@@ -95,10 +95,9 @@ jq -e --arg server "https://$host:8204" '.spec.provider.vault.server == $server 
 kc -n "$namespace" get configmap arc-openbao-ca -o json >"$scratch/ca.json"
 jq -er '.data["ca.crt"] | select(startswith("-----BEGIN CERTIFICATE-----"))' "$scratch/ca.json" >"$scratch/ca.pem"
 kc get clusterpolicy restrict-arc-openbao-certificate -o json >"$scratch/policy.json"
-yq -o=json '.spec.rules[0]' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml >"$scratch/rule.json"
-jq -e --slurpfile rule "$scratch/rule.json" '(.spec.rules | length) == 1 and
- .spec.rules[0].match == $rule[0].match and .spec.rules[0].preconditions == $rule[0].preconditions and
- .spec.rules[0].validate.deny == $rule[0].validate.deny and .spec.rules[0].validate.failureAction == "Enforce" and
+yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
+  | jq '{admission:true,emitWarning:false,validationFailureAction:"Audit"} + .' >"$scratch/issuance-spec.json"
+jq -e --slurpfile expected "$scratch/issuance-spec.json" '.spec == $expected[0] and
  any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/policy.json" >/dev/null
 for layer in infrastructure infrastructure-controllers; do
   kc -n flux-system get kustomization "$layer" -o json | jq -ce 'select(.status.observedGeneration == .metadata.generation and
