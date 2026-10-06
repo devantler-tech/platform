@@ -98,7 +98,7 @@ spec:
                 # Space-separated, and kept equal to the `pools[].name` list in
                 # ksail.prod.yaml by scripts/tests/test-stranded-autoscaler-node-alerter.sh.
                 - name: DECLARED_POOLS
-                  value: "autoscale-cx43 autoscale-cx53 autoscale-ksail-analysis"
+                  value: "autoscale-cx43 autoscale-cx53 autoscale-arc-runners"
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true

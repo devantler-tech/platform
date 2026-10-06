@@ -640,6 +640,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #3144 admission probe, its test and its workflow are one
+              # contract: the test pins that every write the probe sends is a
+              # server-side dry run and that no identity reaches the public log.
+              - 'scripts/probe-github-team-external-identity.sh'
+              - 'scripts/tests/test-probe-github-team-external-identity.sh'
+              - '.github/workflows/probe-github-team-external-identity.yaml'
               # The #3790 datapath throttling measurement, its test and its workflow
               # are one contract: the test pins that the script stays read-only, its
               # arithmetic, and that no node or pod name reaches the public log.
@@ -1272,7 +1278,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.196.0"
+          KSAIL_VERSION: "7.197.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1800,6 +1806,16 @@ jobs:
         run: |
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+
+      - name: 🔏 Validate GitHub Team external-identity probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins what makes dispatching it acceptable: only `get`
+        # plus `patch`/`create` with `--dry-run=server`, a refusal counted only
+        # when it names the policy, and no identity in the public log.
+        run: |
+          shellcheck scripts/probe-github-team-external-identity.sh scripts/tests/test-probe-github-team-external-identity.sh
+          bash scripts/tests/test-probe-github-team-external-identity.sh
 
       - name: 📏 Validate datapath CPU throttling measurement
         if: needs.changes.outputs.k8s == 'true'
@@ -2387,7 +2403,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.196.0"
+          KSAIL_VERSION: "7.197.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3382,7 +3398,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.196.0"
+          KSAIL_VERSION: "7.197.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
