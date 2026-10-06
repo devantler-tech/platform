@@ -1,10 +1,22 @@
 # Organization Linux runners
 
 The organization Linux pool is prepared but inactive and remains outside the
-deployment aggregate. Both HelmReleases are suspended. Production retains the
-controller and the former analysis release in Flux inventory to preserve ownership
-of resources left by failed activation. Suspension stops Helm reconciliation; it
-does not drain an installed scale set. Registration, execution and cleanup still
+deployment aggregate and its HelmRelease is suspended. Production reconciles the
+scoped controller and the former analysis release in Flux inventory to preserve
+ownership of resources left by failed activation. The former release has explicit
+zero minimum and maximum runner bounds. Suspension stops Helm reconciliation,
+does not drain an installed scale set, and prevents a failed release from recovering
+its readiness status. Native Flux and Helm health checks stay enabled. The protected
+deploy proves complete, empty metadata lists for organization runner sets, releases,
+credential-sync resources, retained runner children, both runner namespaces' pods
+and labeled listeners in the controller namespace before publication and after
+reconciliation. The retained namespace may contain only the exact chart-declared
+AutoscalingRunnerSet; Helm keeps that declaration with both runner bounds at zero.
+After reconciliation the guard also proves the installed controller is fully
+rolled out and excludes that retained namespace. Native empty `items: null` is
+accepted only with a complete current-revision list; missing or paginated items
+cannot prove absence. It requests no App credentials, JIT configuration or full
+Pod responses. Registration, execution and cleanup still
 need the separate proofs below before KSail #7131 can close.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
@@ -167,7 +179,7 @@ Activation requires a separate reviewed change and all of these proofs:
 
 For staged validation, run `go test ./scripts/tests/arc-staging` and build both
 component directories directly with `kubectl kustomize`. Local trees exclude ARC;
-production retains the suspended controller and protected legacy analysis resources
+production retains the reconciled controller and drained protected legacy analysis resources
 without including the organization pool. The unconditional CI guard runs on
 pull requests and merge groups. A deliberate activation revises that guard in
 the same reviewed change, alongside its evidence; deleting the guard alone is
@@ -197,8 +209,10 @@ finish. It does not require retiring the shared platform App.
 
 ## Rollout and recovery
 
-After the gates above are approved, first reference and unsuspend the controller
-in the controller layer and verify it is healthy. That component creates both
+After the gates above are approved, verify the scoped controller is healthy and
+retire its `platform.devantler.tech/arc-recovery: drain-only` marker in the reviewed
+activation change. The recovery guard intentionally refuses a credentialed pool
+while that marker remains. That component creates both
 namespaces before the chart installs its namespace-scoped RBAC. The controller's
 network policy also covers the listener, which ARC creates in that namespace.
 Only then reference the pool in
