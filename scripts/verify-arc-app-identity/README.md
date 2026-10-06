@@ -11,6 +11,9 @@ attempt, and the exact confirmation `verify-arc-app-identity`. It uses the exist
 restoring existing production access, and stops before that access when the
 declared ARC SecretStore lacks verified HTTPS transport.
 
+Pull requests touching the verifier run its isolated TLS/API fixture suite and
+Go vet without production credentials or the production concurrency lock.
+
 On a protected invocation, the verifier requires agreement between the reviewed
 and live bootstrap App client ID and SecretStore. It accepts a reviewed CA bundle
 or a namespaced ConfigMap CA reference. It verifies the real listener's certificate

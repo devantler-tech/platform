@@ -1,7 +1,14 @@
 name: Verify ARC App Identity
 
-# Read-only identity proof; never scheduled, PR-triggered or an activation probe.
+# Production identity proof is manual only. PRs run credential-free fixtures.
 on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/verify-arc-app-identity.yaml
+      - scripts/verify-arc-app-identity/**
+      - go.mod
+      - go.sum
   workflow_dispatch:
     inputs:
       confirm:
@@ -10,19 +17,45 @@ on:
         type: string
 
 permissions: {}
-concurrency:
-  group: prod-deploy
-  cancel-in-progress: false
-  queue: max
-
 jobs:
+  fixtures:
+    name: Test ARC identity verifier without credentials
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    concurrency:
+      group: arc-identity-tests-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Exercise TLS and API negative controls
+        run: |
+          go test -race ./scripts/verify-arc-app-identity
+          go vet ./scripts/verify-arc-app-identity
+
   identity:
     name: Verify existing ARC App identity
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: prod
     permissions:
       contents: read
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
     env:
       ARC_IDENTITY_CONFIRM: ${{ inputs.confirm }}
     steps:
