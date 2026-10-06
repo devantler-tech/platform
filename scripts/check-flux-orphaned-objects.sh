@@ -80,7 +80,7 @@
 # sources, and a finding is reported only when a second read after
 # FLUX_ORPHANS_SETTLE_SECONDS still has it. Even a clean first snapshot must be
 # read again: an in-flight candidate apply may not have created its residue yet.
-# A finding the latest read shows for the first time gets one more read after
+# A finding the latest read shows and the one before it did not gets one more read after
 # the same interval, up to four reads in total (#4551); it is then confirmed if
 # it is still there and cleared if it is gone. A clean result always rests on a
 # final read without findings.
@@ -480,7 +480,7 @@ scope() {
 }
 
 # The check answers on its latest read, compared with the one before it. A
-# finding that read shows for the first time is neither confirmed nor cleared,
+# finding that read shows and the one before it did not is neither confirmed nor cleared,
 # so one more read is taken after the same settle interval, up to max_reads in
 # total. Without that, a Kustomization that goes briefly not Ready during its
 # own routine reconcile between two reads ended the heal red (#4551).
@@ -524,7 +524,7 @@ for ((read_number = 2; read_number <= max_reads; read_number++)); do
   # decides the result, and the last permitted read has to answer.
   if [[ -s "${tmp_dir}/unconfirmed-new.txt" && ! -s "${tmp_dir}/orphans.txt" && ! -s "${tmp_dir}/unjudged.txt" ]] &&
     ((read_number < max_reads)); then
-    echo "The ${ordinal} read found these for the first time, so they are neither confirmed nor cleared; reading again in ${settle_seconds}s (read $((read_number + 1)) of at most ${max_reads}):"
+    echo "The ${ordinal} read found these and the one before it did not, so they are neither confirmed nor cleared; reading again in ${settle_seconds}s (read $((read_number + 1)) of at most ${max_reads}):"
     print_findings "${tmp_dir}/unconfirmed-new.txt"
     cut -d' ' -f2-3 "${tmp_dir}/unconfirmed-new.txt" >>"${tmp_dir}/earlier-keys.txt"
     previous="${current}"
@@ -569,7 +569,7 @@ if [[ -s "${tmp_dir}/unjudged.txt" ]]; then
 fi
 
 if [[ -s "${tmp_dir}/unconfirmed-new.txt" ]]; then
-  echo "The ${ordinal} read found these for the first time, so they are not confirmed and cannot establish a clean result:"
+  echo "The ${ordinal} read found these and the one before it did not, so they are not confirmed and cannot establish a clean result:"
   print_findings "${tmp_dir}/unconfirmed-new.txt"
   : >"${tmp_dir}/error.log"
   unknown "the final read contains findings that have not settled."
@@ -582,8 +582,9 @@ else
   reads_phrase="all ${read_number} reads"
   cleared_phrase="the ${cleared} finding(s) on earlier reads had cleared by the ${ordinal}"
 fi
+# A further read is only taken for a finding, so nothing cleared means two reads.
 if ((cleared == 0)); then
-  echo "✅ No object is outside every inventory across ${reads_phrase} among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${current}"))."
+  echo "✅ No object is outside every inventory across both reads among $(scope) (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${current}"))."
 else
   echo "✅ Nothing stayed outside every inventory across ${reads_phrase} among $(scope): ${cleared_phrase} (${checked} Flux-applied objects, ${kustomizations} Kustomizations; aggregated API groups not read: $(skipped_groups "${current}"))."
 fi

@@ -885,7 +885,7 @@ set_ks "${dir}/kustomizations.2.json" flux-system/apps '.status.conditions[0].st
 run "${dir}"
 expect_status 0
 expect_reads 3
-expect_text 'The second read found these for the first time, so they are neither confirmed nor cleared; reading again in 0s (read 3 of at most 4):'
+expect_text 'The second read found these and the one before it did not, so they are neither confirmed nor cleared; reading again in 0s (read 3 of at most 4):'
 expect_text 'Kustomization flux-system/apps'
 expect_text '✅ Nothing stayed outside every inventory across all 3 reads among all Flux-applied objects: the 1 finding(s) on earlier reads had cleared by the third'
 expect_summary '(1 cleared on re-read)'
@@ -939,7 +939,7 @@ obj v1 ConfigMap web never-read uid-never-read flux-system/apps kustomize-contro
 run "${dir}"
 expect_status 2
 expect_reads 4
-expect_text 'The fourth read found these for the first time, so they are not confirmed and cannot establish a clean result:'
+expect_text 'The fourth read found these and the one before it did not, so they are not confirmed and cannot establish a clean result:'
 expect_line '  ConfigMap web/late-4 (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
 expect_text 'the final read contains findings that have not settled.'
 expect_no_text '✅'
@@ -955,6 +955,48 @@ expect_reads 5
 expect_text 'the cluster could not be read a third time.'
 expect_no_text '✅'
 expect_summary 'UNKNOWN'
+
+# A confirmed finding decides the result at once. A different finding the same
+# read shows for the first time must not buy further reads that could end clean.
+case_name='confirmed orphan is not re-read because of another new finding'
+dir="$(scenario confirmed-orphan-with-new)"
+obj v1 ConfigMap web stays uid-stays flux-system/apps kustomize-controller | add_objects "${dir}" 1
+obj v1 ConfigMap web stays uid-stays flux-system/apps kustomize-controller | add_objects "${dir}" 2
+obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}" 2
+run "${dir}"
+expect_status 1
+expect_reads 2
+expect_line '  ConfigMap web/stays (claims=flux-system/apps created=2026-08-30T14:17:34Z prune=-)'
+expect_no_text '✅'
+
+case_name='confirmed unjudgeable Kustomization is not re-read because of another new finding'
+dir="$(scenario confirmed-stale-with-new)"
+for read in 1 2; do
+  cp "${dir}/kustomizations.json" "${dir}/kustomizations.${read}.json"
+  set_ks "${dir}/kustomizations.${read}.json" flux-system/infrastructure-controllers '.status.conditions[0].status = "False"'
+done
+obj v1 ConfigMap web late uid-late flux-system/apps kustomize-controller | add_objects "${dir}" 2
+run "${dir}"
+expect_status 2
+expect_reads 2
+expect_text 'the inventories could not be trusted to judge every recent object.'
+expect_no_text '✅'
+expect_summary 'UNKNOWN'
+
+# A finding that comes and goes is counted once, and a clean last read after
+# four reads still passes: the same answer a re-run of the check would give.
+case_name='flapping finding is counted once when the last read is clean'
+dir="$(scenario flapping)"
+for read in 1 3; do
+  obj v1 ConfigMap web flap uid-flap flux-system/apps kustomize-controller | add_objects "${dir}" "${read}"
+done
+obj v1 ConfigMap web other uid-other flux-system/apps kustomize-controller | add_objects "${dir}" 2
+run "${dir}"
+expect_status 0
+expect_reads 4
+expect_text 'The third read found these and the one before it did not, so they are neither confirmed nor cleared; reading again in 0s (read 4 of at most 4):'
+expect_text 'across all 4 reads among all Flux-applied objects: the 2 finding(s) on earlier reads had cleared by the fourth'
+expect_summary '(2 cleared on re-read)'
 
 # An object claimed by a Kustomization that no longer exists is an orphan.
 case_name='claiming Kustomization deleted'
