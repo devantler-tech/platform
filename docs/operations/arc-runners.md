@@ -62,6 +62,21 @@ Those observations remain mandatory before credential materialization and ARC
 activation. The production deployment must confirm the listener and dedicated
 store; the protected identity verifier then establishes the actual stored App.
 
+Dispatch `Verify ARC Credential Transport` from the current reviewed main commit
+before that identity verification. It uses the established protected production
+path and serializes with deployments. The challenge verifies the dedicated
+authority, hostname and actual initialized, unsealed canary, then places an
+unprivileged, token-free probe on each current OpenBao-canary and secret-controller
+node. Both legacy HTTP and native TLS connection attempts must time out and have
+a corresponding Hubble `DROPPED / POLICY_DENIED` flow for the exact Pod, addresses,
+node, port and attempt window. A certificate error, unreachable healthy control,
+observer loss or changed workload identity fails the proof. Server admission
+must reject privileged, host-volume, host-network, host-process and `NET_RAW`
+variants. Only the owned probe Pods are created; UID-preconditioned deletion and
+absence readback are mandatory. This workflow reads no App key and requests no
+reader token. Its counts-only result is transport evidence, not stored-key,
+runner-registration or managed-analysis evidence.
+
 Activation requires a separate reviewed change and all of these proofs:
 
 1. Reuse the production platform App used for GitHub sign-in, identified by
