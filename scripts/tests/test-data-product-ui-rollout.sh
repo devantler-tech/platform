@@ -244,7 +244,7 @@ run_case() {
     mkdir "$fixture"
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
-  if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset ]]; then timeout_seconds=3; fi
+  if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
