@@ -240,7 +240,7 @@ run_case() {
   ) >"$scratch/stdout" 2>"$scratch/stderr" || code=$?
   if [[ "$expected" == pass ]]; then
     [[ "$code" == 0 && -e "$scratch/deleted" ]] || { printf 'FAIL: %s (exit %s)\n' "$name" "$code" >&2; cat "$scratch/stderr" >&2; exit 1; }
-    rg -q '^PASS: ARC registration' "$scratch/stdout" || exit 1
+    grep -q '^PASS: ARC registration' "$scratch/stdout" || exit 1
   else
     [[ "$code" != 0 ]] || { printf 'FAIL: accepted %s\n' "$name" >&2; exit 1; }
     case "$name" in
@@ -258,7 +258,7 @@ printf 'resources: []\n' >"$scratch/k8s/providers/hetzner/infrastructure/kustomi
   cd "$scratch"
   PATH="$scratch/bin:$PATH" bash scripts/verify-ksail-arc-runtime.sh --if-active
 ) >"$scratch/inactive"
-rg -q 'inactive source; no runtime access' "$scratch/inactive"
+grep -Fq 'inactive source; no runtime access' "$scratch/inactive"
 [[ ! -e "$scratch/runtime-access" ]]
 printf 'resources: ["../../../../bases/infrastructure/controllers/actions-runner-controller/"]\n' \
   >"$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
@@ -266,7 +266,7 @@ printf 'resources: ["../../../bases/infrastructure/ksail-analysis-runners/"]\n' 
   >"$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml"
 if (cd "$scratch"; PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=false bash scripts/verify-ksail-arc-runtime.sh --if-active) \
   >"$scratch/unauthorized-out" 2>"$scratch/unauthorized-error"; then exit 1; fi
-rg -q 'FAIL at deployment-identity' "$scratch/unauthorized-error"
+grep -Fq 'FAIL at deployment-identity' "$scratch/unauthorized-error"
 run_case complete-proof pass
 run_case delayed-flux pass
 [[ $(cat "$scratch/flux-reads") -gt 2 && -e "$scratch/registration-budget" ]]

@@ -173,9 +173,9 @@ fi
 stage=idle-pool-baseline
 kc -n kube-system get deployment cluster-autoscaler-hetzner-cluster-autoscaler \
   -o jsonpath='{range .spec.template.spec.containers[*].args[*]}{.}{"\n"}{end}' >"$scratch/autoscaler-args"
-declared_ceiling=$(rg '^--max-nodes-total=' "$scratch/autoscaler-args")
-declared_pool=$(rg '^--nodes=.*:autoscale-ksail-analysis$' "$scratch/autoscaler-args")
-declared_provider=$(rg '^--cloud-provider=' "$scratch/autoscaler-args")
+declared_ceiling=$(grep '^--max-nodes-total=' "$scratch/autoscaler-args")
+declared_pool=$(grep '^--nodes=.*:autoscale-ksail-analysis$' "$scratch/autoscaler-args")
+declared_provider=$(grep '^--cloud-provider=' "$scratch/autoscaler-args")
 [[ "$declared_ceiling" == --max-nodes-total=9 && \
    "$declared_pool" == --nodes=0:1:cx53:fsn1:autoscale-ksail-analysis && \
    "$declared_provider" == --cloud-provider=hetzner ]] || fail autoscaler-boundary
@@ -211,11 +211,11 @@ for negative in privileged hostpath; do
   if timeout 35s kubectl --context "$context" --request-timeout=30s create --dry-run=server \
     -f "$scratch/negative.json" >"$scratch/denied-out" 2>"$scratch/denied-error"; then fail negative-admission; fi
   # An API/transport failure does not prove admission interception.
-  rg -q 'violates PodSecurity.*restricted|admission webhook.*denied the request' "$scratch/denied-error" || fail unproven-admission-denial
+  grep -Eq 'violates PodSecurity.*restricted|admission webhook.*denied the request' "$scratch/denied-error" || fail unproven-admission-denial
   if [[ "$negative" == privileged ]]; then
-    rg -qi 'privileged' "$scratch/denied-error" || fail unrelated-admission-denial
+    grep -qi 'privileged' "$scratch/denied-error" || fail unrelated-admission-denial
   else
-    rg -qi 'hostPath|host.path' "$scratch/denied-error" || fail unrelated-admission-denial
+    grep -Eqi 'hostPath|host.path' "$scratch/denied-error" || fail unrelated-admission-denial
   fi
 done
 created=true
