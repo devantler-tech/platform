@@ -4,7 +4,6 @@ kind: Kustomization
 resources:
   - oci-repository.yaml
   - helm-release.yaml
-  - service-account.yaml
-  - secret-store.yaml
+  - credentials/
   - external-secret.yaml
   - cilium-network-policy-runner.yaml

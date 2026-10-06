@@ -192,7 +192,7 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	component := "k8s/bases/infrastructure/actions-runners/"
 	secret := readYAML(t, component+"external-secret.yaml")
 	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
-	store := readYAML(t, component+"secret-store.yaml")
+	store := readYAML(t, component+"credentials/secret-store.yaml")
 	equal(t, field(t, store, "metadata", "name"), field(t, secret, "spec", "secretStoreRef", "name"))
 	equal(t, field(t, store, "metadata", "namespace"), "arc-runners")
 	vault := field(t, store, "spec", "provider", "vault")
@@ -201,11 +201,11 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	identity := field(t, vault, "auth", "kubernetes")
 	equal(t, field(t, identity, "mountPath"), "kubernetes")
 	role := field(t, identity, "role").(string)
-	account := readYAML(t, component+"service-account.yaml")
+	account := readYAML(t, component+"credentials/service-account.yaml")
 	equal(t, field(t, account, "metadata", "name"), field(t, identity, "serviceAccountRef", "name"))
 	equal(t, field(t, account, "metadata", "namespace"), "arc-runners")
 	equal(t, field(t, account, "automountServiceAccountToken"), false)
-	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
+	resources := field(t, readYAML(t, component+"credentials/kustomization.yaml"), "resources").([]any)
 	for _, needed := range []string{"secret-store.yaml", "service-account.yaml"} {
 		found := false
 		for _, resource := range resources {
@@ -322,6 +322,7 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 	const retainedControllerAggregate = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 	const retainedControllerReference = "../../../../bases/infrastructure/controllers/actions-runner-controller/"
 	controllerFound := false
+	credentialStageFound := false
 	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -350,6 +351,11 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 					controllerFound = true
 					continue
 				}
+				if relative == "k8s/providers/hetzner/infrastructure/arc-credential-transport/kustomization.yaml" &&
+					reference == "../../../../bases/infrastructure/actions-runners/credentials/" && !credentialStageFound {
+					credentialStageFound = true
+					continue
+				}
 				t.Errorf("%s activates ARC through %q", path, reference)
 			}
 		}
@@ -360,6 +366,9 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 	}
 	if !controllerFound {
 		t.Fatal("production must retain the scoped controller in its inventory")
+	}
+	if !credentialStageFound {
+		t.Fatal("production must stage only the dedicated credential authentication resources")
 	}
 }
 

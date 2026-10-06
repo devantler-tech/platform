@@ -1,0 +1,39 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-openbao-certificate
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-arc-openbao-certificate
+    rule: only-openbao-may-use-credential-ca
+    resources:
+      - openbao/server-certificate
+    kind: Certificate
+    result: pass
+  - policy: restrict-arc-openbao-certificate
+    rule: only-openbao-may-use-credential-ca
+    resources:
+      - openbao/server-request
+    kind: CertificateRequest
+    result: pass
+  - policy: restrict-arc-openbao-certificate
+    rule: only-openbao-may-use-credential-ca
+    resources:
+      - arc-runners/impersonated-server
+    kind: Certificate
+    result: fail
+  - policy: restrict-arc-openbao-certificate
+    rule: only-openbao-may-use-credential-ca
+    resources:
+      - arc-runners/impersonated-request
+    kind: CertificateRequest
+    result: fail
+  - policy: restrict-arc-openbao-certificate
+    rule: only-openbao-may-use-credential-ca
+    resources:
+      - cert-manager/unrelated-ca
+    kind: Certificate
+    result: skip

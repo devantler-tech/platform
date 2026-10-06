@@ -3256,3 +3256,23 @@ No entry was added or removed. Its approved fingerprint moves from
 The source delta is the callback alone; no RBAC, IAM, service account, or
 permission grant changes. The authorization command passes with this one
 entry re-approved; its negative controls remain intact.
+
+## 2026-10-06 — Dedicated encrypted ARC credential transport
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry for #4570, against the retained ARC
+recovery at `2638277c`: HelmRelease openbao/openbao. Nothing was added or
+removed from the selected authorization surface. Its fingerprint moves from
+`068ad0ebbbc391a567ad211c7254130c0b949de8bec7a27f87fcab8ac034b452` to
+`a3e829429965ed7f8c430424564624d176c1ae96be38a05db1bd38d018ebc1d4`.
+
+The reviewed source appends a dedicated TLS listener, certificate mounts and
+same-image certificate reload helper. The existing server retains its API
+identity through an explicit projection; automatic token injection is disabled
+and the helper receives no credential mounts. The existing three Raft members,
+partition 2, storage, audit, unseal hook and legacy listener are preserved.
+The chart render and native OpenBao 2.6.3 TLS/reload regression exercise those
+settings. No RBAC binding, IAM policy, reader role, App identity or App grant
+changes. The required authorization gate and its negative controls remain
+enabled. Production TLS, actual credential identity and untrusted workload
+isolation remain separate protected runtime checks before ARC activation.

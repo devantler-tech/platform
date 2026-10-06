@@ -149,6 +149,12 @@ jobs:
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
 
+      - name: 🔐 Validate ARC transport proof boundaries
+        run: |
+          go test -race ./scripts/verify-arc-transport
+          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
+          bash scripts/tests/test-verify-arc-transport.sh
+
       - name: 🛑 Validate ARC recovery metadata proof
         run: go test -race ./scripts/guard-arc-recovery
 
@@ -491,6 +497,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
@@ -523,6 +530,7 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-arc-listener-public-content.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -2412,6 +2420,15 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate ARC listener public-content disposition
+        if: needs.changes.outputs.k8s == 'true'
+        # Use the pinned native scanner installed above. The regression must
+        # prove both admission enforcement and the exact scanner disposition,
+        # including the unexcepted mirror and genuine-credential controls.
+        run: |
+          shellcheck scripts/tests/test-arc-listener-public-content.sh
+          bash scripts/tests/test-arc-listener-public-content.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from
