@@ -142,6 +142,14 @@ spec:
       provisionerReplicaCount: ${longhorn_csi_provisioner_replicas:=1}
       resizerReplicaCount: ${longhorn_csi_resizer_replicas:=1}
       snapshotterReplicaCount: ${longhorn_csi_snapshotter_replicas:=1}
+      # Chart 1.13.0 adds a cluster-wide `get secrets` ClusterRole for the CSI
+      # controller sidecars, on by default for clusters whose StorageClasses
+      # or volumes name a provisioner- or controller-side Secret. Nothing here
+      # does: neither Longhorn StorageClass nor the snapshot class sets a CSI
+      # secret parameter, and none of the 14 live Longhorn volumes carries a
+      # controller Secret reference (checked 2026-10-06). Turn it back on in
+      # the same change that introduces an encrypted volume.
+      allowControllerSecretAccess: false
 
     # Restrict Longhorn DaemonSets to storage-labeled nodes only.
     # Control planes don't carry disks and no pods on them mount Longhorn
@@ -291,3 +299,48 @@ spec:
                       - name: longhorn-driver-deployer
                         securityContext:
                           seLinuxOptions: {}
+          # longhorn-global-manager is new in chart 1.13.0: three leader-elected
+          # replicas of `longhorn-manager global`, hosting the two controllers
+          # that watch Pods and PersistentVolumes cluster-wide. Unlike the
+          # DaemonSet of the same image it mounts no volume and no host path,
+          # opens only the unprivileged health port 9505 and never writes to its
+          # filesystem (read at tag v1.13.0: app/global.go builds API clients,
+          # runs the Lease election and serves /v1/healthz). So it gets a full
+          # non-root context rather than a C-0211 exception. The image's default
+          # user is root; the explicit numeric uid overrides it, and
+          # runAsNonRoot is the backstop if that uid is ever removed. 65532
+          # names no account in the image and owns nothing there; the binary in
+          # /usr/local/sbin is world-executable. The chart exposes no
+          # securityContext value for this Deployment.
+          - target:
+              kind: Deployment
+              name: longhorn-global-manager
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: longhorn-global-manager
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroup: 65532
+                      fsGroupChangePolicy: OnRootMismatch
+                      runAsNonRoot: true
+                      runAsUser: 65532
+                      runAsGroup: 65532
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: longhorn-global-manager
+                        securityContext:
+                          seLinuxOptions: {}
+                          runAsNonRoot: true
+                          runAsUser: 65532
+                          runAsGroup: 65532
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop:
+                              - ALL
+                          seccompProfile:
+                            type: RuntimeDefault
