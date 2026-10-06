@@ -39,4 +39,3 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
   [[ $# == 0 ]] || { arc_metrics_fail arguments; exit 1; }
   arc_job_metrics /sys/fs/cgroup
 fi
-
