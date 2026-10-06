@@ -143,6 +143,7 @@ require_safe_run() {
   refute_text "${gid_base}" "$1: a node-side group id reached the log"
   refute_text "${pod_name}" "$1: the pod name reached the log"
   refute_text '198.51.100.9' "$1: an address reached the log"
+  refute_text 'PRIVATE_HOST_USERS_CANARY' "$1: an unexpected field value reached the log"
 }
 
 cases_run=0
@@ -194,6 +195,14 @@ require_text 'actualbudget uid_map: mapped — id 0 is a non-zero id on the node
   'the range sizes of a multi-line map must be summed'
 case_done 'a multi-range non-identity map is MAPPED with its sizes summed'
 
+reset_fixtures
+edit_pod '.items[0].status.containerStatuses |= reverse'
+run_read --context admin@prod
+require_rc 0 'ready statuses in a different order must still be MAPPED'
+require_safe_run 'reordered ready statuses'
+require_text 'MAPPED: both containers run in a user namespace' 'reordered statuses must print MAPPED'
+case_done 'ready statuses identify both expected containers regardless of order'
+
 # --- IDENTITY: one fixture away from the control ---------------------------
 identity_case() {
   reset_fixtures
@@ -201,7 +210,7 @@ identity_case() {
   run_read --context admin@prod
   require_rc 2 "$3 must be IDENTITY"
   require_safe_run "$3"
-  require_text 'IDENTITY: at least one map is the node' "$3 must print the IDENTITY verdict"
+  require_text 'IDENTITY: at least one map exposes node identities' "$3 must print the IDENTITY verdict"
   refute_text 'MAPPED: both' "$3 must not print the MAPPED verdict"
   case_done "$3 is IDENTITY"
 }
@@ -211,6 +220,8 @@ identity_case actualbudget.gid_map '0 0 65536' 'root mapped to the node root ove
 identity_case enablebanking-seed.uid_map "$(printf '0 %s 1000\n1000 1000 1\n' "${uid_base}")" \
   'one id passed straight through beside a mapped root'
 identity_case actualbudget.uid_map "0 ${uid_base} 4294967295" 'a range covering the whole id space'
+identity_case actualbudget.uid_map "$(printf '0 %s 1\n1 0 1\n' "${uid_base}")" \
+  'a non-root container id mapped to the node root beside a mapped root'
 
 # IDENTITY outranks an unreadable map: one proven identity map is the answer.
 reset_fixtures
@@ -219,6 +230,8 @@ rm "${fixtures}/maps/enablebanking-seed.gid_map"
 run_read --context admin@prod
 require_rc 2 'an identity map beside an unreadable one must be IDENTITY'
 require_safe_run 'identity beside unreadable'
+require_text 'IDENTITY: at least one map exposes node identities' 'identity beside unreadable must print its verdict'
+refute_text 'MAPPED: both' 'identity beside unreadable must not print the MAPPED verdict'
 case_done 'an identity map beside an unreadable one is IDENTITY'
 
 # --- INCONCLUSIVE: the maps ------------------------------------------------
@@ -244,6 +257,12 @@ map_inconclusive actualbudget.uid_map "0 ${uid_base} 65536 9" 'a map line with f
 map_inconclusive actualbudget.uid_map "0 ${uid_base} 0" 'a zero-length range'
 map_inconclusive actualbudget.uid_map "1000 ${uid_base} 65536" 'a map that leaves id 0 unmapped'
 map_inconclusive actualbudget.uid_map "0 99999999999 65536" 'an id longer than the kernel prints'
+map_inconclusive actualbudget.uid_map "$(printf '0 %s 1000\n08 8 1\n' "${uid_base}")" \
+  'an inside id with a leading zero beside a mapped root'
+map_inconclusive enablebanking-seed.gid_map "$(printf '0 %s 1000\n8 08 1\n' "${gid_base}")" \
+  'an outside id with a leading zero beside a mapped root'
+map_inconclusive actualbudget.uid_map "$(printf '0 %s 65536\ngarbage\n' "${uid_base}")" \
+  'a malformed line after a valid mapped range'
 
 # --- INCONCLUSIVE: the pod -------------------------------------------------
 pod_inconclusive() {
@@ -263,6 +282,21 @@ reset_fixtures
 printf 'not json' >"${fixtures}/pods.json"
 pod_inconclusive 'a pod list that is not JSON'
 reset_fixtures
+edit_pod '.items = {unexpected: .items[0]}'
+pod_inconclusive 'a pod list with an object instead of an items array'
+reset_fixtures
+edit_pod '.items[0].spec.containers = "unexpected"'
+pod_inconclusive 'a container list that is not an array'
+reset_fixtures
+edit_pod '.items[0].status.containerStatuses = "unexpected"'
+pod_inconclusive 'a container status list that is not an array'
+reset_fixtures
+edit_pod '.items[0].spec.containers |= {first: .[0], second: .[1]}'
+pod_inconclusive 'an object with expected container values instead of an array'
+reset_fixtures
+edit_pod '.items[0].status.containerStatuses |= {first: .[0], second: .[1]}'
+pod_inconclusive 'an object with expected status values instead of an array'
+reset_fixtures
 edit_pod '.items = []'
 pod_inconclusive 'no pod'
 reset_fixtures
@@ -278,6 +312,12 @@ reset_fixtures
 edit_pod 'del(.items[0].spec.hostUsers)'
 pod_inconclusive 'hostUsers unset'
 reset_fixtures
+edit_pod '.items[0].spec.hostUsers = "PRIVATE_HOST_USERS_CANARY"'
+pod_inconclusive 'an unexpected hostUsers value'
+reset_fixtures
+edit_pod '.items[0].spec.hostUsers = "false"'
+pod_inconclusive 'a string instead of boolean hostUsers false'
+reset_fixtures
 edit_pod '.items[0].spec.containers += [{name: "extra"}]'
 pod_inconclusive 'an unexpected third container'
 reset_fixtures
@@ -289,6 +329,12 @@ pod_inconclusive 'a container that is not ready'
 reset_fixtures
 edit_pod '.items[0].status.containerStatuses = []'
 pod_inconclusive 'no container statuses'
+reset_fixtures
+edit_pod '.items[0].status.containerStatuses[1].name = "actualbudget"'
+pod_inconclusive 'duplicate ready statuses that leave the sidecar unobserved'
+reset_fixtures
+edit_pod '.items[0].status.containerStatuses[1].name = "unrelated"'
+pod_inconclusive 'an unrelated ready status instead of the sidecar'
 reset_fixtures
 edit_pod '.items[0].metadata.name = "--kubeconfig=/tmp/x"'
 pod_inconclusive 'a pod name that is not an object name'

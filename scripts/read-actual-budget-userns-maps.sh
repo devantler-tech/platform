@@ -17,12 +17,12 @@
 # HOW A MAP IS READ. Each line is `<first id inside> <first id outside> <count>`. A container
 # that shares the node's ids shows the identity map, `0 0 4294967295`. A container in its own
 # user namespace shows id 0 mapped to a non-zero id outside, over a bounded range. A map counts
-# as MAPPED only when every line parses, id 0 is mapped, no id maps onto itself and no range
-# reaches the full id space.
+# as MAPPED only when every line parses, id 0 is mapped, no range exposes the node's root,
+# no id maps onto itself and no range reaches the full id space.
 #
 # THE VERDICT
 #   MAPPED         all four maps (two containers, user and group) are non-identity.
-#   IDENTITY       at least one map is the node's own: the user namespace is not in effect there.
+#   IDENTITY       at least one map exposes node identities: the requested isolation is absent.
 #   INCONCLUSIVE   anything else: a failed read, no pod or more than one, a pod that is not
 #                  Running or not ready, `hostUsers` not false, unexpected containers, or a map
 #                  that could not be parsed.
@@ -92,19 +92,25 @@ if ! pods="$(kubectl --context "${context}" get pods --namespace "${namespace}" 
   --selector "${selector}" --output json 2>/dev/null)"; then
   inconclusive 'the pod list could not be read.'
 fi
-if ! pod_count="$(jq -er '.items | length' <<<"${pods}" 2>/dev/null)"; then
+if ! pod_count="$(jq -er 'if (.items | type) == "array" then .items | length else error("invalid items") end' \
+  <<<"${pods}" 2>/dev/null)"; then
   inconclusive 'the pod list was not the expected JSON.'
 fi
 if [[ "${pod_count}" -ne 1 ]]; then
   inconclusive "expected exactly one Actual Budget pod, found ${pod_count}."
 fi
 
-pod="$(jq -r '.items[0].metadata.name // ""' <<<"${pods}")"
-phase="$(jq -r '.items[0].status.phase // ""' <<<"${pods}")"
-host_users="$(jq -r '.items[0].spec.hostUsers | if . == null then "unset" else tostring end' <<<"${pods}")"
-containers="$(jq -r '[.items[0].spec.containers[]?.name] | sort | join(" ")' <<<"${pods}")"
-not_ready="$(jq -r '[.items[0].status.containerStatuses[]? | select(.ready != true)] | length' <<<"${pods}")"
-status_count="$(jq -r '[.items[0].status.containerStatuses[]?] | length' <<<"${pods}")"
+if ! pod="$(jq -r '.items[0].metadata.name // ""' <<<"${pods}" 2>/dev/null)" ||
+  ! phase="$(jq -r '.items[0].status.phase // ""' <<<"${pods}" 2>/dev/null)" ||
+  ! host_users_false="$(jq -r '.items[0].spec.hostUsers == false' <<<"${pods}" 2>/dev/null)" ||
+  ! containers="$(jq -r '.items[0].spec.containers | if type == "array" then map(.name) | sort | join(" ") else error("invalid containers") end' \
+    <<<"${pods}" 2>/dev/null)" ||
+  ! not_ready="$(jq -r '[.items[0].status.containerStatuses[]? | select(.ready != true)] | length' <<<"${pods}" 2>/dev/null)" ||
+  ! status_count="$(jq -r '.items[0].status.containerStatuses | if type == "array" then length else error("invalid statuses") end' \
+    <<<"${pods}" 2>/dev/null)" ||
+  ! status_containers="$(jq -r '[.items[0].status.containerStatuses[].name] | sort | join(" ")' <<<"${pods}" 2>/dev/null)"; then
+  inconclusive 'the pod fields were not the expected JSON.'
+fi
 
 # The name goes on a kubectl command line, so it must look like a pod name before it is used.
 if [[ ! "${pod}" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
@@ -113,13 +119,14 @@ fi
 if [[ "${phase}" != Running ]]; then
   inconclusive 'the pod is not Running.'
 fi
-if [[ "${host_users}" != false ]]; then
-  inconclusive "the pod does not request a user namespace (hostUsers is ${host_users})."
+if [[ "${host_users_false}" != true ]]; then
+  inconclusive 'the pod does not request a user namespace.'
 fi
 if [[ "${containers}" != "${expected_containers}" ]]; then
   inconclusive 'the pod does not have exactly the two expected containers.'
 fi
-if [[ "${status_count}" -ne 2 || "${not_ready}" -ne 0 ]]; then
+if [[ "${status_count}" -ne 2 || "${not_ready}" -ne 0 ||
+  "${status_containers}" != "${expected_containers}" ]]; then
   inconclusive 'not every container is ready.'
 fi
 printf 'Pod: one, Running, hostUsers false, both containers ready.\n'
@@ -130,7 +137,8 @@ classify_map() {
   local map="$1" inside outside count extra lines=0 total=0 zero_mapped=0 identity=0
   while read -r inside outside count extra; do
     [[ -z "${inside}${outside}${count}${extra}" ]] && continue
-    if [[ -n "${extra}" || ! "${inside}" =~ ^[0-9]+$ || ! "${outside}" =~ ^[0-9]+$ ||
+    if [[ -n "${extra}" || ! "${inside}" =~ ^(0|[1-9][0-9]*)$ ||
+      ! "${outside}" =~ ^(0|[1-9][0-9]*)$ ||
       ! "${count}" =~ ^[1-9][0-9]*$ ]]; then
       return 1
     fi
@@ -143,7 +151,8 @@ classify_map() {
     if [[ "${inside}" -eq 0 ]]; then
       zero_mapped=1
     fi
-    if [[ "${inside}" -eq "${outside}" || "${count}" -ge "${full_id_space}" ]]; then
+    if [[ "${outside}" -eq 0 || "${inside}" -eq "${outside}" ||
+      "${count}" -ge "${full_id_space}" ]]; then
       identity=1
     fi
   done <<<"${map}"
@@ -186,7 +195,7 @@ for container in ${expected_containers}; do
 done
 
 if [[ "${identity_found}" -eq 1 ]]; then
-  printf 'IDENTITY: at least one map is the node'"'"'s own; the user namespace is not in effect there.\n'
+  printf 'IDENTITY: at least one map exposes node identities; the requested user-namespace isolation is not in effect there.\n'
   exit 2
 fi
 if [[ "${unknown_found}" -eq 1 ]]; then
