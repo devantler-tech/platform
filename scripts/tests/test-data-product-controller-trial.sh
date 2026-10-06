@@ -90,7 +90,7 @@ jq -e '[.[] | select(.kind == "NetworkPolicy" and .metadata.namespace == "data-p
   | .spec] == [{"podSelector":{},"policyTypes":["Ingress","Egress"]}]' \
 	"${scratch}/apps.json" >/dev/null || fail "${provider}: namespace default-deny must stay active"
 jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-controller-contract-probe")] as $probe |
-  ($probe|length)==1 and $probe[0].spec.replicas==0 and
+  ($probe|length)==1 and $probe[0].spec.replicas==0 and $probe[0].metadata.labels["platform.devantler.tech/replica-floor"]=="exempt" and
   ($probe[0].spec.template.spec | .serviceAccountName=="data-product-controller-contract-probe" and .automountServiceAccountToken==false and
     (.volumes//[])==[] and (.initContainers//[])==[] and .imagePullSecrets==[{name:"ghcr-auth"}] and
     (.containers|length)==1 and (.containers[0] | .name=="contract-probe" and .command==["/contract-probe"] and (.args//[])==[] and

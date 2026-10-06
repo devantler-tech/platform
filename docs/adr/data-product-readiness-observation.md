@@ -14,6 +14,10 @@ disabled, and the sample declares neither dependency. Activation requires a
 separate GitOps change to all four settings: controller flags, product references,
 probe replicas, and probe execution.
 
+The dormant workload uses the replica-floor policy's documented scale-to-zero
+label. Activation removes that label and runs two probes, so product availability
+does not depend on a single observation Pod.
+
 The probe targets only the sample's public HTTPS contract. Its service account
 does not mount an API token; it has no credential volumes, management Service,
 or public route. Cilium permits only this hostname on TCP 443 and its DNS lookup

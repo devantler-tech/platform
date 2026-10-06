@@ -4,6 +4,9 @@ metadata:
   name: data-product-controller-contract-probe
   namespace: data-product-controller
   labels:
+    # The HA floor does not apply while this non-serving workload is dormant.
+    # Activation must remove this label and supply redundant probe replicas.
+    platform.devantler.tech/replica-floor: exempt
     app.kubernetes.io/name: data-product-controller
     app.kubernetes.io/instance: data-product-controller
     app.kubernetes.io/component: contract-probe
