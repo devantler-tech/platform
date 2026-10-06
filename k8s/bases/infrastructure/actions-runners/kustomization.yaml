@@ -1,7 +1,10 @@
+# Opt-in organization runner pool; activation is a separate reviewed change.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - oci-repository.yaml
   - helm-release.yaml
+  - service-account.yaml
+  - secret-store.yaml
   - external-secret.yaml
   - cilium-network-policy-runner.yaml

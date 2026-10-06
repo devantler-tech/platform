@@ -9,9 +9,9 @@ spec:
   interval: 10m
   url: oci://ghcr.io/devantler-tech/charts/data-product-controller
   ref:
-    # v2.4.3. Pin the content digest so a moved registry tag cannot change the
+    # v2.4.8. Pin the content digest so a moved registry tag cannot change the
     # chart Flux installs.
-    digest: sha256:012cc6de2377ac906160caeff0808569ff91264a7f14f805b588802e2506b722
+    digest: sha256:b55c91a55963ad9b5d2e3929991ef3ba8b2e05079c3003c2d9576f941d39b362
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy

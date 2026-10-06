@@ -252,31 +252,27 @@ RC=$?
 set -e
 check "an unreadable rules file -> exit 2" 2 'not readable' "$RC" "$OUT"
 
-# --- 11. the REAL rules file parses, and keeps its seven ordered rules ------
+# --- 11. the REAL rules file parses, and keeps its ordered rules ------
 # Guards the shape this script reads from drifting without anyone noticing: the catch-all must stay
 # LAST, or ksail, provider packages, and the compatibility images get held to the app
 # identity and go ImagePullBackOff.
 real="${repo_root}/talos/cluster/verify-first-party-images.yaml"
 # macOS ships bash 3.2, which has no `mapfile` — read the globs without it.
 real_globs="$(yq -r '.rules[].image' "$real")"
-real_count="$(printf '%s\n' "$real_globs" | grep -c .)"
-real_last="$(printf '%s\n' "$real_globs" | grep . | tail -1)"
-real_compatibility_rules="$(printf '%s\n' "$real_globs" | grep . | tail -5 | head -3)"
-expected_compatibility_rules="$(printf '%s\n' \
+expected_globs="$(printf '%s\n' \
+  'ghcr.io/devantler-tech/ksail-analysis-runner' \
+  'ghcr.io/devantler-tech/ksail*' \
+  'ghcr.io/devantler-tech/provider-upjet-*' \
   'ghcr.io/devantler-tech/platform-kubescape-storage' \
   'ghcr.io/devantler-tech/platform-kubescape-node-agent' \
-  'ghcr.io/devantler-tech/platform-coroot-node-agent')"
-if [ "$real_count" -ne 7 ]; then
-  echo "FAIL  the real rules file has ${real_count} rules, expected 7"
-  failures=$((failures + 1))
-elif [ "$real_compatibility_rules" != "$expected_compatibility_rules" ]; then
-  echo "FAIL  the three dedicated compatibility rules must precede the exact zone rule and catch-all"
-  failures=$((failures + 1))
-elif [ "$real_last" != 'ghcr.io/devantler-tech/*' ]; then
-  echo "FAIL  the catch-all is not the last rule (${real_last})"
+  'ghcr.io/devantler-tech/platform-coroot-node-agent' \
+  'ghcr.io/devantler-tech/world-at-ruin/zone' \
+  'ghcr.io/devantler-tech/*')"
+if [ "$real_globs" != "$expected_globs" ]; then
+  echo "FAIL  the real rules must retain all eight exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: seven rules, dedicated compatibility and zone rules before catch-all"
+  echo "ok    real rules: eight ordered rules, dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -416,8 +412,8 @@ fi
 # clause of the identity. Same parity rule as section 12: admission (Kyverno) and the kubelet
 # pull (Talos) must carry the same identity AND issuer, or a ksail image accepted by one is
 # refused by the other as an ImagePullBackOff neither file explains alone.
-talos_ksail_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/ksail*") | .keyless.subjectRegex' "$real")"
-talos_ksail_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/ksail*") | .keyless.issuer' "$real")"
+talos_ksail_identity="$(yq -r '.rules[] | select(.image | test("^ghcr\\.io/devantler-tech/ksail\\*$")) | .keyless.subjectRegex' "$real")"
+talos_ksail_issuer="$(yq -r '.rules[] | select(.image | test("^ghcr\\.io/devantler-tech/ksail\\*$")) | .keyless.issuer' "$real")"
 kyverno_ksail_identity="$(yq -r '.spec.attestors[] | select(.name == "ksailcd") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
 kyverno_ksail_issuer="$(yq -r '.spec.attestors[] | select(.name == "ksailcd") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
 

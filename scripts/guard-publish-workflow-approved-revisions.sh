@@ -17,6 +17,12 @@
 # CI and scheduled regeneration set APPROVED_REVISIONS_ENFORCE=1, which refuses the pattern
 # form for every consumer.
 #
+# PUBLISHER FAMILIES (#4502)
+# A manifest consumer may also accept one reviewed commit of the canonical manifest workflow,
+# recorded in scripts/publish-workflow-canonical-approvals.tsv. That record is fixed and
+# hand-reviewed, never generated. A matcher must name exactly the commit the record gives its
+# consumer, and none where the record gives none; the legacy set is judged as before.
+#
 # SCOPE — GENERIC SUBJECTS ARE EXCLUDED BY NAME
 # Three subjects name the shared workflows without belonging to one consumer: the Kyverno
 # app-image policy, the tenant ResourceGraphDefinition template, and the Talos first-party
@@ -32,6 +38,7 @@
 #
 # SEAMS (tests substitute these; production leaves them unset)
 #   APPROVED_REVISIONS_FILE      the generated set (default scripts/publish-workflow-approved-revisions.tsv)
+#   CANONICAL_APPROVALS_FILE     the fixed canonical-publisher approvals (default scripts/publish-workflow-canonical-approvals.tsv)
 #   PUBLISH_CONSUMER_ROOT        scan root for consumer manifests (default: the repository root)
 #   APPROVED_REVISIONS_ENFORCE   `1` refuses the pattern form (default: off)
 set -euo pipefail
@@ -44,11 +51,23 @@ source "$GUARD_DIR/publish-workflow-approved-revisions.lib.sh"
 for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   record="$(lookup "$observed" "$consumer")"
   [ -n "$record" ] || refuse "no OCIRepository under $SCAN_ROOT is attributed to registered consumer $consumer; the scan, not the tree, is the likely cause"
-  IFS=$'\t' read -r file workflow ref <<<"$record"
+  IFS=$'\t' read -r file workflow ref canonical_ref <<<"$record"
   IFS=$'\t' read -r set_workflow signer pin candidate <<<"$(lookup "$approved" "$consumer")"
   [ "$workflow" = "$set_workflow" ] || refuse "$consumer: $file names $workflow but the approved set names $set_workflow"
 
   accepted="$(approved_ref "$signer" "$pin" "$candidate") (in any order)"
+
+  # The canonical family is judged before the legacy set and in both switch states: it is a
+  # fixed reviewed record, so there is no pattern form for it to fall back to.
+  want_canonical="$(lookup "$canonical" "$consumer")"
+  if [ "$canonical_ref" != "${want_canonical:--}" ]; then
+    if [ -z "$want_canonical" ]; then
+      refuse "$consumer: $file accepts the canonical publisher at '@$canonical_ref', but the canonical approvals record none for it"
+    fi
+    [ "$canonical_ref" != '-' ] ||
+      refuse "$consumer: $file does not accept the canonical publisher, but the canonical approvals record @$want_canonical for it; run scripts/write-publish-workflow-matchers.sh"
+    refuse "$consumer: $file names canonical revision '@$canonical_ref', but the canonical approvals record @$want_canonical; run scripts/write-publish-workflow-matchers.sh"
+  fi
 
   form=""
   if [ "$ref" = "$PATTERN_REF" ]; then

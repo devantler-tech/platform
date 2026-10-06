@@ -33,7 +33,11 @@ release_base="https://github.com/siderolabs/talos/releases/download/v${TALOS_VER
 target=$(mktemp "${RUNNER_TEMP:-/tmp}/talosctl.XXXXXX")
 trap 'rm -f "${target}"' EXIT
 
-curl -fsSL "${release_base}/${asset_name}" -o "${target}"
+# The download retries curl's transient failures (timeouts, 408, 429 and 5xx) a few
+# times, because one momentary error from the release host would otherwise fail the job
+# (#4549). The bytes are still checked against the pin above, and a persistent failure
+# still stops here.
+curl -fsSL --retry 5 --retry-delay 3 --retry-max-time 60 "${release_base}/${asset_name}" -o "${target}"
 
 actual_digest=$(sha256sum "${target}" | cut -d' ' -f1)
 

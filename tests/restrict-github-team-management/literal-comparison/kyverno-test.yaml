@@ -44,6 +44,8 @@ results:
       - github-config/ref-namespace-star
       - github-config/ref-namespace-question
       - github-config/init-ref-namespace-foreign
+      - github-config/init-ref-namespace-star
+      - github-config/init-ref-namespace-question
       # A selector resolves to whichever Team carries the labels, so it is
       # refused even beside an allow-listed reference.
       - github-config/selector-beside-reference
@@ -87,6 +89,8 @@ results:
       - github-config/repo-ref-namespace-foreign
       - github-config/repo-ref-namespace-star
       - github-config/repo-init-ref-namespace-foreign
+      - github-config/repo-init-ref-namespace-star
+      - github-config/repo-init-ref-namespace-question
       - github-config/permission-star
       - github-config/permission-question
       - github-config/init-permission-star

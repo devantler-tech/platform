@@ -338,8 +338,10 @@ jobs:
           shellcheck -x scripts/write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
+          shellcheck scripts/tests/test-publish-workflow-canonical-approvals.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
+          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
 
       - name: 🔐 Enforce approved publication signers
         env:
@@ -586,6 +588,7 @@ jobs:
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               # The bookmark validator and its tests guard the same ConfigMap (#2909).
               - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/validate-homepage-bookmarks/**'
               - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/homepage-bookmarks/**'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -637,6 +640,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #3144 admission probe, its test and its workflow are one
+              # contract: the test pins that every write the probe sends is a
+              # server-side dry run and that no identity reaches the public log.
+              - 'scripts/probe-github-team-external-identity.sh'
+              - 'scripts/tests/test-probe-github-team-external-identity.sh'
+              - '.github/workflows/probe-github-team-external-identity.yaml'
               # The #3790 datapath throttling measurement, its test and its workflow
               # are one contract: the test pins that the script stays read-only, its
               # arithmetic, and that no node or pod name reaches the public log.
@@ -814,6 +823,9 @@ jobs:
               - 'scripts/write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
+              # The fixed canonical-publisher approvals the same library reads, and their test (#4502).
+              - 'scripts/publish-workflow-canonical-approvals.tsv'
+              - 'scripts/tests/test-publish-workflow-canonical-approvals.sh'
               # The generator that writes the set the guard above reads, and its test — both
               # halves, so editing either alone still runs the fail-closed proof (an unresolved
               # consumer writes nothing) that step 🔐 Validate the approved-revisions generator pins.
@@ -1265,7 +1277,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.197.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1626,6 +1638,7 @@ jobs:
         # the real ConfigMap (#2909).
         run: |
           shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          go test ./scripts/validate-homepage-bookmarks
           bash scripts/tests/test-validate-homepage-bookmarks.sh
           bash scripts/validate-homepage-bookmarks.sh
 
@@ -1792,6 +1805,16 @@ jobs:
         run: |
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+
+      - name: 🔏 Validate GitHub Team external-identity probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins what makes dispatching it acceptable: only `get`
+        # plus `patch`/`create` with `--dry-run=server`, a refusal counted only
+        # when it names the policy, and no identity in the public log.
+        run: |
+          shellcheck scripts/probe-github-team-external-identity.sh scripts/tests/test-probe-github-team-external-identity.sh
+          bash scripts/tests/test-probe-github-team-external-identity.sh
 
       - name: 📏 Validate datapath CPU throttling measurement
         if: needs.changes.outputs.k8s == 'true'
@@ -2379,7 +2402,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.197.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2774,7 +2797,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@30882cccda9e41c622f6493e21e7eb6f3339b91f # v4.9.1
+        uses: devantler-tech/.github/actions/validate-naming@498fb4b11f129928d3af9a90e9c5a46f1c4dbd77 # v7.0.0
 
       - name: Confirm naming validation completed
         env:
@@ -3374,7 +3397,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.197.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3496,7 +3519,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@df7fd4f83edade31c121a9de563d9a7b9b1f900d # v13.10.3
+        uses: devantler-tech/actions/aggregate-job-checks@1d726483facb9340655489913f609082677be8f5 # v13.10.6
         with:
           job-results: >-
             ${{ needs.changes.result }}

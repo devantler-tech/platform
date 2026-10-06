@@ -1,10 +1,10 @@
-# Inactive, uncalibrated analysis-only pool. Do not route a workflow here until
+# Inactive, uncalibrated organization Linux pool. Do not route a workflow here until
 # the registration, isolation, toolchain and capacity gates in the runbook pass.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
-  name: ksail-analysis-runners
-  namespace: arc-ksail-analysis
+  name: platform-runners
+  namespace: arc-runners
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
@@ -13,15 +13,16 @@ spec:
   timeout: 10m
   chartRef:
     kind: OCIRepository
-    name: ksail-analysis-runners
+    name: platform-runners
   values:
     # Use the controller's built-in scaler defaults during preparation.
     # ARC 0.15's optional tuning object is absent from the public CRD catalog.
     # null is explicitly supported by the pinned chart's values schema.
     listenerConfig: null
-    githubConfigUrl: https://github.com/devantler-tech/ksail
-    githubConfigSecret: arc-ksail-app
-    runnerScaleSetName: ksail-code-quality
+    githubConfigUrl: https://github.com/devantler-tech
+    githubConfigSecret: arc-github-app
+    runnerGroup: platform
+    runnerScaleSetName: platform-linux
     minRunners: 0
     maxRunners: 1
     controllerServiceAccount:
@@ -34,9 +35,9 @@ spec:
       spec:
         automountServiceAccountToken: false
         nodeSelector:
-          platform.devantler.tech/ksail-analysis: enabled
+          platform.devantler.tech/ci-runner: enabled
         tolerations:
-          - key: platform.devantler.tech/ksail-analysis
+          - key: platform.devantler.tech/ci-runner
             operator: Equal
             value: enabled
             effect: NoSchedule
@@ -44,8 +45,38 @@ spec:
           runAsNonRoot: true
           runAsUser: 1001
           runAsGroup: 1001
+          fsGroup: 1001
           seccompProfile:
             type: RuntimeDefault
+        volumes:
+          - name: runner-home
+            emptyDir:
+              sizeLimit: 40Gi
+          - name: runner-tmp
+            emptyDir:
+              sizeLimit: 2Gi
+        initContainers:
+          - name: init-runner-home
+            image: ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
+            command: ["/bin/sh", "-ec", "cp -R /home/runner/. /runner-data/"]
+            securityContext:
+              allowPrivilegeEscalation: false
+              privileged: false
+              readOnlyRootFilesystem: true
+              capabilities:
+                drop: [ALL]
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+                ephemeral-storage: 1Gi
+              limits:
+                cpu: "1"
+                memory: 512Mi
+                ephemeral-storage: 4Gi
+            volumeMounts:
+              - name: runner-home
+                mountPath: /runner-data
         containers:
           - name: runner
             image: ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4
@@ -53,8 +84,14 @@ spec:
             securityContext:
               allowPrivilegeEscalation: false
               privileged: false
+              readOnlyRootFilesystem: true
               capabilities:
                 drop: [ALL]
+            volumeMounts:
+              - name: runner-home
+                mountPath: /home/runner
+              - name: runner-tmp
+                mountPath: /tmp
             resources:
               requests:
                 cpu: "3"

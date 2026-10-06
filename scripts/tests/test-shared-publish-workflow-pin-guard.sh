@@ -396,6 +396,223 @@ assert_line_accepted "a comment opening immediately after the closing quote" \
   "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$${Q}# pinned by #2816" \
   quotednospacecomment
 
+# --- RED/GREEN: the two-publisher-family subject (#4502) ----------------------
+#
+# A manifest matcher may accept the canonical manifest workflow beside the legacy one,
+# as ONE subject holding one group. That subject carries two `@` by design, which is
+# exactly what the single-identity rule above refuses, so the guard reads it with its own
+# strict parse. The GREEN cases prove the reviewed arrangement passes; each RED case
+# isolates one way a second family could let a moving ref, a second identity or an
+# unreviewed arrangement through, and asserts the refusal names that cause — the floor
+# and the single-identity rule both fire on a mis-escaped fixture, so an exit status
+# alone would prove nothing.
+
+readonly FAMILY_OPEN='^https://github\.com/devantler-tech/('
+readonly LEGACY_ID='actions/\.github/workflows/publish-manifests\.yaml@'
+readonly CANONICAL_ID='\.github/\.github/workflows/publish-manifests\.yaml@'
+
+# family_line <legacy-ref> <canonical-ref> — a single-quoted two-family subject line.
+family_line() {
+  printf '        subject: %s%s%s%s|%s%s)$%s' \
+    "${Q}" "${FAMILY_OPEN}" "${LEGACY_ID}" "$1" "${CANONICAL_ID}" "$2" "${Q}"
+}
+
+assert_line_accepted "a two-family subject with one concrete legacy commit" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2}")" \
+  family-single
+
+assert_line_accepted "a two-family subject whose legacy ref is an approved set" \
+  "$(family_line "(${CONCRETE_SHA}|${CONCRETE_SHA_2})" "${CONCRETE_SHA_2}")" \
+  family-set
+
+assert_line_accepted "a two-family subject whose legacy ref is the pattern form" \
+  "$(family_line "${SHA_PATTERN}" "${CONCRETE_SHA}")" \
+  family-pattern
+
+assert_line_accepted "a two-family subject written as a plain scalar" \
+  "        subject: ${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$" \
+  family-plain
+
+# The canonical family is approved one reviewed commit at a time, so the pattern form —
+# accepted for the legacy family — is refused here: it would admit every commit of the
+# canonical repository.
+assert_line_rejected "a canonical ref in the pattern form" \
+  "$(family_line "${CONCRETE_SHA}" "${SHA_PATTERN}")" \
+  family-canonical-pattern 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref naming a branch" \
+  "$(family_line "${CONCRETE_SHA}" 'refs/heads/main')" \
+  family-canonical-branch 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref naming a bare moving ref" \
+  "$(family_line "${CONCRETE_SHA}" 'main')" \
+  family-canonical-bare 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref that is a wildcard" \
+  "$(family_line "${CONCRETE_SHA}" '.+')" \
+  family-canonical-wildcard 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref that is an alternation of two commits" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2})")" \
+  family-canonical-set 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a short canonical commit" \
+  "$(family_line "${CONCRETE_SHA}" '0123456')" \
+  family-canonical-short 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "an uppercase canonical commit" \
+  "$(family_line "${CONCRETE_SHA}" "$(printf '%s' "${CONCRETE_SHA}" | tr 'a-f' 'A-F')")" \
+  family-canonical-upper 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical commit with a wildcard appended" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2}.*")" \
+  family-canonical-suffix 'does not pin one concrete 40-hex commit'
+
+# A third alternative appended INSIDE the group keeps the `)$` ending and both `@`, so
+# only reading the canonical ref whole catches it.
+assert_line_rejected "a third alternative appended inside the group" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2})|(.*")" \
+  family-third-alternative 'does not pin one concrete 40-hex commit'
+
+# The legacy family keeps the allow-list it has outside a group.
+assert_line_rejected "a two-family subject whose legacy ref is a branch" \
+  "$(family_line 'refs/heads/main' "${CONCRETE_SHA}")" \
+  family-legacy-branch 'does not pin a fixed revision'
+
+assert_line_rejected "a two-family subject whose legacy ref is a wildcard" \
+  "$(family_line '.+' "${CONCRETE_SHA}")" \
+  family-legacy-wildcard 'does not pin a fixed revision'
+
+assert_line_rejected "a two-family subject whose legacy set carries a branch" \
+  "$(family_line "(${CONCRETE_SHA}|refs/heads/main)" "${CONCRETE_SHA_2}")" \
+  family-legacy-setbranch 'does not pin a fixed revision'
+
+assert_line_rejected "a two-family subject whose legacy ref is partially grouped" \
+  "$(family_line "(${CONCRETE_SHA})?.+" "${CONCRETE_SHA_2}")" \
+  family-legacy-partial 'not a fully grouped'
+
+# Arrangements nobody reviewed. Each still names only pinned commits, which is the point:
+# the refusal is about the arrangement, not about a ref the allow-list would catch anyway.
+assert_line_rejected "the canonical family written first" \
+  "        subject: ${Q}${FAMILY_OPEN}${CANONICAL_ID}${CONCRETE_SHA}|${LEGACY_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-reversed 'not the legacy family followed by the canonical family'
+
+assert_line_rejected "a group holding the legacy family twice" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${LEGACY_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-legacy-twice 'not the legacy family followed by the canonical family'
+
+assert_line_rejected "a group naming the canonical family twice" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2}|${CANONICAL_ID}${CONCRETE_SHA}")" \
+  family-canonical-twice 'where exactly two are expected'
+
+assert_line_rejected "a canonical family repeated without a second ref" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|\\.github/\\.github/workflows/publish-${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-canonical-nested 'names a publisher family more than once'
+
+assert_line_rejected "a subject naming only the canonical publisher" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/${CANONICAL_ID}${CONCRETE_SHA}\$${Q}" \
+  family-canonical-only 'names only the canonical publisher'
+
+assert_line_rejected "a group that is not closed and anchored" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})${Q}" \
+  family-unanchored-end 'opens a publisher group but is not exactly'
+
+assert_line_rejected "a group followed by a further alternative" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$|.*${Q}" \
+  family-trailing-alternative 'opens a publisher group but is not exactly'
+
+assert_line_rejected "a group that is not anchored at its start" \
+  "        subject: ${Q}https://github\\.com/devantler-tech/(${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-unanchored-start 'opens a publisher group but is not exactly'
+
+assert_line_rejected "a two-family subject with unescaped dots" \
+  "        subject: ${Q}^https://github.com/devantler-tech/(actions/.github/workflows/publish-manifests.yaml@${CONCRETE_SHA}|.github/.github/workflows/publish-manifests.yaml@${CONCRETE_SHA_2})\$${Q}" \
+  family-bare-dots 'opens a publisher group but is not exactly'
+
+# Only the manifest workflow has a canonical publisher.
+assert_line_rejected "a two-family subject for the application workflow" \
+  "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|\\.github/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA_2})\$${Q}" \
+  family-app 'names a workflow other than publish-manifests'
+
+assert_line_rejected "two families naming different workflows" \
+  "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-mixed-workflows 'name different workflows'
+
+# Discovery is independent of the subject pattern, and it has to see the canonical family
+# too: a canonical reference under a key the guard does not validate is reported, not
+# skipped, exactly as a legacy one is.
+tree="${work_dir}/red-family-undiscovered"
+build_tree "${tree}" "${SHA_PATTERN}"
+printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n        identity: '\''^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-manifests\\.yaml@.+$'\''\n' \
+  >"${tree}/k8s/canonical-other-key.yaml"
+if run_tree "${tree}"; then
+  fail "guard ACCEPTED a canonical-publisher reference it never validated"
+fi
+grep -q 'did not validate' "${tree}/stderr" ||
+  fail "guard rejected an unvalidated canonical reference but not for the discovery reason: $(head -1 "${tree}/stderr")"
+ok "reports a canonical-publisher reference under a key it does not validate"
+
+# --- RED: an alternation over refs must be grouped ------------------------------
+#
+# `@A|B$` is not two refs: it reads as `^…@A` OR `B$`, and the second half is anchored to
+# nothing before it. Splitting the ref on `|` found two well-formed alternatives and
+# accepted a subject whose second half matches ANY identity ending in a commit.
+
+assert_rejected_grouping() { # <label> <subject-line> <slug>
+  assert_line_rejected "$1" "$2" "$3" 'not a fully grouped'
+}
+
+assert_rejected_grouping "an ungrouped alternation of a commit and the commit pattern" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}|${SHA_PATTERN}\$${Q}" \
+  ungrouped-pattern
+
+assert_rejected_grouping "an ungrouped alternation of two commits" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}|${CONCRETE_SHA_2}\$${Q}" \
+  ungrouped-commits
+
+assert_rejected_grouping "a two-family subject whose legacy refs are not grouped" \
+  "$(family_line "${CONCRETE_SHA}|${CONCRETE_SHA_2}" "${CONCRETE_SHA}")" \
+  family-legacy-ungrouped
+
+# --- RED: the scalar judged is the identity the line was selected for -----------
+#
+# The subject pattern selects a LINE and matches anywhere on it. Each case below is
+# selected by text that is not the value's identity — a comment, or the tail of an
+# alternation — while the value itself carries one `@` and a well-formed ref, which is all
+# the guard used to look at. cosign receives the value, not the comment.
+
+assert_rejected_identity() { # <label> <subject-line> <slug>
+  assert_line_rejected "$1" "$2" "$3" 'subject is not exactly'
+}
+
+assert_rejected_identity "a wildcard identity selected by a comment naming the workflow" \
+  "        subject: ${Q}.*@${SHA_PATTERN}${Q} # subject: ${SUBJECT_ID}" \
+  identity-comment
+
+assert_rejected_identity "a wildcard alternative ahead of a workflow-shaped tail" \
+  "        subject: ${Q}.*|subject: ${SUBJECT_ID}${SHA_PATTERN}\$${Q}" \
+  identity-tail
+
+assert_rejected_identity "a canonical-only identity in another spelling, selected by a comment" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/[.]github/[.]github/workflows/publish-manifests[.]yaml@${SHA_PATTERN}\$${Q} # subject: ${SUBJECT_ID}x" \
+  identity-canonical-comment
+
+assert_rejected_identity "a subject with no closing anchor" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}${Q}" \
+  identity-no-end-anchor
+
+assert_rejected_identity "a subject with no opening anchor" \
+  "        subject: ${Q}${SUBJECT_ID#^}${CONCRETE_SHA}\$${Q}" \
+  identity-no-start-anchor
+
+assert_rejected_identity "a subject with unescaped dots" \
+  "        subject: ${Q}^https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@${CONCRETE_SHA}\$${Q}" \
+  identity-bare-dots
+
+assert_rejected_identity "a subject naming another publish workflow" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml.*@${CONCRETE_SHA}\$${Q} # subject: ${SUBJECT_ID}" \
+  identity-workflow-suffix
+
 # --- Integration: the real repository satisfies the narrowed guard -----------
 
 if (cd "${root_dir}" && bash "${guard}" >/dev/null 2>"${work_dir}/real.stderr"); then

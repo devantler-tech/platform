@@ -194,3 +194,26 @@ func TestServiceCoverageCannotPassVacuously(t *testing.T) {
 		t.Fatalf("status=%d output=%s", status, output)
 	}
 }
+
+func TestValidatorDoesNotInvokeExternalYAMLTools(t *testing.T) {
+	root := repository(t)
+	tools := t.TempDir()
+	for _, name := range []string{"yq", "jq"} {
+		if err := os.WriteFile(filepath.Join(tools, name), []byte("#!/bin/sh\necho external-parser-invoked >&2\nexit 88\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	status, output := execute(t, filepath.Join(root, "scripts/validate-homepage-bookmarks.sh"), filepath.Join(root, "k8s/bases/apps/homepage/config-map.yaml"), filepath.Join(root, "k8s"))
+	if status != 0 || strings.Contains(output, "external-parser-invoked") {
+		t.Fatalf("native validator must parse its inputs itself: status=%d output=%s", status, output)
+	}
+}
+
+func TestUnreadableInputIsUnknown(t *testing.T) {
+	root := repository(t)
+	status, output := execute(t, filepath.Join(root, "scripts/validate-homepage-bookmarks.sh"), filepath.Join(t.TempDir(), "missing.yaml"), filepath.Join(root, "k8s"))
+	if status != 2 || !strings.Contains(output, "missing or unreadable:") || strings.Contains(output, " valid.") {
+		t.Fatalf("missing input must not produce a clean verdict: status=%d output=%s", status, output)
+	}
+}

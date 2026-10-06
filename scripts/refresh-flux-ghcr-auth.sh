@@ -140,7 +140,11 @@ readonly FLUX_RECONCILE_JSON_PATH="/metadata/annotations/kustomize.toolkit.fluxc
 readonly FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT="kustomize-controller"
 readonly FLUX_KUSTOMIZE_CONTROLLER_SELECTOR="app=kustomize-controller"
 readonly FLUX_CONTROLLER_RESTART_JSON_PATH="/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
-readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
+# The first diagnosed handoff (#4178) stabilized after 142s: new Pods were
+# Ready while an old Pod was still terminating at 120s. Allow that observed
+# convergence plus 38s of headroom; a stalled rollout still fails with its
+# diagnostics, and every old process must still disappear before proceeding.
+readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="3m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 # A GitOps-managed ExternalSecret reads the GHCR seed back from OpenBao through
 # the same store every consumer uses. It is the only read-only way to notice
