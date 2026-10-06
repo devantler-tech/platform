@@ -15,8 +15,8 @@ separate GitOps change to all four settings: controller flags, product reference
 probe replicas, and probe execution.
 
 The dormant workload uses the replica-floor policy's documented scale-to-zero
-label. Activation removes that label and runs two probes, so product availability
-does not depend on a single observation Pod.
+label. Activation removes that label and runs two probes to meet Platform's
+capacity floor. All desired probes must be ready for product readiness.
 
 The probe targets only the sample's public HTTPS contract. Its service account
 does not mount an API token; it has no credential volumes, management Service,
