@@ -12,7 +12,8 @@ export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=
 yq -o=json '.spec.rules[0]' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
   | jq '{spec:{rules:[.]},status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/policy.json"
 yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
-  | jq '{metadata:{uid:"policy-uid"},spec:.,status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/listener-policy.json"
+  | jq '{metadata:{uid:"policy-uid"},spec:(. + {admission:true,emitWarning:false,validationFailureAction:"Audit"}),
+      status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/listener-policy.json"
 yq -o=json '.' k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml \
   | jq '.metadata.uid="listener-uid" | .metadata.resourceVersion="123"' >"$scratch/listener.json"
 cat >"$scratch/bin/gh" <<'MOCK'
@@ -57,6 +58,9 @@ case "$args" in
     else cat "$PROOF_TEST_ROOT/listener.json"; fi ;;
   'get clusterpolicy restrict-arc-openbao-listener '*)
     if [[ "${PROOF_CASE:-}" == listener_audit ]]; then jq '.spec.rules[0].validate.failureAction="Audit"' "$PROOF_TEST_ROOT/listener-policy.json"
+    elif [[ "${PROOF_CASE:-}" == listener_admission_disabled ]]; then jq '.spec.admission=false' "$PROOF_TEST_ROOT/listener-policy.json"
+    elif [[ "${PROOF_CASE:-}" == listener_failure_open ]]; then jq '.spec.failurePolicy="Ignore"' "$PROOF_TEST_ROOT/listener-policy.json"
+    elif [[ "${PROOF_CASE:-}" == listener_override ]]; then jq '.spec.rules[0].validate.failureActionOverrides=[{action:"Audit",namespaces:["openbao"]}]' "$PROOF_TEST_ROOT/listener-policy.json"
     else cat "$PROOF_TEST_ROOT/listener-policy.json"; fi ;;
   'get clusterpolicy '*) cat "$PROOF_TEST_ROOT/policy.json" ;;
   'get kustomization '*) printf '{"metadata":{"generation":1},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conditions":[{"type":"Ready","status":"True"}]}}' ;;
@@ -132,7 +136,8 @@ GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
 run_case healthy_denied 0
 run_case tls_error 60
 for name in sealed stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events \
-  listener_content listener_churn listener_audit listener_admit listener_api_error; do run_case "$name" 1; done
+  listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
+  listener_admit listener_api_error; do run_case "$name" 1; done
 run_case replacement 4
 run_case cleanup_failure 4
 printf 'PASS: %s transport orchestration cases\n' "$cases"
