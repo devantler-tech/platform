@@ -149,10 +149,13 @@ jobs:
       - name: 🛑 Validate bounded ARC activation boundaries
         run: go test ./scripts/tests/arc-staging
 
+      - name: 🧾 Validate published ARC metrics bytes
+        run: go test ./scripts/generate-ksail-arc-job-metrics
+
       - name: 🔬 Validate bounded ARC runtime acceptance
         run: |
           go test -race ./scripts/verify-ksail-arc-runtime
-          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/wait-for-ksail-arc-registration.sh scripts/tests/test-verify-ksail-arc-runtime.sh k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh
+          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/wait-for-ksail-arc-registration.sh scripts/tests/test-verify-ksail-arc-runtime.sh scripts/ksail-arc-job-metrics.sh
           bash scripts/tests/test-verify-ksail-arc-runtime.sh
 
       # Shared Wedding backup access is retired on this proof's word, so it must

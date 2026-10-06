@@ -10,15 +10,13 @@ import (
 )
 
 const metricsComponent = "k8s/bases/infrastructure/ksail-analysis-runners"
-const metricsScript = metricsComponent + "/job-metrics.sh"
+const metricsScript = "scripts/ksail-arc-job-metrics.sh"
 
 func TestRunnerRetainsWholeJobCgroupMeasurement(t *testing.T) {
-	component := readYAML(t, metricsComponent+"/kustomization.yaml")
-	generator := field(t, component, "configMapGenerator").([]any)
-	equal(t, len(generator), 1)
-	equal(t, field(t, generator[0], "namespace"), "arc-ksail-analysis")
-	equal(t, field(t, generator[0], "options", "immutable"), true)
-	equal(t, field(t, generator[0], "options", "annotations", "kustomize.toolkit.fluxcd.io/substitute"), "disabled")
+	config := readYAML(t, metricsComponent+"/config-map-job-metrics.yaml")
+	equal(t, field(t, config, "metadata", "namespace"), "arc-ksail-analysis")
+	equal(t, field(t, config, "immutable"), true)
+	equal(t, field(t, config, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/substitute"), "disabled")
 	release := readYAML(t, metricsComponent+"/helm-release.yaml")
 	runner := field(t, release, "spec", "values", "template", "spec", "containers").([]any)[0]
 	env := field(t, runner, "env").([]any)

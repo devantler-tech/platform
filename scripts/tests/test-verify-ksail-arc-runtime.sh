@@ -13,8 +13,7 @@ if [[ -e "$root/scripts/wait-for-ksail-arc-registration.sh" ]]; then
 fi
 cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
-cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh" \
-  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
+cp "$root/scripts/ksail-arc-job-metrics.sh" "$scratch/scripts/"
 cp "$root/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/"
 yq -i '.spec.suspend=false' "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml"
@@ -138,7 +137,7 @@ case "$args" in
       *) cat "$ARC_TEST_ROOT/ars" ;;
     esac ;;
   *'get configmap ksail-arc-job-metrics-'*)
-    jq -cn --rawfile script "$ARC_TEST_ROOT/k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh" \
+    jq -cn --rawfile script "$ARC_TEST_ROOT/scripts/ksail-arc-job-metrics.sh" \
       --arg scenario "$ARC_TEST_CASE" '{metadata:{uid:"metrics-uid",annotations:{"kustomize.toolkit.fluxcd.io/substitute":"disabled"}},immutable:($scenario!="mutable-metrics"),
       data:{"job-metrics.sh":(if $scenario=="tampered-metrics" then "unverified" else $script end)}}' ;;
   *'get resourcequotas '*)
@@ -223,7 +222,7 @@ case "$args" in
       printf '0\n' >"$ARC_TEST_ROOT/cgroup/memory.peak"
     else printf '9876543210\n' >"$ARC_TEST_ROOT/cgroup/memory.peak"; fi
     printf 'low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n' >"$ARC_TEST_ROOT/cgroup/memory.events"
-    source "$ARC_TEST_ROOT/k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh"
+    source "$ARC_TEST_ROOT/scripts/ksail-arc-job-metrics.sh"
     arc_job_metrics "$ARC_TEST_ROOT/cgroup"
     touch "$ARC_TEST_ROOT/metrics-executed" ;;
   *'exec observer -c cilium-agent -- hubble observe '*)

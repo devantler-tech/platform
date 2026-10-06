@@ -160,7 +160,7 @@ jq -e '
 stage=immutable-job-metrics
 metrics_name=$(jq -er '.spec.template.spec.volumes[2].configMap.name' "$scratch/ars.json")
 kc -n "$namespace" get configmap "$metrics_name" -o json >"$scratch/metrics-config.json"
-jq -e --rawfile expected k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh '
+jq -e --rawfile expected scripts/ksail-arc-job-metrics.sh '
   .immutable == true and (.metadata.uid | type == "string" and length > 0) and
   .metadata.annotations["kustomize.toolkit.fluxcd.io/substitute"] == "disabled" and
   (.data | length) == 1 and (.binaryData // {} | length) == 0 and .data["job-metrics.sh"] == $expected
