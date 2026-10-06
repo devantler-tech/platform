@@ -4,4 +4,6 @@ resources:
   - oci-repository.yaml
   - helm-release.yaml
   - external-secret.yaml
+  - secret-store.yaml
+  - service-account.yaml
   - cilium-network-policy-runner.yaml

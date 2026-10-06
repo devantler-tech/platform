@@ -114,13 +114,32 @@ func TestControllerIsNamespaceScopedAndCredentialsAreExternal(t *testing.T) {
 	secret := readYAML(t, "k8s/bases/infrastructure/ksail-analysis-runners/external-secret.yaml")
 	equal(t, field(t, secret, "kind"), "ExternalSecret")
 	equal(t, field(t, secret, "spec", "secretStoreRef", "name"), "openbao")
+	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
 	equal(t, field(t, secret, "spec", "target", "name"), "arc-ksail-app")
 	entries := field(t, secret, "spec", "data").([]any)
 	if len(entries) != 3 {
 		t.Fatal("only the three App authentication keys are expected")
 	}
+	properties := map[string]string{
+		"github_app_id":              "app_id",
+		"github_app_installation_id": "installation_id",
+		"github_app_private_key":     "pem",
+	}
 	for _, entry := range entries {
-		equal(t, field(t, entry, "remoteRef", "key"), "github-arc-ksail")
+		key, ok := field(t, entry, "secretKey").(string)
+		if !ok {
+			t.Fatal("App credential target key must be a string")
+		}
+		property, ok := properties[key]
+		if !ok {
+			t.Fatalf("unexpected or duplicate App credential target key %q", key)
+		}
+		equal(t, field(t, entry, "remoteRef", "key"), "infrastructure/github/app")
+		equal(t, field(t, entry, "remoteRef", "property"), property)
+		delete(properties, key)
+	}
+	if len(properties) != 0 {
+		t.Fatalf("missing App credential target keys: %v", properties)
 	}
 }
 
