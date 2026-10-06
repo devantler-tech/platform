@@ -349,10 +349,66 @@ wf_fail() {
 wf_line() {
   { grep -n -F -- "$1" "${workflow}" || true; } | head -n 1 | cut -d: -f1
 }
+wf_dispatch_only() {
+  local triggers
+  triggers="$(yq -o=json '.on' "$1" 2>/dev/null)" || return 1
+  jq -se 'length == 1 and (.[0] |
+    if type == "object" then keys == ["workflow_dispatch"]
+    elif type == "array" then . == ["workflow_dispatch"]
+    elif type == "string" then . == "workflow_dispatch"
+    else false end)' <<<"${triggers}" >/dev/null 2>&1
+}
+trigger_case() {
+  local expected="$1" description="$2" body="$3" actual
+  printf '%s\n' "${body}" >"${work_dir}/triggers.yaml"
+  if wf_dispatch_only "${work_dir}/triggers.yaml"; then actual=pass; else actual=fail; fi
+  [[ "${actual}" == "${expected}" ]] || wf_fail "${description}"
+  case_done "${description}"
+}
+trigger_case pass 'mapping with only workflow_dispatch is accepted' 'on: {workflow_dispatch: {}}'
+trigger_case pass 'inline list with only workflow_dispatch is accepted' 'on: [workflow_dispatch]'
+trigger_case pass 'scalar workflow_dispatch is accepted' 'on: workflow_dispatch'
+trigger_case fail 'inline list with push is rejected' 'on: [push, workflow_dispatch]'
+trigger_case fail 'an additional workflow_run mapping is rejected' 'on: {workflow_dispatch: {}, workflow_run: {}}'
+trigger_case fail 'a pull_request scalar is rejected' 'on: pull_request'
+trigger_case fail 'boolean triggers are rejected' 'on: true'
+trigger_case fail 'missing triggers are rejected' 'name: no triggers'
+trigger_case fail 'multiple workflow documents are rejected' $'on: workflow_dispatch\n---\non: workflow_dispatch'
+trigger_case fail 'malformed trigger YAML is rejected' 'on: ['
+
+# Exercise the workflow's actual endpoint step against a helper that emits a
+# synthetic address on both streams. It never calls the production helper.
+readonly endpoint_work="${work_dir}/endpoint"
+mkdir -p "${endpoint_work}/scripts"
+cat >"${endpoint_work}/scripts/use-prod-stable-api-endpoint.sh" <<'ENDPOINT'
+#!/usr/bin/env bash
+printf 'SYNTHETIC-ENDPOINT-CANARY.invalid\n'
+printf 'SYNTHETIC-ENDPOINT-CANARY.invalid\n' >&2
+exit "${ENDPOINT_RC}"
+ENDPOINT
+chmod +x "${endpoint_work}/scripts/use-prod-stable-api-endpoint.sh"
+endpoint_run="$(yq -r '.jobs[].steps[] | select(.run // "" | contains("scripts/use-prod-stable-api-endpoint.sh")) | .run' "${workflow}")"
+[[ -n "${endpoint_run}" ]] || wf_fail 'endpoint selection must have an executable step'
+endpoint_case() {
+  local expected="$1" description="$2" actual output
+  if output="$(cd "${endpoint_work}" && ENDPOINT_RC="${expected}" bash -c "${endpoint_run}" 2>&1)"; then
+    actual=0
+  else
+    actual="$?"
+  fi
+  [[ "${actual}" -eq "${expected}" ]] || wf_fail "${description}: exit status"
+  if [[ "${expected}" -eq 0 ]]; then
+    [[ -z "${output}" ]] || wf_fail "${description}: success must be silent"
+  else
+    [[ "${output}" == 'Could not select the production API endpoint.' ]] ||
+      wf_fail "${description}: failure must use only a fixed message"
+  fi
+  case_done "${description}"
+}
+endpoint_case 0 'endpoint helper success is silent'
+endpoint_case 1 'endpoint helper failure preserves failure without disclosing either stream'
 [[ -f "${workflow}" ]] || wf_fail 'the workflow file is missing'
-if grep -Eq '^[[:space:]]+(schedule|push|pull_request|pull_request_target|merge_group):' "${workflow}"; then
-  wf_fail 'the workflow must stay dispatch-only'
-fi
+wf_dispatch_only "${workflow}" || wf_fail 'the workflow must stay dispatch-only'
 grep -Eq '^permissions: \{\}$' "${workflow}" || wf_fail 'top-level permissions must be empty'
 [[ "$(grep -Ec '^[[:space:]]+[a-z-]+: (read|write)( |$)' "${workflow}")" -eq 1 ]] ||
   wf_fail 'the job may hold exactly one permission'
@@ -363,7 +419,7 @@ main_guard="$(wf_line "!= 'refs/heads/main'")"
 checkout="$(wf_line 'uses: actions/checkout@')"
 confirm="$(wf_line "!= 'read-actual-budget-userns-maps'")"
 restore="$(wf_line 'secrets.KUBE_CONFIG')"
-endpoint="$(wf_line 'run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null')"
+endpoint="$(wf_line 'scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1')"
 read_step="$(wf_line 'run: ./scripts/read-actual-budget-userns-maps.sh --context admin@prod')"
 for step in "${main_guard}" "${checkout}" "${confirm}" "${restore}" "${endpoint}" "${read_step}"; do
   [[ -n "${step}" ]] || wf_fail 'a required step is missing'

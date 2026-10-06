@@ -29,7 +29,7 @@ name: Read Actual Budget User Namespace Maps
 #
 # PUBLIC LOG. The script prints container names, map names, range sizes and outcomes only: never
 # the ids a container maps to on the node, never the pod name, and never kubectl's own error
-# text. The endpoint helper's success line names the API endpoint, so it is discarded.
+# text. Both endpoint-helper streams are discarded; failure uses a fixed message.
 
 on:
   workflow_dispatch:
@@ -112,11 +112,15 @@ jobs:
       - name: 🔗 Select stable prod API endpoint
         # Same helper and same position as the deploy composite: resolve the KSail-owned floating
         # IP, fail closed on missing or foreign ownership, and switch admin@prod before any API
-        # call. Its success line names the endpoint, so stdout is discarded.
+        # call. Either stream can name the endpoint, so both are discarded.
         shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+        run: |
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then
+            printf 'Could not select the production API endpoint.\n' >&2
+            exit 1
+          fi
 
       - name: 🪪 Read both containers' user and group id maps
         shell: bash
