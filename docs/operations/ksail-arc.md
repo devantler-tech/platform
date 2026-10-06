@@ -69,7 +69,16 @@ routing managed analysis:
    combined limits are 1Gi/1.25 CPU. These fit the
    current default namespace quota, but are **not a calibrated memory budget**.
    The observed roughly 9.7GB native extractor peak is not aggregate pod memory or
-   proof of OOM. Measure total pod/cgroup peak and extraction duration; revise
+   proof of OOM. The immutable, hash-named metrics ConfigMap is mounted read-only
+   outside the runner application directory. Its completion hook reads only the
+   container's kernel cgroup memory limit, lifetime peak and OOM counters, including
+   the runner and its descendant processes. It requires the declared 14Gi limit,
+   bounded valid measurements and zero OOM events; an unknown measurement fails.
+   Three bounded reads complete within 15 seconds. No credentials, environment
+   values or JIT configuration are read or printed. The protected canary verifies
+   the exact immutable hook bytes and executes it. This is telemetry from the job
+   account, not an independent security boundary or a substitute for job success.
+   Measure actual managed-job peak and extraction duration; revise
    sizing and any narrowly justified quota change before admitting real traffic.
 4. Render both pinned charts, including their CRDs and namespace-scoped RBAC.
    Confirm the App Secret is absent from runner volumes, the no-permission runner
@@ -107,9 +116,13 @@ routing managed analysis:
    and read configuration back. Preserve the other setup fields. Check the
    required tools, GitHub proxy, network allowlist and non-root installation
    path; do not enable sudo or privilege escalation to make setup pass.
-   Preserve all root, nested-module and desktop extraction/source guards. Meet
+   Require the actual preflight's automatic completion hook to emit its bounded
+   numeric record under GitHub's Complete runner step. The smoke-step peak is
+   separate from that whole-job measurement. Preserve all root, nested-module and desktop extraction/source guards. Meet
    KSail #7131's five consecutive successful managed runs and verify completed
    runner pods and their registration are removed before declaring that bug fixed.
+   Each managed success must retain its complete-step cgroup measurement; absent
+   or malformed output remains HOLD and cannot count as a calibration success.
 
 For source validation, run `go test ./scripts/tests/arc-staging` and build both
 component directories directly with `kubectl kustomize`. The local tree must

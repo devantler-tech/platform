@@ -120,6 +120,7 @@ done
 stage=registration-and-bounds
 kc -n "$namespace" get autoscalingrunnerset.actions.github.com ksail-code-quality -o json >"$scratch/ars.json"
 jq -e '
+  .spec.template.spec.volumes[2].configMap.name as $metrics |
   .status.phase == "Running" and .status.observedGeneration == .metadata.generation and
   ((.metadata.annotations["runner-scale-set-id"] | tonumber) > 0) and
   .spec.githubConfigUrl == "https://github.com/devantler-tech/ksail" and
@@ -141,14 +142,29 @@ jq -e '
   .spec.template.spec.containers[0].resources.limits["ephemeral-storage"] == "48Gi" and
   .spec.template.spec.nodeSelector["platform.devantler.tech/ksail-analysis"] == "enabled" and
   .spec.template.spec.tolerations == [{"key":"platform.devantler.tech/ksail-analysis","operator":"Equal","value":"enabled","effect":"NoSchedule"}] and
-  .spec.template.spec.volumes == [{"name":"runner-home","emptyDir":{"sizeLimit":"40Gi"}},{"name":"runner-tmp","emptyDir":{"sizeLimit":"2Gi"}}] and
+  ($metrics | test("^ksail-arc-job-metrics-[a-z0-9]{10}$")) and
+  .spec.template.spec.volumes == [{"name":"runner-home","emptyDir":{"sizeLimit":"40Gi"}},{"name":"runner-tmp","emptyDir":{"sizeLimit":"2Gi"}},
+    {"name":"runner-metrics","configMap":{"name":$metrics,"defaultMode":365,"items":[{"key":"job-metrics.sh","path":"job-metrics.sh"}]}}] and
+  .spec.template.spec.containers[0].env == [{"name":"ACTIONS_RUNNER_HOOK_JOB_COMPLETED","value":"/etc/ksail-arc-metrics/job-metrics.sh"}] and
+  .spec.template.spec.containers[0].volumeMounts == [{"name":"runner-home","mountPath":"/home/runner"},{"name":"runner-tmp","mountPath":"/tmp"},
+    {"name":"runner-metrics","mountPath":"/etc/ksail-arc-metrics","readOnly":true}] and
+  (.spec.template.spec.initContainers[0].env // [] | length) == 0 and
+  .spec.template.spec.initContainers[0].volumeMounts == [{"name":"runner-home","mountPath":"/runner-data"}] and
   all((.spec.template.spec.containers + .spec.template.spec.initContainers)[];
     .securityContext.readOnlyRootFilesystem == true and .securityContext.privileged == false and
     .securityContext.allowPrivilegeEscalation == false and .securityContext.capabilities.drop == ["ALL"] and
-    (.env // [] | length) == 0 and .envFrom == null and
+    .envFrom == null and
     (.image | test("^ghcr.io/devantler-tech/ksail-analysis-runner@sha256:[0-9a-f]{64}$"))) and
   .spec.template.spec.initContainers[0].image == .spec.template.spec.containers[0].image
 ' "$scratch/ars.json" >/dev/null
+stage=immutable-job-metrics
+metrics_name=$(jq -er '.spec.template.spec.volumes[2].configMap.name' "$scratch/ars.json")
+kc -n "$namespace" get configmap "$metrics_name" -o json >"$scratch/metrics-config.json"
+jq -e --rawfile expected k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh '
+  .immutable == true and (.metadata.uid | type == "string" and length > 0) and
+  .metadata.annotations["kustomize.toolkit.fluxcd.io/substitute"] == "disabled" and
+  (.data | length) == 1 and (.binaryData // {} | length) == 0 and .data["job-metrics.sh"] == $expected
+' "$scratch/metrics-config.json" >/dev/null
 image=$(jq -r '.spec.template.spec.containers[0].image' "$scratch/ars.json")
 expected_image=$(yq '.spec.values.template.spec.containers[0].image' k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml)
 [[ "$image" == "$expected_image" ]] || fail image-drift
@@ -328,5 +344,7 @@ kc -n default get endpoints kubernetes -o json | jq -c '.subsets' >"$scratch/api
 jq -c '.subsets' "$scratch/api.json" >"$scratch/api-before"
 cmp -s "$scratch/api-before" "$scratch/api-after" || fail api-target-churn
 
+stage=job-cgroup-measurement
+quiet kc -n "$namespace" exec "$probe" -- /etc/ksail-arc-metrics/job-metrics.sh
 stage=complete
 printf 'PASS: ARC registration, restricted image, admission and two intercepted egress denials; manifest=%s\n' "$PLATFORM_MANIFEST_DIGEST"

@@ -54,6 +54,13 @@ spec:
           - name: runner-tmp
             emptyDir:
               sizeLimit: 2Gi
+          - name: runner-metrics
+            configMap:
+              name: ksail-arc-job-metrics
+              defaultMode: 365 # 0555: executable, read-only job hook.
+              items:
+                - key: job-metrics.sh
+                  path: job-metrics.sh
         initContainers:
           - name: init-runner-home
             image: ghcr.io/devantler-tech/ksail-analysis-runner@sha256:1ab01644fd6f67e0b1ab0b456e10b78f58be92ac67e5e06d103cd8c12bbb119b
@@ -80,6 +87,9 @@ spec:
           - name: runner
             image: ghcr.io/devantler-tech/ksail-analysis-runner@sha256:1ab01644fd6f67e0b1ab0b456e10b78f58be92ac67e5e06d103cd8c12bbb119b
             command: ["/home/runner/run.sh"]
+            env:
+              - name: ACTIONS_RUNNER_HOOK_JOB_COMPLETED
+                value: /etc/ksail-arc-metrics/job-metrics.sh
             securityContext:
               allowPrivilegeEscalation: false
               privileged: false
@@ -91,6 +101,9 @@ spec:
                 mountPath: /home/runner
               - name: runner-tmp
                 mountPath: /tmp
+              - name: runner-metrics
+                mountPath: /etc/ksail-arc-metrics
+                readOnly: true
             resources:
               requests:
                 cpu: "3"

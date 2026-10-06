@@ -13,6 +13,8 @@ if [[ -e "$root/scripts/wait-for-ksail-arc-registration.sh" ]]; then
 fi
 cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
+cp "$root/k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh" \
+  "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/"
 cp "$root/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/"
 yq -i '.spec.suspend=false' "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml"
@@ -32,7 +34,8 @@ image="$image" yq -i '.spec.values.template.spec.containers[0].image=strenv(imag
 yq -o=json '.spec.values' "$scratch/k8s/bases/infrastructure/ksail-analysis-runners/helm-release.yaml" \
   | jq '{metadata:{generation:1,annotations:{"runner-scale-set-id":"1"}},
     status:{phase:"Running",observedGeneration:1},spec:.} |
-    .spec.template.spec.serviceAccountName="ksail-code-quality-gha-rs-no-permission"' >"$scratch/ars"
+    .spec.template.spec.serviceAccountName="ksail-code-quality-gha-rs-no-permission" |
+    .spec.template.spec.volumes[2].configMap.name="ksail-arc-job-metrics-abc123xyz4"' >"$scratch/ars"
 cat >"$scratch/scripts/wait-for-platform-flux-revision.sh" <<'SH'
 #!/usr/bin/env bash
 [[ "$1" == "$digest" ]]
@@ -127,8 +130,17 @@ case "$args" in
       jq '.status.phase="Pending" | .status.observedGeneration=0 | .metadata.annotations["runner-scale-set-id"]="0"' "$ARC_TEST_ROOT/ars"
       exit 0
     fi
-    if [[ "$ARC_TEST_CASE" == no-registration ]]; then jq '.metadata.annotations["runner-scale-set-id"]="0"' "$ARC_TEST_ROOT/ars"
-    else cat "$ARC_TEST_ROOT/ars"; fi ;;
+    case "$ARC_TEST_CASE" in
+      no-registration) jq '.metadata.annotations["runner-scale-set-id"]="0"' "$ARC_TEST_ROOT/ars" ;;
+      unexpected-hook) jq '.spec.template.spec.containers[0].env[0].value="/unverified"' "$ARC_TEST_ROOT/ars" ;;
+      writable-metrics) jq '.spec.template.spec.containers[0].volumeMounts[2].readOnly=false' "$ARC_TEST_ROOT/ars" ;;
+      wrong-metrics-configmap) jq '.spec.template.spec.volumes[2].configMap.name="unverified"' "$ARC_TEST_ROOT/ars" ;;
+      *) cat "$ARC_TEST_ROOT/ars" ;;
+    esac ;;
+  *'get configmap ksail-arc-job-metrics-'*)
+    jq -cn --rawfile script "$ARC_TEST_ROOT/k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh" \
+      --arg scenario "$ARC_TEST_CASE" '{metadata:{uid:"metrics-uid",annotations:{"kustomize.toolkit.fluxcd.io/substitute":"disabled"}},immutable:($scenario!="mutable-metrics"),
+      data:{"job-metrics.sh":(if $scenario=="tampered-metrics" then "unverified" else $script end)}}' ;;
   *'get resourcequotas '*)
     if [[ "$ARC_TEST_CASE" == full-quota ]]; then
       printf '{"items":[{"spec":{"hard":{"pods":"1"}},"status":{"hard":{"pods":"1"},"used":{"pods":"1"}}}]}'
@@ -204,6 +216,16 @@ case "$args" in
     if [[ "$ARC_TEST_CASE" == allowed-egress ]]; then exit 0; fi
     exit 28 ;;
   *'exec arc-proof-'*'-- test -f /tmp/arc-proof-ready') ;;
+  *'exec arc-proof-'*'-- /etc/ksail-arc-metrics/job-metrics.sh')
+    mkdir -p "$ARC_TEST_ROOT/cgroup"
+    printf '15032385536\n' >"$ARC_TEST_ROOT/cgroup/memory.max"
+    if [[ "$ARC_TEST_CASE" == failed-metrics-hook ]]; then
+      printf '0\n' >"$ARC_TEST_ROOT/cgroup/memory.peak"
+    else printf '9876543210\n' >"$ARC_TEST_ROOT/cgroup/memory.peak"; fi
+    printf 'low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n' >"$ARC_TEST_ROOT/cgroup/memory.events"
+    source "$ARC_TEST_ROOT/k8s/bases/infrastructure/ksail-analysis-runners/job-metrics.sh"
+    arc_job_metrics "$ARC_TEST_ROOT/cgroup"
+    touch "$ARC_TEST_ROOT/metrics-executed" ;;
   *'exec observer -c cilium-agent -- hubble observe '*)
     destination=192.0.2.12 port=8181 target_ns=kube-system target_pod=dns
     [[ "$args" != *'--to-ip 192.0.2.13'* ]] || { destination=192.0.2.13; port=6443; target_ns=''; target_pod=''; }
@@ -232,6 +254,7 @@ run_case() {
   local name=$1 expected=$2 code=0
   rm -f "$scratch/live-pod" "$scratch/deleted" "$scratch/replacement-preserved" "$scratch/runtime-access"
   rm -f "$scratch/flux-reads" "$scratch/registration-reads" "$scratch/registration-budget"
+  rm -f "$scratch/metrics-executed"
   (
     cd "$scratch"
     PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform \
@@ -239,7 +262,7 @@ run_case() {
       bash scripts/verify-ksail-arc-runtime.sh --if-active
   ) >"$scratch/stdout" 2>"$scratch/stderr" || code=$?
   if [[ "$expected" == pass ]]; then
-    [[ "$code" == 0 && -e "$scratch/deleted" ]] || { printf 'FAIL: %s (exit %s)\n' "$name" "$code" >&2; cat "$scratch/stderr" >&2; exit 1; }
+    [[ "$code" == 0 && -e "$scratch/deleted" && -e "$scratch/metrics-executed" ]] || { printf 'FAIL: %s (exit %s)\n' "$name" "$code" >&2; cat "$scratch/stderr" >&2; exit 1; }
     grep -q '^PASS: ARC registration' "$scratch/stdout" || exit 1
   else
     [[ "$code" != 0 ]] || { printf 'FAIL: accepted %s\n' "$name" >&2; exit 1; }
@@ -301,7 +324,8 @@ sed 's/autoscale-ksail-analysis-0123456789abcdef/autoscale-other-pool-0123456789
   "$scratch/kubectl-original" >"$scratch/bin/kubectl"
 run_case wrong-node-pool fail
 cp "$scratch/kubectl-original" "$scratch/bin/kubectl"
-for name in no-registration bad-signature tampered-image wider-ceiling full-quota stale-quota admission-transport mutated-init \
+for name in no-registration unexpected-hook writable-metrics wrong-metrics-configmap mutable-metrics tampered-metrics \
+  failed-metrics-hook bad-signature tampered-image wider-ceiling full-quota stale-quota admission-transport mutated-init \
   unknown-create replacement-race insufficient-memory unhealthy-target curl-transport allowed-egress \
   forwarded-flow wrong-source observer-loss observer-diagnostics failed-node-cleanup; do
   run_case "$name" fail

@@ -47,18 +47,23 @@ func assertRunnerStorage(t *testing.T, spec any) {
 	wantVolumes := []any{
 		map[string]any{"name": "runner-home", "emptyDir": map[string]any{"sizeLimit": "40Gi"}},
 		map[string]any{"name": "runner-tmp", "emptyDir": map[string]any{"sizeLimit": "2Gi"}},
+		map[string]any{"name": "runner-metrics", "configMap": map[string]any{
+			"name": "ksail-arc-job-metrics", "defaultMode": 365,
+			"items": []any{map[string]any{"key": "job-metrics.sh", "path": "job-metrics.sh"}},
+		}},
 	}
 	if !reflect.DeepEqual(field(t, spec, "volumes"), wantVolumes) {
-		t.Fatal("only two explicitly bounded disk emptyDirs are permitted")
+		t.Fatal("only two bounded disk emptyDirs and the immutable metrics hook are permitted")
 	}
 	runner := field(t, spec, "containers").([]any)[0]
 	equal(t, field(t, runner, "securityContext", "readOnlyRootFilesystem"), true)
 	wantMounts := []any{
 		map[string]any{"name": "runner-home", "mountPath": "/home/runner"},
 		map[string]any{"name": "runner-tmp", "mountPath": "/tmp"},
+		map[string]any{"name": "runner-metrics", "mountPath": "/etc/ksail-arc-metrics", "readOnly": true},
 	}
 	if !reflect.DeepEqual(field(t, runner, "volumeMounts"), wantMounts) {
-		t.Fatal("runner may mount only its disposable home and temporary storage")
+		t.Fatal("runner may mount only disposable storage and its read-only metrics hook")
 	}
 	initializers := field(t, spec, "initContainers").([]any)
 	equal(t, len(initializers), 1)

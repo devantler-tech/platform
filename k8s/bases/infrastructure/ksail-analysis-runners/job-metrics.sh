@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+arc_metrics_fail() {
+  printf '::error::KSail ARC whole-job cgroup measurement failed: %s\n' "$1" >&2
+  return 1
+}
+
+# The production entrypoint uses only the container's kernel cgroup. A supplied
+# fixture directory is used when this function is sourced by offline tests.
+arc_job_metrics() {
+  local root=$1 limit peak events key value extra
+  local low='' high='' max='' oom='' oom_kill='' oom_group_kill=''
+  limit=$(timeout 5s cat "$root/memory.max" 2>/dev/null) || { arc_metrics_fail read-limit; return 1; }
+  peak=$(timeout 5s cat "$root/memory.peak" 2>/dev/null) || { arc_metrics_fail read-peak; return 1; }
+  events=$(timeout 5s cat "$root/memory.events" 2>/dev/null) || { arc_metrics_fail read-events; return 1; }
+  [[ "$limit" == 15032385536 ]] || { arc_metrics_fail limit; return 1; }
+  [[ "$peak" =~ ^(0|[1-9][0-9]{0,17})$ && "$peak" -gt 0 && "$peak" -le "$limit" ]] || {
+    arc_metrics_fail peak; return 1;
+  }
+  while read -r key value extra; do
+    [[ -z "$extra" && "$value" =~ ^(0|[1-9][0-9]{0,17})$ ]] || { arc_metrics_fail event-format; return 1; }
+    case "$key" in
+      low|high|max|oom|oom_kill|oom_group_kill)
+        [[ -z "${!key}" ]] || { arc_metrics_fail duplicate-event; return 1; }
+        printf -v "$key" '%s' "$value" ;;
+      *) arc_metrics_fail unknown-event; return 1 ;;
+    esac
+  done <<<"$events"
+  [[ -n "$low" && -n "$high" && -n "$max" && -n "$oom" && -n "$oom_kill" && -n "$oom_group_kill" ]] || {
+    arc_metrics_fail missing-event; return 1;
+  }
+  [[ "$oom" == 0 && "$oom_kill" == 0 && "$oom_group_kill" == 0 ]] || { arc_metrics_fail oom; return 1; }
+  printf 'KSail ARC whole-job cgroup: {"schemaVersion":1,"memoryMaxBytes":%s,"memoryPeakBytes":%s,"limitEvents":%s,"oomEvents":%s,"oomKills":%s,"oomGroupKills":%s}\n' \
+    "$limit" "$peak" "$max" "$oom" "$oom_kill" "$oom_group_kill"
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  [[ $# == 0 ]] || { arc_metrics_fail arguments; exit 1; }
+  arc_job_metrics /sys/fs/cgroup
+fi
+
