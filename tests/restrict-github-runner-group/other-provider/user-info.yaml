@@ -1,0 +1,6 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata: {name: tenant}
+userInfo:
+  username: system:serviceaccount:github-config:github-config
+  groups: [system:serviceaccounts, system:serviceaccounts:github-config, system:authenticated]

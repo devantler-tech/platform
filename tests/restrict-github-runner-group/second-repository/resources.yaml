@@ -1,0 +1,25 @@
+{
+  "apiVersion": "actions.github.m.upbound.io/v1alpha1",
+  "kind": "RunnerGroup",
+  "metadata": {
+    "name": "ksail-code-quality",
+    "namespace": "github-config"
+  },
+  "spec": {
+    "forProvider": {
+      "name": "ksail-code-quality",
+      "visibility": "selected",
+      "allowsPublicRepositories": true,
+      "restrictedToWorkflows": false,
+      "selectedRepositoryIds": [
+        737584922,
+        1
+      ],
+      "selectedWorkflows": []
+    },
+    "providerConfigRef": {
+      "name": "default",
+      "kind": "ProviderConfig"
+    }
+  }
+}

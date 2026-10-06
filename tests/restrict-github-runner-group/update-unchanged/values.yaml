@@ -1,0 +1,14 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata: {name: values}
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: restrict-github-runner-group
+    resources:
+      - name: ksail-code-quality
+        values:
+          request.oldObject:
+            metadata:
+              annotations:
+                crossplane.io/external-name: "27"

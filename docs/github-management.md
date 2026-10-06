@@ -126,6 +126,23 @@ reconcile, then batch the rest.
    where an external object already exists. Each active MRD costs the apiserver
    ~3 MiB; activate only what is used.
 
+## KSail analysis runner group
+
+The existing GitHub App's organization runner permission supports the dedicated
+`ksail-code-quality` runner group. The namespaced RunnerGroup kind is explicitly
+activated, and only the `github-config` tenant Role receives its managed-resource
+verbs. The declaration lives in `.github` and selects only KSail repository
+`737584922`; public-repository use is necessary because KSail is public, while
+the one-item selection keeps every other repository excluded.
+
+Admission requires this exact group name, the existing `default` ProviderConfig,
+selected visibility, and the KSail-only repository set. It refuses initialization
+overrides and tenant changes to the group's remote identity. The protected
+deployment proves the installed CRD and tenant permissions, admits the permitted
+declaration using server dry-run, and observes explicit admission refusals for
+organization-wide access and foreign identity adoption. ARC activation and
+managed-analysis routing require separate registered-runner acceptance.
+
 ## Safety rails
 
 - **Never `Delete`** — every managed resource omits `Delete` from

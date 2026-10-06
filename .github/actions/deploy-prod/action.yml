@@ -554,6 +554,17 @@ runs:
       shell: bash
       run: ./scripts/verify-gateway-routes-applied.sh
 
+    - name: Verify the KSail-only runner-group capability
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      run: bash scripts/verify-ksail-runner-group-capability.sh
+
     - name: Verify the deployed data product UI release
       # The protected deployment must prove current Apps/chart/Helm identities,
       # all current Pods and public endpoints before its candidate can merge.

@@ -1,0 +1,21 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: ksail-runner-group-other-provider
+policies:
+  - ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-runner-group.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-github-runner-group
+    rule: ksail-only-runner-group
+    resources: [github-config/ksail-code-quality]
+    kind: RunnerGroup
+    result: fail
+  - policy: restrict-github-runner-group
+    rule: tenant-cannot-rebind-group
+    resources: [github-config/ksail-code-quality]
+    kind: RunnerGroup
+    result: pass

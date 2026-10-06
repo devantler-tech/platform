@@ -44,3 +44,5 @@ spec:
     # provider-upjet-github release embedding terraform-provider-github >= 6.11.0;
     # the pinned v0.20.0 embeds 6.13.0.
     - repositorypermissions.actions.github.m.upbound.io
+    # Dedicated organization runner group, restricted to KSail by admission.
+    - runnergroups.actions.github.m.upbound.io
