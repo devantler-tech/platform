@@ -3,7 +3,7 @@ module github.com/devantler-tech/platform
 go 1.26.6
 
 require (
-	github.com/google/cel-go v0.31.0
+	github.com/google/cel-go v0.32.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/siderolabs/talos/pkg/machinery v1.14.0
 	go.yaml.in/yaml/v2 v2.4.4
