@@ -17,8 +17,8 @@
 # HOW A MAP IS READ. Each line is `<first id inside> <first id outside> <count>`. A container
 # that shares the node's ids shows the identity map, `0 0 4294967295`. A container in its own
 # user namespace shows id 0 mapped to a non-zero id outside, over a bounded range. A map counts
-# as MAPPED only when every line parses, id 0 is mapped, no range exposes the node's root,
-# no id maps onto itself and no range reaches the full id space.
+# as MAPPED only when every line is within the usable kernel id space, ranges do not overlap,
+# id 0 is mapped, no range exposes the node's root and no id maps onto itself.
 #
 # THE VERDICT
 #   MAPPED         all four maps (two containers, user and group) are non-identity.
@@ -135,6 +135,9 @@ printf 'Pod: one, Running, hostUsers false, both containers ready.\n'
 # Prints `mapped <total count>` or `identity`, and returns 1 when the map cannot be judged.
 classify_map() {
   local map="$1" inside outside count extra lines=0 total=0 zero_mapped=0 identity=0
+  local inside_end outside_end index
+  local -a inside_starts inside_ends outside_starts outside_ends
+  inside_starts=() inside_ends=() outside_starts=() outside_ends=()
   while read -r inside outside count extra; do
     [[ -z "${inside}${outside}${count}${extra}" ]] && continue
     if [[ -n "${extra}" || ! "${inside}" =~ ^(0|[1-9][0-9]*)$ ||
@@ -146,6 +149,29 @@ classify_map() {
     if [[ "${#inside}" -gt 10 || "${#outside}" -gt 10 || "${#count}" -gt 10 ]]; then
       return 1
     fi
+    # The all-ones id is deliberately unmapped; /proc can print it for an
+    # unmapped parent id. Numeric text alone does not prove a usable mapping.
+    # See https://man7.org/linux/man-pages/man7/user_namespaces.7.html.
+    if [[ "${inside}" -ge "${full_id_space}" || "${outside}" -ge "${full_id_space}" ||
+      "${count}" -gt "${full_id_space}" ]]; then
+      return 1
+    fi
+    inside_end=$((inside + count))
+    outside_end=$((outside + count))
+    if [[ "${inside_end}" -gt "${full_id_space}" || "${outside_end}" -gt "${full_id_space}" ]]; then
+      return 1
+    fi
+    # Linux permits any ordering, but neither side of the map may overlap.
+    for ((index = 0; index < lines; index++)); do
+      if [[ ( "${inside}" -lt "${inside_ends[index]}" && "${inside_starts[index]}" -lt "${inside_end}" ) ||
+        ( "${outside}" -lt "${outside_ends[index]}" && "${outside_starts[index]}" -lt "${outside_end}" ) ]]; then
+        return 1
+      fi
+    done
+    inside_starts[lines]="${inside}"
+    inside_ends[lines]="${inside_end}"
+    outside_starts[lines]="${outside}"
+    outside_ends[lines]="${outside_end}"
     lines=$((lines + 1))
     total=$((total + count))
     if [[ "${inside}" -eq 0 ]]; then

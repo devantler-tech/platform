@@ -196,6 +196,22 @@ require_text 'actualbudget uid_map: mapped — id 0 is a non-zero id on the node
 case_done 'a multi-range non-identity map is MAPPED with its sizes summed'
 
 reset_fixtures
+write_map actualbudget.uid_map '0 4294967294 1'
+run_read --context admin@prod
+require_rc 0 'the highest valid outside id must remain MAPPED'
+require_safe_run 'highest valid id'
+require_text 'MAPPED: both' 'the highest valid id must print MAPPED'
+case_done 'the highest valid outside id is accepted'
+
+reset_fixtures
+write_map actualbudget.uid_map "$(printf '0 %s 1000\n1000 %s 1000\n' "$((uid_base + 1000))" "${uid_base}")"
+run_read --context admin@prod
+require_rc 0 'non-overlapping outside ranges need not be in ascending order'
+require_safe_run 'unordered outside ranges'
+require_text 'MAPPED: both' 'unordered valid ranges must print MAPPED'
+case_done 'non-overlapping outside ranges are accepted in either order'
+
+reset_fixtures
 edit_pod '.items[0].status.containerStatuses |= reverse'
 run_read --context admin@prod
 require_rc 0 'ready statuses in a different order must still be MAPPED'
@@ -219,7 +235,6 @@ identity_case enablebanking-seed.gid_map '         0          0 4294967295' 'the
 identity_case actualbudget.gid_map '0 0 65536' 'root mapped to the node root over a bounded range'
 identity_case enablebanking-seed.uid_map "$(printf '0 %s 1000\n1000 1000 1\n' "${uid_base}")" \
   'one id passed straight through beside a mapped root'
-identity_case actualbudget.uid_map "0 ${uid_base} 4294967295" 'a range covering the whole id space'
 identity_case actualbudget.uid_map "$(printf '0 %s 1\n1 0 1\n' "${uid_base}")" \
   'a non-root container id mapped to the node root beside a mapped root'
 
@@ -257,6 +272,19 @@ map_inconclusive actualbudget.uid_map "0 ${uid_base} 65536 9" 'a map line with f
 map_inconclusive actualbudget.uid_map "0 ${uid_base} 0" 'a zero-length range'
 map_inconclusive actualbudget.uid_map "1000 ${uid_base} 65536" 'a map that leaves id 0 unmapped'
 map_inconclusive actualbudget.uid_map "0 99999999999 65536" 'an id longer than the kernel prints'
+map_inconclusive actualbudget.uid_map '0 4294967295 1' 'an unmapped outside-id sentinel'
+map_inconclusive enablebanking-seed.gid_map "$(printf '0 %s 1\n4294967295 %s 1\n' "${gid_base}" "$((gid_base + 1))")" \
+  'an inside-id sentinel beside a valid mapped root'
+map_inconclusive actualbudget.uid_map '0 9999999999 1' 'a ten-digit id beyond the kernel id space'
+map_inconclusive actualbudget.gid_map '0 4294967294 2' 'a range crossing the outside-id boundary'
+map_inconclusive enablebanking-seed.uid_map "$(printf '0 %s 1\n4294967294 %s 2\n' "${uid_base}" "$((uid_base + 1))")" \
+  'a range crossing the inside-id boundary beside a mapped root'
+map_inconclusive actualbudget.uid_map "0 ${uid_base} 4294967296" 'a count beyond the full id space'
+map_inconclusive actualbudget.uid_map "0 ${uid_base} 4294967295" 'a full-size range overflowing a non-zero outside id'
+map_inconclusive actualbudget.uid_map "$(printf '0 %s 1000\n999 %s 1000\n' "${uid_base}" "$((uid_base + 2000))")" \
+  'overlapping inside ranges'
+map_inconclusive enablebanking-seed.gid_map "$(printf '0 %s 1000\n1000 %s 1000\n' "${gid_base}" "$((gid_base + 999))")" \
+  'overlapping outside ranges'
 map_inconclusive actualbudget.uid_map "$(printf '0 %s 1000\n08 8 1\n' "${uid_base}")" \
   'an inside id with a leading zero beside a mapped root'
 map_inconclusive enablebanking-seed.gid_map "$(printf '0 %s 1000\n8 08 1\n' "${gid_base}")" \
