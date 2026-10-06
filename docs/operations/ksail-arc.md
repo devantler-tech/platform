@@ -106,11 +106,13 @@ routing managed analysis:
    runner pods and their registration are removed before declaring that bug fixed.
 
 For staged validation, run `go test ./scripts/tests/arc-staging` and build both
-component directories directly with `kubectl kustomize`; normal local/prod trees
-must continue to contain no ARC resources. The unconditional CI guard runs on
-pull requests and merge groups. A deliberate activation revises that guard in
-the same reviewed change, alongside its evidence; deleting the guard alone is
-not activation proof.
+component directories directly with `kubectl kustomize`. Inactive local/prod
+trees must contain no ARC resources. The unconditional CI guard runs on pull
+requests and merge groups. It accepts production activation only through both
+explicit aggregate references, matching unsuspended releases and one verified
+immutable KSail image pin. The protected verifier also renders every production
+layer before deciding that source is inactive. Neither guard accepts a partial
+activation, hidden legacy reference or waived runtime acceptance.
 
 ## Rollout and recovery
 
@@ -133,6 +135,14 @@ two-stage persistence protection; never delete a namespace to cancel a job.
 Verify no listener, runner or GitHub registration remains before deleting approved
 temporary capacity. Remove only the ARC ExternalSecret and its materialized
 Secret; retain the shared App credential and its other platform consumers.
+
+Healing to inactive main does not drain or remove installed ARC releases: their
+pruning protection retains them. The orphan check must still report those
+untracked resources, and the inactive verifier does not establish their runtime
+cleanup. A failed or cancelled activation therefore remains on HOLD until a
+reviewed protected change declares and drains the retained pool, verifies busy
+jobs finish normally, and proves registration and capacity cleanup. Never remove
+pruning protection, add an orphan exception or treat source absence as drain proof.
 
 Official references: [ARC deployment and security guidance](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/deploy-runner-scale-sets)
 and [App authentication](https://docs.github.com/en/actions/how-tos/manage-runners/use-actions-runner-controller/authenticate-to-the-api).
