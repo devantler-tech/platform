@@ -745,6 +745,15 @@ run_default
 require_inconclusive 'an unsettled control backend must be INCONCLUSIVE' 'control backend endpoint is not settled'
 require_nothing_created
 reset_fixtures
+sed 's/"nodeName":"prod-worker-2",//' "${fixtures}/backend.json" >"${fixtures}/backend.tmp"
+mv "${fixtures}/backend.tmp" "${fixtures}/backend.json"
+if grep -Fq 'nodeName' "${fixtures}/backend.json"; then
+  fail 'fixture did not drop the control backend endpoint node'
+fi
+run_default
+require_inconclusive 'a control backend endpoint without a node must be INCONCLUSIVE' 'control backend endpoint is not settled'
+require_nothing_created
+reset_fixtures
 sed 's/"nodeName":"prod-worker-2"/"nodeName":"prod-worker-3"/' "${fixtures}/backend.json" >"${fixtures}/backend-after.json"
 grep -Fq '"nodeName":"prod-worker-3"' "${fixtures}/backend-after.json" || fail 'fixture did not move the control backend mid-run'
 run_default

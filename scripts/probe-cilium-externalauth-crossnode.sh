@@ -302,7 +302,8 @@ read_ingress_ips() {
 }
 
 # ---------------------------------------------------------------------------
-# 1. Topology before: settled oauth2-proxy endpoints, and the nodes a probe pod may run on.
+# 1. Topology before: settled oauth2-proxy and control backend endpoints, and the nodes a probe
+#    pod may run on.
 # ---------------------------------------------------------------------------
 endpoint_lines="$(read_endpoints "${oauth2_namespace}" "${oauth2_service}")" || inconclusive 'could not read the oauth2-proxy endpoints'
 case "${endpoint_lines}" in
