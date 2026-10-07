@@ -149,6 +149,12 @@ jobs:
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
 
+      - name: 🔐 Validate ARC transport proof boundaries
+        run: |
+          go test -race ./scripts/verify-arc-transport
+          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
+          bash scripts/tests/test-verify-arc-transport.sh
+
       - name: 🛑 Validate ARC recovery metadata proof
         run: go test -race ./scripts/guard-arc-recovery
 
@@ -491,6 +497,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
@@ -523,6 +530,7 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-arc-listener-public-content.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -649,6 +657,12 @@ jobs:
               - 'scripts/probe-github-team-external-identity.sh'
               - 'scripts/tests/test-probe-github-team-external-identity.sh'
               - '.github/workflows/probe-github-team-external-identity.yaml'
+              # The #3604 user-namespace map read, its test and its workflow are one
+              # contract: the test pins that the script issues one `get` and four
+              # fixed `exec … cat` reads, and that no node-side id reaches the log.
+              - 'scripts/read-actual-budget-userns-maps.sh'
+              - 'scripts/tests/test-read-actual-budget-userns-maps.sh'
+              - '.github/workflows/read-actual-budget-userns-maps.yaml'
               # The #3790 datapath throttling measurement, its test and its workflow
               # are one contract: the test pins that the script stays read-only, its
               # arithmetic, and that no node or pod name reaches the public log.
@@ -958,6 +972,11 @@ jobs:
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
+              # Every workflow that calls the stable-endpoint helper is checked by
+              # that helper's wiring test, and new callers keep appearing.
+              # Matching all workflows keeps that check running when only a caller
+              # changes; the test fails if this line is removed.
+              - '.github/workflows/**'
             talos:
               - 'talos/**'
               - 'talos-local/**'
@@ -1283,7 +1302,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.197.0"
+          KSAIL_VERSION: "7.197.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1821,6 +1840,16 @@ jobs:
         run: |
           shellcheck scripts/probe-github-team-external-identity.sh scripts/tests/test-probe-github-team-external-identity.sh
           bash scripts/tests/test-probe-github-team-external-identity.sh
+
+      - name: 🪪 Validate Actual Budget user-namespace map read
+        if: needs.changes.outputs.k8s == 'true'
+        # The read needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins what makes dispatching it acceptable: one `get`
+        # and four fixed `exec … cat` reads, an unreadable or unparsable map
+        # never reported as mapped, and no node-side id in the public log.
+        run: |
+          shellcheck scripts/read-actual-budget-userns-maps.sh scripts/tests/test-read-actual-budget-userns-maps.sh
+          bash scripts/tests/test-read-actual-budget-userns-maps.sh
 
       - name: 📏 Validate datapath CPU throttling measurement
         if: needs.changes.outputs.k8s == 'true'
@@ -2408,10 +2437,19 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.197.0"
+          KSAIL_VERSION: "7.197.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate ARC listener public-content disposition
+        if: needs.changes.outputs.k8s == 'true'
+        # Use the pinned native scanner installed above. The regression must
+        # prove both admission enforcement and the exact scanner disposition,
+        # including the unexcepted mirror and genuine-credential controls.
+        run: |
+          shellcheck scripts/tests/test-arc-listener-public-content.sh
+          bash scripts/tests/test-arc-listener-public-content.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from
@@ -2803,7 +2841,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@2fa404276b0ce5c0527683b080e39045045c4e42 # v7.2.10
+        uses: devantler-tech/.github/actions/validate-naming@ef34177c48310d4e8d6605233cb7218b926dcc55 # v7.2.11
 
       - name: Confirm naming validation completed
         env:
@@ -3408,7 +3446,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.197.0"
+          KSAIL_VERSION: "7.197.2"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

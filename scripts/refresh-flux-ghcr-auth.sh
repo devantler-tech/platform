@@ -6214,12 +6214,16 @@ restart_flux_kustomize_controller_for_handoff() {
     end)
     + [{op: "add", path: $restart_path, value: $restart_token}]
   ' >"${flux_controller_restart_patch_file}"
+  # Flux Operator adopts kubectl-prefixed managers, removing restart annotations
+  # absent from its desired template. Keep this handoff's field ownership separate
+  # so the operator can reconcile without reverting the process-retirement rollout.
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     patch deployment.apps \
     "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
     --type=json \
+    --field-manager=platform-ghcr-auth-handoff \
     --patch-file="${flux_controller_restart_patch_file}" \
     -o json >"${flux_controller_deployment_state_file}" \
     2>"${flux_controller_result_file}"; then

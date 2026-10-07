@@ -42,10 +42,10 @@ const (
 
 	expectedKubectlVersion   = "v1.36.2"
 	expectedKustomizeVersion = "v5.8.1"
-	expectedRoleManifestSHA  = "75acb24fe16f4ae53107f4a07c514b79f2f8659b674191c794ba49076ac5c0dd"
+	expectedRoleManifestSHA  = "714047d4a17851efefe51fa7936df6ce5781d1fc0ef897d844ef0fc9d2089ee2"
 	expectedBoundarySHA      = "0f7b67f3434201a7bd4a2433ade6d8718da4e6cd60fd51ae4570cac88a240dee"
 	expectedTrustPolicySHA   = "85d5d45343f9eac5fdc35717c85c88c5b0f8fde9eddffb169c3a223617fd0a5e"
-	expectedInlinePolicySHA  = "60e3086a6d3dac0092ffe8264c04ebae783c0d38f19a3cf073ed8991085a4df8"
+	expectedInlinePolicySHA  = "b9ed4059523a893c2a121ce5dc933eb333eb50f2f5eb1857d2cb86f0553a6c71"
 	expectedBoundaryJSONSHA  = "2c9bc1ce56efeb6fa30d885d5f9dff8d5d8129a07d9393ccdeb376605cbc5ad8"
 )
 
@@ -256,7 +256,7 @@ func validateUnifiPruneExemption(document map[string]any, identity resourceIdent
 // EKS CI identities while the aggregate surface hash pins every selected
 // source, controller, binding, and indirect authorization object.
 var expectedRenderedHashes = map[resourceIdentity]string{
-	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "224fe726e49cf9327588731605cfbbd751fffae05de91f14078df1db05f2279a",
+	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Role", namespace: "aws", name: "eks-ci"}:                                        "3c472068dc4dc05ce8063bd35b1237e2ef2803b15997acffcc85805de50e7acf",
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "9eb6e5e1b43a470a02cb292f8a449a51b7792e50220c7c3d5c08fe6b73e62f02",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",

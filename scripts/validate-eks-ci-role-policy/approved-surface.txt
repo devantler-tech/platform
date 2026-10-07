@@ -88,7 +88,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator da38c30c19aea0c3e099bb86cda46d89ab6301ff5898b4fad8f020812f8ad800
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 068ad0ebbbc391a567ad211c7254130c0b949de8bec7a27f87fcab8ac034b452
+helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 5f42ca30331162fc4ee98a0487fa3651140f0542ff49b573a99a46a343582616
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
 
@@ -104,7 +104,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami daa7d5894e48ee981cc577597042
 
 iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763cab81a883bc6cf1faf53caf89b5e9274e8ec69cad01b66
 
-iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci 878e257591c0e0dd69ebf1398211feadfc06f857665e453a87815c361c2529cd
+iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 1ee1880dfe992996a7480cceb143bd2520b0cbb87170eb50acda2d214be5abb4
 
@@ -244,6 +244,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|ascoachingogvaner|ascoachingogvaner-ext
 
 rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 876e05322100f78b490b870ba8733b26daa0f93b65b8fdd77d559e9de94588c1
 
+rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 00bcf69a4402d05bf5af23e273f9d3c5d7e7ebeed8c1778017a9f702d261360e
+
 rbac.authorization.k8s.io/v1|RoleBinding|default|events:kubelet-serving-cert-approver 420a3e2f5bb524138bf1a7ee8f953d738a70d03c6f5567541ec03fd093a042f4
 
 rbac.authorization.k8s.io/v1|RoleBinding|github-config|github-config-managed-resources 149f5d805afc668821f5d25d1d5e9b05f5ef79d3e69929a8999faddb1078d417
@@ -287,6 +289,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin 593fd95bd84
 rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-operator b14714377d4a5317c7d829bc1b378ecea44ed82f2b1fff32d4c923f9ee4809d6
 
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19364d7341e4952fcb0566f1c1ba16d073b6f1ae4108b0
+
+rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer 10df039485be13b0344199a50eacc4fbd942f2bb9b831a84b11c024918a3422a
 
 rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources acb7434cc52dd53923f047d301c10d0e85ebfe5bb8c3ef8de67de24817e3e6b0
 

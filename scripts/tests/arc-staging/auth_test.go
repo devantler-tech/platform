@@ -11,7 +11,7 @@ import (
 
 func TestCredentialReaderIsSeparateFromJobRunners(t *testing.T) {
 	component := "k8s/bases/infrastructure/actions-runners/"
-	store := readYAML(t, component+"secret-store.yaml")
+	store := readYAML(t, component+"credentials/secret-store.yaml")
 	equal(t, field(t, store, "kind"), "SecretStore")
 	equal(t, field(t, store, "metadata", "name"), "openbao")
 	equal(t, field(t, store, "metadata", "namespace"), "arc-runners")
@@ -22,11 +22,11 @@ func TestCredentialReaderIsSeparateFromJobRunners(t *testing.T) {
 	equal(t, field(t, auth, "mountPath"), "kubernetes")
 	equal(t, field(t, auth, "role"), "arc-secret-reader")
 	equal(t, field(t, auth, "serviceAccountRef", "name"), "arc-secret-reader")
-	account := readYAML(t, component+"service-account.yaml")
+	account := readYAML(t, component+"credentials/service-account.yaml")
 	equal(t, field(t, account, "metadata", "name"), "arc-secret-reader")
 	equal(t, field(t, account, "metadata", "namespace"), "arc-runners")
 	equal(t, field(t, account, "automountServiceAccountToken"), false)
-	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
+	resources := field(t, readYAML(t, component+"credentials/kustomization.yaml"), "resources").([]any)
 	for _, required := range []string{"secret-store.yaml", "service-account.yaml"} {
 		found := false
 		for _, resource := range resources {

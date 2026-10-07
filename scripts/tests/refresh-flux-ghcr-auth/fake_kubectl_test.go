@@ -859,7 +859,7 @@ func fakeFluxControllerDeploymentObject() map[string]any {
 	annotations := map[string]any{
 		"prometheus.io/port": "8080",
 	}
-	if restartCount > 0 {
+	if restartCount > 0 && !markerExists("flux-controller-restart-reverted") {
 		annotations["kubectl.kubernetes.io/restartedAt"] = markerContent(
 			"flux-controller-restart-token",
 		)
@@ -932,6 +932,9 @@ func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFil
 		return commandFailure(57, "admission webhook denied the restart from 10.0.0.9")
 	}
 	setMarkerContent("flux-controller-restart-token", restartToken)
+	setMarkerContent("flux-controller-restart-manager", defaultString(
+		flagValue(args, "--field-manager"), "kubectl-patch",
+	))
 	setMarkerContent("flux-controller-restart-count", strconv.Itoa(restartCount+1))
 	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
 		appendEnvFile("OPERATION_LOG", "flux-controller-restart:kustomize-controller\n")
@@ -967,7 +970,25 @@ func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 	if os.Getenv("FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL") == "true" {
 		return commandFailure(56, "kustomize-controller rollout did not converge")
 	}
-	setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	restartReverted := false
+	if os.Getenv("FAKE_FLUX_OPERATOR_CLEANS_RESTART_MANAGERS") == "true" {
+		manager := markerContent("flux-controller-restart-manager")
+		// Flux Operator v0.50.0 removes kubectl-prefixed Update managers before
+		// applying its template. Explicit override managers are also removed.
+		// The restart annotation is absent from that template, so adopting its
+		// manager removes the restart while the original Ready Pod survives.
+		restartReverted = strings.HasPrefix(manager, "kubectl") ||
+			manager == os.Getenv("FAKE_FLUX_OPERATOR_RESTART_OVERRIDE_MANAGER")
+		if restartReverted {
+			touchMarker("flux-controller-restart-reverted")
+			appendEnvFile("OPERATION_LOG", "flux-operator-restart-reverted:kustomize-controller\n")
+		} else {
+			appendEnvFile("OPERATION_LOG", "flux-operator-restart-preserved:kustomize-controller\n")
+		}
+	}
+	if !restartReverted {
+		setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	}
 	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_ON_CONTROLLER_RESTART") == "true" {
 		// Restarting a Flux controller changes a Deployment owned by FluxInstance.
 		// The real Flux Operator observes that change and reconciles the generated
@@ -986,7 +1007,7 @@ func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 		)
 		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile:flux-system\n")
 	}
-	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
+	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" && !restartReverted {
 		if os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
 			appendEnvFile(
 				"OPERATION_LOG",

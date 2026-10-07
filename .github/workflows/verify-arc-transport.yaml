@@ -1,0 +1,68 @@
+name: Verify ARC Credential Transport
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  verify:
+    name: Verify same-node credential transport isolation
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the current reviewed main commit before credentials
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_REF" == refs/heads/main ]]
+          [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]
+
+      - name: Checkout the reviewed dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore the established production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "$KUBE_CONFIG" > ~/.kube/config
+
+      - name: Select the stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      # Creates only bounded, unprivileged probe Pods, never an App credential,
+      # runner registration, policy, node or service-account TokenRequest.
+      - name: Prove native TLS health and intercepted same-node attempts
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/verify-arc-transport.sh --same-node

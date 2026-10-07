@@ -25,14 +25,15 @@ if [[ -z "$stability_line" || -z "$readback_line" ]] || (( stability_line >= rea
   exit 1
 fi
 
-# The deploy step must stay observe-only until the switch is made on purpose,
-# and must run only after a successful update and a stable API.
+# The deploy step must fail the deploy on a finding, so it may not set the
+# observe-only switch, and must run only after a successful update and a
+# stable API.
 step=$(yq -o=json -I=0 '.runs.steps[] | select(.run == "./scripts/verify-kubelet-config-readback.sh")' "$deploy_action")
 if [[ "$(jq -s 'length' <<<"$step")" != 1 ]] ||
-  ! jq -e '.env.KUBELET_READBACK_ENFORCE == "false" and
+  ! jq -e '(.env // {} | has("KUBELET_READBACK_ENFORCE") | not) and
     (.if | contains("steps.cluster_update.outcome == \u0027success\u0027") and
            contains("steps.wait_prod_api_stability.outcome == \u0027success\u0027"))' <<<"$step" >/dev/null; then
-  printf 'the deploy must run the kubelet readback once, observe-only, after a successful update\n' >&2
+  printf 'the deploy must run the kubelet readback once, blocking, after a successful update\n' >&2
   exit 1
 fi
 

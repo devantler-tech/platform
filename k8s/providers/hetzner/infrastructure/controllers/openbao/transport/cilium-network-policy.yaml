@@ -1,0 +1,20 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: allow-arc-openbao-tls
+  namespace: openbao
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: openbao
+      app.kubernetes.io/instance: openbao
+      platform.devantler.tech/arc-transport: tls
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: external-secrets
+            app.kubernetes.io/name: external-secrets
+      toPorts:
+        - ports:
+            - port: "8204"
+              protocol: TCP
