@@ -878,6 +878,7 @@ const drPublisherStep = `      - name: 📦 Publish evidenced manifests to GHCR
         id: publish_platform_manifest
         uses: ./.github/actions/deploy-prod/publish-platform-manifests
         with:
+          recovery-source-sha: ${{ github.sha }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
 `
