@@ -31,6 +31,19 @@ if [[ "${MODE:-}" == hang || "${MODE:-}" == preflight-timeout ]]; then
     sleep 2
   fi
 fi
+# A timeout alone cannot prove a mutated snapshot was rejected on a busy host.
+# Record actual projection/predicate rejection before accepting that control.
+for argument in "$@"; do
+  if [[ "$argument" == */project.jq || "$argument" == */check.jq ]]; then
+    if "$REAL_JQ" "$@"; then
+      exit 0
+    else
+      result=$?
+      printf '%s\n' "$result" >>"$FIXTURE/rejections"
+      exit "$result"
+    fi
+  fi
+done
 exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
@@ -308,12 +321,14 @@ mutate_case() {
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/healthy/$key.json" >"${scratch}/$name/$key.json"
   run_case "$name" fail '' "${4:-3}"
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 
 mkdir "${scratch}/declared-activation-but-live-dormant"
 cp "${scratch}/healthy/"*.json "${scratch}/declared-activation-but-live-dormant/"
 printf '[true,true,false]\n' >"${scratch}/declared-activation-but-live-dormant/expected-flags.json"
 run_case declared-activation-but-live-dormant fail
+[[ -s "${scratch}/declared-activation-but-live-dormant/rejections" ]] || fail 'declared activation mismatch did not reach snapshot validation'
 mutate_case probe-supplemental-network probe-policy '.specs=[(.spec | .egress=[{toEntities:["world"]}])]'
 mutate_case probe-object-network probe-policy '.specs={}'
 mutate_case probe-string-network probe-policy '.specs=""'
@@ -354,6 +369,7 @@ active_mutation() {
   cp "${scratch}/active/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/active/$key.json" >"${scratch}/$name/$key.json"
   run_case "$name" fail '' 3
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
 active_mutation active-false-connector product '.status.conditions[1].status="False"'
