@@ -515,8 +515,14 @@ name_changes() {
     ($before[0]|leaves) as $b | ($after[0]|leaves) as $a |
     [(($b-$a)+($a-$b))[] | .p | map(select(type=="string")) |
       if (.[1:3]|all(.[];test("^[A-Za-z]+$"))) then .[:3] else .[:1] end | join(".")] | unique | .[:16]
-  ' >"$scratch/changed" 2>/dev/null
+  ' >"$scratch/changed" 2>/dev/null || return 1
+  # Every retaken pair's names, kept for the report of a rollout that then holds
+  # still. Written whole and moved into place, so a read never sees half of it.
+  jq -cn --slurpfile seen "$scratch/settled" --slurpfile now "$scratch/changed" \
+    '($seen[0]+$now[0])|unique|.[:16]' >"$scratch/settled.next" 2>/dev/null || return 1
+  mv "$scratch/settled.next" "$scratch/settled"
 }
+printf '[]\n' >"$scratch/settled"
 # The public checks only count when the rollout they ran against did not move.
 # An ordinary reconcile can start between the two snapshots, so a pair that
 # differs is retaken from the start, public checks included, at most three
@@ -551,4 +557,11 @@ while :; do
 done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
-printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":9,"readinessState":"%s"}\n' "$expected_pods" "$expected_state"
+# Keep the accepted state and the names of changes that settled in one receipt.
+# A retake reports only role/field names; no cluster values leave the verifier.
+if ((attempt > 1)); then
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":9,"readinessState":"%s","retaken":%d,"settled":%s}\n' \
+    "$expected_pods" "$expected_state" "$((attempt - 1))" "$(<"$scratch/settled")"
+else
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":9,"readinessState":"%s"}\n' "$expected_pods" "$expected_state"
+fi
