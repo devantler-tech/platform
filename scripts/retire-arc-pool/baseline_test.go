@@ -71,6 +71,7 @@ func TestBaselineLateFirstBindingInvalidatesAllCompletionReceipts(t *testing.T) 
 		applyRecord(t, &s, p)
 		j, _ := readJournal(s)
 		j.Phase = "restored"
+		j.Baseline.Writer = writerFixture(t)
 		j.ControllerUID = "controller"
 		j.ControllerPodUIDs = []string{"old"}
 		j.ControllerTicket = "native-123-1"

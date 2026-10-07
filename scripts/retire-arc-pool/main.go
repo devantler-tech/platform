@@ -33,9 +33,13 @@ func run(action string, in io.Reader, out io.Writer) error {
 	if action == "check-source" {
 		return sourceProof(data)
 	}
+	if action == "check-writer" {
+		return writerCurrentProof(data)
+	}
 	var input struct {
-		State   state
-		Receipt json.RawMessage
+		State       state
+		Receipt     json.RawMessage
+		WriterProof json.RawMessage
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
@@ -48,6 +52,15 @@ func run(action string, in io.Reader, out io.Writer) error {
 		patch, err = claim(input.State, input.Receipt)
 	case "bind":
 		patch, err = bindBaseline(input.State)
+	case "writer":
+		patch, err = recordWriter(input.State, input.WriterProof)
+	case "check-writer-barrier":
+		var j journal
+		j, err = verify(input.State)
+		if err == nil {
+			err = sourceWriterProof(input.State, j, input.WriterProof)
+		}
+		return err
 	case "inspect":
 		var j journal
 		j, err = readJournal(input.State)
@@ -57,6 +70,12 @@ func run(action string, in io.Reader, out io.Writer) error {
 	case "verify":
 		var j journal
 		j, err = verify(input.State)
+		if err == nil {
+			return json.NewEncoder(out).Encode(j)
+		}
+	case "verify-delete":
+		var j journal
+		j, err = verifyDelete(input.State)
 		if err == nil {
 			return json.NewEncoder(out).Encode(j)
 		}

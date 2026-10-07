@@ -27,12 +27,13 @@ type baseline struct {
 	ARSUID     string          `json:"arsUID"`
 	ESOUID     string          `json:"esoUID"`
 	ZeroSource *sourceIdentity `json:"zeroSource,omitempty"`
+	Writer     *writerReceipt  `json:"writer,omitempty"`
 }
 
 func validSource(sha, digest string) bool {
 	return regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) && regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(digest)
 }
-func canonicalFields(raw []byte, required []string, optional string) (map[string]json.RawMessage, error) {
+func canonicalFields(raw []byte, required []string, optional ...string) (map[string]json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if unambiguous(raw) != nil || json.Unmarshal(raw, &fields) != nil || fields == nil {
 		return nil, errors.New("invalid baseline object")
@@ -44,8 +45,10 @@ func canonicalFields(raw []byte, required []string, optional string) (map[string
 			return nil, errors.New("incomplete baseline object")
 		}
 	}
-	if optional != "" {
-		allowed[optional] = true
+	for _, key := range optional {
+		if key != "" {
+			allowed[key] = true
+		}
 	}
 	for key, raw := range fields {
 		if !allowed[key] || bytes.Equal(raw, []byte("null")) {
@@ -63,7 +66,7 @@ func decodeSpec(raw json.RawMessage) (object, error) {
 }
 func validateBaseline(raw []byte, j journal) error {
 	b := j.Baseline
-	fields, err := canonicalFields(raw, []string{"version", "sourceSHA", "digest", "maximum", "hrSpec0", "arsSpec0", "esoSpec", "hrUID", "arsUID", "esoUID"}, "zeroSource")
+	fields, err := canonicalFields(raw, []string{"version", "sourceSHA", "digest", "maximum", "hrSpec0", "arsSpec0", "esoSpec", "hrUID", "arsUID", "esoUID"}, "zeroSource", "writer")
 	if err != nil || b == nil {
 		return errors.New("invalid baseline provenance")
 	}
@@ -82,6 +85,14 @@ func validateBaseline(raw []byte, j journal) error {
 		if _, err := canonicalFields(fields["zeroSource"], []string{"sha", "digest"}, ""); err != nil || !validSource(b.ZeroSource.SHA, b.ZeroSource.Digest) {
 			return errors.New("invalid zero-source receipt")
 		}
+	}
+	if b.Writer != nil {
+		if _, err := decodeWriter(fields["writer"]); err != nil {
+			return err
+		}
+	}
+	if j.Phase != "baseline" && j.Phase != "fenced" && b.Writer == nil {
+		return errors.New("completed writer barrier is missing")
 	}
 	if b.Maximum == 1 && (b.ZeroSource == nil || b.HRUID == "" || b.ARSUID == "" || b.ESOUID == "") {
 		return errors.New("active capacity lacks a bound zero baseline")

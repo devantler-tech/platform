@@ -69,12 +69,21 @@ if [[ "$command" == get ]]; then
     autoscalingrunnerset) [[ -s "$ARC_TEST_STATE/ars.json" ]] && cat "$ARC_TEST_STATE/ars.json" ;;
     ephemeralrunnerset) [[ -s "$ARC_TEST_STATE/ers.json" ]] && cat "$ARC_TEST_STATE/ers.json" ;;
     autoscalinglisteners) jq -n --slurpfile items "$ARC_TEST_STATE/listeners.json" '{kind:"AutoscalingListenerList",metadata:{},items:$items[0]}' ;;
-    deployment) cat "$ARC_TEST_STATE/controller.json" ;;
-    replicasets) jq -n --slurpfile items "$ARC_TEST_STATE/replicasets.json" '{items:$items[0]}' ;;
-    pods) [[ "$ns" == arc-systems ]]; if [[ "$*" == *app.kubernetes.io/instance=arc-controller* ]]; then jq -c '.[]' "$ARC_TEST_STATE/controller-pods.json"; else jq -c '.[]' "$ARC_TEST_STATE/listener-pods.json"; fi ;;
+    deployment) if [[ "$ns" == flux-system ]];then cat "$ARC_TEST_STATE/flux-controller.json";else cat "$ARC_TEST_STATE/controller.json";fi ;;
+    replicasets) if [[ "$ns" == flux-system ]];then jq -n --slurpfile items "$ARC_TEST_STATE/flux-sets.json" '{items:$items[0]}';else jq -n --slurpfile items "$ARC_TEST_STATE/replicasets.json" '{items:$items[0]}';fi ;;
+    pods) if [[ "$ns" == flux-system ]];then jq -c '.[]' "$ARC_TEST_STATE/flux-pods.json";else [[ "$ns" == arc-systems ]]; if [[ "$*" == *app.kubernetes.io/instance=arc-controller* ]]; then jq -c '.[]' "$ARC_TEST_STATE/controller-pods.json"; else jq -c '.[]' "$ARC_TEST_STATE/listener-pods.json"; fi;fi ;;
     clusterpolicy) yq -o=json '.' "$ARC_TEST_REPO/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-retirement.yaml" | jq '.spec.admission=true | .spec.emitWarning=false | .spec.validationFailureAction="Audit" | .spec.rules |= map(.skipBackgroundRequests=true)' ;;
     ocirepository) cat "$ARC_TEST_STATE/source.json" ;;
-    kustomizations) touch "$ARC_TEST_STATE/source-proof-read";jq -n --slurpfile layers "$ARC_TEST_STATE/layers.json" '{items:$layers[0]}' ;;
+    kustomizations)
+      touch "$ARC_TEST_STATE/source-proof-read"
+      if [[ "$ARC_TEST_BASELINE_SOURCE" == true && ( ! -s "$ARC_TEST_STATE/hr.json" || ! -s "$ARC_TEST_STATE/eso.json" ) ]];then
+        target=HelmRelease/arc-runners/platform-runners;rule=fence-pool-retirement
+        if [[ -s "$ARC_TEST_STATE/hr.json" ]];then target=ExternalSecret/arc-runners/arc-github-app;rule=fence-credential-recreation;fi
+        message="$target dry-run failed: admission webhook \"validate.kyverno.svc-fail\" denied the request:"
+        message+=$'\nrestrict-arc-retirement:\n  ';message+="$rule: closed"
+        [[ "${ARC_TEST_SOURCE_FAILURE:-}" != generic ]] || message='failed to build kube client'
+        jq -n --slurpfile layers "$ARC_TEST_STATE/layers.json" --arg message "$message" '{items:($layers[0]|map(if .metadata.name=="infrastructure" then .status.observedGeneration=1 | .status.conditions=[{type:"Ready",status:"False",reason:"ReconciliationFailed",observedGeneration:.metadata.generation,message:$message},{type:"Reconciling",status:"True",reason:"ProgressingWithRetry",observedGeneration:.metadata.generation}] else . end))}'
+      else jq -n --slurpfile layers "$ARC_TEST_STATE/layers.json" '{items:$layers[0]}';fi ;;
     kustomization) jq --arg name "$name" '.[]|select(.metadata.name==$name)' "$ARC_TEST_STATE/layers.json" ;;
     *) exit 2 ;;
   esac
@@ -181,7 +190,7 @@ export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=
 export GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=1 GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export GH_TOKEN=fixture PLATFORM_MANIFEST_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 fixture() {
-  export ARC_TEST_STATE="$scratch/state-$1" ARC_TEST_ADMIN=true ARC_TEST_READ_FAILURE=false ARC_TEST_METADATA_FAILURE=false ARC_TEST_REPLACE='' ARC_TEST_LATE='' ARC_TEST_INERT_ADMISSION=false ARC_TEST_NO_ACK=false
+  export ARC_TEST_STATE="$scratch/state-$1" ARC_TEST_ADMIN=true ARC_TEST_READ_FAILURE=false ARC_TEST_METADATA_FAILURE=false ARC_TEST_REPLACE='' ARC_TEST_LATE='' ARC_TEST_INERT_ADMISSION=false ARC_TEST_NO_ACK=false ARC_TEST_BASELINE_SOURCE=false ARC_TEST_SOURCE_FAILURE=''
   mkdir "$ARC_TEST_STATE"
   jq -n '{apiVersion:"v1",kind:"Namespace",metadata:{name:"arc-runners",uid:"ns-1",resourceVersion:"1",annotations:{foreign:"preserve"}}}' >"$ARC_TEST_STATE/ns.json"
   jq -n '{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:{name:"platform-runners",namespace:"arc-runners",uid:"hr-1",resourceVersion:"2"},spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"platform-runners"},values:{runnerScaleSetName:"platform-linux",githubConfigUrl:"https://github.com/devantler-tech",githubConfigSecret:"arc-github-app",runnerGroup:"platform",minRunners:0,maxRunners:1}}}' >"$ARC_TEST_STATE/hr.json"
@@ -192,15 +201,19 @@ fixture() {
   jq -n '[{uid:"old-1",ownerUID:"old-rs",ownerKind:"ReplicaSet",phase:"Running",ready:"True",deleting:""}]' >"$ARC_TEST_STATE/controller-pods.json"
   jq -n '[{uid:"new-1",ownerUID:"new-rs",ownerKind:"ReplicaSet",phase:"Running",ready:"True",deleting:""}]' >"$ARC_TEST_STATE/new-controller-pods.json"
   jq -n '[{metadata:{uid:"new-rs",ownerReferences:[{kind:"Deployment",uid:"deployment",controller:true}]}}]' >"$ARC_TEST_STATE/replicasets.json"
+  jq -n '{metadata:{name:"kustomize-controller",namespace:"flux-system",uid:"flux-deployment",generation:3},spec:{replicas:2,template:{spec:{containers:[{name:"manager",image:"ghcr.io/fluxcd/kustomize-controller:v1.8.5@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed"}]} }},status:{observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2}}' >"$ARC_TEST_STATE/flux-controller.json"
+  jq -n '[{metadata:{uid:"flux-rs",ownerReferences:[{kind:"Deployment",uid:"flux-deployment",controller:true}]}}]' >"$ARC_TEST_STATE/flux-sets.json"
+  jq -n '["flux-pod-1","flux-pod-2"]|map({uid:.,ownerUID:"flux-rs",ownerKind:"ReplicaSet",phase:"Running",ready:"True",deleting:"",imageID:"ghcr.io/fluxcd/kustomize-controller@sha256:70e2a25edeee82690e68662409fb1b60f7d3084c93435e8ab5337a6e0244ffed"})' >"$ARC_TEST_STATE/flux-pods.json"
   jq -n --arg digest "$PLATFORM_MANIFEST_DIGEST" '{metadata:{name:"flux-system",namespace:"flux-system",uid:"source",generation:2},spec:{verify:{provider:"cosign"}},status:{observedGeneration:2,artifact:{digest:$digest},conditions:[{type:"Ready",status:"True",observedGeneration:2},{type:"SourceVerified",status:"True",observedGeneration:2}]}}' >"$ARC_TEST_STATE/source.json"
   jq -n --arg digest "$PLATFORM_MANIFEST_DIGEST" '["flux-system","infrastructure-controllers","infrastructure"]|map({metadata:{name:.,namespace:"flux-system",uid:.,resourceVersion:"6",generation:2},spec:{sourceRef:{kind:"OCIRepository",name:"flux-system"}},status:{observedGeneration:2,lastAppliedRevision:("latest@"+$digest),lastAttemptedRevision:("latest@"+$digest),conditions:[{type:"Ready",status:"True",observedGeneration:2}]}})' >"$ARC_TEST_STATE/layers.json"
 }
 baseline_fixture() {
   fixture "$1"
+  ARC_TEST_BASELINE_SOURCE=true
   jq '.spec.values.maxRunners=0' "$ARC_TEST_STATE/hr.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/hr.json"
   jq -n '{apiVersion:"actions.github.com/v1alpha1",kind:"AutoscalingRunnerSet",metadata:{name:"platform-linux",namespace:"arc-runners",uid:"ars-1",resourceVersion:"8",generation:2,annotations:{"meta.helm.sh/release-name":"platform-runners","meta.helm.sh/release-namespace":"arc-runners"}},spec:{runnerScaleSetName:"platform-linux",githubConfigUrl:"https://github.com/devantler-tech",githubConfigSecret:"arc-github-app",runnerGroup:"platform",minRunners:0,maxRunners:0},status:{observedGeneration:2}}' >"$ARC_TEST_STATE/ars.json"
   jq --slurpfile hr "$ARC_TEST_STATE/hr.json" --slurpfile eso "$ARC_TEST_STATE/eso.json" --slurpfile ars "$ARC_TEST_STATE/ars.json" '
-    .metadata.annotations."platform.devantler.tech/arc-retirement"=({version:1,owner:{run:"123",attempt:"1",sha:("a"*40)},namespaceUID:"ns-1",hrUID:"",esoUID:"",phase:"baseline",controllerUID:"",controllerPodUIDs:[],controllerTicket:"",baseline:{version:1,sourceSHA:("b"*40),digest:("sha256:"+("c"*64)),maximum:0,hrSpec0:$hr[0].spec,arsSpec0:$ars[0].spec,esoSpec:$eso[0].spec,hrUID:"",arsUID:"",esoUID:""}}|tojson)' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
+    .metadata.annotations."platform.devantler.tech/arc-retirement"=({version:1,owner:{run:"123",attempt:"1",sha:("a"*40)},namespaceUID:"ns-1",hrUID:"",esoUID:"",phase:"baseline",controllerUID:"",controllerPodUIDs:[],controllerTicket:"",baseline:{version:1,sourceSHA:("b"*40),digest:("sha256:"+("a"*64)),maximum:0,hrSpec0:$hr[0].spec,arsSpec0:$ars[0].spec,esoSpec:$eso[0].spec,hrUID:"",arsUID:"",esoUID:""}}|tojson)' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
 }
 run_native() { bash scripts/retire-arc-pool.sh "$1" >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error"; }
 refused() {
@@ -267,6 +280,17 @@ done
 baseline_fixture replaced-scale-set;ARC_TEST_REPLACE=ars;refused replaced-scale-set
 if grep -q 'delete.*autoscalingrunnersets' "$ARC_TEST_STATE/commands";then printf 'Replaced scale set was deleted.\n' >&2;exit 1;fi
 jq -e '.metadata.uid=="replacement-ars"' "$ARC_TEST_STATE/ars.json" >/dev/null
+for missing in hr eso;do
+  baseline_fixture "never-created-$missing";rm "$ARC_TEST_STATE/$missing.json"
+  run_native before-publish
+  jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement"|fromjson|.phase=="absent" and .baseline.writer.flux.podUIDs==["flux-pod-1","flux-pod-2"]' "$ARC_TEST_STATE/ns.json" >/dev/null
+done
+baseline_fixture generic-source-failure;rm "$ARC_TEST_STATE/eso.json";ARC_TEST_SOURCE_FAILURE=generic
+export ARC_RETIREMENT_REMAINING=1
+refused generic-source-failure
+unset ARC_RETIREMENT_REMAINING
+grep -q 'quiesced-source-writer-timeout' "$ARC_TEST_STATE/error"
+if grep -q '^delete ' "$ARC_TEST_STATE/commands";then printf 'Generic source failure allowed deletion.\n' >&2;exit 1;fi
 baseline_fixture unacknowledged-writer;ARC_TEST_NO_ACK=true
 if timeout 15s bash scripts/retire-arc-pool.sh before-publish >"$ARC_TEST_STATE/output" 2>"$ARC_TEST_STATE/error";then
   printf 'Unacknowledged source writer allowed retirement.\n' >&2;exit 1

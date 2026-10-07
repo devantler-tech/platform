@@ -275,6 +275,23 @@ retiring the chart. A bound orphan scale set left after Helm finalization uses
 the same natural drain and controller process proofs before a foreground delete
 with UID and resource-version preconditions. Late bindings restart the bounded
 transaction with a new controller process ticket and its remaining deadline.
+The completed source barrier retains its producer, nonce, signed digest and
+the OCI and three source-layer UIDs and configuration generations. Late-binding
+recovery preserves that receipt: after Helm removal the closed fence deliberately
+prevents the still-published baseline from becoming Ready again. Before each
+baseline deletion, the source identities and configurations must remain unchanged
+and the current OCI signature and digest must match. A changed writer requires
+a complete new barrier or recovery holds. Publication still requires fresh Ready
+evidence from all three layers for the exact inactive artifact.
+For an opening that never created its release or credential-sync object, the
+infrastructure layer instead needs a fresh, completed dry-run denial by the
+closed retirement rule for that exact absent, never-bound object. The other two
+layers remain Ready on the authorized opening digest. This narrowly scoped
+completion proof is bound to the reviewed Flux controller image, its complete
+rollout, and both current Pod identities before and after the request and before
+deletion. A different image, runtime replacement, generic failure or active apply
+holds recovery. This proof establishes apply completion, not cluster readiness;
+the final inactive-artifact Ready checks are unchanged.
 These recovery capabilities are prepared while the source remains inactive;
 they do not install a baseline or authorize runner activation themselves.
 

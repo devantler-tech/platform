@@ -40,6 +40,7 @@ type state struct {
 	NodesAbsent        bool
 	SecretAbsent       bool
 	SourceProven       bool
+	WriterCurrent      bool
 	Controller         *resource
 	ControllerPodUIDs  []string
 	ControllerReplaced bool
@@ -382,7 +383,7 @@ func advance(s state, next string) ([]operation, error) {
 	valid := false
 	switch next {
 	case "drained":
-		valid = j.Phase == "fenced" && s.DrainProven
+		valid = j.Phase == "fenced" && s.DrainProven && (j.Baseline == nil || j.Baseline.Writer != nil)
 	case "quiescing":
 		valid = j.Phase == "drained" && s.DrainProven && s.Controller != nil && validPodUIDs(s.ControllerPodUIDs)
 		if valid {

@@ -66,15 +66,17 @@ refresh_objects() {
 snapshot() {
   jq -n --slurpfile ns "$work/ns.json" --slurpfile hr "$work/hr.json" --slurpfile eso "$work/eso.json" \
     --slurpfile ars "$work/ars.json" --slurpfile controller "$work/controller.json" --slurpfile pods "$work/controller-pods.json" --slurpfile receipt "$work/receipt.json" \
+    --slurpfile writerProof "$work/source-proof.json" \
     --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg sha "$GITHUB_SHA" \
     --argjson drained "$drained" --argjson children "$children" --argjson nodes "$nodes" \
-    --argjson secret "$secret" --argjson source "$source" --argjson replaced "$replaced" '
+    --argjson secret "$secret" --argjson source "$source" --argjson replaced "$replaced" --argjson writerCurrent "$writer_current" '
     def project: if .==null then null else {Name:.metadata.name,Namespace:(.metadata.namespace//""),
       UID:.metadata.uid,RV:.metadata.resourceVersion,Annotations:(.metadata.annotations//{}),Spec:(.spec//null)} end;
     {State:{Namespace:($ns[0]|project),Release:($hr[0]|project),Credential:($eso[0]|project),ScaleSet:($ars[0]|project),
       Owner:{run:$run,attempt:$attempt,sha:$sha},DrainProven:$drained,ChildrenAbsent:$children,
       NodesAbsent:$nodes,SecretAbsent:$secret,SourceProven:$source,
-      Controller:($controller[0]|project),ControllerPodUIDs:($pods[0]|map(.uid)),ControllerReplaced:$replaced},Receipt:$receipt[0]}' >"$work/input.json"
+      Controller:($controller[0]|project),ControllerPodUIDs:($pods[0]|map(.uid)),ControllerReplaced:$replaced,
+      WriterCurrent:$writerCurrent},Receipt:$receipt[0],WriterProof:$writerProof[0]}' >"$work/input.json"
 }
 plan() {
   snapshot
@@ -179,8 +181,9 @@ delete_owned() {
     credential-removing) absence_receipts ;;
     *) fail unexpected-delete-phase ;;
   esac
+  if jq -e '.baseline!=null' "$work/journal.json" >/dev/null; then writer_current_receipt || fail changed-writer-authority; fi
   snapshot
-  "$work/planner" verify <"$work/input.json" >"$work/verified-journal.json" || fail changed-delete-owner
+  "$work/planner" verify-delete <"$work/input.json" >"$work/verified-journal.json" || fail changed-delete-owner
   local uid_key
   case "$path" in
     /apis/helm.toolkit.fluxcd.io/v2/namespaces/arc-runners/helmreleases/platform-runners) uid_key=hrUID ;;
@@ -195,10 +198,11 @@ delete_owned() {
     preconditions:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}}' "$file" >"$work/delete.json"
   kc delete --raw "$path" -f "$work/delete.json" >"$work/delete-response.json"
 }
-drained=false; children=false; nodes=false; secret=false; source=false; replaced=false; claimed=false
+drained=false; children=false; nodes=false; secret=false; source=false; replaced=false; claimed=false; writer_current=false
 printf 'null\n' >"$work/controller.json"
 printf '[]\n' >"$work/controller-pods.json"
 printf 'null\n' >"$work/receipt.json"
+printf 'null\n' >"$work/source-proof.json"
 refresh_objects
 if jq -e '.==null' "$work/hr.json" >/dev/null &&
    jq -e '.==null' "$work/eso.json" >/dev/null &&
@@ -224,7 +228,7 @@ pods_projection() {
   local namespace=$1 selector=$2 file=$3
   # Only the named status/ownership fields are serialized. Runner Pod specs,
   # credentials, logs and managedFields are never requested by this helper.
-  kc -n "$namespace" get pods -l "$selector" -o 'jsonpath={range .items[*]}{"{\"uid\":\""}{.metadata.uid}{"\",\"ownerUID\":\""}{.metadata.ownerReferences[?(@.controller==true)].uid}{"\",\"ownerKind\":\""}{.metadata.ownerReferences[?(@.controller==true)].kind}{"\",\"phase\":\""}{.status.phase}{"\",\"ready\":\""}{.status.conditions[?(@.type=="Ready")].status}{"\",\"deleting\":\""}{.metadata.deletionTimestamp}{"\"}\n"}{end}' >"$work/projected-pods.ndjson" || fail pod-status-read
+  kc -n "$namespace" get pods -l "$selector" -o 'jsonpath={range .items[*]}{"{\"uid\":\""}{.metadata.uid}{"\",\"ownerUID\":\""}{.metadata.ownerReferences[?(@.controller==true)].uid}{"\",\"ownerKind\":\""}{.metadata.ownerReferences[?(@.controller==true)].kind}{"\",\"phase\":\""}{.status.phase}{"\",\"ready\":\""}{.status.conditions[?(@.type=="Ready")].status}{"\",\"imageID\":\""}{.status.containerStatuses[?(@.name=="manager")].imageID}{"\",\"deleting\":\""}{.metadata.deletionTimestamp}{"\"}\n"}{end}' >"$work/projected-pods.ndjson" || fail pod-status-read
   jq -s '.' "$work/projected-pods.ndjson" >"$file" || fail pod-status-response
 }
 controller_receipts() {
@@ -400,10 +404,52 @@ source_writer_quiesced() {
   # while the exact HR/ESO are excluded. This proof concerns the currently
   # signed writer, independently of the inactive digest published afterward.
   local PLATFORM_MANIFEST_DIGEST
+  refresh_objects
+  bind_current
   kc -n flux-system get ocirepository flux-system -o json >"$work/writer-source.json" || fail writer-source-read
   check_json "$work/writer-source.json"
   PLATFORM_MANIFEST_DIGEST=$(jq -er '.status.artifact.digest' "$work/writer-source.json") || fail writer-source-digest
-  inactive_source
+  # Build the same source packet, then distinguish actual Ready from the exact
+  # completed closed-CREATE failure of an opening that never installed HR/ESO.
+  inactive_source || true
+  flux_writer_receipts
+  jq --slurpfile flux "$work/flux-writer.json" --slurpfile before "$work/flux-writer-before.json" '.+{Flux:$flux[0],FluxBefore:$before[0]}' "$work/source-proof.json" >"$work/writer-proof.json" || fail writer-runtime-projection
+  mv "$work/writer-proof.json" "$work/source-proof.json"
+  snapshot
+  "$work/planner" check-writer-barrier <"$work/input.json" >"$work/proof-output" 2>"$work/proof-error"
+}
+flux_writer_receipts() {
+  kc -n flux-system get deployment kustomize-controller -o json >"$work/flux-writer-deployment.json" || fail source-writer-deployment-read
+  pods_projection flux-system app=kustomize-controller "$work/flux-writer-pods.json"
+  kc -n flux-system get replicasets -l app=kustomize-controller -o json >"$work/flux-writer-sets.json" || fail source-writer-owners-read
+  jq -n --slurpfile dep "$work/flux-writer-deployment.json" --slurpfile pods "$work/flux-writer-pods.json" --slurpfile sets "$work/flux-writer-sets.json" '{Deployment:$dep[0],Pods:$pods[0],ReplicaSets:$sets[0].items}' >"$work/flux-writer.json" || fail source-writer-runtime-projection
+}
+writer_current_receipt() {
+  writer_current=false
+  kc -n flux-system get ocirepository flux-system -o json >"$work/writer-current-source.json" || fail current-writer-source-read
+  kc -n flux-system get kustomizations flux-system infrastructure-controllers infrastructure -o json >"$work/writer-current-layers.json" || fail current-writer-layers-read
+  jq -n --slurpfile src "$work/writer-current-source.json" --slurpfile layers "$work/writer-current-layers.json" \
+    --slurpfile journal "$work/journal.json" '{OCI:$src[0],Kustomizations:$layers[0].items,Writer:$journal[0].baseline.writer}' >"$work/writer-current-proof.json" || fail current-writer-projection
+  if jq -e '.baseline.writer.flux!=null' "$work/journal.json" >/dev/null;then
+    flux_writer_receipts
+    jq --slurpfile flux "$work/flux-writer.json" '.+{Flux:$flux[0]}' "$work/writer-current-proof.json" >"$work/writer-proof.json" || fail current-writer-runtime-projection
+    mv "$work/writer-proof.json" "$work/writer-current-proof.json"
+  fi
+  if "$work/planner" check-writer <"$work/writer-current-proof.json" >"$work/proof-output" 2>"$work/proof-error"; then writer_current=true;return 0;fi
+  return 1
+}
+ensure_writer_barrier() {
+  # A completed barrier survives our intentional removal of its declarations.
+  # Requiring layer Ready again would deadlock on the correctly closed CREATE
+  # path. Reuse instead requires unchanged UID/configuration generations and a
+  # currently verified signed OCI digest; changed authority gets a full barrier.
+  if jq -e '.baseline.writer!=null' "$work/journal.json" >/dev/null && writer_current_receipt;then return 0;fi
+  flux_writer_receipts
+  cp "$work/flux-writer.json" "$work/flux-writer-before.json"
+  fresh_source_request
+  await quiesced-source-writer source_writer_quiesced
+  plan writer;apply_ns;inspect
+  writer_current_receipt || fail writer-barrier-record
 }
 
 # The declaration itself must keep the fence in every later publication. The
@@ -456,8 +502,7 @@ if [[ "$phase" == fenced ]]; then
     own_resource "$work/ars.json" autoscalingrunnerset platform-linux
   fi
   if jq -e '.baseline!=null' "$work/journal.json" >/dev/null; then
-    fresh_source_request
-    await quiesced-source-writer source_writer_quiesced
+    ensure_writer_barrier
     refresh_objects; bind_current
   fi
   await natural-drain drain_receipts
