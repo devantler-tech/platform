@@ -112,15 +112,13 @@ jobs:
       - name: 🔗 Select stable prod API endpoint
         # Same helper and same position as the deploy composite: resolve the KSail-owned floating
         # IP, fail closed on missing or foreign ownership, and switch admin@prod before any API
-        # call. Either stream can name the endpoint, so both are discarded.
+        # call. The helper's success line names the endpoint, so stdout is discarded. Its stderr
+        # is kept: that is how the command masking the address for the rest of the job reaches
+        # the runner.
         shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: |
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then
-            printf 'Could not select the production API endpoint.\n' >&2
-            exit 1
-          fi
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
 
       - name: 🪪 Read both containers' user and group id maps
         shell: bash
