@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-product-controller-contract-probe
+  namespace: data-product-controller
+  labels:
+    # The HA floor does not apply while this non-serving workload is dormant.
+    # Activation must remove this label and supply redundant probe replicas.
+    platform.devantler.tech/replica-floor: exempt
+    app.kubernetes.io/name: data-product-controller
+    app.kubernetes.io/instance: data-product-controller
+    app.kubernetes.io/component: contract-probe
+spec:
+  # Prepare observation independently; a separate reviewed change activates it.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-product-controller
+      app.kubernetes.io/instance: data-product-controller
+      app.kubernetes.io/component: contract-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: data-product-controller
+        app.kubernetes.io/instance: data-product-controller
+        app.kubernetes.io/component: contract-probe
+    spec:
+      serviceAccountName: data-product-controller-contract-probe
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-auth
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: contract-probe
+          image: ghcr.io/devantler-tech/data-product-controller:2.4.8@sha256:c40aa8ba8696cb93766d216e4fe2db64b66006a79faa36faf6a3834bf8978f9f
+          imagePullPolicy: IfNotPresent
+          command:
+            - /contract-probe
+          env:
+            - name: CONTRACT_PROBE_URL
+              value: https://harbour-data.${domain}/openapi.json
+            - name: CONTRACT_READINESS_ENABLED
+              value: "false"
+          ports:
+            - name: management
+              containerPort: 8081
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 5m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+              scheme: HTTP
+            timeoutSeconds: 7
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: management
+              scheme: HTTP
+            timeoutSeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3

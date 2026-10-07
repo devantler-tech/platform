@@ -1,22 +1,21 @@
-name: Probe GitHub Team External Identity
+name: Read Actual Budget User Namespace Maps
 
-# Obtain the ONE observation #3144 is missing: that production admission really refuses a
-# github-config Team pointed at a foreign GitHub team, on create and on update, and really admits
-# the legitimate writes — the unchanged identity, re-adoption under the identity the object
-# carries, and the provider's own record. The policy's fixtures pass and the policy reads Ready;
-# neither is an answer from the production API server.
+# Obtain the ONE observation #3604 is missing: that both live Actual Budget containers really run
+# inside a user namespace, read from the kernel's own id maps. The pod has requested one
+# (`hostUsers: false`) and has been healthy since the pilot was activated; a pod field is a
+# request, and the map is the answer. A separate smoke pod would not be evidence about these two
+# containers.
 #
-# NOTHING IS STORED. Every write the script sends carries `--dry-run=server`: the API server runs
-# the request through admission and discards it. The requests are sent as the github-config
-# applier and as the GitHub provider by impersonation, because the policy decides on the writing
-# identity. scripts/tests/test-probe-github-team-external-identity.sh pins that the script issues
-# only `get`, and `patch`/`create` with `--dry-run=server`.
+# NOTHING IS CHANGED. The script issues one `get pods` and four `exec … -- cat` reads of
+# `/proc/self/uid_map` and `/proc/self/gid_map`, with a fixed command line.
+# scripts/tests/test-read-actual-budget-userns-maps.sh pins that it issues nothing else.
 #
-# ACCESS USED — stated plainly because it is broader than the probe. The repository holds no
-# narrower production credential, so this reuses the established mechanism, exactly as
-# diagnose-cilium-ext-authz-ipcache.yaml does:
+# ACCESS USED — stated plainly because it is broader than the read. The identities the agents
+# and dashboards hold are denied `pods/exec` by design, and the repository holds no narrower
+# production credential, so this reuses the established mechanism, exactly as
+# probe-github-team-external-identity.yaml does:
 #   * KUBE_CONFIG (the `prod` environment secret), context `admin@prod`. That identity is
-#     cluster-admin, which is also what lets it impersonate the two ServiceAccounts.
+#     cluster-admin, which is what lets it exec into the pod.
 #   * HCLOUD_TOKEN, exposed ONLY to the endpoint-selection step, for one read of the KSail-owned
 #     floating IP.
 # What bounds the job is the reviewed script, the main-branch guard, the pinned context, the
@@ -26,37 +25,38 @@ name: Probe GitHub Team External Identity
 # checked out or restored, and checkout is pinned to that dispatch commit.
 #
 # DORMANT, TWICE OVER. There is no `schedule:` and no `pull_request:` trigger, and the operator
-# must type an exact confirmation phrase, so an accidental dispatch from the UI sends nothing.
+# must type an exact confirmation phrase, so an accidental dispatch from the UI reads nothing.
 #
-# PUBLIC LOG. The script prints Team names, probe names and outcomes only: no identity, no
-# ServiceAccount name, and never kubectl's own error text. The endpoint helper prints no address
-# either; its standard output is discarded so this log carries the probe's lines only.
+# PUBLIC LOG. The script prints container names, map names, range sizes and outcomes only: never
+# the ids a container maps to on the node, never the pod name, and never kubectl's own error
+# text. The endpoint helper's stdout is discarded. Its stderr is kept: it carries the command
+# that masks the address, and on failure the helper's own diagnostics, which name no address.
 
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: probe-production-team-admission"
+        description: "Type exactly: read-actual-budget-userns-maps"
         required: true
         type: string
 
 permissions: {}
 
 concurrency:
-  # Serialised with every production deploy path. Dry-run requests change nothing, but a deploy
-  # can roll Kyverno or the policy itself, and an answer taken while the admission webhook is
-  # restarting would be reported as a verdict about the control.
+  # Serialised with every production deploy path. The read changes nothing, but a deploy can
+  # replace the pod, and maps read from a pod that is being replaced would be reported as a
+  # verdict about the one that serves afterwards.
   group: prod-deploy
   cancel-in-progress: false
   queue: max
 
 jobs:
-  probe-github-team-external-identity:
-    name: 🔏 Probe GitHub Team External Identity
+  read-actual-budget-userns-maps:
+    name: 🪪 Read Actual Budget User Namespace Maps
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # KUBE_CONFIG is a `prod` ENVIRONMENT secret, not a repository secret; without this it resolves
-    # to the empty string and the probe ends INCONCLUSIVE instead of reaching the cluster.
+    # to the empty string and the read ends INCONCLUSIVE instead of reaching the cluster.
     environment: prod
     permissions:
       contents: read # checkout repository
@@ -93,9 +93,9 @@ jobs:
           CONFIRM: ${{ inputs.confirm }}
         run: |
           set -euo pipefail
-          if [[ "${CONFIRM}" != 'probe-production-team-admission' ]]; then
-            printf 'Refusing to run: the confirm input must be exactly "probe-production-team-admission".\n' >&2
-            printf 'Nothing has been sent.\n' >&2
+          if [[ "${CONFIRM}" != 'read-actual-budget-userns-maps' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "read-actual-budget-userns-maps".\n' >&2
+            printf 'Nothing has been read.\n' >&2
             exit 1
           fi
           printf 'Confirmation accepted.\n'
@@ -113,15 +113,17 @@ jobs:
       - name: 🔗 Select stable prod API endpoint
         # Same helper and same position as the deploy composite: resolve the KSail-owned floating
         # IP, fail closed on missing or foreign ownership, and switch admin@prod before any API
-        # call. It prints no address; stdout is discarded to keep this log to the probe's own lines.
+        # call. The helper's success line names the endpoint, so stdout is discarded. Its stderr
+        # is kept: that is how the command masking the address for the rest of the job reaches
+        # the runner.
         shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
 
-      - name: 🔏 Ask production admission about foreign team identities
+      - name: 🪪 Read both containers' user and group id maps
         shell: bash
-        # Exit 2 is NOT-ENFORCED and exit 3 is INCONCLUSIVE; both fail the job on purpose. A probe
-        # that proved nothing must not show green. The context is pinned because the restored
+        # Exit 2 is IDENTITY and exit 3 is INCONCLUSIVE; both fail the job on purpose. A read that
+        # proved nothing must not show green. The context is pinned because the restored
         # kubeconfig's current-context is not guaranteed to be prod.
-        run: ./scripts/probe-github-team-external-identity.sh --context admin@prod
+        run: ./scripts/read-actual-budget-userns-maps.sh --context admin@prod

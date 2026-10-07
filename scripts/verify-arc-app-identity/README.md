@@ -11,7 +11,9 @@ location. Missing, malformed or duplicate source declarations stop verification;
 both locations enforce the same fixed reader, role, namespace and transport.
 
 The manual **Verify ARC App Identity** workflow accepts only main, the first
-attempt, and the exact confirmation `verify-arc-app-identity`. It uses the existing
+attempt, and a matching mode/confirmation pair: `identity` with
+`verify-arc-app-identity`, or `transport` with `verify-arc-app-transport`.
+Identity is the default mode. It uses the existing
 `prod` environment and deployment concurrency lock. It builds and tests before
 restoring existing production access, and stops before that access when the
 declared ARC SecretStore lacks verified HTTPS transport.
@@ -19,7 +21,23 @@ declared ARC SecretStore lacks verified HTTPS transport.
 Pull requests touching the verifier run its isolated TLS/API fixture suite and
 Go vet without production credentials or the production concurrency lock.
 
-On a protected invocation, the verifier requires agreement between the reviewed
+Transport mode runs `--transport` and emits only `ARC_APP_TRANSPORT=<outcome>`.
+It checks agreement between reviewed and live configuration, the listener's real
+CA and service hostname, then makes one unauthenticated GET to
+`/v1/sys/health?standbyok=true`. An HTTP success is insufficient: `initialized`
+must explicitly be true and `sealed` false. Missing, null, malformed or ambiguous
+responses fail. A healthy standby is allowed; sealed or uninitialized status codes
+are never overridden. No reader token, OpenBao login, App entry, JWT or GitHub API
+is used in this mode. The temporary port-forward is stopped and joined on every
+return. Existing protected cluster access is still needed to read nonsecret live
+configuration and establish the tunnel.
+
+Transport success proves listener health only. It cannot satisfy same-node
+isolation, stored-key identity, or activation requirements. The separation and
+its evidence limits are recorded in the
+[pre-activation decision](../../docs/adr/arc-pre-activation-evidence.md).
+
+On a protected identity invocation, the verifier requires agreement between the reviewed
 and live bootstrap App client ID and SecretStore. It accepts a reviewed CA bundle
 or a namespaced ConfigMap CA reference. It verifies the real listener's certificate
 and service hostname through an unchanged TLS session in a loopback port-forward
@@ -40,14 +58,14 @@ read permission. The temporary OpenBao token is revoked even on failure. The
 verifier makes no GitHub writes or installation token, registers no runner and
 changes no credential or permission.
 
-Outputs contain only `ARC_APP_IDENTITY=<outcome>`. Missing transport or reader
+Identity mode outputs contain only `ARC_APP_IDENTITY=<outcome>`. Missing transport or reader
 identity, an unavailable entry, mismatches, failed responses and failed cleanup
 all return nonzero. Underlying errors, IDs, keys, tokens and response bodies are
 never printed or uploaded. Redirects, HTTP, certificate bypasses and environment
 proxies are unsupported. Requests and response sizes are bounded.
 
-The current staged store uses HTTP, so its expected preflight is
-`HOLD_TRANSPORT`. WireGuard's cross-node encryption or a verifier-only tunnel does
+An HTTP declaration produces `HOLD_TRANSPORT`. WireGuard's cross-node encryption
+or a verifier-only tunnel does
 not prove the actual SecretStore's same-node transport. The transport owner must
 first deliver authenticated HTTPS and its trusted CA to the listener **and**
 SecretStore. This verifier neither enables that store nor clears the other

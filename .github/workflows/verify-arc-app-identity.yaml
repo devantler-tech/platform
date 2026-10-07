@@ -1,6 +1,6 @@
 name: Verify ARC App Identity
 
-# Production identity proof is manual only. PRs run credential-free fixtures.
+# Production proof is manual only. PRs run credential-free fixtures.
 on:
   pull_request:
     branches: [main]
@@ -11,8 +11,14 @@ on:
       - go.sum
   workflow_dispatch:
     inputs:
+      mode:
+        description: "Check transport health or the existing App identity"
+        required: true
+        default: identity
+        type: choice
+        options: [identity, transport]
       confirm:
-        description: "Type exactly: verify-arc-app-identity"
+        description: "Type verify-arc-app-identity or verify-arc-app-transport for the selected mode"
         required: true
         type: string
 
@@ -45,7 +51,7 @@ jobs:
           go vet ./scripts/verify-arc-app-identity
 
   identity:
-    name: Verify existing ARC App identity
+    name: Verify selected ARC prerequisite
     if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -58,6 +64,7 @@ jobs:
       queue: max
     env:
       ARC_IDENTITY_CONFIRM: ${{ inputs.confirm }}
+      MODE: ${{ inputs.mode }}
     steps:
       - name: Require protected invocation
         shell: bash
@@ -66,7 +73,11 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == verify-arc-app-identity && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          case "${MODE}:${CONFIRM}" in
+            identity:verify-arc-app-identity | transport:verify-arc-app-transport) ;;
+            *) exit 1 ;;
+          esac
 
       - name: Checkout immutable source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -107,13 +118,24 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
           set -euo pipefail
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then
-            echo 'ARC_APP_IDENTITY=HOLD_ENDPOINT'
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            if [[ "${MODE}" == transport ]]; then
+              echo 'ARC_APP_TRANSPORT=HOLD_ENDPOINT'
+            else
+              echo 'ARC_APP_IDENTITY=HOLD_ENDPOINT'
+            fi
             exit 1
           fi
 
-      - name: Verify existing App and installed organization permission
-        run: '"${RUNNER_TEMP}/verify-arc-app-identity" --verify'
+      - name: Verify selected prerequisite without activation
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${MODE}" in
+            identity) "${RUNNER_TEMP}/verify-arc-app-identity" --verify ;;
+            transport) "${RUNNER_TEMP}/verify-arc-app-identity" --transport ;;
+            *) exit 1 ;;
+          esac
 
       - name: Remove restored kubeconfig
         if: ${{ always() && steps.kubeconfig.outcome == 'success' }}
