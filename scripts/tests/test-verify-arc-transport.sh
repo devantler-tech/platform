@@ -79,6 +79,10 @@ case "$args" in
   'get pods '*external-secrets*) printf '{"items":[{"metadata":{"uid":"eso-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.3","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"eso","ready":true,"restartCount":0,"containerID":"containerd://eso"}]}}]}' ;;
   'get pods '*k8s-app=cilium*) printf '{"items":[{"metadata":{"name":"cilium-a","uid":"agent-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.4","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"containerd://agent"}]}}]}' ;;
   'get pod openbao-2 '*) printf '{"metadata":{"uid":"bao-uid"},"spec":{"nodeName":"node-a","containers":[{"name":"openbao"},{"name":"arc-tls-reload"}]},"status":{"podIP":"10.1.1.2","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"openbao","ready":true,"restartCount":0,"containerID":"containerd://bao"},{"name":"arc-tls-reload","ready":true,"restartCount":0,"containerID":"containerd://reload"}]}}' ;;
+  'get ciliumendpoint openbao-2 '*)
+    owner=bao-uid; [[ "${PROOF_CASE:-}" != identity_stale ]] || owner=replaced-bao-uid
+    jq -n --arg owner "$owner" '{metadata:{ownerReferences:[{kind:"Pod",uid:$owner}]},status:{identity:{id:123,labels:["k8s:app.kubernetes.io/name=openbao","k8s:app.kubernetes.io/instance=openbao","k8s:io.kubernetes.pod.namespace=openbao","k8s:platform.devantler.tech/arc-transport=tls"]}}}' |
+      if [[ "${PROOF_CASE:-}" == identity_ordinal_only ]]; then jq '.status.identity.labels |= map(select(. != "k8s:platform.devantler.tech/arc-transport=tls"))'; else cat; fi ;;
   'get pod cilium-a '*) printf '{"metadata":{"uid":"agent-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.4","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"containerd://agent"}]}}' ;;
   'get pod arc-transport-'*)
     [[ -e "$state/created" ]] || exit 0
@@ -143,7 +147,8 @@ run_case healthy_denied 0
 run_case tls_error 60
 for name in sealed stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events \
   listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
-  listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override; do run_case "$name" 1; done
+  listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override \
+  identity_stale identity_ordinal_only; do run_case "$name" 1; done
 run_case replacement 4
 run_case cleanup_failure 4
 printf 'PASS: %s transport orchestration cases\n' "$cases"

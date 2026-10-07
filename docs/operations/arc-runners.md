@@ -57,6 +57,16 @@ authenticated cluster connection to reach the leader. The existing API listener,
 Raft storage, audit configuration and unseal hook remain in the base configuration.
 An additional listener file is appended through the pinned chart.
 
+The TLS-enabled server template declares the
+`platform.devantler.tech/arc-transport=tls` label. Both Cilium allow selectors
+require this label alongside the server's application and instance identities;
+the credential Service retains its exact ordinal selector. Cilium excludes
+Kubernetes-generated ordinal labels from security identities, so those labels
+cannot select a network-policy endpoint. The protected challenge binds the
+native CiliumEndpoint to the current Pod UID and checks that the transport label
+is retained before creating probes. Held server replicas without this label
+remain outside the TLS allow selectors.
+
 That ConfigMap contains only public settings and paths into a mounted Secret.
 Kubescape's generic credential-text rule matches the mandatory `tls_key_file`
 setting, so its disposition covers only the named ConfigMap and that control.
