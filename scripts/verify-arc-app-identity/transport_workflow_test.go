@@ -15,13 +15,18 @@ func TestWorkflowModeGuardAndDispatchStaySeparate(t *testing.T) {
 	}
 	job := object(object(workflow["jobs"])["identity"])
 	steps, _ := job["steps"].([]any)
-	guard := stringValue(object(steps[0])["run"])
-	var dispatch string
+	var guard, dispatch string
 	for _, entry := range steps {
-		source := stringValue(object(entry)["run"])
-		if strings.Contains(source, "--verify") {
-			dispatch = source
+		step := object(entry)
+		switch stringValue(step["name"]) {
+		case "Require protected invocation":
+			guard = stringValue(step["run"])
+		case "Verify selected prerequisite without activation":
+			dispatch = stringValue(step["run"])
 		}
+	}
+	if guard == "" || !strings.Contains(dispatch, "--verify") || !strings.Contains(dispatch, "--transport") {
+		t.Fatal("workflow guard or mode dispatch step not found")
 	}
 	for _, tc := range []struct {
 		mode, confirm, ref, attempt, argument string
