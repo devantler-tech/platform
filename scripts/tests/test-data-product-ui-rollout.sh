@@ -164,8 +164,12 @@ count=0
 [[ ! -f "$FIXTURE/$key.count" ]] || count=$(cat "$FIXTURE/$key.count")
 count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
 # The second and later reads return the changed object; in flap mode only every
-# other read does, so no two snapshots in a row ever agree.
-if [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
+# other read does, so no two snapshots in a row ever agree. An object with a
+# second change returns it from the fourth read on, so the second pair differs
+# from the first for another reason and only the third pair agrees.
+if [[ "${MODE:-}" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
+  cat "$FIXTURE/after2/$key.json"
+elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
   cat "$FIXTURE/after/$key.json"
 else
   cat "$FIXTURE/$key.json"
@@ -400,6 +404,25 @@ jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/
 expected_urls=18
 run_case settled-label pass
 expected_urls=9
+# The accepted report says a pair was retaken and names what had moved, so the
+# cause of a settled difference can be read from a deploy that passed (#4545).
+jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/settled-label/stdout" >/dev/null ||
+  fail 'settled-label: the accepted report did not name the change that settled'
+# Two different objects moving in turn are both named, in a report that still
+# passes because the third pair agreed.
+mkdir -p "${scratch}/settled-twice/after" "${scratch}/settled-twice/after2"
+cp "${scratch}/healthy/"*.json "${scratch}/settled-twice/"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/settled-twice/after/apps.json"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/product.json" >"${scratch}/settled-twice/after2/product.json"
+expected_urls=27
+run_case settled-twice pass '' 20
+expected_urls=9
+jq -e '.retaken == 2 and .settled == ["apps.metadata.labels","product.metadata.labels"]' "${scratch}/settled-twice/stdout" >/dev/null ||
+  fail 'settled-twice: the accepted report did not name every change that settled'
+# A rollout that never moved reports neither field: their presence is the signal.
+run_case first-pair-agreed pass
+jq -e '(has("retaken") or has("settled")) == false' "${scratch}/first-pair-agreed/stdout" >/dev/null ||
+  fail 'first-pair-agreed: a rollout that never moved was reported as retaken'
 # The same change is still refused when the state it settles into is wrong.
 mkdir -p "${scratch}/settled-wrong/after"
 cp "${scratch}/healthy/"*.json "${scratch}/settled-wrong/"
@@ -414,6 +437,8 @@ jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/
 expected_urls=10
 run_case moving-public pass flaky-public
 expected_urls=9
+jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/moving-public/stdout" >/dev/null ||
+  fail 'moving-public: the accepted report did not name the change that settled'
 # Against a rollout that holds still, one failed public check refuses the deploy.
 run_case still-public fail flaky-public 3
 jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
