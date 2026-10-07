@@ -56,9 +56,9 @@ func TestCompiledTransportCommandNeverRequestsReaderOrAppAccess(t *testing.T) {
 set -euo pipefail
 printf '%s\n' "$*" >>"${ARC_FIXTURE_ROOT}/commands"
 case "$*" in
-  '--namespace=flux-system get configmap variables-cluster --output=json') cat "${ARC_FIXTURE_ROOT}/bootstrap.json" ;;
-  '--namespace=arc-runners get secretstore openbao --output=json') cat "${ARC_FIXTURE_ROOT}/store.json" ;;
-  '--namespace=openbao port-forward --address=127.0.0.1 service/openbao-arc 0:8204')
+  '--context=admin@prod --namespace=flux-system get configmap variables-cluster --output=json') cat "${ARC_FIXTURE_ROOT}/bootstrap.json" ;;
+  '--context=admin@prod --namespace=arc-runners get secretstore openbao --output=json') cat "${ARC_FIXTURE_ROOT}/store.json" ;;
+  '--context=admin@prod --namespace=openbao port-forward --address=127.0.0.1 service/openbao-arc 0:8204')
     printf '%s' "$$" >"${ARC_FIXTURE_ROOT}/forward.pid"
     printf 'Forwarding from 127.0.0.1:%s -> 8204\n' "${ARC_FIXTURE_PORT}"
     exec sleep 60 ;;
@@ -94,7 +94,7 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "--namespace=flux-system get configmap variables-cluster --output=json\n--namespace=arc-runners get secretstore openbao --output=json\n--namespace=openbao port-forward --address=127.0.0.1 service/openbao-arc 0:8204\n"
+	want := "--context=admin@prod --namespace=flux-system get configmap variables-cluster --output=json\n--context=admin@prod --namespace=arc-runners get secretstore openbao --output=json\n--context=admin@prod --namespace=openbao port-forward --address=127.0.0.1 service/openbao-arc 0:8204\n"
 	if string(commands) != want || requests.Load() != 1 {
 		t.Fatalf("compiled command escaped fixed transport operations: commands=%q, requests=%d", commands, requests.Load())
 	}

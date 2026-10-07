@@ -32,7 +32,7 @@ func main() {
 type command func(context.Context, ...string) ([]byte, error)
 
 func kubectl(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context=admin@prod"}, args...)...)
 	// Capture neither errors nor bodies in a transcript. In particular, the
 	// short-lived reader JWT is returned directly to the verifier in memory.
 	cmd.Stderr = io.Discard
@@ -136,7 +136,7 @@ func verifyRuntime(ctx context.Context, reviewed configuration, operations runti
 		return failTransport
 	}
 	// Transport is verified before obtaining any credential-bearing token.
-	jwt, err := operations.execute(ctx, "--namespace=arc-runners", "create", "token", "arc-secret-reader", "--duration=5m")
+	jwt, err := operations.execute(ctx, "--namespace=arc-runners", "create", "token", "arc-secret-reader", "--duration=10m")
 	if err != nil || len(jwt) > maxResponse {
 		return "HOLD_READER"
 	}
@@ -165,7 +165,7 @@ func forwardBao(parent context.Context, port int) (string, func(), error) {
 		return "", nil, fmt.Errorf("transport unavailable")
 	}
 	ctx, cancel := context.WithCancel(parent)
-	cmd := exec.CommandContext(ctx, "kubectl", "--namespace=openbao", "port-forward", "--address=127.0.0.1", "service/openbao-arc", fmt.Sprintf("0:%d", port))
+	cmd := exec.CommandContext(ctx, "kubectl", "--context=admin@prod", "--namespace=openbao", "port-forward", "--address=127.0.0.1", "service/openbao-arc", fmt.Sprintf("0:%d", port))
 	cmd.Stderr = io.Discard
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
