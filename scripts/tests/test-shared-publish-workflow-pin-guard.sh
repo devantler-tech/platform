@@ -42,6 +42,11 @@ readonly CONCRETE_SHA='b3783a5148b844b3f1f4011cdc84871ad66348c1'
 # must be accepted for a currently deployed artifact to keep verifying.
 readonly CONCRETE_SHA_2='3ee6cb9bbd616c2a38779be41a5e41f3e77282d0'
 
+# The opening of a legacy application matcher, and a single quote, for the cases that write
+# a whole subject line.
+readonly SUBJECT_ID='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@'
+readonly Q="'"
+
 pass_count=0
 
 fail() {
@@ -59,6 +64,17 @@ ok() {
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 
+# write_matcher_list <dir> <n>... — the floor the guard reads (#4558): one matcher expected in
+# each named k8s/subject-<n>.yaml.
+write_matcher_list() {
+  local dir="$1" i
+  shift
+  : >"${dir}/scripts/shared-publish-workflow-matchers.tsv"
+  for i in "$@"; do
+    printf '1\tk8s/subject-%s.yaml\n' "${i}" >>"${dir}/scripts/shared-publish-workflow-matchers.tsv"
+  done
+}
+
 # build_tree <dir> <ref-for-subject-1> — writes eight subjects, the first carrying
 # the supplied ref and the remaining seven a plain 40-hex pin. One varying subject
 # is what isolates the ref check from the floor check.
@@ -67,6 +83,7 @@ build_tree() {
   rm -rf "${dir}"
   mkdir -p "${dir}/scripts" "${dir}/k8s"
   cp "${guard}" "${dir}/scripts/guard-shared-publish-workflow-pin.sh"
+  write_matcher_list "${dir}" 1 2 3 4 5 6 7 8
 
   printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n        subject: '\''^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml@%s$'\''\n' \
     "${first_ref}" >"${dir}/k8s/subject-1.yaml"
@@ -163,33 +180,150 @@ assert_rejected "an uppercase commit" "$(printf '%s' "${CONCRETE_SHA}" | tr 'a-f
 assert_rejected "a concrete commit with a wildcard appended" "${CONCRETE_SHA}.+" shasuffix
 assert_rejected "an approved set widened back with a branch" "(${CONCRETE_SHA}|refs/heads/main)" shabranch
 
-# --- RED: the floor fails closed on a shrunken match set ---------------------
+# --- RED: the floor names what must be found (#4558) --------------------------
 #
-# An empty or reduced result from a filtered read is a claim about the FILTER. If
-# the subjects move to a key spelling the pattern does not know, the grep returns
-# less and the guard would otherwise report a clean repository having checked
-# nothing.
+# An empty or reduced result from a filtered read is a claim about the FILTER. The floor
+# used to be a count, which another matcher could make up; it is now the list of files
+# that hold a matcher. Every refusal below asserts its own message, because a fixture
+# escaped wrongly fails for some other reason and would otherwise pass as this one.
+
+# assert_tree_rejected <label> <dir> <expected-stderr-pattern>
+assert_tree_rejected() {
+  local label="$1" dir="$2" expected="$3"
+  if run_tree "${dir}"; then
+    fail "guard ACCEPTED ${label}"
+  fi
+  grep -q -- "${expected}" "${dir}/stderr" ||
+    fail "guard rejected ${label} but not for the expected reason: $(head -1 "${dir}/stderr")"
+  ok "rejects ${label}"
+}
+
+readonly OTHER_FILE_HEAD='spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n'
 
 tree="${work_dir}/red-floor"
 build_tree "${tree}" "[0-9a-f]{40}"
-# Derive how many to delete from the guard's OWN floor, rather than hard-coding "remove one".
-# build_tree writes 8 subjects; the case is only meaningful while the survivors are BELOW the
-# floor. Hard-coding it meant lowering the floor to 7 silently turned this RED case green — the
-# floor stopped being tested at the exact moment it changed, which is the failure this case exists
-# to catch.
-floor="$(sed -n 's/^readonly EXPECTED_MIN_SUBJECTS=\([0-9][0-9]*\).*/\1/p' "${guard}")"
-[ -n "${floor}" ] || fail "could not read EXPECTED_MIN_SUBJECTS from the guard; this case cannot be sized"
-for i in $(seq 8 -1 $((floor))); do
-  rm -f "${tree}/k8s/subject-${i}.yaml"
-done
-survivors="$(find "${tree}/k8s" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
-[ "${survivors}" -lt "${floor}" ] ||
-  fail "red-floor fixture left ${survivors} subjects, not below the floor of ${floor}"
-if run_tree "${tree}"; then
-  fail "guard passed with ${survivors} subjects, below its floor of ${floor} — the floor did not fail closed"
-fi
-grep -q 'expected at least' "${tree}/stderr" || fail "floor fired but with the wrong message"
-ok "fails closed when fewer subjects are found than expected"
+rm -f "${tree}/k8s/subject-8.yaml"
+assert_tree_rejected "a named file that no longer holds its matcher" "${tree}" \
+  'k8s/subject-8.yaml holds 0 .* expected 1'
+
+# One matcher disappears while another appears: the count is unchanged, which is what
+# satisfied the old floor.
+tree="${work_dir}/red-floor-swap"
+build_tree "${tree}" "[0-9a-f]{40}"
+mv "${tree}/k8s/subject-8.yaml" "${tree}/k8s/subject-9.yaml"
+assert_tree_rejected "one matcher vanishing while another appears" "${tree}" \
+  'k8s/subject-9.yaml holds a shared-publish-workflow matcher but is not named'
+grep -q 'k8s/subject-8.yaml holds 0' "${tree}/stderr" ||
+  fail "the swap was refused without naming the file that lost its matcher"
+
+tree="${work_dir}/red-floor-extra"
+build_tree "${tree}" "[0-9a-f]{40}"
+printf "${OTHER_FILE_HEAD}        subject: '^https://github\\\\.com/devantler-tech/actions/\\\\.github/workflows/publish-app\\\\.yaml@%s\$'\n" \
+  "${SHA_PATTERN}" >>"${tree}/k8s/subject-8.yaml"
+assert_tree_rejected "a named file holding more matchers than the list says" "${tree}" \
+  'k8s/subject-8.yaml holds 2 .* expected 1'
+
+tree="${work_dir}/red-floor-missing-list"
+build_tree "${tree}" "[0-9a-f]{40}"
+rm -f "${tree}/scripts/shared-publish-workflow-matchers.tsv"
+assert_tree_rejected "a missing list of matcher files" "${tree}" 'is missing or unreadable'
+
+tree="${work_dir}/red-floor-empty-list"
+build_tree "${tree}" "[0-9a-f]{40}"
+printf '# nothing\n' >"${tree}/scripts/shared-publish-workflow-matchers.tsv"
+assert_tree_rejected "a list of matcher files that names none" "${tree}" 'names no file'
+
+tree="${work_dir}/red-floor-malformed-list"
+build_tree "${tree}" "[0-9a-f]{40}"
+printf 'k8s/subject-1.yaml\n' >"${tree}/scripts/shared-publish-workflow-matchers.tsv"
+assert_tree_rejected "a list line without a count" "${tree}" 'is not <count><TAB>'
+
+tree="${work_dir}/red-floor-zero-count"
+build_tree "${tree}" "[0-9a-f]{40}"
+printf '0\tk8s/subject-1.yaml\n' >"${tree}/scripts/shared-publish-workflow-matchers.tsv"
+assert_tree_rejected "a list line whose count is zero" "${tree}" 'not a positive number'
+
+tree="${work_dir}/red-floor-duplicate"
+build_tree "${tree}" "[0-9a-f]{40}"
+printf '1\tk8s/subject-1.yaml\n' >>"${tree}/scripts/shared-publish-workflow-matchers.tsv"
+assert_tree_rejected "a list naming one file twice" "${tree}" 'more than once'
+
+# --- RED: a subject the patterns do not select is still accounted for (#4558) ---
+#
+# Both patterns recognise the workflow identity by its text. A regex that means the same
+# identity in another spelling is selected by neither, so it used to be left unjudged
+# while the remaining matchers satisfied the count. Every subject is now either judged or
+# proved to name a different repository.
+
+# assert_extra_subject_rejected <label> <slug> <subject-line> <expected-stderr-pattern> —
+# eight pinned matchers, all named, plus one further file holding the supplied line.
+assert_extra_subject_rejected() {
+  local label="$1" dir="${work_dir}/red-extra-$2" line="$3" expected="$4"
+  build_tree "${dir}" "[0-9a-f]{40}"
+  printf "${OTHER_FILE_HEAD}%s\n" "${line}" >"${dir}/k8s/other.yaml"
+  assert_tree_rejected "${label}" "${dir}" "${expected}"
+}
+
+# assert_extra_subject_accepted <label> <slug> <subject-line>
+assert_extra_subject_accepted() {
+  local label="$1" dir="${work_dir}/green-extra-$2" line="$3"
+  build_tree "${dir}" "[0-9a-f]{40}"
+  printf "${OTHER_FILE_HEAD}%s\n" "${line}" >"${dir}/k8s/other.yaml"
+  if run_tree "${dir}"; then
+    ok "accepts ${label}"
+  else
+    printf '%s\n' "$(cat "${dir}/stderr")" >&2
+    fail "guard rejected ${label}"
+  fi
+}
+
+readonly ORG_ID='^https://github\.com/devantler-tech/'
+
+assert_extra_subject_rejected "a matcher whose dots are written as classes" class-dots \
+  "        subject: ${Q}${ORG_ID}actions/[.]github/workflows/publish-app[.]yaml@.+\$${Q}" \
+  'can name the repository that hosts the shared publish workflows'
+assert_extra_subject_rejected "a matcher whose repository is partly a wildcard" repo-wildcard \
+  "        subject: ${Q}${ORG_ID}act.*@.+\$${Q}" \
+  'does not open its repository with a literal name'
+assert_extra_subject_rejected "a matcher whose repository ends in a quantifier" repo-quantifier \
+  "        subject: ${Q}${ORG_ID}xa?ctions/.+\$${Q}" \
+  'does not open its repository with a literal name'
+assert_extra_subject_rejected "a matcher for the canonical repository alone, in another spelling" canonical-class \
+  "        subject: ${Q}${ORG_ID}[.]github/[.]github/workflows/publish-manifests[.]yaml@.+\$${Q}" \
+  'does not open its repository with a literal name'
+assert_extra_subject_rejected "a subject that accepts every identity" wildcard-subject \
+  "        subject: ${Q}.*${Q}" \
+  'does not open with the anchored literal'
+assert_extra_subject_rejected "an unanchored subject" unanchored \
+  "        subject: ${Q}https://github\\.com/devantler-tech/platform/x${Q}" \
+  'does not open with the anchored literal'
+assert_extra_subject_rejected "a first-party subject with an ungrouped alternative" top-alternation \
+  "        subject: ${Q}${ORG_ID}platform/\\.github/workflows/cd\\.yaml@refs/heads/main\$|.*${Q}" \
+  'alternation outside a group'
+assert_extra_subject_rejected "an alternative hidden behind a class holding a bracket" class-bracket \
+  "        subject: ${Q}${ORG_ID}platform/[](]x|.*${Q}" \
+  'character class opening with'
+assert_extra_subject_rejected "a subject whose owner is not literal" owner-wildcard \
+  "        subject: ${Q}^https://github\\.com/.+/actions/.+\$${Q}" \
+  'does not name one literal owner'
+assert_extra_subject_rejected "a matcher under a quoted key" quoted-key \
+  "        ${Q}subject${Q}: ${Q}${ORG_ID}actions/[.]github/workflows/publish-app[.]yaml@.+\$${Q}" \
+  'can name the repository that hosts the shared publish workflows'
+assert_extra_subject_rejected "a subject the guard cannot read as a scalar" double-quoted-other \
+  "        subject: \"${ORG_ID}platform/x\"" \
+  'could not read the YAML scalar of this subject'
+assert_extra_subject_rejected "a subject inside a flow mapping" flow-mapping \
+  "      - {issuer: x, subject: ${Q}.*${Q}}" \
+  'inside a YAML flow mapping'
+
+assert_extra_subject_accepted "a first-party subject with a grouped alternation" grouped \
+  "        subject: ${Q}${ORG_ID}platform/\\.github/workflows/(ci\\.yaml@refs/heads/gh-readonly-queue/main/.+|(cd|dr-rebuild)\\.yaml@refs/heads/main)\$${Q}"
+assert_extra_subject_accepted "a subject whose repository name continues as a class" repo-class \
+  "        subjectRegex: ${ORG_ID}provider-upjet-[a-z0-9-]+/\\.github/workflows/publish-provider-package\\.yml@refs/tags/v.+\$"
+assert_extra_subject_accepted "a repository that only begins like the hosting one" repo-longer \
+  "        subject: ${Q}${ORG_ID}actions-runner/\\.github/workflows/cd\\.yaml@refs/tags/v.+\$${Q}"
+assert_extra_subject_accepted "a subject naming another owner" other-owner \
+  "        subject: ${Q}^https://github\\.com/fluxcd/flux2/\\.github/workflows/release\\.yaml@refs/tags/v.+\$${Q}"
 
 # --- RED: a reference discovered but not validated is reported ---------------
 #
@@ -236,8 +370,6 @@ fi
 # These cases vary the QUOTING rather than the ref, which build_tree cannot do —
 # it always emits a well-formed single-quoted scalar.
 
-readonly SUBJECT_ID='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@'
-readonly Q="'"
 
 # build_tree_line <dir> <verbatim-subject-line> — as build_tree, but the first
 # subject's whole line is supplied by the caller.
@@ -246,6 +378,7 @@ build_tree_line() {
   rm -rf "${dir}"
   mkdir -p "${dir}/scripts" "${dir}/k8s"
   cp "${guard}" "${dir}/scripts/guard-shared-publish-workflow-pin.sh"
+  write_matcher_list "${dir}" 1 2 3 4 5 6 7 8
   printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n%s\n' \
     "${line}" >"${dir}/k8s/subject-1.yaml"
   for i in 2 3 4 5 6 7 8; do
@@ -395,6 +528,223 @@ assert_line_rejected "a block scalar with its indentation digit first" \
 assert_line_accepted "a comment opening immediately after the closing quote" \
   "        subject: ${Q}${SUBJECT_ID}${SHA_PATTERN}\$${Q}# pinned by #2816" \
   quotednospacecomment
+
+# --- RED/GREEN: the two-publisher-family subject (#4502) ----------------------
+#
+# A manifest matcher may accept the canonical manifest workflow beside the legacy one,
+# as ONE subject holding one group. That subject carries two `@` by design, which is
+# exactly what the single-identity rule above refuses, so the guard reads it with its own
+# strict parse. The GREEN cases prove the reviewed arrangement passes; each RED case
+# isolates one way a second family could let a moving ref, a second identity or an
+# unreviewed arrangement through, and asserts the refusal names that cause — the floor
+# and the single-identity rule both fire on a mis-escaped fixture, so an exit status
+# alone would prove nothing.
+
+readonly FAMILY_OPEN='^https://github\.com/devantler-tech/('
+readonly LEGACY_ID='actions/\.github/workflows/publish-manifests\.yaml@'
+readonly CANONICAL_ID='\.github/\.github/workflows/publish-manifests\.yaml@'
+
+# family_line <legacy-ref> <canonical-ref> — a single-quoted two-family subject line.
+family_line() {
+  printf '        subject: %s%s%s%s|%s%s)$%s' \
+    "${Q}" "${FAMILY_OPEN}" "${LEGACY_ID}" "$1" "${CANONICAL_ID}" "$2" "${Q}"
+}
+
+assert_line_accepted "a two-family subject with one concrete legacy commit" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2}")" \
+  family-single
+
+assert_line_accepted "a two-family subject whose legacy ref is an approved set" \
+  "$(family_line "(${CONCRETE_SHA}|${CONCRETE_SHA_2})" "${CONCRETE_SHA_2}")" \
+  family-set
+
+assert_line_accepted "a two-family subject whose legacy ref is the pattern form" \
+  "$(family_line "${SHA_PATTERN}" "${CONCRETE_SHA}")" \
+  family-pattern
+
+assert_line_accepted "a two-family subject written as a plain scalar" \
+  "        subject: ${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$" \
+  family-plain
+
+# The canonical family is approved one reviewed commit at a time, so the pattern form —
+# accepted for the legacy family — is refused here: it would admit every commit of the
+# canonical repository.
+assert_line_rejected "a canonical ref in the pattern form" \
+  "$(family_line "${CONCRETE_SHA}" "${SHA_PATTERN}")" \
+  family-canonical-pattern 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref naming a branch" \
+  "$(family_line "${CONCRETE_SHA}" 'refs/heads/main')" \
+  family-canonical-branch 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref naming a bare moving ref" \
+  "$(family_line "${CONCRETE_SHA}" 'main')" \
+  family-canonical-bare 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref that is a wildcard" \
+  "$(family_line "${CONCRETE_SHA}" '.+')" \
+  family-canonical-wildcard 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical ref that is an alternation of two commits" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2})")" \
+  family-canonical-set 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a short canonical commit" \
+  "$(family_line "${CONCRETE_SHA}" '0123456')" \
+  family-canonical-short 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "an uppercase canonical commit" \
+  "$(family_line "${CONCRETE_SHA}" "$(printf '%s' "${CONCRETE_SHA}" | tr 'a-f' 'A-F')")" \
+  family-canonical-upper 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical commit with a wildcard appended" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2}.*")" \
+  family-canonical-suffix 'does not pin one concrete 40-hex commit'
+
+# A third alternative appended INSIDE the group keeps the `)$` ending and both `@`, so
+# only reading the canonical ref whole catches it.
+assert_line_rejected "a third alternative appended inside the group" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2})|(.*")" \
+  family-third-alternative 'does not pin one concrete 40-hex commit'
+
+# The legacy family keeps the allow-list it has outside a group.
+assert_line_rejected "a two-family subject whose legacy ref is a branch" \
+  "$(family_line 'refs/heads/main' "${CONCRETE_SHA}")" \
+  family-legacy-branch 'does not pin a fixed revision'
+
+assert_line_rejected "a two-family subject whose legacy ref is a wildcard" \
+  "$(family_line '.+' "${CONCRETE_SHA}")" \
+  family-legacy-wildcard 'does not pin a fixed revision'
+
+assert_line_rejected "a two-family subject whose legacy set carries a branch" \
+  "$(family_line "(${CONCRETE_SHA}|refs/heads/main)" "${CONCRETE_SHA_2}")" \
+  family-legacy-setbranch 'does not pin a fixed revision'
+
+assert_line_rejected "a two-family subject whose legacy ref is partially grouped" \
+  "$(family_line "(${CONCRETE_SHA})?.+" "${CONCRETE_SHA_2}")" \
+  family-legacy-partial 'not a fully grouped'
+
+# Arrangements nobody reviewed. Each still names only pinned commits, which is the point:
+# the refusal is about the arrangement, not about a ref the allow-list would catch anyway.
+assert_line_rejected "the canonical family written first" \
+  "        subject: ${Q}${FAMILY_OPEN}${CANONICAL_ID}${CONCRETE_SHA}|${LEGACY_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-reversed 'not the legacy family followed by the canonical family'
+
+assert_line_rejected "a group holding the legacy family twice" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${LEGACY_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-legacy-twice 'not the legacy family followed by the canonical family'
+
+assert_line_rejected "a group naming the canonical family twice" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA_2}|${CANONICAL_ID}${CONCRETE_SHA}")" \
+  family-canonical-twice 'where exactly two are expected'
+
+assert_line_rejected "a canonical family repeated without a second ref" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|\\.github/\\.github/workflows/publish-${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-canonical-nested 'names a publisher family more than once'
+
+assert_line_rejected "a subject naming only the canonical publisher" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/${CANONICAL_ID}${CONCRETE_SHA}\$${Q}" \
+  family-canonical-only 'names only the canonical publisher'
+
+assert_line_rejected "a group that is not closed and anchored" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})${Q}" \
+  family-unanchored-end 'opens a publisher group but is not exactly'
+
+assert_line_rejected "a group followed by a further alternative" \
+  "        subject: ${Q}${FAMILY_OPEN}${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$|.*${Q}" \
+  family-trailing-alternative 'opens a publisher group but is not exactly'
+
+assert_line_rejected "a group that is not anchored at its start" \
+  "        subject: ${Q}https://github\\.com/devantler-tech/(${LEGACY_ID}${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-unanchored-start 'opens a publisher group but is not exactly'
+
+assert_line_rejected "a two-family subject with unescaped dots" \
+  "        subject: ${Q}^https://github.com/devantler-tech/(actions/.github/workflows/publish-manifests.yaml@${CONCRETE_SHA}|.github/.github/workflows/publish-manifests.yaml@${CONCRETE_SHA_2})\$${Q}" \
+  family-bare-dots 'opens a publisher group but is not exactly'
+
+# Only the manifest workflow has a canonical publisher.
+assert_line_rejected "a two-family subject for the application workflow" \
+  "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|\\.github/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA_2})\$${Q}" \
+  family-app 'names a workflow other than publish-manifests'
+
+assert_line_rejected "two families naming different workflows" \
+  "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \
+  family-mixed-workflows 'name different workflows'
+
+# Discovery is independent of the subject pattern, and it has to see the canonical family
+# too: a canonical reference under a key the guard does not validate is reported, not
+# skipped, exactly as a legacy one is.
+tree="${work_dir}/red-family-undiscovered"
+build_tree "${tree}" "${SHA_PATTERN}"
+printf 'spec:\n  verify:\n    matchOIDCIdentity:\n      - issuer: x\n        identity: '\''^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-manifests\\.yaml@.+$'\''\n' \
+  >"${tree}/k8s/canonical-other-key.yaml"
+if run_tree "${tree}"; then
+  fail "guard ACCEPTED a canonical-publisher reference it never validated"
+fi
+grep -q 'did not validate' "${tree}/stderr" ||
+  fail "guard rejected an unvalidated canonical reference but not for the discovery reason: $(head -1 "${tree}/stderr")"
+ok "reports a canonical-publisher reference under a key it does not validate"
+
+# --- RED: an alternation over refs must be grouped ------------------------------
+#
+# `@A|B$` is not two refs: it reads as `^…@A` OR `B$`, and the second half is anchored to
+# nothing before it. Splitting the ref on `|` found two well-formed alternatives and
+# accepted a subject whose second half matches ANY identity ending in a commit.
+
+assert_rejected_grouping() { # <label> <subject-line> <slug>
+  assert_line_rejected "$1" "$2" "$3" 'not a fully grouped'
+}
+
+assert_rejected_grouping "an ungrouped alternation of a commit and the commit pattern" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}|${SHA_PATTERN}\$${Q}" \
+  ungrouped-pattern
+
+assert_rejected_grouping "an ungrouped alternation of two commits" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}|${CONCRETE_SHA_2}\$${Q}" \
+  ungrouped-commits
+
+assert_rejected_grouping "a two-family subject whose legacy refs are not grouped" \
+  "$(family_line "${CONCRETE_SHA}|${CONCRETE_SHA_2}" "${CONCRETE_SHA}")" \
+  family-legacy-ungrouped
+
+# --- RED: the scalar judged is the identity the line was selected for -----------
+#
+# The subject pattern selects a LINE and matches anywhere on it. Each case below is
+# selected by text that is not the value's identity — a comment, or the tail of an
+# alternation — while the value itself carries one `@` and a well-formed ref, which is all
+# the guard used to look at. cosign receives the value, not the comment.
+
+assert_rejected_identity() { # <label> <subject-line> <slug>
+  assert_line_rejected "$1" "$2" "$3" 'subject is not exactly'
+}
+
+assert_rejected_identity "a wildcard identity selected by a comment naming the workflow" \
+  "        subject: ${Q}.*@${SHA_PATTERN}${Q} # subject: ${SUBJECT_ID}" \
+  identity-comment
+
+assert_rejected_identity "a wildcard alternative ahead of a workflow-shaped tail" \
+  "        subject: ${Q}.*|subject: ${SUBJECT_ID}${SHA_PATTERN}\$${Q}" \
+  identity-tail
+
+assert_rejected_identity "a canonical-only identity in another spelling, selected by a comment" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/[.]github/[.]github/workflows/publish-manifests[.]yaml@${SHA_PATTERN}\$${Q} # subject: ${SUBJECT_ID}x" \
+  identity-canonical-comment
+
+assert_rejected_identity "a subject with no closing anchor" \
+  "        subject: ${Q}${SUBJECT_ID}${CONCRETE_SHA}${Q}" \
+  identity-no-end-anchor
+
+assert_rejected_identity "a subject with no opening anchor" \
+  "        subject: ${Q}${SUBJECT_ID#^}${CONCRETE_SHA}\$${Q}" \
+  identity-no-start-anchor
+
+assert_rejected_identity "a subject with unescaped dots" \
+  "        subject: ${Q}^https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@${CONCRETE_SHA}\$${Q}" \
+  identity-bare-dots
+
+assert_rejected_identity "a subject naming another publish workflow" \
+  "        subject: ${Q}^https://github\\.com/devantler-tech/actions/\\.github/workflows/publish-app\\.yaml.*@${CONCRETE_SHA}\$${Q} # subject: ${SUBJECT_ID}" \
+  identity-workflow-suffix
 
 # --- Integration: the real repository satisfies the narrowed guard -----------
 

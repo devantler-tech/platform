@@ -3,6 +3,13 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  # Re-adopt the retained release without activating a runner. Suspension does
+  # not drain an installed scale set; runtime acceptance remains a separate gate.
+  - retained-ksail-analysis/
+  - arc-credential-transport/
+  # Issuance restrictions must be active before credentials or runners are used.
+  # This layer follows installation of the Kyverno admission controller.
+  - cluster-policies/restrict-arc-openbao-certificate.yaml
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers
@@ -46,7 +53,7 @@ resources:
   # the file headers.
   - cluster-policies/restrict-storage-to-baseline-workers.yaml
   - cluster-policies/drain-autoscale-node-storage.yaml
-  # Longhorn 1.12.1 generates a shell pre-stop hook in its distroless CSI
+  # Longhorn 1.13.0 generates a shell pre-stop hook in its distroless CSI
   # registrar. Admission prevents reintroduction; retrofit fixes the existing
   # runtime-generated DaemonSet. Both are exact and version-coupled (#3931).
   - cluster-policies/remove-longhorn-registrar-prestop.yaml

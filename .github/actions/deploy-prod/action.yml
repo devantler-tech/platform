@@ -10,6 +10,10 @@ description: >-
   secret is passed in as an input.
 
 inputs:
+  recovery-source-sha:
+    description: Validated main checkout required to remain current during recovery; empty for speculative merge-group deployment.
+    required: false
+    default: ""
   verify-wedding-backup-staging:
     description: Verify the dedicated Wedding backup credential and active archive during an opted-in manual deployment.
     required: false
@@ -57,6 +61,19 @@ runs:
         APPROVED_REVISIONS_ENFORCE: '1'
       run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
+    # Keep signer approval ahead of credentials, then refuse stale recovery
+    # before installing tools or changing production.
+    - name: 🧭 Verify the validated recovery still matches main
+      id: verify_recovery_source
+      shell: bash
+      env:
+        RECOVERY_SOURCE_SHA: ${{ inputs.recovery-source-sha }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [[ -n "${RECOVERY_SOURCE_SHA}" ]]; then
+          bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
+        fi
+
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
       # downloaded asset against GitHub's published release checksum before
@@ -66,7 +83,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.195.1"
+        KSAIL_VERSION: "7.198.0"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -209,6 +226,12 @@ runs:
         shellcheck scripts/tests/test-pvc-prune-safety.sh
         bash scripts/tests/test-pvc-prune-safety.sh
 
+    - name: 🛑 Verify ARC drain recovery has no active pool
+      # Read complete metadata lists before the mutable artifact can move.
+      # No App key, JIT configuration or full Pod response is requested.
+      shell: bash
+      run: go run ./scripts/guard-arc-recovery before-publish
+
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
       # The widened device component deliberately uses OnDelete so the Cilium
@@ -278,6 +301,7 @@ runs:
       id: publish_platform_manifest
       uses: ./.github/actions/deploy-prod/publish-platform-manifests
       with:
+        recovery-source-sha: ${{ inputs.recovery-source-sha }}
         ghcr-token: ${{ inputs.ghcr-token }}
         hcloud-token: ${{ inputs.hcloud-token }}
 
@@ -315,14 +339,11 @@ runs:
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
-      # Shared composite (extracted from the richest platform-template variant,
-      # devantler-tech/actions#367). Its default `kustomizations` input is
-      # `infrastructure-controllers infrastructure apps` — identical to the list
-      # this callsite previously hard-coded — so this is behaviour-preserving for
-      # the describe loop and a strict diagnostics upgrade otherwise (Nodes,
-      # all-pods, failing/CrashLooping pod logs, Job logs, failing-Job describes,
-      # larger --tail values). Failure-path-only: it cannot affect a green deploy.
-      uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
+      # Canonical bounded diagnostics retain the same default Kustomizations:
+      # infrastructure-controllers infrastructure apps. Current failures precede
+      # capped recent Job output, with per-command and collection deadlines.
+      # This remains failure-path-only and preserves the original deploy verdict.
+      uses: devantler-tech/.github/actions/diagnose-flux@ef34177c48310d4e8d6605233cb7218b926dcc55 # v7.2.11
 
     - name: ⏳ Wait for the newly published Flux revision
       id: wait_flux_revision
@@ -337,6 +358,10 @@ runs:
       env:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
+    - name: 🛑 Verify ARC stayed inactive across recovery
+      shell: bash
+      run: go run ./scripts/guard-arc-recovery after-reconcile
 
     - name: Verify dedicated Wedding backup credential and active archive
       id: verify_wedding_backup_staging
@@ -458,6 +483,20 @@ runs:
         steps.wait_prod_api_stability.outcome == 'success'
       shell: bash
       run: ./scripts/verify-talos-schematic-readback.sh
+
+    - name: 🧾 Read back the kubelet settings on every node
+      # A green machine-config sync does not prove that every running kubelet
+      # took the declared settings: two autoscaler nodes ran without the disk
+      # eviction thresholds for weeks after the fix deployed, and nothing
+      # reported it (#3137). A finding fails the deploy: the comparison passed on
+      # every production deploy for a day before it was made blocking. The
+      # steps after it that reassert credentials run on a failure too. The
+      # check only reads Kubernetes.
+      if: >-
+        steps.cluster_update.outcome == 'success' &&
+        steps.wait_prod_api_stability.outcome == 'success'
+      shell: bash
+      run: ./scripts/verify-kubelet-config-readback.sh
 
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the

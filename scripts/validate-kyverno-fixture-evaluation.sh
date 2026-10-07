@@ -5,15 +5,21 @@
 # REASON=Excluded and counts it as passing whatever the row declared. A rule
 # that matches nothing, or one that was deleted or renamed, therefore leaves
 # the suite green (#3145, #3152, #3392). A declared resource that does not
-# exist gets no row at all, so it drops out of the run the same way. Three
-# checks close those gaps:
+# exist gets no row at all, so it drops out of the run the same way. A policy
+# kyverno loads but refuses to evaluate (an expression it cannot validate) is
+# the same gap at its widest: every row of it is skipped as "Invalid Policy"
+# and still counted as passing (#4530). Four checks close
+# those gaps:
 #   1. every rule a fixture names exists in a policy that fixture loads, so a
 #      deleted or renamed rule fails even where only `skip` rows name it, and an
 #      autogen rule the policy never generates fails too;
 #   2. every Excluded row declares `result: skip`, the way a fixture marks a
 #      resource the rule is meant to leave alone;
 #   3. every resource a results entry names produced a row, and every trigger
-#      of a generated object produced its own.
+#      of a generated object produced its own;
+#   4. every row is a Pass whose reason is that its rule ran (Ok) or left the
+#      resource alone (Excluded). Any other result or reason on a run kyverno
+#      called green means the row asserted nothing.
 #
 # Usage: validate-kyverno-fixture-evaluation.sh [tests-dir]
 # Exit: 0 every fixture evaluates what it declares; 1 a finding or a failing
@@ -231,6 +237,20 @@ for file_marker in "${work}"/section-*.file; do
         | select($row | answers($e; $r)) | $e.result ] | unique as $results
     | select($results != ["skip"])
     | [$row.POLICY, $row.RULE, $row.RESOURCE, ($results | join(","))] | @tsv' "${rows}")
+
+  # Check 4: a row kyverno counted as passing that is not a Pass for one of these two
+  # reasons asserted nothing. The known case is a policy kyverno refuses to evaluate,
+  # whose every row reads Skip / "Invalid Policy"; one finding per policy, result and
+  # reason, not one per row. Naming what IS an assertion means a result or reason
+  # kyverno adds later fails here too.
+  while IFS=$'\t' read -r policy result reason count; do
+    finding "${test_file}: kyverno did not evaluate ${count} row(s) of ${policy} (result: ${result}, reason: ${reason}) and still counted them as passing. fix: run kyverno apply on the policy to see why it is skipped, and correct it."
+  done < <(jq -r '
+    def named: if (. // "") == "" then "none given" else . end;
+    [.[] | select((.RESULT // "") != "Pass"
+      or ((.REASON // "") != "Ok" and (.REASON // "") != "Excluded"))]
+    | group_by([.POLICY, (.RESULT // ""), (.REASON // "")])[]
+    | [(.[0].POLICY | named), (.[0].RESULT | named), (.[0].REASON | named), length] | @tsv' "${rows}")
 
   # Check 3: a declared resource kyverno never loaded produces no row and no failure.
   while IFS=$'\t' read -r policy rule kind resource; do

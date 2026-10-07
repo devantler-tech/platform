@@ -1,0 +1,24 @@
+---
+# Recovery after a rebuild: the artifact states the approved identity of admins.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307"
+spec:
+  forProvider:
+    privacy: closed
+---
+# The live shape: maintainers is adopted by its approved identity.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606"
+spec:
+  forProvider:
+    privacy: closed

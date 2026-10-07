@@ -1,0 +1,12 @@
+---
+# Only the GitHub provider is exempt, not every ServiceAccount beside it: Crossplane itself and the other providers are held to the rule.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed

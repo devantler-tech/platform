@@ -3256,3 +3256,46 @@ No entry was added or removed. Its approved fingerprint moves from
 The source delta is the callback alone; no RBAC, IAM, service account, or
 permission grant changes. The authorization command passes with this one
 entry re-approved; its negative controls remain intact.
+
+## 2026-10-06 — Dedicated encrypted ARC credential transport
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry for #4570, against the retained ARC
+recovery at `2638277c`: HelmRelease openbao/openbao. Nothing was added or
+removed from the selected authorization surface. Its fingerprint moves from
+`068ad0ebbbc391a567ad211c7254130c0b949de8bec7a27f87fcab8ac034b452` to
+`a3e829429965ed7f8c430424564624d176c1ae96be38a05db1bd38d018ebc1d4`.
+
+The reviewed source appends a dedicated TLS listener, certificate mounts and
+same-image certificate reload helper. The existing server retains its API
+identity through an explicit projection; automatic token injection is disabled
+and the helper receives no credential mounts. The existing three Raft members,
+partition 2, storage, audit, unseal hook and legacy listener are preserved.
+The chart render and native OpenBao 2.6.3 TLS/reload regression exercise those
+settings. No RBAC binding, IAM policy, reader role, App identity or App grant
+changes. The required authorization gate and its negative controls remain
+enabled. Production TLS, actual credential identity and untrusted workload
+isolation remain separate protected runtime checks before ARC activation.
+
+## 2026-10-07 — Read-only service-quota listing for the EKS CI role
+
+The renderer measured exactly one changed authorization entry for
+devantler-tech/aws#38 against base `4b711cd8`: Role aws/eks-ci. Nothing was
+added or removed from the selected authorization surface. Its ledger entry
+moves from
+`878e257591c0e0dd69ebf1398211feadfc06f857665e453a87815c361c2529cd` to
+`c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306`, and the
+role manifest, inline policy and per-resource pins move with it.
+
+The source delta is one appended inline-policy statement, `ServiceQuotasRead`,
+allowing the single action `servicequotas:ListServiceQuotas` on `*` (the
+action has no resource-level scoping), plus the comment that explains it. The
+action returns quota values and changes nothing. The trust policy, session
+limit, permissions boundary and every existing statement are unchanged, so
+their pins do not move. It is needed because EKS node groups stopped launching
+on the account's EC2 fleet-request limit and the read-only capacity report in
+devantler-tech/ksail could list usage but not the limit.
+
+These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
+which is not the approved renderer; the required CI job re-renders with the
+approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.

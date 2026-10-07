@@ -22,7 +22,7 @@ done
 for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   record="$(lookup "$observed" "$consumer")"
   [ -n "$record" ] || refuse "no OCIRepository is attributed to registered consumer $consumer"
-  IFS=$'\t' read -r file workflow ref <<<"$record"
+  IFS=$'\t' read -r file workflow ref _canonical_ref <<<"$record"
   IFS=$'\t' read -r set_workflow signer pin candidate <<<"$(lookup "$approved" "$consumer")"
   [ "$workflow" = "$set_workflow" ] || refuse "$consumer: $file names $workflow but the approved set names $set_workflow"
   [ "$ref" = "$PATTERN_REF" ] || [[ "$ref" =~ $FIXED_REF_RE ]] ||
@@ -32,7 +32,7 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   fi
 
   desired_ref="$(approved_ref "$signer" "$pin" "$candidate")"
-  subject="${SUBJECT_PREFIX}${workflow#publish-}"'\.yaml@'"$desired_ref"'$'
+  subject="$(approved_subject "$workflow" "$desired_ref" "$(lookup "$canonical" "$consumer")")"
   mkdir -p "$STAGED/$(dirname "$file")"
   # Select the actual OCIRepository document; unrelated documents remain unchanged.
   # shellcheck disable=SC2016
@@ -41,12 +41,12 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
     "$SCAN_ROOT/$file" >"$STAGED/$file"
 done
 
-APPROVED_REVISIONS_FILE="$APPROVED_SET" PUBLISH_CONSUMER_ROOT="$STAGED" \
+APPROVED_REVISIONS_FILE="$APPROVED_SET" CANONICAL_APPROVALS_FILE="$CANONICAL_SET" PUBLISH_CONSUMER_ROOT="$STAGED" \
   APPROVED_REVISIONS_ENFORCE=1 bash "$WRITER_DIR/guard-publish-workflow-approved-revisions.sh"
 
 changed=0
 for consumer in "${EXPECTED_CONSUMERS[@]}"; do
-  IFS=$'\t' read -r file _workflow _ref <<<"$(lookup "$observed" "$consumer")"
+  IFS=$'\t' read -r file _workflow _ref _canonical_ref <<<"$(lookup "$observed" "$consumer")"
   if ! cmp -s "$STAGED/$file" "$SCAN_ROOT/$file"; then
     cat "$STAGED/$file" >"$SCAN_ROOT/$file"
     changed=$((changed + 1))

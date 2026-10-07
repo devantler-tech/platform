@@ -1,0 +1,12 @@
+# The files that hold a cosign matcher for a shared devantler-tech publish workflow, and how
+# many each holds: <count><TAB><repository-relative path>. Read by
+# scripts/guard-shared-publish-workflow-pin.sh, which fails when a named file yields any other
+# number or when a matcher sits in a file this list does not name. Add or remove a line only in
+# the change that adds or removes the consumer it names.
+1	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
+1	k8s/bases/apps/github-config/oci-repository.yaml
+1	k8s/bases/apps/wedding-app/oci-repository.yaml
+1	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
+1	k8s/providers/hetzner/apps/aws/oci-repository.yaml
+1	talos/cluster/verify-first-party-images.yaml

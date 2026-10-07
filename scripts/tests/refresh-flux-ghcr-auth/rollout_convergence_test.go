@@ -1464,6 +1464,66 @@ func TestStaleFluxChildReconcilingConditionAfterPauseDoesNotBlockHandoff(t *test
 	requireLine(t, operations, "flux-policy-resume:infrastructure")
 }
 
+func TestFluxControllerRestartSurvivesOperatorManagerCleanup(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	result := f.runHelper(validConfig(), nil, map[string]string{
+		"FAKE_FLUX_OPERATOR_CLEANS_RESTART_MANAGERS":                 "true",
+		"FAKE_FLUX_OPERATOR_RECONCILES_PARENT_ON_CONTROLLER_RESTART": "true",
+		"FAKE_LOG_FLUX_CONTROLLER_RESTART":                           "true",
+	})
+	requireSuccessResult(t, result)
+	operations := readLines(f.operationLog)
+	preserved := lineIndex(t, operations, "flux-operator-restart-preserved:kustomize-controller")
+	terminated := lineIndex(t, operations, "flux-controller-old-processes-terminated:kustomize-controller")
+	policy := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+	if preserved >= terminated || terminated >= policy {
+		t.Fatalf("policy mutation preceded preserved restart and process retirement: %v", operations)
+	}
+	requireNoLine(t, operations, "flux-operator-restart-reverted:kustomize-controller")
+}
+
+func TestFluxControllerOperatorCleanupStillRejectsSurvivingProcesses(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		operation string
+		env       map[string]string
+	}{
+		{
+			name:      "explicit operator override reverts the restart",
+			operation: "flux-operator-restart-reverted:kustomize-controller",
+			env: map[string]string{
+				"FAKE_FLUX_OPERATOR_RESTART_OVERRIDE_MANAGER": "platform-ghcr-auth-handoff",
+			},
+		},
+		{
+			name:      "preserved restart leaves an old terminating Pod",
+			operation: "flux-controller-rollout-complete-with-terminating-old-pod:kustomize-controller",
+			env: map[string]string{
+				"FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING": "true",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			tc.env["FAKE_FLUX_OPERATOR_CLEANS_RESTART_MANAGERS"] = "true"
+			tc.env["FAKE_LOG_FLUX_CONTROLLER_RESTART"] = "true"
+			result := f.runHelper(validConfig(), nil, tc.env)
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr,
+				"Could not prove every pre-handoff kustomize-controller process was replaced")
+			operations := readLines(f.operationLog)
+			requireLine(t, operations, tc.operation)
+			requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+			requireNoLine(t, operations, "root-patch")
+			requireLine(t, operations, "flux-policy-resume:infrastructure")
+			requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+		})
+	}
+}
+
 func TestFluxControllerRestartTerminatesPrePauseProcessesBeforePolicyStage(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
@@ -3034,6 +3094,40 @@ func TestFluxChildNotProvablyPastApplyBlocksPolicyHandoff(t *testing.T) {
 			requireNoLine(t, operations, "flux-policy-pause:infrastructure")
 			requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
 			requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+		})
+	}
+}
+
+// The first diagnosed production rollout converged after 142 seconds (#4178).
+// Model elapsed time at the kubectl boundary without sleeping: the script must
+// permit that healthy convergence while still rejecting a rollout beyond its bound.
+func TestFluxControllerRolloutAllowsObservedConvergenceWithinFiniteBudget(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		seconds string
+		ready   bool
+	}{
+		{name: "observed healthy convergence", seconds: "142", ready: true},
+		{name: "exhausted finite budget", seconds: "181", ready: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_FLUX_CONTROLLER_ROLLOUT_SECONDS": tc.seconds,
+				"FAKE_LOG_FLUX_CONTROLLER_RESTART":     "true",
+			})
+			if tc.ready {
+				requireSuccessResult(t, result)
+				requireLine(t, readLines(f.operationLog), "flux-controller-old-processes-terminated:kustomize-controller")
+				requireNotContains(t, result.stdout+result.stderr, "handoff diagnostics")
+				return
+			}
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, "timed out waiting for kustomize-controller rollout")
+			requireContains(t, result.stdout+result.stderr, "::group::kustomize-controller handoff diagnostics")
+			requireNoLine(t, readLines(f.operationLog), "flux-controller-old-processes-terminated:kustomize-controller")
 		})
 	}
 }

@@ -157,6 +157,7 @@ readonly roots_type='tuftrustedroots.security.talos.dev'
 readonly rules_owner='security.ImageVerificationConfigController'
 readonly roots_owner='security.TUFTrustedRootController'
 readonly ksail_pattern='ghcr.io/devantler-tech/ksail*'
+readonly analysis_pattern='ghcr.io/devantler-tech/ksail-analysis-runner'
 readonly provider_pattern='ghcr.io/devantler-tech/provider-upjet-*'
 readonly storage_pattern='ghcr.io/devantler-tech/platform-kubescape-storage'
 readonly kubescape_node_agent_pattern='ghcr.io/devantler-tech/platform-kubescape-node-agent'
@@ -212,13 +213,14 @@ write_roots() {
 write_healthy_rules() {
   local node="$1"
   {
-    resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
-    resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
-    resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
-    resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
-    resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-    resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${analysis_pattern}"
+    resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
+    resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
+    resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
+    resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
+    resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
+    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+    resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -244,7 +246,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '7 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '8 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
@@ -281,13 +283,14 @@ require_text "${output}" 'declared rule set' 'case 1a: names the incomplete poli
 # ===========================================================================
 write_node driftrules
 {
-  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
-  resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
-  resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
-  resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
-  resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0000 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${analysis_pattern}"
+  resource_obj 0001 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${ksail_pattern}"
+  resource_obj 0002 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${provider_pattern}"
+  resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
+  resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
+  resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
+  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+  resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules
@@ -296,6 +299,31 @@ output="$(run_script TALOS_NODES=driftrules 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'case 1b: a runtime rule pattern that differs from the declaration MUST fail'
 require_text "${output}" 'FAIL driftrules' 'case 1b: names the node with policy drift'
 require_text "${output}" 'declared rule set' 'case 1b: names the drifted policy'
+
+# The prepared analysis route is part of every node's policy, even before ARC
+# is activated. Missing it or substituting the legacy KSail release signer
+# must remain red while all other routes and trust material stay healthy.
+healthy_node oldanalysispolicy
+analysis_rules="${fixtures}/oldanalysispolicy/resources/${rules_type}"
+jq -s --arg pattern "${analysis_pattern}" 'map(select(.spec.imagePattern != $pattern))[]' \
+  "${analysis_rules}" >"${work_dir}/changed-rules.json"
+mv "${work_dir}/changed-rules.json" "${analysis_rules}"
+status=0
+output="$(run_script TALOS_NODES=oldanalysispolicy 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'missing exact analysis route must fail'
+require_text "${output}" 'declared rule set' 'missing analysis route must name policy drift'
+
+healthy_node analysissignerdrift
+release_verifier=$(jq -c --arg pattern "${ksail_pattern}" \
+  '.[] | select(.imagePattern == $pattern) | .keylessVerifier' <<<"${fixture_rules_json}")
+analysis_rules="${fixtures}/analysissignerdrift/resources/${rules_type}"
+jq -s --arg pattern "${analysis_pattern}" --argjson verifier "${release_verifier}" \
+  'map(if .spec.imagePattern == $pattern then .spec.keylessVerifier = $verifier else . end)[]' \
+  "${analysis_rules}" >"${work_dir}/changed-rules.json"
+mv "${work_dir}/changed-rules.json" "${analysis_rules}"
+status=0
+output="$(run_script TALOS_NODES=analysissignerdrift 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'legacy KSail release signer must not satisfy the analysis route'
 
 # A previously healthy six-rule fleet cannot clear activation of the new zone.
 # The existing app catch-all is present, but uses the wrong signer for this image.

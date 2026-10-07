@@ -40,6 +40,9 @@ jobs:
           go test ./scripts/audit-storage-retention
           shellcheck scripts/audit-storage-retention/capture.sh
 
+      - name: 🧯 Validate private recovery field extraction
+        run: go test -race ./scripts/validate-break-glass
+
       - name: 💾 Validate Flux replacement safety
         run: |
           go test ./scripts/validate-flux-force-safety
@@ -71,6 +74,9 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
           go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
+          shellcheck scripts/verify-prod-recovery-source.sh scripts/tests/test-prod-recovery-source.sh scripts/tests/test-prod-recovery-source-wiring.sh
+          bash scripts/tests/test-prod-recovery-source.sh
+          bash scripts/tests/test-prod-recovery-source-wiring.sh
           shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
           bash scripts/tests/test-merge-group-evicted.sh
           shellcheck scripts/check-flux-orphaned-objects.sh scripts/tests/test-check-flux-orphaned-objects.sh
@@ -145,6 +151,15 @@ jobs:
 
       - name: 🛑 Validate inactive ARC staging boundaries
         run: go test ./scripts/tests/arc-staging
+
+      - name: 🔐 Validate ARC transport proof boundaries
+        run: |
+          go test -race ./scripts/verify-arc-transport
+          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
+          bash scripts/tests/test-verify-arc-transport.sh
+
+      - name: 🛑 Validate ARC recovery metadata proof
+        run: go test -race ./scripts/guard-arc-recovery
 
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
@@ -335,8 +350,10 @@ jobs:
           shellcheck -x scripts/write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
+          shellcheck scripts/tests/test-publish-workflow-canonical-approvals.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
+          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
 
       - name: 🔐 Enforce approved publication signers
         env:
@@ -483,6 +500,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
@@ -515,6 +533,7 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-arc-listener-public-content.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -583,6 +602,7 @@ jobs:
               - 'scripts/tests/test-restrict-homepage-service-groups.sh'
               # The bookmark validator and its tests guard the same ConfigMap (#2909).
               - 'scripts/validate-homepage-bookmarks.sh'
+              - 'scripts/validate-homepage-bookmarks/**'
               - 'scripts/tests/test-validate-homepage-bookmarks.sh'
               - 'scripts/tests/homepage-bookmarks/**'
               - 'scripts/tests/test-kyverno-umami-mutation-rbac.sh'
@@ -634,6 +654,18 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #3144 admission probe, its test and its workflow are one
+              # contract: the test pins that every write the probe sends is a
+              # server-side dry run and that no identity reaches the public log.
+              - 'scripts/probe-github-team-external-identity.sh'
+              - 'scripts/tests/test-probe-github-team-external-identity.sh'
+              - '.github/workflows/probe-github-team-external-identity.yaml'
+              # The #3604 user-namespace map read, its test and its workflow are one
+              # contract: the test pins that the script issues one `get` and four
+              # fixed `exec … cat` reads, and that no node-side id reaches the log.
+              - 'scripts/read-actual-budget-userns-maps.sh'
+              - 'scripts/tests/test-read-actual-budget-userns-maps.sh'
+              - '.github/workflows/read-actual-budget-userns-maps.yaml'
               # The #3790 datapath throttling measurement, its test and its workflow
               # are one contract: the test pins that the script stays read-only, its
               # arithmetic, and that no node or pod name reaches the public log.
@@ -802,6 +834,7 @@ jobs:
               # that edits the guard must also run the test that pins its ablations,
               # or a widened allow-list would ship with every check still green.
               - 'scripts/guard-shared-publish-workflow-pin.sh'
+              - 'scripts/shared-publish-workflow-matchers.tsv'
               - 'scripts/tests/test-shared-publish-workflow-pin-guard.sh'
               # Both halves, for the same reason as the pin guard above: the guard step itself
               # runs unconditionally, and listing the pair here is what keeps a guard edit
@@ -811,6 +844,9 @@ jobs:
               - 'scripts/write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
+              # The fixed canonical-publisher approvals the same library reads, and their test (#4502).
+              - 'scripts/publish-workflow-canonical-approvals.tsv'
+              - 'scripts/tests/test-publish-workflow-canonical-approvals.sh'
               # The generator that writes the set the guard above reads, and its test — both
               # halves, so editing either alone still runs the fail-closed proof (an unresolved
               # consumer writes nothing) that step 🔐 Validate the approved-revisions generator pins.
@@ -939,6 +975,11 @@ jobs:
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
+              # Every workflow that calls the stable-endpoint helper is checked by
+              # that helper's wiring test, and new callers keep appearing.
+              # Matching all workflows keeps that check running when only a caller
+              # changes; the test fails if this line is removed.
+              - '.github/workflows/**'
             talos:
               - 'talos/**'
               - 'talos-local/**'
@@ -948,6 +989,8 @@ jobs:
               - 'scripts/verify-talos-schematic-readback.sh'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
               - 'scripts/tests/test-talos-schematic-readback.sh'
+              - 'scripts/verify-kubelet-config-readback.sh'
+              - 'scripts/tests/test-kubelet-config-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
@@ -1262,7 +1305,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.198.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1623,6 +1666,7 @@ jobs:
         # the real ConfigMap (#2909).
         run: |
           shellcheck scripts/validate-homepage-bookmarks.sh scripts/tests/test-validate-homepage-bookmarks.sh
+          go test ./scripts/validate-homepage-bookmarks
           bash scripts/tests/test-validate-homepage-bookmarks.sh
           bash scripts/validate-homepage-bookmarks.sh
 
@@ -1789,6 +1833,26 @@ jobs:
         run: |
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+
+      - name: 🔏 Validate GitHub Team external-identity probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins what makes dispatching it acceptable: only `get`
+        # plus `patch`/`create` with `--dry-run=server`, a refusal counted only
+        # when it names the policy, and no identity in the public log.
+        run: |
+          shellcheck scripts/probe-github-team-external-identity.sh scripts/tests/test-probe-github-team-external-identity.sh
+          bash scripts/tests/test-probe-github-team-external-identity.sh
+
+      - name: 🪪 Validate Actual Budget user-namespace map read
+        if: needs.changes.outputs.k8s == 'true'
+        # The read needs prod and runs only on dispatch. Its test fakes kubectl
+        # from fixtures and pins what makes dispatching it acceptable: one `get`
+        # and four fixed `exec … cat` reads, an unreadable or unparsable map
+        # never reported as mapped, and no node-side id in the public log.
+        run: |
+          shellcheck scripts/read-actual-budget-userns-maps.sh scripts/tests/test-read-actual-budget-userns-maps.sh
+          bash scripts/tests/test-read-actual-budget-userns-maps.sh
 
       - name: 📏 Validate datapath CPU throttling measurement
         if: needs.changes.outputs.k8s == 'true'
@@ -2376,10 +2440,19 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.198.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
+
+      - name: 🔐 Validate ARC listener public-content disposition
+        if: needs.changes.outputs.k8s == 'true'
+        # Use the pinned native scanner installed above. The regression must
+        # prove both admission enforcement and the exact scanner disposition,
+        # including the unexcepted mirror and genuine-credential controls.
+        run: |
+          shellcheck scripts/tests/test-arc-listener-public-content.sh
+          bash scripts/tests/test-arc-listener-public-content.sh
 
       - name: 📥 Restore kubeconform schema cache
         # ksail's kubeconform client fetches JSON schemas from
@@ -2550,11 +2623,11 @@ jobs:
         # the COMBINED score across the frameworks listed above. The Kubescape
         # compliance score has historically been environment-dependent (Linux CI
         # runner vs macOS) and shifts with the ksail render, so CI is the source
-        # of truth: the observed CI score with exceptions applied is 98.87%
-        # (2026-07-11, ksail 7.165.2, NSA only). Locally on ksail 7.178.20
-        # (2026-08-10) NSA reads 99.28 and MITRE 96.03, combining to 97 — so the
-        # margin over this floor is thinner than it was under NSA alone. Re-baseline
-        # against a CI run, not a local one, and never lower the floor to
+        # of truth. Three Linux CI runs on 2026-10-05 with ksail 7.195.1 report
+        # 98.78% combined (NSA 99.75%, MITRE 98.14%): runs 37263913110,
+        # 37264739448 and 37279505685. The combined floor is 98%, preserving
+        # measured margin without treating the score as complete compliance.
+        # Re-baseline against CI, not a local run, and never lower the floor to
         # accommodate a finding. (NB it may also need re-baselining after a ksail
         # version bump.)
         #
@@ -2582,7 +2655,7 @@ jobs:
         run: |
           go test ./scripts/generate-kubescape-exceptions
           go run ./scripts/generate-kubescape-exceptions -o /tmp/kubescape-exceptions.json
-          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 95 --format sarif,json -o "${RUNNER_TEMP}/kubescape.sarif"
+          ksail workload scan --framework nsa,mitre --exceptions /tmp/kubescape-exceptions.json --compliance-threshold 98 --format sarif,json -o "${RUNNER_TEMP}/kubescape.sarif"
 
       - name: 📊 Report the Kubescape compliance score
         # Runs whether the gate above passed or failed, so the log and the job
@@ -2771,7 +2844,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@30882cccda9e41c622f6493e21e7eb6f3339b91f # v4.9.1
+        uses: devantler-tech/.github/actions/validate-naming@ef34177c48310d4e8d6605233cb7218b926dcc55 # v7.2.11
 
       - name: Confirm naming validation completed
         env:
@@ -2831,6 +2904,11 @@ jobs:
         run: |
           shellcheck scripts/verify-talos-schematic-readback.sh scripts/tests/test-talos-schematic-readback.sh
           bash scripts/tests/test-talos-schematic-readback.sh
+
+      - name: 🧾 Validate kubelet settings readback
+        run: |
+          shellcheck scripts/verify-kubelet-config-readback.sh scripts/tests/test-kubelet-config-readback.sh
+          bash scripts/tests/test-kubelet-config-readback.sh
 
       - name: 🧱 Prove folded Talos render and invalid-patch rejection
         run: |
@@ -3307,8 +3385,8 @@ jobs:
     steps:
       - name: 📑 Checkout main
         # Deploy the CURRENT tip of `main` (the last state that actually landed in
-        # Git), not the merge group's base_sha, so the heal can never regress prod
-        # below a newer merge that landed while this group was in flight.
+        # Git), not the merge group's base_sha. The deploy action rechecks this
+        # validated checkout before recovery changes production and at promotion.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
@@ -3371,7 +3449,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.195.1"
+          KSAIL_VERSION: "7.198.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3425,6 +3503,7 @@ jobs:
         # from the happy path.
         uses: ./.github/actions/deploy-prod
         with:
+          recovery-source-sha: ${{ steps.recovery-baseline.outputs.sha }}
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           kube-config: ${{ secrets.KUBE_CONFIG }}
           talos-config: ${{ secrets.TALOS_CONFIG }}
@@ -3493,7 +3572,7 @@ jobs:
     permissions: {}
     steps:
       - name: 📊 Evaluate job results
-        uses: devantler-tech/actions/aggregate-job-checks@df7fd4f83edade31c121a9de563d9a7b9b1f900d # v13.10.3
+        uses: devantler-tech/actions/aggregate-job-checks@1d726483facb9340655489913f609082677be8f5 # v13.10.6
         with:
           job-results: >-
             ${{ needs.changes.result }}

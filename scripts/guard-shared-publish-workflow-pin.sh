@@ -52,6 +52,22 @@
 # narrowing is derived from that report rather than from this guard or by hand (#3308).
 # Set MEMBERSHIP — that each per-consumer matcher names exactly the generated pair and no
 # revision outside it — is guard-publish-workflow-approved-revisions.sh's question (#3551).
+#
+# TWO PUBLISHER FAMILIES (#4502)
+# A manifest matcher may accept the canonical manifest workflow in devantler-tech/.github
+# beside the legacy one, as ONE subject holding one group:
+#
+#   ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-<w>\.yaml@<ref>|\.github/\.github/workflows/publish-<w>\.yaml@<commit>)$
+#
+# That subject carries two `@`, which the single-identity rule below exists to refuse, so
+# it is read by its own strict parse instead of by loosening that rule: the exact prefix,
+# the legacy family first, the canonical family second, each exactly once, and nothing
+# else. The legacy ref is judged by the same allow-list as every other subject. The
+# canonical ref must be ONE concrete 40-hex commit — the pattern form is not accepted
+# there, because the canonical family is approved one reviewed commit at a time. A subject
+# naming only the canonical family, or the two in any other arrangement, is refused: an
+# arrangement nobody reviewed is not a spelling variant. Which commit is approved is still
+# the approved-revisions guard's question, not this one's.
 
 set -euo pipefail
 
@@ -64,24 +80,54 @@ readonly REPO_ROOT
 # OCIRepositories, `subjectRegex` on the Talos image-verification config,
 # `subjectRegExp` in Kyverno policies) — a fourth spelling appearing later should show
 # up as a MISSING match against the floor below, not be silently skipped.
-readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
-
-# A floor, because an empty result from a filtered read is a claim about the FILTER.
-# If a refactor moves these subjects into a generator, a template, or a different key,
-# the grep below returns nothing and — without this — the guard would exit 0 and
-# report a clean repository while checking absolutely nothing. Failing closed on an
-# unexpectedly small match set is what makes a passing run mean something. Raise this
-# when a new consumer is genuinely added, and lower it ONLY after verifying by hand
-# that the scan still matches everything it should — a pattern that quietly stopped
-# matching looks identical to a consumer that was removed.
 #
-# 8 -> 7 on 2026-08-24: the doggy-countdown tenant was decommissioned
-# (devantler-tech/monorepo#3023), removing k8s/bases/apps/doggy-countdown/oci-repository.yaml.
-# Verified by hand before lowering: the remaining 7 subjects are talos verify-first-party-images,
-# the aws and github-config manifests consumers, the tenant RGD template, verify-app-images, and
-# the wedding-app and ascoachingogvaner tenants — i.e. the pattern is intact and the set shrank by
-# exactly the deleted file.
-readonly EXPECTED_MIN_SUBJECTS=7
+# Either publisher family, with an optional group opener (#4502), so a two-family subject
+# and a canonical-only one are FOUND and judged rather than left outside the scan. Kept
+# textually parallel to FAMILY_SUBJECT_PATTERN in publish-workflow-approved-revisions.lib.sh.
+readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
+
+# The workflow identity of either family with no key name, no organisation prefix and no
+# line structure, for the independent discovery below. The canonical half of a two-family
+# subject follows a `|`, not the organisation, so a pattern anchored on the organisation
+# would not see a canonical reference written anywhere but first.
+readonly DISCOVERY_PATTERN='(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml'
+
+# The exact text of a two-family subject around its two refs (#4502). These are compared
+# literally, so the backslashes are the ones written in the manifest.
+readonly FAMILY_PREFIX='^https://github\.com/devantler-tech/('
+readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
+# The exact opening of a single-family subject, up to the workflow name.
+readonly LEGACY_SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-'
+readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
+# Only the manifest workflow has a canonical family today; the application workflow and
+# the three generic subjects stay legacy-only.
+readonly CANONICAL_WORKFLOW_NAME='manifests'
+
+# THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
+# An empty result from a filtered read is a claim about the FILTER. If a refactor moves
+# these subjects into a generator, a template, or a different key, the grep below returns
+# less and — without a floor — the guard would exit 0 and report a clean repository while
+# checking nothing.
+#
+# The floor used to be a COUNT, and a count cannot tell which matcher went missing: one
+# rewritten in a spelling the pattern does not select was simply not counted, and any
+# other matcher made the number up. So the floor is the list of files that hold a matcher
+# and how many each holds, one `<count><TAB><path>` per line. Each named file must yield
+# exactly that many, and a matcher in a file the list does not name fails too. Add a line
+# when a consumer is genuinely added, and remove one only with the file it names.
+readonly EXPECTED_MATCHERS_FILE='scripts/shared-publish-workflow-matchers.tsv'
+
+# EVERY SUBJECT IS ACCOUNTED FOR, HOWEVER ITS VALUE IS SPELLED (#4558).
+# SUBJECT_PATTERN and DISCOVERY_PATTERN both recognise the workflow identity by its text,
+# so a matcher whose regex means the same identity in another spelling is selected by
+# neither. This pattern selects by KEY instead: any mapping entry keyed by one of the three
+# subject spellings. Whatever it selects is either judged as a shared-workflow matcher or
+# must be proved to name a different repository (prove_other_identity).
+readonly SUBJECT_KEY_PATTERN='^[[:space:]]*(-[[:space:]]+)*["'\'']?(subject|subjectRegex|subjectRegExp)["'\'']?[[:space:]]*:'
+# The same keys inside a flow mapping, `{issuer: x, subject: y}`, which the line-anchored
+# pattern above cannot see. No manifest here writes one, so the form is refused.
+readonly FLOW_SUBJECT_KEY_PATTERN='[{,][[:space:]]*["'\'']?(subject|subjectRegex|subjectRegExp)["'\'']?[[:space:]]*:[[:space:]]'
+readonly GITHUB_IDENTITY_PREFIX='^https://github\.com/'
 
 # Return the YAML scalar of a `key: value` line, with any inline comment removed.
 #
@@ -173,8 +219,355 @@ yaml_scalar() {
   printf '%s' "$scalar"
 }
 
+# judge_ref <location> <ref> — the allow-list over one ref constraint. Returns non-zero,
+# having said why, unless every alternative of the ref pins a fixed revision.
+judge_ref() {
+  local location="$1" ref="$2" status=0
+  # An ALLOW-LIST over each alternative, not a list of bad shapes to reject.
+  #
+  # Enumerating what is forbidden only ever catches the regressions someone thought
+  # of: rejecting `refs/heads/` and a bare `.+` still waves through `@main`, `@v1`
+  # or `@my-branch`, none of which pins a revision. Requiring each alternative to be
+  # positively recognisable inverts that — an unfamiliar shape fails, and adding a
+  # legitimately new one is a deliberate edit here rather than a silent widening.
+  #
+  # Exactly one form qualifies: a 40-hex commit (#3022).
+  #
+  # An alternation is therefore always a widening now, but it is still parsed
+  # per alternative rather than rejected wholesale on sight — that way the error
+  # names the offending alternative instead of the whole string, and a future
+  # legitimately-added form is a deliberate edit to the allow-list below rather
+  # than a change to this parsing.
+  # A grouped ref must be FULLY grouped. `(A|B)` is the shape this understands;
+  # `(A)?B` is not, and stripping a leading paren from it would silently hand the
+  # trailing `B` to the per-alternative check as part of A's text. Reject the
+  # shape here so an unparsed construct can never reach the allow-list below.
+  local alternatives alternative
+  case "$ref" in
+    '('*')')
+      alternatives="${ref#\(}"
+      alternatives="${alternatives%\)}"
+      ;;
+    '('* | *')')
+      printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
+        "$location" "$ref" >&2
+      return 1
+      ;;
+    *'|'*)
+      # An alternation with no group around it is not an alternation over REFS. `@A|B$`
+      # reads as `^…@A` OR `B$`, and the second half is anchored to nothing before it —
+      # so `@<commit>|[0-9a-f]{40}$` accepts any identity at all that ends in a commit.
+      # Splitting it on `|` and finding two well-formed alternatives is what waved it
+      # through. Several refs must be written `(A|B)`.
+      printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
+        "$location" "$ref" >&2
+      return 1
+      ;;
+    *) alternatives="$ref" ;;
+  esac
+
+  while IFS= read -r alternative; do
+    # Match the alternative WHOLE (`-x`), never by prefix.
+    #
+    # A prefix match is what let `(refs/tags/v.+)?refs/heads/.+$` through when the
+    # tag form was still accepted: the group was optional and a branch ref followed
+    # it, yet the guard reported all eight subjects pinned. The commit form has no
+    # prefix hazard of its own, but the whole-line anchor is what guarantees that —
+    # `[0-9a-f]{40}` must be the entire alternative, so nothing can be appended to
+    # it.
+    # TWO recognisable forms, both of which pin (#3308).
+    #
+    # 1. The literal PATTERN text `[0-9a-f]{40}`. These subjects are cosign identity
+    #    regexes, so this fragment accepts any 40-hex commit: a FIXED revision, but
+    #    not an APPROVED one.
+    # 2. A CONCRETE 40-hex commit, which is what a generated approved-revision
+    #    allow-list emits. It is strictly NARROWER than form 1 — it names one
+    #    revision rather than the whole 40-hex space.
+    #
+    # Only form 1 is a regex fragment; form 2 is a literal identity. Both are judged
+    # by the same allow-list below, so adding a third recognisable shape is likewise a
+    # deliberate edit here rather than a silent widening (#3308).
+    #
+    # It is a WIDENING OF THE ALLOW-LIST, not a loosening of the property. Both forms
+    # keep the whole-line anchor (`-x`), so nothing may be appended to either: a short
+    # SHA, a tag, a branch, a bare ref and a partial group are all still rejected, and
+    # each keeps its own RED case in the test. Uppercase hex is deliberately NOT
+    # accepted — git emits lowercase, so an uppercase subject is an unreviewed shape
+    # rather than a spelling variant.
+    if printf '%s' "$alternative" | grep -qxE '\[0-9a-f\]\{40\}'; then
+      continue
+    fi
+    if printf '%s' "$alternative" | grep -qxE '[0-9a-f]{40}'; then
+      continue
+    fi
+    printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \
+      "$location" "$alternative" "$ref" >&2
+    status=1
+  done < <(printf '%s\n' "$alternatives" | tr '|' '\n')
+  return "$status"
+}
+
+# judge_family_subject <location> <subject> — the strict parse of a two-family subject
+# (#4502). Returns non-zero, having said why, unless the subject is exactly the legacy
+# family followed by the canonical family, the legacy ref passes the allow-list and the
+# canonical ref is one concrete commit.
+#
+# The split is on the literal text that opens the canonical family, never on `|` or `@`
+# alone: the legacy ref is itself an alternation, so both characters occur inside it.
+judge_family_subject() {
+  local location="$1" subject="$2" inner boundary legacy_part canonical_part legacy_ref canonical_ref at_count
+
+  case "$subject" in
+    "$FAMILY_PREFIX"*')$') ;;
+    *)
+      printf '%s: subject opens a publisher group but is not exactly %s<legacy family>|<canonical family>)$; this guard cannot prove an arrangement it does not recognise pins a revision (subject: %s)\n' \
+        "$location" "$FAMILY_PREFIX" "$subject" >&2
+      return 1
+      ;;
+  esac
+
+  at_count="$(printf '%s' "$subject" | tr -cd '@' | wc -c | tr -d ' ')"
+  if [ "$at_count" -ne 2 ]; then
+    printf '%s: two-family subject carries %s "@" separators where exactly two are expected, one per publisher family (subject: %s)\n' \
+      "$location" "$at_count" "$subject" >&2
+    return 1
+  fi
+
+  inner="${subject#"$FAMILY_PREFIX"}"
+  inner="${inner%')$'}"
+  boundary='|'"$CANONICAL_FAMILY"
+  case "$inner" in
+    "$LEGACY_FAMILY"*"$boundary"*) ;;
+    *)
+      printf '%s: two-family subject is not the legacy family followed by the canonical family (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  canonical_part="${inner#*"$boundary"}"                # <workflow>\.yaml@<commit>
+  legacy_part="${inner%"$boundary$canonical_part"}"
+  legacy_part="${legacy_part#"$LEGACY_FAMILY"}"         # <workflow>\.yaml@<ref>
+  case "$legacy_part$canonical_part" in
+    *"$LEGACY_FAMILY"* | *"$CANONICAL_FAMILY"*)
+      printf '%s: two-family subject names a publisher family more than once (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+
+  # Each side of the boundary ends up holding exactly one `@`, so neither ref can hide a
+  # further identity, without a check of its own: the subject carries two in all, the
+  # canonical side must be `<workflow>\.yaml@` followed by 40 hex characters and nothing
+  # else, and the legacy side must open with `<workflow>\.yaml@`.
+  canonical_ref="${canonical_part#"$CANONICAL_WORKFLOW_NAME"'\.yaml@'}"
+  if [ "$canonical_ref" = "$canonical_part" ]; then
+    printf '%s: the canonical family names a workflow other than publish-%s, the only one with a canonical publisher (subject: %s)\n' \
+      "$location" "$CANONICAL_WORKFLOW_NAME" "$subject" >&2
+    return 1
+  fi
+  case "$legacy_part" in
+    "$CANONICAL_WORKFLOW_NAME"'\.yaml@'*) ;;
+    *)
+      printf '%s: the two publisher families name different workflows (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+
+  # ONE concrete commit, matched whole. The pattern text `[0-9a-f]{40}` is deliberately
+  # not accepted here: it would admit every commit of the canonical repository, and the
+  # canonical family is approved one reviewed commit at a time.
+  if ! printf '%s' "$canonical_ref" | grep -qxE '[0-9a-f]{40}'; then
+    printf '%s: canonical ref %s does not pin one concrete 40-hex commit (subject: %s)\n' \
+      "$location" "$canonical_ref" "$subject" >&2
+    return 1
+  fi
+
+  legacy_ref="${legacy_part#*@}"
+  judge_ref "$location" "$legacy_ref"
+}
+
+# load_expected_matchers — print the floor as `<count><TAB><path>` lines. Returns non-zero,
+# having said why, when the list is missing, empty or holds a line it cannot read: a floor
+# that could not be read is not a floor of zero.
+load_expected_matchers() {
+  local line count path seen=$'\n' listed=0
+  if [ ! -r "$EXPECTED_MATCHERS_FILE" ]; then
+    printf 'guard: %s is missing or unreadable, so there is no list of the files that must hold a matcher.\n' \
+      "$EXPECTED_MATCHERS_FILE" >&2
+    return 1
+  fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      '' | '#'*) continue ;;
+    esac
+    count="${line%%$'\t'*}"
+    path="${line#*$'\t'}"
+    case "$path" in
+      '' | "$line" | *$'\t'* | ./* | /*)
+        printf 'guard: %s holds a line that is not <count><TAB><repository-relative path>: %s\n' \
+          "$EXPECTED_MATCHERS_FILE" "$line" >&2
+        return 1
+        ;;
+    esac
+    if ! printf '%s' "$count" | grep -qxE '[1-9][0-9]*'; then
+      printf 'guard: %s gives %s a count that is not a positive number: %s\n' \
+        "$EXPECTED_MATCHERS_FILE" "$path" "$count" >&2
+      return 1
+    fi
+    case "$seen" in
+      *$'\n'"$path"$'\n'*)
+        printf 'guard: %s names %s more than once.\n' "$EXPECTED_MATCHERS_FILE" "$path" >&2
+        return 1
+        ;;
+    esac
+    seen="$seen$path"$'\n'
+    listed=$((listed + 1))
+    printf '%s\t%s\n' "$count" "$path"
+  done <"$EXPECTED_MATCHERS_FILE"
+  if [ "$listed" -eq 0 ]; then
+    printf 'guard: %s names no file, so nothing is required to hold a matcher.\n' \
+      "$EXPECTED_MATCHERS_FILE" >&2
+    return 1
+  fi
+}
+
+# check_named_matchers <expected> <matches> — every named file yields exactly its count,
+# and no matcher sits in a file the list does not name.
+check_named_matchers() {
+  local expected="$1" matches="$2" status=0 count path actual file
+  while IFS=$'\t' read -r count path; do
+    [ -n "$path" ] || continue
+    actual="$(printf '%s\n' "$matches" | grep -cF -- "./$path:" || true)"
+    if [ "$actual" -ne "$count" ]; then
+      printf 'guard: %s holds %d shared-publish-workflow matcher(s) this guard can judge, expected %d.\n' \
+        "$path" "$actual" "$count" >&2
+      status=1
+    fi
+  done <<EOF
+$expected
+EOF
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    if ! printf '%s\n' "$expected" | cut -f2- | grep -qxF -- "${file#./}"; then
+      printf 'guard: %s holds a shared-publish-workflow matcher but is not named in %s.\n' \
+        "${file#./}" "$EXPECTED_MATCHERS_FILE" >&2
+      status=1
+    fi
+  done <<EOF
+$(printf '%s\n' "$matches" | cut -d: -f1 | sort -u)
+EOF
+  if [ "$status" -ne 0 ]; then
+    printf 'The scan, not the repository, is the likely cause when a count is short: the matcher may\n' >&2
+    printf 'have moved, or adopted a key or a spelling this guard does not select. Verify by hand,\n' >&2
+    printf 'then fix the matcher or the pattern. Change %s only when a consumer was\n' "$EXPECTED_MATCHERS_FILE" >&2
+    printf 'genuinely added or removed, in the change that adds or removes its file.\n' >&2
+  fi
+  return "$status"
+}
+
+# has_top_level_alternation <regex> — true when a `|` sits outside every group and
+# character class, which splits the whole expression: `^A|B` is `^A` OR `B`, and the
+# second half is anchored to nothing.
+has_top_level_alternation() {
+  local text="$1" depth=0 in_class=0 index char
+  for ((index = 0; index < ${#text}; index++)); do
+    char="${text:index:1}"
+    if [ "$char" = "\\" ]; then
+      index=$((index + 1))
+      continue
+    fi
+    if [ "$in_class" -eq 1 ]; then
+      [ "$char" = ']' ] && in_class=0
+      continue
+    fi
+    case "$char" in
+      '[') in_class=1 ;;
+      '(') depth=$((depth + 1)) ;;
+      ')') depth=$((depth - 1)) ;;
+      '|') [ "$depth" -le 0 ] && return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# prove_other_identity <location> <subject> — the answer for a subject this guard does not
+# judge. Returns non-zero, having said why, unless the subject provably names a repository
+# other than the two that host the shared publish workflows.
+#
+# The proof is a literal prefix. A regex that opens with the anchored literal
+# `^https://github\.com/<owner>/<repository>` and has no alternation outside a group can
+# only match an identity beginning with that text, so one whose owner is not
+# devantler-tech, or whose repository cannot begin `actions`, cannot match a shared
+# workflow however the rest of it is written. Anything else is refused, not skipped: an
+# identity this guard cannot place may be a shared-workflow matcher in a spelling it does
+# not select, which is the gap #4558 closes. Extend this deliberately when a new kind of
+# signer is added.
+prove_other_identity() {
+  local location="$1" subject="$2" rest owner repository hosting='actions'
+  case "$subject" in
+    "$GITHUB_IDENTITY_PREFIX"*) ;;
+    *)
+      printf '%s: subject does not open with the anchored literal %s, so this guard cannot prove it is not a shared-publish-workflow matcher in a spelling it does not judge (subject: %s)\n' \
+        "$location" "$GITHUB_IDENTITY_PREFIX" "$subject" >&2
+      return 1
+      ;;
+  esac
+  # A class that opens with `]` holds it as a literal, which the scan below would read as
+  # the end of the class. No subject here needs one.
+  case "$subject" in
+    *'[]'* | *'[^]'*)
+      printf '%s: subject holds a character class opening with "]", which this guard does not parse (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  if has_top_level_alternation "$subject"; then
+    printf '%s: subject holds an alternation outside a group, so its opening literal does not bound what it matches (subject: %s)\n' \
+      "$location" "$subject" >&2
+    return 1
+  fi
+
+  rest="${subject#"$GITHUB_IDENTITY_PREFIX"}"
+  owner="${rest%%[!A-Za-z0-9-]*}"
+  rest="${rest#"$owner"}"
+  if [ -z "$owner" ] || [ "${rest:0:1}" != '/' ]; then
+    printf '%s: subject does not name one literal owner after %s (subject: %s)\n' \
+      "$location" "$GITHUB_IDENTITY_PREFIX" "$subject" >&2
+    return 1
+  fi
+  [ "$owner" = 'devantler-tech' ] || return 0
+
+  rest="${rest#/}"
+  repository="${rest%%[!a-z0-9-]*}"
+  rest="${rest#"$repository"}"
+  # The literal must END at a `/` or a class: a quantifier there would make its last
+  # character optional or repeated, so the text before it would no longer be a prefix.
+  case "${rest:0:1}" in
+    '/' | '[') ;;
+    *) repository='' ;;
+  esac
+  case "$repository" in
+    '')
+      printf '%s: subject does not open its repository with a literal name, so this guard cannot prove which repository it accepts (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  case "$hosting" in
+    "$repository"*)
+      printf '%s: subject can name the repository that hosts the shared publish workflows but is not written as %s(app|manifests)\\.yaml@<ref>$, so it was not judged (subject: %s)\n' \
+        "$location" "$LEGACY_SUBJECT_PREFIX" "$subject" >&2
+      return 1
+      ;;
+  esac
+}
+
 main() {
   cd "$REPO_ROOT"
+
+  local expected
+  expected="$(load_expected_matchers)" || return 1
 
   local matches
   matches="$(grep -rnE "$SUBJECT_PATTERN" --include='*.yaml' . || true)"
@@ -184,14 +577,7 @@ main() {
     found="$(printf '%s\n' "$matches" | wc -l | tr -d ' ')"
   fi
 
-  if [ "$found" -lt "$EXPECTED_MIN_SUBJECTS" ]; then
-    printf 'guard: found %d shared-publish-workflow subject(s), expected at least %d.\n' \
-      "$found" "$EXPECTED_MIN_SUBJECTS" >&2
-    printf 'The scan, not the repository, is the likely cause: these subjects may have moved,\n' >&2
-    printf 'been renamed, or adopted a key spelling this guard does not match. Verify by hand,\n' >&2
-    printf 'then either fix the pattern or lower EXPECTED_MIN_SUBJECTS with the reason.\n' >&2
-    return 1
-  fi
+  check_named_matchers "$expected" "$matches" || return 1
 
   # DISCOVER independently of formatting, then require discovery and validation to
   # agree. The floor above only proves that the eight KNOWN subjects are still
@@ -205,14 +591,13 @@ main() {
   # no line structure, so it finds a reference however it is written. Anything it
   # finds that the strict pattern did not validate is reported rather than skipped.
   local discovered_lines unvalidated
-  discovered_lines="$(grep -rlE 'devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml' \
-    --include='*.yaml' . || true)"
+  discovered_lines="$(grep -rlE "$DISCOVERY_PATTERN" --include='*.yaml' . || true)"
 
   unvalidated=""
   local file discovered_count validated_count
   while IFS= read -r file; do
     [ -n "$file" ] || continue
-    discovered_count="$(grep -cE 'devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml' "$file" || true)"
+    discovered_count="$(grep -cE "$DISCOVERY_PATTERN" "$file" || true)"
     validated_count="$(grep -cE "$SUBJECT_PATTERN" "$file" || true)"
     if [ "$discovered_count" -gt "$validated_count" ]; then
       unvalidated="$unvalidated  $file (references: $discovered_count, validated as subjects: $validated_count)
@@ -273,12 +658,46 @@ EOF
     printf '%s' "$unvalidated" >&2
     printf 'A consumer written in a form the subject pattern does not match is NOT checked, so it could\n' >&2
     printf 'pin nothing while this guard reports success. Either extend SUBJECT_PATTERN to cover the new\n' >&2
-    printf 'form and raise EXPECTED_MIN_SUBJECTS, or confirm the reference is not a cosign subject.\n' >&2
+    printf 'form and name its file in %s, or confirm the reference is not a cosign subject.\n' "$EXPECTED_MATCHERS_FILE" >&2
+    return 1
+  fi
+
+  local flow_subjects
+  flow_subjects="$(grep -rnE "$FLOW_SUBJECT_KEY_PATTERN" --include='*.yaml' . | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)"
+  if [ -n "$flow_subjects" ]; then
+    printf 'guard: a subject is written inside a YAML flow mapping:\n%s\n' "$flow_subjects" >&2
+    printf 'This guard reads one mapping entry per line, so it would never judge that value.\n' >&2
+    printf 'Write the subject as a mapping entry on a line of its own.\n' >&2
     return 1
   fi
 
   local status=0
   local line location subject ref
+
+  # ACCOUNT FOR EVERY SUBJECT THE STRICT PATTERN DID NOT SELECT (#4558). Each is read the
+  # way YAML reads it and must be proved to name another repository. One that cannot be is
+  # refused: it may be a shared-workflow matcher in a spelling nothing above selects.
+  local keyed
+  keyed="$(grep -rnE "$SUBJECT_KEY_PATTERN" --include='*.yaml' . || true)"
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    if printf '%s\n' "$line" | grep -qE "$SUBJECT_PATTERN"; then
+      continue # judged below
+    fi
+    location="${line%%:*}"
+    line="${line#*:}"
+    location="$location:${line%%:*}"
+    subject="${line#*:}"
+    if ! subject="$(yaml_scalar "$subject")"; then
+      printf '%s: could not read the YAML scalar of this subject, so this guard cannot tell which identity it accepts. Write it as a single-quoted or plain scalar.\n' \
+        "$location" >&2
+      status=1
+      continue
+    fi
+    prove_other_identity "$location" "$subject" || status=1
+  done <<EOF
+$keyed
+EOF
   while IFS= read -r line; do
     location="${line%%:*}"
     line="${line#*:}"
@@ -298,6 +717,22 @@ EOF
       status=1
       continue
     fi
+
+    # A TWO-FAMILY SUBJECT IS READ BY ITS OWN STRICT PARSE (#4502). It carries two `@` by
+    # design, so it is dispatched before the single-identity rule below rather than by
+    # relaxing that rule: every other subject is still held to exactly one.
+    case "$subject" in
+      *'devantler-tech/('*)
+        judge_family_subject "$location" "$subject" || status=1
+        continue
+        ;;
+      *'devantler-tech/\.github/'* | *'devantler-tech/.github/'*)
+        printf '%s: subject names only the canonical publisher; the recognised forms are the legacy family alone or the legacy family followed by the canonical one (subject: %s)\n' \
+          "$location" "$subject" >&2
+        status=1
+        continue
+        ;;
+    esac
 
     # EXACTLY ONE `@`, checked BEFORE the ref is read. The ref constraint is everything
     # after the LAST @, so any alternative carrying its own `...@...` earlier in the scalar
@@ -319,85 +754,29 @@ EOF
       continue
     fi
 
-    # Everything after the LAST @ in the scalar is the ref constraint; a trailing
-    # $ anchor and any closing quote are not part of it.
-    ref="${subject##*@}"
-    ref="${ref%\'}"
-    ref="${ref%\"}"
-    ref="${ref%$}"
-
-    # An ALLOW-LIST over each alternative, not a list of bad shapes to reject.
-    #
-    # Enumerating what is forbidden only ever catches the regressions someone thought
-    # of: rejecting `refs/heads/` and a bare `.+` still waves through `@main`, `@v1`
-    # or `@my-branch`, none of which pins a revision. Requiring each alternative to be
-    # positively recognisable inverts that — an unfamiliar shape fails, and adding a
-    # legitimately new one is a deliberate edit here rather than a silent widening.
-    #
-    # Exactly one form qualifies: a 40-hex commit (#3022).
-    #
-    # An alternation is therefore always a widening now, but it is still parsed
-    # per alternative rather than rejected wholesale on sight — that way the error
-    # names the offending alternative instead of the whole string, and a future
-    # legitimately-added form is a deliberate edit to the allow-list below rather
-    # than a change to this parsing.
-    # A grouped ref must be FULLY grouped. `(A|B)` is the shape this understands;
-    # `(A)?B` is not, and stripping a leading paren from it would silently hand the
-    # trailing `B` to the per-alternative check as part of A's text. Reject the
-    # shape here so an unparsed construct can never reach the allow-list below.
-    local alternatives alternative
-    case "$ref" in
-      '('*')')
-        alternatives="${ref#\(}"
-        alternatives="${alternatives%\)}"
-        ;;
-      '('* | *')')
-        printf '%s: ref %s is not a fully grouped alternation; this guard cannot prove it pins a revision\n' \
-          "$location" "$ref" >&2
+    # THE WHOLE SCALAR, NOT JUST ITS REF. SUBJECT_PATTERN selects a LINE, and it matches
+    # anywhere on it — inside a comment, or after a `|` in the value. Judging only the text
+    # after the single `@` therefore validated subjects whose identity half was never the
+    # shared workflow at all: a value of `.*@[0-9a-f]{40}` followed by a comment naming the
+    # workflow was selected by the comment and passed on its ref. So the scalar itself must
+    # be exactly the anchored legacy identity, a ref, and the closing anchor. Compared
+    # literally: an unescaped dot or a character class in place of `\.` is a wider regex,
+    # not a spelling of this one.
+    case "$subject" in
+      "$LEGACY_SUBJECT_PREFIX"'app\.yaml@'*'$' | "$LEGACY_SUBJECT_PREFIX"'manifests\.yaml@'*'$') ;;
+      *)
+        printf '%s: subject is not exactly %s(app|manifests)\\.yaml@<ref>$, so the identity it accepts is not the one this line was selected for (subject: %s)\n' \
+          "$location" "$LEGACY_SUBJECT_PREFIX" "$subject" >&2
         status=1
         continue
         ;;
-      *) alternatives="$ref" ;;
     esac
 
-    while IFS= read -r alternative; do
-      # Match the alternative WHOLE (`-x`), never by prefix.
-      #
-      # A prefix match is what let `(refs/tags/v.+)?refs/heads/.+$` through when the
-      # tag form was still accepted: the group was optional and a branch ref followed
-      # it, yet the guard reported all eight subjects pinned. The commit form has no
-      # prefix hazard of its own, but the whole-line anchor is what guarantees that —
-      # `[0-9a-f]{40}` must be the entire alternative, so nothing can be appended to
-      # it.
-      # TWO recognisable forms, both of which pin (#3308).
-      #
-      # 1. The literal PATTERN text `[0-9a-f]{40}`. These subjects are cosign identity
-      #    regexes, so this fragment accepts any 40-hex commit: a FIXED revision, but
-      #    not an APPROVED one.
-      # 2. A CONCRETE 40-hex commit, which is what a generated approved-revision
-      #    allow-list emits. It is strictly NARROWER than form 1 — it names one
-      #    revision rather than the whole 40-hex space.
-      #
-      # Only form 1 is a regex fragment; form 2 is a literal identity. Both are judged
-      # by the same allow-list below, so adding a third recognisable shape is likewise a
-      # deliberate edit here rather than a silent widening (#3308).
-      #
-      # It is a WIDENING OF THE ALLOW-LIST, not a loosening of the property. Both forms
-      # keep the whole-line anchor (`-x`), so nothing may be appended to either: a short
-      # SHA, a tag, a branch, a bare ref and a partial group are all still rejected, and
-      # each keeps its own RED case in the test. Uppercase hex is deliberately NOT
-      # accepted — git emits lowercase, so an uppercase subject is an unreviewed shape
-      # rather than a spelling variant.
-      if printf '%s' "$alternative" | grep -qxE '\[0-9a-f\]\{40\}'; then
-        continue
-      fi
-      if printf '%s' "$alternative" | grep -qxE '[0-9a-f]{40}'; then
-        continue
-      fi
-      printf '%s: ref alternative %s does not pin a fixed revision (subject: %s)\n' \
-        "$location" "$alternative" "$ref" >&2
-      status=1
-    done < <(printf '%s\n' "$alternatives" | tr '|' '\n')
+    # Everything after the single @ is the ref constraint, less the closing anchor.
+    ref="${subject##*@}"
+    ref="${ref%$}"
+
+    judge_ref "$location" "$ref" || status=1
   done <<EOF
 $matches
 EOF

@@ -1,0 +1,65 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: server-certificate
+  namespace: openbao
+spec:
+  secretName: synthetic-server-tls
+  dnsNames:
+    - openbao-arc.openbao.svc.cluster.local
+  issuerRef:
+    name: arc-openbao-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata:
+  name: server-request
+  namespace: openbao
+spec:
+  request: dGVzdA==
+  issuerRef:
+    name: arc-openbao-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: impersonated-server
+  namespace: arc-runners
+spec:
+  secretName: synthetic-impersonation-tls
+  dnsNames:
+    - openbao-arc.openbao.svc.cluster.local
+  issuerRef:
+    name: arc-openbao-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata:
+  name: impersonated-request
+  namespace: arc-runners
+spec:
+  request: dGVzdA==
+  issuerRef:
+    name: arc-openbao-ca
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: unrelated-ca
+  namespace: cert-manager
+spec:
+  secretName: synthetic-unrelated-ca
+  isCA: true
+  commonName: synthetic-unrelated-ca
+  issuerRef:
+    name: unrelated-selfsigned
+    kind: Issuer
+    group: cert-manager.io

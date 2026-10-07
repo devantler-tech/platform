@@ -1,0 +1,129 @@
+name: Read Actual Budget User Namespace Maps
+
+# Obtain the ONE observation #3604 is missing: that both live Actual Budget containers really run
+# inside a user namespace, read from the kernel's own id maps. The pod has requested one
+# (`hostUsers: false`) and has been healthy since the pilot was activated; a pod field is a
+# request, and the map is the answer. A separate smoke pod would not be evidence about these two
+# containers.
+#
+# NOTHING IS CHANGED. The script issues one `get pods` and four `exec … -- cat` reads of
+# `/proc/self/uid_map` and `/proc/self/gid_map`, with a fixed command line.
+# scripts/tests/test-read-actual-budget-userns-maps.sh pins that it issues nothing else.
+#
+# ACCESS USED — stated plainly because it is broader than the read. The identities the agents
+# and dashboards hold are denied `pods/exec` by design, and the repository holds no narrower
+# production credential, so this reuses the established mechanism, exactly as
+# probe-github-team-external-identity.yaml does:
+#   * KUBE_CONFIG (the `prod` environment secret), context `admin@prod`. That identity is
+#     cluster-admin, which is what lets it exec into the pod.
+#   * HCLOUD_TOKEN, exposed ONLY to the endpoint-selection step, for one read of the KSail-owned
+#     floating IP.
+# What bounds the job is the reviewed script, the main-branch guard, the pinned context, the
+# confirmation phrase and `contents: read` on the GitHub token — not the credentials.
+#
+# REVIEWED CODE ONLY. The first step refuses any ref but `refs/heads/main`, before anything is
+# checked out or restored, and checkout is pinned to that dispatch commit.
+#
+# DORMANT, TWICE OVER. There is no `schedule:` and no `pull_request:` trigger, and the operator
+# must type an exact confirmation phrase, so an accidental dispatch from the UI reads nothing.
+#
+# PUBLIC LOG. The script prints container names, map names, range sizes and outcomes only: never
+# the ids a container maps to on the node, never the pod name, and never kubectl's own error
+# text. The endpoint helper's stdout is discarded. Its stderr is kept: it carries the command
+# that masks the address, and on failure the helper's own diagnostics, which name no address.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: read-actual-budget-userns-maps"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  # Serialised with every production deploy path. The read changes nothing, but a deploy can
+  # replace the pod, and maps read from a pod that is being replaced would be reported as a
+  # verdict about the one that serves afterwards.
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  read-actual-budget-userns-maps:
+    name: 🪪 Read Actual Budget User Namespace Maps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # KUBE_CONFIG is a `prod` ENVIRONMENT secret, not a repository secret; without this it resolves
+    # to the empty string and the read ends INCONCLUSIVE instead of reaching the cluster.
+    environment: prod
+    permissions:
+      contents: read # checkout repository
+    steps:
+      # Fails closed BEFORE checkout, so nothing from another ref is fetched, let alone run with a
+      # production credential. `github.ref` reaches bash through `env:`, never interpolated.
+      - name: 🛑 Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          if [[ "${RUN_REF}" != 'refs/heads/main' ]]; then
+            printf 'Refusing to run: dispatch this workflow from main (got %s).\n' "${RUN_REF}" >&2
+            printf 'Only the script CI tested on main may run with production credentials.\n' >&2
+            exit 1
+          fi
+          printf 'Running from main.\n'
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The dispatch commit on main (guaranteed by the step above). An immutable sha rather
+          # than the branch name, so the script run is the one from the same commit as this file.
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # Checked BEFORE the kubeconfig is restored, so a mistyped dispatch cannot reach the cluster.
+      # The input is read through `env:` rather than interpolated into the script, which would be a
+      # shell-injection vector.
+      - name: 🛑 Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "${CONFIRM}" != 'read-actual-budget-userns-maps' ]]; then
+            printf 'Refusing to run: the confirm input must be exactly "read-actual-budget-userns-maps".\n' >&2
+            printf 'Nothing has been read.\n' >&2
+            exit 1
+          fi
+          printf 'Confirmation accepted.\n'
+
+      - name: 🔑 Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🔗 Select stable prod API endpoint
+        # Same helper and same position as the deploy composite: resolve the KSail-owned floating
+        # IP, fail closed on missing or foreign ownership, and switch admin@prod before any API
+        # call. The helper's success line names the endpoint, so stdout is discarded. Its stderr
+        # is kept: that is how the command masking the address for the rest of the job reaches
+        # the runner.
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      - name: 🪪 Read both containers' user and group id maps
+        shell: bash
+        # Exit 2 is IDENTITY and exit 3 is INCONCLUSIVE; both fail the job on purpose. A read that
+        # proved nothing must not show green. The context is pinned because the restored
+        # kubeconfig's current-context is not guaranteed to be prod.
+        run: ./scripts/read-actual-budget-userns-maps.sh --context admin@prod

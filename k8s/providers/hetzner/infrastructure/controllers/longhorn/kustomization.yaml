@@ -20,7 +20,7 @@ resources:
   # before the policies are admitted.
   - cluster-role-kyverno-mutate-longhorn-nodes.yaml
   - cluster-role-kyverno-reports-longhorn-nodes.yaml
-  # Exact namespaced grant for the Longhorn v1.12.1 registrar-hook retrofit.
+  # Exact namespaced grant for the Longhorn v1.13.0 registrar-hook retrofit.
   # It must precede the ClusterPolicy in the next Flux layer.
   - role-kyverno-mutate-longhorn-csi-plugin.yaml
   - role-binding-kyverno-mutate-longhorn-csi-plugin.yaml

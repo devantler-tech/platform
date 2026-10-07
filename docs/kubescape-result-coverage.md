@@ -59,11 +59,17 @@ object is updated in place afterwards. So a posture result that exists but was n
 the latest scan cannot be told apart from a current one here. Posture freshness is watched at the
 scanner instead, by the data age of the whole surface.
 
-## Relationship to the 95% floor
+## Relationship to the 98% floor
 
-The CI gate (`ksail workload scan --framework nsa,mitre --compliance-threshold 95` in
+The CI gate (`ksail workload scan --framework nsa,mitre --compliance-threshold 98` in
 `.github/workflows/ci.yaml`) and this check answer different questions, and neither replaces the
 other:
+
+The combined NSA/MITRE floor is based on measured Linux CI results. The main
+baseline publisher uses the same 98% threshold. Neither a passing threshold nor
+complete result coverage means that every control passes or that suppressed
+findings have been remediated. Rebaseline upward from actual CI evidence as gaps
+close; preserve failed findings and treat incomplete observations as unknown.
 
 - The **floor** scores the rendered manifests with the platform's exceptions applied. It says
   whether the posture that *is* evaluated is good enough.

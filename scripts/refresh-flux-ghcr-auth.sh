@@ -140,7 +140,11 @@ readonly FLUX_RECONCILE_JSON_PATH="/metadata/annotations/kustomize.toolkit.fluxc
 readonly FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT="kustomize-controller"
 readonly FLUX_KUSTOMIZE_CONTROLLER_SELECTOR="app=kustomize-controller"
 readonly FLUX_CONTROLLER_RESTART_JSON_PATH="/spec/template/metadata/annotations/kubectl.kubernetes.io~1restartedAt"
-readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="2m"
+# The first diagnosed handoff (#4178) stabilized after 142s: new Pods were
+# Ready while an old Pod was still terminating at 120s. Allow that observed
+# convergence plus 38s of headroom; a stalled rollout still fails with its
+# diagnostics, and every old process must still disappear before proceeding.
+readonly FLUX_CONTROLLER_ROLLOUT_TIMEOUT="3m"
 readonly SYNC_LEASE_NAME="ghcr-auth-refresh"
 # A GitOps-managed ExternalSecret reads the GHCR seed back from OpenBao through
 # the same store every consumer uses. It is the only read-only way to notice
@@ -6210,12 +6214,16 @@ restart_flux_kustomize_controller_for_handoff() {
     end)
     + [{op: "add", path: $restart_path, value: $restart_token}]
   ' >"${flux_controller_restart_patch_file}"
+  # Flux Operator adopts kubectl-prefixed managers, removing restart annotations
+  # absent from its desired template. Keep this handoff's field ownership separate
+  # so the operator can reconcile without reverting the process-retirement rollout.
   if ! kubectl \
     --context "${KUBE_CONTEXT}" \
     --namespace flux-system \
     patch deployment.apps \
     "${FLUX_KUSTOMIZE_CONTROLLER_DEPLOYMENT}" \
     --type=json \
+    --field-manager=platform-ghcr-auth-handoff \
     --patch-file="${flux_controller_restart_patch_file}" \
     -o json >"${flux_controller_deployment_state_file}" \
     2>"${flux_controller_result_file}"; then

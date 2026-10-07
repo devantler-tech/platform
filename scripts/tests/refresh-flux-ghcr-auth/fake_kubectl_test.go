@@ -859,7 +859,7 @@ func fakeFluxControllerDeploymentObject() map[string]any {
 	annotations := map[string]any{
 		"prometheus.io/port": "8080",
 	}
-	if restartCount > 0 {
+	if restartCount > 0 && !markerExists("flux-controller-restart-reverted") {
 		annotations["kubectl.kubernetes.io/restartedAt"] = markerContent(
 			"flux-controller-restart-token",
 		)
@@ -932,6 +932,9 @@ func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFil
 		return commandFailure(57, "admission webhook denied the restart from 10.0.0.9")
 	}
 	setMarkerContent("flux-controller-restart-token", restartToken)
+	setMarkerContent("flux-controller-restart-manager", defaultString(
+		flagValue(args, "--field-manager"), "kubectl-patch",
+	))
 	setMarkerContent("flux-controller-restart-count", strconv.Itoa(restartCount+1))
 	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
 		appendEnvFile("OPERATION_LOG", "flux-controller-restart:kustomize-controller\n")
@@ -948,16 +951,44 @@ func fakeKubectlPatchFluxControllerDeployment(args []string, namespace, patchFil
 func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 	restartCount := parseInt(markerContent("flux-controller-restart-count"), 0)
 	rolloutCount := parseInt(markerContent("flux-controller-rollout-count"), 0)
+	budget, err := time.ParseDuration(flagValue(args, "--timeout"))
 	if namespace != "flux-system" ||
 		!containsArg(args, "deployment.apps/kustomize-controller") ||
-		flagValue(args, "--timeout") != "2m" ||
+		err != nil || budget <= 0 ||
 		restartCount != rolloutCount+1 {
 		return commandFailure(91, "invalid kustomize-controller rollout status")
+	}
+	if observed := os.Getenv("FAKE_FLUX_CONTROLLER_ROLLOUT_SECONDS"); observed != "" {
+		seconds, err := strconv.Atoi(observed)
+		if err != nil || seconds < 0 {
+			return commandFailure(91, "invalid simulated controller rollout duration")
+		}
+		if time.Duration(seconds)*time.Second > budget {
+			return commandFailure(56, "timed out waiting for kustomize-controller rollout")
+		}
 	}
 	if os.Getenv("FAKE_FLUX_CONTROLLER_ROLLOUT_FAIL") == "true" {
 		return commandFailure(56, "kustomize-controller rollout did not converge")
 	}
-	setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	restartReverted := false
+	if os.Getenv("FAKE_FLUX_OPERATOR_CLEANS_RESTART_MANAGERS") == "true" {
+		manager := markerContent("flux-controller-restart-manager")
+		// Flux Operator v0.50.0 removes kubectl-prefixed Update managers before
+		// applying its template. Explicit override managers are also removed.
+		// The restart annotation is absent from that template, so adopting its
+		// manager removes the restart while the original Ready Pod survives.
+		restartReverted = strings.HasPrefix(manager, "kubectl") ||
+			manager == os.Getenv("FAKE_FLUX_OPERATOR_RESTART_OVERRIDE_MANAGER")
+		if restartReverted {
+			touchMarker("flux-controller-restart-reverted")
+			appendEnvFile("OPERATION_LOG", "flux-operator-restart-reverted:kustomize-controller\n")
+		} else {
+			appendEnvFile("OPERATION_LOG", "flux-operator-restart-preserved:kustomize-controller\n")
+		}
+	}
+	if !restartReverted {
+		setMarkerContent("flux-controller-rollout-count", strconv.Itoa(restartCount))
+	}
 	if os.Getenv("FAKE_FLUX_OPERATOR_RECONCILES_PARENT_ON_CONTROLLER_RESTART") == "true" {
 		// Restarting a Flux controller changes a Deployment owned by FluxInstance.
 		// The real Flux Operator observes that change and reconciles the generated
@@ -976,7 +1007,7 @@ func fakeKubectlRolloutFluxController(args []string, namespace string) int {
 		)
 		appendEnvFile("OPERATION_LOG", "flux-operator-parent-reconcile:flux-system\n")
 	}
-	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" {
+	if os.Getenv("FAKE_LOG_FLUX_CONTROLLER_RESTART") == "true" && !restartReverted {
 		if os.Getenv("FAKE_FLUX_CONTROLLER_OLD_POD_TERMINATING") == "true" {
 			appendEnvFile(
 				"OPERATION_LOG",
@@ -1108,17 +1139,18 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 7 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 8 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
+	analysisAttestorValid := false
 	warZoneAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1137,6 +1169,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			kubescapeNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$"
 		case "publishcorootnodeagent":
 			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
+		case "publishksailanalysis":
+			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
 		case "publishwarzone":
 			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		}
@@ -1148,6 +1182,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesKubescapeNodeAgent := false
 	genericExcludesCorootNodeAgent := false
 	dedicatedRoutesCorootNodeAgent := false
+	genericExcludesAnalysis := false
+	dedicatedRoutesAnalysis := false
 	genericExcludesWarZone := false
 	dedicatedRoutesWarZone := false
 	for _, rawValidation := range validations {
@@ -1166,6 +1202,9 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			genericExcludesCorootNodeAgent = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
+			genericExcludesAnalysis = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/ksail-analysis-runner'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@')")
 		}
 		if strings.Contains(expression, "attestors.publishkubescapestorage") {
 			dedicatedRoutesStorage = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kubescape-storage'") &&
@@ -1187,8 +1226,14 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
 		}
+		if strings.Contains(expression, "attestors.publishksailanalysis") {
+			dedicatedRoutesAnalysis = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/ksail-analysis-runner'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@')")
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
 		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||
 		!dedicatedRoutesStorage || !dedicatedRoutesKubescapeNodeAgent || !dedicatedRoutesCorootNodeAgent {
