@@ -11,6 +11,10 @@
 # it as a masked value. The cases pin that too: issued on a runner as soon as the
 # address is selected, before any later tool runs, on stderr only, and never
 # into a file the runner would keep.
+#
+# The same holds for the addresses of the servers behind the endpoint, which the
+# tools that run later in the job print as well: every address of every listed
+# server is registered right after the endpoint, all of them or none.
 
 set -euo pipefail
 
@@ -33,6 +37,19 @@ readonly no_context_line='::error::Restored kubeconfig has no usable admin@prod 
 readonly no_cluster_line='::error::Context admin@prod references a cluster the restored kubeconfig does not define.'
 readonly not_owned_line='::error::Hetzner floating IP prod-floating-ip is not owned by KSail for cluster prod; refusing to adopt it.'
 readonly not_persisted_line='::error::Failed to persist the stable production API endpoint in the restored kubeconfig.'
+readonly servers_unlisted_line='::error::Could not list the production servers from the Hetzner API, so the node addresses cannot be masked.'
+readonly servers_invalid_line='::error::Hetzner returned an invalid server list, so the node addresses cannot be masked.'
+readonly servers_endless_line='::error::Hetzner listed more server pages than expected, so the node addresses cannot all be masked.'
+readonly servers_empty_line='::error::Hetzner listed no server address, so the node addresses cannot be masked.'
+readonly servers_odd_address_line='::error::Hetzner returned a server address in an unexpected form, so the node addresses cannot be masked.'
+
+# Every address the fixture's two server pages carry, once each, in the order the script issues
+# them: public IPv4, the prefix of a public IPv6 network, private and alias addresses.
+readonly node_addresses=(
+  '192.0.2.11' '192.0.2.111' '192.0.2.12'
+  '198.51.100.31' '198.51.100.32'
+  '2001:db8:0:1::' '2001:db8:0:2::'
+)
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -71,13 +88,67 @@ while (($# > 0)); do
   esac
 done
 
-[[ "${url}" == 'https://api.hetzner.cloud/v1/floating_ips?name=prod-floating-ip' ]] || {
-  printf 'unexpected URL: %s\n' "${url}" >&2
-  exit 90
-}
+printf '%s\n' "${url}" >>"${FAKE_CURL_CALLS}"
 [[ "${authorization}" == 'Authorization: Bearer fixture-hcloud-token' ]] || {
   printf 'missing bearer authorization\n' >&2
   exit 91
+}
+
+# The server list, one page per call. Every answer carries an address, so a path that echoes its
+# input is caught.
+readonly servers_url='https://api.hetzner.cloud/v1/servers?per_page=50&page='
+if [[ "${url}" == "${servers_url}"* ]]; then
+  page="${url#"${servers_url}"}"
+  # one_server_page <public IPv4 as JSON> <next page as JSON> — a page holding one server.
+  one_server_page() {
+    printf '{"servers":[{"public_net":{"ipv4":{"ip":%s},"ipv6":null},"private_net":[]}],"meta":{"pagination":{"next_page":%s}}}\n' \
+      "$1" "$2"
+  }
+  case "${FAKE_SERVERS_MODE:-two-pages}:${page}" in
+    # Page 1: a server with every kind of address, and one with a public IPv4 only.
+    two-pages:1)
+      printf '%s%s%s\n' \
+        '{"servers":[{"public_net":{"ipv4":{"ip":"198.51.100.31"},"ipv6":{"ip":"2001:db8:0:1::/64"}},' \
+        '"private_net":[{"ip":"192.0.2.11","alias_ips":["192.0.2.111"]}]},' \
+        '{"public_net":{"ipv4":{"ip":"198.51.100.32"},"ipv6":null},"private_net":[]}],"meta":{"pagination":{"next_page":2}}}'
+      ;;
+    # Page 2: a server with no public IPv4, and one repeating an address and lacking private_net.
+    two-pages:2)
+      printf '%s%s%s\n' \
+        '{"servers":[{"public_net":{"ipv4":null,"ipv6":{"ip":"2001:db8:0:2::/64"}},' \
+        '"private_net":[{"ip":"192.0.2.12","alias_ips":[]}]},' \
+        '{"public_net":{"ipv4":{"ip":"198.51.100.31"}}}],"meta":{"pagination":{"next_page":null}}}'
+      ;;
+    unreachable:*)
+      printf 'curl: (7) Failed to connect to 198.51.100.31' >&2
+      exit 7
+      ;;
+    malformed:*) printf '{"servers":{"ip":"198.51.100.31"}}\n' ;;
+    not-json:*) printf 'gateway error naming 198.51.100.31\n' ;;
+    no-servers:*) printf '{"servers":[],"meta":{"pagination":{"next_page":null}}}\n' ;;
+    no-addresses:*)
+      printf '{"servers":[{"name":"198.51.100.31","public_net":{"ipv4":null,"ipv6":null},"private_net":[]}],"meta":{"pagination":{"next_page":null}}}\n'
+      ;;
+    repeating:*) one_server_page '"198.51.100.31"' "${page}" ;;
+    odd-next-page:*) one_server_page '"198.51.100.31"' '"198.51.100.31"' ;;
+    endless:*) one_server_page '"198.51.100.31"' "$((page + 1))" ;;
+    second-page-unreachable:1) one_server_page '"198.51.100.31"' 2 ;;
+    second-page-unreachable:2) exit 7 ;;
+    # An address that would start a second runner command of its own.
+    command:*) one_server_page '"198.51.100.31\n::add-mask::198.51.100.32"' null ;;
+    host-name:*) one_server_page '"node-1.example.invalid"' null ;;
+    too-short:*) one_server_page '"1.2"' null ;;
+    *)
+      printf 'unexpected server list request: %s page %s\n' "${FAKE_SERVERS_MODE:-}" "${page}" >&2
+      exit 93
+      ;;
+  esac
+  exit 0
+fi
+
+[[ "${url}" == 'https://api.hetzner.cloud/v1/floating_ips?name=prod-floating-ip' ]] || {
+  printf 'unexpected URL: %s\n' "${url}" >&2
+  exit 90
 }
 
 # floating_ip_object <ip> <ksail.owned> <ksail.cluster.name> — one Hetzner floating-IP object.
@@ -117,8 +188,8 @@ cat >"${work_dir}/kubectl-bin/kubectl" <<'EOF'
 set -euo pipefail
 
 printf '%s\n' "$*" >>"${FAKE_KUBECTL_CALLS}"
-# Whether the runner had already been asked to mask the address when this call was made.
-if grep -q '^::add-mask::' "${FAKE_STDERR}"; then
+# Whether the runner had already been asked to mask every address when this call was made.
+if [[ "$(grep -c '^::add-mask::' "${FAKE_STDERR}")" == "${FAKE_MASK_COUNT}" ]]; then
   printf 'masked\n' >>"${FAKE_KUBECTL_CALLS}.mask"
 else
   printf 'unmasked\n' >>"${FAKE_KUBECTL_CALLS}.mask"
@@ -208,6 +279,8 @@ run_endpoint() {
     GITHUB_PATH="${work_dir}/runner-path" \
     GITHUB_STEP_SUMMARY="${work_dir}/runner-step-summary" \
     FAKE_STDERR="${work_dir}/stderr" \
+    FAKE_MASK_COUNT="$((${#node_addresses[@]} + 1))" \
+    FAKE_CURL_CALLS="${work_dir}/curl-calls" \
     KUBECONFIG="${kubeconfig}" \
     HCLOUD_TOKEN="fixture-hcloud-token" \
     FAKE_FLOATING_IP="${floating_ip}" \
@@ -224,20 +297,39 @@ run_endpoint() {
   return "${status}"
 }
 
-# take_mask — the mask command is the one line allowed to carry the address, and only as the
-# first line of stderr. Record whether it was there in ${masked} and remove it, so every check
-# after this one reads streams that may name nothing. The command anywhere else fails here: on
-# stdout a caller that discards stdout would drop it, and a second copy or a later position
-# means it was not issued once, up front.
+# take_mask — the mask commands are the only lines allowed to carry an address, and only as the
+# leading lines of stderr. Record which were there in ${masked} and remove them, so every check
+# after this one reads streams that may name nothing:
+#   no        none;
+#   endpoint  the endpoint's alone;
+#   all       the endpoint's, then one for each address in ${node_addresses}, in that order.
+# Any other set fails here, as does a command anywhere else: on stdout a caller that discards
+# stdout would drop it, and a partial set or a later position means the addresses were not all
+# registered once, up front.
 take_mask() {
-  masked=no
-  if [[ "$(head -n 1 "${work_dir}/stderr")" == "${mask_line}" ]]; then
-    masked=yes
+  local address
+  : >"${work_dir}/masks"
+  while [[ "$(head -n 1 "${work_dir}/stderr")" == '::add-mask::'* ]]; do
+    head -n 1 "${work_dir}/stderr" >>"${work_dir}/masks"
     sed -e '1d' "${work_dir}/stderr" >"${work_dir}/stderr.rest"
     mv "${work_dir}/stderr.rest" "${work_dir}/stderr"
-  fi
+  done
   if grep -q -e '::add-mask::' "${work_dir}/stdout" "${work_dir}/stderr"; then
-    fail 'a mask command was printed somewhere other than the first line of stderr'
+    fail 'a mask command was printed somewhere other than the leading lines of stderr'
+  fi
+  printf '%s\n' "${mask_line}" >"${work_dir}/masks.endpoint"
+  cp "${work_dir}/masks.endpoint" "${work_dir}/masks.all"
+  for address in "${node_addresses[@]}"; do
+    printf '::add-mask::%s\n' "${address}" >>"${work_dir}/masks.all"
+  done
+  if [[ ! -s "${work_dir}/masks" ]]; then
+    masked=no
+  elif cmp -s "${work_dir}/masks" "${work_dir}/masks.endpoint"; then
+    masked=endpoint
+  elif cmp -s "${work_dir}/masks" "${work_dir}/masks.all"; then
+    masked=all
+  else
+    fail 'the mask commands issued are neither the endpoint alone nor the endpoint and every server address'
   fi
 }
 
@@ -267,7 +359,8 @@ expect_selection() {
   local what="$1" line="$2"
   shift 2
   run_endpoint "$@" || fail "${what} was refused"
-  [[ "${masked}" == yes ]] || fail "${what} did not ask the runner to mask the address"
+  [[ "${masked}" == all ]] ||
+    fail "${what} did not ask the runner to mask the endpoint and every server address"
   [[ "$(server_for_prod "${kubeconfig}")" == "${stable_server}" ]] ||
     fail "${what} did not leave admin@prod on the stable endpoint"
   expect_stream stdout "${line}" || fail "${what} did not print exactly its one outcome line"
@@ -275,9 +368,9 @@ expect_selection() {
   if names_what_it_read; then fail "${what} named something it read in the public log"; fi
 }
 
-# refuse_with_mask <yes|no> <what> <stderr line> <PATH prefix> [VAR=value ...] — the run must
-# fail, print exactly that line on stderr and nothing on stdout, and leave the kubeconfig as it
-# was. The first argument says whether the mask command must have been issued by then.
+# refuse_with_mask <no|endpoint|all> <what> <stderr line> <PATH prefix> [VAR=value ...] — the run
+# must fail, print exactly that line on stderr and nothing on stdout, and leave the kubeconfig as
+# it was. The first argument says which mask commands must have been issued by then.
 refuse_with_mask() {
   local want_mask="$1" what="$2" line="$3"
   shift 3
@@ -297,9 +390,13 @@ refuse_with_mask() {
 # A refusal before the address is selected: there is nothing to mask yet.
 expect_refusal() { refuse_with_mask no "$@"; }
 
-# A refusal after the address is selected: the runner must already have been asked to mask it,
-# because the tools that fail from here on are the ones that quote what they were given.
-expect_refusal_after_selection() { refuse_with_mask yes "$@"; }
+# A refusal over the server list: the endpoint is selected and masked, and no server address
+# is, because they are registered together or not at all.
+expect_refusal_over_servers() { refuse_with_mask endpoint "$@"; }
+
+# A refusal after the addresses are selected: the runner must already have been asked to mask
+# them, because the tools that fail from here on are the ones that quote what they were given.
+expect_refusal_after_selection() { refuse_with_mask all "$@"; }
 
 # A detector that cannot fire proves nothing, so show it firing on each shape, on each stream,
 # and staying silent on the lines the script may print, before relying on it.
@@ -313,7 +410,8 @@ for sample in "endpoint ${floating_ip}" "was https://${stale_host}:6443" "${stal
 done
 printf '%s\n' "${switched_line}" "${unchanged_line}" >"${work_dir}/stdout"
 printf '%s\n' "${no_context_line}" "${no_cluster_line}" "${not_owned_line}" "${not_persisted_line}" \
-  >"${work_dir}/stderr"
+  "${servers_unlisted_line}" "${servers_invalid_line}" "${servers_endless_line}" \
+  "${servers_empty_line}" "${servers_odd_address_line}" >"${work_dir}/stderr"
 if names_what_it_read; then fail 'the detector fired on lines that name nothing'; fi
 
 kubeconfig="${work_dir}/kubeconfig"
@@ -343,15 +441,28 @@ fi
 grep -Fxq 'masked' "${work_dir}/kubectl-calls.mask" ||
   fail 'the recording kubectl never saw the mask command'
 if grep -Fxq 'unmasked' "${work_dir}/kubectl-calls.mask"; then
-  fail 'kubectl was called before the runner had been asked to mask the address'
+  fail 'kubectl was called before the runner had been asked to mask every address'
 fi
 
-# Off a runner nothing reads the command, so it would only print the address to a terminal.
+# Off a runner nothing reads the commands, so they would only print the addresses to a terminal,
+# and the servers are not asked for.
 write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443"
+: >"${work_dir}/curl-calls"
 run_endpoint "${work_dir}/bin" GITHUB_ACTIONS= || fail 'a run off a runner was refused'
-[[ "${masked}" == no ]] || fail 'a run off a runner printed the mask command'
+[[ "${masked}" == no ]] || fail 'a run off a runner printed a mask command'
 expect_stream stdout "${switched_line}" || fail 'a run off a runner did not print its one outcome line'
 expect_stream stderr '' || fail 'a run off a runner printed to stderr'
+grep -Fq 'floating_ips' "${work_dir}/curl-calls" || fail 'the recording curl saw no floating IP read'
+if grep -Fq '/servers' "${work_dir}/curl-calls"; then
+  fail 'a run off a runner asked Hetzner for the server list'
+fi
+
+# On a runner the server list is read to its last page, one request per page.
+write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443"
+: >"${work_dir}/curl-calls"
+expect_selection 'a run that reads two server pages' "${switched_line}" "${work_dir}/bin"
+[[ "$(grep -c '/servers' "${work_dir}/curl-calls")" == 2 ]] ||
+  fail 'the two server pages were not read with one request each'
 
 # Every way the script can refuse, in the order it checks them.
 write_kubeconfig "${kubeconfig}" "https://${stale_ip}:6443"
@@ -385,6 +496,28 @@ expect_refusal 'a floating IP owned for another cluster' "${not_owned_line}" \
 expect_refusal 'a floating IP that is not an IPv4 address' \
   '::error::Hetzner floating IP prod-floating-ip returned an invalid IPv4 address.' \
   "${work_dir}/bin" FAKE_FLOATING_IP_MODE=not-ipv4
+
+# Every way the server list can fail to give addresses. Each stops the job before a later tool
+# can print one, and none leaves some addresses masked and others not.
+expect_refusal_over_servers 'an unreachable server list' "${servers_unlisted_line}" \
+  "${work_dir}/bin" FAKE_SERVERS_MODE=unreachable
+expect_refusal_over_servers 'a server list whose second page is unreachable' "${servers_unlisted_line}" \
+  "${work_dir}/bin" FAKE_SERVERS_MODE=second-page-unreachable
+for mode in malformed not-json repeating odd-next-page; do
+  expect_refusal_over_servers "a server list that is ${mode}" "${servers_invalid_line}" \
+    "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
+done
+expect_refusal_over_servers 'a server list that never ends' "${servers_endless_line}" \
+  "${work_dir}/bin" FAKE_SERVERS_MODE=endless
+for mode in no-servers no-addresses; do
+  expect_refusal_over_servers "a server list with ${mode}" "${servers_empty_line}" \
+    "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
+done
+for mode in command host-name too-short; do
+  expect_refusal_over_servers "a server address that is a ${mode}" "${servers_odd_address_line}" \
+    "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
+done
+
 expect_refusal_after_selection 'a kubectl that fails every read by quoting the kubeconfig' "${no_context_line}" \
   "${work_dir}/kubectl-bin:${work_dir}/bin" FAKE_KUBECTL_MODE=loud FAKE_KUBECTL_SUBCOMMAND=view
 expect_refusal_after_selection 'a kubectl that refuses the write by quoting the server' "${not_persisted_line}" \
@@ -445,4 +578,4 @@ done < <(grep -rF 'use-prod-stable-api-endpoint.sh' "${root_dir}/.github")
 ((arc_invocations == 1)) ||
   fail "expected the one listed stderr-hiding invocation in the ARC identity workflow, found ${arc_invocations}: update or drop its exception"
 
-printf 'ok — prod deploy selects only its KSail-owned stable API endpoint, masks it for the rest of the job, and names nothing it read doing it\n'
+printf 'ok — prod deploy selects only its KSail-owned stable API endpoint, masks it and every server address for the rest of the job, and names nothing it read doing it\n'

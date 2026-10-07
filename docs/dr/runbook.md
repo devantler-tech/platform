@@ -720,6 +720,12 @@ credentials and CA, and checks `/readyz` through normal TLS validation. Check th
 `Select stable prod API endpoint` and `Verify prod cluster is reachable` steps
 when diagnosing endpoint failures.
 
+Workflow logs are public, so on a runner the same script also asks it to redact
+the endpoint address and every address of every server the Hetzner token can
+list, before any later tool can print one. It stops the job when it cannot list
+those servers or take addresses from the answer. An address therefore shows as
+`***` in a deploy log; read it from the Hetzner console when you need the value.
+
 `TALOS_CONFIG` retains direct node endpoints. Do not point the Talos API at the
 Kubernetes floating IP: recovery access must remain available when etcd or the
 Kubernetes API is unhealthy.

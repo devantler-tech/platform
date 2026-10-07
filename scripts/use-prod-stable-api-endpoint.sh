@@ -9,7 +9,8 @@
 #   * on a GitHub runner it registers the address as a masked value the moment
 #     it is selected, so the runner redacts it from every later line of the job
 #     whichever tool prints it. That one command carries the address to the
-#     runner, which redacts it in the log line too;
+#     runner, which redacts it in the log line too. The addresses of the
+#     servers behind the endpoint are registered the same way, right after it;
 #   * its own lines report outcomes only, never a value it read;
 #   * jq's and kubectl's own error text never reaches the log, because both can
 #     quote their input — a failed kubectl jsonpath prints the object it was
@@ -104,6 +105,74 @@ fi
 # nothing to redact and the line would only print the address, so it is skipped.
 if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
   echo "::add-mask::${stable_ip}" >&2
+fi
+
+# The endpoint is not the only address those tools print: the cluster update
+# names the node it read its settings from, and each node it writes to (#4612).
+# Which node that is changes from deploy to deploy and the autoscaler adds nodes
+# no file here lists, so every address of every server the token can see is
+# registered the same way — a server that is not a node costs one unused mask.
+# A read that fails, or an answer this cannot take addresses from, stops the job
+# here: continuing would publish what this step exists to hide. Off a runner
+# nothing would read the commands, so the servers are not asked for at all.
+readonly servers_api="https://api.hetzner.cloud/v1/servers?per_page=50"
+readonly servers_page_limit=20
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  node_addresses=""
+  servers_page=1
+  while [[ -n "${servers_page}" ]]; do
+    if ((servers_page > servers_page_limit)); then
+      echo "::error::Hetzner listed more server pages than expected, so the node addresses cannot all be masked." >&2
+      exit 1
+    fi
+    if ! servers_response="$(curl \
+      --fail \
+      --silent \
+      --retry 3 \
+      --retry-all-errors \
+      --header "Authorization: Bearer ${HCLOUD_TOKEN}" \
+      "${servers_api}&page=${servers_page}" 2>/dev/null)"; then
+      echo "::error::Could not list the production servers from the Hetzner API, so the node addresses cannot be masked." >&2
+      exit 1
+    fi
+    # A public IPv6 address is reported as the server's network, so its prefix
+    # is what every address inside it starts with.
+    if ! page_addresses="$(jq -r '
+        if (.servers | type) != "array" then error("no server list") else . end
+        | .servers[]
+        | (.public_net.ipv4.ip? // empty),
+          ((.public_net.ipv6.ip? // empty) | strings | sub("/[0-9]+$"; "")),
+          (.private_net[]? | (.ip? // empty), (.alias_ips[]? // empty))
+      ' <<<"${servers_response}" 2>/dev/null)" ||
+      ! next_page="$(jq -r '.meta.pagination.next_page // ""' <<<"${servers_response}" 2>/dev/null)"; then
+      echo "::error::Hetzner returned an invalid server list, so the node addresses cannot be masked." >&2
+      exit 1
+    fi
+    if [[ -n "${next_page}" && "${next_page}" != "$((servers_page + 1))" ]]; then
+      echo "::error::Hetzner returned an invalid server list, so the node addresses cannot be masked." >&2
+      exit 1
+    fi
+    node_addresses+="${page_addresses}"$'\n'
+    servers_page="${next_page}"
+  done
+
+  node_addresses="$(LC_ALL=C sort -u <<<"${node_addresses}" | sed -e '/^$/d')"
+  readonly node_addresses
+  if [[ -z "${node_addresses}" ]]; then
+    echo "::error::Hetzner listed no server address, so the node addresses cannot be masked." >&2
+    exit 1
+  fi
+  # Each value becomes part of a runner command, so anything that is not plainly
+  # an address is refused rather than passed on.
+  while IFS= read -r node_address; do
+    if [[ ! "${node_address}" =~ ^[0-9A-Fa-f:.]{7,45}$ ]]; then
+      echo "::error::Hetzner returned a server address in an unexpected form, so the node addresses cannot be masked." >&2
+      exit 1
+    fi
+  done <<<"${node_addresses}"
+  while IFS= read -r node_address; do
+    echo "::add-mask::${node_address}" >&2
+  done <<<"${node_addresses}"
 fi
 
 # kubeconfig_field <jsonpath> — one field of the restored kubeconfig, or nothing
