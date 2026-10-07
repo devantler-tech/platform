@@ -5,6 +5,10 @@ description: >-
   promote that exact digest to latest.
 
 inputs:
+  recovery-source-sha:
+    description: Validated main checkout required to remain current during recovery; empty for speculative merge-group publication.
+    required: false
+    default: ""
   ghcr-token:
     description: >-
       GHCR PAT with write:packages for push, signing, attestation, and
@@ -186,10 +190,15 @@ runs:
       id: promote_latest
       shell: bash
       env:
+        RECOVERY_SOURCE_SHA: ${{ inputs.recovery-source-sha }}
+        GH_TOKEN: ${{ github.token }}
         SUBJECT_NAME: ${{ steps.staging_reference.outputs.subject_name }}
         STAGING_DIGEST: ${{ steps.resolve_staging.outputs.digest }}
       run: |
         set -euo pipefail
+        if [[ -n "${RECOVERY_SOURCE_SHA}" ]]; then
+          bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
+        fi
         LATEST_REF="${SUBJECT_NAME}:latest"
         docker buildx imagetools create --prefer-index=false \
           --tag "${LATEST_REF}" "${SUBJECT_NAME}@${STAGING_DIGEST}"
