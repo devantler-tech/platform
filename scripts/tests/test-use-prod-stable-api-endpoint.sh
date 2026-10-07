@@ -25,7 +25,6 @@ readonly stale_host='stale-control-plane.example.invalid'
 readonly kubeconfig_token='fixture-kubeconfig-credential'
 readonly stable_server="https://${floating_ip}:6443"
 readonly mask_line="::add-mask::${floating_ip}"
-readonly arc_workflow="${root_dir}/.github/workflows/verify-arc-app-identity.yaml"
 
 readonly switched_line='✅ Production kubeconfig now uses the stable API endpoint (the restored kubeconfig named a different server).'
 readonly unchanged_line='✅ Production kubeconfig already uses the stable API endpoint.'
@@ -412,25 +411,19 @@ grep -Fq 'run: ./scripts/use-prod-stable-api-endpoint.sh' "${deploy_action}" ||
 # them: every line under .github that names the script must be one of the spellings below, and
 # anything else fails until it is reviewed and added here.
 #
-# One caller does hide stderr and is listed rather than changed: an open pull request is
-# rewriting its invocation line, and the step after it prints fixed verdict tokens only.
-readonly arc_invocation='if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then'
+# The `if !` spelling keeps stderr too: its caller prints a fixed hold token of its own when
+# the selection fails, after the helper's fixed explanation.
 readonly lint_list_entry="scripts/use-prod-stable-api-endpoint.sh \\"
 invocations=0
-arc_invocations=0
 while IFS= read -r mention; do
   file="${mention%%:*}"
   line="${mention#*:}"
   line="${line#"${line%%[![:space:]]*}"}"
   case "${line}" in
     'run: ./scripts/use-prod-stable-api-endpoint.sh' | \
-      'run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null')
+      'run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null' | \
+      'if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then')
       invocations=$((invocations + 1))
-      ;;
-    "${arc_invocation}")
-      [[ "${file}" == "${arc_workflow}" ]] ||
-        fail "${file#"${root_dir}/"} hides the endpoint helper's stderr, so the runner never sees the mask command"
-      arc_invocations=$((arc_invocations + 1))
       ;;
     # Not invocations: the path filter, the lint list and the test's own name in ci.yaml.
     "- 'scripts/use-prod-stable-api-endpoint.sh'" | "${lint_list_entry}" | \
@@ -440,9 +433,7 @@ while IFS= read -r mention; do
       ;;
   esac
 done < <(grep -rF 'use-prod-stable-api-endpoint.sh' "${root_dir}/.github")
-((invocations >= 11)) ||
+((invocations >= 12)) ||
   fail "found only ${invocations} reviewed invocations of the endpoint helper; the wiring check is not reading them all"
-((arc_invocations == 1)) ||
-  fail "expected the one listed stderr-hiding invocation in the ARC identity workflow, found ${arc_invocations}: update or drop its exception"
 
 printf 'ok — prod deploy selects only its KSail-owned stable API endpoint, masks it for the rest of the job, and names nothing it read doing it\n'

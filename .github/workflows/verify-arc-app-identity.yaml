@@ -118,7 +118,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
           set -euo pipefail
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
             if [[ "${MODE}" == transport ]]; then
               echo 'ARC_APP_TRANSPORT=HOLD_ENDPOINT'
             else
