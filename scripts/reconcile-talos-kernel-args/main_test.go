@@ -232,6 +232,29 @@ func TestUnchangedFoldInputsPassWhateverTheVersion(t *testing.T) {
 	}
 }
 
+func TestSameVersionRolloutReleaseFoldInputs(t *testing.T) {
+	// Read independently from the v7.202.3 tag (f9172ab810fdcb94b47351d04d70708f6878e10a),
+	// not from the acceptance registry. This is the release carrying the image-only
+	// rollout needed to apply the production AppArmor schematic at the same Talos version.
+	ids := map[string]string{
+		"pkg/fsutil/configmanager":   "ac334b6ba5b7e474bfa88e13486a1ab0d1d6feea",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "c4ed7098f7dce6dca0c65649cd8ab3aaeccdf6f4",
+		"go.mod":                     "3ef4674d6c9d1507ec198883c78712ce74819866",
+		"go.sum":                     "c780001120d55f3eb85838940f5f149e62202fab",
+	}
+	if _, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return ids, nil }); err != nil {
+		t.Fatalf("audited rollout release rejected: %v", err)
+	}
+	// A near match is not the reviewed source. Do not let this audit accept the
+	// newer config manager with a dependency blob from a different release.
+	ids["go.mod"] = "e7265f2eee822033c9047eb50e7720872756aa03"
+	if _, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return ids, nil }); err == nil {
+		t.Fatal("unaudited mix of releases accepted")
+	}
+}
+
 func TestAnyChangedFoldInputFailsAndIsNamed(t *testing.T) {
 	const other = "0123456789abcdef0123456789abcdef01234567"
 	for _, input := range foldInputs {

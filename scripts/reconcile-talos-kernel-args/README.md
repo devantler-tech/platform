@@ -216,3 +216,21 @@ The same actual caller preserves both roles' arguments and UKI values with an
 explicit schematic ID, while a whitespace-only ID still permits folding.
 `TALOSCTL_BIN` may point at a locally verified client of the pinned version.
 No local cluster is started.
+
+**7.202.3**, commit `f9172ab810fdcb94b47351d04d70708f6878e10a`, is audited as
+the range 7.197.1 → 7.202.3. The Talos generator is byte-identical. The changed
+configuration manager adds pod/service network patches for the nested Kubernetes
+provider; that path is a no-op for this platform's Hetzner provider. The fold's
+trigger, argument normalization, both-role output, installer-image selection and
+explicit schematic-ID boundary are unchanged. The API and chart changes add
+network defaults and clarify existing settings; the extensions and schematic-ID
+fields retain their names, types and defaults. Dependency updates do not change
+Talos machinery or its YAML encoder. The offline render test still exercises both
+roles and rejects invalid patches.
+
+This release also contains [KSail #7300](https://github.com/devantler-tech/ksail/pull/7300):
+same-version boot-image changes now trigger a node rollout instead of being
+silently skipped. Its [final-head provider trial](https://github.com/devantler-tech/ksail/actions/runs/37591901167)
+verified a same-version image update, readiness, a second no-change plan and
+cleanup on a temporary single-node cluster. That trial does not cover autoscaled
+nodes or an interrupted rollout; the release's regression tests cover those paths.
