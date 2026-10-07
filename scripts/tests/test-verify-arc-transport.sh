@@ -49,7 +49,7 @@ exit 1
 MOCK
 cat >"$scratch/bin/curl" <<'MOCK'
 #!/usr/bin/env bash
-if [[ "${PROOF_CASE:-}" == tls_error ]]; then exit 60; fi
+if [[ "${PROOF_CASE:-}" == tls_error ]]; then printf 'private-error-sentinel\n' >&2; exit 60; fi
 if [[ "${PROOF_CASE:-}" == sealed ]]; then printf '{"initialized":true,"sealed":true,"version":"2.6.3","cluster_id":"fixture"}'; exit; fi
 printf '{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"fixture"}'
 MOCK
@@ -99,7 +99,9 @@ case "$args" in
   'get kustomization '*) printf '{"metadata":{"generation":1},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conditions":[{"type":"Ready","status":"True"}]}}' ;;
   'get service '*) printf '{"spec":{"selector":{"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"},"ports":[{"name":"arc-tls","port":8204,"targetPort":8204,"protocol":"TCP"}]}}' ;;
   'get node '*) printf '{"metadata":{"uid":"node-uid","labels":{}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' ;;
-  'get --raw '*) printf '{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"fixture"}' ;;
+  'get --raw '*)
+    if [[ "${PROOF_CASE:-}" == http_health_error ]]; then printf 'private-error-sentinel\n' >&2; exit 43; fi
+    printf '{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"fixture"}' ;;
   'get pods '*arc-role=runner*) : ;;
   'get pods '*arc-transport-probe*)
     if [[ "${PROOF_CASE:-}" == stale_probe && ! -e "$state/created" ]]; then printf '{"items":[{}]}'; else printf '{"items":[]}'; fi ;;
@@ -184,6 +186,22 @@ run_case source_explicit_false 0
 run_case source_explicit_drift 1
 run_case listener_read_failure 17
 run_case tls_error 60
+grep -Fxq 'ARC transport: FAIL at healthy-tls-health' "$scratch/error" || {
+  printf 'FAIL TLS health failure did not identify its phase\n'; exit 1;
+}
+if grep -Fq private-error-sentinel "$scratch/error"; then
+  printf 'FAIL private TLS diagnostic leaked\n'; exit 1;
+fi
+grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
+run_case http_health_error 43
+grep -Fxq 'ARC transport: FAIL at healthy-http-health' "$scratch/error" || {
+  printf 'FAIL HTTP health failure did not identify its phase\n'; exit 1;
+}
+if grep -Fq private-error-sentinel "$scratch/error"; then
+  printf 'FAIL private HTTP diagnostic leaked\n'; exit 1;
+fi
+grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
+[[ ! -e "$scratch/state/created" ]]
 for name in sealed stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events \
   listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
   listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override \
