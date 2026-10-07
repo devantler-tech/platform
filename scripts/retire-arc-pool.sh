@@ -58,16 +58,20 @@ refresh_objects() {
     (.metadata.deletionTimestamp==null)' "$work/ns.json" >/dev/null || fail namespace-response
   optional_object helmrelease platform-runners arc-runners "$work/hr.json"
   optional_object externalsecret arc-github-app arc-runners "$work/eso.json"
+  printf 'null\n' >"$work/ars.json"
+  if jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement" | fromjson | has("baseline")' "$work/ns.json" >"$work/proof-output" 2>"$work/proof-error"; then
+    optional_object autoscalingrunnerset platform-linux arc-runners "$work/ars.json"
+  fi
 }
 snapshot() {
   jq -n --slurpfile ns "$work/ns.json" --slurpfile hr "$work/hr.json" --slurpfile eso "$work/eso.json" \
-    --slurpfile controller "$work/controller.json" --slurpfile pods "$work/controller-pods.json" --slurpfile receipt "$work/receipt.json" \
+    --slurpfile ars "$work/ars.json" --slurpfile controller "$work/controller.json" --slurpfile pods "$work/controller-pods.json" --slurpfile receipt "$work/receipt.json" \
     --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" --arg sha "$GITHUB_SHA" \
     --argjson drained "$drained" --argjson children "$children" --argjson nodes "$nodes" \
     --argjson secret "$secret" --argjson source "$source" --argjson replaced "$replaced" '
     def project: if .==null then null else {Name:.metadata.name,Namespace:(.metadata.namespace//""),
-      UID:.metadata.uid,RV:.metadata.resourceVersion,Annotations:(.metadata.annotations//{})} end;
-    {State:{Namespace:($ns[0]|project),Release:($hr[0]|project),Credential:($eso[0]|project),
+      UID:.metadata.uid,RV:.metadata.resourceVersion,Annotations:(.metadata.annotations//{}),Spec:(.spec//null)} end;
+    {State:{Namespace:($ns[0]|project),Release:($hr[0]|project),Credential:($eso[0]|project),ScaleSet:($ars[0]|project),
       Owner:{run:$run,attempt:$attempt,sha:$sha},DrainProven:$drained,ChildrenAbsent:$children,
       NodesAbsent:$nodes,SecretAbsent:$secret,SourceProven:$source,
       Controller:($controller[0]|project),ControllerPodUIDs:($pods[0]|map(.uid)),ControllerReplaced:$replaced},Receipt:$receipt[0]}' >"$work/input.json"
@@ -143,9 +147,13 @@ own_resource() {
   local file=$1 kind=$2 name=$3
   local tag
   tag=$(jq -r '.metadata.uid' "$work/ns.json")
-  jq -e --arg tag "retirement:$tag" '((.metadata.annotations//{} | has("platform.devantler.tech/arc-retirement") | not) and
+  local baseline=false
+  if jq -e '.baseline!=null' "$work/journal.json" >/dev/null; then baseline=true; fi
+  jq -e --arg tag "retirement:$tag" --argjson baseline "$baseline" '((.metadata.annotations//{} | has("platform.devantler.tech/arc-retirement") | not) and
     (.metadata.annotations//{} | has("kustomize.toolkit.fluxcd.io/reconcile") | not)) or
     (.metadata.annotations."platform.devantler.tech/arc-retirement"==$tag and
+     .metadata.annotations."kustomize.toolkit.fluxcd.io/reconcile"=="disabled") or
+    ($baseline and (.metadata.annotations//{} | has("platform.devantler.tech/arc-retirement") | not) and
      .metadata.annotations."kustomize.toolkit.fluxcd.io/reconcile"=="disabled")' "$file" >/dev/null || fail foreign-resource-fence
   jq --arg tag "retirement:$tag" '[
     {op:"test",path:"/metadata/uid",value:.metadata.uid},
@@ -155,7 +163,9 @@ own_resource() {
     ] + (if .kind=="HelmRelease" then [
       {op:"add",path:"/spec/suspend",value:false},
       {op:"add",path:"/spec/values/minRunners",value:0},
-      {op:"add",path:"/spec/values/maxRunners",value:0}] else [] end)' "$file" >"$work/resource-patch.json"
+      {op:"add",path:"/spec/values/maxRunners",value:0}]
+      elif .kind=="AutoscalingRunnerSet" then [
+      {op:"add",path:"/spec/minRunners",value:0},{op:"add",path:"/spec/maxRunners",value:0}] else [] end)' "$file" >"$work/resource-patch.json"
   kc -n arc-runners patch "$kind" "$name" --type=json --patch-file "$work/resource-patch.json" >"$work/mutation.json"
 }
 delete_owned() {
@@ -163,6 +173,7 @@ delete_owned() {
   # Bind the destructive request to the journal, not merely to whichever UID
   # a fresh GET returned. Replacements or a changed owner must survive untouched.
   refresh_objects
+  bind_current
   case "$phase" in
     uninstalling) drain_receipts || fail changed-drain-proof; controller_replaced || fail changed-controller-proof ;;
     credential-removing) absence_receipts ;;
@@ -174,15 +185,17 @@ delete_owned() {
   case "$path" in
     /apis/helm.toolkit.fluxcd.io/v2/namespaces/arc-runners/helmreleases/platform-runners) uid_key=hrUID ;;
     /apis/external-secrets.io/v1/namespaces/arc-runners/externalsecrets/arc-github-app) uid_key=esoUID ;;
+    /apis/actions.github.com/v1alpha1/namespaces/arc-runners/autoscalingrunnersets/platform-linux) uid_key=arsUID ;;
     *) fail unexpected-delete-target ;;
   esac
   jq -e --arg key "$uid_key" --slurpfile journal "$work/verified-journal.json" \
-    '.metadata.uid==$journal[0][$key] and (.metadata.uid|type=="string" and length>0)' "$file" >/dev/null || fail replacement-delete-target
+    '.metadata.uid==(if $key=="arsUID" then $journal[0].baseline.arsUID else $journal[0][$key] end) and
+     (.metadata.uid|type=="string" and length>0)' "$file" >/dev/null || fail replacement-delete-target
   jq '{apiVersion:"v1",kind:"DeleteOptions",propagationPolicy:"Foreground",
     preconditions:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion}}' "$file" >"$work/delete.json"
   kc delete --raw "$path" -f "$work/delete.json" >"$work/delete-response.json"
 }
-drained=false; children=false; nodes=false; secret=false; source=false; replaced=false
+drained=false; children=false; nodes=false; secret=false; source=false; replaced=false; claimed=false
 printf 'null\n' >"$work/controller.json"
 printf '[]\n' >"$work/controller-pods.json"
 printf 'null\n' >"$work/receipt.json"
@@ -193,7 +206,9 @@ if jq -e '.==null' "$work/hr.json" >/dev/null &&
   printf 'ARC retirement has no installed release or credential-sync object; the unchanged absence guard follows.\n'
   exit
 fi
-deadline=$((SECONDS+1200))
+remaining=${ARC_RETIREMENT_REMAINING:-1200}
+[[ "$remaining" =~ ^[0-9]{1,4}$ && "$remaining" -gt 0 && "$remaining" -le 1200 ]] || fail retirement-deadline
+deadline=$((SECONDS+remaining))
 nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 [[ "$nonce" =~ ^[0-9a-f]{32}$ ]] || fail request-nonce
 ticket="native-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$nonce"
@@ -220,6 +235,26 @@ inspect() {
   snapshot
   "$work/planner" inspect <"$work/input.json" >"$work/journal.json" || fail journal-read
   phase=$(jq -er '.phase' "$work/journal.json") || fail journal-phase
+}
+bind_current() {
+  # Admission can finish a previously accepted zero CREATE after the close CAS.
+  # Enroll that first exact UID before touching it, and invalidate every old
+  # completion receipt. At most three first identities can restart this attempt.
+  [[ "$claimed" == true ]] || return 0
+  jq -e '.baseline!=null' "$work/journal.json" >/dev/null || return 0
+  plan bind
+  if jq -e --slurpfile ns "$work/ns.json" '.[-1].value."platform.devantler.tech/arc-retirement" != $ns[0].metadata.annotations."platform.devantler.tech/arc-retirement"' "$work/patch.json" >/dev/null; then
+    apply_ns; inspect
+    if [[ "$phase" == fenced ]]; then
+      [[ "$mode" == before-publish ]] || fail late-baseline-after-publication
+      local restarts=${ARC_RETIREMENT_RESTARTS:-0}
+      [[ "$restarts" =~ ^[0-3]$ && "$restarts" -lt 3 ]] || fail late-baseline-restart-bound
+      export ARC_RETIREMENT_RESTARTS=$((restarts+1))
+      export ARC_RETIREMENT_REMAINING=$((deadline-SECONDS))
+      cleanup
+      exec bash scripts/retire-arc-pool.sh "$mode"
+    fi
+  fi
 }
 installed_policy() {
   stage=installed-retirement-policy
@@ -289,6 +324,7 @@ admission_receipts() {
 drain_receipts() {
   drained=false
   refresh_objects
+  bind_current
   optional_object autoscalingrunnerset platform-linux arc-runners "$work/ars.json"
   optional_object ephemeralrunnerset platform-linux arc-runners "$work/ers.json"
   kc -n arc-systems get autoscalinglisteners -o json >"$work/listeners.json" || fail listener-read
@@ -318,11 +354,25 @@ controller_replaced() {
 }
 no_pool() {
   refresh_objects
+  bind_current
+  if jq -e '.baseline!=null' "$work/journal.json" >/dev/null &&
+     jq -e '.==null' "$work/hr.json" >/dev/null && jq -e '.!=null' "$work/ars.json" >/dev/null; then
+    # A chart CREATE accepted before uninstall can leave its scale set behind.
+    # Only the journal-bound orphan is removed, after the unchanged drain and
+    # controller retirement proofs; ARC finalizers retire children naturally.
+    if ! drain_receipts || ! controller_replaced; then return 1; fi
+    if jq -e '.metadata.deletionTimestamp==null' "$work/ars.json" >/dev/null; then
+      delete_owned "$work/ars.json" /apis/actions.github.com/v1alpha1/namespaces/arc-runners/autoscalingrunnersets/platform-linux
+    fi
+    refresh_objects
+    bind_current
+  fi
   absence_receipts
   jq -e '.==null' "$work/hr.json" >/dev/null && [[ "$children" == true && "$nodes" == true ]]
 }
 no_credential() {
   refresh_objects
+  bind_current
   absence_receipts
   jq -e '.==null' "$work/eso.json" >/dev/null && [[ "$children" == true && "$nodes" == true && "$secret" == true ]]
 }
@@ -345,6 +395,16 @@ inactive_source() {
   if "$work/planner" check-source <"$work/source-proof.json" >"$work/proof-output" 2>"$work/proof-error"; then source=true; return 0; fi
   return 1
 }
+source_writer_quiesced() {
+  # Fresh acknowledgements at all three source layers finish pending applies
+  # while the exact HR/ESO are excluded. This proof concerns the currently
+  # signed writer, independently of the inactive digest published afterward.
+  local PLATFORM_MANIFEST_DIGEST
+  kc -n flux-system get ocirepository flux-system -o json >"$work/writer-source.json" || fail writer-source-read
+  check_json "$work/writer-source.json"
+  PLATFORM_MANIFEST_DIGEST=$(jq -er '.status.artifact.digest' "$work/writer-source.json") || fail writer-source-digest
+  inactive_source
+}
 
 # The declaration itself must keep the fence in every later publication. The
 # first policy-only deployment has no installed ARC objects and exits above.
@@ -352,9 +412,14 @@ installed_policy
 controller_receipts
 if jq -e '.metadata.annotations|has("platform.devantler.tech/arc-retirement")' "$work/ns.json" >/dev/null; then
   inspect
-  case "$phase" in drained|quiescing|quiesced) await current-drain drain_receipts ;; uninstalling) if jq -e '.!=null' "$work/hr.json" >/dev/null; then await current-drain drain_receipts; fi ;; esac
-  case "$phase" in quiesced|uninstalling) await current-controller controller_replaced ;; esac
-  case "$phase" in uninstalled|credential-removing|absent|restored) absence_receipts ;; esac
+  pending_binding=false
+  if jq -e --slurpfile hr "$work/hr.json" --slurpfile eso "$work/eso.json" --slurpfile ars "$work/ars.json" '.baseline!=null and
+    ((.hrUID=="" and $hr[0]!=null) or (.esoUID=="" and $eso[0]!=null) or (.baseline.arsUID=="" and $ars[0]!=null))' "$work/journal.json" >/dev/null; then pending_binding=true; fi
+  if [[ "$pending_binding" == false ]]; then
+    case "$phase" in drained|quiescing|quiesced) await current-drain drain_receipts ;; uninstalling) if jq -e '.!=null' "$work/hr.json" >/dev/null; then await current-drain drain_receipts; fi ;; esac
+    case "$phase" in quiesced|uninstalling) await current-controller controller_replaced ;; esac
+    case "$phase" in uninstalled|credential-removing|absent|restored) absence_receipts ;; esac
+  fi
   prior_run=$(jq -er '.owner.run' "$work/journal.json"); prior_attempt=$(jq -er '.owner.attempt' "$work/journal.json")
   if [[ "$prior_run" != "$GITHUB_RUN_ID" || "$prior_attempt" != "$GITHUB_RUN_ATTEMPT" ]]; then
     [[ "$prior_run" =~ ^[1-9][0-9]{0,19}$ && "$prior_attempt" =~ ^[1-9][0-9]{0,4}$ ]] || fail previous-owner-identity
@@ -362,12 +427,15 @@ if jq -e '.metadata.annotations|has("platform.devantler.tech/arc-retirement")' "
   fi
 fi
 plan claim; apply_ns; inspect
+claimed=true
+bind_current
 admission_receipts
 if [[ "$mode" == after-reconcile ]]; then
   [[ "$phase" == absent || "$phase" == restored ]] || fail incomplete-retirement
   fresh_source_request
   await inactive-source inactive_source
   absence_receipts
+  refresh_objects; bind_current
   plan restored; apply_ns
   printf 'ARC retirement restored the exact inactive artifact with a durable closed fence.\n'
   exit
@@ -383,6 +451,14 @@ if [[ "$phase" == fenced ]]; then
     jq -e '.kind=="ExternalSecret" and .spec.target.name=="arc-github-app" and .spec.target.creationPolicy=="Owner" and
       .spec.secretStoreRef.name=="openbao" and .spec.secretStoreRef.kind=="SecretStore"' "$work/eso.json" >/dev/null || fail unexpected-credential-sync
     own_resource "$work/eso.json" externalsecret arc-github-app
+  fi
+  if jq -e '.baseline!=null' "$work/journal.json" >/dev/null && jq -e '.!=null' "$work/ars.json" >/dev/null; then
+    own_resource "$work/ars.json" autoscalingrunnerset platform-linux
+  fi
+  if jq -e '.baseline!=null' "$work/journal.json" >/dev/null; then
+    fresh_source_request
+    await quiesced-source-writer source_writer_quiesced
+    refresh_objects; bind_current
   fi
   await natural-drain drain_receipts
   plan drained; apply_ns; inspect
@@ -406,6 +482,7 @@ fi
 if [[ "$phase" == quiesced ]]; then plan uninstalling; apply_ns; inspect; fi
 if [[ "$phase" == uninstalling ]]; then
   refresh_objects
+  bind_current
   if jq -e '.!=null' "$work/hr.json" >/dev/null && jq -e '.metadata.deletionTimestamp==null' "$work/hr.json" >/dev/null; then
     delete_owned "$work/hr.json" /apis/helm.toolkit.fluxcd.io/v2/namespaces/arc-runners/helmreleases/platform-runners
   fi
@@ -419,6 +496,7 @@ fi
 if [[ "$phase" == credential-removing ]]; then
   admission_receipts
   refresh_objects
+  bind_current
   if jq -e '.!=null' "$work/eso.json" >/dev/null && jq -e '.metadata.deletionTimestamp==null' "$work/eso.json" >/dev/null; then
     delete_owned "$work/eso.json" /apis/external-secrets.io/v1/namespaces/arc-runners/externalsecrets/arc-github-app
   fi
@@ -427,5 +505,6 @@ if [[ "$phase" == credential-removing ]]; then
 fi
 [[ "$phase" == absent || "$phase" == restored ]] || fail incomplete-retirement
 absence_receipts
+refresh_objects; bind_current
 [[ "$children" == true && "$nodes" == true && "$secret" == true ]] || fail retirement-regressed
 printf 'ARC retirement finalized the pool and credential before publication; its closed fence remains.\n'

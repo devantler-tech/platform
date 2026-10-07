@@ -259,6 +259,25 @@ in place so stale writers cannot reopen the pool. Reopening requires a separate
 reviewed transaction that first establishes an actual zero-runner baseline;
 clearing the journal by hand is not an activation procedure.
 
+The prepared journal decoder also retains a versioned baseline declaration with
+the publication revision and digest, the exact zero specifications and separately
+bound release, scale-set and credential-sync UIDs. The native workflow identity
+remains distinct from the publication revision. An opening baseline can create
+only its exact zero resources; one slot permits only updates of already-bound
+UIDs after a zero-source receipt. Recovery closes this opening before any
+resource mutation. A zero CREATE accepted just before that close may appear
+later: recovery binds its first exact UID with another Namespace compare-and-swap
+and invalidates earlier completion receipts. A replacement UID is never adopted.
+
+While the release and credential-sync object are excluded from source applies,
+recovery requires fresh acknowledgements from every signed source layer before
+retiring the chart. A bound orphan scale set left after Helm finalization uses
+the same natural drain and controller process proofs before a foreground delete
+with UID and resource-version preconditions. Late bindings restart the bounded
+transaction with a new controller process ticket and its remaining deadline.
+These recovery capabilities are prepared while the source remains inactive;
+they do not install a baseline or authorize runner activation themselves.
+
 After the gates above are approved, verify the scoped controller is healthy and
 retire its `platform.devantler.tech/arc-recovery: drain-only` marker in the reviewed
 activation change. The recovery guard intentionally refuses a credentialed pool

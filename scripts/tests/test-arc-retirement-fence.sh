@@ -31,7 +31,7 @@ run_case() {
     policies:["policy.yaml"],resources:["resource.json"],variables:"values.json",userinfo:"userinfo.json",
     apiCallResponses:[{urlPath:"/api/v1/namespaces/arc-runners",method:"GET",
       response:{statusCode:$code,body:{apiVersion:"v1",kind:"Namespace",metadata:{
-        name:"arc-runners",annotations:(if $flag=="missing" then {} else {"platform.devantler.tech/arc-retirement":$flag} end)}}}}],
+        name:"arc-runners",uid:"ns-1",annotations:(if $flag=="missing" then {} else {"platform.devantler.tech/arc-retirement":$flag} end)}}}}],
     results:[{kind:$resource[0].kind,policy:"restrict-arc-retirement",rule:$rule,
       resources:[(($resource[0].metadata.namespace // "") + "/" + $resource[0].metadata.name | ltrimstr("/"))],operation:$op,result:$expected}]
     }' >"$dir/kyverno-test.yaml"
@@ -40,7 +40,7 @@ run_case() {
 run_case recreate-zero CREATE owned '.' fail
 run_case recreate-active CREATE owned '.spec.values.maxRunners=1' fail
 run_case empty-journal CREATE '' '.' fail
-run_case malformed-journal CREATE '{not-json' '.' fail
+run_case malformed-journal CREATE '{not-json' '.' error
 run_case reopen-admission UPDATE owned '.spec.values.maxRunners=1' fail
 run_case unchanged-existing-violation UPDATE owned '.spec.values.maxRunners=1' fail fence-pool-retirement '{"spec":{"suspend":false,"values":{"minRunners":0,"maxRunners":1}}}'
 run_case omitted-maximum UPDATE owned 'del(.spec.values.maxRunners)' fail
@@ -106,5 +106,29 @@ run_case admin-clear-journal UPDATE owned "$ns | .metadata.annotations={}" pass 
 run_case neighboring-namespace UPDATE owned "$ns | .metadata.name=\"other-namespace\" | .metadata.annotations={}" skip preserve-retirement-journal "$old"
 run_case delete-retiring-namespace DELETE owned "$ns" fail preserve-retiring-namespace "$old"
 run_case delete-unfenced-namespace DELETE missing "$ns | .metadata.annotations={}" pass preserve-retiring-namespace '{}'
+# The prepared opening gate never allows one-capacity CREATE, and binds every
+# active UPDATE to the already proved zero object. Exact noncapacity specs remain
+# part of the gate even when the source authorizes one slot.
+baseline=$(jq -cn '{phase:"baseline",namespaceUID:"ns-1",baseline:{version:1,maximum:0,sourceSHA:("b"*40),digest:("sha256:"+("c"*64)),hrUID:"",arsUID:"",esoUID:"",hrSpec0:{suspend:false,values:{minRunners:0,maxRunners:0}},arsSpec0:{minRunners:0,maxRunners:0},esoSpec:{}}}')
+run_case baseline-zero-release CREATE "$baseline" '.' pass
+run_case baseline-active-create CREATE "$baseline" '.spec.values.maxRunners=1' fail
+run_case baseline-changed-spec CREATE "$baseline" '.spec.values.image="other"' fail
+run_case baseline-zero-set CREATE "$baseline" "$ars" pass fence-scale-set-retirement
+run_case baseline-zero-credential CREATE "$baseline" "$eso" pass fence-credential-recreation
+run_case baseline-credential-drift CREATE "$baseline" "$eso | .spec.target={name:\"other\"}" fail fence-credential-recreation
+run_case baseline-listener-pod CREATE "$baseline" "$listener_pod" pass fence-retired-listener-pod
+run_case baseline-secret CREATE "$baseline" "$secret" pass fence-retired-secret
+active=$(jq -c '.baseline.maximum=1 | .baseline.hrUID="hr-1" | .baseline.arsUID="ars-1" | .baseline.esoUID="eso-1" | .baseline.zeroSource={sha:("d"*40),digest:("sha256:"+("e"*64))}' <<<"$baseline")
+run_case baseline-one-never-create CREATE "$active" '.metadata.uid="hr-1" | .spec.values.maxRunners=1' fail
+run_case baseline-one-bound-update UPDATE "$active" '.metadata.uid="hr-1" | .spec.values.maxRunners=1' pass
+run_case baseline-one-wrong-uid UPDATE "$active" '.metadata.uid="replacement" | .spec.values.maxRunners=1' fail
+run_case baseline-one-changed-image UPDATE "$active" '.metadata.uid="hr-1" | .spec.values.maxRunners=1 | .spec.values.image="other"' fail
+run_case baseline-one-without-zero UPDATE "$(jq -c 'del(.baseline.zeroSource)' <<<"$active")" '.metadata.uid="hr-1" | .spec.values.maxRunners=1' fail
+run_case baseline-one-set-create CREATE "$active" "$ars | .metadata.uid=\"ars-1\" | .spec.maxRunners=1" fail fence-scale-set-retirement
+run_case baseline-one-set-update UPDATE "$active" "$ars | .metadata.uid=\"ars-1\" | .spec.maxRunners=1" pass fence-scale-set-retirement
+run_case baseline-one-set-replacement UPDATE "$active" "$ars | .metadata.uid=\"replacement\" | .spec.maxRunners=1" fail fence-scale-set-retirement
+run_case baseline-namespace-replacement CREATE "$(jq -c '.namespaceUID="replacement"' <<<"$baseline")" '.' fail
+run_case baseline-schema-unknown CREATE "$(jq -c '.baseline.version=2' <<<"$baseline")" '.' fail
+run_case baseline-corrupt-zero CREATE "$(jq -c '.baseline.hrSpec0.values.maxRunners=1' <<<"$baseline")" '.spec.values.maxRunners=1' fail
 bash scripts/validate-kyverno-fixture-evaluation.sh "$scratch"
 printf 'ARC retirement admission: %s evaluated engine cases passed.\n' "$cases"

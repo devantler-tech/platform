@@ -46,6 +46,8 @@ func run(action string, in io.Reader, out io.Writer) error {
 	switch action {
 	case "claim":
 		patch, err = claim(input.State, input.Receipt)
+	case "bind":
+		patch, err = bindBaseline(input.State)
 	case "inspect":
 		var j journal
 		j, err = readJournal(input.State)

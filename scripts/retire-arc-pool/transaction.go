@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"sort"
@@ -25,11 +27,13 @@ type resource struct {
 	UID         string
 	RV          string
 	Annotations map[string]string
+	Spec        json.RawMessage
 }
 type state struct {
 	Namespace          resource
 	Release            *resource
 	Credential         *resource
+	ScaleSet           *resource
 	Owner              identity
 	DrainProven        bool
 	ChildrenAbsent     bool
@@ -41,15 +45,16 @@ type state struct {
 	ControllerReplaced bool
 }
 type journal struct {
-	Version           int      `json:"version"`
-	Owner             identity `json:"owner"`
-	NamespaceUID      string   `json:"namespaceUID"`
-	HRUID             string   `json:"hrUID"`
-	ESOUID            string   `json:"esoUID"`
-	Phase             string   `json:"phase"`
-	ControllerUID     string   `json:"controllerUID"`
-	ControllerPodUIDs []string `json:"controllerPodUIDs"`
-	ControllerTicket  string   `json:"controllerTicket"`
+	Version           int       `json:"version"`
+	Owner             identity  `json:"owner"`
+	NamespaceUID      string    `json:"namespaceUID"`
+	HRUID             string    `json:"hrUID"`
+	ESOUID            string    `json:"esoUID"`
+	Phase             string    `json:"phase"`
+	ControllerUID     string    `json:"controllerUID"`
+	ControllerPodUIDs []string  `json:"controllerPodUIDs"`
+	ControllerTicket  string    `json:"controllerTicket"`
+	Baseline          *baseline `json:"baseline,omitempty"`
 }
 type operation struct {
 	Op    string `json:"op"`
@@ -70,6 +75,7 @@ func validateState(s state) error {
 	if !validIdentity(s.Owner) || !validResource(s.Namespace, "arc-runners", "") ||
 		(s.Release != nil && !validResource(*s.Release, "platform-runners", "arc-runners")) ||
 		(s.Credential != nil && !validResource(*s.Credential, "arc-github-app", "arc-runners")) ||
+		(s.ScaleSet != nil && !validResource(*s.ScaleSet, "platform-linux", "arc-runners")) ||
 		(s.Controller != nil && !validResource(*s.Controller, "arc-controller", "arc-systems")) {
 		return errors.New("retirement identity is incomplete")
 	}
@@ -151,7 +157,7 @@ func unambiguous(data []byte) error {
 func readJournal(s state) (journal, error) {
 	var j journal
 	body := []byte(s.Namespace.Annotations[journalKey])
-	if len(body) > 8192 || unambiguous(body) != nil {
+	if len(body) > 128<<10 || unambiguous(body) != nil {
 		return j, errors.New("invalid retirement journal")
 	}
 	d := json.NewDecoder(bytes.NewReader(body))
@@ -164,7 +170,7 @@ func readJournal(s state) (journal, error) {
 	if json.Unmarshal(body, &canonical) != nil {
 		return j, errors.New("invalid retirement journal")
 	}
-	if len(canonical) != 9 {
+	if len(canonical) != 9 && !(len(canonical) == 10 && j.Baseline != nil) {
 		return j, errors.New("incomplete retirement journal")
 	}
 	for _, key := range []string{"namespaceUID", "hrUID", "esoUID", "phase", "controllerUID", "controllerTicket"} {
@@ -175,6 +181,10 @@ func readJournal(s state) (journal, error) {
 	for k := range canonical {
 		switch k {
 		case "version", "owner", "namespaceUID", "hrUID", "esoUID", "phase", "controllerUID", "controllerPodUIDs", "controllerTicket":
+		case "baseline":
+			if err := validateBaseline(canonical[k], j); err != nil {
+				return j, err
+			}
 		default:
 			return j, errors.New("noncanonical journal field")
 		}
@@ -197,12 +207,15 @@ func readJournal(s state) (journal, error) {
 		}
 	}
 	switch j.Phase {
-	case "fenced", "drained":
+	case "baseline", "fenced", "drained":
+		if j.Phase == "baseline" && j.Baseline == nil {
+			return j, errors.New("baseline provenance is missing")
+		}
 		if j.ControllerUID != "" || len(j.ControllerPodUIDs) != 0 || j.ControllerTicket != "" {
 			return j, errors.New("premature controller receipt")
 		}
 	case "quiescing", "quiesced", "uninstalling", "uninstalled", "credential-removing", "absent", "restored":
-		if j.ControllerUID == "" || !validPodUIDs(j.ControllerPodUIDs) || !regexp.MustCompile(`^native-[1-9][0-9]{0,19}-[1-9][0-9]{0,4}$`).MatchString(j.ControllerTicket) {
+		if j.ControllerUID == "" || !validPodUIDs(j.ControllerPodUIDs) || !regexp.MustCompile(`^native-[1-9][0-9]{0,19}-[1-9][0-9]{0,4}(-[0-9a-f]{32})?$`).MatchString(j.ControllerTicket) {
 			return j, errors.New("incomplete controller retirement receipt")
 		}
 	default:
@@ -221,10 +234,15 @@ func verify(s state) (journal, error) {
 	if j.Owner != s.Owner {
 		return j, errors.New("retirement is owned by another native attempt")
 	}
+	if j.Baseline != nil {
+		if err := baselineResources(s, j, false); err != nil {
+			return j, err
+		}
+	}
 	hrMayBeGone := j.Phase == "uninstalling" || j.Phase == "uninstalled" || j.Phase == "credential-removing" || j.Phase == "absent" || j.Phase == "restored"
 	esoMayBeGone := j.Phase == "credential-removing" || j.Phase == "absent" || j.Phase == "restored"
-	if (s.Release != nil && s.Release.UID != j.HRUID) || (s.Release == nil && j.HRUID != "" && !hrMayBeGone) ||
-		(s.Credential != nil && s.Credential.UID != j.ESOUID) || (s.Credential == nil && j.ESOUID != "" && !esoMayBeGone) {
+	if (s.Release != nil && s.Release.UID != j.HRUID) || (s.Release == nil && j.HRUID != "" && !hrMayBeGone && j.Baseline == nil) ||
+		(s.Credential != nil && s.Credential.UID != j.ESOUID) || (s.Credential == nil && j.ESOUID != "" && !esoMayBeGone && j.Baseline == nil) {
 		return j, errors.New("retirement resource disappeared or was replaced outside its recorded transition")
 	}
 	if (j.Phase == "drained" || j.Phase == "quiescing" || j.Phase == "quiesced") && !s.DrainProven {
@@ -312,9 +330,6 @@ func claim(s state, receipt []byte) ([]operation, error) {
 		}
 		original := s.Owner
 		s.Owner = j.Owner
-		if _, err := verify(s); err != nil {
-			return nil, err
-		}
 		if original != j.Owner {
 			if original.Run == j.Owner.Run && original.Attempt == j.Owner.Attempt {
 				return nil, errors.New("same-attempt source identity changed")
@@ -322,6 +337,23 @@ func claim(s state, receipt []byte) ([]operation, error) {
 			if err := terminal(receipt, j.Owner); err != nil {
 				return nil, err
 			}
+		}
+		if j.Baseline != nil {
+			if err := baselineResources(s, j, true); err != nil {
+				return nil, err
+			}
+			changed := bindFirst(&j, s)
+			if j.Phase == "baseline" || changed {
+				closeBaseline(&j)
+			}
+			// Check the freshly bound journal against current receipts, without
+			// writing it until the outer Namespace UID/RV CAS succeeds.
+			body, _ := json.Marshal(j)
+			s.Namespace.Annotations = annotations(s.Namespace)
+			s.Namespace.Annotations[journalKey] = string(body)
+		}
+		if _, err := verify(s); err != nil {
+			return nil, err
 		}
 		s.Owner = original
 		j.Owner = original
@@ -355,9 +387,11 @@ func advance(s state, next string) ([]operation, error) {
 		valid = j.Phase == "drained" && s.DrainProven && s.Controller != nil && validPodUIDs(s.ControllerPodUIDs)
 		if valid {
 			j.ControllerUID = s.Controller.UID
-			j.ControllerTicket = "native-" + s.Owner.Run + "-" + s.Owner.Attempt
 			j.ControllerPodUIDs = append([]string{}, s.ControllerPodUIDs...)
 			sort.Strings(j.ControllerPodUIDs)
+			body, _ := json.Marshal(j.ControllerPodUIDs)
+			hash := sha256.Sum256(body)
+			j.ControllerTicket = "native-" + s.Owner.Run + "-" + s.Owner.Attempt + "-" + fmt.Sprintf("%x", hash[:16])
 		}
 	case "quiesced":
 		valid = j.Phase == "quiescing" && s.ControllerReplaced

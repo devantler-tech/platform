@@ -20,17 +20,19 @@ spec:
               namespaces: [arc-runners]
               operations: [CREATE, UPDATE]
       context:
-        # A fresh direct lookup also fences SSA CREATE after the old object is
-        # gone. No default masks lookup errors; key presence, even malformed or
-        # empty content, remains a fence after protected recovery completes.
-        - name: retirementPresent
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
           apiCall:
             urlPath: /api/v1/namespaces/arc-runners
             jmesPath: >-
-              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+        - name: baselineHRSpec1
+          variable:
+            jmesPath: >-
+              merge(retirement.record.baseline.hrSpec0 || `{}`, {values: merge(retirement.record.baseline.hrSpec0.values || `{}`, {maxRunners: `1`})})
       preconditions:
         all:
-          - key: "{{ retirementPresent }}"
+          - key: "{{ retirement.present }}"
             operator: Equals
             value: true
       validate:
@@ -39,17 +41,11 @@ spec:
         message: ARC retirement forbids recreating this release or reopening runner admission.
         deny:
           conditions:
-            any:
-              - key: "{{ request.operation }}"
-                operator: Equals
-                value: CREATE
+            all:
               - key: >-
-                  {{ request.object.spec.suspend == `true` || (request.object.spec.values.minRunners == `0` && request.object.spec.values.maxRunners == `0`) }}
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.hrSpec0.suspend == `false` && retirement.record.baseline.hrSpec0.values.minRunners == `0` && retirement.record.baseline.hrSpec0.values.maxRunners == `0` && ((((request.operation == 'CREATE' && (retirement.record.baseline.hrUID || '') == '') || (request.operation == 'UPDATE' && ((retirement.record.baseline.hrUID || '') == '' || (request.object.metadata.uid || '') == retirement.record.baseline.hrUID))) && request.object.spec == retirement.record.baseline.hrSpec0) || (request.operation == 'UPDATE' && (request.object.metadata.uid || '') == retirement.record.baseline.hrUID && retirement.record.baseline.maximum == `1` && (retirement.record.baseline.hrUID || '') != '' && (retirement.record.baseline.arsUID || '') != '' && (retirement.record.baseline.esoUID || '') != '' && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.zeroSource.sha || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.zeroSource.digest || '') && request.object.spec == baselineHRSpec1))) || (retirement.phase != 'baseline' && (request.operation == 'UPDATE' && ((retirement.record.baseline == `null` && (request.object.spec.suspend == `true` || (request.object.spec.values.minRunners == `0` && request.object.spec.values.maxRunners == `0`))) || (retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.hrSpec0.suspend == `false` && retirement.record.baseline.hrSpec0.values.minRunners == `0` && retirement.record.baseline.hrSpec0.values.maxRunners == `0` && (request.object.metadata.uid || '') == retirement.record.baseline.hrUID && (request.object.spec == retirement.record.baseline.hrSpec0 || request.object.spec == merge(retirement.record.baseline.hrSpec0, {suspend: `true`})))))) }}
                 operator: NotEquals
                 value: true
-    # Helm reconciliation can outlive its leader epoch. Fence the admission
-    # object itself as well as the release so an older chart apply cannot
-    # recreate it after uninstall or undo the explicit zero bounds.
     - name: fence-scale-set-retirement
       match:
         any:
@@ -59,14 +55,15 @@ spec:
               namespaces: [arc-runners]
               operations: [CREATE, UPDATE]
       context:
-        - name: retirementPresent
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
           apiCall:
             urlPath: /api/v1/namespaces/arc-runners
             jmesPath: >-
-              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
       preconditions:
         all:
-          - key: "{{ retirementPresent }}"
+          - key: "{{ retirement.present }}"
             operator: Equals
             value: true
       validate:
@@ -75,12 +72,9 @@ spec:
         message: ARC retirement forbids recreating this scale set or reopening its admission.
         deny:
           conditions:
-            any:
-              - key: "{{ request.operation }}"
-                operator: Equals
-                value: CREATE
+            all:
               - key: >-
-                  {{ request.object.spec.minRunners == `0` && request.object.spec.maxRunners == `0` }}
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.arsSpec0.minRunners == `0` && retirement.record.baseline.arsSpec0.maxRunners == `0` && ((((request.operation == 'CREATE' && (retirement.record.baseline.arsUID || '') == '') || (request.operation == 'UPDATE' && ((retirement.record.baseline.arsUID || '') == '' || (request.object.metadata.uid || '') == retirement.record.baseline.arsUID))) && request.object.spec == retirement.record.baseline.arsSpec0) || (request.operation == 'UPDATE' && (request.object.metadata.uid || '') == retirement.record.baseline.arsUID && retirement.record.baseline.maximum == `1` && (retirement.record.baseline.hrUID || '') != '' && (retirement.record.baseline.arsUID || '') != '' && (retirement.record.baseline.esoUID || '') != '' && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.zeroSource.sha || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.zeroSource.digest || '') && request.object.spec == merge(retirement.record.baseline.arsSpec0, {maxRunners: `1`})))) || (retirement.phase != 'baseline' && (request.operation == 'UPDATE' && ((retirement.record.baseline == `null` && request.object.spec.minRunners == `0` && request.object.spec.maxRunners == `0`) || (retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.arsSpec0.minRunners == `0` && retirement.record.baseline.arsSpec0.maxRunners == `0` && (request.object.metadata.uid || '') == retirement.record.baseline.arsUID && request.object.spec == retirement.record.baseline.arsSpec0)))) }}
                 operator: NotEquals
                 value: true
     - name: fence-listener-retirement
@@ -91,19 +85,15 @@ spec:
               namespaces: [arc-systems]
               operations: [CREATE, UPDATE]
       context:
-        - name: retirementPresent
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
           apiCall:
             urlPath: /api/v1/namespaces/arc-runners
             jmesPath: >-
-              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
-        - name: retirementPhase
-          apiCall:
-            urlPath: /api/v1/namespaces/arc-runners
-            jmesPath: >-
-              parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown'
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
       preconditions:
         all:
-          - key: "{{ retirementPresent }}"
+          - key: "{{ retirement.present }}"
             operator: Equals
             value: true
           - key: "{{ request.object.spec.autoscalingRunnerSetNamespace || '' }}"
@@ -123,11 +113,11 @@ spec:
               # Finalizer-only updates on an already deleting old listener must
               # remain possible; its spec cannot change through that exception.
               - key: >-
-                  {{ ((request.object.spec.minRunners || `0`) == `0` && (request.object.spec.maxRunners || `0`) == `0`) || (request.operation == 'UPDATE' && request.object.metadata.deletionTimestamp != `null` && request.oldObject.metadata.deletionTimestamp != `null` && request.object.spec == request.oldObject.spec) }}
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.maximum == `1` && (retirement.record.baseline.hrUID || '') != '' && (retirement.record.baseline.arsUID || '') != '' && (retirement.record.baseline.esoUID || '') != '' && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.zeroSource.sha || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.zeroSource.digest || '') && (request.object.spec.minRunners || `0`) == `0` && request.object.spec.maxRunners == `1`) || ((request.object.spec.minRunners || `0`) == `0` && (request.object.spec.maxRunners || `0`) == `0`) || (request.operation == 'UPDATE' && request.object.metadata.deletionTimestamp != `null` && request.oldObject.metadata.deletionTimestamp != `null` && request.object.spec == request.oldObject.spec) }}
                 operator: NotEquals
                 value: true
               - key: >-
-                  {{ request.operation == 'CREATE' && contains(['uninstalled', 'credential-removing', 'absent', 'restored'], retirementPhase) }}
+                  {{ request.operation == 'CREATE' && contains(['uninstalled', 'credential-removing', 'absent', 'restored'], retirement.phase) }}
                 operator: Equals
                 value: true
     - name: fence-retired-listener-pod
@@ -143,11 +133,12 @@ spec:
                   actions.github.com/scale-set-namespace: arc-runners
                   app.kubernetes.io/component: runner-scale-set-listener
       context:
-        - name: retirementPhase
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
           apiCall:
             urlPath: /api/v1/namespaces/arc-runners
             jmesPath: >-
-              (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
       validate:
         failureAction: Enforce
         allowExistingViolations: false
@@ -155,9 +146,9 @@ spec:
         deny:
           conditions:
             all:
-              - key: "{{ retirementPhase }}"
+              - key: "{{ retirement.phase }}"
                 operator: NotIn
-                value: [unfenced, fenced, drained, quiescing, quiesced, uninstalling]
+                value: [unfenced, baseline, fenced, drained, quiescing, quiesced, uninstalling]
     - name: fence-credential-recreation
       match:
         any:
@@ -167,14 +158,15 @@ spec:
               namespaces: [arc-runners]
               operations: [CREATE, UPDATE]
       context:
-        - name: retirementPresent
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
           apiCall:
             urlPath: /api/v1/namespaces/arc-runners
             jmesPath: >-
-              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
       preconditions:
         all:
-          - key: "{{ retirementPresent }}"
+          - key: "{{ retirement.present }}"
             operator: Equals
             value: true
       validate:
@@ -183,16 +175,11 @@ spec:
         message: ARC retirement forbids recreating or rewriting its credential-sync object.
         deny:
           conditions:
-            any:
-              - key: "{{ request.operation }}"
-                operator: Equals
-                value: CREATE
-              - key: "{{ request.object.spec == request.oldObject.spec }}"
+            all:
+              - key: >-
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && request.object.spec == retirement.record.baseline.esoSpec && ((request.operation == 'CREATE' && (retirement.record.baseline.esoUID || '') == '') || (request.operation == 'UPDATE' && ((retirement.record.baseline.esoUID || '') == '' || (request.object.metadata.uid || '') == retirement.record.baseline.esoUID)))) || (retirement.phase != 'baseline' && request.operation == 'UPDATE' && request.object.spec == request.oldObject.spec) }}
                 operator: NotEquals
                 value: true
-    # An ESO reconcile may have read the old parent before deletion. Close the
-    # exact Secret CREATE path only after ARC children have finalized, when its
-    # credential is no longer needed. Malformed journal lookup fails closed.
     - name: fence-retired-secret
       match:
         any:
@@ -202,11 +189,12 @@ spec:
               namespaces: [arc-runners]
               operations: [CREATE]
       context:
-        - name: retirementPhase
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
           apiCall:
             urlPath: /api/v1/namespaces/arc-runners
             jmesPath: >-
-              (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
       validate:
         failureAction: Enforce
         allowExistingViolations: false
@@ -214,9 +202,9 @@ spec:
         deny:
           conditions:
             all:
-              - key: "{{ retirementPhase }}"
+              - key: "{{ retirement.phase }}"
                 operator: NotIn
-                value: [unfenced, fenced, drained, quiescing, quiesced, uninstalling, uninstalled]
+                value: [unfenced, baseline, fenced, drained, quiescing, quiesced, uninstalling, uninstalled]
     - name: preserve-retirement-journal
       match:
         any:
