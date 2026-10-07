@@ -27,7 +27,7 @@ runs) and unchanged in v1.6.5 and on its `main` branch on 2026-10-07:
 |---|---|---|
 | The Flux reconciliation alert | One message, at the moment of the failure | Slack, from [`alert.yaml`](../../k8s/providers/hetzner/infrastructure/flux-notifications/alert.yaml); it carried the full error text on 2026-09-04 |
 | A Warning `UpgradeFailed` event on the release | As long as the API server keeps events, about an hour | `kubectl get events` |
-| The release's own failure counters | Until its chart, values or generation next change | `status.failures`, `status.upgradeFailures` |
+| The release's own failure count | Until its chart version, values or generation next change | `status.failures` (`status.upgradeFailures` stays at zero, because the failed attempt stored no release) |
 | The helm-controller log | Until the pod restarts | `flux-system/helm-controller` |
 
 Before a change merges, the `validate-helm-post-renderers` CI job renders each changed release's
@@ -37,31 +37,47 @@ the cluster's APIs, a value held only in a Secret, or a difference in how the co
 
 ## Check for it
 
-The failure counters are the only trace on the object that outlives the event. The controller
-clears them when an install or upgrade succeeds, so a release that is `Ready=True` with a counter
-above zero is reporting healthy over an attempt that failed and was never retried:
+The failure count is the only trace on the object that outlives the event. A failed upgrade raises
+`status.failures`. The controller resets it when the release's generation, chart version or values
+change, and after a successful upgrade only when a retry strategy applies to the release.
+So a release that is `Ready=True` with a count above zero had an attempt at its **current**
+configuration fail. This lists them, with the two times that tell a hidden failure from one that
+was retried:
 
 ```bash
 kubectl get helmreleases.helm.toolkit.fluxcd.io --all-namespaces -o json | jq -r '
   "read \(.items | length) releases",
   (.items[]
     | select(.status.conditions // [] | any(.type == "Ready" and .status == "True"))
-    | select(((.status.failures // 0) + (.status.upgradeFailures // 0) + (.status.installFailures // 0)) > 0)
-    | "\(.metadata.namespace)/\(.metadata.name) failures=\(.status.failures // 0) upgradeFailures=\(.status.upgradeFailures // 0)")'
+    | select((.status.failures // 0) > 0)
+    | "\(.metadata.namespace)/\(.metadata.name) failures=\(.status.failures)"
+      + " deployed=\(.status.history[0].lastDeployed // "unknown")"
+      + " released-condition-changed=\([.status.conditions[] | select(.type == "Released") | .lastTransitionTime][0] // "unknown")")'
 ```
 
 The first line states how many releases were read; a result without it read nothing. On 2026-10-07
 production printed `read 46 releases` and no release.
 
-This is a derived signal, not one the controller designed, and it has two limits:
+Read a line it prints like this:
 
-- **It can clear while the release is still stale.** The counters are also reset when the release's
-  generation changes. An edit that changes the spec without changing the chart, the values or the
-  post-renderers (an interval or a timeout, for example) resets them and triggers no upgrade.
+- **`released-condition-changed` is much later than `deployed`:** the release went back to
+  `Released=True` without deploying anything. That is the hidden failure. On 2026-09-04 the release
+  it described had been deployed five days earlier.
+- **The two are within the time an upgrade takes:** a later attempt deployed. The count is left
+  over because no retry strategy applies, and the release is fine.
+
+This is a derived signal, not one the controller designed, and it has three limits:
+
+- **It can clear while the release is still stale.** An edit that changes the spec without changing
+  the chart, the values or the post-renderers (an interval or a timeout, for example) changes the
+  generation, which resets the count and triggers no upgrade.
+- **It cannot tell the two cases apart when the failure follows a deployment closely**, because the
+  two times are then near each other either way.
 - **It has never been observed on a real failure.** It follows from the source and no release
   matches it today. Reproducing the failure needs a cluster that can be written to.
 
-A release it names needs the next section. A release it does not name is not proven healthy.
+A release in the first case needs the next section. A release the check does not name is not proven
+healthy.
 
 ## Repair
 
