@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -169,7 +170,7 @@ func TestRuntimeRequiresTLSBeforeReaderTokenAndAlwaysStopsForward(t *testing.T) 
 					if body, ok := responses[call]; ok {
 						return body, nil
 					}
-					if call != "--namespace=arc-runners create token arc-secret-reader --duration=5m" {
+					if call != "--namespace=arc-runners create token arc-secret-reader --duration=10m" {
 						t.Fatal("unexpected command")
 					}
 					events = append(events, "reader")
@@ -216,6 +217,35 @@ func TestRuntimeRequiresTLSBeforeReaderTokenAndAlwaysStopsForward(t *testing.T) 
 				t.Fatalf("unsafe credential or cleanup ordering: %v", events)
 			}
 		})
+	}
+}
+
+func TestReaderCommandPinsProtectedContextAndKeepsFailuresPrivate(t *testing.T) {
+	root := t.TempDir()
+	script := `#!/bin/bash
+set -euo pipefail
+[[ "$*" == '--context=admin@prod --namespace=arc-runners create token arc-secret-reader --duration=10m' ]] || exit 17
+if [[ "$ARC_READER_FAIL" == true ]]; then
+  printf 'private-reader-diagnostic-canary\n' >&2
+  printf 'private-reader-response-canary\n'
+  exit 18
+fi
+printf 'synthetic.reader.jwt\n'
+`
+	if err := os.WriteFile(filepath.Join(root, "kubectl"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", root+string(os.PathListSeparator)+os.Getenv("PATH"))
+	for _, failed := range []bool{false, true} {
+		t.Setenv("ARC_READER_FAIL", fmt.Sprint(failed))
+		body, err := kubectl(context.Background(), "--namespace=arc-runners", "create", "token", "arc-secret-reader", "--duration=10m")
+		if failed {
+			if body != nil || err == nil || err.Error() != "cluster operation unavailable" {
+				t.Fatal("failed reader command exposed its response or diagnostic")
+			}
+		} else if err != nil || string(body) != "synthetic.reader.jwt\n" {
+			t.Fatal("reader command did not select the protected production context")
+		}
 	}
 }
 
