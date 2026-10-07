@@ -29,8 +29,8 @@ kube_context=${KUBE_CONTEXT:-admin@prod}
 max_attempts=${KUBELET_READBACK_ATTEMPTS:-30}
 interval_seconds=${KUBELET_READBACK_INTERVAL_SECONDS:-10}
 max_seconds=${KUBELET_READBACK_MAX_SECONDS:-300}
-# false reports a failure as a warning and exits 0. The production deploy
-# starts that way until one clean production reading is on record (#3137).
+# false reports a failure as a warning and exits 0, for reading a cluster
+# whose result is not yet known. The production deploy does not set it.
 enforce=${KUBELET_READBACK_ENFORCE:-true}
 
 [[ "$enforce" =~ ^(true|false)$ ]] || {
@@ -39,8 +39,7 @@ enforce=${KUBELET_READBACK_ENFORCE:-true}
 }
 
 # Every way this check can end without a pass goes through here, so that
-# observe-only really cannot fail a deploy: a red step would skip the steps
-# after it, and those reassert production credentials.
+# observe-only really cannot fail a deploy.
 give_up() { # <exit code> <message>
   printf '%s\n' "$2" >&2
   if [[ "$enforce" == false ]]; then
