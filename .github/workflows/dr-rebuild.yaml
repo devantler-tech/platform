@@ -211,6 +211,13 @@ jobs:
         # before creating infrastructure or publishing a mutable latest tag.
         run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
 
+      - name: 🧭 Verify the validated recovery still matches main
+        id: verify_recovery_source
+        env:
+          RECOVERY_SOURCE_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
+
       - name: 🏗️ Create cluster
         # From-zero provisioning: Hetzner servers, Talos boot, CCM, CSI. Writes
         # a fresh kubeconfig (~/.kube/config, context admin@prod) and
@@ -252,6 +259,7 @@ jobs:
         id: publish_platform_manifest
         uses: ./.github/actions/deploy-prod/publish-platform-manifests
         with:
+          recovery-source-sha: ${{ github.sha }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
 
