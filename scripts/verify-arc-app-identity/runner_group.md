@@ -46,11 +46,18 @@ go run ./scripts/verify-arc-app-identity --preflight-runner-group
 ```
 
 An ambiguous create response cannot establish ownership for automatic deletion.
-Keep capability on hold and verify the exact invocation's zero-runner residue
-through the protected operator path before another trial. Do not adopt or delete
-another group to clear that hold.
+Keep capability on hold while any reserved `ksail-capability-` group remains,
+including residue from an earlier invocation. Verify it through the protected
+operator path before another trial; do not adopt or delete another group's
+resources to clear that hold.
 
 Once a successful create identifies a new invocation-owned group, cleanup is
 armed before checking its policy fields. Invalid create-response flags keep
 capability on hold. Cleanup re-reads the live identity, default/inherited flags
 and zero membership before deletion; unsafe live state reports `FAIL_CLEANUP`.
+
+After cancellation, group removal, installation-token revocation and OpenBao
+revocation share one six-second budget, including cleanup already in progress.
+The authenticated tunnel remains available during that budget. Ordinary cleanup
+retains each stage's existing timeout; any unconfirmed cleanup reports
+`FAIL_CLEANUP` rather than capability success.

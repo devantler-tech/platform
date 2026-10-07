@@ -41,6 +41,11 @@ func verifyRunnerGroupCapability(ctx context.Context, options verificationOption
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	if options.cleanup == nil {
+		var stop func()
+		options.cleanup, stop = cleanupContext(ctx)
+		defer stop()
+	}
 	payload, _ := json.Marshal(map[string]any{"repository_ids": []int64{ksailRunnerRepository}, "permissions": map[string]string{"organization_self_hosted_runners": "write", "metadata": "read"}})
 	var access struct {
 		Token       string            `json:"token"`
@@ -60,9 +65,9 @@ func verifyRunnerGroupCapability(ctx context.Context, options verificationOption
 	}
 	api := groupAPI{options: options, token: access.Token}
 	// Arm revocation before validating the returned scope, so a widened token
-	// cannot survive a refusal. Cleanup uses a fresh bounded context on cancellation.
+	// cannot survive a refusal. All cleanup shares one cancellation budget.
 	defer func() {
-		cleanup, stop := context.WithTimeout(context.Background(), 10*time.Second)
+		cleanup, stop := context.WithTimeout(options.cleanup, 10*time.Second)
 		defer stop()
 		if _, status := api.call(cleanup, http.MethodDelete, "/installation/token", nil, http.StatusNoContent, nil); status != pass {
 			result = failCleanup
@@ -90,7 +95,7 @@ func verifyRunnerGroupCapability(ctx context.Context, options verificationOption
 	}
 	name := "ksail-capability-" + runID
 	for _, group := range groups {
-		if group.Name == name {
+		if strings.HasPrefix(group.Name, "ksail-capability-") {
 			return "HOLD_OWNERSHIP"
 		}
 	}
@@ -121,7 +126,7 @@ func verifyRunnerGroupCapability(ctx context.Context, options verificationOption
 	}
 	// Ownership comes only from this successful create, never a name lookup.
 	defer func() {
-		if api.removeOwned(created) != pass {
+		if api.removeOwned(options.cleanup, created) != pass {
 			result = failCleanup
 		}
 	}()
@@ -252,8 +257,8 @@ func (api groupAPI) zeroRunners(ctx context.Context, path string) outcome {
 	return pass
 }
 
-func (api groupAPI) removeOwned(created runnerGroup) outcome {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (api groupAPI) removeOwned(cleanup context.Context, created runnerGroup) outcome {
+	ctx, cancel := context.WithTimeout(cleanup, 30*time.Second)
 	defer cancel()
 	path := runnerGroupsPath + "/" + strconv.FormatInt(created.ID, 10)
 	var live runnerGroup

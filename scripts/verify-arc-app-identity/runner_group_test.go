@@ -435,6 +435,74 @@ func TestRunnerGroupCapabilityRefusesLeftoverBeforeExistingPass(t *testing.T) {
 	}
 }
 
+func TestRunnerGroupCapabilityRefusesEarlierInvocationResidue(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("existing=%t", existing), func(t *testing.T) {
+			f := &groupFixture{groups: map[int64]map[string]any{98: fixtureGroup(98, "ksail-capability-previous-run")}}
+			if existing {
+				f.groups[10] = fixtureGroup(10, "platform")
+			}
+			if got := exerciseGroup(t, f); got != "HOLD_OWNERSHIP" {
+				t.Fatalf("earlier invocation's residue returned %s", got)
+			}
+			if f.created || f.deleted || !f.revoked || f.groups[98] == nil {
+				t.Fatal("earlier invocation's residue was ignored, adopted, or deleted")
+			}
+		})
+	}
+}
+
+func TestRunnerGroupCancellationBoundsCleanupAlreadyInProgress(t *testing.T) {
+	for _, stage := range []string{"proof", "group", "token"} {
+		t.Run(stage, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			f := &groupFixture{groups: map[int64]map[string]any{}}
+			base := f.handler(t)
+			reads := 0
+			var cancelledAt time.Time
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && r.URL.Path == runnerGroupsPath+"/99" {
+					reads++
+				}
+				blocked := (stage == "proof" && reads == 1 && r.URL.Path == runnerGroupsPath+"/99") ||
+					(stage == "group" && reads == 2 && r.URL.Path == runnerGroupsPath+"/99") ||
+					(stage == "token" && r.URL.Path == "/installation/token")
+				if blocked {
+					cancelledAt = time.Now()
+					cancel()
+					select {
+					case <-r.Context().Done():
+						return
+					case <-time.After(8 * time.Second):
+					}
+				}
+				// Once proof is cancelled, block the later cleanup as well: it
+				// must share the first cancellation's budget, not start another.
+				if stage == "proof" && !cancelledAt.IsZero() && r.Method == http.MethodGet && reads == 2 && r.URL.Path == runnerGroupsPath+"/99" {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-time.After(8 * time.Second):
+					}
+				}
+				base(w, r)
+			}))
+			defer server.Close()
+			got := verifyRunnerGroupCapability(ctx, verificationOptions{githubURL: server.URL, client: server.Client(), now: time.Now}, "fixture-app-jwt", 42, "31415")
+			if cancelledAt.IsZero() {
+				t.Fatal("fixture did not reach its cancellation stage")
+			}
+			if elapsed := time.Since(cancelledAt); elapsed > 7*time.Second {
+				t.Fatalf("%s cleanup exceeded the aggregate cancellation budget: %v", stage, elapsed)
+			}
+			if got != failCleanup {
+				t.Fatalf("interrupted cleanup returned %s", got)
+			}
+		})
+	}
+}
+
 func TestRunnerGroupCapabilityRefusesBroadenedSelectedToken(t *testing.T) {
 	f := &groupFixture{groups: map[int64]map[string]any{}, mutate: func(path string, v map[string]any) {
 		if path == "/installation/repositories" {
