@@ -1,10 +1,23 @@
 # Organization Linux runners
 
-The ARC controller and organization Linux pool are prepared but inactive. Neither
-component is referenced by a deployment aggregate, and both HelmReleases are
-suspended. Merging their definitions registers no runner, reads no App credential
-and provisions no server. This is preparation for opt-in organization use (#4529),
-not runtime acceptance of #4462 or a resolution of KSail #7131.
+The organization Linux pool is prepared but inactive and remains outside the
+deployment aggregate and its HelmRelease is suspended. Production reconciles the
+scoped controller and the former analysis release in Flux inventory to preserve
+ownership of resources left by failed activation. The former release has explicit
+zero minimum and maximum runner bounds. Suspension stops Helm reconciliation,
+does not drain an installed scale set, and prevents a failed release from recovering
+its readiness status. Native Flux and Helm health checks stay enabled. The protected
+deploy proves complete, empty metadata lists for organization runner sets, releases,
+credential-sync resources, retained runner children, both runner namespaces' pods
+and labeled listeners in the controller namespace before publication and after
+reconciliation. The retained namespace may contain only the exact chart-declared
+AutoscalingRunnerSet; Helm keeps that declaration with both runner bounds at zero.
+After reconciliation the guard also proves the installed controller is fully
+rolled out and excludes that retained namespace. Native empty `items: null` is
+accepted only with a complete current-revision list; missing or paginated items
+cannot prove absence. It requests no App credentials, JIT configuration or full
+Pod responses. Registration, execution and cleanup still
+need the separate proofs below before KSail #7131 can close.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -37,6 +50,64 @@ and timestamps would fail on a group-writable Kubernetes volume.
 
 ## Activation gates
 
+Production prepares credential transport separately from runner activation.
+The dedicated native TLS listener is served by the already repaired highest
+Raft ordinal; the held partition is unchanged. Standby requests use OpenBao's
+authenticated cluster connection to reach the leader. The existing API listener,
+Raft storage, audit configuration and unseal hook remain in the base configuration.
+An additional listener file is appended through the pinned chart.
+
+The TLS-enabled server template declares the
+`platform.devantler.tech/arc-transport=tls` label. Both Cilium allow selectors
+require this label alongside the server's application and instance identities;
+the credential Service retains its exact ordinal selector. Cilium excludes
+Kubernetes-generated ordinal labels from security identities, so those labels
+cannot select a network-policy endpoint. The protected challenge binds the
+native CiliumEndpoint to the current Pod UID and checks that the transport label
+is retained before creating probes. Held server replicas without this label
+remain outside the TLS allow selectors.
+
+That ConfigMap contains only public settings and paths into a mounted Secret.
+Kubescape's generic credential-text rule matches the mandatory `tls_key_file`
+setting, so its disposition covers only the named ConfigMap and that control.
+Both platform variants enforce its exact public content through admission; source
+tests reject drift, and native scanner controls prove genuine credentials remain
+findings. The protected transport challenge verifies the installed policy and
+configuration, then proves server admission denies synthetic credentials without
+writing them to the cluster.
+
+The dedicated certificate authority is trusted only in the runner namespace.
+Its issuance policy denies use outside OpenBao. The credential store requires
+HTTPS and that authority, with hostname verification and no plaintext fallback.
+Authentication staging includes only the dedicated reader ServiceAccount and
+SecretStore; it does not synchronize an App key or install a runner pool.
+OpenBao's same-identity reload helper has no credential volume or API token.
+It signals the server after an unsealed health response so certificate renewal
+does not depend on replacing the held Raft replicas.
+
+The pinned-server regression exercises TLS, wrong-name and wrong-authority
+rejection, obsolete-protocol rejection and actual certificate reload against
+an empty synthetic local store. These checks are not production transport,
+stored-key identity, secret synchronization or same-node runner-isolation proof.
+Those observations remain mandatory before credential materialization and ARC
+activation. The production deployment must confirm the listener and dedicated
+store; the protected identity verifier then establishes the actual stored App.
+
+Dispatch `Verify ARC Credential Transport` from the current reviewed main commit
+before that identity verification. It uses the established protected production
+path and serializes with deployments. The challenge verifies the dedicated
+authority, hostname and actual initialized, unsealed canary, then places an
+unprivileged, token-free probe on each current OpenBao-canary and secret-controller
+node. Both legacy HTTP and native TLS connection attempts must time out and have
+a corresponding Hubble `DROPPED / POLICY_DENIED` flow for the exact Pod, addresses,
+node, port and attempt window. A certificate error, unreachable healthy control,
+observer loss or changed workload identity fails the proof. Server admission
+must reject privileged, host-volume, host-network, host-process and `NET_RAW`
+variants. Only the owned probe Pods are created; UID-preconditioned deletion and
+absence readback are mandatory. This workflow reads no App key and requests no
+reader token. Its counts-only result is transport evidence, not stored-key,
+runner-registration or managed-analysis evidence.
+
 Activation requires a separate reviewed change and all of these proofs:
 
 1. Reuse the production platform App used for GitHub sign-in, identified by
@@ -62,7 +133,9 @@ Activation requires a separate reviewed change and all of these proofs:
    verification outcome, never the key or tokens.
    Prove authenticated, encrypted credential transport and protection against
    observation by untrusted workloads, including workloads on the same node.
-   Do not activate the store until this transport boundary is verified.
+   Do not materialize the App key or activate runners until this transport
+   boundary is verified. Authentication-only staging must use the declared TLS
+   endpoint and its dedicated trust bundle.
    Reuse does not narrow the shared App's authority: the runner group controls
    job access, not what the App credential can do. Never mount the private key in
    a job runner.
@@ -124,8 +197,9 @@ Activation requires a separate reviewed change and all of these proofs:
    criteria do not route or onboard other repositories automatically.
 
 For staged validation, run `go test ./scripts/tests/arc-staging` and build both
-component directories directly with `kubectl kustomize`; normal local/prod trees
-must continue to contain no ARC resources. The unconditional CI guard runs on
+component directories directly with `kubectl kustomize`. Local trees exclude ARC;
+production retains the reconciled controller and drained protected legacy analysis resources
+without including the organization pool. The unconditional CI guard runs on
 pull requests and merge groups. A deliberate activation revises that guard in
 the same reviewed change, alongside its evidence; deleting the guard alone is
 not activation proof.
@@ -154,8 +228,10 @@ finish. It does not require retiring the shared platform App.
 
 ## Rollout and recovery
 
-After the gates above are approved, first reference and unsuspend the controller
-in the controller layer and verify it is healthy. That component creates both
+After the gates above are approved, verify the scoped controller is healthy and
+retire its `platform.devantler.tech/arc-recovery: drain-only` marker in the reviewed
+activation change. The recovery guard intentionally refuses a credentialed pool
+while that marker remains. That component creates both
 namespaces before the chart installs its namespace-scoped RBAC. The controller's
 network policy also covers the listener, which ARC creates in that namespace.
 Only then reference the pool in

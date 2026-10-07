@@ -12,6 +12,22 @@ fail() {
   exit 1
 }
 
+checked_postrenderer_changes() {
+  jq -en --slurpfile before "$1" --slurpfile after "$2" '
+    ($before | length) == 1 and ($after | length) == 1 and
+    $after[0].spec.replicas == 3 and
+    $after[0].spec.updateStrategy == {
+      type: "RollingUpdate", rollingUpdate: {partition: 2}
+    } and
+    $after[0].spec.template.spec.automountServiceAccountToken == false and
+    $before[0].spec.template.metadata.labels["platform.devantler.tech/arc-transport"] == null and
+    $after[0].spec.template.metadata.labels["platform.devantler.tech/arc-transport"] == "tls" and
+    ($before[0].spec | del(.updateStrategy, .template.spec.automountServiceAccountToken)) ==
+    ($after[0].spec | del(.updateStrategy, .template.spec.automountServiceAccountToken,
+                         .template.metadata.labels["platform.devantler.tech/arc-transport"]))
+  ' >/dev/null
+}
+
 resolve_replica_placeholder() {
   OPENBAO_REPLICA_PLACEHOLDER="\${openbao_replicas:=1}" OPENBAO_CANARY_REPLICAS="$2" yq -i '
     (.server.replicas | select(. == strenv(OPENBAO_REPLICA_PLACEHOLDER))) = env(OPENBAO_CANARY_REPLICAS) |
@@ -37,6 +53,33 @@ else
   actual_sha="$(shasum -a 256 "${archive}" | cut -d ' ' -f 1)"
 fi
 [[ "${actual_sha}" == "${expected_sha}" ]] || fail 'the pinned OpenBao chart checksum changed'
+
+# Exercise this exact server's listener parsing and SIGHUP reload behavior,
+# without starting Kubernetes, initializing a vault or accessing credentials.
+case "$(uname -s)/$(uname -m)" in
+  Linux/x86_64)
+    native_asset=openbao_2.6.3_linux_amd64.tar.gz
+    native_sha=c6463ddd4fdc4214b62a7ffdeaa0fc6df170f7e6b75c6dea2c5e525bdc932ed3
+    ;;
+  Darwin/arm64)
+    native_asset=openbao_2.6.3_darwin_arm64.tar.gz
+    native_sha=ed17491ebc6415d075b7b2b2c0ef6b5908b84b161b8e5a50c7da303cd8d15df4
+    ;;
+  *) fail 'the native TLS regression needs a reviewed server archive for this host' ;;
+esac
+curl --proto '=https' --proto-redir '=https' --location --tlsv1.2 --fail --silent --show-error --retry 2 --max-time 120 \
+  "https://github.com/openbao/openbao/releases/download/v2.6.3/${native_asset}" \
+  --output "${scratch}/native.tar.gz"
+if command -v sha256sum >/dev/null 2>&1; then
+  actual_native_sha="$(sha256sum "${scratch}/native.tar.gz" | cut -d ' ' -f 1)"
+else
+  actual_native_sha="$(shasum -a 256 "${scratch}/native.tar.gz" | cut -d ' ' -f 1)"
+fi
+[[ "${actual_native_sha}" == "${native_sha}" ]] || fail 'the pinned native OpenBao archive checksum changed'
+mkdir "${scratch}/native"
+tar -xzf "${scratch}/native.tar.gz" -C "${scratch}/native"
+OPENBAO_TLS_TEST_BINARY="${scratch}/native/bao" go test \
+  "${root_dir}/scripts/tests/openbao-transport-runtime" -count=1
 
 replicas="$(yq -er '.data.openbao_replicas' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")"
 readonly replicas
@@ -75,11 +118,51 @@ yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
   .image == "quay.io/openbao/openbao:2.6.3"' "${statefulset}" >/dev/null ||
   fail 'the canary must use the released standby OIDC repair'
 
-before="$(yq ea -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "openbao") |
-  .spec | del(.updateStrategy)' "${scratch}/rendered.yaml" | jq -cS .)"
-after="$(yq -o=json -I=0 '.spec | del(.updateStrategy)' "${statefulset}" | jq -cS .)"
-[[ "${before}" == "${after}" ]] ||
-  fail 'the canary post-renderer must not alter storage, probes, unseal, identity or placement'
+yq -e '.spec.template.spec.automountServiceAccountToken == false' "${statefulset}" >/dev/null ||
+  fail 'the certificate reload helper must not receive an injected API token'
+
+yq ea -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "openbao")' \
+  "${scratch}/rendered.yaml" >"${scratch}/before.json"
+yq -o=json -I=0 '.' "${statefulset}" >"${scratch}/after.json"
+checked_postrenderer_changes "${scratch}/before.json" "${scratch}/after.json" ||
+  fail 'the canary post-renderer must change only partition, token injection and the exact TLS identity label'
+
+# Exercise rejected mutations against the actual chart and Flux-rendered Pod.
+# Allowing one retained identity label must not permit other metadata or spec edits.
+for mutation in \
+  'del(.spec.template.metadata.labels["platform.devantler.tech/arc-transport"])' \
+  '.spec.template.metadata.labels["platform.devantler.tech/arc-transport"] = "other"' \
+  '.spec.template.metadata.labels["unreviewed-label"] = "extra"' \
+  '.spec.template.metadata.annotations["unreviewed-annotation"] = "extra"' \
+  '.spec.template.metadata.labels["app.kubernetes.io/name"] = "other"' \
+  '.spec.template.spec.serviceAccountName = "other"' \
+  '.spec.template.spec.automountServiceAccountToken = true' \
+  '.spec.updateStrategy.rollingUpdate.partition = 0' \
+  '.spec.updateStrategy.rollingUpdate.maxUnavailable = 1' \
+  '.spec.replicas = 1'; do
+  jq "$mutation" "${scratch}/after.json" >"${scratch}/mutated.json"
+  if checked_postrenderer_changes "${scratch}/before.json" "${scratch}/mutated.json"; then
+    fail 'the canary post-renderer accepted an unreviewed identity, metadata or Pod-spec mutation'
+  fi
+done
+
+# Validate the actual pinned chart and post-rendered security boundary. An
+# unsupported Helm value must not look like it removed the sidecar's token.
+yq -o=json "${statefulset}" | jq -e '.spec.template.spec.shareProcessNamespace == true and
+  ((.spec.template.spec.hostPID // false) == false) and
+  ((.spec.template.spec.hostNetwork // false) == false)' >/dev/null ||
+  fail 'native certificate reload must stay inside the trusted server Pod'
+yq -o=json "${statefulset}" | jq -e '.spec.template.spec.containers[] | select(.name == "arc-tls-reload") |
+  .image == "quay.io/openbao/openbao:2.6.3" and
+  ((.volumeMounts // []) | length == 0) and
+  .securityContext.runAsUser == 100 and
+  .securityContext.allowPrivilegeEscalation == false and
+  .securityContext.readOnlyRootFilesystem == true' >/dev/null ||
+  fail 'certificate reload must receive neither credential mounts nor additional privilege'
+yq -o=json "${statefulset}" | jq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
+  any(.volumeMounts[]; .name == "kube-api-access" and
+    .mountPath == "/var/run/secrets/kubernetes.io/serviceaccount" and .readOnly == true)' >/dev/null ||
+  fail 'the native server must retain its own explicit Kubernetes API identity'
 
 # Local/default installations keep the chart's deliberate OnDelete behavior.
 yq '.spec.values' "${root_dir}/k8s/bases/infrastructure/controllers/openbao/helm-release.yaml" >"${scratch}/base-values.yaml"

@@ -11,13 +11,13 @@ kind: ClusterPolicy
 metadata:
   name: remove-existing-longhorn-registrar-prestop
   annotations:
-    platform.devantler.tech/longhorn-chart-version: "1.12.1"
+    platform.devantler.tech/longhorn-chart-version: "1.13.0"
     policies.kyverno.io/title: Remove Existing Broken Longhorn Registrar Pre-stop Hook
     policies.kyverno.io/category: Storage, Reliability
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: DaemonSet
     policies.kyverno.io/description: >-
-      Retrofits the existing Longhorn 1.12.1 CSI DaemonSet by removing only
+      Retrofits the existing Longhorn 1.13.0 CSI DaemonSet by removing only
       the impossible shell pre-stop hook from its distroless registrar.
 spec:
   failurePolicy: Ignore

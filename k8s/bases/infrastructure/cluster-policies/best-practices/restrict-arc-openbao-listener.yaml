@@ -1,0 +1,46 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-arc-openbao-listener
+  annotations:
+    policies.kyverno.io/title: Keep the ARC OpenBao Listener Configuration Public
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+spec:
+  background: true
+  rules:
+    - name: public-listener-settings-only
+      match:
+        any:
+          - resources:
+              kinds:
+                - ConfigMap
+              names:
+                - arc-openbao-listener
+      validate:
+        failureAction: Enforce
+        message: This listener ConfigMap may contain only audited public settings and Secret-mounted file paths.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.object.metadata.namespace || '' }}"
+                operator: NotEquals
+                value: openbao
+              - key: "{{ length(keys(request.object.data || `{}`)) }}"
+                operator: NotEquals
+                value: 1
+              - key: "{{ length(keys(request.object.binaryData || `{}`)) }}"
+                operator: NotEquals
+                value: 0
+              - key: >-
+                  {{ request.object.data."listener.hcl" || '' }}
+                operator: NotEquals
+                value: |
+                  listener "tcp" {
+                    address = "0.0.0.0:8204"
+                    cluster_address = "127.0.0.1:8205"
+                    tls_cert_file = "/openbao/arc-tls/tls.crt"
+                    tls_key_file = "/openbao/arc-tls/tls.key"
+                    tls_min_version = "tls12"
+                    tls_disable_client_certs = true
+                  }

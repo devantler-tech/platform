@@ -209,6 +209,12 @@ runs:
         shellcheck scripts/tests/test-pvc-prune-safety.sh
         bash scripts/tests/test-pvc-prune-safety.sh
 
+    - name: 🛑 Verify ARC drain recovery has no active pool
+      # Read complete metadata lists before the mutable artifact can move.
+      # No App key, JIT configuration or full Pod response is requested.
+      shell: bash
+      run: go run ./scripts/guard-arc-recovery before-publish
+
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
       # The widened device component deliberately uses OnDelete so the Cilium
@@ -338,6 +344,10 @@ runs:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
+    - name: 🛑 Verify ARC stayed inactive across recovery
+      shell: bash
+      run: go run ./scripts/guard-arc-recovery after-reconcile
+
     - name: Verify dedicated Wedding backup credential and active archive
       id: verify_wedding_backup_staging
       shell: bash
@@ -458,6 +468,22 @@ runs:
         steps.wait_prod_api_stability.outcome == 'success'
       shell: bash
       run: ./scripts/verify-talos-schematic-readback.sh
+
+    - name: 🧾 Read back the kubelet settings on every node
+      # A green machine-config sync does not prove that every running kubelet
+      # took the declared settings: two autoscaler nodes ran without the disk
+      # eviction thresholds for weeks after the fix deployed, and nothing
+      # reported it (#3137). Observe-only for now: the comparison has not yet
+      # been read against production, so a finding is a warning on a green
+      # deploy. Drop KUBELET_READBACK_ENFORCE once one deploy has logged a
+      # clean PASS (tracked on #3137). The check only reads Kubernetes.
+      if: >-
+        steps.cluster_update.outcome == 'success' &&
+        steps.wait_prod_api_stability.outcome == 'success'
+      shell: bash
+      env:
+        KUBELET_READBACK_ENFORCE: "false"
+      run: ./scripts/verify-kubelet-config-readback.sh
 
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the

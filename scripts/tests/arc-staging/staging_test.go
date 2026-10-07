@@ -48,14 +48,14 @@ func equal(t *testing.T, value, want any) {
 	}
 }
 
-func TestStagedReleasesAreSuspendedAndPinned(t *testing.T) {
+func TestRecoveryControllerReconcilesWhileOrganizationPoolStaysSuspended(t *testing.T) {
 	for _, component := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller",
 		"k8s/bases/infrastructure/actions-runners",
 	} {
 		t.Run(filepath.Base(component), func(t *testing.T) {
 			release := readYAML(t, component+"/helm-release.yaml")
-			equal(t, field(t, release, "spec", "suspend"), true)
+			equal(t, field(t, release, "spec", "suspend"), filepath.Base(component) == "actions-runners")
 			equal(t, field(t, release, "spec", "chartRef", "kind"), "OCIRepository")
 			source := readYAML(t, component+"/oci-repository.yaml")
 			equal(t, field(t, source, "spec", "ref", "tag"), "0.15.0")
@@ -192,7 +192,7 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	component := "k8s/bases/infrastructure/actions-runners/"
 	secret := readYAML(t, component+"external-secret.yaml")
 	equal(t, field(t, secret, "spec", "secretStoreRef", "kind"), "SecretStore")
-	store := readYAML(t, component+"secret-store.yaml")
+	store := readYAML(t, component+"credentials/secret-store.yaml")
 	equal(t, field(t, store, "metadata", "name"), field(t, secret, "spec", "secretStoreRef", "name"))
 	equal(t, field(t, store, "metadata", "namespace"), "arc-runners")
 	vault := field(t, store, "spec", "provider", "vault")
@@ -201,11 +201,11 @@ func TestAppLookupHasDedicatedReadOnlyAuthentication(t *testing.T) {
 	identity := field(t, vault, "auth", "kubernetes")
 	equal(t, field(t, identity, "mountPath"), "kubernetes")
 	role := field(t, identity, "role").(string)
-	account := readYAML(t, component+"service-account.yaml")
+	account := readYAML(t, component+"credentials/service-account.yaml")
 	equal(t, field(t, account, "metadata", "name"), field(t, identity, "serviceAccountRef", "name"))
 	equal(t, field(t, account, "metadata", "namespace"), "arc-runners")
 	equal(t, field(t, account, "automountServiceAccountToken"), false)
-	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
+	resources := field(t, readYAML(t, component+"credentials/kustomization.yaml"), "resources").([]any)
 	for _, needed := range []string{"secret-store.yaml", "service-account.yaml"} {
 		found := false
 		for _, resource := range resources {
@@ -319,6 +319,10 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 }
 
 func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
+	const retainedControllerAggregate = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
+	const retainedControllerReference = "../../../../bases/infrastructure/controllers/actions-runner-controller/"
+	controllerFound := false
+	credentialStageFound := false
 	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -339,6 +343,19 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		}
 		for _, reference := range append(document.Resources, document.Components...) {
 			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "actions-runners") {
+				relative, err := filepath.Rel(repoRoot, path)
+				if err != nil {
+					return err
+				}
+				if relative == retainedControllerAggregate && reference == retainedControllerReference && !controllerFound {
+					controllerFound = true
+					continue
+				}
+				if relative == "k8s/providers/hetzner/infrastructure/arc-credential-transport/kustomization.yaml" &&
+					reference == "../../../../bases/infrastructure/actions-runners/credentials/" && !credentialStageFound {
+					credentialStageFound = true
+					continue
+				}
 				t.Errorf("%s activates ARC through %q", path, reference)
 			}
 		}
@@ -346,6 +363,54 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !controllerFound {
+		t.Fatal("production must retain the scoped controller in its inventory")
+	}
+	if !credentialStageFound {
+		t.Fatal("production must stage only the dedicated credential authentication resources")
+	}
+}
+
+func TestRetainedAnalysisResourcesCannotActivateOrLosePruneProtection(t *testing.T) {
+	const component = "k8s/providers/hetzner/infrastructure/retained-ksail-analysis/"
+	namespace := readYAML(t, component+"namespace.yaml")
+	equal(t, field(t, namespace, "metadata", "name"), "arc-ksail-analysis")
+	equal(t, field(t, namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+	release := readYAML(t, component+"helm-release.yaml")
+	equal(t, field(t, release, "metadata", "name"), "ksail-analysis-runners")
+	equal(t, field(t, release, "metadata", "namespace"), "arc-ksail-analysis")
+	equal(t, field(t, release, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune"), "disabled")
+	equal(t, field(t, release, "spec", "suspend"), false)
+	equal(t, field(t, release, "spec", "values", "minRunners"), 0)
+	equal(t, field(t, release, "spec", "values", "maxRunners"), 0)
+	controller := readYAML(t, "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml")
+	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-runners")
+	equal(t, field(t, controller, "metadata", "annotations", "platform.devantler.tech/arc-recovery"), "drain-only")
+}
+
+func TestRecoveryMetadataProofSurroundsPublicationAndReconciliation(t *testing.T) {
+	action := readYAML(t, ".github/actions/deploy-prod/action.yml")
+	before, publish, reconcile, after := -1, -1, -1, -1
+	for index, step := range field(t, action, "runs", "steps").([]any) {
+		value := step.(map[string]any)
+		if value["uses"] == "./.github/actions/deploy-prod/publish-platform-manifests" {
+			publish = index
+		}
+		if value["run"] == "./scripts/reconcile-flux-workloads.sh" {
+			reconcile = index
+		}
+		for stage, target := range map[string]*int{"before-publish": &before, "after-reconcile": &after} {
+			if value["run"] == "go run ./scripts/guard-arc-recovery "+stage {
+				if _, conditional := value["if"]; conditional {
+					t.Fatal("recovery proof must not be skipped")
+				}
+				*target = index
+			}
+		}
+	}
+	if before < 0 || before >= publish || after <= reconcile {
+		t.Fatal("recovery metadata proof must run before publication and after reconciliation")
 	}
 }
 
