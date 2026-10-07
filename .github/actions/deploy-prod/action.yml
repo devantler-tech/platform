@@ -66,7 +66,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.197.0"
+        KSAIL_VERSION: "7.197.3"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -473,16 +473,14 @@ runs:
       # A green machine-config sync does not prove that every running kubelet
       # took the declared settings: two autoscaler nodes ran without the disk
       # eviction thresholds for weeks after the fix deployed, and nothing
-      # reported it (#3137). Observe-only for now: the comparison has not yet
-      # been read against production, so a finding is a warning on a green
-      # deploy. Drop KUBELET_READBACK_ENFORCE once one deploy has logged a
-      # clean PASS (tracked on #3137). The check only reads Kubernetes.
+      # reported it (#3137). A finding fails the deploy: the comparison passed on
+      # every production deploy for a day before it was made blocking. The
+      # steps after it that reassert credentials run on a failure too. The
+      # check only reads Kubernetes.
       if: >-
         steps.cluster_update.outcome == 'success' &&
         steps.wait_prod_api_stability.outcome == 'success'
       shell: bash
-      env:
-        KUBELET_READBACK_ENFORCE: "false"
       run: ./scripts/verify-kubelet-config-readback.sh
 
     - name: 📣 Report suppressed machine-config sync

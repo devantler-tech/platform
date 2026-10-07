@@ -27,6 +27,14 @@ publication and contract probing remain disabled. The trial
 has no database or persistent data volume. New capabilities and releases go through
 reviewed GitOps changes before activation.
 
+An independent contract-probe Deployment is prepared with zero replicas and
+literal observation disabled. Its token-free service account, exact-host HTTPS
+and DNS policy, and controller GET permission on just the Harbour and probe
+Deployments are installed without changing the sample's readiness. The deployment
+receipt requires this dormant state and rejects broader grants, target changes,
+or unexpected activation. See the [readiness decision](adr/data-product-readiness-observation.md)
+for the activation boundary.
+
 Flux owns the release, API definition, product registration, workloads, and routes.
 Helm installs the DataProduct API before registering the sample, so a clean rebuild
 does not depend on a pre-existing CRD. The chart's broad network policies and direct

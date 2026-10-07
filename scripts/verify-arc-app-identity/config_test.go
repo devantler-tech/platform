@@ -129,7 +129,7 @@ func TestPreflightRejectsPlaintextWithoutExecutionOrCredentials(t *testing.T) {
 	mutateFixture(t, root, storePath, "https://", "http://")
 	var output bytes.Buffer
 	called := false
-	code := run([]string{"--preflight"}, root, &output, func(configuration) outcome { called = true; return pass })
+	code := run([]string{"--preflight"}, root, &output, runtimeModes{identity: func(configuration) outcome { called = true; return pass }})
 	if code == 0 || output.String() != "ARC_APP_IDENTITY=HOLD_TRANSPORT\n" || called {
 		t.Fatalf("current plaintext source must stop before runtime: exit=%d, outcome=%q, called=%v", code, output.String(), called)
 	}
@@ -158,7 +158,7 @@ func TestCLIEmitsOnlyOutcomesAndRequiresProtectedInvocation(t *testing.T) {
 			}
 			var output bytes.Buffer
 			called := false
-			code := run(tc.args, root, &output, func(configuration) outcome { called = true; return tc.result })
+			code := run(tc.args, root, &output, runtimeModes{identity: func(configuration) outcome { called = true; return tc.result }})
 			if output.String() != tc.want {
 				t.Fatalf("unexpected output %q", output.String())
 			}
