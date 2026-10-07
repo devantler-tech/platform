@@ -65,7 +65,7 @@ ns=''
 if [[ "$1" == -n ]]; then ns=$2; shift 2; fi
 args="$*"
 case "$args" in
-  'port-forward '*) printf 'Forwarding from 127.0.0.1:38204 -> 8204\n'; exec sleep 300 ;;
+  'port-forward '*) printf '%s\n' "$$" >"$state/port-forward-pid"; printf 'Forwarding from 127.0.0.1:38204 -> 8204\n'; exec sleep 300 ;;
   'get externalsecrets '*) printf '{"items":[]}' ;;
   'get helmreleases '*) printf '{"items":[]}' ;;
   'get secretstore '*) jq -n '{spec:{provider:{vault:{server:"https://openbao-arc.openbao.svc.cluster.local:8204",caProvider:{type:"ConfigMap",name:"arc-openbao-ca",key:"ca.crt"},path:"secret",version:"v2",auth:{kubernetes:{mountPath:"kubernetes",role:"arc-secret-reader",serviceAccountRef:{name:"arc-secret-reader"}}}}}}}' ;;
@@ -169,6 +169,16 @@ run_case() {
     PROOF_CASE=$name bash "$script" --same-node >"$scratch/output" 2>"$scratch/error" || result=$?
   fi
   [[ "$result" == "$expected" ]] || { printf 'FAIL %s: exit %s expected %s\n' "$name" "$result" "$expected"; cat "$scratch/error"; exit 1; }
+  if [[ -f "$scratch/state/port-forward-pid" ]]; then
+    local forward_pid
+    forward_pid=$(cat "$scratch/state/port-forward-pid")
+    if kill -0 "$forward_pid" 2>/dev/null; then
+      # This PID belongs to this fixture, so clean up even when the subject leaks it.
+      kill "$forward_pid" 2>/dev/null || true
+      printf 'FAIL %s: port-forward remained alive after verifier cleanup\n' "$name"
+      exit 1
+    fi
+  fi
   if [[ "$name" == listener_read_failure ]]; then
     grep -Fxq 'ARC transport: FAIL at inactive-credential-boundary' "$scratch/error" || { printf 'FAIL missing failure stage\n'; exit 1; }
     ! grep -Fq private-error-sentinel "$scratch/error" || { printf 'FAIL private diagnostic leaked\n'; exit 1; }
@@ -186,6 +196,7 @@ run_case source_explicit_false 0
 run_case source_explicit_drift 1
 run_case listener_read_failure 17
 run_case tls_error 60
+[[ -f "$scratch/state/port-forward-pid" ]] || { printf 'FAIL TLS case did not exercise port forwarding\n'; exit 1; }
 grep -Fxq 'ARC transport: FAIL at healthy-tls-health' "$scratch/error" || {
   printf 'FAIL TLS health failure did not identify its phase\n'; exit 1;
 }
@@ -194,6 +205,7 @@ if grep -Fq private-error-sentinel "$scratch/error"; then
 fi
 grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
 run_case http_health_error 43
+[[ -f "$scratch/state/port-forward-pid" ]] || { printf 'FAIL HTTP case did not exercise port forwarding\n'; exit 1; }
 grep -Fxq 'ARC transport: FAIL at healthy-http-health' "$scratch/error" || {
   printf 'FAIL HTTP health failure did not identify its phase\n'; exit 1;
 }
