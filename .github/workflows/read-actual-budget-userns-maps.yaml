@@ -29,7 +29,8 @@ name: Read Actual Budget User Namespace Maps
 #
 # PUBLIC LOG. The script prints container names, map names, range sizes and outcomes only: never
 # the ids a container maps to on the node, never the pod name, and never kubectl's own error
-# text. Both endpoint-helper streams are discarded; failure uses a fixed message.
+# text. The endpoint helper's stdout is discarded. Its stderr is kept: it carries the command
+# that masks the address, and on failure the helper's own diagnostics, which name no address.
 
 on:
   workflow_dispatch:

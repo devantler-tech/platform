@@ -421,14 +421,15 @@ endpoint_run="$(yq -r '.jobs[].steps[] | select(.run // "" | contains("scripts/u
 [[ -n "${endpoint_run}" ]] || wf_fail 'endpoint selection must have an executable step'
 endpoint_case() {
   local expected="$1" description="$2" actual output
-  if output="$(cd "${endpoint_work}" && ENDPOINT_RC="${expected}" bash -c "${endpoint_run}" 2>&1)"; then
+  if output="$(cd "${endpoint_work}" && ENDPOINT_RC="${expected}" bash -c "${endpoint_run}" 2>"${endpoint_work}/stderr")"; then
     actual=0
   else
     actual="$?"
   fi
   [[ "${actual}" -eq "${expected}" ]] || wf_fail "${description}: exit status"
-  [[ "${output}" == '::add-mask::SYNTHETIC-MASKED-VALUE.invalid' ]] ||
-    wf_fail "${description}: the step must pass on the mask command and nothing from stdout"
+  [[ -z "${output}" ]] || wf_fail "${description}: the step must print nothing on stdout"
+  [[ "$(cat "${endpoint_work}/stderr")" == '::add-mask::SYNTHETIC-MASKED-VALUE.invalid' ]] ||
+    wf_fail "${description}: the step must pass the mask command on, on stderr, unchanged"
   case_done "${description}"
 }
 endpoint_case 0 'endpoint helper success discards stdout and passes the mask command on'
