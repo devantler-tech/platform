@@ -15,8 +15,10 @@ AutoscalingRunnerSet; Helm keeps that declaration with both runner bounds at zer
 After reconciliation the guard also proves the installed controller is fully
 rolled out and excludes that retained namespace. Native empty `items: null` is
 accepted only with a complete current-revision list; missing or paginated items
-cannot prove absence. It requests no App credentials, JIT configuration or full
-Pod responses. Registration, execution and cleanup still
+cannot prove absence. Protected recovery first retires an installed organization
+pool through the owned transaction below; the complete absence guard still runs
+before publication and after reconciliation. Neither path requests App values,
+JIT configuration or full runner Pod responses. Registration, execution and cleanup still
 need the separate proofs below before KSail #7131 can close.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
@@ -227,6 +229,35 @@ verifying the readback, removing its group access and letting its current job
 finish. It does not require retiring the shared platform App.
 
 ## Rollout and recovery
+
+The protected deployment and merge-group heal run `retire-arc-pool.sh` when the
+reviewed controller declaration carries `arc-recovery: drain-only`. An empty
+installation keeps the existing absence-only path. A partial installation is
+fenced by a compare-and-swap journal on the retained `arc-runners` Namespace.
+The admission policy reads that Namespace directly and fails closed on lookup
+errors. It prevents release, scale-set and credential-sync recreation; existing
+runner jobs may finish while the release reconciles explicit zero bounds.
+
+The transaction retains the ExternalSecret and its owned credential until Helm
+and ARC finish uninstalling the pool. It requires the current zero listener
+process, processed runner-set revision and natural runner/node absence. Before
+uninstall it records every current controller Pod UID, restarts only the scoped
+ARC controller, and proves the old processes are gone and the replacement belongs
+to its unchanged Deployment. It never force-removes finalizers or deletes runner
+jobs or nodes. Finalization fences also reject late listener and Secret creation
+from reconciliations that read a parent before it was removed.
+
+The journal binds the native workflow run, attempt, producer revision and object
+UIDs. Recovery by another attempt requires the previous exact attempt to be
+terminal through GitHub's API; a failed read cannot authorize takeover. Every
+phase rechecks its required evidence, and interruptions retain the journal and
+credentials still needed for finalization. After publication, all three root and
+infrastructure layers must handle a fresh request, report their current generation
+Ready and apply and attempt the exact signed published digest. Fresh complete
+absence receipts then advance the journal to `restored`. Its closed fence remains
+in place so stale writers cannot reopen the pool. Reopening requires a separate
+reviewed transaction that first establishes an actual zero-runner baseline;
+clearing the journal by hand is not an activation procedure.
 
 After the gates above are approved, verify the scoped controller is healthy and
 retire its `platform.devantler.tech/arc-recovery: drain-only` marker in the reviewed

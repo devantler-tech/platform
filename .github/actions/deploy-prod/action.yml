@@ -213,7 +213,11 @@ runs:
       # Read complete metadata lists before the mutable artifact can move.
       # No App key, JIT configuration or full Pod response is requested.
       shell: bash
-      run: go run ./scripts/guard-arc-recovery before-publish
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        bash scripts/retire-arc-pool.sh before-publish
+        go run ./scripts/guard-arc-recovery before-publish
 
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
@@ -346,7 +350,12 @@ runs:
 
     - name: 🛑 Verify ARC stayed inactive across recovery
       shell: bash
-      run: go run ./scripts/guard-arc-recovery after-reconcile
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: |
+        bash scripts/retire-arc-pool.sh after-reconcile
+        go run ./scripts/guard-arc-recovery after-reconcile
 
     - name: Verify dedicated Wedding backup credential and active archive
       id: verify_wedding_backup_staging

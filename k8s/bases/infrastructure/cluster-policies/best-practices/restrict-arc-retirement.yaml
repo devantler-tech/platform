@@ -1,0 +1,265 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-arc-retirement
+  annotations:
+    policies.kyverno.io/title: Preserve the Owned ARC Retirement Fence
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: fence-pool-retirement
+      match:
+        any:
+          - resources:
+              kinds: [helm.toolkit.fluxcd.io/v2/HelmRelease]
+              names: [platform-runners]
+              namespaces: [arc-runners]
+              operations: [CREATE, UPDATE]
+      context:
+        # A fresh direct lookup also fences SSA CREATE after the old object is
+        # gone. No default masks lookup errors; key presence, even malformed or
+        # empty content, remains a fence after protected recovery completes.
+        - name: retirementPresent
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+      preconditions:
+        all:
+          - key: "{{ retirementPresent }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating this release or reopening runner admission.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: Equals
+                value: CREATE
+              - key: >-
+                  {{ request.object.spec.suspend == `true` || (request.object.spec.values.minRunners == `0` && request.object.spec.values.maxRunners == `0`) }}
+                operator: NotEquals
+                value: true
+    # Helm reconciliation can outlive its leader epoch. Fence the admission
+    # object itself as well as the release so an older chart apply cannot
+    # recreate it after uninstall or undo the explicit zero bounds.
+    - name: fence-scale-set-retirement
+      match:
+        any:
+          - resources:
+              kinds: [actions.github.com/v1alpha1/AutoscalingRunnerSet]
+              names: [platform-linux]
+              namespaces: [arc-runners]
+              operations: [CREATE, UPDATE]
+      context:
+        - name: retirementPresent
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+      preconditions:
+        all:
+          - key: "{{ retirementPresent }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating this scale set or reopening its admission.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: Equals
+                value: CREATE
+              - key: >-
+                  {{ request.object.spec.minRunners == `0` && request.object.spec.maxRunners == `0` }}
+                operator: NotEquals
+                value: true
+    - name: fence-listener-retirement
+      match:
+        any:
+          - resources:
+              kinds: [actions.github.com/v1alpha1/AutoscalingListener]
+              namespaces: [arc-systems]
+              operations: [CREATE, UPDATE]
+      context:
+        - name: retirementPresent
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+        - name: retirementPhase
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown'
+      preconditions:
+        all:
+          - key: "{{ retirementPresent }}"
+            operator: Equals
+            value: true
+          - key: "{{ request.object.spec.autoscalingRunnerSetNamespace || '' }}"
+            operator: Equals
+            value: arc-runners
+          - key: "{{ request.object.spec.autoscalingRunnerSetName || '' }}"
+            operator: Equals
+            value: platform-linux
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement permits only a zero-capacity listener or unchanged deletion cleanup.
+        deny:
+          conditions:
+            any:
+              # Listener bounds are nonpointer ints with omitempty in ARC0.15.
+              # Finalizer-only updates on an already deleting old listener must
+              # remain possible; its spec cannot change through that exception.
+              - key: >-
+                  {{ ((request.object.spec.minRunners || `0`) == `0` && (request.object.spec.maxRunners || `0`) == `0`) || (request.operation == 'UPDATE' && request.object.metadata.deletionTimestamp != `null` && request.oldObject.metadata.deletionTimestamp != `null` && request.object.spec == request.oldObject.spec) }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ request.operation == 'CREATE' && contains(['uninstalled', 'credential-removing', 'absent', 'restored'], retirementPhase) }}
+                operator: Equals
+                value: true
+    - name: fence-retired-listener-pod
+      match:
+        any:
+          - resources:
+              kinds: [v1/Pod]
+              namespaces: [arc-systems]
+              operations: [CREATE]
+              selector:
+                matchLabels:
+                  actions.github.com/scale-set-name: platform-linux
+                  actions.github.com/scale-set-namespace: arc-runners
+                  app.kubernetes.io/component: runner-scale-set-listener
+      context:
+        - name: retirementPhase
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating this finalized listener process.
+        deny:
+          conditions:
+            all:
+              - key: "{{ retirementPhase }}"
+                operator: NotIn
+                value: [unfenced, fenced, drained, quiescing, quiesced, uninstalling]
+    - name: fence-credential-recreation
+      match:
+        any:
+          - resources:
+              kinds: [external-secrets.io/v1/ExternalSecret]
+              names: [arc-github-app]
+              namespaces: [arc-runners]
+              operations: [CREATE, UPDATE]
+      context:
+        - name: retirementPresent
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement')
+      preconditions:
+        all:
+          - key: "{{ retirementPresent }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating or rewriting its credential-sync object.
+        deny:
+          conditions:
+            any:
+              - key: "{{ request.operation }}"
+                operator: Equals
+                value: CREATE
+              - key: "{{ request.object.spec == request.oldObject.spec }}"
+                operator: NotEquals
+                value: true
+    # An ESO reconcile may have read the old parent before deletion. Close the
+    # exact Secret CREATE path only after ARC children have finalized, when its
+    # credential is no longer needed. Malformed journal lookup fails closed.
+    - name: fence-retired-secret
+      match:
+        any:
+          - resources:
+              kinds: [v1/Secret]
+              names: [arc-github-app]
+              namespaces: [arc-runners]
+              operations: [CREATE]
+      context:
+        - name: retirementPhase
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating its finalized credential.
+        deny:
+          conditions:
+            all:
+              - key: "{{ retirementPhase }}"
+                operator: NotIn
+                value: [unfenced, fenced, drained, quiescing, quiesced, uninstalling, uninstalled]
+    - name: preserve-retirement-journal
+      match:
+        any:
+          - resources:
+              kinds: [v1/Namespace]
+              names: [arc-runners]
+              operations: [UPDATE]
+      preconditions:
+        all:
+          - key: >-
+              {{ contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') || contains(keys(request.object.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') }}
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: Only protected administrator recovery may replace or clear the ARC retirement journal.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ contains(request.userInfo.groups || `[]`, 'system:masters') }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ contains(keys(request.object.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') == contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (request.object.metadata.annotations."platform.devantler.tech/arc-retirement" || '') == (request.oldObject.metadata.annotations."platform.devantler.tech/arc-retirement" || '') }}
+                operator: NotEquals
+                value: true
+    - name: preserve-retiring-namespace
+      match:
+        any:
+          - resources:
+              kinds: [v1/Namespace]
+              names: [arc-runners]
+              operations: [DELETE]
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: The owned ARC retirement journal must survive namespace deletion.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') }}
+                operator: Equals
+                value: true
