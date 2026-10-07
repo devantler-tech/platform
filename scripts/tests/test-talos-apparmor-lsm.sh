@@ -10,7 +10,8 @@ expected_talos_version='v1.13.10'
 expected_modules='apparmor,bpf,integrity,landlock,loadpin,lockdown,safesetid,selinux,yama'
 
 if ! grep -Fq "'scripts/tests/test-talos-apparmor-lsm.sh'" "$ci_workflow" ||
-  ! grep -Fq 'bash scripts/tests/test-talos-apparmor-lsm.sh' "$ci_workflow"; then
+  ! grep -Fq "'scripts/tests/test-talos-apparmor-lsm-regressions.sh'" "$ci_workflow" ||
+  ! grep -Fq 'bash scripts/tests/test-talos-apparmor-lsm-regressions.sh' "$ci_workflow"; then
   printf 'CI must detect and execute the Talos AppArmor LSM contract\n' >&2
   exit 1
 fi
@@ -22,6 +23,7 @@ actual_talos_version=$(yq eval '.spec.cluster.talos.version' "$cluster_config")
   exit 1
 }
 
+# Validate one parsed argument source without changing its security-module inventory.
 check_args() {
   local file=$1 expression=$2 args modules
   args=$(yq eval -o=json "$expression" "$file")
