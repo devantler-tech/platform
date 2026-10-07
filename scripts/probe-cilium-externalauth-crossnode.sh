@@ -25,6 +25,13 @@
 # reports nothing rather than a wrong verdict. The ExternalAuth requests alternate with the control
 # requests over the same Service from the same pod.
 #
+# NEITHER CLIENT RUNS ON A NODE HOSTING THE CONTROL BACKEND. That attribution holds only when the
+# Envoy reaches whoami on ANOTHER node: the first production run pinned the cross-node client to the
+# node whoami itself runs on, and none of its 40 control answers carried that node's ingress IP
+# while the other client's all did, so the run could only read INCONCLUSIVE. A node hosting a whoami
+# endpoint is therefore never chosen for either client, and whoami's placement is fingerprinted
+# before and after the run like the oauth2-proxy endpoints.
+#
 # WHY A FAILURE IS ATTRIBUTABLE. Requests stay inside the cluster, over plain HTTP on the gateway's
 # `http` listener, to hostnames under `externalauth-probe.invalid`. Nothing in the path is
 # Cloudflare, public DNS or TLS, and external-dns publishes nothing outside the zone. Each client
@@ -81,6 +88,7 @@ set -euo pipefail
 readonly probe_namespace='whoami'
 readonly oauth2_namespace='oauth2-proxy'
 readonly oauth2_service='oauth2-proxy'
+readonly backend_service='whoami'
 readonly probe_label='platform.devantler.tech/externalauth-probe'
 readonly control_host='control.externalauth-probe.invalid'
 readonly authz_host='authz.externalauth-probe.invalid'
@@ -212,11 +220,12 @@ is_k8s_name() {
   [[ "$1" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]
 }
 
-# Placement from the Service's EndpointSlices: every endpoint must be ready, not terminating, and
-# carry a node and a target UID. Emits "FP <fingerprint>" then one "NODE <name>" per endpoint.
+# Placement from a Service's EndpointSlices ($1 namespace, $2 Service): every endpoint must be
+# ready, not terminating, and carry a node and a target UID. Emits "FP <fingerprint>" then one
+# "NODE <name>" per endpoint.
 read_endpoints() {
   local json
-  json="$(kc -n "${oauth2_namespace}" get endpointslices -l "kubernetes.io/service-name=${oauth2_service}" -o json)" || return 1
+  json="$(kc -n "$1" get endpointslices -l "kubernetes.io/service-name=$2" -o json)" || return 1
   jq -r '
     [.items[]?.endpoints[]? | {
         ready: (.conditions.ready == true),
@@ -295,13 +304,21 @@ read_ingress_ips() {
 # ---------------------------------------------------------------------------
 # 1. Topology before: settled oauth2-proxy endpoints, and the nodes a probe pod may run on.
 # ---------------------------------------------------------------------------
-endpoint_lines="$(read_endpoints)" || inconclusive 'could not read the oauth2-proxy endpoints'
+endpoint_lines="$(read_endpoints "${oauth2_namespace}" "${oauth2_service}")" || inconclusive 'could not read the oauth2-proxy endpoints'
 case "${endpoint_lines}" in
   'ERR none') inconclusive 'the oauth2-proxy Service has no endpoints' ;;
   'ERR unsettled') inconclusive 'an oauth2-proxy endpoint is not settled (rollout in flight)' ;;
 esac
 endpoint_fp_before="$(sed -n 's/^FP //p' <<<"${endpoint_lines}")"
 endpoint_nodes="$(sed -n 's/^NODE //p' <<<"${endpoint_lines}" | sort -u)"
+
+backend_lines="$(read_endpoints "${probe_namespace}" "${backend_service}")" || inconclusive 'could not read the control backend endpoints'
+case "${backend_lines}" in
+  'ERR none') inconclusive 'the control backend Service has no endpoints' ;;
+  'ERR unsettled') inconclusive 'a control backend endpoint is not settled (rollout in flight)' ;;
+esac
+backend_fp_before="$(sed -n 's/^FP //p' <<<"${backend_lines}")"
+backend_nodes="$(sed -n 's/^NODE //p' <<<"${backend_lines}" | sort -u)"
 
 node_lines="$(read_nodes)" || inconclusive 'could not read the nodes'
 case "${node_lines}" in
@@ -315,7 +332,7 @@ case "${datapath_lines}" in
   'ERR rolling') inconclusive 'a Cilium or cilium-envoy rollout is incomplete, so nodes may run different datapath revisions' ;;
 esac
 datapath_fp_before="$(sed -n 's/^FP //p' <<<"${datapath_lines}")"
-if [[ -z "${endpoint_fp_before}" || -z "${node_fp_before}" || -z "${datapath_fp_before}" ]]; then
+if [[ -z "${endpoint_fp_before}" || -z "${backend_fp_before}" || -z "${backend_nodes}" || -z "${node_fp_before}" || -z "${datapath_fp_before}" ]]; then
   inconclusive 'the topology reads did not parse'
 fi
 
@@ -331,6 +348,11 @@ while read -r node host; do
   if [[ -z "${host:-}" ]] || ! is_k8s_name "${host}"; then
     continue
   fi
+  # A client beside the control backend cannot be attributed to its own node's Envoy (see the
+  # header), so such a node hosts neither client.
+  if grep -Fxq -- "${node}" <<<"${backend_nodes}"; then
+    continue
+  fi
   if grep -Fxq -- "${node}" <<<"${endpoint_nodes}"; then
     if [[ -z "${same_node}" ]]; then
       same_node="${node}"
@@ -342,8 +364,8 @@ while read -r node host; do
   fi
 done < <(sed -n 's/^SCHED //p' <<<"${node_lines}")
 
-[[ -n "${cross_node}" ]] || inconclusive 'no schedulable node without an oauth2-proxy endpoint exists, so no cross-node path can be forced'
-[[ -n "${same_node}" ]] || inconclusive 'no schedulable node hosts an oauth2-proxy endpoint, so there is no same-node control'
+[[ -n "${cross_node}" ]] || inconclusive 'no schedulable node without an oauth2-proxy endpoint exists apart from the nodes hosting the control backend, so no cross-node path can be forced'
+[[ -n "${same_node}" ]] || inconclusive 'no schedulable node hosts an oauth2-proxy endpoint apart from the nodes hosting the control backend, so there is no same-node control'
 
 ingress_lines="$(read_ingress_ips)" || inconclusive 'could not read the per-node Cilium ingress IPs'
 case "${ingress_lines}" in
@@ -767,9 +789,12 @@ done
 # ---------------------------------------------------------------------------
 # 6. Topology after: the placement the verdict relies on must not have changed.
 # ---------------------------------------------------------------------------
-endpoint_lines_after="$(read_endpoints)" || inconclusive 'could not re-read the oauth2-proxy endpoints'
+endpoint_lines_after="$(read_endpoints "${oauth2_namespace}" "${oauth2_service}")" || inconclusive 'could not re-read the oauth2-proxy endpoints'
 [[ "$(sed -n 's/^FP //p' <<<"${endpoint_lines_after}")" == "${endpoint_fp_before}" ]] ||
   inconclusive 'the oauth2-proxy endpoints changed during the run'
+backend_lines_after="$(read_endpoints "${probe_namespace}" "${backend_service}")" || inconclusive 'could not re-read the control backend endpoints'
+[[ "$(sed -n 's/^FP //p' <<<"${backend_lines_after}")" == "${backend_fp_before}" ]] ||
+  inconclusive 'the control backend endpoints changed during the run'
 node_lines_after="$(read_nodes)" || inconclusive 'could not re-read the nodes'
 [[ "$(sed -n 's/^FP //p' <<<"${node_lines_after}")" == "${node_fp_before}" ]] ||
   inconclusive 'the node set changed during the run'
