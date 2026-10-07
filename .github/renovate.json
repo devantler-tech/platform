@@ -41,12 +41,12 @@
     },
     {
       "customType": "regex",
-      "description": "Track the flux-operator OCI Helm chart version in its HelmRelease via the docker datasource. The built-in `flux` manager silently stopped proposing flux-operator bumps after 0.48.0 (2026-04-21) even though 0.49.0/0.50.0 published, letting the version drift from the chart KSail seeds at bootstrap. This regex manager tracks ghcr.io/controlplaneio-fluxcd/charts/flux-operator deterministically (same datasource that bumps Dockerfile FROM tags elsewhere) so it cannot silently drift again.",
+      "description": "Track the flux-operator OCI chart tag in its OCIRepository via the docker datasource. The dedicated manager preserves update discovery after the migration from HelmRepository/chart.spec to OCIRepository/chartRef.",
       "managerFilePatterns": [
-        "/^k8s/bases/infrastructure/controllers/flux-operator/helm-release\\.ya?ml$/"
+        "/^k8s/bases/infrastructure/controllers/flux-operator/helm-repository\\.ya?ml$/"
       ],
       "matchStrings": [
-        "chart:\\s*flux-operator\\s+version:\\s*(?<currentValue>\\S+)"
+        "tag:\\s*(?<currentValue>\\S+)"
       ],
       "datasourceTemplate": "docker",
       "depNameTemplate": "ghcr.io/controlplaneio-fluxcd/charts/flux-operator",

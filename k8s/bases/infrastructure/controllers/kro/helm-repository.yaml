@@ -1,13 +1,15 @@
 ---
 apiVersion: source.toolkit.fluxcd.io/v1
-kind: HelmRepository
+kind: OCIRepository
 metadata:
   name: kro
   namespace: kro-system
 spec:
-  type: oci
-  # KRO publishes its chart as an OCI artifact to the Kubernetes community
-  # registry (`oci://registry.k8s.io/kro/charts/kro`), so the source URL is the
-  # repository PREFIX and the chart name is appended via HelmRelease.chart.spec
-  # -- mirroring the flux-operator pattern (oci://<registry>/<prefix> + chart).
-  url: oci://registry.k8s.io/kro/charts
+  interval: 10m
+  # Fetch the chart artifact directly so the source exposes real readiness.
+  url: oci://registry.k8s.io/kro/charts/kro
+  ref:
+    tag: 0.9.2
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
