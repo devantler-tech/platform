@@ -66,7 +66,7 @@ if [[ "$command" == get ]]; then
     namespace) cat "$ARC_TEST_STATE/ns.json" ;;
     helmrelease) [[ "$ARC_TEST_READ_FAILURE" != true ]] || exit 1; [[ -s "$ARC_TEST_STATE/hr.json" ]] && cat "$ARC_TEST_STATE/hr.json" ;;
     externalsecret) [[ -s "$ARC_TEST_STATE/eso.json" ]] && cat "$ARC_TEST_STATE/eso.json" ;;
-    autoscalingrunnerset) [[ -s "$ARC_TEST_STATE/ars.json" ]] && cat "$ARC_TEST_STATE/ars.json" ;;
+    autoscalingrunnerset) [[ "${ARC_TEST_ARS_READ_FAILURE:-false}" != true ]] || exit 1; [[ -s "$ARC_TEST_STATE/ars.json" ]] && cat "$ARC_TEST_STATE/ars.json" ;;
     ephemeralrunnerset) [[ -s "$ARC_TEST_STATE/ers.json" ]] && cat "$ARC_TEST_STATE/ers.json" ;;
     autoscalinglisteners) jq -n --slurpfile items "$ARC_TEST_STATE/listeners.json" '{kind:"AutoscalingListenerList",metadata:{},items:$items[0]}' ;;
     deployment) if [[ "$ns" == flux-system ]];then cat "$ARC_TEST_STATE/flux-controller.json";else cat "$ARC_TEST_STATE/controller.json";fi ;;
@@ -171,7 +171,7 @@ done
 [[ -n "$url" ]]
 printf '%s\n' "$url" >>"$ARC_TEST_STATE/metadata-paths"
 if [[ "$url" == */secrets/arc-github-app ]]; then
-  if [[ -s "$ARC_TEST_STATE/eso.json" ]]; then
+  if [[ -s "$ARC_TEST_STATE/eso.json" || "${ARC_TEST_LINGERING_SECRET:-false}" == true ]]; then
     jq -n '{apiVersion:"meta.k8s.io/v1",kind:"PartialObjectMetadata",metadata:{name:"arc-github-app",namespace:"arc-runners",uid:"secret"}}' >"$output"; printf 200
   else jq -n '{kind:"Status",reason:"NotFound",code:404}' >"$output"; printf 404; fi
 else
@@ -190,7 +190,7 @@ export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=
 export GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=1 GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 export GH_TOKEN=fixture PLATFORM_MANIFEST_DIGEST=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 fixture() {
-  export ARC_TEST_STATE="$scratch/state-$1" ARC_TEST_ADMIN=true ARC_TEST_READ_FAILURE=false ARC_TEST_METADATA_FAILURE=false ARC_TEST_REPLACE='' ARC_TEST_LATE='' ARC_TEST_INERT_ADMISSION=false ARC_TEST_NO_ACK=false ARC_TEST_BASELINE_SOURCE=false ARC_TEST_SOURCE_FAILURE=''
+  export ARC_TEST_STATE="$scratch/state-$1" ARC_TEST_ADMIN=true ARC_TEST_READ_FAILURE=false ARC_TEST_METADATA_FAILURE=false ARC_TEST_REPLACE='' ARC_TEST_LATE='' ARC_TEST_INERT_ADMISSION=false ARC_TEST_NO_ACK=false ARC_TEST_BASELINE_SOURCE=false ARC_TEST_SOURCE_FAILURE='' ARC_TEST_LINGERING_SECRET=false ARC_TEST_ARS_READ_FAILURE=false
   mkdir "$ARC_TEST_STATE"
   jq -n '{apiVersion:"v1",kind:"Namespace",metadata:{name:"arc-runners",uid:"ns-1",resourceVersion:"1",annotations:{foreign:"preserve"}}}' >"$ARC_TEST_STATE/ns.json"
   jq -n '{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:{name:"platform-runners",namespace:"arc-runners",uid:"hr-1",resourceVersion:"2"},spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"platform-runners"},values:{runnerScaleSetName:"platform-linux",githubConfigUrl:"https://github.com/devantler-tech",githubConfigSecret:"arc-github-app",runnerGroup:"platform",minRunners:0,maxRunners:1}}}' >"$ARC_TEST_STATE/hr.json"
@@ -227,8 +227,33 @@ fixture outside; GITHUB_ACTIONS=false; refused outside; GITHUB_ACTIONS=true
 fixture reader; ARC_TEST_ADMIN=false; refused reader
 fixture denied-read; ARC_TEST_READ_FAILURE=true; refused denied-read
 [[ ! -f "$ARC_TEST_STATE/metadata-paths" ]]
+fixture empty-scale-set-read-failure; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; ARC_TEST_ARS_READ_FAILURE=true
+refused empty-scale-set-read-failure
+grep -q 'object-read' "$ARC_TEST_STATE/error"
+if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands";then printf 'Failed orphan lookup allowed a mutation.\n' >&2;exit 1;fi
+fixture empty-secret-read-failure; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; ARC_TEST_METADATA_FAILURE=true
+refused empty-secret-read-failure
+grep -q 'secret-metadata-transport' "$ARC_TEST_STATE/error"
+if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands";then printf 'Failed credential lookup allowed a mutation.\n' >&2;exit 1;fi
+fixture empty-lingering-secret; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; ARC_TEST_LINGERING_SECRET=true
+refused empty-lingering-secret
+grep -q 'lingering-generated-credential' "$ARC_TEST_STATE/error"
+grep -q '/secrets/arc-github-app$' "$ARC_TEST_STATE/metadata-paths"
+if grep -Eq '^patch |^delete |(^| )get secrets?( |$)' "$ARC_TEST_STATE/commands";then printf 'Empty-install refusal mutated or read a full credential.\n' >&2;exit 1;fi
+for parent in absent retained;do
+  baseline_fixture "unbound-orphan-$parent"
+  jq 'del(.metadata.annotations."platform.devantler.tech/arc-retirement")' "$ARC_TEST_STATE/ns.json" >"$ARC_TEST_STATE/next.json";mv "$ARC_TEST_STATE/next.json" "$ARC_TEST_STATE/ns.json"
+  : >"$ARC_TEST_STATE/hr.json"
+  if [[ "$parent" == absent ]];then : >"$ARC_TEST_STATE/eso.json";fi
+  refused "unbound-orphan-$parent"
+  grep -q 'unbound-orphan-scale-set' "$ARC_TEST_STATE/error"
+  grep -q 'get autoscalingrunnerset platform-linux' "$ARC_TEST_STATE/commands"
+  [[ -s "$ARC_TEST_STATE/ars.json" ]]
+  if grep -Eq '^patch |^delete ' "$ARC_TEST_STATE/commands";then printf 'Unbound orphan was mutated.\n' >&2;exit 1;fi
+done
 fixture empty; : >"$ARC_TEST_STATE/hr.json"; : >"$ARC_TEST_STATE/eso.json"; run_native before-publish
-[[ ! -f "$ARC_TEST_STATE/proxy-pid" ]]
+grep -q '/secrets/arc-github-app$' "$ARC_TEST_STATE/metadata-paths"
+if [[ -s "$ARC_TEST_STATE/proxy-pid" ]] && kill -0 "$(cat "$ARC_TEST_STATE/proxy-pid")" 2>/dev/null;then printf 'Empty-install proxy survived success.\n' >&2;exit 1;fi
 fixture failed-metadata; ARC_TEST_METADATA_FAILURE=true; refused failed-metadata
 [[ -s "$ARC_TEST_STATE/eso.json" && -s "$ARC_TEST_STATE/hr.json" ]]
 fixture inert-admission; ARC_TEST_INERT_ADMISSION=true; refused inert-admission

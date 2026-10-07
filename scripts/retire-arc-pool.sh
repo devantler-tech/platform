@@ -58,10 +58,13 @@ refresh_objects() {
     (.metadata.deletionTimestamp==null)' "$work/ns.json" >/dev/null || fail namespace-response
   optional_object helmrelease platform-runners arc-runners "$work/hr.json"
   optional_object externalsecret arc-github-app arc-runners "$work/eso.json"
-  printf 'null\n' >"$work/ars.json"
-  if jq -e '.metadata.annotations."platform.devantler.tech/arc-retirement" | fromjson | has("baseline")' "$work/ns.json" >"$work/proof-output" 2>"$work/proof-error"; then
-    optional_object autoscalingrunnerset platform-linux arc-runners "$work/ars.json"
-  fi
+  # A failed Helm installation can lose its parent before the scale set. Its
+  # presence must never depend on whether a future baseline was recorded.
+  optional_object autoscalingrunnerset platform-linux arc-runners "$work/ars.json"
+  jq -e '.==null or (.apiVersion=="actions.github.com/v1alpha1" and .kind=="AutoscalingRunnerSet" and
+    .metadata.name=="platform-linux" and .metadata.namespace=="arc-runners" and
+    (.metadata.uid|type=="string" and length>0) and (.metadata.resourceVersion|type=="string" and length>0) and
+    (.spec|type)=="object")' "$work/ars.json" >/dev/null || fail scale-set-response
 }
 snapshot() {
   jq -n --slurpfile ns "$work/ns.json" --slurpfile hr "$work/hr.json" --slurpfile eso "$work/eso.json" \
@@ -205,8 +208,16 @@ printf 'null\n' >"$work/receipt.json"
 printf 'null\n' >"$work/source-proof.json"
 refresh_objects
 if jq -e '.==null' "$work/hr.json" >/dev/null &&
+   jq -e '.!=null' "$work/ars.json" >/dev/null &&
+   jq -e '(.metadata.annotations//{} | has("platform.devantler.tech/arc-retirement")) | not' "$work/ns.json" >/dev/null; then
+  # No durable UID or original release remains to authorize deletion. Keep the
+  # orphan intact and name the missing ownership proof before claiming anything.
+  fail unbound-orphan-scale-set
+fi
+if jq -e '.==null' "$work/hr.json" >/dev/null &&
    jq -e '.==null' "$work/eso.json" >/dev/null &&
    jq -e '.metadata.annotations | has("platform.devantler.tech/arc-retirement") | not' "$work/ns.json" >/dev/null; then
+  secret_absent || fail lingering-generated-credential
   printf 'ARC retirement has no installed release or credential-sync object; the unchanged absence guard follows.\n'
   exit
 fi

@@ -232,7 +232,9 @@ finish. It does not require retiring the shared platform App.
 
 The protected deployment and merge-group heal run `retire-arc-pool.sh` when the
 reviewed controller declaration carries `arc-recovery: drain-only`. An empty
-installation keeps the existing absence-only path. A partial installation is
+installation requires a metadata-only credential absence check before the
+existing complete absence guard follows. An orphan scale set without a
+retirement journal is refused before any mutation. An owned partial installation is
 fenced by a compare-and-swap journal on the retained `arc-runners` Namespace.
 The admission policy reads that Namespace directly and fails closed on lookup
 errors. It prevents release, scale-set and credential-sync recreation; existing
