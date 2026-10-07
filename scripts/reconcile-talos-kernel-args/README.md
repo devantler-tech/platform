@@ -174,20 +174,26 @@ cluster runs on does not.
 range 7.195.1 → 7.197.1, which also covers 7.196.0 and 7.197.0. The
 configuration-manager tree (`439ee0a33cf6ca597f5773bcb6db316900cb8149`), the Talos
 generator tree, the cluster API tree and the chart tree are byte-identical to
-7.195.1, so the mirrored fold is unchanged. Unlike every release audited
-since 7.194.5, it changes `go.mod` and `go.sum`. Four modules moved and nothing else:
+7.195.1, so the mirrored fold is unchanged. 7.196.0 and 7.197.0 still carry
+the 7.195.1 set in full; 7.197.1 is the first release audited since 7.194.5 that
+changes `go.mod` and `go.sum`. Four modules moved and nothing else:
 `golang.org/x/oauth2` 0.36.0 → 0.37.0, the Azure SDK `azcore` 1.23.0 → 1.23.1 and
 `azidentity` 1.14.0 → 1.14.1, and the Microsoft authentication library 1.7.2 →
 1.8.0. The Talos machinery version did not move. Of the four, the package that
 holds the fold reaches only `golang.org/x/oauth2`, through the Kubernetes client
 transport, and the two packages it reaches there (`oauth2` and `oauth2/internal`)
-are byte-identical in both versions; that release changes only Google default
-credential lookup. The shipped source changes are outside the fold: 7.196.0 adds an
+have byte-identical sources in both versions; that release changes only Google
+default credential lookup and the Go version its own module declares. The shipped source changes are outside the fold: 7.196.0 adds an
 experimental, opt-in option to `ksail workload validate` that also checks the
 resources an operator generates from the manifests; it is off by default and no
 validation step in this repository passes it, so what they check is unchanged;
 7.197.0 makes `ksail project env reconcile` available without the experimental
-flag; and 7.197.1 pins two telemetry modules in KSail's separate desktop module. See
+flag; and 7.197.1, besides the four module updates, pins two telemetry modules in KSail's
+separate desktop module. Three smaller changes in the range are inert here: the
+default Argo CD chart moves from 10.9.2 to 10.9.4, which this Flux-managed cluster
+never installs; the throwaway-cluster validation behind `--ephemeral` records what
+it applied, which no step here uses; and a standalone tool that checks Hetzner node
+user-data in KSail's own tests is added. See
 [`applySchematic`, `schematicKernelArgs` and `reconcileFoldedKernelArgs`](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/talos/configs.go#L1082)
 and the [explicit schematic selection boundary](https://github.com/devantler-tech/ksail/blob/6c2d2f4b14594521e5001dec9a2796e7902ad610/pkg/fsutil/configmanager/ksail/distribution.go#L154).
 KSail first computes the schematic and installs its image; this helper mirrors
