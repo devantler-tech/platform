@@ -32,6 +32,12 @@
 # capped at the smoke-test compute plane even if an arbitrary policy is written
 # to them.
 #
+# servicequotas:ListServiceQuotas is the one read the role holds outside the
+# services eksctl drives (devantler-tech/aws#38): node groups stopped launching
+# on the account's EC2 fleet-request limit, and ksail's read-only capacity
+# report could list usage but not the limit itself. The action lists quota
+# values only, changes nothing and does not support resource-level scoping.
+#
 # ROLLOUT GATE (#2631 review): the iam:CreateRole condition below makes every
 # eksctl-created role carry the boundary, but ksail's generated eks.yaml does not
 # yet set eksctl's iam.serviceRolePermissionsBoundary /
@@ -252,6 +258,12 @@ spec:
                 "Sid": "StsIdentity",
                 "Effect": "Allow",
                 "Action": "sts:GetCallerIdentity",
+                "Resource": "*"
+              },
+              {
+                "Sid": "ServiceQuotasRead",
+                "Effect": "Allow",
+                "Action": "servicequotas:ListServiceQuotas",
                 "Resource": "*"
               }
             ]

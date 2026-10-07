@@ -104,7 +104,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami daa7d5894e48ee981cc577597042
 
 iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763cab81a883bc6cf1faf53caf89b5e9274e8ec69cad01b66
 
-iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci 878e257591c0e0dd69ebf1398211feadfc06f857665e453a87815c361c2529cd
+iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
 kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 1ee1880dfe992996a7480cceb143bd2520b0cbb87170eb50acda2d214be5abb4
 
