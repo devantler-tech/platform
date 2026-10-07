@@ -7,12 +7,15 @@ umask 077
 # --context NAME --domain PUBLIC_DOMAIN --image-digest sha256:...
 # --runtime-digest sha256:... (repeat) --chart-digest sha256:...
 # --apps-digest sha256:... --apps-verify-file /absolute/public-policy.json [--timeout SECONDS]
+# Expected readiness activation comes from this checkout's Helm declaration.
 # Browser authentication and embedding handshakes remain separate acceptance
 # checks. This helper reads no Secrets or authenticated URLs.
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
 readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
+expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/apps/data-product-controller/helm-release.yaml"
+readonly expected_helm_file
 fail() {
   # Once a snapshot pair has differed, every later refusal still names what moved.
   if [[ -n "$changed" ]]; then
@@ -36,15 +39,15 @@ trap 'fail interrupted' HUP INT TERM
 while (($#)); do
   [[ $# -ge 2 ]] || fail invalid_arguments 2
   case "$1" in
-  --context) context=$2 ;;
-  --domain) domain=$2 ;;
-  --image-digest) image_digest=$2 ;;
-  --runtime-digest) runtime_digests+=("$2") ;;
-  --chart-digest) chart_digest=$2 ;;
-  --apps-digest) apps_digest=$2 ;;
-  --apps-verify-file) apps_verify_file=$2 ;;
-  --timeout) timeout_seconds=$2 ;;
-  *) fail invalid_arguments 2 ;;
+    --context) context=$2 ;;
+    --domain) domain=$2 ;;
+    --image-digest) image_digest=$2 ;;
+    --runtime-digest) runtime_digests+=("$2") ;;
+    --chart-digest) chart_digest=$2 ;;
+    --apps-digest) apps_digest=$2 ;;
+    --apps-verify-file) apps_verify_file=$2 ;;
+    --timeout) timeout_seconds=$2 ;;
+    *) fail invalid_arguments 2 ;;
   esac
   shift 2
 done
@@ -58,7 +61,7 @@ for value in "$image_digest" "$chart_digest" "$apps_digest" "${runtime_digests[@
   [[ "$value" =~ ^sha256:[a-f0-9]{64}$ ]] || fail invalid_arguments 2
 done
 [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ && "$timeout_seconds" -le 600 ]] || fail invalid_arguments 2
-for tool in kubectl jq curl; do command -v "$tool" >/dev/null || fail missing_dependency 2; done
+for tool in kubectl jq curl yq; do command -v "$tool" >/dev/null || fail missing_dependency 2; done
 scratch=$(mktemp -d) || fail private_storage_unavailable
 chmod 700 "$scratch"
 readonly deadline=$((started_at + timeout_seconds))
@@ -87,6 +90,13 @@ bounded() {
   remaining
   return "$result"
 }
+read_expected_state() {
+  yq -o=json '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]' "$expected_helm_file" 2>/dev/null |
+    jq -ers 'if length!=1 then error("ambiguous expected flags") elif .[0]==[false,false,false] then "dormant"
+      elif .[0]==[true,true,false] then "active" else error("unsupported expected flags") end' >"$scratch/readiness-state" 2>/dev/null
+}
+bounded read_expected_state || fail invalid_expected_state 2
+expected_state=$(<"$scratch/readiness-state")
 read_verify_policy() {
   [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
   jq -se 'length==1 and (.[0]|type=="object" and keys==["matchOIDCIdentity","provider"] and
@@ -102,7 +112,7 @@ cat >"$scratch/project.jq" <<'JQ'
 def metadata: {name,namespace,uid,generation,deletionTimestamp,labels,
   revision:.annotations["deployment.kubernetes.io/revision"],
   owners:[.ownerReferences[]? | {apiVersion,kind,name,uid,controller}]};
-def conditions: [.[]? | {type,status,observedGeneration}];
+def conditions: [.[]? | {type,status,observedGeneration,reason}];
 def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,protocol:(.protocol//"TCP")}],
   command,args,envCount:(.env//[]|length),envFromCount:(.envFrom//[]|length),volumeMountCount:(.volumeMounts//[]|length),
   env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED") |
@@ -112,7 +122,9 @@ def workload: {apiVersion,kind,metadata:(.metadata|metadata),
     serviceAccountName:.spec.template.spec.serviceAccountName,automountServiceAccountToken:.spec.template.spec.automountServiceAccountToken,
     volumeCount:(.spec.template.spec.volumes//[]|length),initContainerCount:(.spec.template.spec.initContainers//[]|length)},
   status:(.status|{observedGeneration,replicas,updatedReplicas,readyReplicas,availableReplicas})};
-def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.containers|containers)},
+def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.containers|containers),
+  serviceAccountName:.spec.serviceAccountName,automountServiceAccountToken:.spec.automountServiceAccountToken,
+  volumeCount:(.spec.volumes//[]|length),initContainerCount:(.spec.initContainers//[]|length)},
   status:{phase:.status.phase,podIP:.status.podIP,podIPs:[.status.podIPs[]? | .ip],conditions:(.status.conditions|conditions),
     containers:[.status.containerStatuses[]? | {name,ready,imageID,
       running:(.state.running|type=="object"),waiting:(.state.waiting!=null),terminated:(.state.terminated!=null)}]}};
@@ -140,7 +152,8 @@ elif $role == "chart" or $role == "root" then {apiVersion,kind,metadata:(.metada
   spec:{suspend:.spec.suspend,url:.spec.url,ref:{digest:.spec.ref.digest},verify:.spec.verify},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),artifact:(.status.artifact|{revision,digest})}}
 elif $role == "product" then {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
+  spec:{connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),outputs:[.spec.outputs[]? | {name,contractUrl}],
+    ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions)}}
 elif $role|startswith("service-") then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{type:.spec.type,selector:.spec.selector,ports:[.spec.ports[]? | {name,port,targetPort,protocol:(.protocol//"TCP")}]}}
@@ -221,21 +234,50 @@ def dormant_probe($sets;$pods):
   (.metadata.uid as $uid | [$sets[] | select(owned("Deployment";"data-product-controller-contract-probe";$uid))] as $owned |
     all($owned[];.spec.replicas==0 and (.status.replicas//0)==0) and
     all($pods[];. as $pod | all($owned[];. as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)|not)));
-def probe_configuration($tag):
+def private_probe_spec($tag;$enabled):
   .spec.serviceAccountName=="data-product-controller-contract-probe" and .spec.automountServiceAccountToken==false and .spec.volumeCount==0 and .spec.initContainerCount==0 and
-  .spec.selector.matchLabels=={"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":"contract-probe"} and
-  .spec.labels==.spec.selector.matchLabels and (.spec.containers|length)==1 and named_image("contract-probe";$tag) and
+  (.spec.containers|length)==1 and named_image("contract-probe";$tag) and
   (.spec.containers[0] | .command==["/contract-probe"] and (.args//[])==[] and .envCount==2 and .envFromCount==0 and .volumeMountCount==0 and
     (.env|sort_by(.name))==([{name:"CONTRACT_PROBE_URL",value:("https://harbour-data."+$domain+"/openapi.json"),indirect:false},
-      {name:"CONTRACT_READINESS_ENABLED",value:"false",indirect:false}]|sort_by(.name)) and
+      {name:"CONTRACT_READINESS_ENABLED",value:$enabled,indirect:false}]|sort_by(.name)) and
     .ports==[{name:"management",containerPort:8081,protocol:"TCP"}] and
     .readinessProbe.httpGet=={path:"/readyz",port:"management",scheme:"HTTP"} and .readinessProbe.timeoutSeconds==7 and
     .readinessProbe.periodSeconds==30 and .readinessProbe.failureThreshold==1 and
     .livenessProbe.httpGet=={path:"/healthz",port:"management",scheme:"HTTP"} and
     .securityContext.runAsNonRoot==true and .securityContext.readOnlyRootFilesystem==true and
     .securityContext.allowPrivilegeEscalation==false and .securityContext.capabilities.drop==["ALL"]);
-def readiness_scaffold($snapshot;$tag):
-  ($snapshot["deployment-probe"]|dormant_probe($snapshot.replicasets.items;$snapshot.pods.items) and probe_configuration($tag)) and
+def probe_configuration($tag;$enabled):
+  .spec.selector.matchLabels=={"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":"contract-probe"} and
+  .spec.labels==.spec.selector.matchLabels and private_probe_spec($tag;$enabled);
+def reference($name): (.namespace//"")=="" and (del(.namespace))==
+  {apiVersion:"apps/v1",kind:"Deployment",name:$name};
+def product_observation:
+  . as $product |
+  if $readiness_state=="dormant" then .spec.connector==null and .spec.contractChecks==[] and
+    all(.status.conditions[]?;.type!="ConnectorReady" and .type!="ContractsReady")
+  else .spec.connector.adapter=="deployment/v1" and (.spec.connector|keys)==["adapter","resourceRef"] and
+    (.spec.connector.resourceRef|reference("data-product-controller-harbour")) and
+    (.spec.contractChecks|length)==1 and (.spec.contractChecks[0]|keys)==["output","resourceRef"] and
+    .spec.contractChecks[0].output=="observations" and
+    (.spec.contractChecks[0].resourceRef|reference("data-product-controller-contract-probe")) and
+    .spec.outputs==[{name:"observations",contractUrl:("https://harbour-data."+$domain+"/openapi.json")}] and
+    ready(["ConnectorReady","ContractsReady","Ready"]) and
+    all([["ConnectorReady","ConnectorReady"],["ContractsReady","ContractsReady"],["Ready","DependenciesReady"]][];
+      . as $expected | any($product.status.conditions[]?; .type==$expected[0] and .reason==$expected[1]))
+  end;
+def readiness_observation($snapshot;$tag):
+  ($snapshot["deployment-probe"] as $probe |
+    ($probe|probe_configuration($tag;($readiness_state=="active"|tostring))) and
+    if $readiness_state=="dormant" then $probe|dormant_probe($snapshot.replicasets.items;$snapshot.pods.items)
+    else ($probe|workload(.;"contract-probe";$tag;$snapshot.replicasets.items;$snapshot.pods.items)) and
+      ($probe.metadata.labels//{}|has("platform.devantler.tech/replica-floor")|not) and
+      all($snapshot.replicasets.items[] | select(owned("Deployment";$probe.metadata.name;$probe.metadata.uid) and .metadata.revision==$probe.metadata.revision);
+        private_probe_spec($tag;"true")) and
+      ([$snapshot.replicasets.items[] | select(owned("Deployment";$probe.metadata.name;$probe.metadata.uid)) | .metadata.uid] as $probe_sets |
+        all($snapshot.pods.items[] | select(any(.metadata.owners[]?; .uid as $uid | $probe_sets|index($uid)!=null));
+          . as $pod | private_probe_spec($tag;"true") and
+          all($probe.spec.labels|to_entries[]; . as $label | $pod.metadata.labels[$label.key]==$label.value)))
+    end) and
   ($snapshot["probe-account"]|object_identity("ServiceAccount";"v1";"data-product-controller-contract-probe";$namespace) and .automountServiceAccountToken==false) and
   ($snapshot["observer-role"]|object_identity("Role";"rbac.authorization.k8s.io/v1";"data-product-readiness-observer";$namespace) and
     (.rules|map(.resourceNames|=sort))==[{apiGroups:["apps"],resources:["deployments"],resourceNames:["data-product-controller-contract-probe","data-product-controller-harbour"],verbs:["get"]}]) and
@@ -316,7 +358,7 @@ def route($name;$host;$backend;$public):
   ($tag|type=="string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
   .spec.values.uiContract.enabled==true and .spec.values.uiContract.additionalHostOrigins==["https://product-ui."+$domain] and
   .spec.values.uiAppearance.enabled==true and .spec.values.controller.replicas==2 and .spec.values.demoProduct.enabled==true and
-  .spec.values.observationFlags==[false,false,false] and
+  .spec.values.observationFlags==[$readiness_state=="active",$readiness_state=="active",false] and
   .spec.values.demoProduct.replicas==2 and .spec.values.demoProduct.publicBaseURL==("https://harbour-data."+$domain) and
   .spec.values.route.enabled==true and .spec.values.route.host==("data-products."+$domain) and
   .status.lastAttemptedRevisionDigest==$chart_digest and .status.lastAttemptedRevision==($tag+"+"+$chart_digest[7:19]) and
@@ -325,16 +367,16 @@ def route($name;$host;$backend;$public):
   .status.history[0].chartVersion==.status.lastAttemptedRevision and .status.history[0].ociDigest==$chart_digest and .status.history[0].configDigest==.status.lastAttemptedConfigDigest) and
 (.product|identity("DataProduct";"data.devantler.tech/v1alpha1";"harbour-observations";$namespace) and
   .status.observedGeneration==.metadata.generation and ready(["Ready"]) and .spec.ui.url==("https://harbour-data."+$domain+"/ui") and
-  .spec.connector==null and .spec.contractChecks==[] and
-  all(.status.conditions[]?;.type!="ConnectorReady" and .type!="ContractsReady") and
+  product_observation and
   .spec.ui.contract.apiVersion=="data-product-ui/v2" and
   (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
   (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"]) and
 (.replicasets|inventory("ReplicaSet";"apps/v1")) and (.pods|inventory("Pod";"v1")) and
 (.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) and
-readiness_scaffold($snapshot;$tag) and
+readiness_observation($snapshot;$tag) and
 ([."deployment-controller".spec.containers[] | select(.name=="controller") | .env[]] | sort_by(.name))==
-  [{name:"CONNECTOR_READINESS_ENABLED",value:"false",indirect:false},{name:"CONTRACT_READINESS_ENABLED",value:"false",indirect:false}] and
+  [{name:"CONNECTOR_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false},
+    {name:"CONTRACT_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false}] and
 all([["deployment-controller","data-product-controller","controller"],["deployment-harbour","data-product-controller-harbour","product"],["deployment-ui-kit","data-product-controller-ui-kit","ui-kit"]][];
   . as $id | $snapshot[$id[0]] as $deployment |
   $deployment.metadata.name==$id[1] and workload($deployment;$id[2];$tag;$snapshot.replicasets.items;$snapshot.pods.items)) and
@@ -412,7 +454,7 @@ make_runtime_json() { printf '%s\n' "${runtime_digests[@]}" | jq -Rsc 'split("\n
 bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
 check() {
-  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" \
+  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
@@ -454,12 +496,12 @@ public_checks() {
     header_is Referrer-Policy no-referrer || return 1
     header_is X-Content-Type-Options nosniff || return 1
     case "$path" in
-    /) grep -Fq '<body data-appearance-enabled="true">' "$scratch/body" &&
-      grep -Fq 'id="manifest-form"' "$scratch/body" && grep -Fq 'src="ui-contract.js"' "$scratch/body" &&
-      grep -Fq 'src="kit.js"' "$scratch/body" && grep -Fq 'href="kit.css"' "$scratch/body" || return 1 ;;
-    /ui-contract.js) grep -Fq DataProductUI "$scratch/body" || return 1 ;;
-    /kit.js) grep -Fq DataProductUI.mount "$scratch/body" || return 1 ;;
-    /kit.css) grep -Fq color-scheme: "$scratch/body" || return 1 ;;
+      /) grep -Fq '<body data-appearance-enabled="true">' "$scratch/body" &&
+        grep -Fq 'id="manifest-form"' "$scratch/body" && grep -Fq 'src="ui-contract.js"' "$scratch/body" &&
+        grep -Fq 'src="kit.js"' "$scratch/body" && grep -Fq 'href="kit.css"' "$scratch/body" || return 1 ;;
+      /ui-contract.js) grep -Fq DataProductUI "$scratch/body" || return 1 ;;
+      /kit.js) grep -Fq DataProductUI.mount "$scratch/body" || return 1 ;;
+      /kit.css) grep -Fq color-scheme: "$scratch/body" || return 1 ;;
     esac
   done
 }
@@ -508,4 +550,5 @@ while :; do
   sleep 0.2
 done
 remaining
-printf '{"complete":true,"deployments":4,"pods":6,"routes":3,"publicChecks":9,"readinessState":"dormant"}\n'
+if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
+printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":9,"readinessState":"%s"}\n' "$expected_pods" "$expected_state"

@@ -35,6 +35,16 @@ exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
 
+# Production derives the expected state from the checked-out Helm declaration,
+# never from the live object being judged. Keep that read explicit in fixtures.
+cat >"${scratch}/bin/yq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# == 3 && "$1" == -o=json && "$2" == '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]' && "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
+cat "$FIXTURE/expected-flags.json"
+SH
+chmod +x "${scratch}/bin/yq"
+
 cat >"${scratch}/fixtures.jq" <<'JQ'
 def meta($name;$ns): {name:$name,namespace:$ns,uid:($name+"-uid"),generation:3};
 def labels($name): {"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":(if $name|endswith("-harbour") then "harbour-product" elif $name|endswith("-ui-kit") then "ui-kit" else "controller" end)};
@@ -99,6 +109,7 @@ JQ
 jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps "$apps" \
   --arg repo 'ghcr.io/devantler-tech/data-product-controller' -f "${scratch}/fixtures.jq" >"${scratch}/all.json"
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
+printf '[false,false,false]\n' >"${scratch}/healthy/expected-flags.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
@@ -238,7 +249,7 @@ chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
 
 expected_urls=9
 run_case() {
-  local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-10}
+  local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-15}
   local fixture="${scratch}/${name}"
   [[ -d "$fixture" ]] || {
     mkdir "$fixture"
@@ -246,16 +257,20 @@ run_case() {
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+    EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
-    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 4 and .pods == 6 and .routes == 3 and .publicChecks == 9 and .readinessState == "dormant"' "$fixture/stdout" >/dev/null; then
+    local expected_state expected_pods
+    expected_state=$(jq -r 'if .==[true,true,false] then "active" else "dormant" end' "$fixture/expected-flags.json")
+    if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
+    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == 9 and .readinessState == $state' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
       case "$reason" in
-      invalid_arguments | missing_dependency | private_storage_unavailable | deadline_exceeded | invalid_verification_policy | read_incomplete | public_contract_incomplete | rollout_changed | interrupted) ;;
-      *) reason=invalid_report ;;
+        invalid_arguments | missing_dependency | private_storage_unavailable | deadline_exceeded | invalid_verification_policy | invalid_expected_state | read_incomplete | public_contract_incomplete | rollout_changed | interrupted) ;;
+        *) reason=invalid_report ;;
       esac
       fail "$name: healthy live-shaped rollout was not accepted (helper exit $result, $reason)"
     fi
@@ -295,6 +310,10 @@ mutate_case() {
   run_case "$name" fail '' "${4:-3}"
 }
 
+mkdir "${scratch}/declared-activation-but-live-dormant"
+cp "${scratch}/healthy/"*.json "${scratch}/declared-activation-but-live-dormant/"
+printf '[true,true,false]\n' >"${scratch}/declared-activation-but-live-dormant/expected-flags.json"
+run_case declared-activation-but-live-dormant fail
 mutate_case probe-supplemental-network probe-policy '.specs=[(.spec | .egress=[{toEntities:["world"]}])]'
 mutate_case probe-object-network probe-policy '.specs={}'
 mutate_case probe-string-network probe-policy '.specs=""'
@@ -303,6 +322,78 @@ mutate_case helm-missing-connector-flag helm 'del(.spec.values.connectorReadines
 mutate_case helm-missing-contract-flag helm 'del(.spec.values.contractReadiness.enabled)'
 mutate_case helm-missing-probe-flag helm 'del(.spec.values.contractProbe.enabled)'
 run_case healthy pass
+mkdir "${scratch}/active"
+jq --arg child "$child" '
+  .helm.spec.values.connectorReadiness.enabled=true | .helm.spec.values.contractReadiness.enabled=true |
+  ."deployment-controller".spec.template.spec.containers[0].env[].value="true" |
+  .product.spec.connector={adapter:"deployment/v1",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-harbour"}} |
+  .product.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}] |
+  .product.spec.outputs=[{name:"observations",contractUrl:"https://harbour-data.example.com/openapi.json"}] |
+  .product.status.conditions=[{type:"Ready",status:"True",observedGeneration:3,reason:"DependenciesReady"},
+    {type:"ConnectorReady",status:"True",observedGeneration:3,reason:"ConnectorReady"},
+    {type:"ContractsReady",status:"True",observedGeneration:3,reason:"ContractsReady"}] |
+  ."deployment-probe".metadata.annotations={"deployment.kubernetes.io/revision":"8"} |
+  ."deployment-probe".spec.replicas=2 | ."deployment-probe".status={observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2} |
+  ."deployment-probe".spec.template.spec.containers[0].env[1].value="true" |
+  ."deployment-probe" as $probe |
+  {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:($probe.metadata.name+"-new"),namespace:"data-product-controller",uid:($probe.metadata.name+"-new-uid"),generation:3,
+    annotations:$probe.metadata.annotations,ownerReferences:[{apiVersion:"apps/v1",kind:"Deployment",name:$probe.metadata.name,uid:$probe.metadata.uid,controller:true}]},
+    spec:{replicas:2,template:$probe.spec.template},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}} as $set |
+  .replicasets.items += [$set] |
+  .pods.items += [range(1;3) as $ordinal | {apiVersion:"v1",kind:"Pod",metadata:{name:($probe.metadata.name+"-pod-"+($ordinal|tostring)),namespace:"data-product-controller",
+    uid:($probe.metadata.name+"-pod-"+($ordinal|tostring)+"-uid"),labels:$probe.spec.template.metadata.labels,
+    ownerReferences:[{apiVersion:"apps/v1",kind:"ReplicaSet",name:$set.metadata.name,uid:$set.metadata.uid,controller:true}]},
+    spec:$probe.spec.template.spec,status:{phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:"contract-probe",ready:true,imageID:("containerd://"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}}]
+' "${scratch}/all.json" >"${scratch}/active.json"
+while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json" >"${scratch}/active/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/active.json")
+printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
+run_case active pass
+active_mutation() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/active/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/active/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' 3
+}
+active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
+active_mutation active-false-connector product '.status.conditions[1].status="False"'
+active_mutation active-missing-contract-condition product '.status.conditions |= map(select(.type!="ContractsReady"))'
+active_mutation active-duplicate-condition product '.status.conditions += [.status.conditions[2]]'
+active_mutation active-wrong-reason product '.status.conditions[2].reason="DependenciesReady"'
+active_mutation active-wrong-connector product '.spec.connector.resourceRef.name="other-workload"'
+active_mutation active-foreign-scope product '.spec.connector.resourceRef.namespace="other"'
+active_mutation active-wrong-output product '.spec.contractChecks[0].output="other"'
+active_mutation active-wrong-url product '.spec.outputs[0].contractUrl="https://other.example.com/openapi.json"'
+active_mutation active-wrong-probe product '.spec.contractChecks[0].resourceRef.name="data-product-controller-harbour"'
+active_mutation active-disabled-controller deployment-controller '.spec.template.spec.containers[0].env[1].value="false"'
+active_mutation active-missing-connector-flag helm 'del(.spec.values.connectorReadiness.enabled)'
+active_mutation active-missing-contract-flag helm 'del(.spec.values.contractReadiness.enabled)'
+active_mutation active-missing-probe-flag helm 'del(.spec.values.contractProbe.enabled)'
+active_mutation active-disabled-helm helm '.spec.values.contractReadiness.enabled=false'
+active_mutation active-disabled-probe deployment-probe '.spec.template.spec.containers[0].env[1].value="false"'
+active_mutation active-zero-probe deployment-probe '.spec.replicas=0'
+active_mutation active-partial-probe deployment-probe '.status.readyReplicas=1'
+active_mutation active-old-probe-rs replicasets '.items[-1].metadata.annotations["deployment.kubernetes.io/revision"]="7"'
+active_mutation active-unready-probe-pod pods '.items[-1].status.containerStatuses[0].ready=false'
+active_mutation active-foreign-probe-image pods '.items[-1].status.containerStatuses[0].imageID="containerd://sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+active_mutation active-probe-pod-token pods '.items[-1].spec.automountServiceAccountToken=true'
+active_mutation active-probe-pod-init pods '.items[-1].spec.initContainers=[{name:"unexpected",image:"example.invalid/other:latest"}]'
+active_mutation active-probe-pod-label pods 'del(.items[-1].metadata.labels["app.kubernetes.io/component"])'
+active_mutation active-probe-pod-target pods '.items[-1].spec.containers[0].env[0].value="https://other.example.com/openapi.json"'
+active_mutation active-probe-pod-liveness pods '.items[-1].spec.containers[0].readinessProbe.httpGet.path="/healthz"'
+active_mutation active-probe-pod-env-from pods '.items[-1].spec.containers[0].envFrom=[{configMapRef:{name:"unexpected"}}]'
+active_mutation active-retained-exemption deployment-probe '.metadata.labels["platform.devantler.tech/replica-floor"]="exempt"'
+active_mutation declared-dormancy-but-live-active expected-flags '.=[false,false,false]'
+for state in '[true,false,false]' '[true,true,true]' '[null,null,null]' '["true",true,false]' '[]' '[true,true,false]\n[true,true,false]'; do
+  name="invalid-expected-state-${RANDOM}"
+  mkdir "${scratch}/$name"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  printf '%b\n' "$state" >"${scratch}/$name/expected-flags.json"
+  run_case "$name" fail
+  jq -e '.failure=="invalid_expected_state"' "${scratch}/$name/stdout" >/dev/null || fail "$name: wrong configuration failure"
+  [[ ! -e "${scratch}/$name/reads" ]] || fail "$name: invalid expectation reached the cluster"
+done
+if [[ ${TEST_READINESS_ONLY:-false} == true ]]; then exit 0; fi
 mutate_case probe-extra-init deployment-probe '.spec.template.spec.initContainers=[{name:"unexpected",image:"example.invalid/other:latest",envFrom:[{secretRef:{name:"environment-canary"}}]}]'
 mutate_case helm-unplanned-observation helm '.spec.values.connectorReadiness.enabled=true'
 mutate_case helm-unplanned-contracts helm '.spec.values.contractReadiness.enabled=true'
@@ -323,7 +414,9 @@ mutate_case observer-wrong-account observer-binding '.subjects[0].name="other-co
 mutate_case probe-broad-network probe-policy '.spec.egress += [{toEntities:["world"]}]'
 mutate_case dormant-product-reference product '.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}]'
 run_case partial-observer fail partial-observer
-run_case healthy-acceptance-bound pass '' 3
+# A healthy snapshot pair also parses the declared feature state. Allow host scheduling
+# overhead here; the one-second expiry controls below still enforce the total deadline.
+run_case healthy-acceptance-bound pass "" 10
 run_case orphan-plugin pass orphan
 while IFS= read -r pid; do
   if kill -0 "$pid" 2>/dev/null; then fail 'successful read left a credential-plugin child running'; fi
