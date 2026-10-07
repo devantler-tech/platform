@@ -86,7 +86,7 @@ func header(r resource) []operation {
 	return []operation{{"test", "/metadata/uid", r.UID}, {"test", "/metadata/resourceVersion", r.RV}}
 }
 func annotations(r resource) map[string]string {
-	a := make(map[string]string, len(r.Annotations)+1)
+	a := make(map[string]string, len(r.Annotations))
 	for k, v := range r.Annotations {
 		a[k] = v
 	}
