@@ -283,16 +283,24 @@ spec:
       # individual HTTP handlers; two summary workers can still read the same
       # resourceVersion and race their updates. Serialize that kind explicitly.
       #
-      # Valid VEX records currently exceed the chart's 500 kB default and are
-      # rejected with HTTP 413 before persistence. One megabyte covers the
-      # observed records with headroom while retaining a finite queue bound.
+      # Valid VEX records exceed the chart's 1 MB default for their kind and are
+      # rejected with HTTP 413 before persistence, which the scanner reports
+      # only as a warning: the stored record then silently stops following the
+      # daily scan.
       kindQueues:
         vulnerabilitymanifestsummaries:
           workerCount: 1
         openvulnerabilityexchangecontainers:
-          # Backstage 1.52.0 produced a valid 6,604,551-byte VEX record. Keep a
-          # finite 8 MB ceiling (about 21% headroom) for this exact object kind.
-          maxObjectSize: 8000000
+          # A VEX record carries one statement per vulnerability match, so it
+          # grows with the vulnerability feed even when the image does not
+          # change. Backstage 1.52.0 produced 6,604,551 bytes on 2026-09-20 and
+          # 8,551,938 bytes on 2026-10-06; the 8 MB ceiling chosen from the first
+          # figure (about 21% headroom) refused every write from then on (#3955).
+          # Use the finite ceiling the chart gives vulnerabilitymanifests, the
+          # kind this record is derived from in the same scan (the manifest was
+          # 10,909,075 bytes when the record was 8.55 MB). That is 5.8 times the
+          # largest record seen, and this kind no longer fails before its source.
+          maxObjectSize: 50000000
       image:
         # Storage v0.0.297 starts two deferred profile-maintenance workers. They
         # can both read and then race while promoting to SQLite's single writer;

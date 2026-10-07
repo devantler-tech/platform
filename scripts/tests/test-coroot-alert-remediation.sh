@@ -130,8 +130,20 @@ vex_capacity="$(
     "${kubescape_release}"
 )" || fail 'the VEX queue object-size limit is missing'
 readonly vex_capacity
-[[ "${vex_capacity}" == '8000000' ]] ||
-  fail 'the VEX queue must admit the observed 6.605 MB record with finite headroom'
+# The record grows with the vulnerability feed: the same Backstage 1.52.0 image went
+# from 6,604,551 bytes (2026-09-20) to 8,551,938 bytes (2026-10-06), which passed the
+# former 8 MB ceiling after sixteen days and had every later write refused (#3955).
+# Require the ceiling the chart gives the vulnerability manifests a VEX record is
+# derived from, and at least twice the largest record seen, so a limit set a few
+# percent above one day's payload cannot come back.
+readonly vex_largest_observed=8551938
+readonly vulnerability_manifest_capacity=50000000
+[[ "${vex_capacity}" =~ ^[1-9][0-9]*$ ]] ||
+  fail "the VEX queue object-size limit must be a finite byte count, not '${vex_capacity}'"
+((vex_capacity >= 2 * vex_largest_observed)) ||
+  fail "the VEX queue limit ${vex_capacity} leaves less than twice the largest observed record (${vex_largest_observed} bytes)"
+((vex_capacity == vulnerability_manifest_capacity)) ||
+  fail "the VEX queue limit must equal the ${vulnerability_manifest_capacity}-byte ceiling of the vulnerability manifests it is derived from, not ${vex_capacity}"
 
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'

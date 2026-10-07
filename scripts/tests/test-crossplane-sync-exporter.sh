@@ -446,7 +446,7 @@ custom_resource_state="$(
 # inventory lets the runtime sentinel compare this closed set with live CRDs,
 # so a provider addition fails loudly without pre-authorising the exporter to
 # read resource kinds that have not been reviewed.
-expected_managed_gvks=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\ndns.unifi.m.crossplane.io\tv1alpha1\tRecord\nenterprise.github.m.upbound.io\tv1alpha1\tOrganizationRuleset\niam.aws.m.upbound.io\tv1beta1\tOpenIDConnectProvider\niam.aws.m.upbound.io\tv1beta1\tPolicy\niam.aws.m.upbound.io\tv1beta1\tRole\nrepo.github.m.upbound.io\tv1alpha1\tBranchProtection\nrepo.github.m.upbound.io\tv1alpha1\tDefaultBranch\nrepo.github.m.upbound.io\tv1alpha1\tIssueLabels\nrepo.github.m.upbound.io\tv1alpha1\tRepository\nrepo.github.m.upbound.io\tv1alpha1\tRepositoryRuleset\nroute.unifi.m.crossplane.io\tv1alpha1\tTrafficRoute\nteam.github.m.upbound.io\tv1alpha1\tTeam\nteam.github.m.upbound.io\tv1alpha1\tTeamMembership\nteam.github.m.upbound.io\tv1alpha1\tTeamRepository\nvpn.unifi.m.crossplane.io\tv1alpha1\tClient'
+expected_managed_gvks=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\nactions.github.m.upbound.io\tv1alpha1\tRunnerGroup\ndns.unifi.m.crossplane.io\tv1alpha1\tRecord\nenterprise.github.m.upbound.io\tv1alpha1\tOrganizationRuleset\niam.aws.m.upbound.io\tv1beta1\tOpenIDConnectProvider\niam.aws.m.upbound.io\tv1beta1\tPolicy\niam.aws.m.upbound.io\tv1beta1\tRole\nrepo.github.m.upbound.io\tv1alpha1\tBranchProtection\nrepo.github.m.upbound.io\tv1alpha1\tDefaultBranch\nrepo.github.m.upbound.io\tv1alpha1\tIssueLabels\nrepo.github.m.upbound.io\tv1alpha1\tRepository\nrepo.github.m.upbound.io\tv1alpha1\tRepositoryRuleset\nroute.unifi.m.crossplane.io\tv1alpha1\tTrafficRoute\nteam.github.m.upbound.io\tv1alpha1\tTeam\nteam.github.m.upbound.io\tv1alpha1\tTeamMembership\nteam.github.m.upbound.io\tv1alpha1\tTeamRepository\nvpn.unifi.m.crossplane.io\tv1alpha1\tClient'
 actual_managed_gvks="$(
   yq eval -r '
     .spec.resources[]
@@ -457,7 +457,7 @@ actual_managed_gvks="$(
 [ "${actual_managed_gvks}" = "${expected_managed_gvks}" ] ||
   fail 'the exporter must describe every installed Crossplane managed-resource GVK'
 
-expected_managed_resources=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\trepositorypermissions\ndns.unifi.m.crossplane.io\tv1alpha1\tRecord\trecords\nenterprise.github.m.upbound.io\tv1alpha1\tOrganizationRuleset\torganizationrulesets\niam.aws.m.upbound.io\tv1beta1\tOpenIDConnectProvider\topenidconnectproviders\niam.aws.m.upbound.io\tv1beta1\tPolicy\tpolicies\niam.aws.m.upbound.io\tv1beta1\tRole\troles\nrepo.github.m.upbound.io\tv1alpha1\tBranchProtection\tbranchprotections\nrepo.github.m.upbound.io\tv1alpha1\tDefaultBranch\tdefaultbranches\nrepo.github.m.upbound.io\tv1alpha1\tIssueLabels\tissuelabels\nrepo.github.m.upbound.io\tv1alpha1\tRepository\trepositories\nrepo.github.m.upbound.io\tv1alpha1\tRepositoryRuleset\trepositoryrulesets\nroute.unifi.m.crossplane.io\tv1alpha1\tTrafficRoute\ttrafficroutes\nteam.github.m.upbound.io\tv1alpha1\tTeam\tteams\nteam.github.m.upbound.io\tv1alpha1\tTeamMembership\tteammemberships\nteam.github.m.upbound.io\tv1alpha1\tTeamRepository\tteamrepositories\nvpn.unifi.m.crossplane.io\tv1alpha1\tClient\tclients'
+expected_managed_resources=$'actions.github.m.upbound.io\tv1alpha1\tRepositoryPermissions\trepositorypermissions\nactions.github.m.upbound.io\tv1alpha1\tRunnerGroup\trunnergroups\ndns.unifi.m.crossplane.io\tv1alpha1\tRecord\trecords\nenterprise.github.m.upbound.io\tv1alpha1\tOrganizationRuleset\torganizationrulesets\niam.aws.m.upbound.io\tv1beta1\tOpenIDConnectProvider\topenidconnectproviders\niam.aws.m.upbound.io\tv1beta1\tPolicy\tpolicies\niam.aws.m.upbound.io\tv1beta1\tRole\troles\nrepo.github.m.upbound.io\tv1alpha1\tBranchProtection\tbranchprotections\nrepo.github.m.upbound.io\tv1alpha1\tDefaultBranch\tdefaultbranches\nrepo.github.m.upbound.io\tv1alpha1\tIssueLabels\tissuelabels\nrepo.github.m.upbound.io\tv1alpha1\tRepository\trepositories\nrepo.github.m.upbound.io\tv1alpha1\tRepositoryRuleset\trepositoryrulesets\nroute.unifi.m.crossplane.io\tv1alpha1\tTrafficRoute\ttrafficroutes\nteam.github.m.upbound.io\tv1alpha1\tTeam\tteams\nteam.github.m.upbound.io\tv1alpha1\tTeamMembership\tteammemberships\nteam.github.m.upbound.io\tv1alpha1\tTeamRepository\tteamrepositories\nvpn.unifi.m.crossplane.io\tv1alpha1\tClient\tclients'
 configured_managed_resources="$(
   yq eval -r '.data."managed-resources.tsv"' <<<"${config_map}" |
     sed '/^[[:space:]]*$/d' |
@@ -647,7 +647,7 @@ cluster_role="$(
 )" || fail 'the component must render the exporter ClusterRole'
 require_rule \
   "${cluster_role}" \
-  'apiGroups=[actions.github.m.upbound.io] resources=[repositorypermissions] verbs=[get,list,watch]' \
+  'apiGroups=[actions.github.m.upbound.io] resources=[repositorypermissions,runnergroups] verbs=[get,list,watch]' \
   'the exporter must read the GitHub Actions managed resource it exports'
 require_rule \
   "${cluster_role}" \
@@ -704,7 +704,7 @@ require_rule \
 # Closes the set: the two rules above are the ONLY rules this role may carry.
 reject_unexpected_rules \
   "${cluster_role}" \
-  'apiGroups=[actions.github.m.upbound.io] resources=[repositorypermissions] verbs=[get,list,watch]' \
+  'apiGroups=[actions.github.m.upbound.io] resources=[repositorypermissions,runnergroups] verbs=[get,list,watch]' \
   'apiGroups=[dns.unifi.m.crossplane.io] resources=[records] verbs=[get,list,watch]' \
   'apiGroups=[enterprise.github.m.upbound.io] resources=[organizationrulesets] verbs=[get,list,watch]' \
   'apiGroups=[iam.aws.m.upbound.io] resources=[openidconnectproviders,policies,roles] verbs=[get,list,watch]' \
