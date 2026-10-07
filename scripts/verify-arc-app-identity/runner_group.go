@@ -111,7 +111,7 @@ func verifyRunnerGroupCapability(ctx context.Context, options verificationOption
 		}
 		return "HOLD_CAPABILITY"
 	}
-	if status != pass || created.ID <= 0 || created.Name != name || !falseFlag(created.Default) || !falseFlag(created.Inherited) {
+	if status != pass || created.ID <= 0 || created.Name != name {
 		return "HOLD_OWNERSHIP"
 	}
 	for _, previous := range groups {

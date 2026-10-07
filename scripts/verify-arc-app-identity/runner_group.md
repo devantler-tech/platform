@@ -49,3 +49,8 @@ An ambiguous create response cannot establish ownership for automatic deletion.
 Keep capability on hold and verify the exact invocation's zero-runner residue
 through the protected operator path before another trial. Do not adopt or delete
 another group to clear that hold.
+
+Once a successful create identifies a new invocation-owned group, cleanup is
+armed before checking its policy fields. Invalid create-response flags keep
+capability on hold. Cleanup re-reads the live identity, default/inherited flags
+and zero membership before deletion; unsafe live state reports `FAIL_CLEANUP`.

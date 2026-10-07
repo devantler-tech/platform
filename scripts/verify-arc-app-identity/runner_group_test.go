@@ -365,6 +365,45 @@ func TestRunnerGroupCapabilityBadCreatedPolicyIsRemoved(t *testing.T) {
 	}
 }
 
+func TestRunnerGroupCapabilityInvalidCreateFlagsStillCleanOwnedGroup(t *testing.T) {
+	for _, field := range []string{"default", "inherited"} {
+		for _, missing := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/missing=%t", field, missing), func(t *testing.T) {
+				f := &groupFixture{groups: map[int64]map[string]any{}, mutate: func(path string, value map[string]any) {
+					if path == runnerGroupsPath && value["id"] != nil {
+						if missing {
+							delete(value, field)
+						} else {
+							value[field] = true
+						}
+					}
+				}}
+				if got := exerciseGroup(t, f); got != "HOLD_CAPABILITY" {
+					t.Fatalf("owned create with invalid policy returned %s", got)
+				}
+				if !f.created || !f.deleted || !f.revoked || len(f.groups) != 0 {
+					t.Fatal("owned group survived an invalid create response")
+				}
+			})
+		}
+	}
+}
+
+func TestRunnerGroupCapabilityUnsafeLiveFlagsReportCleanupFailure(t *testing.T) {
+	for _, field := range []string{"default", "inherited"} {
+		t.Run(field, func(t *testing.T) {
+			f := &groupFixture{groups: map[int64]map[string]any{}}
+			f.afterCreate = func() { f.groups[99][field] = true }
+			if got := exerciseGroup(t, f); got != failCleanup {
+				t.Fatalf("unsafe live owned group returned %s", got)
+			}
+			if !f.created || f.deleted || !f.revoked || len(f.groups) != 1 {
+				t.Fatal("unsafe group was deleted or cleanup was silently accepted")
+			}
+		})
+	}
+}
+
 func TestRunnerGroupCapabilityCancellationWithOwnershipCleansUp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
