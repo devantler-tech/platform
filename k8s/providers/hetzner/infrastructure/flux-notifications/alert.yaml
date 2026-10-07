@@ -95,9 +95,6 @@ spec:
       namespace: arc-systems
     - kind: HelmRelease
       name: "*"
-      namespace: backstage
-    - kind: HelmRelease
-      name: "*"
       namespace: cert-manager
     - kind: HelmRelease
       name: "*"

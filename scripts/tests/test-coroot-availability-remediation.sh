@@ -6,7 +6,6 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly alertmanager_release="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/alertmanager/helm-release.yaml"
 readonly umami_release="${root_dir}/k8s/bases/apps/umami/helm-release.yaml"
-readonly backstage_release="${root_dir}/k8s/bases/apps/backstage/helm-release.yaml"
 readonly loadtester_release="${root_dir}/k8s/bases/infrastructure/controllers/flagger/helm-release-loadtester.yaml"
 readonly loadtester_pdb="${root_dir}/k8s/bases/infrastructure/controllers/flagger/pod-disruption-budget-loadtester.yaml"
 readonly kubescape_alert_route="${root_dir}/k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/route-runtime-detection-alerts.yaml"
@@ -54,12 +53,6 @@ printf '%s\n' "${umami_patch}" | yq e -e '
     .value.rollingUpdate.maxUnavailable == 1)] | length == 1
 ' - >/dev/null ||
   fail 'Umami primary rollout must retire one old pod before placing its replacement'
-
-yq e -e '
-  .spec.values.backstage.startupProbe.httpGet.path == "/.backstage/health/v1/readiness" and
-  .spec.values.backstage.startupProbe.failureThreshold == 30
-' "${backstage_release}" >/dev/null ||
-  fail 'Backstage must retry startup if backend initialization never reaches readiness'
 
 yq e -e '
   .spec.values.replicaCount == 2 and

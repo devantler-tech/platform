@@ -933,13 +933,6 @@ data:
             "designatorType": "Attributes",
             "attributes": {
               "kind": "^Role$",
-              "name": "^backstage-db$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^Role$",
               "name": "^coroot-db$"
             }
           },

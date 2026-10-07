@@ -170,11 +170,10 @@
 #      shutdown failures stay visible.
 #
 #  19. controlled-lifecycle-log-tail - deleting an autoscaled node or an
-#      ephemeral deploy-probe pod leaves five known log representatives: a
+#      ephemeral deploy-probe pod leaves four known log representatives: a
 #      metrics scrape timeout for the removed autoscale node, Longhorn's manager
-#      reconnect and deleted-node reconciliation, Kubescape loading an already
-#      deleted runtime probe, and Backstage's connection close during a verified
-#      PostgreSQL failover. Bind every case to its stable fingerprint, exact app,
+#      reconnect and deleted-node reconciliation, and Kubescape loading an
+#      already deleted runtime probe. Bind every case to its fingerprint, exact app,
 #      representative shape, and the same five-minute quiet period. A recurrence
 #      or changed representative is automatically visible (or reopened).
 #
@@ -667,10 +666,6 @@ spec:
                            and quiet
                            and ((.application_id // "") | endswith(":kubescape:Deployment:operator"))
                            and ($d.Sample // "")=="failed loading pod spec") then "kubescape-deleted-runtime-probe"
-                          elif (.fingerprint=="019fd2a540f61820"
-                           and quiet
-                           and ((.application_id // "") | endswith(":backstage:Deployment:backstage"))
-                           and ($d.Sample // "")=="Connection Error: Connection ended unexpectedly") then "backstage-controlled-db-failover"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==false and .resolved_at==null)
@@ -753,10 +748,6 @@ spec:
                            and quiet
                            and ((.application_id // "") | endswith(":kubescape:Deployment:operator"))
                            and ($d.Sample // "")=="failed loading pod spec") then "kubescape-deleted-runtime-probe"
-                          elif (.fingerprint=="019fd2a540f61820"
-                           and quiet
-                           and ((.application_id // "") | endswith(":backstage:Deployment:backstage"))
-                           and ($d.Sample // "")=="Connection Error: Connection ended unexpectedly") then "backstage-controlled-db-failover"
                           else null end;
                       .data.alerts[]
                       | select(.suppressed==true and .resolved_at==null

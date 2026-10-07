@@ -34,9 +34,6 @@ resources:
   - umami/cilium-network-policy.yaml
   - umami/password-coroot-monitor.yaml
   - umami/external-secret-coroot-monitor.yaml
-  - backstage/cilium-network-policy.yaml
-  - backstage/password-coroot-monitor.yaml
-  - backstage/external-secret-coroot-monitor.yaml
   # Crossview bundles a plain PostgreSQL Deployment instead of CNPG. These
   # resources supply its init hook, dedicated credential, and scrape-only
   # network path; the HelmRelease patch below wires them into the chart output.
@@ -69,10 +66,9 @@ patches:
   # spec.interval) fails. Restore the patch from git history if re-enabling.
   - path: wedding-app/patches/flux-kustomization-protect-wedding-db.yaml
   # Prod-only Coroot Postgres integration for the in-repo CNPG DBs (strategic
-  # merge: inheritedMetadata scrape annotations + pg_stat_statements params, plus
-  # for backstage a dedicated pg_monitor managed role). These self-identify, so no target.
+  # merge: inheritedMetadata scrape annotations + pg_stat_statements params).
+  # These self-identify, so no target.
   - path: umami/patches/enable-coroot-monitoring.yaml
-  - path: backstage/patches/enable-coroot-monitoring.yaml
   # Crossview is a Helm-rendered Deployment, so its JSON6902 patch adds chart
   # values and appends post-render patches without replacing the base list.
   - target:
@@ -96,7 +92,7 @@ patches:
   # namespace-label patches opt proven-stateless workloads into the
   # add-security-context Kyverno rule. Local/CI stays out, and so do stateful
   # workloads apart from the Actual Budget pilot component above; in mixed
-  # namespaces (umami, backstage) the rule itself excludes the
+  # namespaces (umami) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
   # Headlamp takes an exact-target values patch instead of a namespace label
   # (#2651). Its chart renders `hostUsers: {{ .Values.hostUsers }}` from a
@@ -120,7 +116,6 @@ patches:
         value: false
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
-  - path: backstage/patches/enable-user-namespaces.yaml
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2

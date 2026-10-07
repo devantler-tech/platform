@@ -28,12 +28,6 @@ data:
         "reason": "platform#3812: RWO SQLite data; pod rescheduling and restore meet its recovery objective"
       },
       {
-        "application": "backstage:Deployment:backstage",
-        "category": "Availability",
-        "type": "single-instance-app",
-        "reason": "platform#3812: single-writer state and migration safety; rescheduling meets its recovery objective"
-      },
-      {
         "application": "kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler",
         "category": "Availability",
         "type": "single-instance-app",

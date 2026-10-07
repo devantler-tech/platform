@@ -38,14 +38,6 @@ spec:
         - ports:
             - port: "5006"
               protocol: TCP
-    # Backstage upstream (developer portal; Service backstage :7007).
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: backstage
-      toPorts:
-        - ports:
-            - port: "7007"
-              protocol: TCP
     # Crossview upstream (cluster resource explorer; Service :80 -> pod :3001).
     - toEndpoints:
         - matchLabels:

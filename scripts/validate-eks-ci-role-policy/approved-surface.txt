@@ -18,8 +18,6 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners 
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller 5af946415fcf05e49fb79e9a07cd82cd1da6d3c8ee33a6ebbe0483fc6e00afa1
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|backstage|backstage 5ff19be19e3525e641b0a7a22e2a7047e1fbda16ef9ca7b4fa731ce3a61e686a
-
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|cert-manager 6e91f980ce0c37a8bfa4671319b170384cffd1781e4778d84f57710a97754ca1
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|cert-manager|origin-ca-issuer 2175d9359951ebca2b5de568d9f15d41ce93771f63bfc71a69f71b90f21d6f03
@@ -36,7 +34,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane 8faec319d400c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossview|crossview 4e1e58c881413b308d488a91e732cdc7cb5fa43dfc8e92b51ab6ebb50e4d7a54
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 95040fe2e9f606513ebe779062cce80a8d3fc0581d5187948caabb043a98ab08
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex f319dbf385897af1985ef0b4c91925e69ee06c892b316abfa881792935118e4c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns fa298f48bf949ef686f4203506d8219b3d139e75acab6cef31f5ff17943a89d5
 
@@ -329,8 +327,6 @@ rbac.authorization.k8s.io/v1|Role|world-at-ruin|world-at-ruin-zone-trial-operato
 source.toolkit.fluxcd.io/v1|GitRepository|unifi|unifi 58cb863c65fbca54948d10a53dcb6dd98b28cfb5a5299dee40604b588e8852c0
 
 source.toolkit.fluxcd.io/v1|HelmRepository|actual-budget|actual-budget c77db6e8054359ae32168d3d10940f55c80cb482865df218fc866da00fdc165b
-
-source.toolkit.fluxcd.io/v1|HelmRepository|backstage|backstage d18c530f277fafe7d715efd4130640fc87e35cd0df73911dc4d72ab37b853c6a
 
 source.toolkit.fluxcd.io/v1|HelmRepository|cert-manager|cert-manager cd18284871c3da7ea497aa40db0f158c71504a0c3a41cae9e5927c3b97a1305b
 

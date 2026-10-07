@@ -751,6 +751,7 @@ jobs:
               - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
+              - 'scripts/tests/test-backstage-retirement.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
@@ -1946,6 +1947,8 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-availability-remediation.sh
           bash scripts/tests/test-coroot-availability-remediation.sh
+          shellcheck scripts/tests/test-backstage-retirement.sh
+          bash scripts/tests/test-backstage-retirement.sh
           shellcheck scripts/tests/test-descheduler-availability.sh
           bash scripts/tests/test-descheduler-availability.sh
           shellcheck scripts/tests/test-umami-rendered-placement.sh

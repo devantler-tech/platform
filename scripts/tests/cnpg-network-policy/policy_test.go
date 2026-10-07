@@ -169,7 +169,6 @@ func loadPolicies(t *testing.T) []policy {
 		"k8s/bases/infrastructure/controllers/plugin-barman-cloud/cilium-network-policy-allow-plugin-barman-cloud.yaml",
 		"k8s/bases/infrastructure/controllers/plugin-barman-cloud/cilium-network-policy-allow-cnpg-to-plugin-barman-cloud.yaml",
 		"k8s/bases/apps/umami/cilium-network-policy.yaml",
-		"k8s/bases/apps/backstage/cilium-network-policy.yaml",
 		"k8s/providers/hetzner/infrastructure/coroot/cilium-network-policy.yaml",
 	}
 	var policies []policy
@@ -195,7 +194,7 @@ func loadPolicies(t *testing.T) []policy {
 			continue
 		}
 		found = true
-		for _, namespace := range []string{"tenant-example", "umami", "backstage", "observability"} {
+		for _, namespace := range []string{"tenant-example", "umami", "observability"} {
 			p := r.Generate.Data
 			p.Metadata.Namespace = namespace
 			policies = append(policies, p)
@@ -225,7 +224,7 @@ func TestDatabaseManagementBoundary(t *testing.T) {
 			for _, instance := range []string{"cloudnative-pg", "other", ""} {
 				source := identity(namespace, name, instance)
 				operator := namespace == "cnpg-system" && name == "cloudnative-pg" && instance == "cloudnative-pg"
-				for _, destinationNamespace := range []string{"tenant-example", "umami", "backstage", "observability"} {
+				for _, destinationNamespace := range []string{"tenant-example", "umami", "observability"} {
 					for _, database := range []bool{false, true} {
 						destination := identity(destinationNamespace, "application", "application")
 						if database {

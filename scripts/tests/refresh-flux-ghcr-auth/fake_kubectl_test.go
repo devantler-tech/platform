@@ -2487,7 +2487,7 @@ func fakeKubectlDrain(args []string) int {
 		touchMarker("autoscaler-cordon-" + nodeName)
 	}
 	if nodeName == os.Getenv("FAKE_DRAIN_FAIL_NODE") {
-		return commandFailure(53, "cannot evict pod backstage-db-4: would violate PodDisruptionBudget backstage-db-primary")
+		return commandFailure(53, "cannot evict pod example-db-4: would violate PodDisruptionBudget example-db-primary")
 	}
 	touchMarker("drained-" + nodeName)
 	if nodeName == os.Getenv("FAKE_EXTERNAL_UNCORDON_AFTER_DRAIN_NODE") {

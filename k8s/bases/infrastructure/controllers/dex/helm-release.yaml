@@ -132,8 +132,6 @@ spec:
             - "https://${domain}:443/oauth2/callback"
             - "https://analytics.${domain}/oauth2/callback"
             - "https://analytics.${domain}:443/oauth2/callback"
-            - "https://backstage.${domain}/oauth2/callback"
-            - "https://backstage.${domain}:443/oauth2/callback"
             - "https://budget.${domain}/oauth2/callback"
             - "https://budget.${domain}:443/oauth2/callback"
             - "https://crossview.${domain}/oauth2/callback"
