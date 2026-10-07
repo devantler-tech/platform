@@ -124,6 +124,22 @@ if [[ "${url}" == "${servers_url}"* ]]; then
       exit 7
       ;;
     malformed:*) printf '{"servers":{"ip":"198.51.100.31"}}\n' ;;
+    # Shapes that carry an address where the script would not look for one, or do not say
+    # whether another page follows.
+    no-pagination:*)
+      printf '{"servers":[{"public_net":{"ipv4":{"ip":"198.51.100.31"}}}]}\n'
+      ;;
+    listed-ipv6:*)
+      printf '{"servers":[{"public_net":{"ipv4":{"ip":"198.51.100.31"},"ipv6":{"ip":["2001:db8:0:1::/64"]}}}],"meta":{"pagination":{"next_page":null}}}\n'
+      ;;
+    unlisted-alias:*)
+      printf '{"servers":[{"public_net":{"ipv4":{"ip":"198.51.100.31"}},"private_net":[{"ip":"192.0.2.11","alias_ips":"192.0.2.111"}]}],"meta":{"pagination":{"next_page":null}}}\n'
+      ;;
+    null-server:*)
+      printf '{"servers":[{"public_net":{"ipv4":{"ip":"198.51.100.31"}}},null],"meta":{"pagination":{"next_page":null}}}\n'
+      ;;
+    second-page-odd:1) one_server_page '"198.51.100.31"' 2 ;;
+    second-page-odd:2) one_server_page '"node-2.example.invalid"' null ;;
     not-json:*) printf 'gateway error naming 198.51.100.31\n' ;;
     no-servers:*) printf '{"servers":[],"meta":{"pagination":{"next_page":null}}}\n' ;;
     no-addresses:*)
@@ -503,7 +519,7 @@ expect_refusal_over_servers 'an unreachable server list' "${servers_unlisted_lin
   "${work_dir}/bin" FAKE_SERVERS_MODE=unreachable
 expect_refusal_over_servers 'a server list whose second page is unreachable' "${servers_unlisted_line}" \
   "${work_dir}/bin" FAKE_SERVERS_MODE=second-page-unreachable
-for mode in malformed not-json repeating odd-next-page; do
+for mode in malformed not-json repeating odd-next-page no-pagination listed-ipv6 unlisted-alias null-server; do
   expect_refusal_over_servers "a server list that is ${mode}" "${servers_invalid_line}" \
     "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
 done
@@ -513,7 +529,7 @@ for mode in no-servers no-addresses; do
   expect_refusal_over_servers "a server list with ${mode}" "${servers_empty_line}" \
     "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
 done
-for mode in command host-name too-short; do
+for mode in command host-name too-short second-page-odd; do
   expect_refusal_over_servers "a server address that is a ${mode}" "${servers_odd_address_line}" \
     "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
 done

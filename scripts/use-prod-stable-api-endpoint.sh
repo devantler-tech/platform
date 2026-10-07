@@ -110,11 +110,12 @@ fi
 # The endpoint is not the only address those tools print: the cluster update
 # names the node it read its settings from, and each node it writes to (#4612).
 # Which node that is changes from deploy to deploy and the autoscaler adds nodes
-# no file here lists, so every address of every server the token can see is
+# no file here lists, so every address of every server the token can see now is
 # registered the same way — a server that is not a node costs one unused mask.
-# A read that fails, or an answer this cannot take addresses from, stops the job
-# here: continuing would publish what this step exists to hide. Off a runner
-# nothing would read the commands, so the servers are not asked for at all.
+# A server created later in the job is not covered: its address is not known
+# here. A read that fails, or an answer this cannot take addresses from, stops
+# the job here: continuing would publish what this step exists to hide. Off a
+# runner nothing would read the commands, so the servers are not asked for.
 readonly servers_api="https://api.hetzner.cloud/v1/servers?per_page=50"
 readonly servers_page_limit=20
 if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
@@ -128,6 +129,7 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
     if ! servers_response="$(curl \
       --fail \
       --silent \
+      --max-time 30 \
       --retry 3 \
       --retry-all-errors \
       --header "Authorization: Bearer ${HCLOUD_TOKEN}" \
@@ -135,14 +137,22 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
       echo "::error::Could not list the production servers from the Hetzner API, so the node addresses cannot be masked." >&2
       exit 1
     fi
-    # A public IPv6 address is reported as the server's network, so its prefix
-    # is what every address inside it starts with.
+    # A server may lack a kind of address, but an address or a list that is
+    # present in another shape than expected is an answer this cannot take
+    # addresses from, as is a page that does not say whether another follows.
+    # A public IPv6 address is reported as the server's network; its prefix is
+    # registered, which covers an address printed in that same compressed form.
     if ! page_addresses="$(jq -r '
+        def address: if type == "string" then . else error("not an address") end;
+        def list: if . == null then [] elif type == "array" then . else error("not a list") end;
         if (.servers | type) != "array" then error("no server list") else . end
+        | if (.meta.pagination | type) != "object" or (.meta.pagination | has("next_page") | not)
+          then error("no pagination") else . end
         | .servers[]
-        | (.public_net.ipv4.ip? // empty),
-          ((.public_net.ipv6.ip? // empty) | strings | sub("/[0-9]+$"; "")),
-          (.private_net[]? | (.ip? // empty), (.alias_ips[]? // empty))
+        | if type != "object" then error("not a server") else . end
+        | (.public_net.ipv4 | if . == null then empty else .ip | address end),
+          (.public_net.ipv6 | if . == null then empty else .ip | address | sub("/[0-9]+$"; "") end),
+          (.private_net | list | .[] | (.ip | address), (.alias_ips | list | .[] | address))
       ' <<<"${servers_response}" 2>/dev/null)" ||
       ! next_page="$(jq -r '.meta.pagination.next_page // ""' <<<"${servers_response}" 2>/dev/null)"; then
       echo "::error::Hetzner returned an invalid server list, so the node addresses cannot be masked." >&2
