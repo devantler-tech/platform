@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 # Point admin@prod at the KSail-owned Hetzner floating IP before a deployment
 # can roll the control-plane node named by a stale KUBE_CONFIG secret.
+#
+# PUBLIC LOG. This repository's workflow logs are public and this script runs in
+# them, so nothing it prints — on stdout or stderr, on success or failure — may
+# name the endpoint address or anything the restored kubeconfig carries. Three
+# rules keep that true:
+#   * on a GitHub runner it registers the address as a masked value the moment
+#     it is selected, so the runner redacts it from every later line of the job
+#     whichever tool prints it. That one command carries the address to the
+#     runner, which redacts it in the log line too;
+#   * its own lines report outcomes only, never a value it read;
+#   * jq's and kubectl's own error text never reaches the log, because both can
+#     quote their input — a failed kubectl jsonpath prints the object it was
+#     given, which is the whole kubeconfig. Each call discards that text and the
+#     script says what failed in its own words.
+# scripts/tests/test-use-prod-stable-api-endpoint.sh pins both streams, line for
+# line, on every exit.
 
 set -euo pipefail
 
@@ -8,6 +24,14 @@ readonly cluster_name="prod"
 readonly kube_context="admin@prod"
 readonly floating_ip_name="${cluster_name}-floating-ip"
 readonly hcloud_api="https://api.hetzner.cloud/v1/floating_ips?name=${floating_ip_name}"
+
+# Discarding a tool's error text would also hide that the tool is missing.
+for tool in curl jq kubectl; do
+  if ! command -v "${tool}" >/dev/null 2>&1; then
+    echo "::error::${tool} is required to select the stable production API endpoint." >&2
+    exit 1
+  fi
+done
 
 if [[ -z "${HCLOUD_TOKEN:-}" ]]; then
   echo "::error::HCLOUD_TOKEN is required to resolve the production API floating IP." >&2
@@ -42,7 +66,7 @@ readonly response
 matching_count="$(jq -er \
   --arg name "${floating_ip_name}" \
   '[.floating_ips[]? | select(.name == $name)] | length' \
-  <<<"${response}")" || {
+  <<<"${response}" 2>/dev/null)" || {
   echo "::error::Hetzner returned an invalid response while resolving ${floating_ip_name}." >&2
   exit 1
 }
@@ -61,7 +85,7 @@ stable_ip="$(jq -er \
     | select(.labels["ksail.cluster.name"] == $cluster)
     | .ip
     | select(type == "string" and length > 0)
-  ' <<<"${response}")" || {
+  ' <<<"${response}" 2>/dev/null)" || {
   echo "::error::Hetzner floating IP ${floating_ip_name} is not owned by KSail for cluster ${cluster_name}; refusing to adopt it." >&2
   exit 1
 }
@@ -71,32 +95,55 @@ if [[ ! "${stable_ip}" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
   exit 1
 fi
 
-kube_cluster="$(kubectl --kubeconfig "${kubeconfig_path}" config view --raw \
-  -o jsonpath="{.contexts[?(@.name==\"${kube_context}\")].context.cluster}")"
+# Tools that run later in the job print the endpoint on their own — the cluster
+# update names it on every deploy, and a failed deploy's diagnostic excerpts can
+# too — so ask the runner to redact it before anything here or after can use
+# it. The command goes to stderr because several callers discard stdout, and it
+# goes nowhere else: the runner redacts the value in this line as well, while a
+# file, a step summary or an artifact would keep it. Off a runner there is
+# nothing to redact and the line would only print the address, so it is skipped.
+if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
+  echo "::add-mask::${stable_ip}" >&2
+fi
+
+# kubeconfig_field <jsonpath> — one field of the restored kubeconfig, or nothing
+# when kubectl cannot produce it. Only names and the server are read, so
+# credentials stay redacted (no --raw).
+kubeconfig_field() {
+  kubectl --kubeconfig "${kubeconfig_path}" config view -o jsonpath="$1" 2>/dev/null || true
+}
+
+kube_cluster="$(kubeconfig_field "{.contexts[?(@.name==\"${kube_context}\")].context.cluster}")"
 readonly kube_cluster
 if [[ -z "${kube_cluster}" ]]; then
-  echo "::error::Restored kubeconfig has no ${kube_context} context." >&2
+  echo "::error::Restored kubeconfig has no usable ${kube_context} context." >&2
   exit 1
 fi
 
-old_server="$(kubectl --kubeconfig "${kubeconfig_path}" config view --raw \
-  -o jsonpath="{.clusters[?(@.name==\"${kube_cluster}\")].cluster.server}")"
+old_server="$(kubeconfig_field "{.clusters[?(@.name==\"${kube_cluster}\")].cluster.server}")"
 readonly old_server
 if [[ -z "${old_server}" ]]; then
-  echo "::error::Context ${kube_context} references missing cluster ${kube_cluster}." >&2
+  echo "::error::Context ${kube_context} references a cluster the restored kubeconfig does not define." >&2
   exit 1
 fi
 
 readonly stable_server="https://${stable_ip}:6443"
-kubectl --kubeconfig "${kubeconfig_path}" config set-cluster "${kube_cluster}" \
-  --server="${stable_server}" >/dev/null
-
-updated_server="$(kubectl --kubeconfig "${kubeconfig_path}" config view --raw \
-  -o jsonpath="{.clusters[?(@.name==\"${kube_cluster}\")].cluster.server}")"
+if kubectl --kubeconfig "${kubeconfig_path}" config set-cluster "${kube_cluster}" \
+  --server="${stable_server}" >/dev/null 2>&1; then
+  updated_server="$(kubeconfig_field "{.clusters[?(@.name==\"${kube_cluster}\")].cluster.server}")"
+else
+  updated_server=""
+fi
 readonly updated_server
 if [[ "${updated_server}" != "${stable_server}" ]]; then
-  echo "::error::Failed to persist production API endpoint ${stable_server} in the restored kubeconfig." >&2
+  echo "::error::Failed to persist the stable production API endpoint in the restored kubeconfig." >&2
   exit 1
 fi
 
-echo "✅ Production kubeconfig now uses the stable API endpoint ${stable_ip} (was ${old_server})."
+# Whether the restored kubeconfig was stale is the one thing an operator needs
+# from this line, and it can be said without naming either server.
+if [[ "${old_server}" == "${stable_server}" ]]; then
+  echo "✅ Production kubeconfig already uses the stable API endpoint."
+else
+  echo "✅ Production kubeconfig now uses the stable API endpoint (the restored kubeconfig named a different server)."
+fi

@@ -57,7 +57,7 @@ jobs:
         shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: bash scripts/use-prod-stable-api-endpoint.sh >/dev/null
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
 
       # Creates only bounded, unprivileged probe Pods, never an App credential,
       # runner registration, policy, node or service-account TokenRequest.
