@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # CI-owned, bounded runtime acceptance. No Secret or generated JIT configuration is read.
-set -euo pipefail
+set -Eeuo pipefail
 umask 077
 
 fail() { printf 'ARC acceptance: FAIL at %s\n' "$1" >&2; exit 1; }

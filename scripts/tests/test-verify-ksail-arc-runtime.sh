@@ -173,6 +173,10 @@ case "$args" in
       *) cat "$ARC_TEST_ROOT/ars" ;;
     esac ;;
   *'get configmap ksail-arc-job-metrics-'*)
+    if [[ "$ARC_TEST_CASE" == live-api-error ]]; then
+      printf 'private-api-error-canary\n' >&2
+      exit 42
+    fi
     jq -cn --rawfile script "$ARC_TEST_ROOT/scripts/ksail-arc-job-metrics.sh" \
       --arg scenario "$ARC_TEST_CASE" '{metadata:{uid:"metrics-uid",annotations:{"kustomize.toolkit.fluxcd.io/substitute":"disabled"}},immutable:($scenario!="mutable-metrics"),
       data:{"job-metrics.sh":(if $scenario=="tampered-metrics" then "unverified" else $script end)}}' ;;
@@ -352,6 +356,16 @@ for name in retained-active-min retained-active-max retained-suspended retained-
   [[ ! -e "$scratch/runtime-access" && ! -e "$scratch/live-pod" ]]
 done
 run_case complete-proof pass
+run_case live-api-error fail
+grep -Fq 'ARC acceptance: FAIL at immutable-job-metrics' "$scratch/stderr" || {
+  printf 'FAIL: live API error did not identify the failing acceptance stage\n' >&2
+  exit 1
+}
+grep -Fq 'ARC acceptance: cleanup verified' "$scratch/stdout"
+if grep -Fq 'private-api-error-canary' "$scratch/stdout" "$scratch/stderr"; then
+  printf 'FAIL: private API diagnostics reached acceptance output\n' >&2
+  exit 1
+fi
 run_case delayed-flux pass
 [[ $(cat "$scratch/flux-reads") -gt 2 && -e "$scratch/registration-budget" ]]
 run_case delayed-registration pass
