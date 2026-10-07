@@ -96,10 +96,27 @@ func TestCheckedInOCIChartSources(t *testing.T) {
 	for _, expected := range chartSources {
 		t.Run(expected.name, func(t *testing.T) {
 			directory := filepath.Join(root, expected.directory)
-			source := readDocument(t, filepath.Join(directory, "helm-repository.yaml"))
+			source := readDocument(t, filepath.Join(directory, "oci-repository.yaml"))
 			release := readDocument(t, filepath.Join(directory, "helm-release.yaml"))
 			if err := validateSource(source, release, expected); err != nil {
 				t.Fatal(err)
+			}
+			kustomization := readDocument(t, filepath.Join(directory, "kustomization.yaml"))
+			resources, _ := kustomization["resources"].([]any)
+			count := 0
+			for _, resource := range resources {
+				if resource == "helm-repository.yaml" {
+					t.Fatal("kustomization still references the legacy source filename")
+				}
+				if resource == "oci-repository.yaml" {
+					count++
+				}
+			}
+			if count != 1 {
+				t.Fatalf("kustomization must include the kind-named source exactly once, found %d", count)
+			}
+			if _, err := os.Stat(filepath.Join(directory, "helm-repository.yaml")); !os.IsNotExist(err) {
+				t.Fatal("legacy source filename must be absent after migration")
 			}
 		})
 	}
@@ -108,7 +125,7 @@ func TestCheckedInOCIChartSources(t *testing.T) {
 func TestMigrationContractRejectsUnsafeInputs(t *testing.T) {
 	expected := chartSources[0]
 	root := filepath.Join(repositoryRoot(t), expected.directory)
-	source := readDocument(t, filepath.Join(root, "helm-repository.yaml"))
+	source := readDocument(t, filepath.Join(root, "oci-repository.yaml"))
 	release := readDocument(t, filepath.Join(root, "helm-release.yaml"))
 	if err := validateSource(source, release, expected); err != nil {
 		t.Fatalf("negative controls require a valid checked-in positive control: %v", err)
@@ -172,7 +189,7 @@ func TestFluxOperatorVersionRemainsDiscoverable(t *testing.T) {
 		t.Fatal("migration must preserve dependency update stability policy")
 	}
 	expected := chartSources[0]
-	path := expected.directory + "/helm-repository.yaml"
+	path := expected.directory + "/oci-repository.yaml"
 	source := readDocument(t, filepath.Join(root, path))
 	tag := object(object(source, "spec"), "ref")["tag"]
 	text, err := os.ReadFile(filepath.Join(root, path))

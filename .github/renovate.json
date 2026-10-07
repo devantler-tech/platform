@@ -43,7 +43,7 @@
       "customType": "regex",
       "description": "Track the flux-operator OCI chart tag in its OCIRepository via the docker datasource. The dedicated manager preserves update discovery after the migration from HelmRepository/chart.spec to OCIRepository/chartRef.",
       "managerFilePatterns": [
-        "/^k8s/bases/infrastructure/controllers/flux-operator/helm-repository\\.ya?ml$/"
+        "/^k8s/bases/infrastructure/controllers/flux-operator/oci-repository\\.ya?ml$/"
       ],
       "matchStrings": [
         "tag:\\s*(?<currentValue>\\S+)"

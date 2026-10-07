@@ -5,7 +5,7 @@ resources:
   - config-map.yaml
   - canary.yaml
   - helm-release.yaml
-  - helm-repository.yaml
+  - oci-repository.yaml
   - http-route.yaml
   - namespace.yaml
   - pod-disruption-budget.yaml
