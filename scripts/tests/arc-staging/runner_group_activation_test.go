@@ -3,7 +3,10 @@ package arcstaging_test
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const arcActivationFile = "managed-resource-activation-policy-arc.yaml"
@@ -29,6 +32,39 @@ func validateARCActivation(policy map[string]any, resources []any) error {
 		return fmt.Errorf("include the ARC activation policy exactly once")
 	}
 	return nil
+}
+
+func TestActivatedRunnerGroupKeepsSyncExporterCoverage(t *testing.T) {
+	const component = "k8s/bases/infrastructure/coroot/components/crossplane-sync-exporter/"
+	data := field(t, readYAML(t, component+"config-map.yaml"), "data").(map[string]any)
+	row := "actions.github.m.upbound.io\tv1alpha1\tRunnerGroup\trunnergroups"
+	if strings.Count(data["managed-resources.tsv"].(string), row) != 1 {
+		t.Fatal("activated RunnerGroup is absent from the closed exporter inventory")
+	}
+	var state map[string]any
+	if err := yaml.Unmarshal([]byte(data["custom-resource-state.yaml"].(string)), &state); err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, entry := range field(t, state, "spec", "resources").([]any) {
+		gvk := field(t, entry, "groupVersionKind")
+		if reflect.DeepEqual(gvk, map[string]any{"group": "actions.github.m.upbound.io", "version": "v1alpha1", "kind": "RunnerGroup"}) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatal("RunnerGroup needs exactly one condition collector")
+	}
+	want := map[string]any{"apiGroups": []any{"actions.github.m.upbound.io"}, "resources": []any{"repositorypermissions", "runnergroups"}, "verbs": []any{"get", "list", "watch"}}
+	count = 0
+	for _, rule := range field(t, readYAML(t, component+"cluster-role.yaml"), "rules").([]any) {
+		if reflect.DeepEqual(rule, want) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatal("RunnerGroup collector needs its exact read-only permission")
+	}
 }
 
 func TestARCResourceIsExplicitlyActivated(t *testing.T) {
