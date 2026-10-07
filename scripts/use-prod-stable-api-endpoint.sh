@@ -154,7 +154,7 @@ if [[ "${GITHUB_ACTIONS:-}" == "true" ]]; then
           (.public_net.ipv6 | if . == null then empty else .ip | address | sub("/[0-9]+$"; "") end),
           (.private_net | list | .[] | (.ip | address), (.alias_ips | list | .[] | address))
       ' <<<"${servers_response}" 2>/dev/null)" ||
-      ! next_page="$(jq -r '.meta.pagination.next_page | if . == null then "" elif type == "number" then tostring else error("not a page number") end' <<<"${servers_response}" 2>/dev/null)"; then
+      ! next_page="$(jq -rs 'if length != 1 then error("not one answer") else .[0] end | .meta.pagination.next_page | if . == null then "" elif type == "number" then tostring else error("not a page number") end' <<<"${servers_response}" 2>/dev/null)"; then
       echo "::error::Hetzner returned an invalid server list, so the node addresses cannot be masked." >&2
       exit 1
     fi
