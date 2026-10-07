@@ -972,6 +972,11 @@ jobs:
               - '.github/actions/deploy-prod/**'
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/ci.yaml'
+              # Every workflow that calls the stable-endpoint helper is checked by
+              # that helper's wiring test, and new callers keep appearing.
+              # Matching all workflows keeps that check running when only a caller
+              # changes; the test fails if this line is removed.
+              - '.github/workflows/**'
             talos:
               - 'talos/**'
               - 'talos-local/**'
