@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Protected-main-only challenge; never reads an App key, Secret or runner JIT data.
-set -euo pipefail
+set -Eeuo pipefail
 umask 077
 fail() { printf 'ARC transport: FAIL at %s\n' "$1" >&2; exit 1; }
 [[ "$#" == 1 && "$1" == --same-node ]] || fail arguments
@@ -51,12 +51,19 @@ trap 'printf "ARC transport: FAIL at %s\n" "$stage" >&2' ERR
 trap 'exit 143' INT TERM
 go build -trimpath -o "$scratch/evidence" ./scripts/verify-arc-transport >"$scratch/build-output" 2>"$scratch/build-error"
 
+policy_spec() {
+  # Kyverno v1.19.1 ClusterPolicy CRD defaults, also observed from this API.
+  # Add only absent defaults to the source; retain explicit values and unknown
+  # live fields so the complete spec comparison still rejects drift.
+  yq -o=json '.spec' "$1" | jq '
+    {admission:true,emitWarning:false,validationFailureAction:"Audit"} + . |
+    .rules |= map({skipBackgroundRequests:true} + . |
+      if has("validate") then .validate = ({allowExistingViolations:true} + .validate) else . end)'
+}
+
 public_listener_boundary() {
   kc get clusterpolicy restrict-arc-openbao-listener -o json >"$scratch/listener-policy.json"
-  # Include only defaults observed from this production API. Source fields
-  # take precedence; unknown fields and any rule or admission drift still fail.
-  yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
-    | jq '{admission:true,emitWarning:false,validationFailureAction:"Audit"} + .' >"$scratch/listener-spec.json"
+  policy_spec k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml >"$scratch/listener-spec.json"
   jq -e --slurpfile expected "$scratch/listener-spec.json" '.spec == $expected[0] and
     any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/listener-policy.json" >/dev/null
   kc -n openbao get configmap arc-openbao-listener -o json >"$scratch/listener.json"
@@ -95,8 +102,7 @@ jq -e --arg server "https://$host:8204" '.spec.provider.vault.server == $server 
 kc -n "$namespace" get configmap arc-openbao-ca -o json >"$scratch/ca.json"
 jq -er '.data["ca.crt"] | select(startswith("-----BEGIN CERTIFICATE-----"))' "$scratch/ca.json" >"$scratch/ca.pem"
 kc get clusterpolicy restrict-arc-openbao-certificate -o json >"$scratch/policy.json"
-yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
-  | jq '{admission:true,emitWarning:false,validationFailureAction:"Audit"} + .' >"$scratch/issuance-spec.json"
+policy_spec k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml >"$scratch/issuance-spec.json"
 jq -e --slurpfile expected "$scratch/issuance-spec.json" '.spec == $expected[0] and
  any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/policy.json" >/dev/null
 for layer in infrastructure infrastructure-controllers; do

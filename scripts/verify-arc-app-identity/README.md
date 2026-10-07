@@ -41,7 +41,10 @@ On a protected identity invocation, the verifier requires agreement between the 
 and live bootstrap App client ID and SecretStore. It accepts a reviewed CA bundle
 or a namespaced ConfigMap CA reference. It verifies the real listener's certificate
 and service hostname through an unchanged TLS session in a loopback port-forward
-**before** requesting a five-minute token for the existing dedicated reader. It
+**before** requesting a ten-minute token for the existing dedicated reader, the
+minimum lifetime Kubernetes accepts. Every Kubernetes subprocess explicitly
+selects the protected production context; the restored default context is not
+used. It
 does not create the service account, change a policy or use a broader reader.
 
 The endpoint is fixed to the separately reviewed dedicated `openbao-arc` Service
