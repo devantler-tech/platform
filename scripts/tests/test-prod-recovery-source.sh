@@ -77,13 +77,13 @@ grep -q 'PROD_RECOVERY_SOURCE=STALE' "$work_dir/log" || {
 }
 printf 'PASS: stale recovery cannot promote production\n'
 
-yq -r '.runs.steps[0].run' "$root_dir/.github/actions/deploy-prod/action.yml" > "$work_dir/entry.sh"
+yq -r '.runs.steps[] | select(.id == "verify_recovery_source") | .run' "$root_dir/.github/actions/deploy-prod/action.yml" > "$work_dir/entry.sh"
 entry_status=0
 bash "$work_dir/entry.sh" > "$work_dir/log" 2>&1 || entry_status=$?
 if [[ "$entry_status" != 1 ]] || ! grep -q 'PROD_RECOVERY_SOURCE=STALE' "$work_dir/log"; then
   echo 'FAIL: outdated recovery reached the deployment entry point' >&2; exit 1
 fi
-printf 'PASS: stale recovery stops at the first deployment step\n'
+printf 'PASS: stale recovery stops before deployment tooling and production changes\n'
 
 printf '%s\n' "$baseline" > "$work_dir/main-sha"
 check_promotion() {

@@ -16,12 +16,13 @@ violation() {
   dr="$root/.github/workflows/dr-rebuild.yaml"
   [[ "$(yq -r '.inputs.recovery-source-sha.default' "$deploy")" == '' &&
      "$(yq -r '.inputs.recovery-source-sha.default' "$publisher")" == '' ]] || { echo speculative-default; return; }
-  [[ "$(yq -r '.runs.steps[0].id' "$deploy")" == verify_recovery_source ]] || { echo deploy-first-gate; return; }
-  [[ "$(yq -r '.runs.steps[0].run' "$deploy")" == "$guard" ]] || { echo deploy-command; return; }
-  [[ "$(yq -r '.runs.steps[0] | has("if")' "$deploy")" == false &&
-     "$(yq -r '.runs.steps[0] | has("continue-on-error")' "$deploy")" == false ]] || { echo deploy-unconditional; return; }
-  [[ "$(yq -r '.runs.steps[0].env.RECOVERY_SOURCE_SHA' "$deploy")" == "\${{ inputs.recovery-source-sha }}" ]] || { echo deploy-binding; return; }
-  [[ "$(yq -r '.runs.steps[0].env.GH_TOKEN' "$deploy")" == "\${{ github.token }}" ]] || { echo reader-token; return; }
+  [[ "$(yq -r '.runs.steps[0].run' "$deploy")" == './scripts/guard-publish-workflow-approved-revisions.sh' ]] || { echo approved-policy-first; return; }
+  [[ "$(yq -r '.runs.steps[1].id' "$deploy")" == verify_recovery_source ]] || { echo deploy-first-gate; return; }
+  [[ "$(yq -r '.runs.steps[1].run' "$deploy")" == "$guard" ]] || { echo deploy-command; return; }
+  [[ "$(yq -r '.runs.steps[1] | has("if")' "$deploy")" == false &&
+     "$(yq -r '.runs.steps[1] | has("continue-on-error")' "$deploy")" == false ]] || { echo deploy-unconditional; return; }
+  [[ "$(yq -r '.runs.steps[1].env.RECOVERY_SOURCE_SHA' "$deploy")" == "\${{ inputs.recovery-source-sha }}" ]] || { echo deploy-binding; return; }
+  [[ "$(yq -r '.runs.steps[1].env.GH_TOKEN' "$deploy")" == "\${{ github.token }}" ]] || { echo reader-token; return; }
   [[ "$(yq -r '.runs.steps[] | select(.id == "publish_platform_manifest") | .with.recovery-source-sha' "$deploy")" == "\${{ inputs.recovery-source-sha }}" ]] || { echo publisher-binding; return; }
   [[ "$(yq -r '.jobs.heal-prod-on-failure.steps[] | select(.uses == "./.github/actions/deploy-prod") | .with.recovery-source-sha' "$ci")" == "\${{ steps.recovery-baseline.outputs.sha }}" ]] || { echo heal-binding; return; }
   [[ "$(yq -r '.jobs.deploy-prod.steps[] | select(.uses == "./.github/actions/deploy-prod") | .with.recovery-source-sha // ""' "$ci")" == '' ]] || { echo speculative-publication; return; }
@@ -59,10 +60,11 @@ ablate() {
   [[ "$got" == "$want" ]] || { echo "FAIL: $want mutation returned ${got:-nothing}" >&2; exit 1; }
   printf 'PASS: %s ablation\n' "$want"
 }
-ablate deploy-first-gate .github/actions/deploy-prod/action.yml 'del(.runs.steps[0])'
+ablate approved-policy-first .github/actions/deploy-prod/action.yml 'del(.runs.steps[0])'
+ablate deploy-first-gate .github/actions/deploy-prod/action.yml 'del(.runs.steps[1])'
 ablate speculative-default .github/actions/deploy-prod/action.yml '.inputs.recovery-source-sha.default = "main"'
-ablate deploy-unconditional .github/actions/deploy-prod/action.yml '.runs.steps[0].continue-on-error = true'
-ablate reader-token .github/actions/deploy-prod/action.yml '.runs.steps[0].env.GH_TOKEN = "wrong"'
+ablate deploy-unconditional .github/actions/deploy-prod/action.yml '.runs.steps[1].continue-on-error = true'
+ablate reader-token .github/actions/deploy-prod/action.yml '.runs.steps[1].env.GH_TOKEN = "wrong"'
 ablate publisher-binding .github/actions/deploy-prod/action.yml 'del(.runs.steps[] | select(.id == "publish_platform_manifest") | .with.recovery-source-sha)'
 ablate heal-binding .github/workflows/ci.yaml 'del(.jobs.heal-prod-on-failure.steps[] | select(.uses == "./.github/actions/deploy-prod") | .with.recovery-source-sha)'
 ablate manual-binding .github/workflows/cd.yaml 'del(.jobs.deploy-prod.steps[] | select(.uses == "./.github/actions/deploy-prod") | .with.recovery-source-sha)'

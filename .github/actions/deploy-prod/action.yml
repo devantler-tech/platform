@@ -53,6 +53,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # The action and policy come from the same checkout. Recovery therefore
+    # restores the policy of main even during the first narrowing rollout.
+    - name: 🔐 Enforce approved publication signers
+      shell: bash
+      env:
+        APPROVED_REVISIONS_ENFORCE: '1'
+      run: ./scripts/guard-publish-workflow-approved-revisions.sh
+
+    # Keep signer approval ahead of credentials, then refuse stale recovery
+    # before installing tools or changing production.
     - name: 🧭 Verify the validated recovery still matches main
       id: verify_recovery_source
       shell: bash
@@ -63,14 +73,6 @@ runs:
         if [[ -n "${RECOVERY_SOURCE_SHA}" ]]; then
           bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
         fi
-
-    # The action and policy come from the same checkout. Recovery therefore
-    # restores the policy of main even during the first narrowing rollout.
-    - name: 🔐 Enforce approved publication signers
-      shell: bash
-      env:
-        APPROVED_REVISIONS_ENFORCE: '1'
-      run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
