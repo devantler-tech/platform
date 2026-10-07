@@ -74,6 +74,9 @@ jobs:
           go test ./scripts/validate-merge-group-heal
           go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
           go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
+          shellcheck scripts/verify-prod-recovery-source.sh scripts/tests/test-prod-recovery-source.sh scripts/tests/test-prod-recovery-source-wiring.sh
+          bash scripts/tests/test-prod-recovery-source.sh
+          bash scripts/tests/test-prod-recovery-source-wiring.sh
           shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
           bash scripts/tests/test-merge-group-evicted.sh
           shellcheck scripts/check-flux-orphaned-objects.sh scripts/tests/test-check-flux-orphaned-objects.sh
@@ -3391,8 +3394,8 @@ jobs:
     steps:
       - name: 📑 Checkout main
         # Deploy the CURRENT tip of `main` (the last state that actually landed in
-        # Git), not the merge group's base_sha, so the heal can never regress prod
-        # below a newer merge that landed while this group was in flight.
+        # Git), not the merge group's base_sha. The deploy action rechecks this
+        # validated checkout before recovery changes production and at promotion.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
@@ -3509,6 +3512,7 @@ jobs:
         # from the happy path.
         uses: ./.github/actions/deploy-prod
         with:
+          recovery-source-sha: ${{ steps.recovery-baseline.outputs.sha }}
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           kube-config: ${{ secrets.KUBE_CONFIG }}
           talos-config: ${{ secrets.TALOS_CONFIG }}
