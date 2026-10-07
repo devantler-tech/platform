@@ -147,6 +147,8 @@ if [[ "${url}" == "${servers_url}"* ]]; then
       ;;
     repeating:*) one_server_page '"198.51.100.31"' "${page}" ;;
     odd-next-page:*) one_server_page '"198.51.100.31"' '"198.51.100.31"' ;;
+    # Anything but a page number or null leaves it unknown whether another page follows.
+    false-next-page:*) one_server_page '"198.51.100.31"' false ;;
     endless:*) one_server_page '"198.51.100.31"' "$((page + 1))" ;;
     second-page-unreachable:1) one_server_page '"198.51.100.31"' 2 ;;
     second-page-unreachable:2) exit 7 ;;
@@ -519,7 +521,7 @@ expect_refusal_over_servers 'an unreachable server list' "${servers_unlisted_lin
   "${work_dir}/bin" FAKE_SERVERS_MODE=unreachable
 expect_refusal_over_servers 'a server list whose second page is unreachable' "${servers_unlisted_line}" \
   "${work_dir}/bin" FAKE_SERVERS_MODE=second-page-unreachable
-for mode in malformed not-json repeating odd-next-page no-pagination listed-ipv6 unlisted-alias null-server; do
+for mode in malformed not-json repeating odd-next-page false-next-page no-pagination listed-ipv6 unlisted-alias null-server; do
   expect_refusal_over_servers "a server list that is ${mode}" "${servers_invalid_line}" \
     "${work_dir}/bin" FAKE_SERVERS_MODE="${mode}"
 done
