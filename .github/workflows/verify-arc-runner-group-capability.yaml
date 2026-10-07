@@ -73,7 +73,7 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
           set -euo pipefail
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null 2>&1; then
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
             echo 'ARC_RUNNER_GROUP_CAPABILITY=HOLD_ENDPOINT'
             exit 1
           fi
