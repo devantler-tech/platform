@@ -110,6 +110,14 @@ jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-contr
   ([.[]|select(.kind=="ServiceAccount" and .metadata.name=="data-product-controller-contract-probe")|.automountServiceAccountToken]==[false]) and
   ([.[]|select((.kind=="Service" or .kind=="HTTPRoute") and .metadata.name=="data-product-controller-contract-probe")]|length)==0' \
   "${scratch}/apps.json" >/dev/null || fail "${provider}: the independent probe must have two replicas and remain token-free and private"
+jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-controller-contract-probe"
+    and .metadata.namespace=="data-product-controller")] as $probe |
+  [.[] | select(.kind=="PodDisruptionBudget" and .metadata.name=="data-product-controller-contract-probe"
+    and .metadata.namespace=="data-product-controller")] as $budgets |
+  ($probe|length)==1 and ($budgets|length)==1 and $budgets[0].apiVersion=="policy/v1" and
+  $budgets[0].spec.maxUnavailable==1 and $budgets[0].spec.minAvailable==null and
+  $budgets[0].spec.selector=={matchLabels:$probe[0].spec.selector.matchLabels}' \
+  "${scratch}/apps.json" >/dev/null || fail "${provider}: the activated contract probe must retain one replica during voluntary disruption"
 jq -e '[.[]|select(.kind=="Role" and .metadata.name=="data-product-readiness-observer")|.rules] ==
   [[{apiGroups:["apps"],resources:["deployments"],resourceNames:["data-product-controller-harbour","data-product-controller-contract-probe"],verbs:["get"]}]] and
   ([.[]|select(.kind=="RoleBinding" and .metadata.name=="data-product-readiness-observer") |

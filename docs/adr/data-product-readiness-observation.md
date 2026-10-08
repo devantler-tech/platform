@@ -13,8 +13,9 @@ Platform owns a separate contract-probe Deployment with two replicas and literal
 observation enabled. The controller's connector and contract flags are enabled for
 the Harbour adoption, and the sample names its serving Deployment and independent
 probe. The chart-owned probe remains disabled so a second probe does not share
-the serving lifecycle. Two replicas meet Platform's capacity floor; all desired
-probes must be ready for product readiness.
+the serving lifecycle. Two replicas meet Platform's capacity floor. A matching
+`maxUnavailable: 1` disruption budget protects the remaining healthy probe during
+voluntary eviction; all desired probes must still be ready for product readiness.
 
 The probe targets only the sample's public HTTPS contract. Its service account
 does not mount an API token; it has no credential volumes, management Service,
