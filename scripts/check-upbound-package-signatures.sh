@@ -87,14 +87,28 @@ count="$(wc -l <"$scratch/packages.txt" | tr -d ' ')"
 
 # verify IDENTITY PACKAGE: succeed only when PACKAGE carries a keyless
 # signature from IDENTITY, issued by GitHub Actions.
+verification_started=false
 verify() {
+  : >"$scratch/cosign.log"
+  # Each package has three strict checks. Pace all successive invocations,
+  # including controls and package boundaries, rather than bursting token
+  # requests at the public registry. This is not a retry or an error-text gate.
+  if [[ "$verification_started" == true ]]; then
+    sleep 30 || {
+      echo 'verification pacing wait failed' >"$scratch/cosign.log"
+      return 1
+    }
+  fi
+  verification_started=true
   "$cosign" verify --certificate-oidc-issuer "$UPBOUND_ISSUER" \
     --certificate-identity "$1" "$2" >/dev/null 2>"$scratch/cosign.log"
 }
 
 while IFS= read -r package; do
   if ! verify "$UPBOUND_IDENTITY" "$package"; then
-    echo "FAIL: $package is not signed by Upbound's build workflow" >&2
+    # A nonzero verifier exit can also mean the registry never answered.
+    # Report the failed check without inventing an unsigned-package verdict.
+    echo "FAIL: could not verify $package with Upbound's build identity" >&2
     tail -n 5 "$scratch/cosign.log" >&2
     exit 1
   fi

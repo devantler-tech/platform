@@ -73,9 +73,21 @@ set -euo pipefail
 identity="\$5" ref="\$6"
 echo "\$ref" >>"$scratch/calls.log"
 calls=\$(wc -l <"$scratch/calls.log" | tr -d ' ')
+previous=\$(tail -n 1 "$scratch/events.log")
+echo verify >>"$scratch/events.log"
+if [[ "\${COSIGN_MODE:-normal}" == burst && "\$calls" -gt 1 && "\$previous" != sleep:30 ]]; then
+  echo 'unexpected status code 429 Too Many Requests' >&2
+  exit 1
+fi
 case "\${COSIGN_MODE:-normal}" in
-  normal) [[ "\$identity" == '$good_identity' ]] ;;
-  unsigned-iam) [[ "\$ref" != *provider-aws-iam* && "\$identity" == '$good_identity' ]] ;;
+  normal|burst|wait-fails) [[ "\$identity" == '$good_identity' ]] ;;
+  unsigned-iam)
+    if [[ "\$ref" == *provider-aws-iam* || "\$identity" != '$good_identity' ]]; then
+      echo 'none of the expected identities matched what was in the certificate' >&2
+      exit 1
+    fi
+    ;;
+  registry-rate-limit) echo 'unexpected status code 429 Too Many Requests' >&2; exit 1 ;;
   accepts-anything) exit 0 ;;
   outage-after-first) [[ "\$calls" -eq 1 && "\$identity" == '$good_identity' ]] ;;
   *) exit 99 ;;
@@ -84,11 +96,24 @@ SH
 chmod +x "$scratch/cosign"
 export COSIGN="$scratch/cosign"
 
+# Exercise the real pacing boundary without waiting in an offline test. No
+# production environment variable may reduce the fixed interval.
+cat >"$scratch/sleep" <<SH
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "\$#" -eq 1 && "\$1" == 30 ]] || exit 99
+echo sleep:30 >>"$scratch/events.log"
+[[ "\${COSIGN_MODE:-normal}" != wait-fails ]]
+SH
+chmod +x "$scratch/sleep"
+export PATH="$scratch:$PATH"
+
 failures=0
 # expect NAME WANT_STATUS WANT_TEXT FIXTURE [MODE]
 expect() {
   local name="$1" want="$2" text="$3" fixture="$4" mode="${5:-normal}" status=0
   : >"$scratch/calls.log"
+  : >"$scratch/events.log"
   COSIGN_MODE="$mode" bash scripts/check-upbound-package-signatures.sh --rendered "$fixture" \
     >"$scratch/out.log" 2>&1 || status=$?
   if [[ "$status" -ne "$want" ]] || ! grep -qF -- "$text" "$scratch/out.log"; then
@@ -102,17 +127,35 @@ expect() {
 
 expect 'both signed Upbound packages verify' 0 \
   '2 Upbound package signatures verified' "$scratch/rendered.yaml"
+if [[ "$(cat "$scratch/events.log")" != $'verify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify\nsleep:30\nverify' ]]; then
+  echo 'FAIL: every consecutive verifier call must be separated, including controls and package boundaries' >&2
+  failures=$((failures + 1))
+fi
 if grep -qv '^xpkg\.upbound\.io/upbound/provider-\(family-aws\|aws-iam\):v2\.6\.1$' "$scratch/calls.log"; then
   echo 'FAIL: a non-Upbound or non-Provider reference was sent to cosign:' >&2
   sed 's/^/  /' "$scratch/calls.log" >&2
   failures=$((failures + 1))
 fi
 expect 'a package not signed by Upbound is refused' 1 \
-  'FAIL: xpkg.upbound.io/upbound/provider-aws-iam:v2.6.1 is not signed' "$scratch/rendered.yaml" unsigned-iam
+  'FAIL: could not verify xpkg.upbound.io/upbound/provider-aws-iam:v2.6.1' "$scratch/rendered.yaml" unsigned-iam
 expect 'a verifier that accepts any identity is caught' 1 \
   'verified against a deliberately wrong identity' "$scratch/rendered.yaml" accepts-anything
 expect 'an outage during the negative control is not read as a refusal' 1 \
   'stopped verifying after the negative control' "$scratch/rendered.yaml" outage-after-first
+expect 'a registry enforcing burst limits verifies with paced requests' 0 \
+  '2 Upbound package signatures verified' "$scratch/rendered.yaml" burst
+expect 'an HTTP 429 is not reported as an unsigned package' 1 \
+  'FAIL: could not verify' "$scratch/rendered.yaml" registry-rate-limit
+if grep -qF 'is not signed' "$scratch/out.log"; then
+  echo 'FAIL: transport failure was reported as an unsigned package' >&2
+  failures=$((failures + 1))
+fi
+expect 'a failed pacing wait does not permit another verifier call' 1 \
+  'stopped verifying after the negative control' "$scratch/rendered.yaml" wait-fails
+if [[ "$(wc -l <"$scratch/calls.log" | tr -d ' ')" -ne 1 ]]; then
+  echo 'FAIL: verifier ran after the pacing wait failed' >&2
+  failures=$((failures + 1))
+fi
 expect 'a privileged provider repointed to another registry is refused' 1 \
   'Provider provider-aws-iam must use xpkg.upbound.io/upbound/provider-aws-iam' "$scratch/repointed.yaml"
 expect 'a privileged provider that is not rendered is refused' 1 \
