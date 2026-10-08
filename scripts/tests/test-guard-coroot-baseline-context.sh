@@ -62,12 +62,14 @@ export -f sleep
 export PATH="${scratch}/bin:${PATH}" FIXTURE_DIR="${scratch}"
 script="${root_dir}/scripts/guard-coroot-baseline-context.sh"
 
+extra_args=()
 check() {
   local name="$1" phase="$2" expected="$3" scenario="$4" manifest="$5" reason="${6:-}" rc=0
   : >"${scratch}/outputs"
   rm -f "${scratch}/count"
   SCENARIO="${scenario}" GITHUB_OUTPUT="${scratch}/outputs" bash "${script}" "${phase}" \
-    --context fixture --namespace-manifest "${scratch}/${manifest}.yaml" >"${scratch}/output" 2>&1 || rc=$?
+    --context fixture --namespace-manifest "${scratch}/${manifest}.yaml" \
+    ${extra_args[@]+"${extra_args[@]}"} >"${scratch}/output" 2>&1 || rc=$?
   if [[ "${expected}" == pass && "${rc}" -ne 0 ]] || [[ "${expected}" == fail && "${rc}" -ne 1 ]]; then
     printf 'FAIL: %s (exit %s)\n' "${name}" "${rc}" >&2
     cat "${scratch}/output" >&2
@@ -174,4 +176,83 @@ jq '.items |= map(.spec.template.spec.securityContext.fsGroupChangePolicy = "OnR
   .spec.template.spec.containers |= map(.securityContext.seLinuxOptions = {}))' \
   "${scratch}/input.3.json" >"${scratch}/tmp.json" && mv "${scratch}/tmp.json" "${scratch}/input.3.json"
 check 'losing readiness during observation fails' after-reconcile fail normal enabled 'lost readiness'
+
+# A template that was already unready before publication. Only all six carrying
+# both fields, unrewritten, separates an unrelated fault from an admission loop.
+jq '.items[4].spec.replicas = 2 | .items[4].status |= (.replicas = 2 | .readyReplicas = 1 | .updatedReplicas = 2 | .availableReplicas = 1)' \
+  "${scratch}/hardened.json" >"${scratch}/degraded.json"
+record='[{"key":"StatefulSet/coroot-coroot","generation":3,"uid":"uid-coroot-coroot","ready":1}]'
+use degraded
+check 'a stable pre-existing unready template does not refuse publication' before-publish pass normal enabled \
+  'already unready before this deployment'
+grep -qx 'rollout_required=true' "${scratch}/outputs"
+grep -qxF "preexisting_unready=${record}" "${scratch}/outputs"
+[[ "$(cat "${scratch}/count")" == 4 ]] || {
+  printf 'FAIL: a pre-existing unready template must receive three stability samples\n' >&2
+  exit 1
+}
+use degraded; cp "${scratch}/hardened.json" "${scratch}/input.4.json"
+check 'a template that recovers during observation leaves no tolerated record' before-publish pass normal enabled
+grep -qx 'rollout_required=true' "${scratch}/outputs"
+if grep -q '^preexisting_unready=' "${scratch}/outputs"; then
+  printf "FAIL: a recovered template must leave no tolerated record\n" >&2
+  exit 1
+fi
+jq '.items[4].metadata.generation = 4 | .items[4].status.observedGeneration = 4' \
+  "${scratch}/degraded.json" >"${scratch}/degraded-regen.json"
+use degraded; cp "${scratch}/degraded-regen.json" "${scratch}/input.3.json"
+check 'an unready template rewritten during observation is refused' before-publish fail normal enabled 'rewrote or replaced'
+jq '.items[4].metadata.resourceVersion = "101"' "${scratch}/degraded.json" >"${scratch}/degraded-v101.json"
+jq '.items[4].metadata.resourceVersion = "102"' "${scratch}/degraded.json" >"${scratch}/degraded-v102.json"
+use degraded; cp "${scratch}/degraded-v101.json" "${scratch}/input.2.json"; cp "${scratch}/degraded-v102.json" "${scratch}/input.3.json"
+check 'an unready template written repeatedly is refused' before-publish fail normal enabled 'repeated owner writes'
+jq '.items[4].metadata.generation = 4' "${scratch}/degraded.json" >"${scratch}/degraded-unobserved.json"
+use degraded-unobserved
+check 'an unready template with an unobserved generation is refused' before-publish fail normal enabled 'has not observed the latest generation'
+use degraded; cp "${scratch}/unhardened.json" "${scratch}/input.3.json"
+check 'an unready template losing its fields during observation is refused' before-publish fail normal enabled 'removed an admitted field'
+jq '.items[4].metadata.ownerReferences = []' "${scratch}/degraded.json" >"${scratch}/degraded-orphan.json"
+use degraded; cp "${scratch}/degraded-orphan.json" "${scratch}/input.2.json"
+check 'an unready template losing its owner during observation is refused' before-publish fail normal enabled 'lost its operator owner'
+
+# After reconcile the tolerated record admits only that same object, no worse.
+use degraded
+check 'an unready template with no tolerated record still fails' after-reconcile fail normal enabled 'did not all reach both fields'
+extra_args=(--tolerate-unready "${record}")
+check 'a tolerated pre-existing unready template is reported, not passed' after-reconcile pass normal enabled \
+  'PREEXISTING-UNREADY: six Coroot templates carry both fields and are stable; StatefulSet/coroot-coroot'
+grep -qx 'baseline_result=preexisting-unready' "${scratch}/outputs"
+if grep -q '^PASS:' "${scratch}/output"; then
+  printf "FAIL: a still-unready template must never be reported as a pass\n" >&2
+  exit 1
+fi
+use hardened
+check 'a tolerated template that recovered passes' after-reconcile pass normal enabled
+grep -qx 'baseline_result=pass' "${scratch}/outputs"
+grep -qx 'PASS: six Coroot templates carry both fields, are ready, and are stable' "${scratch}/output"
+jq '.items[1].status.readyReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-second.json"
+use degraded-second
+check 'the tolerated record does not cover another template' after-reconcile fail normal enabled 'did not all reach both fields'
+use degraded-regen
+check 'the tolerated record lapses when the deployment changes the template' after-reconcile fail normal enabled 'did not all reach both fields'
+jq '.items[4].metadata.uid = "uid-replacement"' "${scratch}/degraded.json" >"${scratch}/degraded-replaced.json"
+use degraded-replaced
+check 'the tolerated record lapses when the template is replaced' after-reconcile fail normal enabled 'did not all reach both fields'
+jq '.items[4].status.readyReplicas = 0 | .items[4].status.availableReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-worse.json"
+use degraded-worse
+check 'a tolerated template that got less ready fails' after-reconcile fail normal enabled 'did not all reach both fields'
+use degraded; cp "${scratch}/degraded-worse.json" "${scratch}/input.3.json"
+check 'a tolerated template losing readiness during observation fails' after-reconcile fail normal enabled 'lost readiness'
+use degraded; cp "${scratch}/degraded-v101.json" "${scratch}/input.2.json"; cp "${scratch}/degraded-v102.json" "${scratch}/input.3.json"
+check 'a tolerated template is still held to the rewrite loop check' after-reconcile fail normal enabled 'repeated owner writes'
+jq '.items |= map(.spec.template.spec.securityContext |= del(.fsGroupChangePolicy))' "${scratch}/degraded.json" >"${scratch}/degraded-stripped.json"
+use degraded-stripped
+check 'a tolerated template is still held to both fields' after-reconcile fail normal enabled 'did not all reach both fields'
+use degraded
+extra_args=(--tolerate-unready '[{"key":"StatefulSet/other","generation":3,"uid":"u","ready":1}]')
+check 'a tolerated record naming an unreviewed template is refused' after-reconcile fail normal enabled 'record is malformed'
+extra_args=(--tolerate-unready 'not-json')
+check 'a tolerated record that is not JSON is refused' after-reconcile fail normal enabled 'record is malformed'
+extra_args=()
+
 printf 'PASS: Coroot baseline guard fixtures\n'
