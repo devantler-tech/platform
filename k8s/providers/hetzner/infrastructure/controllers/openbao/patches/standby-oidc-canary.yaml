@@ -1,7 +1,11 @@
-# Deliver the already-selected standby OIDC repair to one production replica.
-# Keep the lower ordinals on their current revision until the canary is unsealed
-# and healthy. Advancing this partition requires a separate reviewed change and
-# deployment readback (#4391); the base/local chart retains OnDelete.
+# Production replaces an OpenBao server only when its Pod is deleted or lost.
+# OnDelete creates a missing Pod from the newest StatefulSet revision. A rolling
+# update with a partition instead builds every ordinal below the partition from
+# the stored current revision, which production kept from before the pins that
+# keep these volumes on the baseline workers: when openbao-0 was lost, admission
+# refused its replacement and the cluster ran on two of three servers (#4391).
+# The earlier one-replica canary (openbao-2) has run the repaired release
+# unsealed since; nothing here replaces a running server.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -25,6 +29,5 @@ spec:
                 namespace: openbao
               spec:
                 updateStrategy:
-                  type: RollingUpdate
-                  rollingUpdate:
-                    partition: 2
+                  type: OnDelete
+                  rollingUpdate: null

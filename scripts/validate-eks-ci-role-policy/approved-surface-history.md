@@ -3322,3 +3322,21 @@ devantler-tech/ksail could list usage but not the limit.
 These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
 which is not the approved renderer; the required CI job re-renders with the
 approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.
+
+## 2026-10-08 — OpenBao replaces a server only when its Pod is lost
+
+The renderer measured exactly one changed authorization entry for #4391
+against base `6de1a8b9`: HelmRelease openbao/openbao. Nothing was added or
+removed from the selected authorization surface. Its ledger entry moves from
+`5f42ca30331162fc4ee98a0487fa3651140f0542ff49b573a99a46a343582616` to
+`83c3232f567e9320bf9561380834fb64ba0e34f974c4dfd026bef228bf59ecd3`.
+
+The source delta is the StatefulSet update strategy in the release's single
+post-renderer patch: `RollingUpdate` with `partition: 2` becomes `OnDelete`,
+the chart's own default. No value, identity, mount, listener, policy or
+network rule changes. The partition made the controller recreate a lost
+lower ordinal from a stored revision that predates the baseline-worker
+pins, which admission refuses, so a lost server could not return.
+
+These values were computed locally with the approved kubectl v1.36.2 /
+Kustomize v5.8.1 renderer.
