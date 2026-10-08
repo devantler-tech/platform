@@ -24,6 +24,14 @@ spec:
       enableHA: true
       deployment:
         replicas: ${reloader_replicas:=2}
+        # Keep the platform admission defaults visible in the chart render.
+        resources:
+          requests:
+            cpu: 15m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
         securityContext:
           runAsUser: 65534
           runAsGroup: 65534

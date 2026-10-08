@@ -3,10 +3,13 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/reloader-placement.XXXXXX")"
-trap 'rm -rf -- "${scratch}"' EXIT
+local_fixture="$(mktemp -d "${root_dir}/.reloader-local-opt-in.XXXXXX")"
+trap 'rm -rf -- "${scratch}" "${local_fixture}"' EXIT
 
+# Stop the render guard with the failed invariant.
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
+# Check the actual chart's placement, HA, security and resource bounds.
 placement_is_independent() {
   jq -e -s --argjson replicas "$2" '
     length == 1 and (.[0] |
@@ -17,7 +20,8 @@ placement_is_independent() {
       .securityContext.allowPrivilegeEscalation == false and
       .securityContext.readOnlyRootFilesystem == true and
       .securityContext.runAsNonRoot == true and
-      .securityContext.capabilities.drop == ["ALL"]) and
+      .securityContext.capabilities.drop == ["ALL"] and
+      .resources == {requests:{cpu:"15m",memory:"128Mi"},limits:{cpu:"500m",memory:"512Mi"}}) and
     (
     .spec.template.metadata.labels as $labels |
     .spec.template.spec as $pod |
@@ -48,14 +52,36 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
 [[ "$(yq -er '.data.reloader_replicas' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" == 2 ]] ||
   fail 'revalidate independent placement if the production replica count changes'
 
+# Reloader is opt-in, not part of the thin Docker overlay. Exercise its actual
+# composition with that overlay in a one-replica fixture without enabling it
+# in the shared local cluster configuration.
+printf '%s\n' \
+  'apiVersion: kustomize.config.k8s.io/v1beta1' \
+  'kind: Kustomization' \
+  'resources:' \
+  '  - ../k8s/providers/docker/infrastructure/controllers' \
+  '  - ../k8s/bases/infrastructure/controllers/reloader' \
+  'patches:' \
+  '  - target:' \
+  '      kind: HelmRelease' \
+  '      name: reloader' \
+  '    patch: |-' \
+  '      - op: replace' \
+  '        path: /spec/values/reloader/deployment/replicas' \
+  '        value: 1' >"${local_fixture}/kustomization.yaml"
+kubectl kustomize "${local_fixture}" |
+  yq ea 'select(.kind == "HelmRelease" and .metadata.name == "reloader")' - >"${scratch}/local-release.yaml"
+
 for replicas in 2 1; do
-  effective_release="${release}"
+  effective_release="${scratch}/local-release.yaml"
   [[ "${replicas}" != 2 ]] || effective_release="${scratch}/prod-release.yaml"
   yq '.spec.values' "${effective_release}" >"${scratch}/values.yaml"
   # Resolve the established Flux placeholder, rather than masking a literal
   # replica-count regression in the effective production release.
-  [[ "$(yq -er '.reloader.deployment.replicas' "${scratch}/values.yaml")" == "\${reloader_replicas:=2}" ]] ||
-    fail 'the effective reloader release must retain its configured replica placeholder'
+  expected_replicas=1
+  [[ "${replicas}" != 2 ]] || expected_replicas="\${reloader_replicas:=2}"
+  [[ "$(yq -er '.reloader.deployment.replicas' "${scratch}/values.yaml")" == "${expected_replicas}" ]] ||
+    fail 'the effective reloader release must retain its configured replica count'
   RELOADER_REPLICAS="${replicas}" yq -i '.reloader.deployment.replicas = env(RELOADER_REPLICAS)' "${scratch}/values.yaml"
   "${helm_bin}" template reloader "${scratch}/reloader-${chart_version}.tgz" --namespace reloader \
     --kube-version "${kube_version}" \
@@ -87,6 +113,8 @@ for replicas in 2 1; do
     '.spec.template.spec.topologySpreadConstraints[0].labelSelector.matchLabels.app = "other"' \
     '.spec.template.spec.containers[0].args = []' \
     '.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation = true' \
+    'del(.spec.template.spec.containers[0].resources)' \
+    '.spec.template.spec.containers[0].resources.limits.memory = "1Gi"' \
     '.spec.replicas = 0'; do
     jq "${mutation}" "${scratch}/deployment.json" >"${scratch}/mutated.json"
     if placement_is_independent "${scratch}/mutated.json" "${replicas}"; then
