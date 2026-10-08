@@ -3322,3 +3322,19 @@ devantler-tech/ksail could list usage but not the limit.
 These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
 which is not the approved renderer; the required CI job re-renders with the
 approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.
+
+## 2026-10-08 — Independent reloader replica placement
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer in CI run
+37851989501, job 113569129825, measured exactly one changed entry at
+`df6153ec520d46681366bc49d62d36d1d77d31ac`: HelmRelease reloader/reloader.
+No entry was added or removed. Its fingerprint moves from
+`177bc2a47ba87335ce284b71f54a5430565f0df26a46f3ddf74a33f0a5ade937` to
+`0f8235a479614c5bb68302b8f1f3267a85e3ffcb5a54c46ce4542b6e16e7f645`.
+
+The source changes hostname placement to a required, same-revision separation
+and states the existing admission-default resource bounds explicitly. High
+availability, two production replicas, the one-replica opt-in configuration,
+security settings, disruption budget, and pinned chart and image are retained.
+No RBAC, IAM, service account, or permission grant changes. The exact ledger
+comparison and authorization negative controls remain enabled.
