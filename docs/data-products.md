@@ -31,7 +31,7 @@ Harbour readiness observes its serving Deployment and a separate two-replica
 contract probe. The probe uses a token-free service account and an exact-host
 HTTPS and DNS policy; the controller can GET only the named Harbour and probe
 Deployments. All desired replicas must be current and ready. The deployment
-receipt requires current dependency conditions, the exact output contract URL,
+receipt requires current dependency conditions, the declared observations and contract URLs,
 and healthy probe Pods, and refuses a state that differs from the checked-out
 Helm declaration. See the [readiness decision](adr/data-product-readiness-observation.md)
 for rollback and the remaining fault/recovery acceptance before flag retirement.

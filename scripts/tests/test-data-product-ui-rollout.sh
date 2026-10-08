@@ -88,7 +88,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
 {apps:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",kind:"Kustomization",metadata:meta("apps";"flux-system"),spec:{suspend:false,sourceRef:{kind:"OCIRepository",name:"flux-system"}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAppliedRevision:("latest@"+$apps)}},
  root:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("flux-system";"flux-system"),spec:{suspend:false,verify:root_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:("latest@"+$apps),digest:("sha256:"+([range(64)|"e"]|join("")))}}},
  chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",ref:{digest:$chart},verify:chart_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
- product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{ui:{url:"https://harbour-data.example.com/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}},status:{observedGeneration:3,conditions:[condition("Ready")]}},
+ product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{outputs:[{name:"observations",url:"https://harbour-data.example.com/api/observations",contractUrl:"https://harbour-data.example.com/openapi.json"}],ui:{url:"https://harbour-data.example.com/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}},status:{observedGeneration:3,conditions:[condition("Ready")]}},
  helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},uiContract:{enabled:true,additionalHostOrigins:["https://product-ui.example.com"]},uiAppearance:{enabled:true},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"},connectorReadiness:{enabled:false},contractReadiness:{enabled:false},contractProbe:{enabled:false}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"data-product-controller",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
  "deployment-controller":(deployment("data-product-controller";"controller") | .spec.template.spec.containers[0].env=[
    {name:"CONNECTOR_READINESS_ENABLED",value:"false"},{name:"CONTRACT_READINESS_ENABLED",value:"false"}]),
@@ -341,13 +341,15 @@ mutate_case helm-missing-connector-flag helm 'del(.spec.values.connectorReadines
 mutate_case helm-missing-contract-flag helm 'del(.spec.values.contractReadiness.enabled)'
 mutate_case helm-missing-probe-flag helm 'del(.spec.values.contractProbe.enabled)'
 run_case healthy pass
+mutate_case dormant-wrong-output-url product '.spec.outputs[0].url="https://other.example.com/api/observations"' 15
+mutate_case dormant-missing-output-url product 'del(.spec.outputs[0].url)'
 mkdir "${scratch}/active"
 jq --arg child "$child" '
   .helm.spec.values.connectorReadiness.enabled=true | .helm.spec.values.contractReadiness.enabled=true |
   ."deployment-controller".spec.template.spec.containers[0].env[].value="true" |
   .product.spec.connector={adapter:"deployment/v1",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-harbour"}} |
   .product.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}] |
-  .product.spec.outputs=[{name:"observations",contractUrl:"https://harbour-data.example.com/openapi.json"}] |
+  .product.spec.outputs=[{name:"observations",url:"https://harbour-data.example.com/api/observations",contractUrl:"https://harbour-data.example.com/openapi.json"}] |
   .product.status.conditions=[{type:"Ready",status:"True",observedGeneration:3,reason:"DependenciesReady"},
     {type:"ConnectorReady",status:"True",observedGeneration:3,reason:"ConnectorReady"},
     {type:"ContractsReady",status:"True",observedGeneration:3,reason:"ContractsReady"}] |
@@ -380,7 +382,7 @@ active_mutation() {
   mkdir "${scratch}/$name"
   cp "${scratch}/active/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/active/$key.json" >"${scratch}/$name/$key.json"
-  run_case "$name" fail '' 3
+  run_case "$name" fail '' "${4:-3}"
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
@@ -392,6 +394,8 @@ active_mutation active-wrong-connector product '.spec.connector.resourceRef.name
 active_mutation active-foreign-scope product '.spec.connector.resourceRef.namespace="other"'
 active_mutation active-wrong-output product '.spec.contractChecks[0].output="other"'
 active_mutation active-wrong-url product '.spec.outputs[0].contractUrl="https://other.example.com/openapi.json"'
+active_mutation active-wrong-output-url product '.spec.outputs[0].url="https://other.example.com/api/observations"' 15
+active_mutation active-missing-output-url product 'del(.spec.outputs[0].url)'
 active_mutation active-wrong-probe product '.spec.contractChecks[0].resourceRef.name="data-product-controller-harbour"'
 active_mutation active-disabled-controller deployment-controller '.spec.template.spec.containers[0].env[1].value="false"'
 active_mutation active-missing-connector-flag helm 'del(.spec.values.connectorReadiness.enabled)'
@@ -544,7 +548,9 @@ jq -e '(has("retaken") or has("settled")) == false' "${scratch}/first-pair-agree
 mkdir -p "${scratch}/settled-wrong/after"
 cp "${scratch}/healthy/"*.json "${scratch}/settled-wrong/"
 jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/settled-wrong/after/apps.json"
-run_case settled-wrong fail '' 3
+# Reach both snapshots before testing the retained change name. A three-second
+# budget can expire during the first collection on a loaded runner.
+run_case settled-wrong fail '' 15
 jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"]' "${scratch}/settled-wrong/stdout" >/dev/null ||
   fail 'settled-wrong: a rollout that settled into a wrong state was not refused with the change named'
 # Public checks that fail once while the rollout moves are retaken with it.
@@ -557,7 +563,8 @@ expected_urls=9
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/moving-public/stdout" >/dev/null ||
   fail 'moving-public: the accepted report did not name the change that settled'
 # Against a rollout that holds still, one failed public check refuses the deploy.
-run_case still-public fail flaky-public 3
+# This reason requires a failed public request and two complete snapshots.
+run_case still-public fail flaky-public 15
 jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
   fail 'still-public: a failed public check against an unchanged rollout was not refused as such'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3

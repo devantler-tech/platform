@@ -152,7 +152,7 @@ elif $role == "chart" or $role == "root" then {apiVersion,kind,metadata:(.metada
   spec:{suspend:.spec.suspend,url:.spec.url,ref:{digest:.spec.ref.digest},verify:.spec.verify},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),artifact:(.status.artifact|{revision,digest})}}
 elif $role == "product" then {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),outputs:[.spec.outputs[]? | {name,contractUrl}],
+  spec:{connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),outputs:[.spec.outputs[]? | {name,url,contractUrl}],
     ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions)}}
 elif $role|startswith("service-") then {apiVersion,kind,metadata:(.metadata|metadata),
@@ -260,7 +260,6 @@ def product_observation:
     (.spec.contractChecks|length)==1 and (.spec.contractChecks[0]|keys)==["output","resourceRef"] and
     .spec.contractChecks[0].output=="observations" and
     (.spec.contractChecks[0].resourceRef|reference("data-product-controller-contract-probe")) and
-    .spec.outputs==[{name:"observations",contractUrl:("https://harbour-data."+$domain+"/openapi.json")}] and
     ready(["ConnectorReady","ContractsReady","Ready"]) and
     all([["ConnectorReady","ConnectorReady"],["ContractsReady","ContractsReady"],["Ready","DependenciesReady"]][];
       . as $expected | any($product.status.conditions[]?; .type==$expected[0] and .reason==$expected[1]))
@@ -367,6 +366,7 @@ def route($name;$host;$backend;$public):
   .status.history[0].chartVersion==.status.lastAttemptedRevision and .status.history[0].ociDigest==$chart_digest and .status.history[0].configDigest==.status.lastAttemptedConfigDigest) and
 (.product|identity("DataProduct";"data.devantler.tech/v1alpha1";"harbour-observations";$namespace) and
   .status.observedGeneration==.metadata.generation and ready(["Ready"]) and .spec.ui.url==("https://harbour-data."+$domain+"/ui") and
+  .spec.outputs==[{name:"observations",url:("https://harbour-data."+$domain+"/api/observations"),contractUrl:("https://harbour-data."+$domain+"/openapi.json")}] and
   product_observation and
   .spec.ui.contract.apiVersion=="data-product-ui/v2" and
   (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
