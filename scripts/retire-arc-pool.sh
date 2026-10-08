@@ -419,7 +419,7 @@ source_writer_quiesced() {
   bind_current
   kc -n flux-system get ocirepository flux-system -o json >"$work/writer-source.json" || fail writer-source-read
   check_json "$work/writer-source.json"
-  PLATFORM_MANIFEST_DIGEST=$(jq -er '.status.artifact.digest' "$work/writer-source.json") || fail writer-source-digest
+  PLATFORM_MANIFEST_DIGEST=$(jq -er '.status.artifact.revision | if test("^latest@sha256:[0-9a-f]{64}$") then ltrimstr("latest@") else error("invalid OCI revision") end' "$work/writer-source.json") || fail writer-source-digest
   # Build the same source packet, then distinguish actual Ready from the exact
   # completed closed-CREATE failure of an opening that never installed HR/ESO.
   inactive_source || true

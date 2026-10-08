@@ -280,7 +280,7 @@ func writerCurrentProof(body []byte) error {
 	}
 	src := at(o, "OCI")
 	gen, gok := numberAt(src, "metadata", "generation")
-	if !exactObject(src, "flux-system", "flux-system") || !currentReady(src) || textAt(src, "metadata", "uid") != w.OCI.UID || !gok || gen != w.OCI.Generation || textAt(src, "status", "artifact", "digest") != w.Digest || textAt(src, "spec", "verify", "provider") != "cosign" {
+	if !exactObject(src, "flux-system", "flux-system") || !currentReady(src) || textAt(src, "metadata", "uid") != w.OCI.UID || !gok || gen != w.OCI.Generation || !sourceArtifact(src, w.Digest) || textAt(src, "spec", "verify", "provider") != "cosign" {
 		return errors.New("completed source barrier authority changed")
 	}
 	verified := false

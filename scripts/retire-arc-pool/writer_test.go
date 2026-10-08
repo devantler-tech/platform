@@ -14,7 +14,7 @@ func sourceFixture(t *testing.T) []byte {
 	for _, name := range []string{"flux-system", "infrastructure-controllers", "infrastructure"} {
 		layers = append(layers, map[string]any{"metadata": map[string]any{"name": name, "namespace": "flux-system", "uid": name, "generation": 2, "annotations": map[string]any{"reconcile.fluxcd.io/requestedAt": "native-123-1"}}, "spec": map[string]any{"sourceRef": map[string]any{"kind": "OCIRepository", "name": "flux-system"}}, "status": map[string]any{"observedGeneration": 2, "lastAppliedRevision": "latest@" + digest, "lastAttemptedRevision": "latest@" + digest, "lastHandledReconcileAt": "native-123-1", "conditions": ready}})
 	}
-	body, err := json.Marshal(map[string]any{"Digest": digest, "Ticket": "native-123-1", "OCI": map[string]any{"metadata": map[string]any{"name": "flux-system", "namespace": "flux-system", "uid": "source", "generation": 2}, "spec": map[string]any{"verify": map[string]any{"provider": "cosign"}}, "status": map[string]any{"observedGeneration": 2, "artifact": map[string]any{"digest": digest}, "conditions": append(ready, map[string]any{"type": "SourceVerified", "status": "True", "observedGeneration": 2})}}, "Kustomizations": layers})
+	body, err := json.Marshal(map[string]any{"Digest": digest, "Ticket": "native-123-1", "OCI": map[string]any{"metadata": map[string]any{"name": "flux-system", "namespace": "flux-system", "uid": "source", "generation": 2}, "spec": map[string]any{"verify": map[string]any{"provider": "cosign"}}, "status": map[string]any{"observedGeneration": 2, "artifact": map[string]any{"revision": "latest@" + digest, "digest": "sha256:" + strings.Repeat("f", 64)}, "conditions": append(ready, map[string]any{"type": "SourceVerified", "status": "True", "observedGeneration": 2})}}, "Kustomizations": layers})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestWriterBarrierSurvivesClosedSourceReadinessButNotChangedAuthority(t *tes
 	if err := writerCurrentProof(body); err != nil {
 		t.Fatal(err)
 	}
-	for _, kind := range []string{"source-uid", "source-generation", "source-digest", "source-unverified", "layer-uid", "layer-generation", "disabled-layer", "producer-alias"} {
+	for _, kind := range []string{"source-uid", "source-generation", "source-revision", "invalid-archive-checksum", "source-unverified", "layer-uid", "layer-generation", "disabled-layer", "producer-alias"} {
 		var p map[string]any
 		json.Unmarshal(body, &p)
 		src := p["OCI"].(map[string]any)
@@ -58,8 +58,10 @@ func TestWriterBarrierSurvivesClosedSourceReadinessButNotChangedAuthority(t *tes
 			src["metadata"].(map[string]any)["uid"] = "replacement"
 		case "source-generation":
 			src["metadata"].(map[string]any)["generation"] = 3
-		case "source-digest":
-			src["status"].(map[string]any)["artifact"].(map[string]any)["digest"] = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		case "source-revision":
+			src["status"].(map[string]any)["artifact"].(map[string]any)["revision"] = "latest@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		case "invalid-archive-checksum":
+			src["status"].(map[string]any)["artifact"].(map[string]any)["digest"] = "unverified"
 		case "source-unverified":
 			src["status"].(map[string]any)["conditions"] = []any{}
 		case "layer-uid":
@@ -139,7 +141,7 @@ func TestOpeningWriterBarrierRequiresTheCompletedExactMissingCreateDenial(t *tes
 			proof["Digest"] = j.Baseline.Digest
 			proof["Ticket"] = "native-123-1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			proof["FluxBefore"], proof["Flux"] = fluxFixture(), fluxFixture()
-			proof["OCI"].(map[string]any)["status"].(map[string]any)["artifact"].(map[string]any)["digest"] = proof["Digest"]
+			proof["OCI"].(map[string]any)["status"].(map[string]any)["artifact"].(map[string]any)["revision"] = "latest@" + j.Baseline.Digest
 			for _, value := range proof["Kustomizations"].([]any) {
 				layer := value.(map[string]any)
 				layer["metadata"].(map[string]any)["annotations"] = map[string]any{"reconcile.fluxcd.io/requestedAt": proof["Ticket"]}

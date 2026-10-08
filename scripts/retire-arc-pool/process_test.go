@@ -49,7 +49,7 @@ func TestRestorationJoinsEveryCurrentLayerToThePublishedDigest(t *testing.T) {
 	for _, name := range []string{"flux-system", "infrastructure-controllers", "infrastructure"} {
 		ks = append(ks, map[string]any{"metadata": map[string]any{"name": name, "namespace": "flux-system", "uid": name, "generation": 2, "annotations": map[string]any{"reconcile.fluxcd.io/requestedAt": "native-123-1"}}, "spec": map[string]any{"sourceRef": map[string]any{"kind": "OCIRepository", "name": "flux-system"}}, "status": map[string]any{"observedGeneration": 2, "lastAppliedRevision": "latest@" + digest, "lastAttemptedRevision": "latest@" + digest, "lastHandledReconcileAt": "native-123-1", "conditions": ready}})
 	}
-	o := map[string]any{"Digest": digest, "Ticket": "native-123-1", "OCI": map[string]any{"metadata": map[string]any{"name": "flux-system", "namespace": "flux-system", "uid": "source", "generation": 2}, "spec": map[string]any{"verify": map[string]any{"provider": "cosign"}}, "status": map[string]any{"observedGeneration": 2, "artifact": map[string]any{"digest": digest}, "conditions": ready}}, "Kustomizations": ks}
+	o := map[string]any{"Digest": digest, "Ticket": "native-123-1", "OCI": map[string]any{"metadata": map[string]any{"name": "flux-system", "namespace": "flux-system", "uid": "source", "generation": 2}, "spec": map[string]any{"verify": map[string]any{"provider": "cosign"}}, "status": map[string]any{"observedGeneration": 2, "artifact": map[string]any{"revision": "latest@" + digest, "digest": "sha256:" + strings.Repeat("f", 64)}, "conditions": ready}}, "Kustomizations": ks}
 	b, _ := json.Marshal(o)
 	var signed map[string]any
 	_ = json.Unmarshal(b, &signed)
@@ -67,7 +67,7 @@ func TestRestorationJoinsEveryCurrentLayerToThePublishedDigest(t *testing.T) {
 		status := layer["status"].(map[string]any)
 		switch kind {
 		case "stale-source":
-			changed["OCI"].(map[string]any)["status"].(map[string]any)["artifact"].(map[string]any)["digest"] = "sha256:" + strings.Repeat("b", 64)
+			changed["OCI"].(map[string]any)["status"].(map[string]any)["artifact"].(map[string]any)["revision"] = "latest@sha256:" + strings.Repeat("b", 64)
 		case "wrong-layer":
 			layer["metadata"].(map[string]any)["name"] = "apps"
 		case "stale-generation":

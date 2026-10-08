@@ -151,7 +151,7 @@ func sourceProof(body []byte) error {
 	src := at(o, "OCI")
 	layers, ok := sliceAt(o, "Kustomizations")
 	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(digest) || ticket == "" || !ok || len(layers) != 3 ||
-		!exactObject(src, "flux-system", "flux-system") || !currentReady(src) || textAt(src, "status", "artifact", "digest") != digest ||
+		!exactObject(src, "flux-system", "flux-system") || !currentReady(src) || !sourceArtifact(src, digest) ||
 		textAt(src, "spec", "verify", "provider") != "cosign" {
 		return errors.New("signed published source is not current")
 	}
@@ -182,6 +182,12 @@ func sourceProof(body []byte) error {
 		seen[name] = true
 	}
 	return nil
+}
+
+// Flux's revision identifies the signed upstream OCI manifest. Its digest is
+// the independently hashed stored archive, not the registry manifest digest.
+func sourceArtifact(src any, digest string) bool {
+	return textAt(src, "status", "artifact", "revision") == "latest@"+digest && regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(textAt(src, "status", "artifact", "digest"))
 }
 func at(v any, keys ...string) any {
 	for _, k := range keys {
