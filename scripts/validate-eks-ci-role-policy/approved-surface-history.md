@@ -3277,6 +3277,29 @@ changes. The required authorization gate and its negative controls remain
 enabled. Production TLS, actual credential identity and untrusted workload
 isolation remain separate protected runtime checks before ARC activation.
 
+## 2026-10-06 — Canonical manifest publisher accepted alongside the legacy one
+
+platform#4502 records one reviewed commit of the canonical manifest publishing
+workflow, `devantler-tech/.github` at
+`2fa404276b0ce5c0527683b080e39045045c4e42`, as an additional accepted signer
+for the two manifest artifacts. The reviewed writer regenerated both cosign
+subjects from the record; every legacy revision accepted before is still in
+each subject.
+
+The production-authorization job on the checksum-verified renderer (run
+37444690606, job 112208384114) measured exactly two changed entries against
+base `530f81bb` and nothing added or removed:
+
+- OCIRepository aws/aws moves from
+  `f900dbd1860a7494381bb0fe0bd044ebedeaa1570bc9a230b7879e2b4d752163` to
+  `0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3`.
+- OCIRepository github-config/github-config moves from
+  `56d973136e535da94263547ab49101420a05e55f301e3f4c9c3f191354da7365` to
+  `b6c432af595e2aaa0b41cc114cb4d85a21125a02e5b7a60e5abfc4e034c03e40`.
+
+The source delta is the two subjects alone. No RBAC, IAM, service account, or
+permission grant changes.
+
 ## 2026-10-07 — Read-only service-quota listing for the EKS CI role
 
 The renderer measured exactly one changed authorization entry for
