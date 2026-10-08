@@ -216,6 +216,23 @@ func TestEveryAuditedSetIsCompleteAndDistinct(t *testing.T) {
 	}
 }
 
+func TestReleasedImageRecoveryFoldInputsAreAccepted(t *testing.T) {
+	// Read independently from the v7.202.3 tag. Rejecting this audited source
+	// prevents adoption of the released same-version boot-image recovery.
+	inputs := map[string]string{
+		"pkg/fsutil/configmanager":   "ac334b6ba5b7e474bfa88e13486a1ab0d1d6feea",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "c4ed7098f7dce6dca0c65649cd8ab3aaeccdf6f4",
+		"go.mod":                     "3ef4674d6c9d1507ec198883c78712ce74819866",
+		"go.sum":                     "c780001120d55f3eb85838940f5f149e62202fab",
+	}
+	_, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return inputs, nil })
+	if err != nil {
+		t.Fatalf("released image recovery source was rejected: %v", err)
+	}
+}
+
 func TestUnchangedFoldInputsPassWhateverTheVersion(t *testing.T) {
 	// A later release with the audited inputs needs no edit here: the check
 	// compares content, not the version's name.
