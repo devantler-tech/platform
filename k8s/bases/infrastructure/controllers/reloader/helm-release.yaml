@@ -39,10 +39,23 @@ spec:
           runAsNonRoot: true
           seccompProfile:
             type: RuntimeDefault
+        # Replicas of the same revision must occupy separate nodes. Scoping
+        # by pod-template-hash lets a one-replica installation roll in place.
+        affinity:
+          podAntiAffinity:
+            requiredDuringSchedulingIgnoredDuringExecution:
+              - topologyKey: kubernetes.io/hostname
+                matchLabelKeys:
+                  - pod-template-hash
+                labelSelector:
+                  matchLabels:
+                    app: reloader-reloader
         topologySpreadConstraints:
           - maxSkew: 1
             topologyKey: kubernetes.io/hostname
-            whenUnsatisfiable: ScheduleAnyway
+            whenUnsatisfiable: DoNotSchedule
+            matchLabelKeys:
+              - pod-template-hash
             labelSelector:
               matchLabels:
                 app: reloader-reloader
@@ -52,7 +65,7 @@ spec:
       podDisruptionBudget:
         enabled: true
         # Drain-safe PDB pattern (#1880/#1882): maxUnavailable: 1 keeps the
-        # node drainable at any replica count. reloader_replicas is "1" in prod,
-        # so minAvailable: 1 permitted zero voluntary evictions and made its
-        # node undrainable.
+        # node drainable at any replica count, including a one-replica local
+        # installation. With one replica, minAvailable: 1 permits no voluntary
+        # evictions and makes its node undrainable.
         maxUnavailable: 1
