@@ -987,6 +987,8 @@ jobs:
               - 'scripts/tests/test-talos-render-kernel-args.sh'
               - 'scripts/register-talos-factory-schematic.sh'
               - 'scripts/verify-talos-schematic-readback.sh'
+              # The reviewed record that readback reads, so a record-only change runs its test (#4665).
+              - 'scripts/talos-boot-image-drift-accepted.tsv'
               - 'scripts/tests/test-talos-factory-schematic-registration.sh'
               - 'scripts/tests/test-talos-schematic-readback.sh'
               - 'scripts/verify-kubelet-config-readback.sh'
