@@ -1716,7 +1716,11 @@ probe_node_runtime_pull() {
           imagePullPolicy: "Always",
           args: ["--version"],
           resources: {
-            requests: {cpu: "10m", memory: "16Mi"},
+            # The Pod names its node, so the kubelet alone admits it, and it refuses a Pod
+            # that asks for more memory than the node has left to request (#4664: a
+            # worker with 15 Mi left refused 16 Mi and stopped the deploy). The probe
+            # only prints a version, so it asks for the least the node can grant.
+            requests: {cpu: "1m", memory: "1Mi"},
             limits: {cpu: "100m", memory: "64Mi"}
           },
           securityContext: {
