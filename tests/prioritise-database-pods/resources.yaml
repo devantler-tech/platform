@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: database
+  namespace: observability
+  labels:
+    app.kubernetes.io/managed-by: cloudnative-pg
+    cnpg.io/cluster: database
+    cnpg.io/podRole: instance
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: database-data
+  containers:
+    - name: postgres
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: explicit-priority
+  namespace: observability
+  labels:
+    app.kubernetes.io/managed-by: cloudnative-pg
+    cnpg.io/cluster: database
+    cnpg.io/podRole: instance
+spec:
+  priorityClassName: platform-critical
+  priority: 1000000000
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: database-data
+  containers:
+    - name: postgres
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-claim
+  namespace: observability
+  labels:
+    app.kubernetes.io/managed-by: cloudnative-pg
+    cnpg.io/cluster: database
+    cnpg.io/podRole: instance
+spec:
+  containers:
+    - name: postgres
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backup-job
+  namespace: observability
+  labels:
+    app.kubernetes.io/managed-by: cloudnative-pg
+    cnpg.io/cluster: database
+    cnpg.io/podRole: backup
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: database-data
+  containers:
+    - name: backup
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unrelated-claim
+  namespace: observability
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: application-data
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: missing-cluster
+  namespace: observability
+  labels:
+    app.kubernetes.io/managed-by: cloudnative-pg
+    cnpg.io/podRole: instance
+spec:
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: database-data
+  containers:
+    - name: postgres
+      image: registry.k8s.io/pause:3.10

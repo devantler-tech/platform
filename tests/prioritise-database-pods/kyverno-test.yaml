@@ -1,0 +1,27 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: prioritise-database-pods
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/prioritise-database-pods.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: prioritise-database-pods
+    rule: prioritise-database-instances
+    resources:
+      - observability/database
+    kind: Pod
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: prioritise-database-pods
+    rule: prioritise-database-instances
+    resources:
+      - observability/explicit-priority
+      - observability/no-claim
+      - observability/backup-job
+      - observability/unrelated-claim
+      - observability/missing-cluster
+    kind: Pod
+    result: skip

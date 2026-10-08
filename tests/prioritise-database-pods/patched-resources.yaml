@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: database
+  namespace: observability
+  labels:
+    app.kubernetes.io/managed-by: cloudnative-pg
+    cnpg.io/cluster: database
+    cnpg.io/podRole: instance
+spec:
+  priorityClassName: hcloud-volume-workload
+  priority: 1000
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: database-data
+  containers:
+    - name: postgres
+      image: registry.k8s.io/pause:3.10
