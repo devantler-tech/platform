@@ -95,8 +95,10 @@ verify() {
   # requests at the public registry. This is not a retry or an error-text gate.
   if [[ "$verification_started" == true ]]; then
     sleep 30 || {
-      echo 'verification pacing wait failed' >"$scratch/cosign.log"
-      return 1
+      # A missing negative-control invocation is not an identity refusal.
+      # Terminate the gate even when verify is called as an if condition.
+      echo 'FAIL: verification pacing wait failed' >&2
+      exit 1
     }
   fi
   verification_started=true

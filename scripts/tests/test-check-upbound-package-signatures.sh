@@ -80,7 +80,7 @@ if [[ "\${COSIGN_MODE:-normal}" == burst && "\$calls" -gt 1 && "\$previous" != s
   exit 1
 fi
 case "\${COSIGN_MODE:-normal}" in
-  normal|burst|wait-fails) [[ "\$identity" == '$good_identity' ]] ;;
+  normal|burst|wait-fails|control-wait-fails) [[ "\$identity" == '$good_identity' ]] ;;
   unsigned-iam)
     if [[ "\$ref" == *provider-aws-iam* || "\$identity" != '$good_identity' ]]; then
       echo 'none of the expected identities matched what was in the certificate' >&2
@@ -103,6 +103,10 @@ cat >"$scratch/sleep" <<SH
 set -euo pipefail
 [[ "\$#" -eq 1 && "\$1" == 30 ]] || exit 99
 echo sleep:30 >>"$scratch/events.log"
+if [[ "\${COSIGN_MODE:-normal}" == control-wait-fails ]]; then
+  waits=\$(grep -c '^sleep:30$' "$scratch/events.log")
+  [[ "\$waits" -ne 1 ]] || exit 1
+fi
 [[ "\${COSIGN_MODE:-normal}" != wait-fails ]]
 SH
 chmod +x "$scratch/sleep"
@@ -151,9 +155,16 @@ if grep -qF 'is not signed' "$scratch/out.log"; then
   failures=$((failures + 1))
 fi
 expect 'a failed pacing wait does not permit another verifier call' 1 \
-  'stopped verifying after the negative control' "$scratch/rendered.yaml" wait-fails
+  'verification pacing wait failed' "$scratch/rendered.yaml" wait-fails
 if [[ "$(wc -l <"$scratch/calls.log" | tr -d ' ')" -ne 1 ]]; then
   echo 'FAIL: verifier ran after the pacing wait failed' >&2
+  failures=$((failures + 1))
+fi
+expect 'a failed wait before the negative control stops the whole gate' 1 \
+  'verification pacing wait failed' "$scratch/rendered.yaml" control-wait-fails
+if [[ "$(wc -l <"$scratch/calls.log" | tr -d ' ')" -ne 1 ]] ||
+  grep -qF '2 Upbound package signatures verified' "$scratch/out.log"; then
+  echo 'FAIL: a missing negative control was accepted after a failed wait' >&2
   failures=$((failures + 1))
 fi
 expect 'a privileged provider repointed to another registry is refused' 1 \
