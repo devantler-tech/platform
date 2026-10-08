@@ -220,6 +220,37 @@ func TestRuntimeRequiresTLSBeforeReaderTokenAndAlwaysStopsForward(t *testing.T) 
 	}
 }
 
+func TestCancellationRetainsTunnelThroughCredentialCleanup(t *testing.T) {
+	config, responses := liveFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var tunnel context.Context
+	stopped := false
+	operations := runtimeOperations{
+		execute: func(_ context.Context, args ...string) ([]byte, error) {
+			if body, ok := responses[strings.Join(args, " ")]; ok {
+				return body, nil
+			}
+			return []byte("synthetic.reader.jwt"), nil
+		},
+		forward: func(parent context.Context, _ int) (string, func(), error) {
+			tunnel = parent
+			return "https://127.0.0.1:12345", func() { stopped = true }, nil
+		},
+		handshake: func(context.Context, string, []byte) error { return nil },
+		identity: func(proof context.Context, options verificationOptions) outcome {
+			cancel()
+			if proof.Err() == nil || options.cleanup == nil || options.cleanup.Err() != nil || tunnel.Err() != nil || stopped {
+				t.Fatal("cancellation closed the tunnel before credential cleanup")
+			}
+			return failCleanup
+		},
+	}
+	if got := verifyRuntime(ctx, config, operations); got != failCleanup || !stopped || tunnel.Err() == nil {
+		t.Fatal("runtime did not stop and dispose the tunnel after cleanup")
+	}
+}
+
 func TestReaderCommandPinsProtectedContextAndKeepsFailuresPrivate(t *testing.T) {
 	root := t.TempDir()
 	script := `#!/bin/bash
