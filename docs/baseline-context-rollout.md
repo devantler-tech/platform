@@ -93,7 +93,9 @@ them:
    controller has not observed, or is rewritten, replaced or written twice
    over three samples in 30 seconds. Otherwise the fault is unrelated to the
    label, so the guard records the template with its generation, UID and
-   ready count and lets the deployment continue. Refusing it would also
+   ready count and lets the deployment continue. Only a template unready at
+   the first read is excused: one that loses readiness, or gets less ready,
+   during those samples is still a refusal. Refusing a settled fault would also
    refuse the deployment that repairs production.
 2. After Flux reports the released revision Ready,
    `scripts/admit-coroot-baseline-context.sh` writes each template that still

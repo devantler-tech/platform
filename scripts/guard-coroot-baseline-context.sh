@@ -119,12 +119,13 @@ observe_stability() {
     read_templates
     population || fail 'the Coroot template population changed during observation'
     owned || fail 'a Coroot template lost its operator owner during observation'
-    if ! observed || ! "${readiness}"; then fail 'a Coroot template lost readiness during observation'; fi
-    has_fields || fail 'the operator removed an admitted field during observation'
     current="$(snapshot)"
     jq -e -n --argjson a "${baseline}" --argjson b "${current}" \
       '[$a[] | {key, generation, uid}] == [$b[] | {key, generation, uid}]' >/dev/null ||
       fail 'the operator rewrote or replaced a template during observation'
+    # After the rewrite check: a rewritten template also voids its tolerated record.
+    if ! observed || ! "${readiness}"; then fail 'a Coroot template lost readiness during observation'; fi
+    has_fields || fail 'the operator removed an admitted field during observation'
     # Per template, so one write each on two objects is not mistaken for a loop.
     writes="$(jq -c -n --argjson a "${previous}" --argjson b "${current}" --argjson w "${writes}" \
       'reduce range($a | length) as $i ($w;
@@ -134,7 +135,6 @@ observe_stability() {
       fail "repeated owner writes continued during observation: ${writes}"
   done
 }
-any_readiness() { true; }
 ready_or_tolerated() { ready_except "${tolerated}"; }
 
 if [[ "${phase}" == before-publish ]]; then
@@ -159,7 +159,10 @@ if [[ "${phase}" == before-publish ]]; then
   has_fields ||
     fail 'a Coroot template is not fully ready and the admitted fields are not all present'
   observed || fail 'a Coroot template is not fully ready: its controller has not observed the latest generation'
-  observe_stability any_readiness
+  # Only what was unready at the first read is excused: a template that loses
+  # readiness while being observed is a fault still spreading, not a settled one.
+  tolerated="$(unready_records)"
+  observe_stability ready_or_tolerated
   records="$(unready_records)"
   output rollout_required true
   if [[ "${records}" != '[]' ]]; then

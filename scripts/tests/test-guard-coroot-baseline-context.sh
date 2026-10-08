@@ -215,6 +215,13 @@ jq '.items[4].metadata.ownerReferences = []' "${scratch}/degraded.json" >"${scra
 use degraded; cp "${scratch}/degraded-orphan.json" "${scratch}/input.2.json"
 check 'an unready template losing its owner during observation is refused' before-publish fail normal enabled 'lost its operator owner'
 
+jq '.items[1].status.readyReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-second.json"
+jq '.items[4].status.readyReplicas = 0 | .items[4].status.availableReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-worse.json"
+use degraded; cp "${scratch}/degraded-second.json" "${scratch}/input.3.json"
+check 'a second template losing readiness during observation is refused' before-publish fail normal enabled 'lost readiness'
+use degraded; cp "${scratch}/degraded-worse.json" "${scratch}/input.2.json"
+check 'an unready template getting less ready during observation is refused' before-publish fail normal enabled 'lost readiness'
+
 # After reconcile the tolerated record admits only that same object, no worse.
 use degraded
 check 'an unready template with no tolerated record still fails' after-reconcile fail normal enabled 'did not all reach both fields'
@@ -230,7 +237,6 @@ use hardened
 check 'a tolerated template that recovered passes' after-reconcile pass normal enabled
 grep -qx 'baseline_result=pass' "${scratch}/outputs"
 grep -qx 'PASS: six Coroot templates carry both fields, are ready, and are stable' "${scratch}/output"
-jq '.items[1].status.readyReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-second.json"
 use degraded-second
 check 'the tolerated record does not cover another template' after-reconcile fail normal enabled 'did not all reach both fields'
 use degraded-regen
@@ -238,7 +244,6 @@ check 'the tolerated record lapses when the deployment changes the template' aft
 jq '.items[4].metadata.uid = "uid-replacement"' "${scratch}/degraded.json" >"${scratch}/degraded-replaced.json"
 use degraded-replaced
 check 'the tolerated record lapses when the template is replaced' after-reconcile fail normal enabled 'did not all reach both fields'
-jq '.items[4].status.readyReplicas = 0 | .items[4].status.availableReplicas = 0' "${scratch}/degraded.json" >"${scratch}/degraded-worse.json"
 use degraded-worse
 check 'a tolerated template that got less ready fails' after-reconcile fail normal enabled 'did not all reach both fields'
 use degraded; cp "${scratch}/degraded-worse.json" "${scratch}/input.3.json"
