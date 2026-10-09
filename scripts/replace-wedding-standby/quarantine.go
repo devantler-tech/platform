@@ -15,6 +15,7 @@ const pauseKey = "cnpg.io/reconciliationLoop"
 const pauseMessage = "Disable reconciliation loop annotation set, skipping the reconciliation."
 const leaderLease = "db9c8771.cnpg.io"
 const retainedCSIDriver = "driver.longhorn.io"
+const operatorClockSkew = 2 * time.Second
 
 var recoveryUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -162,7 +163,7 @@ func (c client) leader(ctx context.Context) (operatorLeader, error) {
 	renew, err := time.Parse(time.RFC3339Nano, str(lease, "spec", "renewTime"))
 	now := c.now()
 	_, transitionsPresent := value(lease, "spec", "leaseTransitions").(float64)
-	if !validMeta(lease, "cnpg-system") || id(lease).name != leaderLease || !transitionsPresent || num(lease, "spec", "leaseTransitions") < 0 || len(parts) != 2 || !recoveryUUID.MatchString(parts[1]) || !strings.HasPrefix(parts[0], "cloudnative-pg-") || err != nil || renew.After(now) || now.Sub(renew) > time.Duration(num(lease, "spec", "leaseDurationSeconds"))*time.Second || num(lease, "spec", "leaseDurationSeconds") <= 0 {
+	if !validMeta(lease, "cnpg-system") || id(lease).name != leaderLease || !transitionsPresent || num(lease, "spec", "leaseTransitions") < 0 || len(parts) != 2 || !recoveryUUID.MatchString(parts[1]) || !strings.HasPrefix(parts[0], "cloudnative-pg-") || err != nil || renew.After(now.Add(operatorClockSkew)) || now.Sub(renew) > time.Duration(num(lease, "spec", "leaseDurationSeconds"))*time.Second || num(lease, "spec", "leaseDurationSeconds") <= 0 {
 		return l, errors.New("operator leader lease is unknown or expired")
 	}
 	pod, err := c.read(ctx, "pod", parts[0], "-n", "cnpg-system", "-o", "json")
@@ -176,19 +177,36 @@ func (c client) leader(ctx context.Context) (operatorLeader, error) {
 	return operatorLeader{id(lease), id(pod), str(lease, "spec", "holderIdentity"), num(lease, "spec", "leaseTransitions")}, nil
 }
 
-// pauseAcknowledged accepts only a fresh, structured, cluster-specific controller log.
-func pauseAcknowledged(b []byte, since, now time.Time) bool {
-	if len(b) == 0 || len(b) > 1<<20 {
+// pauseLogRecords refuses truncated or malformed controller log coverage.
+func pauseLogRecords(b []byte) ([]object, error) {
+	if len(b) > 1<<20 {
+		return nil, errors.New("operator log coverage exceeds the bound")
+	}
+	if len(bytes.TrimSpace(b)) == 0 {
+		return nil, nil
+	}
+	records := []object{}
+	for _, line := range bytes.Split(bytes.TrimSpace(b), []byte("\n")) {
+		var record object
+		if json.Unmarshal(line, &record) != nil || record == nil {
+			return nil, errors.New("operator log coverage is malformed")
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+// pauseAcknowledged accepts only a bound, recent reconciliation not observed
+// before the pause. The clock allowance never admits an observed reconciliation replay.
+func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool) bool {
+	records, err := pauseLogRecords(b)
+	if err != nil {
 		return false
 	}
 	found := false
-	for _, line := range bytes.Split(bytes.TrimSpace(b), []byte("\n")) {
-		var record object
-		if json.Unmarshal(line, &record) != nil {
-			return false
-		}
+	for _, record := range records {
 		t, err := time.Parse(time.RFC3339Nano, str(record, "ts"))
-		if err == nil && !t.Before(since) && !t.After(now) && str(record, "level") == "warning" && str(record, "msg") == pauseMessage && str(record, "namespace") == namespace && str(record, "name") == clusterName && str(record, "Cluster", "namespace") == namespace && str(record, "Cluster", "name") == clusterName && recoveryUUID.MatchString(str(record, "reconcileID")) {
+		if err == nil && !t.Before(since.Add(-operatorClockSkew)) && !t.After(now.Add(operatorClockSkew)) && str(record, "level") == "warning" && str(record, "msg") == pauseMessage && str(record, "namespace") == namespace && str(record, "name") == clusterName && str(record, "Cluster", "namespace") == namespace && str(record, "Cluster", "name") == clusterName && recoveryUUID.MatchString(str(record, "reconcileID")) && !previous[str(record, "reconcileID")] {
 			found = true
 		}
 	}
@@ -259,6 +277,22 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if _, err = consumers(true); err != nil {
 		return err
 	}
+	since := c.now()
+	logArgs := []string{"logs", leader.pod.name, "-n", "cnpg-system", "--since-time=" + since.Add(-operatorClockSkew).Format(time.RFC3339Nano), "--limit-bytes=1048577"}
+	baseline, err := c.command(ctx, logArgs, nil)
+	if err != nil {
+		return errors.New("pre-pause operator log read failed; no writes")
+	}
+	records, err := pauseLogRecords(baseline)
+	if err != nil {
+		return err
+	}
+	previous := map[string]bool{}
+	for _, record := range records {
+		if reconcile := str(record, "reconcileID"); recoveryUUID.MatchString(reconcile) {
+			previous[reconcile] = true
+		}
+	}
 	if !execute {
 		return nil
 	}
@@ -302,7 +336,6 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if _, err = completedJoinPlan(s, o, g); err != nil {
 		return err
 	}
-	since := c.now()
 	ops := append(tests(s.cluster), testPath("/status/currentPrimary", p.primary.name), testPath("/status/targetPrimary", p.primary.name), testPath("/spec/instances", float64(3)))
 	if value(s.cluster, "metadata", "annotations") == nil {
 		ops = append(ops, editPath("add", "/metadata/annotations", object{pauseKey: "disabled"}))
@@ -319,11 +352,11 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if err = refresh(); err != nil {
 			return err
 		}
-		b, e := c.command(ackCtx, []string{"logs", leader.pod.name, "-n", "cnpg-system", "--since-time=" + since.Format(time.RFC3339Nano), "--tail=200"}, nil)
+		b, e := c.command(ackCtx, logArgs, nil)
 		if e != nil {
 			return errors.New("operator pause acknowledgment read failed")
 		}
-		if pauseAcknowledged(b, since, c.now()) {
+		if pauseAcknowledged(b, since, c.now(), previous) {
 			break
 		}
 		if err = c.pause(ackCtx); err != nil {
