@@ -137,12 +137,17 @@ func testPath(path string, v any) object { return object{"op": "test", "path": p
 // editPath creates one reviewed JSON patch operation.
 func editPath(op, path string, v any) object { return object{"op": op, "path": path, "value": v} }
 
+// fieldManager attributes every repair write to this procedure. Flux takes over
+// fields whose manager starts with "kubectl" and removes what Git does not
+// declare, which deleted the fence mid-repair on 2026-10-09.
+const fieldManager = "wedding-standby-repair"
+
 // patch scopes mutations to the observed resource and explicit API group.
 func (c client) patch(ctx context.Context, kind string, o object, ops []object) error {
 	if kind == "cluster" {
 		kind = "cluster.postgresql.cnpg.io"
 	}
-	args := []string{"patch", kind, id(o).name, "--type=json", "--patch-file=/dev/stdin"}
+	args := []string{"patch", kind, id(o).name, "--type=json", "--patch-file=/dev/stdin", "--field-manager=" + fieldManager}
 	if kind != "pv" {
 		args = append(args, "-n", namespace)
 	}

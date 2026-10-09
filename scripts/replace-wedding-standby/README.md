@@ -29,6 +29,11 @@ three Ready instances, fresh replacement storage, healthy archiving, and the old
 claim and volume still bound to their original identities. Only then may ordinary
 maintenance proceed. This proves database repair, not overall platform health.
 
+Every write names the field manager `wedding-standby-repair`. Flux takes over
+fields written by a default `kubectl` manager and removes what Git does not
+declare, so a fence written that way is deleted at the next reconciliation and
+the repair stops before the claim is detached.
+
 ## Read-only plan
 
 From current main, get the current Cluster and failed Pod UIDs with OIDC reads,

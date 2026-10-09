@@ -540,3 +540,32 @@ func TestFixtureDecodesLikeKubernetes(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestPatchUsesOwnFieldManager keeps Flux from reverting the repair's writes.
+// kustomize-controller takes over every field whose manager starts with
+// "kubectl" and then removes what the Git source does not declare, so a fence
+// written by a default kubectl patch disappears on the next reconciliation.
+func TestPatchUsesOwnFieldManager(t *testing.T) {
+	for _, kind := range []string{"pv", "cluster", "pvc"} {
+		var got []string
+		c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			got = args
+			return nil, nil
+		}}
+		if err := c.patch(context.Background(), kind, object{"metadata": map[string]any{"name": "n", "uid": "u"}}, nil); err != nil {
+			t.Fatal(err)
+		}
+		managers := 0
+		for _, arg := range got {
+			if name, ok := strings.CutPrefix(arg, "--field-manager="); ok {
+				managers++
+				if name == "" || strings.HasPrefix(name, "kubectl") || name == "before-first-apply" || name == "kustomize-controller" {
+					t.Fatalf("%s patch uses field manager %q, which Flux reverts", kind, name)
+				}
+			}
+		}
+		if managers != 1 {
+			t.Fatalf("%s patch names %d field managers, want exactly 1: %v", kind, managers, got)
+		}
+	}
+}
