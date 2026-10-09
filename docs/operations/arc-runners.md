@@ -245,6 +245,24 @@ it exercises admission, allowed connectivity, intercepted denials and cleanup.
 Verify SecretStore and ExternalSecret readiness before admitting jobs. Keep the
 opt-in runner name out of workflows that have not completed onboarding.
 
+The protected canary reserves admission with the fixed `arc-runtime-admission`
+ResourceQuota in the runner namespace. Its zero-pod `NotTerminating` scope blocks
+new ordinary runner Pods while existing jobs finish naturally. The deadline-bound
+probe is outside that scope. The verifier checks retained runner templates, proves
+the real runner template is denied by this quota, and waits up to twenty minutes
+for existing runners and the dedicated node to drain. It leaves the quota in place
+until probe deletion and node cleanup are verified, then deletes only the
+invocation-owned quota with UID and resource-version preconditions. It changes no
+runner bounds, Helm reconciliation, App permission or capacity ceiling.
+
+A pre-existing quota, ambiguous create, changed quota identity or incomplete probe
+cleanup fails closed. An incomplete cleanup retains the fence for recovery. Before
+removing a retained fence, verify its invocation ownership, prove that invocation's
+probe is absent and the dedicated pool has drained, and use the current UID and
+resource version as deletion preconditions. Never remove another invocation's
+fence to make a deployment pass. Quota behavior and its deadline scopes are defined
+in the [Kubernetes resource quota documentation](https://kubernetes.io/docs/concepts/policy/resource-quotas/).
+
 To stop admitting jobs, restore every consumer's prior runner configuration
 and verify the readbacks, then use a reviewed values change to set both runner
 bounds to zero. Let the current job finish and prove there are no busy runners

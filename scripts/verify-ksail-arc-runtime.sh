@@ -58,10 +58,13 @@ trap - EXIT
 readonly context=admin@prod namespace=arc-runners
 readonly ownership_label=platform.devantler.tech/arc-runtime-probe
 readonly probe="arc-proof-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+readonly fence_name=arc-runtime-admission
 scratch=$(mktemp -d)
 readonly scratch
 created=false
 probe_uid=''
+fence_created=false
+fence_uid=''
 stage=initialization
 trap 'printf "ARC acceptance: FAIL at %s\n" "$stage" >&2' ERR
 
@@ -71,6 +74,42 @@ wait_ready() {
     wait "pod/$probe" --for=condition=Ready --timeout=600s 2>/dev/null
 }
 quiet() { "$@" >/dev/null 2>"$scratch/command-error"; }
+verify_admission_fence() {
+  kc -n "$namespace" get resourcequota "$fence_name" -o json >"$scratch/live-fence.json"
+  jq -e --arg name "$fence_name" --arg owner "$probe" --arg key "$ownership_label" --arg uid "$fence_uid" '
+    .metadata.name == $name and .metadata.labels[$key] == $owner and .metadata.uid == $uid and
+    .metadata.deletionTimestamp == null and .spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
+    .status.hard == {pods:"0"}
+  ' "$scratch/live-fence.json" >/dev/null
+}
+verify_runner_deadlines() {
+  local resource path line first
+  # Project only metadata and the deadline: EphemeralRunner objects can carry
+  # generated JIT credentials, which this acceptance must never read.
+  for resource in ephemeralrunnersets.actions.github.com ephemeralrunners.actions.github.com; do
+    if [[ "$resource" == ephemeralrunnersets.actions.github.com ]]; then
+      path='{.spec.ephemeralRunnerSpec.spec.activeDeadlineSeconds}'
+    else
+      path='{.spec.spec.activeDeadlineSeconds}'
+    fi
+    kc -n "$namespace" get "$resource" \
+      -o "jsonpath={\"continue=\"}{.metadata.continue}{\"\\n\"}{range .items[*]}{\"uid=\"}{.metadata.uid}{\";deadline=\"}$path{\"\\n\"}{end}" \
+      >"$scratch/runner-deadlines"
+    first=true
+    while IFS= read -r line; do
+      if "$first"; then [[ "$line" == continue= ]] || return 1; first=false
+      else [[ "$line" =~ ^uid=[a-zA-Z0-9-]+\;deadline=$ ]] || return 1; fi
+    done <"$scratch/runner-deadlines"
+    ! "$first" || return 1
+  done
+}
+verify_runner_source() {
+  verify_runner_deadlines
+  kc -n "$namespace" get autoscalingrunnerset.actions.github.com platform-linux -o json >"$scratch/ars-current.json"
+  jq -e --slurpfile before "$scratch/ars.json" '.metadata.uid == $before[0].metadata.uid and
+    .metadata.generation == $before[0].metadata.generation and .spec == $before[0].spec' \
+    "$scratch/ars-current.json" >/dev/null
+}
 
 cleanup() {
   local result=$? failed=0 remaining=''
@@ -104,6 +143,7 @@ cleanup() {
     # Never delete nodes or resize a shared pool to manufacture cleanup.
     local deadline=$((SECONDS + 1200))
     while ((SECONDS < deadline)); do
+      verify_admission_fence || { failed=1; break; }
       remaining=$(kc get nodes -o json) || { failed=1; break; }
       if jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
         (.metadata.name | startswith("autoscale-arc-runners-") | not))' <<<"$remaining" >/dev/null; then break; fi
@@ -111,6 +151,31 @@ cleanup() {
     done
     jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
       (.metadata.name | startswith("autoscale-arc-runners-") | not))' <<<"$remaining" >/dev/null || failed=1
+  fi
+  if "$fence_created" && [[ "$failed" == 0 ]]; then
+    # Keep admission closed until the probe and its node are gone. A replacement
+    # quota, a timed-out create with no UID, or an incomplete cleanup needs recovery.
+    local fence
+    if [[ -z "$fence_uid" ]]; then
+      failed=1
+    else
+      fence=$(kc -n "$namespace" get resourcequota "$fence_name" --ignore-not-found -o json) || failed=1
+      if ! jq -e --arg name "$fence_name" --arg owner "$probe" --arg key "$ownership_label" --arg uid "$fence_uid" '
+        .metadata.name == $name and .metadata.labels[$key] == $owner and .metadata.uid == $uid and
+        .spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
+        (.metadata.resourceVersion | type == "string" and length > 0)
+      ' <<<"$fence" >/dev/null; then
+        failed=1
+      else
+        jq '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:.metadata.uid,
+          resourceVersion:.metadata.resourceVersion},propagationPolicy:"Background"}' \
+          <<<"$fence" >"$scratch/delete-fence.json"
+        quiet kc delete --raw="/api/v1/namespaces/$namespace/resourcequotas/$fence_name" \
+          -f "$scratch/delete-fence.json" || failed=1
+        fence=$(kc -n "$namespace" get resourcequota "$fence_name" --ignore-not-found -o json) || failed=1
+        [[ -z "$fence" ]] || failed=1
+      fi
+    fi
   fi
   rm -rf "$scratch"
   if [[ "$failed" != 0 ]]; then printf 'ARC acceptance: FAIL cleanup\n' >&2; exit 4; fi
@@ -139,6 +204,8 @@ stage=registration-and-bounds
 kc -n "$namespace" get autoscalingrunnerset.actions.github.com platform-linux -o json >"$scratch/ars.json"
 jq -e '
   .spec.template.spec.volumes[2].configMap.name as $metrics |
+  (.metadata.uid | type == "string" and length > 0) and
+  (.metadata.generation | type == "number" and . > 0) and
   .status.phase == "Running" and .status.observedGeneration == .metadata.generation and
   ((.metadata.annotations["runner-scale-set-id"] | tonumber) > 0) and
   .spec.githubConfigUrl == "https://github.com/devantler-tech" and
@@ -147,6 +214,7 @@ jq -e '
   .metadata.annotations["actions.github.com/runner-scale-set-name"] == "platform-linux" and
   .spec.githubConfigSecret == "arc-github-app" and .spec.runnerScaleSetName == "platform-linux" and
   .spec.minRunners == 0 and .spec.maxRunners == 1 and
+  .spec.template.spec.activeDeadlineSeconds == null and
   .spec.template.spec.serviceAccountName == "platform-linux-gha-rs-no-permission" and
   .spec.template.spec.automountServiceAccountToken == false and
   .spec.template.spec.securityContext.runAsUser == 1001 and
@@ -207,6 +275,55 @@ if [[ "$runtime_digest" != "$pinned_digest" ]]; then
     <"$scratch/runtime-image.json" >"$scratch/runtime-readback"
   cmp -s "$scratch/runtime-digest" "$scratch/runtime-readback" || fail runtime-descriptor
 fi
+stage=runner-admission-fence
+# A scoped quota leaves every existing job running and rejects new ordinary
+# runner Pods, including creations already queued by a stale ARC controller.
+# The bounded probe has activeDeadlineSeconds and is outside NotTerminating.
+# Source: https://kubernetes.io/docs/concepts/policy/resource-quotas/
+verify_runner_deadlines
+kc -n "$namespace" get resourcequotas -l "$ownership_label" -o json \
+  | jq -e '.items | length == 0' >/dev/null
+jq -n --arg name "$fence_name" --arg owner "$probe" --arg ns "$namespace" --arg key "$ownership_label" '
+  {apiVersion:"v1",kind:"ResourceQuota",metadata:{name:$name,namespace:$ns,labels:{($key):$owner}},
+   spec:{hard:{pods:"0"},scopes:["NotTerminating"]}}' >"$scratch/fence.json"
+fence_created=true
+kc create -f "$scratch/fence.json" -o json >"$scratch/created-fence.json"
+fence_uid=$(jq -er --arg name "$fence_name" --arg owner "$probe" --arg ns "$namespace" --arg key "$ownership_label" '
+  select(.metadata.name == $name and .metadata.namespace == $ns and .metadata.labels[$key] == $owner) |
+  .metadata.uid | select(type == "string" and length > 0)' "$scratch/created-fence.json")
+fence_deadline=$((SECONDS + 120))
+while ((SECONDS < fence_deadline)); do
+  kc -n "$namespace" get resourcequota "$fence_name" -o json >"$scratch/live-fence.json"
+  if jq -e --arg uid "$fence_uid" '.metadata.uid == $uid and .spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
+    .status.hard == {pods:"0"}' "$scratch/live-fence.json" >/dev/null; then break; fi
+  sleep 10
+done
+jq -e --arg uid "$fence_uid" '.metadata.uid == $uid and .spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
+  .status.hard == {pods:"0"}' "$scratch/live-fence.json" >/dev/null
+# Prove the actual API denies the unchanged runner template for this quota.
+# A transport error, unrelated admission denial, or dry-run success proves nothing.
+jq --arg name "$probe-admission" --arg ns "$namespace" '
+  {apiVersion:"v1",kind:"Pod",metadata:{name:$name,namespace:$ns,
+   labels:.spec.template.metadata.labels},spec:.spec.template.spec}' "$scratch/ars.json" >"$scratch/runner-admission.json"
+if timeout 35s kubectl --context "$context" --request-timeout=30s create --dry-run=server \
+  -f "$scratch/runner-admission.json" >"$scratch/admission-out" 2>"$scratch/admission-error"; then
+  fail runner-admission-fence
+fi
+grep -Fq "exceeded quota: $fence_name," "$scratch/admission-error" || fail unproven-runner-admission-fence
+stage=runner-job-drain
+drain_deadline=$((SECONDS + 1200))
+while ((SECONDS < drain_deadline)); do
+  kc -n "$namespace" get pods -l platform.devantler.tech/arc-role=runner -o json >"$scratch/runners.json"
+  kc get nodes -o json >"$scratch/drain-nodes.json"
+  if jq -e '.items | length == 0' "$scratch/runners.json" >/dev/null &&
+    jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
+      (.metadata.name | startswith("autoscale-arc-runners-") | not))' "$scratch/drain-nodes.json" >/dev/null; then break; fi
+  sleep 10
+done
+jq -e '.items | length == 0' "$scratch/runners.json" >/dev/null
+jq -e '.items | all(.[]; .metadata.labels["platform.devantler.tech/ci-runner"] != "enabled" and
+  (.metadata.name | startswith("autoscale-arc-runners-") | not))' "$scratch/drain-nodes.json" >/dev/null
+verify_runner_source
 stage=idle-pool-baseline
 kc -n kube-system get deployment cluster-autoscaler-hetzner-cluster-autoscaler \
   -o jsonpath='{range .spec.template.spec.containers[*].args[*]}{.}{"\n"}{end}' >"$scratch/autoscaler-args"
@@ -228,7 +345,18 @@ jq -e --arg key platform.devantler.tech/ci-runner \
 
 stage=restricted-admission
 kc -n "$namespace" get resourcequotas -o json >"$scratch/quotas.json"
-quiet go run ./scripts/verify-ksail-arc-runtime verify-quota <"$scratch/quotas.json"
+# Only our immutable, deadline-scoped fence excludes this probe. Every other
+# quota still goes through the existing conservative budget verification.
+jq -e --arg name "$fence_name" --arg owner "$probe" --arg key "$ownership_label" --arg uid "$fence_uid" '
+  [.items[] | select(.metadata.name == $name)] as $fences |
+  ($fences | length) == 1 and $fences[0].metadata.uid == $uid and
+  $fences[0].metadata.labels[$key] == $owner and
+  $fences[0].spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
+  $fences[0].status.hard == {pods:"0"}
+' "$scratch/quotas.json" >/dev/null
+jq --arg uid "$fence_uid" '.items |= map(select(.metadata.uid != $uid))' \
+  "$scratch/quotas.json" >"$scratch/probe-quotas.json"
+quiet go run ./scripts/verify-ksail-arc-runtime verify-quota <"$scratch/probe-quotas.json"
 # Retain the actual chart-generated template; replace only process/lifecycle and run identity.
 jq --arg name "$probe" --arg ns "$namespace" --arg key "$ownership_label" '
   {apiVersion:"v1",kind:"Pod",metadata:{name:$name,namespace:$ns,
@@ -255,6 +383,7 @@ for negative in privileged hostpath; do
     grep -Eqi 'hostPath|host.path' "$scratch/denied-error" || fail unrelated-admission-denial
   fi
 done
+verify_admission_fence
 created=true
 kc create -f "$scratch/pod.json" -o json >"$scratch/created-pod.json"
 probe_uid=$(jq -er --arg name "$probe" --arg ns "$namespace" --arg key "$ownership_label" \
@@ -367,5 +496,9 @@ cmp -s "$scratch/api-before" "$scratch/api-after" || fail api-target-churn
 
 stage=job-cgroup-measurement
 quiet kc -n "$namespace" exec "$probe" -- /etc/ksail-arc-metrics/job-metrics.sh
+verify_admission_fence
+verify_runner_source
+kc -n "$namespace" get pods -l platform.devantler.tech/arc-role=runner -o json \
+  | jq -e --arg uid "$probe_uid" '.items | length == 1 and .[0].metadata.uid == $uid' >/dev/null
 stage=complete
 printf 'PASS: ARC registration, restricted image, admission and two intercepted egress denials; manifest=%s\n' "$PLATFORM_MANIFEST_DIGEST"

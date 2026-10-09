@@ -33,7 +33,7 @@ image="$image" yq -i '.spec.values.template.spec.containers[0].image=strenv(imag
   .spec.values.template.spec.initContainers[0].image=strenv(image) | .spec.suspend=false' \
   "$scratch/k8s/bases/infrastructure/actions-runners/helm-release.yaml"
 yq -o=json '.spec.values' "$scratch/k8s/bases/infrastructure/actions-runners/helm-release.yaml" \
-  | jq '{metadata:{generation:1,annotations:{"runner-scale-set-id":"1",
+  | jq '{metadata:{uid:"ars-uid",generation:1,annotations:{"runner-scale-set-id":"1",
       "actions.github.com/runner-group-name":"platform",
       "actions.github.com/runner-scale-set-name":"platform-linux"}},
     status:{phase:"Running",observedGeneration:1},spec:.} |
@@ -170,8 +170,20 @@ case "$args" in
       unexpected-hook) jq '.spec.template.spec.containers[0].env[0].value="/unverified"' "$ARC_TEST_ROOT/ars" ;;
       writable-metrics) jq '.spec.template.spec.containers[0].volumeMounts[2].readOnly=false' "$ARC_TEST_ROOT/ars" ;;
       wrong-metrics-configmap) jq '.spec.template.spec.volumes[2].configMap.name="unverified"' "$ARC_TEST_ROOT/ars" ;;
+      runner-deadline) jq '.spec.template.spec.activeDeadlineSeconds=60' "$ARC_TEST_ROOT/ars" ;;
+      template-churn)
+        if [[ -e "$ARC_TEST_ROOT/admission-fence" ]]; then jq '.spec.template.spec.activeDeadlineSeconds=60' "$ARC_TEST_ROOT/ars"
+        else cat "$ARC_TEST_ROOT/ars"; fi ;;
+      invalid-runner-identity) jq 'del(.metadata.uid)' "$ARC_TEST_ROOT/ars" ;;
+      drift-during-probe)
+        if [[ -e "$ARC_TEST_ROOT/metrics-executed" ]]; then jq '.metadata.generation=2 | .spec.template.spec.activeDeadlineSeconds=60' "$ARC_TEST_ROOT/ars"
+        else cat "$ARC_TEST_ROOT/ars"; fi ;;
       *) cat "$ARC_TEST_ROOT/ars" ;;
     esac ;;
+  *'get ephemeralrunnersets.actions.github.com '*|*'get ephemeralrunners.actions.github.com '*)
+    printf 'continue=\n'
+    if [[ "$ARC_TEST_CASE" == retained-runner-deadline ]]; then printf 'uid=retained-uid;deadline=60\n'
+    else printf 'uid=retained-uid;deadline=\n'; fi ;;
   *'get configmap ksail-arc-job-metrics-'*)
     if [[ "$ARC_TEST_CASE" == live-api-error ]]; then
       printf 'private-api-error-canary\n' >&2
@@ -180,15 +192,28 @@ case "$args" in
     jq -cn --rawfile script "$ARC_TEST_ROOT/scripts/ksail-arc-job-metrics.sh" \
       --arg scenario "$ARC_TEST_CASE" '{metadata:{uid:"metrics-uid",annotations:{"kustomize.toolkit.fluxcd.io/substitute":"disabled"}},immutable:($scenario!="mutable-metrics"),
       data:{"job-metrics.sh":(if $scenario=="tampered-metrics" then "unverified" else $script end)}}' ;;
+  *'get resourcequotas -l '*)
+    printf '{"items":[]}' ;;
   *'get resourcequotas '*)
+    {
     if [[ "$ARC_TEST_CASE" == full-quota ]]; then
       printf '{"items":[{"spec":{"hard":{"pods":"1"}},"status":{"hard":{"pods":"1"},"used":{"pods":"1"}}}]}'
     elif [[ "$ARC_TEST_CASE" == stale-quota ]]; then
       printf '{"items":[{"spec":{"hard":{"pods":"1"}},"status":{"hard":{"pods":"3"},"used":{"pods":"0"}}}]}'
-    else printf '{"items":[]}'; fi ;;
+    else printf '{"items":[]}'; fi
+    } | jq --slurpfile fence "$ARC_TEST_ROOT/admission-fence" '.items += $fence' ;;
+  *'get resourcequota arc-runtime-admission '*)
+    [[ -e "$ARC_TEST_ROOT/admission-fence" ]] || exit 0
+    cat "$ARC_TEST_ROOT/admission-fence" ;;
   *'get pods -l platform.devantler.tech/arc-role=runner '*|*'get pods -l platform.devantler.tech/arc-runtime-probe'*)
-    printf '{"items":[]}' ;;
+    if [[ "$args" == *'arc-role=runner'* && -e "$ARC_TEST_ROOT/live-pod" ]]; then
+      jq '{items:[.]}' "$ARC_TEST_ROOT/live-pod"
+    elif [[ "$args" == *'arc-role=runner'* && "$ARC_TEST_CASE" == busy-runner && ! -e "$ARC_TEST_ROOT/job-completed" ]]; then
+      touch "$ARC_TEST_ROOT/job-completed"
+      printf '{"items":[{"metadata":{"name":"legitimate-runner","uid":"job-uid"},"spec":{},"status":{"phase":"Running"}}]}'
+    else printf '{"items":[]}'; fi ;;
   'get nodes -o json')
+    if [[ -e "$ARC_TEST_ROOT/deleted" && ! -e "$ARC_TEST_ROOT/admission-fence" ]]; then exit 97; fi
     if [[ "$ARC_TEST_CASE" == failed-node-cleanup && -e "$ARC_TEST_ROOT/deleted" ]]; then exit 1; fi
     if [[ "$ARC_TEST_CASE" == unknown-create && -e "$ARC_TEST_ROOT/live-pod" ]]; then exit 1; fi
     if [[ "$ARC_TEST_CASE" == replacement-race && -e "$ARC_TEST_ROOT/replacement-preserved" ]]; then exit 1; fi
@@ -199,12 +224,31 @@ case "$args" in
     fi ;;
   'create --dry-run=server -f '*)
     file=$4
+    if [[ -e "$ARC_TEST_ROOT/admission-fence" ]] && jq -e '.spec.activeDeadlineSeconds == null' "$file" >/dev/null; then
+      [[ "$ARC_TEST_CASE" != fence-transport ]] || { printf 'connection refused\n' >&2; exit 1; }
+      printf 'pods forbidden: exceeded quota: arc-runtime-admission, requested: pods=1, limited: pods=0\n' >&2
+      exit 1
+    fi
     if jq -e '.spec.containers[0].securityContext.privileged == true or any(.spec.volumes[]; .hostPath != null)' "$file" >/dev/null; then
       if [[ "$ARC_TEST_CASE" == admission-transport ]]; then printf 'connection refused\n' >&2
       else printf 'violates PodSecurity restricted: privileged hostPath\n' >&2; fi
       exit 1
     fi ;;
   'create -f '*)
+    if jq -e '.kind == "ResourceQuota"' "$3" >/dev/null; then
+      jq -e '.metadata.name == "arc-runtime-admission" and .metadata.namespace == "arc-runners" and
+        .metadata.labels["platform.devantler.tech/arc-runtime-probe"] == "arc-proof-123-1" and
+        .spec == {hard:{pods:"0"},scopes:["NotTerminating"]}' "$3" >/dev/null || exit 96
+      [[ "$ARC_TEST_CASE" != foreign-fence ]] || exit 1
+      jq '.metadata.uid="fence-uid" | .metadata.resourceVersion="1" |
+        .status={hard:{pods:"0"},used:{pods:"0"}}' "$3" >"$ARC_TEST_ROOT/admission-fence"
+      cat "$ARC_TEST_ROOT/admission-fence"
+      exit 0
+    fi
+    if [[ "$ARC_TEST_CASE" == late-runner ]]; then
+      [[ -e "$ARC_TEST_ROOT/admission-fence" ]] || { touch "$ARC_TEST_ROOT/late-job-admitted"; exit 1; }
+      touch "$ARC_TEST_ROOT/late-job-blocked"
+    fi
     cp "$3" "$ARC_TEST_ROOT/desired-pod"
     jq --arg image "ghcr.io/devantler-tech/ksail-analysis-runner@$digest" '
       .metadata.uid="owned-uid" | .spec.nodeName="autoscale-arc-runners-0123456789abcdef" |
@@ -223,6 +267,14 @@ case "$args" in
       jq '.spec.initContainers[0].securityContext.privileged=true' "$ARC_TEST_ROOT/live-pod"
     else cat "$ARC_TEST_ROOT/live-pod"; fi ;;
   'delete --raw='*)
+    if [[ "$args" == *'/resourcequotas/'* ]]; then
+      [[ "$ARC_TEST_CASE" != replacement-fence ]] || { touch "$ARC_TEST_ROOT/fence-replacement-preserved"; exit 1; }
+      jq -e '.kind == "DeleteOptions" and .preconditions == {uid:"fence-uid",resourceVersion:"1"}' "$4" >/dev/null || exit 96
+      [[ ! -e "$ARC_TEST_ROOT/live-pod" ]] || exit 96
+      rm "$ARC_TEST_ROOT/admission-fence"
+      touch "$ARC_TEST_ROOT/fence-deleted"
+      exit 0
+    fi
     [[ "$ARC_TEST_CASE" != replacement-race ]] || { touch "$ARC_TEST_ROOT/replacement-preserved"; exit 1; }
     jq -e '.kind=="DeleteOptions" and .preconditions.uid=="owned-uid" and .gracePeriodSeconds==5' "$4" >/dev/null || exit 96
     rm "$ARC_TEST_ROOT/live-pod"
@@ -294,6 +346,8 @@ run_case() {
   rm -f "$scratch/live-pod" "$scratch/deleted" "$scratch/replacement-preserved" "$scratch/runtime-access"
   rm -f "$scratch/flux-reads" "$scratch/registration-reads" "$scratch/registration-budget"
   rm -f "$scratch/metrics-executed"
+  rm -f "$scratch/admission-fence" "$scratch/fence-deleted" "$scratch/job-completed" \
+    "$scratch/late-job-admitted" "$scratch/late-job-blocked" "$scratch/fence-replacement-preserved"
   (
     cd "$scratch"
     PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform \
@@ -356,6 +410,26 @@ for name in retained-active-min retained-active-max retained-suspended retained-
   [[ ! -e "$scratch/runtime-access" && ! -e "$scratch/live-pod" ]]
 done
 run_case complete-proof pass
+run_case busy-runner pass
+[[ -e "$scratch/job-completed" && -e "$scratch/fence-deleted" ]]
+run_case late-runner pass
+[[ -e "$scratch/late-job-blocked" && ! -e "$scratch/late-job-admitted" && -e "$scratch/fence-deleted" ]]
+run_case foreign-fence fail
+[[ ! -e "$scratch/live-pod" && ! -e "$scratch/fence-deleted" ]]
+run_case replacement-fence fail
+[[ -e "$scratch/fence-replacement-preserved" && ! -e "$scratch/fence-deleted" ]]
+run_case fence-transport fail
+[[ ! -e "$scratch/live-pod" && -e "$scratch/fence-deleted" ]]
+for name in runner-deadline retained-runner-deadline; do
+  run_case "$name" fail
+  [[ ! -e "$scratch/live-pod" && ! -e "$scratch/admission-fence" ]]
+done
+run_case template-churn fail
+[[ ! -e "$scratch/live-pod" && -e "$scratch/fence-deleted" ]]
+run_case invalid-runner-identity fail
+[[ ! -e "$scratch/admission-fence" ]]
+run_case drift-during-probe fail
+[[ -e "$scratch/deleted" && -e "$scratch/fence-deleted" ]]
 run_case live-api-error fail
 grep -Fq 'ARC acceptance: FAIL at immutable-job-metrics' "$scratch/stderr" || {
   printf 'FAIL: live API error did not identify the failing acceptance stage\n' >&2
