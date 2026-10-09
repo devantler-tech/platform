@@ -197,7 +197,7 @@ func pauseLogRecords(b []byte) ([]object, error) {
 }
 
 // pauseAcknowledged accepts only a bound, recent reconciliation not observed
-// before the pause. The two-second clock allowance never admits a replay.
+// before the pause. The clock allowance never admits an observed reconciliation replay.
 func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool) bool {
 	records, err := pauseLogRecords(b)
 	if err != nil {

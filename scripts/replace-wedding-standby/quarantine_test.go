@@ -321,9 +321,10 @@ func TestCompletedJoinTransaction(t *testing.T) {
 			lease, leaderPod := leaderFixture()
 			now := testNow
 			clockOffset := time.Duration(0)
-			if failure == "runner ahead" {
+			switch failure {
+			case "runner ahead":
 				clockOffset = -time.Millisecond
-			} else if failure == "runner behind" {
+			case "runner behind":
 				clockOffset = time.Millisecond
 			}
 			if clockOffset != 0 {
@@ -540,6 +541,20 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				t.Fatalf("failure %q escaped stop boundary: %v", failure, writes)
 			}
 		})
+	}
+}
+
+// TestPauseLogCoverageIsBounded refuses partial baselines before pausing.
+func TestPauseLogCoverageIsBounded(t *testing.T) {
+	for _, malformed := range []string{"null", `{"ts":`, strings.Repeat(" ", (1<<20)+1), "{}\nnot JSON"} {
+		if _, err := pauseLogRecords([]byte(malformed)); err == nil {
+			t.Fatal("incomplete baseline log coverage was accepted")
+		}
+	}
+	for _, complete := range []string{"", " \n", `{"msg":"unrelated startup log"}`} {
+		if _, err := pauseLogRecords([]byte(complete)); err != nil {
+			t.Fatalf("complete baseline was refused: %v", err)
+		}
 	}
 }
 
