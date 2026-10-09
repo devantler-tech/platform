@@ -162,6 +162,24 @@ func TestReadOnlyPlanAndPartialReadFailure(t *testing.T) {
 	}
 }
 
+// TestMalformedJobListingCannotClearPlan rejects entries that cannot be examined.
+func TestMalformedJobListingCannotClearPlan(t *testing.T) {
+	for _, entry := range []any{"not an object", nil} {
+		c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+			if args[0] != "get" {
+				t.Fatal("plan issued a write")
+			}
+			if args[1] == "jobs" {
+				return json.Marshal(object{"items": []any{entry}})
+			}
+			return fakeRead(fixture(), args[1:])
+		}}
+		if err := repair(context.Background(), c, testOptions(), false); err == nil {
+			t.Fatalf("unexamined job entry %v cleared the plan", entry)
+		}
+	}
+}
+
 // TestExecutionRefusesFailedSourceBeforeWrites protects against stale-main execution.
 func TestExecutionRefusesFailedSourceBeforeWrites(t *testing.T) {
 	writes := 0

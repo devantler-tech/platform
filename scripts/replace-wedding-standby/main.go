@@ -82,10 +82,14 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 		if e != nil {
 			return s, e
 		}
-		if _, ok := value(obj, "items").([]any); !ok {
+		items, ok := value(obj, "items").([]any)
+		if !ok {
 			return s, errors.New("incomplete resource listing")
 		}
 		*entry.dst = list(obj, "items")
+		if len(*entry.dst) != len(items) {
+			return s, errors.New("malformed resource listing")
+		}
 	}
 	for _, claim := range s.claims {
 		name := str(claim, "spec", "volumeName")
