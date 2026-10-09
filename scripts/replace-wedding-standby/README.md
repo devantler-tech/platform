@@ -15,7 +15,13 @@ identity or changed primary stops the repair.
 
 The failed replica's single existing volume is changed to `Retain`. The replica
 is fenced, and its own metrics must acknowledge that PostgreSQL is fenced before
-the claim is detached. Detachment follows the operator's
+the claim is detached. The protected workflow reads the exporter over loopback
+inside the exact failed Pod's `postgres` container, under a remote timeout and
+with identity checks before and after the read. It still requires HTTP 200 and
+exactly one positive fencing gauge; an annotation or log line is insufficient.
+This avoids the Pod-proxy connection to port 9187 that the namespace's network
+policies deny. No network policy or OIDC read permission is expanded. Detachment
+follows the operator's
 [`destroy --keep-pvc` procedure](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/cmd/plugin/destroy/destroy.go):
 remove only the verified Cluster owner reference and mark the claim `detached`
 before deleting the exact failed Pod with UID and resource-version preconditions.
@@ -28,6 +34,11 @@ peers remain healthy. Success requires two separated, complete samples showing
 three Ready instances, fresh replacement storage, healthy archiving, and the old
 claim and volume still bound to their original identities. Only then may ordinary
 maintenance proceed. This proves database repair, not overall platform health.
+
+Every write names the field manager `wedding-standby-repair`. Flux takes over
+fields written by a default `kubectl` manager and removes what Git does not
+declare, so a fence written that way is deleted at the next reconciliation and
+the repair stops before the claim is detached.
 
 ## Read-only plan
 
@@ -53,6 +64,26 @@ There is no automatic destructive cleanup, reverse ownership change, WAL reset,
 or repeated mutation. Inspect the current state with OIDC reads and prepare a
 reviewed continuation. Keep the old claim and volume for diagnosis; retirement
 is a separately approved data-lifecycle operation.
+
+The `resume_fenced` workflow input defaults to false. A specifically approved,
+fresh dispatch can set it to true only for the pre-detachment HOLD: the exact
+target fence must be owned by `wedding-standby-repair`, and the original claim
+must still be attached and Bound to its retained volume. The procedure does not
+rewrite that fence. Every other health, identity, backup and fencing-acknowledgment
+gate still applies. Missing or foreign fence ownership, a detached claim, changed
+identities, or a later partial repair remains HOLD and needs a separate reviewed
+continuation. A read-only plan for this state uses `--resume-fenced` without
+`--execute`; planning never executes a command inside a Pod.
+
+`Verify Retained Wedding Fence` is a separate dispatch-only, read-only workflow
+for the instance acknowledgment that local OIDC reads cannot reach. It requires
+current identity guards, main, first-attempt confirmation
+`prove-retained-wedding-fence`, the `prod` environment and the shared deployment
+lock. Its fixed command reads only the exporter, and complete observations before
+and after must preserve the original peers and retained storage. Inputs are
+identity guards, never command or target selectors. It prints only a sanitized
+PASS/HOLD result; it does not run the repair. A passing proof does not authorize
+a continuation or declare the database recovered.
 
 ## Offline validation
 
