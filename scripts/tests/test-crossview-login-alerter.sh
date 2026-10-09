@@ -112,10 +112,14 @@ for runner in self-hosted ''; do
 done
 cache_case not-linux '{}'
 cache_run '' github-hosted macOS
-[ "${cache_rc}" != 0 ] && [ ! -s "${cache_dir}/calls" ] || fail 'non-Linux daemon changes must be refused'
+if [ "${cache_rc}" = 0 ] || [ -s "${cache_dir}/calls" ]; then
+  fail 'non-Linux daemon changes must be refused'
+fi
 cache_case not-actions '{}'
 cache_run '' github-hosted Linux false
-[ "${cache_rc}" != 0 ] && [ ! -s "${cache_dir}/calls" ] || fail 'local daemon changes must be refused'
+if [ "${cache_rc}" = 0 ] || [ -s "${cache_dir}/calls" ]; then
+  fail 'local daemon changes must be refused'
+fi
 pass 'hosted registry cache preserves configuration and fails closed without changing local daemons'
 
 # The earlier changes-job fixture builds a pinned Docker Hub toolbox too. Its
@@ -139,8 +143,9 @@ if [ "${cache_rc}" = 0 ] || grep -qx docker-build "${cache_dir}/calls"; then
 fi
 cache_case wedding-local '{}'
 cache_runtime_run '' false
-[ "${cache_rc}" = 94 ] && [ ! -e "${cache_dir}/installed.json" ] ||
+if [ "${cache_rc}" != 94 ] || [ -e "${cache_dir}/installed.json" ]; then
   fail 'a local Wedding fixture must build without reconfiguring Docker'
+fi
 pass 'both hosted runtime fixtures configure the cache before pulling pinned images'
 
 readonly pod='.spec.jobTemplate.spec.template.spec'

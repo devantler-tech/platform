@@ -30,14 +30,14 @@ set -euo pipefail
 # images or the outage assertions. This mode is invoked only before the hosted
 # fixture starts; local and self-hosted Docker daemons are never reconfigured.
 if [ "$#" -gt 0 ]; then
-  [ "$#" = 1 ] && [ "$1" = --configure-registry-cache ] || {
+  if [ "$#" != 1 ] || [ "$1" != --configure-registry-cache ]; then
     printf 'FAIL: unexpected runtime fixture argument\n' >&2; exit 1;
-  }
-  [ "${GITHUB_ACTIONS:-}" = true ] &&
-    [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
-    [ "${RUNNER_OS:-}" = Linux ] || {
+  fi
+  if [ "${GITHUB_ACTIONS:-}" != true ] ||
+    [ "${RUNNER_ENVIRONMENT:-}" != github-hosted ] ||
+    [ "${RUNNER_OS:-}" != Linux ]; then
       printf 'FAIL: registry cache setup requires a hosted Linux runner\n' >&2; exit 1;
-    }
+  fi
   umask 077
   cache_dir="$(mktemp -d)"
   trap 'rm -rf "${cache_dir}"' EXIT
