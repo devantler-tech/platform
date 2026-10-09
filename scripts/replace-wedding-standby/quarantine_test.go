@@ -13,7 +13,8 @@ import (
 	"time"
 )
 
-// The operator reuses the missing ordinal. A name is not a storage identity:
+// TestRecoveryChecksClaimIdentityRatherThanReusableName checks ordinal reuse.
+// A name is not a storage identity:
 // only a newly bound claim can safely use that name after the old PV is retained.
 func TestRecoveryChecksClaimIdentityRatherThanReusableName(t *testing.T) {
 	for _, sameUID := range []bool{false, true} {
@@ -52,6 +53,7 @@ func TestRecoveryChecksClaimIdentityRatherThanReusableName(t *testing.T) {
 	}
 }
 
+// completedFixture models the bound, completed-bootstrap two-peer HOLD.
 func completedFixture() (inventory, storageGuards) {
 	s := fixture()
 	at(s.claims[0], "metadata")["ownerReferences"] = []any{}
@@ -67,16 +69,19 @@ func completedFixture() (inventory, storageGuards) {
 	return s, storageGuards{"job-uid", "claim-uid", "pv-uid"}
 }
 
+// leaderFixture supplies one live lease and its ready, version-bound operator.
 func leaderFixture() (object, object) {
 	lease := object{"metadata": object{"name": leaderLease, "namespace": "cnpg-system", "uid": "lease-uid", "resourceVersion": "10"}, "spec": object{"holderIdentity": "cloudnative-pg-fixture_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "leaseDurationSeconds": float64(15), "leaseTransitions": float64(1), "renewTime": testNow.Add(-time.Second).Format(time.RFC3339Nano)}}
 	pod := object{"metadata": object{"name": "cloudnative-pg-fixture", "namespace": "cnpg-system", "uid": "leader-uid", "resourceVersion": "10", "labels": object{"app.kubernetes.io/instance": "cloudnative-pg", "app.kubernetes.io/name": "cloudnative-pg"}}, "spec": object{"containers": []any{object{"name": "manager", "image": "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1"}}}, "status": object{"phase": "Running", "conditions": []any{object{"type": "Ready", "status": "True"}}}}
 	return lease, pod
 }
 
+// pauseRecord models the operator's fresh cluster-specific pause acknowledgment.
 func pauseRecord() object {
 	return object{"level": "warning", "ts": testNow.Format(time.RFC3339Nano), "msg": pauseMessage, "namespace": namespace, "name": clusterName, "Cluster": object{"namespace": namespace, "name": clusterName}, "reconcileID": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
 }
 
+// TestCompletedJoinPlanRejectsUnsafeHold preserves every recovery admission gate.
 func TestCompletedJoinPlanRejectsUnsafeHold(t *testing.T) {
 	for _, failure := range []string{"", "claim UID", "volume UID", "job UID", "job active", "job owner", "pod running", "wrong container", "unready peer", "nonrunning peer", "stale backup", "active backup", "fence", "pause", "different image", "missing CSI", "empty handle", "attached claim", "foreign claim", "unknown phase"} {
 		t.Run(failure, func(t *testing.T) {
@@ -129,6 +134,7 @@ func TestCompletedJoinPlanRejectsUnsafeHold(t *testing.T) {
 	}
 }
 
+// TestPauseAcknowledgmentIsFreshAndBound rejects stale or unrelated controller logs.
 func TestPauseAcknowledgmentIsFreshAndBound(t *testing.T) {
 	for _, failure := range []string{"", "stale", "future", "wrong namespace", "wrong cluster", "wrong context", "wrong message", "missing reconcile", "wrong level", "malformed reconcile", "truncated", "mixed malformed"} {
 		t.Run(failure, func(t *testing.T) {
@@ -167,6 +173,7 @@ func TestPauseAcknowledgmentIsFreshAndBound(t *testing.T) {
 	}
 }
 
+// TestOperatorLeaderBindingIsComplete rejects incomplete or expired leader identity.
 func TestOperatorLeaderBindingIsComplete(t *testing.T) {
 	for _, failure := range []string{"", "wrong lease", "missing transitions", "expired", "wrong pod", "wrong image", "unready"} {
 		t.Run(failure, func(t *testing.T) {
@@ -199,7 +206,7 @@ func TestOperatorLeaderBindingIsComplete(t *testing.T) {
 	}
 }
 
-// All nonterminal CNPG Backup phases must stop the storage transaction, even
+// TestCompletedJoinBlocksEveryActiveOrUnknownBackup rejects nonterminal phases, even
 // when another older backup can supply the recent-success evidence.
 func TestCompletedJoinBlocksEveryActiveOrUnknownBackup(t *testing.T) {
 	for _, phase := range []string{"pending", "started", "running", "finalizing", "unknown", ""} {
@@ -216,6 +223,8 @@ func TestCompletedJoinBlocksEveryActiveOrUnknownBackup(t *testing.T) {
 	}
 }
 
+// TestCompletedJoinSnapshotIncludesUnlabelledBackups checks the actual cluster join
+// rather than assuming that every backup has an optional cluster label.
 func TestCompletedJoinSnapshotIncludesUnlabelledBackups(t *testing.T) {
 	s, _ := completedFixture()
 	c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
@@ -229,6 +238,8 @@ func TestCompletedJoinSnapshotIncludesUnlabelledBackups(t *testing.T) {
 	}
 }
 
+// TestCompletedJoinBackupCensusDoesNotDropUnknownEntries rejects malformed coverage
+// while admitting positively identified backups belonging to another cluster.
 func TestCompletedJoinBackupCensusDoesNotDropUnknownEntries(t *testing.T) {
 	for _, failure := range []string{"foreign cluster", "missing cluster", "missing metadata", "malformed item"} {
 		t.Run(failure, func(t *testing.T) {
@@ -474,7 +485,8 @@ func TestCompletedJoinTransaction(t *testing.T) {
 	}
 }
 
-// Execution must be bound to the new grant, not the consumed legacy grant.
+// TestCompletedJoinCLIRequiresSeparateApproval binds execution to the new grant,
+// not the consumed legacy grant.
 func TestCompletedJoinCLIRequiresSeparateApproval(t *testing.T) {
 	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": strings.Repeat("a", 40), "WEDDING_REPAIR_CONFIRM": "retain-volume-rebuild-completed-standby"}
 	for _, failure := range []string{"workflow", "confirm", "branch", "attempt", "SHA", "missing UID", "resume", "proof"} {
