@@ -173,7 +173,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.197.2"
+          KSAIL_VERSION: "7.198.0"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -210,6 +210,13 @@ jobs:
         # Validate every package served by the shared Git/SOPS credential
         # before creating infrastructure or publishing a mutable latest tag.
         run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
+      - name: 🧭 Verify the validated recovery still matches main
+        id: verify_recovery_source
+        env:
+          RECOVERY_SOURCE_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
 
       - name: 🏗️ Create cluster
         # From-zero provisioning: Hetzner servers, Talos boot, CCM, CSI. Writes
@@ -252,6 +259,7 @@ jobs:
         id: publish_platform_manifest
         uses: ./.github/actions/deploy-prod/publish-platform-manifests
         with:
+          recovery-source-sha: ${{ github.sha }}
           ghcr-token: ${{ secrets.GHCR_TOKEN }}
           hcloud-token: ${{ secrets.HCLOUD_TOKEN }}
 

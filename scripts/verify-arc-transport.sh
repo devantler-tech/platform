@@ -111,7 +111,7 @@ for layer in infrastructure infrastructure-controllers; do
 done
 cmp -s "$scratch/infrastructure-revision" "$scratch/infrastructure-controllers-revision" || fail split-revision
 
-stage=healthy-targets
+stage=healthy-bao-pod
 kc -n openbao get pod openbao-2 -o json >"$scratch/bao.json"
 jq -e '.metadata.uid != null and .status.podIP != null and .spec.nodeName != null and
  any(.status.conditions[]; .type == "Ready" and .status == "True") and
@@ -121,6 +121,7 @@ bao_ip=$(jq -er '.status.podIP' "$scratch/bao.json")
 bao_node=$(jq -er '.spec.nodeName' "$scratch/bao.json")
 # Pod labels are not necessarily Cilium identity labels. Bind the retained
 # transport selector to the current Pod before claiming policy isolation.
+stage=healthy-bao-identity
 kc -n openbao get ciliumendpoint openbao-2 -o json >"$scratch/bao-identity.json"
 jq -e --arg uid "$(jq -er '.metadata.uid' "$scratch/bao.json")" '
  any(.metadata.ownerReferences[]; .kind == "Pod" and .uid == $uid) and
@@ -129,32 +130,44 @@ jq -e --arg uid "$(jq -er '.metadata.uid' "$scratch/bao.json")" '
   all(["k8s:app.kubernetes.io/name=openbao", "k8s:app.kubernetes.io/instance=openbao",
        "k8s:io.kubernetes.pod.namespace=openbao", "k8s:platform.devantler.tech/arc-transport=tls"][];
       . as $label | $labels | index($label) != null))' "$scratch/bao-identity.json" >/dev/null
+stage=healthy-bao-service
 kc -n openbao get service openbao-arc -o json | jq -e '.spec.selector == {"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"} and
  .spec.ports == [{name:"arc-tls",port:8204,protocol:"TCP",targetPort:8204}]' >/dev/null
+stage=healthy-eso-pods
 kc -n external-secrets get pods -l app.kubernetes.io/name=external-secrets -o json >"$scratch/eso.json"
 jq -e '(.items | length) > 0 and all(.items[]; .metadata.uid != null and .spec.nodeName != null and
  any(.status.conditions[]; .type == "Ready" and .status == "True") and
  all(.status.containerStatuses[]; .ready == true and .containerID != ""))' "$scratch/eso.json" >/dev/null
 { printf '%s\n' "$bao_node"; jq -r '.items[].spec.nodeName' "$scratch/eso.json"; } | sort -u >"$scratch/nodes"
 [[ "$(wc -l <"$scratch/nodes")" -le 4 ]] || fail exposure-bound
-kubectl --context "$context" --request-timeout=30s -n openbao port-forward --address=127.0.0.1 pod/openbao-2 :8204 >"$scratch/forward" 2>"$scratch/forward-error" &
+stage=healthy-health-forward
+# Positive health controls use loopback-only tunnels to this exact Pod. The
+# API-server proxy is not an allowed HTTP client under OpenBao's network policy.
+# Direct same-node HTTP/TLS denial challenges below remain unchanged.
+kubectl --context "$context" --request-timeout=30s -n openbao port-forward --address=127.0.0.1 pod/openbao-2 :8204 :8200 >"$scratch/forward" 2>"$scratch/forward-error" &
 forward_pid=$!
 for _ in {1..30}; do
   kill -0 "$forward_pid" 2>/dev/null || fail port-forward
   port=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 8204$/\1/p' "$scratch/forward")
-  [[ "$port" =~ ^[0-9]+$ ]] && break
+  http_port=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 8200$/\1/p' "$scratch/forward")
+  [[ "$port" =~ ^[0-9]+$ && "$http_port" =~ ^[0-9]+$ ]] && break
   sleep 1
 done
-[[ "$port" =~ ^[0-9]+$ ]] || fail port-forward
+[[ "$port" =~ ^[0-9]+$ && "$http_port" =~ ^[0-9]+$ ]] || fail port-forward
 healthy() {
+  stage=healthy-tls-health
   curl --noproxy '*' --proto '=https' --tlsv1.2 --cacert "$scratch/ca.pem" --resolve "$host:$port:127.0.0.1" \
     --fail --silent --show-error --max-time 15 "https://$host:$port/v1/sys/health?standbyok=true" >"$scratch/tls-health" 2>"$scratch/tls-error"
   "$scratch/evidence" health <"$scratch/tls-health"
-  kc get --raw '/api/v1/namespaces/openbao/pods/openbao-2:8200/proxy/v1/sys/health?standbyok=true' >"$scratch/http-health"
+  stage=healthy-http-health
+  curl --noproxy '*' --proto '=http' --fail --silent --show-error --max-time 15 \
+    "http://127.0.0.1:$http_port/v1/sys/health?standbyok=true" >"$scratch/http-health" 2>"$scratch/http-error"
   "$scratch/evidence" health <"$scratch/http-health"
+  stage=healthy-health-binding
   [[ "$(jq -r .cluster_id "$scratch/tls-health")" == "$(jq -r .cluster_id "$scratch/http-health")" ]] || fail split-health
 }
 healthy
+stage=healthy-cluster-info
 cluster=$(kc -n kube-system get configmap cilium-config -o json | jq -er '.data["cluster-name"] | select(length > 0)')
 count=0
 while IFS= read -r node; do
