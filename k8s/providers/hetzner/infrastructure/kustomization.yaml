@@ -3,7 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
-  # Prod-only: one bounded KSail analysis runner, authenticated by the shared App.
+  # Prod-only: the organization runner pool (max one runner), authenticated by the shared App.
   - ../../../bases/infrastructure/actions-runners/
   # Re-adopt the retained release without activating a runner. Suspension does
   # not drain an installed scale set; runtime acceptance remains a separate gate.

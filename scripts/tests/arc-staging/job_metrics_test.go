@@ -3,7 +3,6 @@ package arcstaging_test
 import "testing"
 
 const metricsComponent = "k8s/bases/infrastructure/actions-runners"
-const metricsScript = "scripts/ksail-arc-job-metrics.sh"
 
 func TestRunnerRetainsWholeJobCgroupMeasurement(t *testing.T) {
 	config := readYAML(t, metricsComponent+"/config-map-job-metrics.yaml")

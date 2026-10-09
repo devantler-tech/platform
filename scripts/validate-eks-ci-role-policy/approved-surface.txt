@@ -16,7 +16,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget adc009b64f2a9d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|arc-runners|platform-runners 52f89508024a6a9d9547f85a1f292b6fa05819f679fed5f5e3ee3972cd6eb388
+helm.toolkit.fluxcd.io/v2|HelmRelease|arc-runners|platform-runners 442c4bc77b77c3a927b1c479592d6960d535627050bf408ce55e794aa3ec505a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-systems|arc-controller 844e32e3408c2ad6e85b10c6628de7208c447ca3f1cffe5a0da74dcf3cdc11cf
 

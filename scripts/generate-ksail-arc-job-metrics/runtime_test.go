@@ -36,7 +36,6 @@ func TestWholeJobCgroupMeasurement(t *testing.T) {
 		{"wrong cgroup", "17179869184", "10", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"missing peak", "15032385536", "", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"zero peak", "15032385536", "0", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
-		{"exceeded", "15032385536", "15032385537", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"malformed peak", "15032385536", "1\n2", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"noncanonical peak", "15032385536", "001", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"overflow", "15032385536", "99999999999999999999999", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
@@ -49,6 +48,8 @@ func TestWholeJobCgroupMeasurement(t *testing.T) {
 		{"OOM", "15032385536", "10", "low 0\nhigh 0\nmax 0\noom 1\noom_kill 0\noom_group_kill 0\n", false},
 		{"OOM kill", "15032385536", "10", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 1\noom_group_kill 0\n", false},
 		{"OOM group kill", "15032385536", "10", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 1\n", false},
+		{"over budget with OOM", "15032385536", "15032385537", "low 0\nhigh 0\nmax 3\noom 1\noom_kill 0\noom_group_kill 0\n", false},
+		{"over budget with invalid events", "15032385536", "15032385537", "low 0\nhigh 0\nmax 3\noom nope\noom_kill 0\noom_group_kill 0\n", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -97,6 +98,31 @@ func TestWholeJobCgroupMeasurement(t *testing.T) {
 				t.Fatalf("wrong measurement: %+v", got)
 			}
 		})
+	}
+}
+
+func TestOverBudgetPeakRetainsMeasurementAndRejectsAcceptance(t *testing.T) {
+	root := t.TempDir()
+	for name, value := range map[string]string{
+		"memory.max": "15032385536\n", "memory.peak": "15032385537\n",
+		"memory.events": "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script, err := filepath.Abs(filepath.Join(repoRoot, metricsScript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("bash", "-c", `source "$1"; arc_job_metrics "$2"`, "metrics-test", script, root)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("over-budget measurement accepted")
+	}
+	const receipt = `KSail ARC whole-job cgroup: {"schemaVersion":1,"memoryMaxBytes":15032385536,"memoryPeakBytes":15032385537,"limitEvents":3,"oomEvents":0,"oomKills":0,"oomGroupKills":0}`
+	if string(output) != receipt+"\n::error::KSail ARC whole-job cgroup measurement failed: budget\n" {
+		t.Fatalf("lost measurement or budget refusal: %s", output)
 	}
 }
 

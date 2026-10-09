@@ -35,17 +35,20 @@ func TestQuotaRequiresCompleteHeadroom(t *testing.T) {
 	if err := verifyQuota([]byte(`{"items":[]}`)); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []string{
-		strings.ReplaceAll(good, `"pods":"3"`, `"pods":"1"`),
-		strings.ReplaceAll(good, `"limits.memory":"16Gi"`, `"limits.memory":"14Gi"`),
-		strings.ReplaceAll(good, `"requests.memory":"1Gi",`, ``),
-		`{"items":[{"spec":{"hard":{"pods":"1"}},"status":{}}]}`,
-		`{"items":[{"spec":{"hard":{"pods":"1"}},"status":{"hard":{"pods":"5"},"used":{"pods":"1"}}}]}`,
-		`{"items":[{"spec":{"hard":{"pods":"1"},"scopes":["Terminating"]},"status":{"hard":{"pods":"1"},"used":{"pods":"0"}}}]}`,
-		`{}`, `{"items":[{"status":{"hard":{"pods":"unknown"},"used":{"pods":"0"}}}]}`,
+	for _, tc := range []struct{ name, input, want string }{
+		{"pods", strings.ReplaceAll(good, `"pods":"3"`, `"pods":"1"`), "insufficient namespace quota"},
+		{"memory", strings.ReplaceAll(good, `"limits.memory":"16Gi"`, `"limits.memory":"14Gi"`), "insufficient namespace quota"},
+		{"used accounting", strings.ReplaceAll(good, `"requests.memory":"1Gi",`, ``), "incomplete quota accounting"},
+		{"limit accounting", `{"items":[{"spec":{"hard":{"pods":"1"}},"status":{}}]}`, "missing quota limit accounting"},
+		{"stale accounting", `{"items":[{"spec":{"hard":{"pods":"1"}},"status":{"hard":{"pods":"5"},"used":{"pods":"1"}}}]}`, "stale quota limit accounting"},
+		{"scoped", `{"items":[{"spec":{"hard":{"pods":"1"},"scopes":["Terminating"]},"status":{"hard":{"pods":"1"},"used":{"pods":"0"}}}]}`, "unresolved scoped quota"},
+		{"missing read", `{}`, "invalid quota read"},
+		{"unknown quantity", `{"items":[{"spec":{"hard":{"pods":"unknown"}},"status":{"hard":{"pods":"unknown"},"used":{"pods":"0"}}}]}`, "unknown resource quantity"},
 	} {
-		if verifyQuota([]byte(bad)) == nil {
-			t.Fatal("accepted incomplete or insufficient quota")
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if err := verifyQuota([]byte(tc.input)); err == nil || err.Error() != tc.want {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
 	}
 }

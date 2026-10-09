@@ -3350,3 +3350,28 @@ missing, duplicated or newly added authorization resources, changed Flux
 handoff and unauthorized AWS identity bindings. Local validation uses cached
 Go 1.26.9; required native CI uses the repository's Go 1.26.6 pin and remains
 the authority. This approval establishes no runtime or activation clearance.
+
+## 2026-10-09 — ARC over-budget measurements remain visible without accepting them
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 renderer compares all five
+production layers against #4544 at `1451f9cf`. Both renders contain 686
+documents, with no duplicate identities. Only the generated metrics ConfigMap
+and its HelmRelease volume reference change. The ConfigMap name moves from
+`ksail-arc-job-metrics-6f02a2616f` to `ksail-arc-job-metrics-2fbcf0b1d7`.
+Removing that single reference scalar makes the complete HelmRelease equal;
+every other complete rendered document is equal.
+
+The script now emits a canonical measurement for a transient peak above the
+kernel limit, then returns the existing budget failure with a nonzero exit.
+The 14 GiB limit, positive numeric peak, complete event counters and zero-OOM
+requirements remain enforced. Over-budget measurements with invalid events or
+OOM events still emit no receipt. Runtime acceptance continues to reject an
+over-budget peak. No IAM/RBAC grant, App permission, runner identity, image,
+resource bound or security setting changes.
+
+The validator reproduces only the pool entry's fingerprint change from
+`52f89508024a6a9d9547f85a1f292b6fa05819f679fed5f5e3ee3972cd6eb388` to
+`442c4bc77b77c3a927b1c479592d6960d535627050bf408ce55e794aa3ec505a`.
+Renew only this entry; all authorization checks and negative controls remain
+enabled. Local validation uses cached Go 1.26.9; native CI's repository pin
+remains authoritative. This audit grants no runtime or activation clearance.
