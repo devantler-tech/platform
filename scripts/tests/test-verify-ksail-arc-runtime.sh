@@ -8,6 +8,7 @@ mkdir -p "$scratch/bin" "$scratch/scripts" "$scratch/k8s/providers/hetzner/infra
   "$scratch/k8s/bases/infrastructure/actions-runners" \
   "$scratch/k8s/bases/infrastructure/controllers/actions-runner-controller"
 cp "$root/scripts/verify-ksail-arc-runtime.sh" "$scratch/scripts/"
+cp "$root/scripts/ksail-arc-admission-fence.sh" "$scratch/scripts/"
 if [[ -e "$root/scripts/wait-for-ksail-arc-registration.sh" ]]; then
   cp "$root/scripts/wait-for-ksail-arc-registration.sh" "$scratch/scripts/"
 fi
@@ -64,6 +65,50 @@ cat >"$scratch/bin/go" <<'SH'
 [[ "$1" == run && "$2" == ./scripts/verify-ksail-arc-runtime ]] || exit 91
 shift 2
 exec "$ARC_TEST_ROOT/verifier" "$@"
+SH
+cat >"$scratch/bin/git" <<'SH'
+#!/usr/bin/env bash
+[[ "$*" == 'rev-parse HEAD' ]] || exit 97
+printf '%040d\n' 1
+SH
+cat >"$scratch/bin/gh" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$1" == api && "$*" == *'--hostname github.com --method GET'* ]] || exit 97
+case "$2" in
+  'repos/devantler-tech/platform/actions/runs/123/attempts/1')
+    [[ "$ARC_TEST_CASE" != orphan-current-empty-api ]] || exit 0
+    printf '{"id":123,"run_attempt":1,"head_sha":"%040d","path":".github/workflows/ci.yaml","event":"merge_group","status":"in_progress","repository":{"full_name":"devantler-tech/platform"},"head_repository":{"full_name":"devantler-tech/platform"}}' 1 ;;
+  'repos/devantler-tech/platform/actions/runs/122/attempts/1')
+    [[ "$ARC_TEST_CASE" != orphan-api-unknown ]] || exit 42
+    if [[ "$ARC_TEST_CASE" == orphan-final-api-unknown && -e "$ARC_TEST_ROOT/prior-probe-deleted" ]]; then exit 42; fi
+    status=completed
+    [[ "$ARC_TEST_CASE" != orphan-active ]] || status=in_progress
+    jq -cn --arg status "$status" --arg scenario "$ARC_TEST_CASE" '{id:122,run_attempt:1,head_sha:"0000000000000000000000000000000000000001",
+      path:".github/workflows/ci.yaml",event:"merge_group",status:$status,conclusion:"cancelled",
+      repository:{full_name:"devantler-tech/platform"},head_repository:{full_name:"devantler-tech/platform"}} |
+      if $scenario=="orphan-run-mismatch" then .run_attempt=2
+      elif $scenario=="orphan-wrong-api-head" then .head_sha="0000000000000000000000000000000000000002"
+      elif $scenario=="orphan-wrong-api-workflow" then .path=".github/workflows/unrelated.yaml"
+      elif $scenario=="orphan-wrong-api-repository" then .repository.full_name="devantler-tech/ksail"
+      else . end' ;;
+  'repos/devantler-tech/platform/actions/runs/123/attempts/1/jobs?per_page=100')
+    [[ "$ARC_TEST_CASE" != orphan-current-job-list-empty ]] || exit 0
+    printf '[{"total_count":1,"jobs":[{"id":456,"run_id":123,"head_sha":"%040d","name":"🚀 Deploy to Prod","status":"in_progress"}]}]' 1 ;;
+  'repos/devantler-tech/platform/actions/runs/122/attempts/1/jobs?per_page=100')
+    count=1
+    [[ "$ARC_TEST_CASE" != orphan-incomplete-jobs ]] || count=2
+    jq -cn --argjson count "$count" --arg scenario "$ARC_TEST_CASE" '{total_count:$count,jobs:[{id:455,run_id:122,
+      head_sha:"0000000000000000000000000000000000000001",name:"🚀 Deploy to Prod",status:"completed",
+      conclusion:"cancelled",completed_at:"2026-10-05T22:00:00Z"}]} |
+      if $scenario=="orphan-duplicate-job" then .total_count=2 | .jobs += .jobs
+      elif $scenario=="orphan-job-active" then .jobs[0].status="in_progress" | .jobs[0].completed_at=null
+      elif $scenario=="orphan-wrong-job" then .jobs[0].id=999
+      else . end | if $scenario=="orphan-paginated" then
+        [.total_count=2, {total_count:2,jobs:[{id:999,run_id:122,name:"Unrelated job",status:"completed"}]}]
+      else [.] end' ;;
+  *) exit 97 ;;
+esac
 SH
 cat >"$scratch/bin/cosign" <<'SH'
 #!/usr/bin/env bash
@@ -204,8 +249,29 @@ case "$args" in
     } | jq --slurpfile fence "$ARC_TEST_ROOT/admission-fence" '.items += $fence' ;;
   *'get resourcequota arc-runtime-admission '*)
     [[ -e "$ARC_TEST_ROOT/admission-fence" ]] || exit 0
+    if [[ "$ARC_TEST_CASE" == own-fence-empty && -e "$ARC_TEST_ROOT/fence-mutated" ]]; then exit 0; fi
+    if [[ "$ARC_TEST_CASE" == orphan-quota-churn ]]; then
+      if [[ -e "$ARC_TEST_ROOT/prior-fence-read" ]]; then
+        jq '.metadata.uid="replacement-fence-uid"' "$ARC_TEST_ROOT/admission-fence" >"$ARC_TEST_ROOT/replaced-fence"
+        mv "$ARC_TEST_ROOT/replaced-fence" "$ARC_TEST_ROOT/admission-fence"
+      fi
+      touch "$ARC_TEST_ROOT/prior-fence-read"
+    fi
     cat "$ARC_TEST_ROOT/admission-fence" ;;
+  *'patch resourcequota arc-runtime-admission --type=json --patch-file '*)
+    patch=${!#}
+    jq -e '.[0] == {op:"test",path:"/metadata/uid",value:"fence-uid"} and
+      .[1] == {op:"test",path:"/metadata/resourceVersion",value:"1"} and
+      .[2] == {op:"add",path:"/metadata/annotations/platform.devantler.tech~1arc-runtime-probe-uid",value:"owned-uid"}' \
+      "$patch" >/dev/null || exit 96
+    jq '.metadata.annotations["platform.devantler.tech/arc-runtime-probe-uid"]="owned-uid" |
+      .metadata.resourceVersion="2"' "$ARC_TEST_ROOT/admission-fence" >"$ARC_TEST_ROOT/patched-fence"
+    mv "$ARC_TEST_ROOT/patched-fence" "$ARC_TEST_ROOT/admission-fence" ;;
   *'get pods -l platform.devantler.tech/arc-role=runner '*|*'get pods -l platform.devantler.tech/arc-runtime-probe'*)
+    if [[ "$ARC_TEST_CASE" == orphan-incomplete-probes && "$args" == *'arc-runtime-probe='* ]]; then
+      printf '{"metadata":{"continue":"next"},"items":[]}'
+      exit 0
+    fi
     if [[ "$args" == *'arc-role=runner'* && -e "$ARC_TEST_ROOT/live-pod" ]]; then
       jq '{items:[.]}' "$ARC_TEST_ROOT/live-pod"
     elif [[ "$args" == *'arc-role=runner'* && "$ARC_TEST_CASE" == busy-runner && ! -e "$ARC_TEST_ROOT/job-completed" ]]; then
@@ -213,6 +279,7 @@ case "$args" in
       printf '{"items":[{"metadata":{"name":"legitimate-runner","uid":"job-uid"},"spec":{},"status":{"phase":"Running"}}]}'
     else printf '{"items":[]}'; fi ;;
   'get nodes -o json')
+    if [[ "$ARC_TEST_CASE" == orphan-node-api && -e "$ARC_TEST_ROOT/prior-probe-deleted" ]]; then exit 42; fi
     if [[ -e "$ARC_TEST_ROOT/deleted" && ! -e "$ARC_TEST_ROOT/admission-fence" ]]; then exit 97; fi
     if [[ "$ARC_TEST_CASE" == failed-node-cleanup && -e "$ARC_TEST_ROOT/deleted" ]]; then exit 1; fi
     if [[ "$ARC_TEST_CASE" == unknown-create && -e "$ARC_TEST_ROOT/live-pod" ]]; then exit 1; fi
@@ -233,9 +300,20 @@ case "$args" in
       if [[ "$ARC_TEST_CASE" == admission-transport ]]; then printf 'connection refused\n' >&2
       else printf 'violates PodSecurity restricted: privileged hostPath\n' >&2; fi
       exit 1
-    fi ;;
+    fi
+    case "$ARC_TEST_CASE" in
+      own-fence-origin-churn|own-fence-controller-churn|own-fence-deleting|own-fence-empty)
+        jq --arg scenario "$ARC_TEST_CASE" '
+          if $scenario=="own-fence-origin-churn" then .metadata.annotations["platform.devantler.tech/arc-runtime-origin"]="changed"
+          elif $scenario=="own-fence-controller-churn" then .metadata.ownerReferences=[{uid:"controller-uid"}]
+          elif $scenario=="own-fence-deleting" then .metadata.deletionTimestamp="2026-10-05T22:00:00Z"
+          else . end' "$ARC_TEST_ROOT/admission-fence" >"$ARC_TEST_ROOT/mutated-fence"
+        mv "$ARC_TEST_ROOT/mutated-fence" "$ARC_TEST_ROOT/admission-fence"
+        touch "$ARC_TEST_ROOT/fence-mutated" ;;
+    esac ;;
   'create -f '*)
     if jq -e '.kind == "ResourceQuota"' "$3" >/dev/null; then
+      [[ ! -e "$ARC_TEST_ROOT/admission-fence" ]] || exit 1
       jq -e '.metadata.name == "arc-runtime-admission" and .metadata.namespace == "arc-runners" and
         .metadata.labels["platform.devantler.tech/arc-runtime-probe"] == "arc-proof-123-1" and
         .spec == {hard:{pods:"0"},scopes:["NotTerminating"]}' "$3" >/dev/null || exit 96
@@ -268,11 +346,26 @@ case "$args" in
     else cat "$ARC_TEST_ROOT/live-pod"; fi ;;
   'delete --raw='*)
     if [[ "$args" == *'/resourcequotas/'* ]]; then
+      if jq -e '.preconditions.uid == "prior-fence-uid"' "$4" >/dev/null; then
+        [[ "$ARC_TEST_CASE" != orphan-replacement ]] || { touch "$ARC_TEST_ROOT/prior-replacement-preserved"; exit 1; }
+        jq -e '.preconditions == {uid:"prior-fence-uid",resourceVersion:"1"}' "$4" >/dev/null || exit 96
+        [[ ! -e "$ARC_TEST_ROOT/live-pod" ]] || exit 96
+        rm "$ARC_TEST_ROOT/admission-fence"
+        touch "$ARC_TEST_ROOT/prior-fence-deleted"
+        exit 0
+      fi
       [[ "$ARC_TEST_CASE" != replacement-fence ]] || { touch "$ARC_TEST_ROOT/fence-replacement-preserved"; exit 1; }
-      jq -e '.kind == "DeleteOptions" and .preconditions == {uid:"fence-uid",resourceVersion:"1"}' "$4" >/dev/null || exit 96
+      jq -e '.kind == "DeleteOptions" and .preconditions.uid == "fence-uid" and
+        (.preconditions.resourceVersion == "1" or .preconditions.resourceVersion == "2")' "$4" >/dev/null || exit 96
       [[ ! -e "$ARC_TEST_ROOT/live-pod" ]] || exit 96
       rm "$ARC_TEST_ROOT/admission-fence"
       touch "$ARC_TEST_ROOT/fence-deleted"
+      exit 0
+    fi
+    if [[ "$args" == *'/pods/arc-proof-122-1'* ]]; then
+      jq -e '.preconditions.uid == "prior-probe-uid" and .gracePeriodSeconds == 5' "$4" >/dev/null || exit 96
+      rm "$ARC_TEST_ROOT/live-pod"
+      touch "$ARC_TEST_ROOT/prior-probe-deleted"
       exit 0
     fi
     [[ "$ARC_TEST_CASE" != replacement-race ]] || { touch "$ARC_TEST_ROOT/replacement-preserved"; exit 1; }
@@ -341,17 +434,82 @@ esac
 SH
 chmod +x "$scratch/bin/"*
 
+expected_refusal() {
+  case "$1" in
+    orphan-current-empty-api|orphan-current-job-list-empty|orphan-unauthorized-current) printf 'runner-admission-fence' ;;
+    orphan-*) printf 'runner-fence-recovery' ;;
+    own-fence-*) printf 'restricted-admission' ;;
+    retained-active-min|retained-active-max|retained-suspended|retained-missing-bound|retained-wrong-scale-set)
+      printf 'retained-source-state' ;;
+    foreign-fence|retained-runner-deadline) printf 'runner-admission-fence' ;;
+    replacement-fence|replacement-race|failed-node-cleanup) printf 'cleanup' ;;
+    fence-transport) printf 'unproven-runner-admission-fence' ;;
+    template-churn) printf 'runner-job-drain' ;;
+    invalid-runner-identity|unexpected-hook|writable-metrics|wrong-metrics-configmap|runner-deadline) printf 'registration-and-bounds' ;;
+    drift-during-probe|failed-metrics-hook) printf 'job-cgroup-measurement' ;;
+    live-api-error|mutable-metrics|tampered-metrics) printf 'immutable-job-metrics' ;;
+    registration-timeout|stale-flux|no-registration) printf 'registration-convergence' ;;
+    rendered-hidden-activation) printf 'partial-activation' ;;
+    source-render-failure) printf 'source-render' ;;
+    rendered-suspended|rendered-wrong-image) printf 'rendered-source-state' ;;
+    invalid-node-suffix-*|wrong-node-pool|full-quota|stale-quota|mutated-init|unknown-create) printf 'restricted-admission' ;;
+    bad-signature|tampered-image) printf 'immutable-image' ;;
+    wider-ceiling) printf 'autoscaler-boundary' ;;
+    admission-transport) printf 'unproven-admission-denial' ;;
+    insufficient-memory) printf 'allocatable-headroom' ;;
+    unhealthy-target) printf 'unhealthy-internal-control' ;;
+    curl-transport) printf 'unproven-curl-timeout' ;;
+    allowed-egress) printf 'network-isolation' ;;
+    forwarded-flow|wrong-source|observer-loss) printf 'intercepted-egress-denials' ;;
+    observer-diagnostics) printf 'observer-diagnostics' ;;
+    *) printf 'FAIL: no expected refusal for %s\n' "$1" >&2; return 1 ;;
+  esac
+}
+
 run_case() {
-  local name=$1 expected=$2 code=0
+  local name=$1 expected=$2 code=0 producer_job=deploy-prod
+  [[ "$name" != orphan-unauthorized-current ]] || producer_job=unrelated
   rm -f "$scratch/live-pod" "$scratch/deleted" "$scratch/replacement-preserved" "$scratch/runtime-access"
   rm -f "$scratch/flux-reads" "$scratch/registration-reads" "$scratch/registration-budget"
   rm -f "$scratch/metrics-executed"
   rm -f "$scratch/admission-fence" "$scratch/fence-deleted" "$scratch/job-completed" \
     "$scratch/late-job-admitted" "$scratch/late-job-blocked" "$scratch/fence-replacement-preserved"
+  rm -f "$scratch/prior-fence-deleted" "$scratch/prior-probe-deleted" "$scratch/prior-replacement-preserved"
+  rm -f "$scratch/prior-fence-read" "$scratch/fence-mutated"
+  if [[ "$name" == orphan-* ]]; then
+    jq -cn --arg manifest "$digest" --arg key platform.devantler.tech/arc-runtime-origin \
+      --arg scenario "$name" '{metadata:{name:"arc-runtime-admission",namespace:"arc-runners",uid:"prior-fence-uid",resourceVersion:"1",
+        labels:{"platform.devantler.tech/arc-runtime-probe":"arc-proof-122-1"},
+        annotations:{($key):({repository:"devantler-tech/platform",workflow:".github/workflows/ci.yaml",run:"122",attempt:"1",
+          head:"0000000000000000000000000000000000000001",source:"0000000000000000000000000000000000000001",
+          manifest:$manifest,job:"455",job_name:"🚀 Deploy to Prod"}|tojson),
+          "platform.devantler.tech/arc-runtime-probe-uid":"prior-probe-uid"}},
+        spec:{hard:{pods:"0"},scopes:["NotTerminating"]},status:{hard:{pods:"0"},used:{pods:"0"}}} |
+        if $scenario=="orphan-missing-provenance" then del(.metadata.annotations[$key])
+        elif $scenario=="orphan-missing-probe-uid" then del(.metadata.annotations["platform.devantler.tech/arc-runtime-probe-uid"])
+        elif $scenario=="orphan-current-attempt" then
+          .metadata.labels["platform.devantler.tech/arc-runtime-probe"]="arc-proof-123-1" |
+          .metadata.annotations[$key] |= (fromjson | .run="123" | .job="456" | tojson)
+        elif $scenario=="orphan-foreign-provenance" then
+          .metadata.annotations[$key] |= (fromjson | .repository="devantler-tech/ksail" | tojson)
+        elif $scenario=="orphan-wrong-quota" then .spec.scopes=["Terminating"]
+        else . end' >"$scratch/admission-fence"
+    if [[ "$name" != orphan-empty ]]; then
+      jq -cn --arg scenario "$name" '{metadata:{name:"arc-proof-122-1",namespace:"arc-runners",
+        uid:(if $scenario=="orphan-wrong-probe" then "replacement-probe-uid" else "prior-probe-uid" end),
+        labels:{"platform.devantler.tech/arc-runtime-probe":"arc-proof-122-1"}},
+        spec:{activeDeadlineSeconds:1200,restartPolicy:"Never"}} |
+        if $scenario=="orphan-controlled-probe" then .metadata.ownerReferences=[{uid:"controller-uid"}]
+        elif $scenario=="orphan-wrong-deadline" then .spec.activeDeadlineSeconds=60
+        else . end' >"$scratch/live-pod"
+    fi
+  fi
   (
     cd "$scratch"
     PATH="$scratch/bin:$PATH" GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform \
       GITHUB_RUN_ID=123 GITHUB_RUN_ATTEMPT=1 PLATFORM_MANIFEST_DIGEST="$digest" ARC_TEST_CASE="$name" \
+      GITHUB_SHA=0000000000000000000000000000000000000001 GITHUB_JOB="$producer_job" \
+      GITHUB_WORKFLOW_REF=devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main GH_TOKEN=fixture-only \
       bash scripts/verify-ksail-arc-runtime.sh --if-active
   ) >"$scratch/stdout" 2>"$scratch/stderr" || code=$?
   if [[ "$expected" == pass ]]; then
@@ -359,6 +517,19 @@ run_case() {
     grep -q '^PASS: ARC registration' "$scratch/stdout" || exit 1
   else
     [[ "$code" != 0 ]] || { printf 'FAIL: accepted %s\n' "$name" >&2; exit 1; }
+    [[ "$code" -lt 91 || "$code" -gt 98 ]] || {
+      printf 'FAIL: %s failed with an unexpected fixture/transport exit %s\n' "$name" "$code" >&2
+      exit 1
+    }
+    local refusal marker
+    refusal=$(expected_refusal "$name") || exit 1
+    marker="ARC acceptance: FAIL at $refusal"
+    [[ "$refusal" != cleanup ]] || marker='ARC acceptance: FAIL cleanup'
+    grep -Fxq "$marker" "$scratch/stderr" || {
+      printf 'FAIL: %s refused for an unrelated reason (expected %s, exit %s)\n' "$name" "$refusal" "$code" >&2
+      cat "$scratch/stderr" >&2
+      exit 1
+    }
     case "$name" in
       replacement-race) [[ -e "$scratch/replacement-preserved" && ! -e "$scratch/deleted" && "$code" == 4 ]] || exit 1 ;;
       unknown-create) [[ -e "$scratch/live-pod" && ! -e "$scratch/deleted" && "$code" == 4 ]] || exit 1 ;;
@@ -410,6 +581,28 @@ for name in retained-active-min retained-active-max retained-suspended retained-
   [[ ! -e "$scratch/runtime-access" && ! -e "$scratch/live-pod" ]]
 done
 run_case complete-proof pass
+run_case orphan-completed pass
+[[ -e "$scratch/prior-fence-deleted" && -e "$scratch/prior-probe-deleted" ]]
+run_case orphan-empty pass
+[[ -e "$scratch/prior-fence-deleted" && ! -e "$scratch/prior-probe-deleted" ]]
+run_case orphan-paginated pass
+[[ -e "$scratch/prior-fence-deleted" && -e "$scratch/prior-probe-deleted" ]]
+for name in orphan-active orphan-api-unknown orphan-incomplete-jobs orphan-missing-provenance orphan-wrong-probe \
+  orphan-replacement orphan-run-mismatch orphan-wrong-api-head orphan-wrong-api-workflow orphan-wrong-api-repository \
+  orphan-duplicate-job orphan-job-active orphan-wrong-job orphan-quota-churn orphan-incomplete-probes orphan-node-api \
+  orphan-missing-probe-uid orphan-current-attempt orphan-foreign-provenance orphan-wrong-quota orphan-controlled-probe orphan-wrong-deadline \
+  orphan-current-empty-api orphan-current-job-list-empty orphan-unauthorized-current orphan-final-api-unknown; do
+  run_case "$name" fail
+  [[ ! -e "$scratch/prior-fence-deleted" ]]
+  case "$name" in
+    orphan-replacement|orphan-incomplete-probes|orphan-node-api|orphan-final-api-unknown) [[ -e "$scratch/prior-probe-deleted" ]] ;;
+    *) [[ ! -e "$scratch/prior-probe-deleted" ]] ;;
+  esac
+done
+for name in own-fence-origin-churn own-fence-controller-churn own-fence-deleting own-fence-empty; do
+  run_case "$name" fail
+  [[ ! -e "$scratch/live-pod" && ! -e "$scratch/fence-deleted" && -e "$scratch/admission-fence" ]]
+done
 run_case busy-runner pass
 [[ -e "$scratch/job-completed" && -e "$scratch/fence-deleted" ]]
 run_case late-runner pass
@@ -479,4 +672,11 @@ for name in no-registration unexpected-hook writable-metrics wrong-metrics-confi
   forwarded-flow wrong-source observer-loss observer-diagnostics failed-node-cleanup; do
   run_case "$name" fail
 done
+# Prove that an unrelated API failure cannot stand in for an egress refusal.
+sed 's/== live-api-error/== allowed-egress/' "$scratch/kubectl-original" >"$scratch/bin/kubectl"
+if (run_case allowed-egress fail) >"$scratch/wrong-cause-out" 2>"$scratch/wrong-cause-error"; then
+  printf 'FAIL: an unrelated API error satisfied the egress negative control\n' >&2
+  exit 1
+fi
+cp "$scratch/kubectl-original" "$scratch/bin/kubectl"
 printf 'PASS: inactive and unauthorized sources never reach runtime access\n'

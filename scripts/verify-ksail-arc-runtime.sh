@@ -73,11 +73,22 @@ wait_ready() {
   timeout 630s kubectl --context "$context" --request-timeout=610s -n "$namespace" \
     wait "pod/$probe" --for=condition=Ready --timeout=600s 2>/dev/null
 }
-quiet() { "$@" >/dev/null 2>"$scratch/command-error"; }
+quiet() {
+  local code=0
+  "$@" >/dev/null 2>"$scratch/command-error" || code=$?
+  if [[ "$code" != 0 ]]; then printf 'ARC acceptance: FAIL at %s\n' "$stage" >&2; fi
+  return "$code"
+}
+# shellcheck source=scripts/ksail-arc-admission-fence.sh
+source scripts/ksail-arc-admission-fence.sh
 verify_admission_fence() {
-  kc -n "$namespace" get resourcequota "$fence_name" -o json >"$scratch/live-fence.json"
-  jq -e --arg name "$fence_name" --arg owner "$probe" --arg key "$ownership_label" --arg uid "$fence_uid" '
+  kc -n "$namespace" get resourcequota "$fence_name" -o json >"$scratch/live-fence.json" || return 1
+  [[ -s "$scratch/live-fence.json" ]] || return 1
+  jq -e --arg name "$fence_name" --arg ns "$namespace" --arg owner "$probe" --arg key "$ownership_label" --arg uid "$fence_uid" \
+    --arg origin_key "$arc_origin_key" --slurpfile origin "$scratch/current-origin.json" '
     .metadata.name == $name and .metadata.labels[$key] == $owner and .metadata.uid == $uid and
+    .metadata.namespace == $ns and (.metadata.ownerReferences // [] | length) == 0 and
+    .metadata.annotations[$origin_key] == ($origin[0]|tojson) and
     .metadata.deletionTimestamp == null and .spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
     .status.hard == {pods:"0"}
   ' "$scratch/live-fence.json" >/dev/null
@@ -159,17 +170,14 @@ cleanup() {
     if [[ -z "$fence_uid" ]]; then
       failed=1
     else
-      fence=$(kc -n "$namespace" get resourcequota "$fence_name" --ignore-not-found -o json) || failed=1
-      if ! jq -e --arg name "$fence_name" --arg owner "$probe" --arg key "$ownership_label" --arg uid "$fence_uid" '
-        .metadata.name == $name and .metadata.labels[$key] == $owner and .metadata.uid == $uid and
-        .spec == {hard:{pods:"0"},scopes:["NotTerminating"]} and
-        (.metadata.resourceVersion | type == "string" and length > 0)
-      ' <<<"$fence" >/dev/null; then
+      if ! verify_admission_fence || ! jq -e '
+        .metadata.resourceVersion | type == "string" and length > 0
+      ' "$scratch/live-fence.json" >/dev/null; then
         failed=1
       else
         jq '{apiVersion:"v1",kind:"DeleteOptions",preconditions:{uid:.metadata.uid,
           resourceVersion:.metadata.resourceVersion},propagationPolicy:"Background"}' \
-          <<<"$fence" >"$scratch/delete-fence.json"
+          "$scratch/live-fence.json" >"$scratch/delete-fence.json"
         quiet kc delete --raw="/api/v1/namespaces/$namespace/resourcequotas/$fence_name" \
           -f "$scratch/delete-fence.json" || failed=1
         fence=$(kc -n "$namespace" get resourcequota "$fence_name" --ignore-not-found -o json) || failed=1
@@ -281,10 +289,16 @@ stage=runner-admission-fence
 # The bounded probe has activeDeadlineSeconds and is outside NotTerminating.
 # Source: https://kubernetes.io/docs/concepts/policy/resource-quotas/
 verify_runner_deadlines
+arc_current_origin
+stage=runner-fence-recovery
+arc_recover_admission_fence
+stage=runner-admission-fence
 kc -n "$namespace" get resourcequotas -l "$ownership_label" -o json \
   | jq -e '.items | length == 0' >/dev/null
-jq -n --arg name "$fence_name" --arg owner "$probe" --arg ns "$namespace" --arg key "$ownership_label" '
-  {apiVersion:"v1",kind:"ResourceQuota",metadata:{name:$name,namespace:$ns,labels:{($key):$owner}},
+jq -n --arg name "$fence_name" --arg owner "$probe" --arg ns "$namespace" --arg key "$ownership_label" \
+  --arg origin_key "$arc_origin_key" --slurpfile origin "$scratch/current-origin.json" '
+  {apiVersion:"v1",kind:"ResourceQuota",metadata:{name:$name,namespace:$ns,labels:{($key):$owner},
+    annotations:{($origin_key):($origin[0]|tojson)}},
    spec:{hard:{pods:"0"},scopes:["NotTerminating"]}}' >"$scratch/fence.json"
 fence_created=true
 kc create -f "$scratch/fence.json" -o json >"$scratch/created-fence.json"
@@ -389,6 +403,7 @@ kc create -f "$scratch/pod.json" -o json >"$scratch/created-pod.json"
 probe_uid=$(jq -er --arg name "$probe" --arg ns "$namespace" --arg key "$ownership_label" \
   'select(.metadata.name == $name and .metadata.namespace == $ns and .metadata.labels[$key] == $name) |
    .metadata.uid | select(type == "string" and length > 0)' "$scratch/created-pod.json")
+arc_record_probe_uid
 quiet wait_ready
 kc -n "$namespace" get pod "$probe" -o json >"$scratch/live-pod.json"
 jq -e --arg uid "$probe_uid" '.metadata.uid == $uid' "$scratch/live-pod.json" >/dev/null
@@ -494,7 +509,7 @@ kc -n default get endpoints kubernetes -o json | jq -c '.subsets' >"$scratch/api
 jq -c '.subsets' "$scratch/api.json" >"$scratch/api-before"
 cmp -s "$scratch/api-before" "$scratch/api-after" || fail api-target-churn
 
-stage=job-cgroup-measurement
+stage='job-cgroup-measurement'
 quiet kc -n "$namespace" exec "$probe" -- /etc/ksail-arc-metrics/job-metrics.sh
 verify_admission_fence
 verify_runner_source

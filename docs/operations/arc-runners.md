@@ -255,12 +255,28 @@ until probe deletion and node cleanup are verified, then deletes only the
 invocation-owned quota with UID and resource-version preconditions. It changes no
 runner bounds, Helm reconciliation, App permission or capacity ceiling.
 
-A pre-existing quota, ambiguous create, changed quota identity or incomplete probe
-cleanup fails closed. An incomplete cleanup retains the fence for recovery. Before
-removing a retained fence, verify its invocation ownership, prove that invocation's
-probe is absent and the dedicated pool has drained, and use the current UID and
-resource version as deletion preconditions. Never remove another invocation's
-fence to make a deployment pass. Quota behavior and its deadline scopes are defined
+A later protected deployment can recover a quota left by a completed prior
+workflow attempt. The quota records the fixed repository and workflow, run and
+attempt, producing job, run-head and checkout revisions, manifest digest and
+successfully created probe UID. Recovery joins the exact attempt and its complete
+job list using the existing read-only Actions permission. It retains admission
+while deleting only that recorded, standalone probe with a UID precondition,
+proving absence and natural node drain, then deleting the unchanged quota with
+UID and resource-version preconditions. It proves quota absence before creating
+the new invocation's fence.
+
+Active or unknown writers, incomplete job lists, missing provenance, ambiguous
+creation, replacement objects and incomplete cleanup remain HOLD. Same-attempt
+Heal Prod cannot recover a fence while its attempt is still running. The first
+activation therefore also depends on the inactive-main recovery support in
+[#4638](https://github.com/devantler-tech/platform/issues/4638) and
+[#4641](https://github.com/devantler-tech/platform/pull/4641); candidate-only
+acceptance does not establish a recoverable rollout. A legacy fence without the
+recorded proof needs explicit manual recovery: prove its producing job and
+attempt have stopped, verify invocation ownership and probe absence, prove the
+dedicated pool has drained, and use the current UID and resource version as
+deletion preconditions. Never release a live or unknown invocation's fence to
+make a deployment pass. Quota behavior and its deadline scopes are defined
 in the [Kubernetes resource quota documentation](https://kubernetes.io/docs/concepts/policy/resource-quotas/).
 
 To stop admitting jobs, restore every consumer's prior runner configuration

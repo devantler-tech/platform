@@ -161,7 +161,7 @@ jobs:
       - name: 🔬 Validate bounded ARC runtime acceptance
         run: |
           go test -race ./scripts/verify-ksail-arc-runtime
-          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/wait-for-ksail-arc-registration.sh scripts/tests/test-verify-ksail-arc-runtime.sh scripts/ksail-arc-job-metrics.sh
+          shellcheck scripts/verify-ksail-arc-runtime.sh scripts/ksail-arc-admission-fence.sh scripts/wait-for-ksail-arc-registration.sh scripts/tests/test-verify-ksail-arc-runtime.sh scripts/ksail-arc-job-metrics.sh
           bash scripts/tests/test-verify-ksail-arc-runtime.sh
 
       - name: 🔐 Validate ARC transport proof boundaries
@@ -509,6 +509,7 @@ jobs:
               - 'scripts/tests/test-setup-supply-chain-tools.sh'
               - '.github/actions/deploy-prod/action.yml'
               - 'scripts/verify-ksail-arc-runtime.sh'
+              - 'scripts/ksail-arc-admission-fence.sh'
               - 'scripts/wait-for-ksail-arc-registration.sh'
               - 'scripts/verify-ksail-arc-runtime/**'
               - 'scripts/tests/test-verify-ksail-arc-runtime.sh'

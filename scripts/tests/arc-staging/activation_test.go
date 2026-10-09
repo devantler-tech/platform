@@ -45,7 +45,7 @@ func activationFixture(active bool) fstest.MapFS {
 		runtimeAction: "runs:\n  steps:\n    - name: Verify the deployed KSail ARC canary\n" +
 			"      if: >-\n        !cancelled() && steps.wait_flux_revision.outcome == 'success' && " +
 			"( steps.cluster_update.outcome == 'skipped' || steps.wait_prod_api_stability.outcome == 'success' )\n" +
-			"      shell: bash\n      env:\n        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}\n" +
+			"      shell: bash\n      env:\n        GH_TOKEN: ${{ github.token }}\n        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}\n" +
 			"      run: |\n        export KUBECONFIG=\"${HOME}/.kube/config\"\n        bash scripts/verify-ksail-arc-runtime.sh --if-active\n",
 	} {
 		files[name] = &fstest.MapFile{Data: []byte(data)}
@@ -76,6 +76,8 @@ func TestActivationEnvelopeRejectsUnboundedOrUnverifiedStates(t *testing.T) {
 		{"skipped canary", runtimeAction, "!cancelled() &&", "false &&"},
 		{"waived canary", runtimeAction, "      shell: bash", "      continue-on-error: true\n      shell: bash"},
 		{"wrong deployment digest", runtimeAction, "steps.publish_platform_manifest.outputs.digest", "github.sha"},
+		{"missing Actions read token", runtimeAction, "        GH_TOKEN: ${{ github.token }}\n", ""},
+		{"wrong Actions read token", runtimeAction, "GH_TOKEN: ${{ github.token }}", "GH_TOKEN: ${{ secrets.GHCR_TOKEN }}"},
 		{"unexpected proof environment", runtimeAction, "      env:", "      env:\n        PATH: /unverified"},
 		{"missing suspension declaration", runnerRelease, "suspend: false", "unrelated: false"},
 	}
@@ -235,7 +237,8 @@ func validateARCRuntimeHook(files fs.FS) error {
 		run, runOK := step["run"].(string)
 		env, envOK := step["env"].(map[string]any)
 		if waived || !ok || strings.Join(strings.Fields(guard), " ") != condition || !runOK || strings.TrimSpace(run) != command ||
-			step["shell"] != "bash" || !envOK || len(env) != 1 || env["PLATFORM_MANIFEST_DIGEST"] != "${{ steps.publish_platform_manifest.outputs.digest }}" {
+			step["shell"] != "bash" || !envOK || len(env) != 2 || env["GH_TOKEN"] != "${{ github.token }}" ||
+			env["PLATFORM_MANIFEST_DIGEST"] != "${{ steps.publish_platform_manifest.outputs.digest }}" {
 			return fmt.Errorf("ARC runtime proof is skipped, waived, or bound to the wrong deployment")
 		}
 	}

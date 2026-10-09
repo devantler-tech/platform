@@ -603,6 +603,7 @@ runs:
         )
       shell: bash
       env:
+        GH_TOKEN: ${{ github.token }}
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: |
         export KUBECONFIG="${HOME}/.kube/config"
