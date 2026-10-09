@@ -1,0 +1,85 @@
+name: Verify ARC Runner Group Capability
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-arc-runner-group-capability"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  capability:
+    name: Prove bounded runner group capability
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    env:
+      ARC_RUNNER_GROUP_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require protected invocation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == verify-arc-runner-group-capability && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          printf 'KUBECONFIG=%s/arc-group-kubeconfig\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
+      - name: Harden runner
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - name: Checkout immutable source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test and build verifier without credentials
+        run: |
+          go test -race ./scripts/verify-arc-app-identity
+          go build -o "${RUNNER_TEMP}/verify-arc-capability" ./scripts/verify-arc-app-identity
+      - name: Require encrypted declared credential transport
+        run: '"${RUNNER_TEMP}/verify-arc-capability" --preflight-runner-group'
+      - name: Restore existing protected kubeconfig into an owned file
+        id: kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          (set -o noclobber; : > "${KUBECONFIG}")
+          echo 'owned=true' >> "${GITHUB_OUTPUT}"
+          printf '%s' "${KUBE_CONFIG}" > "${KUBECONFIG}"
+      - name: Select production endpoint without publishing its details
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            echo 'ARC_RUNNER_GROUP_CAPABILITY=HOLD_ENDPOINT'
+            exit 1
+          fi
+      - name: Verify identity and runner group capability inside the process
+        run: '"${RUNNER_TEMP}/verify-arc-capability" --verify-runner-group'
+      - name: Remove only the owned restored kubeconfig
+        if: ${{ always() && steps.kubeconfig.outputs.owned == 'true' }}
+        shell: bash
+        run: rm -f "${KUBECONFIG}"

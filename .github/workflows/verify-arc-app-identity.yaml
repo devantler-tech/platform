@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/verify-arc-app-identity.yaml
+      - .github/workflows/verify-arc-runner-group-capability.yaml
       - scripts/verify-arc-app-identity/**
       - go.mod
       - go.sum
