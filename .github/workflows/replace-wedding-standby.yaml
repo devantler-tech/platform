@@ -1,0 +1,120 @@
+name: Replace Failed Wedding Standby
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/replace-wedding-standby.yaml
+      - .github/workflows/verify-wedding-fence.yaml
+      - scripts/replace-wedding-standby/**
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: retain-volumes-replace-failed-standby"
+        required: true
+        type: string
+      cluster_uid:
+        description: Current Wedding Cluster UID from an OIDC read
+        required: true
+        type: string
+      pod_uid:
+        description: Current failed standby Pod UID from an OIDC read
+        required: true
+        type: string
+      resume_fenced:
+        description: Continue only this repair's retained, attached fenced HOLD (requires specific approval)
+        default: false
+        type: boolean
+
+permissions: {}
+
+jobs:
+  tests:
+    name: 🛡️ Validate standby replacement safety
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test complete observations and conditional writes
+        run: go test -race -count=1 -timeout=5m ./scripts/replace-wedding-standby
+      - name: Validate the loopback probe in the database image
+        env:
+          WEDDING_REPAIR_OPERAND_TEST: "true"
+        run: |
+          docker pull ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185
+          go test -count=1 -timeout=1m -run '^TestLoopbackRequestReadsTheExporter$' ./scripts/replace-wedding-standby
+
+  repair:
+    name: 💒 Replace failed standby without deleting its storage
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: prod
+    permissions:
+      contents: read
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    env:
+      WEDDING_REPAIR_CONFIRM: ${{ inputs.confirm }}
+      WEDDING_REPAIR_RESUME_FENCED: ${{ inputs.resume_fenced }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require main and explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == retain-volumes-replace-failed-standby && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+      - name: 📑 Checkout reviewed main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Require the current main recovery source
+        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: 🔑 Restore production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: 🎯 Select stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+      - name: Preserve old storage and prove the replacement healthy
+        shell: bash
+        env:
+          CLUSTER_UID: ${{ inputs.cluster_uid }}
+          POD_UID: ${{ inputs.pod_uid }}
+          RESUME_FENCED: ${{ inputs.resume_fenced }}
+        run: |
+          set -euo pipefail
+          go run ./scripts/replace-wedding-standby --execute --resume-fenced="${RESUME_FENCED}" --cluster-uid "${CLUSTER_UID}" --pod-uid "${POD_UID}"

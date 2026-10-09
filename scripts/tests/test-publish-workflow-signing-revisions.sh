@@ -2097,6 +2097,10 @@ else
   pass 'a two-family subject naming two workflows is refused as ambiguous'
 fi
 
+if ! bash "$REPO_ROOT/scripts/tests/test-signing-report-publisher-families.sh"; then
+  fail 'publisher-family report regressions'
+fi
+
 if [ "$failures" -ne 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
