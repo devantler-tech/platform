@@ -121,6 +121,11 @@ for any continuation beyond the original procedure.
 
 A failure returns `REPAIR=HOLD`, never health clearance. Earlier successful
 steps may remain: a Retain volume, a fenced failed replica, or a detached claim.
+Rejected commands include only a bounded reason category: a recognized server
+status, caller cancellation/deadline, or UNKNOWN. Raw stderr and command error
+text are never published. A server status does not establish a particular
+admission policy, failed JSON-patch test or transport cause; ambiguous, oversized
+or unrecognized evidence stays UNKNOWN.
 There is no automatic destructive cleanup, reverse ownership change, WAL reset,
 or repeated mutation. Inspect the current state with OIDC reads and prepare a
 reviewed continuation. Keep the old claim and volume for diagnosis; retirement
