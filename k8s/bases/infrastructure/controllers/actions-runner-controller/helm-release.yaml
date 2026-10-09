@@ -27,7 +27,17 @@ spec:
       name: RetryOnFailure
   values:
     fullnameOverride: arc-controller
-    replicaCount: 1
+    # The chart enables leader election for multiple replicas; keep independent
+    # placement so losing one worker does not remove the controller.
+    replicaCount: 2
+    affinity:
+      podAntiAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/component: controller-manager
+                app.kubernetes.io/part-of: gha-rs-controller
     serviceAccount:
       name: arc-controller
     flags:

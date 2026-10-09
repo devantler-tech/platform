@@ -534,6 +534,7 @@ jobs:
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
               - 'scripts/tests/test-arc-listener-public-content.sh'
+              - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
@@ -1696,6 +1697,8 @@ jobs:
           bash scripts/tests/test-hcloud-volume-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
           bash scripts/tests/test-audit-privileged-rbac.sh
+          shellcheck scripts/tests/test-arc-controller-availability.sh
+          bash scripts/tests/test-arc-controller-availability.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
