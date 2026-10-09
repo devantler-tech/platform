@@ -1,5 +1,6 @@
 // Command replace-wedding-standby provides a narrowly scoped, volume-preserving
-// repair for the failed Wedding replica. Without --execute it only reads.
+// repair for the failed Wedding replica. Its default mode only reads; a separate
+// protected diagnostic submits one non-persisting server-side dry-run request.
 package main
 
 import (
@@ -35,9 +36,9 @@ type plan struct {
 }
 
 type options struct {
-	clusterUID, podUID string
-	now                time.Time
-	fenced, detached   bool
+	clusterUID, podUID              string
+	now                             time.Time
+	fenced, detached, diagnosePause bool
 }
 
 type client struct {
@@ -172,6 +173,11 @@ const fieldManager = "wedding-standby-repair"
 
 // patch scopes mutations to the observed resource and explicit API group.
 func (c client) patch(ctx context.Context, kind string, o object, ops []object) error {
+	return c.write(ctx, patchArgs(kind, o), ops)
+}
+
+// patchArgs keeps repair and diagnostic resource targeting identical.
+func patchArgs(kind string, o object) []string {
 	if kind == "cluster" {
 		kind = "cluster.postgresql.cnpg.io"
 	}
@@ -179,7 +185,7 @@ func (c client) patch(ctx context.Context, kind string, o object, ops []object) 
 	if kind != "pv" {
 		args = append(args, "-n", namespace)
 	}
-	return c.write(ctx, args, ops)
+	return args
 }
 
 // fencePatch changes only this repair's fence while pinning the primary and size.
@@ -840,6 +846,7 @@ func run() error {
 	proveFenced := flag.Bool("prove-fenced", false, "read the bound instance's fencing acknowledgment through the protected read-only workflow")
 	resumeFenced := flag.Bool("resume-fenced", false, "continue this repair's retained, attached fenced HOLD")
 	quarantine := flag.Bool("quarantine-completed-join", false, "retain the old backing volume and replace the completed-join claim through a separately approved workflow")
+	diagnose := flag.Bool("diagnose-pause", false, "submit only the guarded pause patch as a separately approved server-side dry-run")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
 	podUID := flag.String("pod-uid", "", "expected failed Pod or completed join Pod UID")
 	jobUID := flag.String("job-uid", "", "expected completed join Job UID")
@@ -848,6 +855,9 @@ func run() error {
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return errors.New("unexpected argument")
+	}
+	if *diagnose && (!*quarantine || *execute || *proveFenced || *resumeFenced) {
+		return errors.New("pause diagnostic cannot share execution, proof or continuation modes and requires completed-join guards")
 	}
 	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	if !uuid.MatchString(*clusterUID) || !uuid.MatchString(*podUID) {
@@ -867,7 +877,12 @@ func run() error {
 		return errors.New("storage identity guards require the completed-join mode")
 	}
 	contextName := "oidc@prod"
-	if *execute && *quarantine {
+	if *diagnose {
+		if !pauseDiagnosticDispatchAllowed(os.Getenv) {
+			return errors.New("pause diagnostic requires the separately confirmed first protected main diagnostic dispatch")
+		}
+		contextName = "admin@prod"
+	} else if *execute && *quarantine {
 		if !storageDispatchAllowed(os.Getenv) {
 			return errors.New("execution requires the separately confirmed first protected completed-join main dispatch")
 		}
@@ -906,12 +921,15 @@ func run() error {
 		return nil
 	}
 	result := "PLAN=PASS no writes"
-	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced}
+	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced, diagnosePause: *diagnose}
 	if *quarantine {
 		if err := quarantineCompletedJoin(ctx, c, o, storageGuards{*jobUID, *claimUID, *volumeUID}, *execute); err != nil {
 			return err
 		}
 		result = quarantineResult(*execute)
+		if *diagnose {
+			result = "PAUSE_DIAGNOSTIC=PASS requestAccepted=1 persistedMutations=0"
+		}
 	} else {
 		if err := repair(ctx, c, o, *execute); err != nil {
 			return err
