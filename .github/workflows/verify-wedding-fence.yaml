@@ -1,0 +1,82 @@
+name: Verify Retained Wedding Fence
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: prove-retained-wedding-fence"
+        required: true
+        type: string
+      cluster_uid:
+        description: Expected current Wedding Cluster UID from an OIDC read
+        required: true
+        type: string
+      pod_uid:
+        description: Expected current failed standby Pod UID from an OIDC read
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  proof:
+    name: 🛡️ Read fencing acknowledgment without changing database resources
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: prod
+    permissions:
+      contents: read
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    env:
+      WEDDING_FENCE_PROOF_CONFIRM: ${{ inputs.confirm }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require main and explicit read-only confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == prove-retained-wedding-fence && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+      - name: 📑 Checkout reviewed main revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Require the current main recovery source
+        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Validate the read-only observation boundary
+        run: go test -race -count=1 -timeout=5m ./scripts/replace-wedding-standby
+      - name: 🔑 Restore production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+      - name: 🎯 Select stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+      - name: Read only the fixed replica's exporter and verify unchanged storage
+        shell: bash
+        env:
+          CLUSTER_UID: ${{ inputs.cluster_uid }}
+          POD_UID: ${{ inputs.pod_uid }}
+        run: |
+          set -euo pipefail
+          go run ./scripts/replace-wedding-standby --prove-fenced --cluster-uid "${CLUSTER_UID}" --pod-uid "${POD_UID}"

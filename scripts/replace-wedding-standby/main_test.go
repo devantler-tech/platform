@@ -7,11 +7,91 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
+	"os/exec"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 )
+
+// TestLoopbackRequestReadsTheExporter exercises the real static Bash request,
+// rather than accepting a fake response from a script that never reaches HTTP.
+func TestLoopbackRequestReadsTheExporter(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:9187")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/metrics" || r.Proto != "HTTP/1.0" {
+			t.Errorf("unexpected exporter request: %s %s %s", r.Method, r.URL.Path, r.Proto)
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		if _, err := fmt.Fprintln(w, "cnpg_collector_fencing_on 1"); err != nil {
+			t.Error(err)
+		}
+	})}
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	t.Cleanup(func() {
+		if err := server.Close(); err != nil {
+			t.Error(err)
+		}
+		if err := <-served; !errors.Is(err, http.ErrServerClosed) {
+			t.Error(err)
+		}
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "/bin/bash", "--noprofile", "--norc", "-p", "-c", metricsRequest)
+	cmd.Env = append(os.Environ(), "BASH_ENV=/no-such-startup-script")
+	if os.Getenv("WEDDING_REPAIR_OPERAND_TEST") == "true" {
+		// CI uses the immutable image currently observed on the failed Pod.
+		// Host networking lets this read-only container reach this local fixture.
+		cmd = exec.CommandContext(ctx, "docker", "run", "--rm", "--network=host", "--entrypoint=/usr/bin/timeout", "ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185", "--kill-after=2s", "10s", "/bin/bash", "--noprofile", "--norc", "-p", "-c", metricsRequest)
+	}
+	b, err := cmd.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] == "exec" {
+			return b, nil
+		}
+		return json.Marshal(fixture().pods[0])
+	}}
+	if !c.fenced(ctx, identity{"wedding-db-1", "target-uid"}) {
+		t.Fatalf("real exporter response was not acknowledged: %q", b)
+	}
+}
+
+// TestFenceReadDoesNotNeedPodIngress catches a proxy read that cannot cross
+// the database's default-deny network policy, even when the instance is fenced.
+func TestFenceReadDoesNotNeedPodIngress(t *testing.T) {
+	var reads []string
+	c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		reads = append(reads, args[0])
+		if args[0] == "exec" {
+			if !reflect.DeepEqual(args[:8], []string{"exec", "-n", "wedding-app", "wedding-db-1", "-c", "postgres", "--", "/usr/bin/timeout"}) {
+				t.Fatalf("probe escaped the exact target container: %v", args)
+			}
+			return []byte("HTTP/1.0 200 OK\r\nContent-Length: 28\r\n\r\ncnpg_collector_fencing_on 1\n"), nil
+		}
+		if len(args) > 1 && args[1] == "pod" {
+			return json.Marshal(fixture().pods[0])
+		}
+		return nil, errors.New("Pod ingress denied")
+	}}
+	if !c.fenced(context.Background(), identity{"wedding-db-1", "target-uid"}) {
+		t.Fatal("instance-owned fencing proof incorrectly requires Pod ingress")
+	}
+	if !reflect.DeepEqual(reads, []string{"get", "exec", "get"}) {
+		t.Fatalf("metrics were not bracketed by target identity reads: %v", reads)
+	}
+}
 
 // TestFullyQualifiedDatabaseResources prevents selecting an unrelated Cluster API.
 func TestFullyQualifiedDatabaseResources(t *testing.T) {
@@ -60,20 +140,208 @@ func TestDispatchBoundary(t *testing.T) {
 	}
 }
 
+// TestResumeDispatchMustMatchExplicitConfirmation refuses a continuation not
+// explicitly selected by the protected workflow, even with ordinary approval.
+func TestResumeDispatchMustMatchExplicitConfirmation(t *testing.T) {
+	for _, tc := range []struct{ flag, input string }{{"true", "false"}, {"false", "true"}, {"true", ""}, {"true", "yes"}} {
+		t.Run(tc.flag+"/"+tc.input, func(t *testing.T) {
+			for k, v := range map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_REPAIR_CONFIRM": "retain-volumes-replace-failed-standby", "GITHUB_SHA": strings.Repeat("a", 40), "WEDDING_REPAIR_RESUME_FENCED": tc.input} {
+				t.Setenv(k, v)
+			}
+			previousFlags, previousArgs := flag.CommandLine, os.Args
+			t.Cleanup(func() { flag.CommandLine = previousFlags; os.Args = previousArgs })
+			flag.CommandLine = flag.NewFlagSet("repair", flag.ContinueOnError)
+			flag.CommandLine.SetOutput(io.Discard)
+			os.Args = []string{"repair", "--execute", "--resume-fenced=" + tc.flag, "--cluster-uid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "--pod-uid", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+			if err := run(); err == nil || !strings.Contains(err.Error(), "explicitly selected") {
+				t.Fatalf("continuation binding returned %v", err)
+			}
+		})
+	}
+}
+
+// TestInvalidCLIInputsStopBeforeObservation refuses implicit identities and
+// stray arguments instead of invoking any Kubernetes read or write.
+func TestInvalidCLIInputsStopBeforeObservation(t *testing.T) {
+	for _, args := range [][]string{{"repair"}, {"repair", "--resume-fenced", "extra"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			previousFlags, previousArgs := flag.CommandLine, os.Args
+			t.Cleanup(func() { flag.CommandLine = previousFlags; os.Args = previousArgs })
+			flag.CommandLine = flag.NewFlagSet("repair", flag.ContinueOnError)
+			flag.CommandLine.SetOutput(io.Discard)
+			os.Args = args
+			if err := run(); err == nil || (!strings.Contains(err.Error(), "unexpected argument") && !strings.Contains(err.Error(), "UIDs are required")) {
+				t.Fatalf("unsafe input returned %v", err)
+			}
+		})
+	}
+}
+
+// TestProofDispatchBoundary separates a read-only in-Pod observation from the
+// repair grant: neither a local caller nor another workflow may invoke it.
+func TestProofDispatchBoundary(t *testing.T) {
+	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/verify-wedding-fence.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_FENCE_PROOF_CONFIRM": "prove-retained-wedding-fence", "GITHUB_SHA": strings.Repeat("a", 40)}
+	for key := range good {
+		t.Run(key, func(t *testing.T) {
+			for k, v := range good {
+				t.Setenv(k, v)
+			}
+			t.Setenv(key, "wrong")
+			previousFlags, previousArgs := flag.CommandLine, os.Args
+			t.Cleanup(func() { flag.CommandLine = previousFlags; os.Args = previousArgs })
+			flag.CommandLine = flag.NewFlagSet("proof", flag.ContinueOnError)
+			flag.CommandLine.SetOutput(io.Discard)
+			os.Args = []string{"proof", "--prove-fenced", "--cluster-uid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "--pod-uid", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+			if err := run(); err == nil || !strings.Contains(err.Error(), "read-only proof requires") {
+				t.Fatalf("read-only proof boundary returned %v", err)
+			}
+		})
+	}
+}
+
+// TestProtectedFenceProofIsReadOnly observes the original owned HOLD without
+// invoking any mutation; failed or changed observations cannot report PASS.
+func TestProtectedFenceProofIsReadOnly(t *testing.T) {
+	for _, failure := range []string{"", "false gauge", "foreign owner", "changed peer", "stale source", "changed source", "first read failed", "second read failed", "changed owner", "changed volume", "unfenced", "detached", "initial validation failed"} {
+		t.Run(failure, func(t *testing.T) {
+			s, o := fixture(), testOptions()
+			prepareFencedHold(s)
+			o.fenced = true
+			if failure == "unfenced" {
+				o.fenced = false
+			}
+			if failure == "detached" {
+				o.detached = true
+			}
+			if failure == "initial validation failed" {
+				at(s.cluster, "status")["targetPrimary"] = "wedding-db-3"
+			}
+			if failure == "foreign owner" {
+				list(s.cluster, "metadata", "managedFields")[0]["manager"] = "someone-else"
+			}
+			sources, snapshots := 0, 0
+			c := client{source: func(context.Context) error {
+				sources++
+				if failure == "stale source" || (failure == "changed source" && sources == 2) {
+					return errors.New("stale main")
+				}
+				return nil
+			}, command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				switch args[0] {
+				case "get":
+					if args[1] == "cluster.postgresql.cnpg.io" {
+						snapshots++
+						if (failure == "first read failed" && snapshots == 1) || (failure == "second read failed" && snapshots == 2) {
+							return nil, errors.New("snapshot failed")
+						}
+					}
+					return fakeRead(s, args[1:])
+				case "exec":
+					if failure == "false gauge" {
+						return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 0\n"), nil
+					}
+					if failure == "changed peer" {
+						at(s.pods[2], "metadata")["uid"] = "replacement"
+					}
+					if failure == "changed owner" {
+						list(s.cluster, "metadata", "managedFields")[0]["manager"] = "someone-else"
+					}
+					if failure == "changed volume" {
+						at(s.volumes["old-pv"], "spec", "claimRef")["uid"] = "someone-else"
+					}
+					return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n"), nil
+				default:
+					t.Fatalf("read-only proof issued mutation: %v", args)
+					return nil, errors.New("mutation")
+				}
+			}}
+			if err := proveFence(context.Background(), c, o); (err == nil) != (failure == "") {
+				t.Fatalf("proof failure=%q returned %v", failure, err)
+			}
+		})
+	}
+}
+
+// TestProofCannotInvokeRepair refuses a mixed invocation before any access.
+func TestProofCannotInvokeRepair(t *testing.T) {
+	previousFlags, previousArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine = previousFlags; os.Args = previousArgs })
+	flag.CommandLine = flag.NewFlagSet("proof", flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	os.Args = []string{"proof", "--prove-fenced", "--execute", "--cluster-uid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "--pod-uid", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+	if err := run(); err == nil || !strings.Contains(err.Error(), "cannot share") {
+		t.Fatalf("mixed read-only and repair invocation returned %v", err)
+	}
+}
+
 // TestFenceMetricMustBeCompleteAndTrue rejects missing, duplicate and failed evidence.
 func TestFenceMetricMustBeCompleteAndTrue(t *testing.T) {
 	for _, tc := range []struct {
+		name       string
 		body       string
 		failed, ok bool
-	}{{"cnpg_collector_fencing_on 1\n", false, true}, {"cnpg_collector_fencing_on 1\n", true, false}, {"cnpg_collector_fencing_on 0\n", false, false}, {"cnpg_collector_fencing_on 1\ncnpg_collector_fencing_on 1\n", false, false}, {"", false, false}} {
-		c := client{command: func(context.Context, []string, []byte) ([]byte, error) {
-			if tc.failed {
-				return []byte(tc.body), errors.New("partial response")
+	}{
+		{"fenced", "HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n", false, true},
+		{"failed exec", "HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n", true, false},
+		{"not fenced", "HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 0\n", false, false},
+		{"duplicate gauge", "HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\ncnpg_collector_fencing_on 1\n", false, false},
+		{"empty", "", false, false},
+		{"non-OK HTTP", "HTTP/1.0 503 Unavailable\r\n\r\ncnpg_collector_fencing_on 1\n", false, false},
+		{"truncated body", "HTTP/1.0 200 OK\r\nContent-Length: 100\r\n\r\ncnpg_collector_fencing_on 1\n", false, false},
+		{"trailing response", "HTTP/1.0 200 OK\r\nContent-Length: 28\r\n\r\ncnpg_collector_fencing_on 1\nextra", false, false},
+		{"oversized", "HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n" + strings.Repeat("#", 1<<20), false, false},
+		{"timestamped gauge", "HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1 123\n", false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if args[0] == "get" {
+					return fakeRead(fixture(), args[1:])
+				}
+				if tc.failed {
+					return []byte(tc.body), errors.New("partial response")
+				}
+				return []byte(tc.body), nil
+			}}
+			if got := c.fenced(context.Background(), identity{"wedding-db-1", "target-uid"}); got != tc.ok {
+				t.Fatalf("fencing=%v, want %v", got, tc.ok)
 			}
-			return []byte(tc.body), nil
-		}}
-		if got := c.fenced(context.Background()); got != tc.ok {
-			t.Fatalf("fencing %q=%v", tc.body, got)
+		})
+	}
+}
+
+// TestFenceMetricCannotClearChangedIdentity rejects a replaced, deleting or
+// unreadable Pod before or after exec; valid metrics alone do not bind identity.
+func TestFenceMetricCannotClearChangedIdentity(t *testing.T) {
+	for _, after := range []bool{false, true} {
+		for _, failure := range []string{"uid", "deleting", "failed read"} {
+			t.Run(fmt.Sprintf("after=%v/%s", after, failure), func(t *testing.T) {
+				reads, execs := 0, 0
+				c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+					if args[0] == "exec" {
+						execs++
+						return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n"), nil
+					}
+					reads++
+					pod := fixture().pods[0]
+					if (reads == 2) == after {
+						switch failure {
+						case "uid":
+							at(pod, "metadata")["uid"] = "replacement"
+						case "deleting":
+							at(pod, "metadata")["deletionTimestamp"] = "now"
+						case "failed read":
+							return nil, errors.New("unreadable identity")
+						}
+					}
+					return json.Marshal(pod)
+				}}
+				if c.fenced(context.Background(), identity{"wedding-db-1", "target-uid"}) {
+					t.Fatal("metrics cleared a changed or unreadable target")
+				}
+				if !after && execs != 0 {
+					t.Fatal("executed inside an unbound target")
+				}
+			})
 		}
 	}
 }
@@ -105,6 +373,12 @@ func fakeRead(s inventory, args []string) ([]byte, error) {
 		result = s.operator
 	case "pods":
 		result = object{"items": s.pods}
+	case "pod":
+		for _, pod := range s.pods {
+			if id(pod).name == name {
+				result = pod
+			}
+		}
 	case "pvc":
 		if name == "wedding-db-4" {
 			claim := fixture().claims[0]
@@ -219,6 +493,9 @@ func TestRepairStopsOnIntermediateDrift(t *testing.T) {
 			writes := 0
 			c := client{source: func(context.Context) error { return nil }, wait: func(context.Context) error { return errors.New("unexpected wait") }}
 			c.command = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if args[0] == "exec" {
+					return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n"), nil
+				}
 				if args[0] == "get" {
 					if args[1] == "--raw" {
 						return []byte("cnpg_collector_fencing_on 1\n"), nil
@@ -280,6 +557,9 @@ func TestUnacknowledgedFenceCannotDetachStorage(t *testing.T) {
 	writes := 0
 	c := client{source: func(context.Context) error { return nil }, wait: func(context.Context) error { return context.DeadlineExceeded }}
 	c.command = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] == "exec" {
+			return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 0\n"), nil
+		}
 		if args[0] == "get" {
 			if args[1] == "--raw" {
 				return []byte("cnpg_collector_fencing_on 0\n"), nil
@@ -307,7 +587,65 @@ func TestUnacknowledgedFenceCannotDetachStorage(t *testing.T) {
 
 // TestWriteSequencePreservesDataAndPinsDeletes checks proof/read/write ordering and retention.
 func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
+	testRepairSequence(t, false)
+}
+
+// TestResumeOwnFencePreservesTheOriginalData resumes only the pre-detachment
+// HOLD without rewriting an already-owned fence or touching protected peers.
+func TestResumeOwnFencePreservesTheOriginalData(t *testing.T) {
+	testRepairSequence(t, true)
+}
+
+// TestResumePlanRequestsOwnershipEvidence models kubectl's default omission of
+// managedFields. A read-only continuation plan must request the ownership proof.
+func TestResumePlanRequestsOwnershipEvidence(t *testing.T) {
+	s, o := fixture(), testOptions()
+	prepareFencedHold(s)
+	o.fenced = true
+	c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] != "get" {
+			t.Fatalf("read-only plan issued %v", args)
+		}
+		if args[1] == "cluster.postgresql.cnpg.io" && !strings.Contains(strings.Join(args, " "), "--show-managed-fields=true") {
+			delete(at(s.cluster, "metadata"), "managedFields")
+		}
+		return fakeRead(s, args[1:])
+	}}
+	if err := repair(context.Background(), c, o, false); err != nil {
+		t.Fatalf("read-only continuation omitted ownership evidence: %v", err)
+	}
+}
+
+// TestResumeRechecksOwnershipBeforeMutation refuses a fence taken over after
+// the initial plan, including before its first conditional storage mutation.
+func TestResumeRechecksOwnershipBeforeMutation(t *testing.T) {
+	s, o := fixture(), testOptions()
+	prepareFencedHold(s)
+	o.fenced = true
+	writes := 0
+	c := client{wait: func(context.Context) error { return context.DeadlineExceeded }, source: func(context.Context) error {
+		list(s.cluster, "metadata", "managedFields")[0]["manager"] = "someone-else"
+		return nil
+	}, command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+		if args[0] == "get" {
+			return fakeRead(s, args[1:])
+		}
+		writes++
+		return nil, errors.New("unexpected mutation")
+	}}
+	if err := repair(context.Background(), c, o, true); err == nil || writes != 0 {
+		t.Fatalf("lost fence ownership issued %d mutations, error %v", writes, err)
+	}
+}
+
+func testRepairSequence(t *testing.T, resume bool) {
+	t.Helper()
 	s := fixture()
+	o := testOptions()
+	if resume {
+		prepareFencedHold(s)
+		o.fenced = true
+	}
 	var writes []string
 	proofs := 0
 	c := client{source: func(context.Context) error {
@@ -320,6 +658,9 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 		return nil
 	}, wait: func(context.Context) error { return nil }}
 	c.command = func(_ context.Context, args []string, data []byte) ([]byte, error) {
+		if args[0] == "exec" {
+			return []byte("HTTP/1.0 200 OK\r\n\r\n# gauge\ncnpg_collector_fencing_on 1\n"), nil
+		}
 		if args[0] == "get" {
 			if args[1] == "--raw" {
 				return []byte("# gauge\ncnpg_collector_fencing_on 1\n"), nil
@@ -386,10 +727,13 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 		}
 		return []byte(`{}`), nil
 	}
-	if err := repair(context.Background(), c, testOptions(), true); err != nil {
+	if err := repair(context.Background(), c, o, true); err != nil {
 		t.Fatal(err)
 	}
 	want := "patch pv,patch cluster.postgresql.cnpg.io,patch pvc,delete --raw,patch cluster.postgresql.cnpg.io"
+	if resume {
+		want = "patch pvc,delete --raw,patch cluster.postgresql.cnpg.io"
+	}
 	if strings.Join(writes, ",") != want {
 		t.Fatalf("write ordering %v; want %s", writes, want)
 	}
@@ -398,6 +742,51 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 	}
 	if id(s.claims[0]).uid != "claim-uid" || str(s.volumes["old-pv"], "spec", "claimRef", "uid") != "claim-uid" {
 		t.Fatal("old data binding lost")
+	}
+}
+
+// prepareFencedHold represents the original workflow's persisted pre-detach
+// state, including ownership of the exact annotation and the retained volume.
+func prepareFencedHold(s inventory) {
+	at(s.cluster, "metadata", "annotations")[fenceKey] = `["wedding-db-1"]`
+	at(s.cluster, "metadata")["managedFields"] = []any{object{"manager": "wedding-standby-repair", "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:cnpg.io/fencedInstances": object{}}}}}}
+	at(s.volumes["old-pv"], "spec")["persistentVolumeReclaimPolicy"] = "Retain"
+	at(s.pods[0], "status")["containerStatuses"] = []any{object{"name": "postgres", "ready": false, "state": object{"running": object{}}}}
+}
+
+// TestResumeRefusesUnownedOrAdvancedHold cannot infer authority from the mere
+// presence of a fence or resume a later partially-completed storage operation.
+func TestResumeRefusesUnownedOrAdvancedHold(t *testing.T) {
+	for _, failure := range []string{"foreign fence owner", "unretained volume", "detached claim", "wrong fence", "missing fence"} {
+		t.Run(failure, func(t *testing.T) {
+			s, o := fixture(), testOptions()
+			prepareFencedHold(s)
+			o.fenced = true
+			switch failure {
+			case "foreign fence owner":
+				list(s.cluster, "metadata", "managedFields")[0]["manager"] = "someone-else"
+			case "unretained volume":
+				at(s.volumes["old-pv"], "spec")["persistentVolumeReclaimPolicy"] = "Delete"
+			case "detached claim":
+				at(s.claims[0], "metadata", "annotations")["cnpg.io/pvcStatus"] = "detached"
+			case "wrong fence":
+				at(s.cluster, "metadata", "annotations")[fenceKey] = `["wedding-db-3"]`
+			case "missing fence":
+				delete(at(s.cluster, "metadata", "annotations"), fenceKey)
+			}
+			writes := 0
+			c := client{source: func(context.Context) error { return nil }, wait: func(context.Context) error { return context.DeadlineExceeded }}
+			c.command = func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if args[0] == "get" {
+					return fakeRead(s, args[1:])
+				}
+				writes++
+				return nil, errors.New("unexpected write")
+			}
+			if err := repair(context.Background(), c, o, true); err == nil || writes != 0 {
+				t.Fatalf("unsafe continuation issued %d writes, error %v", writes, err)
+			}
+		})
 	}
 }
 
