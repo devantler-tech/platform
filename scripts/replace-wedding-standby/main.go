@@ -44,6 +44,7 @@ type client struct {
 	now     func() time.Time
 }
 
+// read accepts only a complete JSON response from a successful Kubernetes read.
 func (c client) read(ctx context.Context, args ...string) (object, error) {
 	b, err := c.command(ctx, append([]string{"get"}, args...), nil)
 	if err != nil {
@@ -55,6 +56,8 @@ func (c client) read(ctx context.Context, args ...string) (object, error) {
 	}
 	return result, nil
 }
+
+// snapshot joins the cluster, operator, instances, old storage, jobs and backups.
 func (c client) snapshot(ctx context.Context) (inventory, error) {
 	s := inventory{volumes: map[string]object{}}
 	var err error
@@ -98,10 +101,17 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 	return s, nil
 }
 
-func (c client) write(ctx context.Context, args []string, body any) error {
+// proveSource binds the next fresh observation to the validated current main.
+func (c client) proveSource(ctx context.Context) error {
 	if c.source == nil || c.source(ctx) != nil {
 		return errors.New("current-main source proof failed; no further write")
 	}
+	return nil
+}
+
+// write sends a single conditional mutation after its proof and fresh observation.
+// The repair caller never retries a rejected request or performs cleanup writes.
+func (c client) write(ctx context.Context, args []string, body any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -112,11 +122,18 @@ func (c client) write(ctx context.Context, args []string, body any) error {
 	return nil
 }
 
+// tests pins a JSON patch to one observed resource identity and version.
 func tests(o object) []object {
 	return []object{{"op": "test", "path": "/metadata/uid", "value": id(o).uid}, {"op": "test", "path": "/metadata/resourceVersion", "value": str(o, "metadata", "resourceVersion")}}
 }
-func testPath(path string, v any) object     { return object{"op": "test", "path": path, "value": v} }
+
+// testPath creates a semantic precondition without changing a resource.
+func testPath(path string, v any) object { return object{"op": "test", "path": path, "value": v} }
+
+// editPath creates one reviewed JSON patch operation.
 func editPath(op, path string, v any) object { return object{"op": op, "path": path, "value": v} }
+
+// patch scopes mutations to the observed resource and explicit API group.
 func (c client) patch(ctx context.Context, kind string, o object, ops []object) error {
 	if kind == "cluster" {
 		kind = "cluster.postgresql.cnpg.io"
@@ -127,6 +144,8 @@ func (c client) patch(ctx context.Context, kind string, o object, ops []object) 
 	}
 	return c.write(ctx, args, ops)
 }
+
+// fencePatch changes only this repair's fence while pinning the primary and size.
 func fencePatch(cluster object, remove bool) []object {
 	ops := append(tests(cluster), testPath("/status/currentPrimary", str(cluster, "status", "currentPrimary")), testPath("/status/targetPrimary", str(cluster, "status", "targetPrimary")), testPath("/spec/instances", float64(3)))
 	path := "/metadata/annotations/cnpg.io~1fencedInstances"
@@ -138,6 +157,8 @@ func fencePatch(cluster object, remove bool) []object {
 	}
 	return append(ops, editPath("add", path, `["wedding-db-1"]`))
 }
+
+// detachPatch preserves the claim and removes only its verified cluster owner.
 func detachPatch(claim object, uid string) ([]object, error) {
 	ops := append(tests(claim), testPath("/spec/volumeName", str(claim, "spec", "volumeName")))
 	for i, ref := range list(claim, "metadata", "ownerReferences") {
@@ -148,6 +169,8 @@ func detachPatch(claim object, uid string) ([]object, error) {
 	}
 	return nil, errors.New("cluster ownership disappeared before detachment")
 }
+
+// pause separates observations and respects the enclosing operation deadline.
 func (c client) pause(ctx context.Context) error {
 	if c.wait != nil {
 		return c.wait(ctx)
@@ -161,6 +184,8 @@ func (c client) pause(ctx context.Context) error {
 		return nil
 	}
 }
+
+// fenced requires exactly one positive gauge from the target's own exporter.
 func (c client) fenced(ctx context.Context) bool {
 	b, err := c.command(ctx, []string{"get", "--raw", "/api/v1/namespaces/" + namespace + "/pods/" + targetName + ":9187/proxy/metrics"}, nil)
 	if err != nil {
@@ -178,6 +203,8 @@ func (c client) fenced(ctx context.Context) bool {
 	}
 	return count == 1
 }
+
+// stable refuses drift in any protected instance or old storage identity.
 func stable(s inventory, o options, p plan, claimID, volumeID identity) error {
 	current, err := validate(s, o)
 	if err != nil {
@@ -188,6 +215,8 @@ func stable(s inventory, o options, p plan, claimID, volumeID identity) error {
 	}
 	return nil
 }
+
+// retained proves the old claim and volume remain bound with a Retain policy.
 func retained(s inventory, claimID, volumeID identity, detached bool) bool {
 	if len(s.claims) != 1 {
 		return false
@@ -210,6 +239,7 @@ func retained(s inventory, claimID, volumeID identity, detached bool) bool {
 	return true
 }
 
+// repair either validates without writes or performs the approved narrow sequence.
 func repair(ctx context.Context, c client, o options, execute bool) error {
 	s, err := c.snapshot(ctx)
 	if err != nil {
@@ -228,6 +258,9 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 	// Pin each write to a new complete observation, never retrying a rejected CAS.
 	refresh := func() error {
 		var e error
+		if e = c.proveSource(ctx); e != nil {
+			return e
+		}
 		s, e = c.snapshot(ctx)
 		if e != nil {
 			return e
@@ -251,7 +284,7 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 		return err
 	}
 	if !retained(s, claimID, volumeID, false) {
-		return errors.New("Retain policy was not read back")
+		return errors.New("volume Retain policy was not read back")
 	}
 	if err = c.patch(ctx, "cluster", s.cluster, fencePatch(s.cluster, false)); err != nil {
 		return err
@@ -301,6 +334,9 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 		return err
 	}
 	for {
+		if err = c.proveSource(ctx); err != nil {
+			return err
+		}
 		s, err = c.snapshot(ctx)
 		if err != nil {
 			return err
@@ -361,6 +397,7 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 	}
 }
 
+// protectedPeers requires the original healthy primary and standby throughout.
 func protectedPeers(s inventory, o options, p plan) error {
 	if !auditedOperator(s.operator) || !condition(s.cluster, "ContinuousArchiving") || !condition(s.cluster, "LastBackupSucceeded") {
 		return errors.New("operator or backup health changed during repair")
@@ -385,6 +422,8 @@ func protectedPeers(s inventory, o options, p plan) error {
 	}
 	return nil
 }
+
+// recovered joins three Ready instances to fresh replacement storage, not the old claim.
 func (c client) recovered(ctx context.Context, s inventory, o options, p plan, oldClaim identity) (bool, error) {
 	if num(s.cluster, "status", "readyInstances") != 3 || !condition(s.cluster, "Ready") || !condition(s.cluster, "ContinuousArchiving") || str(s.cluster, "metadata", "annotations", fenceKey) != "" || len(s.pods) != 3 {
 		return false, nil
@@ -444,6 +483,7 @@ const (
 	fenceKey    = "cnpg.io/fencedInstances"
 )
 
+// value traverses decoded Kubernetes objects without accepting incompatible shapes.
 func value(o object, path ...string) any {
 	var v any = o
 	for _, key := range path {
@@ -455,8 +495,14 @@ func value(o object, path ...string) any {
 	}
 	return v
 }
-func str(o object, path ...string) string  { s, _ := value(o, path...).(string); return s }
+
+// str reads a string field; absence or a wrong type cannot satisfy a string gate.
+func str(o object, path ...string) string { s, _ := value(o, path...).(string); return s }
+
+// num reads the numeric form produced by standard JSON decoding.
 func num(o object, path ...string) float64 { n, _ := value(o, path...).(float64); return n }
+
+// list refuses a mixed or malformed resource collection instead of dropping entries.
 func list(o object, path ...string) []object {
 	var result []object
 	items, _ := value(o, path...).([]any)
@@ -469,6 +515,8 @@ func list(o object, path ...string) []object {
 	}
 	return result
 }
+
+// condition accepts only an explicitly True condition of the requested type.
 func condition(o object, name string) bool {
 	for _, c := range list(o, "status", "conditions") {
 		if str(c, "type") == name {
@@ -477,10 +525,16 @@ func condition(o object, name string) bool {
 	}
 	return false
 }
+
+// id binds names to immutable Kubernetes UIDs.
 func id(o object) identity { return identity{str(o, "metadata", "name"), str(o, "metadata", "uid")} }
+
+// validMeta requires a versioned, nonterminating resource in the expected scope.
 func validMeta(o object, ns string) bool {
 	return id(o).name != "" && id(o).uid != "" && str(o, "metadata", "namespace") == ns && str(o, "metadata", "resourceVersion") != "" && value(o, "metadata", "deletionTimestamp") == nil
 }
+
+// owned requires exactly one controller owner from this CloudNativePG cluster.
 func owned(o object, uid string) bool {
 	count := 0
 	for _, ref := range list(o, "metadata", "ownerReferences") {
@@ -493,6 +547,8 @@ func owned(o object, uid string) bool {
 	}
 	return count == 1
 }
+
+// crashLoop recognizes the specific failed postgres container, not a sidecar.
 func crashLoop(p object) bool {
 	for _, c := range list(p, "status", "containerStatuses") {
 		if str(c, "name") == "postgres" {
@@ -502,6 +558,7 @@ func crashLoop(p object) bool {
 	return false
 }
 
+// auditedOperator binds fencing semantics to the inspected, fully rolled-out version.
 func auditedOperator(o object) bool {
 	if !validMeta(o, "cnpg-system") || id(o).name != "cloudnative-pg" || num(o, "metadata", "generation") < 1 || num(o, "metadata", "generation") != num(o, "status", "observedGeneration") || num(o, "spec", "replicas") < 1 || num(o, "spec", "replicas") != num(o, "status", "availableReplicas") || num(o, "spec", "replicas") != num(o, "status", "updatedReplicas") {
 		return false
@@ -510,6 +567,7 @@ func auditedOperator(o object) bool {
 	return len(containers) == 1 && str(containers[0], "image") == "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1"
 }
 
+// validate refuses incomplete, stale or unsafe observations before authorizing repair.
 func validate(s inventory, o options) (plan, error) {
 	p := plan{}
 	if !auditedOperator(s.operator) {
@@ -622,6 +680,7 @@ func validate(s inventory, o options) (plan, error) {
 	return p, nil
 }
 
+// main reports a failed observation or repair as HOLD and exits unsuccessfully.
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "REPAIR=HOLD:", err)
@@ -629,9 +688,12 @@ func main() {
 	}
 }
 
+// dispatchAllowed limits execution to the first confirmed dispatch of this main workflow.
 func dispatchAllowed(env func(string) string) bool {
 	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volumes-replace-failed-standby" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
 }
+
+// run selects OIDC reads by default and protected workflow execution only when bound.
 func run() error {
 	execute := flag.Bool("execute", false, "replace the failed standby through the protected main workflow")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")

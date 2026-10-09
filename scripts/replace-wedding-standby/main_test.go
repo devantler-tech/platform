@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 )
 
+// TestFullyQualifiedDatabaseResources prevents selecting an unrelated Cluster API.
 func TestFullyQualifiedDatabaseResources(t *testing.T) {
 	c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
 		if args[1] == "cluster" || args[1] == "backups" {
@@ -24,17 +26,19 @@ func TestFullyQualifiedDatabaseResources(t *testing.T) {
 	}
 }
 
+// TestDuplicateRecoveryObservationIsNotClean requires a distinct replacement observation.
 func TestDuplicateRecoveryObservationIsNotClean(t *testing.T) {
 	s := fixture()
 	p := plan{primary: id(s.pods[1]), healthy: id(s.pods[2]), target: id(s.pods[0])}
 	s.pods = []object{s.pods[1], s.pods[2], s.pods[2]}
 	at(s.cluster, "status")["readyInstances"] = float64(3)
-	at(s.cluster, "status")["conditions"] = append(at(s.cluster, "status")["conditions"].([]any), object{"type": "Ready", "status": "True"})
+	appendCondition(s.cluster, object{"type": "Ready", "status": "True"})
 	if ok, err := (client{}).recovered(context.Background(), s, testOptions(), p, id(s.claims[0])); ok || err == nil {
 		t.Fatal("duplicate observations cleared recovery without a replacement")
 	}
 }
 
+// TestDispatchBoundary refuses each independently invalid execution binding.
 func TestDispatchBoundary(t *testing.T) {
 	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_REPAIR_CONFIRM": "retain-volumes-replace-failed-standby", "GITHUB_SHA": strings.Repeat("a", 40)}
 	for key := range good {
@@ -56,6 +60,7 @@ func TestDispatchBoundary(t *testing.T) {
 	}
 }
 
+// TestFenceMetricMustBeCompleteAndTrue rejects missing, duplicate and failed evidence.
 func TestFenceMetricMustBeCompleteAndTrue(t *testing.T) {
 	for _, tc := range []struct {
 		body       string
@@ -73,6 +78,7 @@ func TestFenceMetricMustBeCompleteAndTrue(t *testing.T) {
 	}
 }
 
+// TestDispatchMustNameTheProtectedRecoveryWorkflow rejects a different dispatch caller.
 func TestDispatchMustNameTheProtectedRecoveryWorkflow(t *testing.T) {
 	env := map[string]string{"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_REPAIR_CONFIRM": "retain-volumes-replace-failed-standby", "GITHUB_SHA": strings.Repeat("a", 40), "GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main"}
 	get := func(key string) string { return env[key] }
@@ -85,6 +91,7 @@ func TestDispatchMustNameTheProtectedRecoveryWorkflow(t *testing.T) {
 	}
 }
 
+// fakeRead returns Kubernetes-shaped responses for the transaction's exact reads.
 func fakeRead(s inventory, args []string) ([]byte, error) {
 	kind, name := strings.TrimSuffix(args[0], ".postgresql.cnpg.io"), ""
 	if len(args) > 1 {
@@ -133,6 +140,7 @@ func fakeRead(s inventory, args []string) ([]byte, error) {
 	return json.Marshal(result)
 }
 
+// TestReadOnlyPlanAndPartialReadFailure rejects plausible output followed by failure.
 func TestReadOnlyPlanAndPartialReadFailure(t *testing.T) {
 	for _, fail := range []string{"", "cluster", "deployment", "pods", "pvc", "pv", "backups", "jobs"} {
 		t.Run("partial "+fail, func(t *testing.T) {
@@ -154,6 +162,7 @@ func TestReadOnlyPlanAndPartialReadFailure(t *testing.T) {
 	}
 }
 
+// TestExecutionRefusesFailedSourceBeforeWrites protects against stale-main execution.
 func TestExecutionRefusesFailedSourceBeforeWrites(t *testing.T) {
 	writes := 0
 	c := client{command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
@@ -171,6 +180,7 @@ func TestExecutionRefusesFailedSourceBeforeWrites(t *testing.T) {
 	}
 }
 
+// TestRepairStopsOnIntermediateDrift prevents later mutations after a safety gate changes.
 func TestRepairStopsOnIntermediateDrift(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -227,6 +237,7 @@ func TestRepairStopsOnIntermediateDrift(t *testing.T) {
 	}
 }
 
+// TestFailedConditionalWriteDoesNotRetry keeps a rejected mutation in HOLD.
 func TestFailedConditionalWriteDoesNotRetry(t *testing.T) {
 	writes := 0
 	c := client{source: func(context.Context) error { return nil }}
@@ -245,6 +256,7 @@ func TestFailedConditionalWriteDoesNotRetry(t *testing.T) {
 	}
 }
 
+// TestUnacknowledgedFenceCannotDetachStorage preserves ownership until fencing is proven.
 func TestUnacknowledgedFenceCannotDetachStorage(t *testing.T) {
 	s := fixture()
 	writes := 0
@@ -275,10 +287,20 @@ func TestUnacknowledgedFenceCannotDetachStorage(t *testing.T) {
 	}
 }
 
+// TestWriteSequencePreservesDataAndPinsDeletes checks proof/read/write ordering and retention.
 func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 	s := fixture()
 	var writes []string
-	c := client{source: func(context.Context) error { return nil }, wait: func(context.Context) error { return nil }}
+	proofs := 0
+	c := client{source: func(context.Context) error {
+		// Controllers can publish harmless status changes during the forge read.
+		// Every write must observe the versions AFTER that read, not before it.
+		proofs++
+		for _, o := range append([]object{s.cluster, s.operator, s.claims[0], s.volumes["old-pv"]}, s.pods...) {
+			at(o, "metadata")["resourceVersion"] = fmt.Sprint(proofs)
+		}
+		return nil
+	}, wait: func(context.Context) error { return nil }}
 	c.command = func(_ context.Context, args []string, data []byte) ([]byte, error) {
 		if args[0] == "get" {
 			if args[1] == "--raw" {
@@ -295,7 +317,7 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 			if err := json.Unmarshal(data, &body); err != nil {
 				t.Fatal(err)
 			}
-			if str(body, "preconditions", "uid") != "target-uid" || str(body, "preconditions", "resourceVersion") != "10" {
+			if str(body, "preconditions", "uid") != "target-uid" || str(body, "preconditions", "resourceVersion") != str(s.pods[0], "metadata", "resourceVersion") {
 				t.Fatal("delete not bound to exact pod")
 			}
 			s.pods = s.pods[1:]
@@ -306,7 +328,7 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 			at(newPod, "spec")["volumes"] = []any{object{"persistentVolumeClaim": object{"claimName": "wedding-db-4"}}}
 			s.pods = append(s.pods, newPod)
 			at(s.cluster, "status")["readyInstances"] = float64(3)
-			at(s.cluster, "status")["conditions"] = append(at(s.cluster, "status")["conditions"].([]any), object{"type": "Ready", "status": "True"})
+			appendCondition(s.cluster, object{"type": "Ready", "status": "True"})
 			return []byte(`{}`), nil
 		}
 		if args[0] != "patch" {
@@ -321,8 +343,14 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 		}
 		switch strings.TrimSuffix(args[1], ".postgresql.cnpg.io") {
 		case "pv":
+			if value(ops[1], "value") != str(s.volumes["old-pv"], "metadata", "resourceVersion") {
+				t.Fatal("PV snapshot preceded the source proof")
+			}
 			at(s.volumes["old-pv"], "spec")["persistentVolumeReclaimPolicy"] = "Retain"
 		case "cluster":
+			if value(ops[1], "value") != str(s.cluster, "metadata", "resourceVersion") {
+				t.Fatal("Cluster snapshot preceded the source proof")
+			}
 			last := ops[len(ops)-1]
 			if str(last, "op") == "remove" {
 				delete(at(s.cluster, "metadata", "annotations"), fenceKey)
@@ -330,6 +358,9 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 				at(s.cluster, "metadata", "annotations")[fenceKey] = `["wedding-db-1"]`
 			}
 		case "pvc":
+			if value(ops[1], "value") != str(s.claims[0], "metadata", "resourceVersion") {
+				t.Fatal("PVC snapshot preceded the source proof")
+			}
 			at(s.claims[0], "metadata")["ownerReferences"] = []any{}
 			at(s.claims[0], "metadata", "annotations")["cnpg.io/pvcStatus"] = "detached"
 		default:
@@ -344,6 +375,9 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 	if strings.Join(writes, ",") != want {
 		t.Fatalf("write ordering %v; want %s", writes, want)
 	}
+	if proofs < len(writes) {
+		t.Fatal("a write reused an old source proof")
+	}
 	if id(s.claims[0]).uid != "claim-uid" || str(s.volumes["old-pv"], "spec", "claimRef", "uid") != "claim-uid" {
 		t.Fatal("old data binding lost")
 	}
@@ -351,6 +385,7 @@ func TestWriteSequencePreservesDataAndPinsDeletes(t *testing.T) {
 
 var testNow = time.Date(2026, 10, 9, 1, 0, 0, 0, time.UTC)
 
+// fixture models the one failed standby and its protected peers and bound storage.
 func fixture() inventory {
 	owner := []any{object{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "wedding-db", "uid": "cluster-uid", "controller": true}}
 	meta := func(name, uid string) object {
@@ -364,24 +399,41 @@ func fixture() inventory {
 	}
 	c := object{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "metadata": object{"name": "wedding-db", "namespace": "wedding-app", "uid": "cluster-uid", "resourceVersion": "10", "annotations": object{}}, "spec": object{"instances": float64(3)}, "status": object{"readyInstances": float64(2), "currentPrimary": "wedding-db-2", "targetPrimary": "wedding-db-2", "conditions": []any{object{"type": "ContinuousArchiving", "status": "True"}, object{"type": "LastBackupSucceeded", "status": "True"}}}}
 	claim := object{"metadata": meta("wedding-db-1", "claim-uid"), "spec": object{"volumeName": "old-pv"}, "status": object{"phase": "Bound"}}
-	claim["metadata"].(object)["labels"] = object{"cnpg.io/cluster": "wedding-db", "cnpg.io/instanceName": "wedding-db-1"}
-	claim["metadata"].(object)["annotations"] = object{"cnpg.io/pvcStatus": "ready"}
+	at(claim, "metadata")["labels"] = object{"cnpg.io/cluster": "wedding-db", "cnpg.io/instanceName": "wedding-db-1"}
+	at(claim, "metadata")["annotations"] = object{"cnpg.io/pvcStatus": "ready"}
 	volume := object{"metadata": object{"name": "old-pv", "uid": "pv-uid", "resourceVersion": "10"}, "spec": object{"claimRef": object{"name": "wedding-db-1", "namespace": "wedding-app", "uid": "claim-uid"}, "persistentVolumeReclaimPolicy": "Delete"}, "status": object{"phase": "Bound"}}
 	backup := object{"metadata": meta("daily-backup", "backup-uid"), "spec": object{"cluster": object{"name": "wedding-db"}, "method": "plugin", "pluginConfiguration": object{"name": "barman-cloud.cloudnative-pg.io"}}, "status": object{"phase": "completed", "stoppedAt": testNow.Add(-time.Hour).Format(time.RFC3339), "pluginMetadata": object{"clusterUID": "cluster-uid"}}}
 	operator := object{"metadata": object{"name": "cloudnative-pg", "namespace": "cnpg-system", "uid": "operator-uid", "resourceVersion": "10", "generation": float64(1)}, "spec": object{"replicas": float64(2), "template": object{"spec": object{"containers": []any{object{"image": "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1"}}}}}, "status": object{"observedGeneration": float64(1), "availableReplicas": float64(2), "updatedReplicas": float64(2)}}
 	return inventory{cluster: c, operator: operator, pods: []object{pod("wedding-db-1", "target-uid", "replica", "False"), pod("wedding-db-2", "primary-uid", "primary", "True"), pod("wedding-db-3", "healthy-uid", "replica", "True")}, claims: []object{claim}, volumes: map[string]object{"old-pv": volume}, backups: []object{backup}}
 }
 
+// at requires the fixture's expected map shape and fails loudly on fixture mistakes.
 func at(o object, path ...string) object {
 	for _, k := range path {
-		o = o[k].(object)
+		next, ok := o[k].(object)
+		if !ok {
+			panic("fixture map is missing at " + k)
+		}
+		o = next
 	}
 	return o
 }
+
+// appendCondition extends decoded conditions without unchecked type assertions.
+func appendCondition(o object, c object) {
+	items := []any{}
+	for _, existing := range list(o, "status", "conditions") {
+		items = append(items, existing)
+	}
+	at(o, "status")["conditions"] = append(items, c)
+}
+
+// testOptions binds deterministic identities and freshness for the fixture.
 func testOptions() options {
 	return options{clusterUID: "cluster-uid", podUID: "target-uid", now: testNow}
 }
 
+// TestValidateSafeRepair proves complete safe evidence produces a bound plan.
 func TestValidateSafeRepair(t *testing.T) {
 	p, err := validate(fixture(), testOptions())
 	if err != nil {
@@ -392,6 +444,7 @@ func TestValidateSafeRepair(t *testing.T) {
 	}
 }
 
+// TestRefuseUnsafeRepair checks invalid identities, storage, backups and roles.
 func TestRefuseUnsafeRepair(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -453,10 +506,13 @@ func TestRefuseUnsafeRepair(t *testing.T) {
 	}
 }
 
-// JSON round-tripping also exercises the numeric and list forms kubectl returns.
+// TestFixtureDecodesLikeKubernetes exercises kubectl's JSON numeric and list forms.
 func TestFixtureDecodesLikeKubernetes(t *testing.T) {
 	s := fixture()
-	b, _ := json.Marshal(s.cluster)
+	b, err := json.Marshal(s.cluster)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var decoded object
 	if err := json.Unmarshal(b, &decoded); err != nil {
 		t.Fatal(err)
