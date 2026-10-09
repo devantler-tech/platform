@@ -3,12 +3,15 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"regexp"
@@ -61,7 +64,7 @@ func (c client) read(ctx context.Context, args ...string) (object, error) {
 func (c client) snapshot(ctx context.Context) (inventory, error) {
 	s := inventory{volumes: map[string]object{}}
 	var err error
-	s.cluster, err = c.read(ctx, "cluster.postgresql.cnpg.io", clusterName, "-n", namespace, "-o", "json")
+	s.cluster, err = c.read(ctx, "cluster.postgresql.cnpg.io", clusterName, "-n", namespace, "--show-managed-fields=true", "-o", "json")
 	if err != nil {
 		return s, err
 	}
@@ -194,14 +197,44 @@ func (c client) pause(ctx context.Context) error {
 	}
 }
 
-// fenced requires exactly one positive gauge from the target's own exporter.
-func (c client) fenced(ctx context.Context) bool {
-	b, err := c.command(ctx, []string{"get", "--raw", "/api/v1/namespaces/" + namespace + "/pods/" + targetName + ":9187/proxy/metrics"}, nil)
+// metricsRequest reads only the local exporter using the operand's Debian
+// essentials. No ingress rule, added tool, secret or storage access is needed.
+// Privileged Bash ignores BASH_ENV and inherited functions; timeout also bounds
+// the remote process when kubectl's own deadline cannot terminate it.
+const metricsRequest = `set -e
+exec 3<>/dev/tcp/127.0.0.1/9187
+printf 'GET /metrics HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+exec /bin/cat <&3`
+
+// fenced requires exactly one positive gauge from the bound target's own
+// exporter. Identity reads bracket exec because the exec API has no UID CAS.
+func (c client) fenced(ctx context.Context, target identity) bool {
+	bound := func() bool {
+		pod, err := c.read(ctx, "pod", targetName, "-n", namespace, "-o", "json")
+		return err == nil && target.name == targetName && target.uid != "" && validMeta(pod, namespace) && id(pod) == target
+	}
+	if !bound() {
+		return false
+	}
+	b, err := c.command(ctx, []string{"exec", "-n", namespace, targetName, "-c", "postgres", "--", "/usr/bin/timeout", "--kill-after=2s", "10s", "/bin/bash", "--noprofile", "--norc", "-p", "-c", metricsRequest}, nil)
+	if err != nil || len(b) > 1<<20 || !bound() {
+		return false
+	}
+	reader := bufio.NewReader(bytes.NewReader(b))
+	response, err := http.ReadResponse(reader, nil)
 	if err != nil {
 		return false
 	}
+	body, err := io.ReadAll(response.Body)
+	closeErr := response.Body.Close()
+	if err != nil || closeErr != nil || response.StatusCode != http.StatusOK {
+		return false
+	}
+	if _, err = reader.Peek(1); err != io.EOF {
+		return false
+	}
 	count := 0
-	for _, line := range strings.Split(string(b), "\n") {
+	for _, line := range strings.Split(string(body), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) > 0 && fields[0] == "cnpg_collector_fencing_on" {
 			if len(fields) != 2 || fields[1] != "1" {
@@ -248,6 +281,20 @@ func retained(s inventory, claimID, volumeID identity, detached bool) bool {
 	return true
 }
 
+// repairOwnsFence rejects absent or shared ownership of the exact annotation.
+func repairOwnsFence(cluster object) bool {
+	ownedFence := false
+	for _, fields := range list(cluster, "metadata", "managedFields") {
+		if value(fields, "fieldsV1", "f:metadata", "f:annotations", "f:"+fenceKey) != nil {
+			if str(fields, "manager") != fieldManager {
+				return false
+			}
+			ownedFence = true
+		}
+	}
+	return ownedFence
+}
+
 // repair either validates without writes or performs the approved narrow sequence.
 func repair(ctx context.Context, c client, o options, execute bool) error {
 	s, err := c.snapshot(ctx)
@@ -258,12 +305,20 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 	if err != nil {
 		return err
 	}
-	if !execute {
-		return nil
-	}
 	claimID := id(p.claims[0])
 	volume := s.volumes[str(p.claims[0], "spec", "volumeName")]
 	volumeID := id(volume)
+	resuming := o.fenced
+	if resuming {
+		// Only the original procedure's pre-detachment HOLD is resumable. Do
+		// not infer ownership from an annotation or advance a later partial state.
+		if !repairOwnsFence(s.cluster) || o.detached || !retained(s, claimID, volumeID, false) {
+			return errors.New("continuation requires this repair's retained, attached pre-detachment HOLD")
+		}
+	}
+	if !execute {
+		return nil
+	}
 	// Pin each write to a new complete observation, never retrying a rejected CAS.
 	refresh := func() error {
 		var e error
@@ -276,6 +331,9 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 		}
 		if c.now != nil {
 			o.now = c.now()
+		}
+		if resuming && (!repairOwnsFence(s.cluster) || !retained(s, claimID, volumeID, o.detached)) {
+			return errors.New("continuation ownership or retention proof changed")
 		}
 		return stable(s, o, p, claimID, volumeID)
 	}
@@ -295,8 +353,10 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 	if !retained(s, claimID, volumeID, false) {
 		return errors.New("volume Retain policy was not read back")
 	}
-	if err = c.patch(ctx, "cluster", s.cluster, fencePatch(s.cluster, false)); err != nil {
-		return err
+	if !o.fenced {
+		if err = c.patch(ctx, "cluster", s.cluster, fencePatch(s.cluster, false)); err != nil {
+			return err
+		}
 	}
 	o.fenced = true
 	fenceCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
@@ -305,7 +365,7 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 		if err = refresh(); err != nil {
 			return err
 		}
-		if c.fenced(fenceCtx) {
+		if c.fenced(fenceCtx, p.target) {
 			break
 		}
 		if err = c.pause(fenceCtx); err != nil {
@@ -315,7 +375,7 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 	if err = refresh(); err != nil {
 		return err
 	}
-	if !retained(s, claimID, volumeID, false) || !c.fenced(ctx) {
+	if !retained(s, claimID, volumeID, false) || !c.fenced(ctx, p.target) {
 		return errors.New("volume retention or fencing proof lost")
 	}
 	ops, err := detachPatch(s.claims[0], o.clusterUID)
@@ -329,7 +389,7 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 	if err = refresh(); err != nil {
 		return err
 	}
-	if !retained(s, claimID, volumeID, true) || !c.fenced(ctx) {
+	if !retained(s, claimID, volumeID, true) || !c.fenced(ctx, p.target) {
 		return errors.New("detachment or fencing proof lost; pod preserved")
 	}
 	var target object
@@ -369,7 +429,7 @@ func repair(ctx context.Context, c client, o options, execute bool) error {
 			return err
 		}
 	}
-	if str(s.cluster, "metadata", "annotations", fenceKey) != `["wedding-db-1"]` {
+	if str(s.cluster, "metadata", "annotations", fenceKey) != `["wedding-db-1"]` || (resuming && !repairOwnsFence(s.cluster)) {
 		return errors.New("repair fence changed; refusing to remove it")
 	}
 	if err = c.patch(ctx, "cluster", s.cluster, fencePatch(s.cluster, true)); err != nil {
@@ -705,6 +765,7 @@ func dispatchAllowed(env func(string) string) bool {
 // run selects OIDC reads by default and protected workflow execution only when bound.
 func run() error {
 	execute := flag.Bool("execute", false, "replace the failed standby through the protected main workflow")
+	resumeFenced := flag.Bool("resume-fenced", false, "continue this repair's retained, attached fenced HOLD")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
 	podUID := flag.String("pod-uid", "", "expected failed Pod UID")
 	flag.Parse()
@@ -717,6 +778,10 @@ func run() error {
 	}
 	contextName := "oidc@prod"
 	if *execute {
+		resumeInput := os.Getenv("WEDDING_REPAIR_RESUME_FENCED")
+		if (resumeInput != "" && resumeInput != "false" && resumeInput != "true") || *resumeFenced != (resumeInput == "true") {
+			return errors.New("continuation must be explicitly selected by the protected dispatch")
+		}
 		if !dispatchAllowed(os.Getenv) {
 			return errors.New("execution requires the explicitly confirmed first protected main dispatch")
 		}
@@ -733,7 +798,7 @@ func run() error {
 	c.source = func(ctx context.Context) error {
 		return exec.CommandContext(ctx, "bash", "scripts/verify-prod-recovery-source.sh", os.Getenv("GITHUB_SHA")).Run()
 	}
-	if err := repair(ctx, c, options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now()}, *execute); err != nil {
+	if err := repair(ctx, c, options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced}, *execute); err != nil {
 		return err
 	}
 	result := "PLAN=PASS no writes"

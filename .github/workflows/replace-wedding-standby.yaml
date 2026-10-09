@@ -21,6 +21,10 @@ on:
         description: Current failed standby Pod UID from an OIDC read
         required: true
         type: string
+      resume_fenced:
+        description: Continue only this repair's retained, attached fenced HOLD (requires specific approval)
+        default: false
+        type: boolean
 
 permissions: {}
 
@@ -43,6 +47,12 @@ jobs:
           cache: false
       - name: Test complete observations and conditional writes
         run: go test -race -count=1 -timeout=5m ./scripts/replace-wedding-standby
+      - name: Validate the loopback probe in the database image
+        env:
+          WEDDING_REPAIR_OPERAND_TEST: "true"
+        run: |
+          docker pull ghcr.io/cloudnative-pg/postgresql@sha256:42708a75345b7a48fdd9257b071830783a97fd228529196b6313187a7198e185
+          go test -count=1 -timeout=1m -run '^TestLoopbackRequestReadsTheExporter$' ./scripts/replace-wedding-standby
 
   repair:
     name: 💒 Replace failed standby without deleting its storage
@@ -59,6 +69,7 @@ jobs:
       queue: max
     env:
       WEDDING_REPAIR_CONFIRM: ${{ inputs.confirm }}
+      WEDDING_REPAIR_RESUME_FENCED: ${{ inputs.resume_fenced }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - name: Require main and explicit confirmation
@@ -102,6 +113,7 @@ jobs:
         env:
           CLUSTER_UID: ${{ inputs.cluster_uid }}
           POD_UID: ${{ inputs.pod_uid }}
+          RESUME_FENCED: ${{ inputs.resume_fenced }}
         run: |
           set -euo pipefail
-          go run ./scripts/replace-wedding-standby --execute --cluster-uid "${CLUSTER_UID}" --pod-uid "${POD_UID}"
+          go run ./scripts/replace-wedding-standby --execute --resume-fenced="${RESUME_FENCED}" --cluster-uid "${CLUSTER_UID}" --pod-uid "${POD_UID}"
