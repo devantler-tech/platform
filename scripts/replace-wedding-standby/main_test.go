@@ -36,7 +36,7 @@ func TestDuplicateRecoveryObservationIsNotClean(t *testing.T) {
 }
 
 func TestDispatchBoundary(t *testing.T) {
-	good := map[string]string{"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_REPAIR_CONFIRM": "retain-volumes-replace-failed-standby", "GITHUB_SHA": strings.Repeat("a", 40)}
+	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_REPAIR_CONFIRM": "retain-volumes-replace-failed-standby", "GITHUB_SHA": strings.Repeat("a", 40)}
 	for key := range good {
 		t.Run(key, func(t *testing.T) {
 			for k, v := range good {
@@ -70,6 +70,18 @@ func TestFenceMetricMustBeCompleteAndTrue(t *testing.T) {
 		if got := c.fenced(context.Background()); got != tc.ok {
 			t.Fatalf("fencing %q=%v", tc.body, got)
 		}
+	}
+}
+
+func TestDispatchMustNameTheProtectedRecoveryWorkflow(t *testing.T) {
+	env := map[string]string{"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_REPAIR_CONFIRM": "retain-volumes-replace-failed-standby", "GITHUB_SHA": strings.Repeat("a", 40), "GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main"}
+	get := func(key string) string { return env[key] }
+	if !dispatchAllowed(get) {
+		t.Fatal("reviewed dispatch refused")
+	}
+	env["GITHUB_WORKFLOW_REF"] = "devantler-tech/platform/.github/workflows/other.yaml@refs/heads/main"
+	if dispatchAllowed(get) {
+		t.Fatal("another workflow received recovery authority")
 	}
 }
 

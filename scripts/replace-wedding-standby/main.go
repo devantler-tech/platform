@@ -628,6 +628,10 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+func dispatchAllowed(env func(string) string) bool {
+	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volumes-replace-failed-standby" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
+}
 func run() error {
 	execute := flag.Bool("execute", false, "replace the failed standby through the protected main workflow")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
@@ -642,7 +646,7 @@ func run() error {
 	}
 	contextName := "oidc@prod"
 	if *execute {
-		if os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("WEDDING_REPAIR_CONFIRM") != "retain-volumes-replace-failed-standby" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) {
+		if !dispatchAllowed(os.Getenv) {
 			return errors.New("execution requires the explicitly confirmed first protected main dispatch")
 		}
 		contextName = "admin@prod"
