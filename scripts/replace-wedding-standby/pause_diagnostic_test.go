@@ -7,6 +7,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"os/exec"
 	"reflect"
 	"strings"
 	"testing"
@@ -95,6 +96,9 @@ func TestPauseDiagnosticStopsAfterOneNonPersistingPatch(t *testing.T) {
 			before, _ := json.Marshal(s)
 			patches, sourceReads := 0, 0
 			c := client{now: func() time.Time { return testNow }, source: func(context.Context) error {
+				if patches != 0 {
+					t.Fatal("source command continued after diagnostic")
+				}
 				sourceReads++
 				if failure == "source" {
 					return errors.New("fixture source changed")
@@ -132,7 +136,7 @@ func TestPauseDiagnosticStopsAfterOneNonPersistingPatch(t *testing.T) {
 						t.Fatal("diagnostic did not use the exact guarded pause patch")
 					}
 					if failure == "rejected patch" {
-						return nil, errors.New("fixture-private-server-error")
+						return nil, &exec.ExitError{Stderr: []byte("Error from server (Forbidden): fixture-private-server-error")}
 					}
 					return []byte("{}"), nil
 				default:
@@ -153,6 +157,9 @@ func TestPauseDiagnosticStopsAfterOneNonPersistingPatch(t *testing.T) {
 			}
 			if err != nil && strings.Contains(err.Error(), "fixture-private-server-error") {
 				t.Fatal("raw server error escaped diagnostic")
+			}
+			if failure == "rejected patch" && !strings.Contains(err.Error(), "reason=SERVER_FORBIDDEN") {
+				t.Fatal("diagnostic lost the bounded server rejection category")
 			}
 		})
 	}
