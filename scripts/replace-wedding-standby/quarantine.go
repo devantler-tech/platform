@@ -198,10 +198,10 @@ func pauseLogRecords(b []byte) ([]object, error) {
 
 // pauseAcknowledged accepts only a bound, recent reconciliation not observed
 // before the pause. The clock allowance never admits an observed reconciliation replay.
-func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool) bool {
+func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool) (bool, error) {
 	records, err := pauseLogRecords(b)
 	if err != nil {
-		return false
+		return false, err
 	}
 	found := false
 	for _, record := range records {
@@ -210,7 +210,7 @@ func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool)
 			found = true
 		}
 	}
-	return found
+	return found, nil
 }
 
 // ownedPause requires exclusive ownership, not just a disabled annotation.
@@ -356,7 +356,11 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if e != nil {
 			return errors.New("operator pause acknowledgment read failed")
 		}
-		if pauseAcknowledged(b, since, c.now(), previous) {
+		acknowledged, e := pauseAcknowledged(b, since, c.now(), previous)
+		if e != nil {
+			return e
+		}
+		if acknowledged {
 			break
 		}
 		if err = c.pause(ackCtx); err != nil {

@@ -166,7 +166,8 @@ func TestPauseAcknowledgmentIsFreshAndBound(t *testing.T) {
 			if failure == "mixed malformed" {
 				b = append(b, []byte("\nnot JSON")...)
 			}
-			if pauseAcknowledged(b, testNow.Add(-time.Second), testNow, nil) != (failure == "") {
+			got, _ := pauseAcknowledged(b, testNow.Add(-time.Second), testNow, nil)
+			if got != (failure == "") {
 				t.Fatalf("incorrect acknowledgment for %q", failure)
 			}
 		})
@@ -235,7 +236,8 @@ func TestPauseAcknowledgmentAllowsOnlyBoundedClockSkew(t *testing.T) {
 			r["ts"] = testNow.Add(offset).Format(time.RFC3339Nano)
 			b, _ := json.Marshal(r)
 			want := offset >= -2*time.Second && offset <= 2*time.Second
-			if got := pauseAcknowledged(b, testNow, testNow, nil); got != want {
+			got, err := pauseAcknowledged(b, testNow, testNow, nil)
+			if err != nil || got != want {
 				t.Fatalf("acknowledgment offset %s accepted=%v, want=%v", offset, got, want)
 			}
 		})
@@ -315,7 +317,7 @@ func TestCompletedJoinBackupCensusDoesNotDropUnknownEntries(t *testing.T) {
 // TestCompletedJoinTransaction exercises real reads and mutations with a stateful
 // API stand-in, including the operator's ordinal reuse and pending fresh PVC.
 func TestCompletedJoinTransaction(t *testing.T) {
-	for _, failure := range []string{"", "read only", "runner ahead", "runner behind", "baseline read", "malformed baseline", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
+	for _, failure := range []string{"", "read only", "runner ahead", "runner behind", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
 		t.Run(failure, func(t *testing.T) {
 			s, g := completedFixture()
 			lease, leaderPod := leaderFixture()
@@ -438,6 +440,9 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					if failure == "no acknowledgment" {
 						r["msg"] = "other"
 					}
+					if failure == "malformed acknowledgment" {
+						return []byte("truncated"), nil
+					}
 					if failure == "leader changed" {
 						at(lease, "spec")["leaseTransitions"] = float64(2)
 					}
@@ -528,15 +533,15 @@ func TestCompletedJoinTransaction(t *testing.T) {
 			if failure == "read only" && len(writes) != 0 {
 				t.Fatal("planning performed mutations")
 			}
-			if failure == "job removal read" && waits != 0 {
-				t.Fatal("failed consumer read was retried rather than stopping immediately")
+			if (failure == "job removal read" || failure == "malformed acknowledgment") && waits != 0 {
+				t.Fatal("unknown observation was retried rather than stopping immediately")
 			}
 			if failure == "" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" {
 				if !reflect.DeepEqual(writes, []string{"pause", "job", "claim", "resume"}) || waits < 1 {
 					t.Fatalf("unexpected transaction %v / separated waits=%d", writes, waits)
 				}
 			}
-			maximum := map[string]int{"baseline read": 0, "malformed baseline": 0, "replayed acknowledgment": 1, "source": 0, "namespace read": 0, "malformed volumes": 0, "unlabelled consumer": 0, "pause CAS": 1, "no acknowledgment": 1, "leader changed": 1, "pause owner": 1, "job CAS": 2, "job removal read": 2, "PVC CAS": 3, "PV loss": 3, "old CSI reused": 4, "unselected old CSI": 4, "backing read": 0, "backing UID drift": 2, "backing attached": 2, "backing terminating": 2}
+			maximum := map[string]int{"baseline read": 0, "malformed baseline": 0, "malformed acknowledgment": 1, "replayed acknowledgment": 1, "source": 0, "namespace read": 0, "malformed volumes": 0, "unlabelled consumer": 0, "pause CAS": 1, "no acknowledgment": 1, "leader changed": 1, "pause owner": 1, "job CAS": 2, "job removal read": 2, "PVC CAS": 3, "PV loss": 3, "old CSI reused": 4, "unselected old CSI": 4, "backing read": 0, "backing UID drift": 2, "backing attached": 2, "backing terminating": 2}
 			if n, exists := maximum[failure]; exists && len(writes) != n {
 				t.Fatalf("failure %q escaped stop boundary: %v", failure, writes)
 			}
