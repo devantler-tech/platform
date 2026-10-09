@@ -215,6 +215,20 @@ versions used by the fold do not move. The offline render regression verifies
 both roles with the pinned Talos client. This adoption leaves the intended
 production schematic and strict node-image readback unchanged.
 
+**7.202.28**, commit `349f4a104cc9fe6d3b8db2e963b6203246ad8f4f`, is audited
+against 7.202.3 for the released cluster-update ownership repair. Among the six
+governed inputs, only the K3d Dockerfile image pin, the operator chart README,
+`go.mod` and `go.sum` change. The complete Talos generator and cluster API trees
+are byte-identical. Both the Talos configuration manager and the distribution
+caller are byte-identical, preserving extension activation, the argument union
+and reconciliation for both roles, and explicit schematic-ID precedence. The
+Talos machinery, Image Factory, YAML and protobuf versions and checksums are
+unchanged. Chart manifests, extension defaults and schematic-ID defaults are
+unchanged. The offline render regression verifies both roles in production and
+local configurations with the pinned Talos client. The ownership repair changes
+how cluster updates cooperate with existing Helm owners; this adoption preserves
+the intended production schematic and strict node-image readback.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
