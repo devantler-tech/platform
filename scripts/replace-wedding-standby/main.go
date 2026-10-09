@@ -150,9 +150,47 @@ func (c client) write(ctx context.Context, args []string, body any) error {
 		return err
 	}
 	if _, err = c.command(ctx, args, b); err != nil {
-		return fmt.Errorf("conditional %s failed; no retry or cleanup write", args[0])
+		return fmt.Errorf("conditional %s failed (reason=%s); no retry or cleanup write", args[0], commandFailureReason(ctx, err))
 	}
 	return nil
+}
+
+// commandFailureReason emits only finite categories from bounded, recognized
+// kubectl status lines. It never returns raw process errors, stderr or payloads.
+// A status reason is not proof of a particular admission rule or CAS failure.
+func commandFailureReason(ctx context.Context, err error) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return "CONTEXT_DEADLINE"
+	}
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		return "CONTEXT_CANCELLED"
+	}
+	var failure *exec.ExitError
+	if !errors.As(err, &failure) || len(failure.Stderr) == 0 || len(failure.Stderr) > 8192 {
+		return "UNKNOWN"
+	}
+	reasons := map[string]string{
+		"Forbidden": "SERVER_FORBIDDEN", "Conflict": "SERVER_CONFLICT",
+		"Invalid": "SERVER_INVALID", "BadRequest": "SERVER_BAD_REQUEST",
+		"Unauthorized": "SERVER_UNAUTHORIZED", "InternalError": "SERVER_INTERNAL",
+		"ServiceUnavailable": "SERVER_UNAVAILABLE", "Timeout": "SERVER_TIMEOUT",
+	}
+	reason := ""
+	for _, line := range strings.Split(string(failure.Stderr), "\n") {
+		if !strings.HasPrefix(line, "Error from server (") {
+			continue
+		}
+		status, _, ok := strings.Cut(strings.TrimPrefix(line, "Error from server ("), "): ")
+		next := reasons[status]
+		if !ok || next == "" || (reason != "" && reason != next) {
+			return "UNKNOWN"
+		}
+		reason = next
+	}
+	if reason == "" {
+		return "UNKNOWN"
+	}
+	return reason
 }
 
 // tests pins a JSON patch to one observed resource identity and version.
