@@ -295,6 +295,43 @@ func repairOwnsFence(cluster object) bool {
 	return ownedFence
 }
 
+// proveFence is the protected read-only observation entry point.
+func proveFence(ctx context.Context, c client, o options) error {
+	if !o.fenced || o.detached {
+		return errors.New("proof requires the attached fenced HOLD")
+	}
+	if err := c.proveSource(ctx); err != nil {
+		return err
+	}
+	s, err := c.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	p, err := validate(s, o)
+	if err != nil {
+		return err
+	}
+	claimID := id(p.claims[0])
+	volumeID := id(s.volumes[str(p.claims[0], "spec", "volumeName")])
+	if !repairOwnsFence(s.cluster) || !retained(s, claimID, volumeID, false) || !c.fenced(ctx, p.target) {
+		return errors.New("owned fence, retained storage or instance acknowledgment is unproven")
+	}
+	if err = c.proveSource(ctx); err != nil {
+		return err
+	}
+	s, err = c.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	if c.now != nil {
+		o.now = c.now()
+	}
+	if !repairOwnsFence(s.cluster) || !retained(s, claimID, volumeID, false) {
+		return errors.New("proof ownership or storage changed")
+	}
+	return stable(s, o, p, claimID, volumeID)
+}
+
 // repair either validates without writes or performs the approved narrow sequence.
 func repair(ctx context.Context, c client, o options, execute bool) error {
 	s, err := c.snapshot(ctx)
@@ -762,9 +799,15 @@ func dispatchAllowed(env func(string) string) bool {
 	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/replace-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volumes-replace-failed-standby" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
 }
 
+// proofDispatchAllowed grants only the fixed observation in the read-only workflow.
+func proofDispatchAllowed(env func(string) string) bool {
+	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/verify-wedding-fence.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_FENCE_PROOF_CONFIRM") == "prove-retained-wedding-fence" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
+}
+
 // run selects OIDC reads by default and protected workflow execution only when bound.
 func run() error {
 	execute := flag.Bool("execute", false, "replace the failed standby through the protected main workflow")
+	proveFenced := flag.Bool("prove-fenced", false, "read the bound instance's fencing acknowledgment through the protected read-only workflow")
 	resumeFenced := flag.Bool("resume-fenced", false, "continue this repair's retained, attached fenced HOLD")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
 	podUID := flag.String("pod-uid", "", "expected failed Pod UID")
@@ -776,6 +819,9 @@ func run() error {
 	if !uuid.MatchString(*clusterUID) || !uuid.MatchString(*podUID) {
 		return errors.New("explicit current cluster and pod UIDs are required")
 	}
+	if *execute && *proveFenced {
+		return errors.New("read-only proof cannot share the repair execution mode")
+	}
 	contextName := "oidc@prod"
 	if *execute {
 		resumeInput := os.Getenv("WEDDING_REPAIR_RESUME_FENCED")
@@ -784,6 +830,11 @@ func run() error {
 		}
 		if !dispatchAllowed(os.Getenv) {
 			return errors.New("execution requires the explicitly confirmed first protected main dispatch")
+		}
+		contextName = "admin@prod"
+	} else if *proveFenced {
+		if !proofDispatchAllowed(os.Getenv) {
+			return errors.New("read-only proof requires the explicitly confirmed first protected main proof dispatch")
 		}
 		contextName = "admin@prod"
 	}
@@ -797,6 +848,13 @@ func run() error {
 	}
 	c.source = func(ctx context.Context) error {
 		return exec.CommandContext(ctx, "bash", "scripts/verify-prod-recovery-source.sh", os.Getenv("GITHUB_SHA")).Run()
+	}
+	if *proveFenced {
+		if err := proveFence(ctx, c, options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: true}); err != nil {
+			return err
+		}
+		fmt.Println("FENCE_PROOF=PASS instanceAcknowledged=1 retainedClaims=1 noMutations=1")
+		return nil
 	}
 	if err := repair(ctx, c, options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced}, *execute); err != nil {
 		return err

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/replace-wedding-standby.yaml
+      - .github/workflows/verify-wedding-fence.yaml
       - scripts/replace-wedding-standby/**
   merge_group:
   workflow_dispatch:

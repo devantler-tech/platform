@@ -177,6 +177,103 @@ func TestInvalidCLIInputsStopBeforeObservation(t *testing.T) {
 	}
 }
 
+// TestProofDispatchBoundary separates a read-only in-Pod observation from the
+// repair grant: neither a local caller nor another workflow may invoke it.
+func TestProofDispatchBoundary(t *testing.T) {
+	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/verify-wedding-fence.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "WEDDING_FENCE_PROOF_CONFIRM": "prove-retained-wedding-fence", "GITHUB_SHA": strings.Repeat("a", 40)}
+	for key := range good {
+		t.Run(key, func(t *testing.T) {
+			for k, v := range good {
+				t.Setenv(k, v)
+			}
+			t.Setenv(key, "wrong")
+			previousFlags, previousArgs := flag.CommandLine, os.Args
+			t.Cleanup(func() { flag.CommandLine = previousFlags; os.Args = previousArgs })
+			flag.CommandLine = flag.NewFlagSet("proof", flag.ContinueOnError)
+			flag.CommandLine.SetOutput(io.Discard)
+			os.Args = []string{"proof", "--prove-fenced", "--cluster-uid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "--pod-uid", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+			if err := run(); err == nil || !strings.Contains(err.Error(), "read-only proof requires") {
+				t.Fatalf("read-only proof boundary returned %v", err)
+			}
+		})
+	}
+}
+
+// TestProtectedFenceProofIsReadOnly observes the original owned HOLD without
+// invoking any mutation; failed or changed observations cannot report PASS.
+func TestProtectedFenceProofIsReadOnly(t *testing.T) {
+	for _, failure := range []string{"", "false gauge", "foreign owner", "changed peer", "stale source", "changed source", "first read failed", "second read failed", "changed owner", "changed volume", "unfenced", "detached", "initial validation failed"} {
+		t.Run(failure, func(t *testing.T) {
+			s, o := fixture(), testOptions()
+			prepareFencedHold(s)
+			o.fenced = true
+			if failure == "unfenced" {
+				o.fenced = false
+			}
+			if failure == "detached" {
+				o.detached = true
+			}
+			if failure == "initial validation failed" {
+				at(s.cluster, "status")["targetPrimary"] = "wedding-db-3"
+			}
+			if failure == "foreign owner" {
+				list(s.cluster, "metadata", "managedFields")[0]["manager"] = "someone-else"
+			}
+			sources, snapshots := 0, 0
+			c := client{source: func(context.Context) error {
+				sources++
+				if failure == "stale source" || (failure == "changed source" && sources == 2) {
+					return errors.New("stale main")
+				}
+				return nil
+			}, command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				switch args[0] {
+				case "get":
+					if args[1] == "cluster.postgresql.cnpg.io" {
+						snapshots++
+						if (failure == "first read failed" && snapshots == 1) || (failure == "second read failed" && snapshots == 2) {
+							return nil, errors.New("snapshot failed")
+						}
+					}
+					return fakeRead(s, args[1:])
+				case "exec":
+					if failure == "false gauge" {
+						return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 0\n"), nil
+					}
+					if failure == "changed peer" {
+						at(s.pods[2], "metadata")["uid"] = "replacement"
+					}
+					if failure == "changed owner" {
+						list(s.cluster, "metadata", "managedFields")[0]["manager"] = "someone-else"
+					}
+					if failure == "changed volume" {
+						at(s.volumes["old-pv"], "spec", "claimRef")["uid"] = "someone-else"
+					}
+					return []byte("HTTP/1.0 200 OK\r\n\r\ncnpg_collector_fencing_on 1\n"), nil
+				default:
+					t.Fatalf("read-only proof issued mutation: %v", args)
+					return nil, errors.New("mutation")
+				}
+			}}
+			if err := proveFence(context.Background(), c, o); (err == nil) != (failure == "") {
+				t.Fatalf("proof failure=%q returned %v", failure, err)
+			}
+		})
+	}
+}
+
+// TestProofCannotInvokeRepair refuses a mixed invocation before any access.
+func TestProofCannotInvokeRepair(t *testing.T) {
+	previousFlags, previousArgs := flag.CommandLine, os.Args
+	t.Cleanup(func() { flag.CommandLine = previousFlags; os.Args = previousArgs })
+	flag.CommandLine = flag.NewFlagSet("proof", flag.ContinueOnError)
+	flag.CommandLine.SetOutput(io.Discard)
+	os.Args = []string{"proof", "--prove-fenced", "--execute", "--cluster-uid", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "--pod-uid", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"}
+	if err := run(); err == nil || !strings.Contains(err.Error(), "cannot share") {
+		t.Fatalf("mixed read-only and repair invocation returned %v", err)
+	}
+}
+
 // TestFenceMetricMustBeCompleteAndTrue rejects missing, duplicate and failed evidence.
 func TestFenceMetricMustBeCompleteAndTrue(t *testing.T) {
 	for _, tc := range []struct {

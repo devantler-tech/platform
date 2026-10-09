@@ -75,6 +75,16 @@ identities, or a later partial repair remains HOLD and needs a separate reviewed
 continuation. A read-only plan for this state uses `--resume-fenced` without
 `--execute`; planning never executes a command inside a Pod.
 
+`Verify Retained Wedding Fence` is a separate dispatch-only, read-only workflow
+for the instance acknowledgment that local OIDC reads cannot reach. It requires
+current identity guards, main, first-attempt confirmation
+`prove-retained-wedding-fence`, the `prod` environment and the shared deployment
+lock. Its fixed command reads only the exporter, and complete observations before
+and after must preserve the original peers and retained storage. Inputs are
+identity guards, never command or target selectors. It prints only a sanitized
+PASS/HOLD result; it does not run the repair. A passing proof does not authorize
+a continuation or declare the database recovered.
+
 ## Offline validation
 
 ```sh
