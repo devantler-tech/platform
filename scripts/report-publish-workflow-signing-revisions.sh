@@ -1088,11 +1088,11 @@ report_publisher_at_ref() {
   calls="$(printf '%s\n' "$body" | yq eval -o=json -I=0 '[.jobs[].uses // ""]' - 2>/dev/null)" || return 1
   # Keep decoded calls intact: a second document, non-text value or embedded
   # control cannot turn into a valid prefix. Count unsupported/floating callers
-  # before validating the sole identity, rather than silently filtering them out.
+  # before validating the sole identity; even identical jobs are separate callers.
   printf '%s\n' "$calls" | jq -sre --arg workflow "$workflow" --arg family "$pattern" '
     select(length == 1 and (.[0] | type == "array" and
       all(.[]; type == "string" and (test("[[:cntrl:]]") | not)))) | .[0] |
-    [.[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] | unique |
+    [.[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] |
     select(length == 1) | .[0] |
     select(test("^devantler-tech/" + $family + "/[.]github/workflows/" + $workflow + "[.]yaml@[0-9a-f]{40}$"))
   '

@@ -35,6 +35,7 @@ gh_retry() {
         canonical-signed) [[ "$args" != *ref=main* ]] && family=.github ;;
         canonical-both) family=.github ;;
         ambiguous) second="  second: {uses: devantler-tech/.github/.github/workflows/publish-manifests.yaml@$SHA}" ;;
+        duplicate) second="  second: {uses: devantler-tech/actions/.github/workflows/publish-manifests.yaml@$SHA}" ;;
         unknown) family=unregistered ;;
         unknown-mixed) second="  second: {uses: another-owner/actions/.github/workflows/publish-manifests.yaml@$SHA}" ;;
         floating-mixed) second='  second: {uses: devantler-tech/actions/.github/workflows/publish-manifests.yaml@main}' ;;
@@ -70,7 +71,7 @@ main >"$WORK/legacy" 2>&1 || fail 'retained legacy publishers stopped resolving'
 grep -Eq "^IN-SYNC +[.]github .*signed=$SHA pinned=$SHA" "$WORK/legacy" || fail 'legacy report format changed'
 printf 'PASS: retained legacy publishers keep their report contract\n'
 
-for fixture_case in ambiguous unknown malformed canonical-app unknown-mixed floating-mixed multiline; do
+for fixture_case in ambiguous duplicate unknown malformed canonical-app unknown-mixed floating-mixed multiline; do
   if main >"$WORK/$fixture_case" 2>&1; then fail "$fixture_case caller was accepted"; fi
   grep -Eq '^UNRESOLVED +[.]github ' "$WORK/$fixture_case" || fail "$fixture_case refusal lost its consumer"
   printf 'PASS: %s caller remains unresolved\n' "$fixture_case"
