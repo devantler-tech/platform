@@ -19,7 +19,7 @@ set -euo pipefail
 [[ "$*" == *'--context admin@prod'* ]] || exit 92
 case "$*" in
   *'get providerconfigs.github.m.upbound.io --all-namespaces '*)
-    [[ "$GROUP_CASE" != unreadable-provider ]] || exit 1
+    [[ "$GROUP_CASE" != unreadable-provider ]] || { printf 'private-registration-error-canary\n' >&2; exit 1; }
     jq -cn --arg scenario "$GROUP_CASE" '{items:[{
       apiVersion:"github.m.upbound.io/v1beta1",kind:"ProviderConfig",
       metadata:{name:"arc-runtime-platform-app",namespace:"arc-runners"},
@@ -33,6 +33,11 @@ case "$*" in
   *'get providerconfigs.github.upbound.io '*)
     jq -cn --arg scenario "$GROUP_CASE" '{items:(if $scenario=="legacy-provider-collision" then [{metadata:{name:"arc-runtime-platform-app"}}] else [] end)}' ;;
   *'get kustomization '*)
+    if [[ ( "$GROUP_CASE" == unready-infrastructure && "$*" == *'get kustomization infrastructure '* ) ||
+      ( "$GROUP_CASE" == unready-apps && "$*" == *'get kustomization apps '* ) ]]; then
+      printf '{"metadata":{"generation":2},"status":{"observedGeneration":1,"conditions":[]}}'
+      exit 0
+    fi
     jq -cn --arg revision "latest@$GROUP_DIGEST" '{metadata:{generation:1},status:{observedGeneration:1,lastAppliedRevision:$revision,conditions:[{type:"Ready",status:"True"}]}}' ;;
   *'get runnergroups.actions.github.m.upbound.io platform '*)
     [[ "$GROUP_CASE" != unreadable-group ]] || exit 1
@@ -70,12 +75,30 @@ chmod 700 "$scratch/bin/"*
 for scenario in normal all-repositories extra-repository default-group inherited-group wrong-remote-org \
   stale-observation missing-observation unbound-id unreadable-group wrong-registered-group \
   unrestricted-workflows extra-workflow wrong-workflow-ref unrestricted-desired \
-  duplicate-provider wrong-provider-secret cluster-provider-collision legacy-provider-collision unreadable-provider; do
+  duplicate-provider wrong-provider-secret cluster-provider-collision legacy-provider-collision unreadable-provider \
+  unready-infrastructure unready-apps; do
   if PATH="$scratch/bin:$PATH" GROUP_DIGEST="sha256:$(printf 'a%.0s' {1..64})" GROUP_CASE="$scenario" \
     GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform \
     bash "$root/scripts/wait-for-ksail-arc-registration.sh" "sha256:$(printf 'a%.0s' {1..64})" \
     >"$scratch/out" 2>"$scratch/err"; then
     [[ "$scenario" == normal ]] || { echo "accepted $scenario"; exit 1; }
-  else [[ "$scenario" != normal ]] || { cat "$scratch/err"; exit 1; }; fi
+  else
+    [[ "$scenario" != normal ]] || { cat "$scratch/err"; exit 1; }
+    case "$scenario" in
+      duplicate-provider|wrong-provider-secret|unreadable-provider) label=provider-config ;;
+      cluster-provider-collision) label=provider-collision-cluster ;;
+      legacy-provider-collision) label=provider-collision-legacy ;;
+      wrong-registered-group) label=runner-scale-set ;;
+      unready-infrastructure) label=flux-infrastructure ;;
+      unready-apps) label=flux-apps ;;
+      *) label=runner-group ;;
+    esac
+    grep -Fxq "ARC registration pending: $label" "$scratch/err" || {
+      printf 'FAIL: missing safe diagnostic for %s\n' "$scenario" >&2; exit 1;
+    }
+  fi
+  if grep -Fq 'private-registration-error-canary' "$scratch/out" "$scratch/err"; then
+    printf 'FAIL: raw registration error escaped\n' >&2; exit 1
+  fi
 done
 printf 'PASS: organization registration requires an observed KSail-only group\n'

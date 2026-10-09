@@ -6,14 +6,25 @@ arc_metrics_fail() {
   return 1
 }
 
+arc_metrics_read() {
+  local root=$1 name=$2
+  if [[ "$root" == /sys/fs/cgroup ]]; then
+    timeout 5s cat "$root/$name" 2>/dev/null
+  else
+    # Only regular test-owned fixture files use the portable read path.
+    [[ -f "$root/$name" && ! -L "$root/$name" ]] || return 1
+    cat "$root/$name" 2>/dev/null
+  fi
+}
+
 # The production entrypoint uses only the container's kernel cgroup. A supplied
 # fixture directory is used when this function is sourced by offline tests.
 arc_job_metrics() {
   local root=$1 limit peak events key value extra
-  local low='' high='' max='' oom='' oom_kill='' oom_group_kill=''
-  limit=$(timeout 5s cat "$root/memory.max" 2>/dev/null) || { arc_metrics_fail read-limit; return 1; }
-  peak=$(timeout 5s cat "$root/memory.peak" 2>/dev/null) || { arc_metrics_fail read-peak; return 1; }
-  events=$(timeout 5s cat "$root/memory.events" 2>/dev/null) || { arc_metrics_fail read-events; return 1; }
+  local low='' high='' max='' oom='' oom_kill='' oom_group_kill='' sock_throttled=''
+  limit=$(arc_metrics_read "$root" memory.max) || { arc_metrics_fail read-limit; return 1; }
+  peak=$(arc_metrics_read "$root" memory.peak) || { arc_metrics_fail read-peak; return 1; }
+  events=$(arc_metrics_read "$root" memory.events) || { arc_metrics_fail read-events; return 1; }
   [[ "$limit" == 15032385536 ]] || { arc_metrics_fail limit; return 1; }
   [[ "$peak" =~ ^(0|[1-9][0-9]{0,17})$ && "$peak" -gt 0 && "$peak" -le "$limit" ]] || {
     arc_metrics_fail peak; return 1;
@@ -24,6 +35,9 @@ arc_job_metrics() {
       low|high|max|oom|oom_kill|oom_group_kill)
         [[ -z "${!key}" ]] || { arc_metrics_fail duplicate-event; return 1; }
         printf -v "$key" '%s' "$value" ;;
+      sock_throttled)
+        [[ -z "$sock_throttled" ]] || { arc_metrics_fail duplicate-event; return 1; }
+        sock_throttled=$value ;;
       *) arc_metrics_fail unknown-event; return 1 ;;
     esac
   done <<<"$events"

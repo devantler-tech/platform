@@ -47,6 +47,12 @@ SH
 cat >"$scratch/bin/timeout" <<'SH'
 #!/usr/bin/env bash
 export ARC_TEST_TIMEOUT=$1
+if [[ "$1" == 660s && "$ARC_TEST_CASE" == registration-diagnostic-redaction ]]; then
+  printf 'ARC registration pending: runner-scale-set\n' >&2
+  printf 'ARC registration pending: private-registration-error-canary\n' >&2
+  printf 'private-registration-error-canary\n' >&2
+  exit 124
+fi
 if [[ "$1" == 660s ]]; then touch "$ARC_TEST_ROOT/registration-budget"; fi
 shift
 exec "$@"
@@ -448,7 +454,7 @@ expected_refusal() {
     invalid-runner-identity|unexpected-hook|writable-metrics|wrong-metrics-configmap|runner-deadline) printf 'registration-and-bounds' ;;
     drift-during-probe|failed-metrics-hook) printf 'job-cgroup-measurement' ;;
     live-api-error|mutable-metrics|tampered-metrics) printf 'immutable-job-metrics' ;;
-    registration-timeout|stale-flux|no-registration) printf 'registration-convergence' ;;
+    registration-timeout|stale-flux|no-registration|registration-diagnostic-redaction) printf 'registration-convergence' ;;
     rendered-hidden-activation) printf 'partial-activation' ;;
     source-render-failure) printf 'source-render' ;;
     rendered-suspended|rendered-wrong-image) printf 'rendered-source-state' ;;
@@ -640,7 +646,17 @@ run_case delayed-registration pass
 for name in registration-timeout stale-flux; do
   run_case "$name" fail
   [[ -e "$scratch/registration-budget" && ! -e "$scratch/live-pod" && ! -e "$scratch/deleted" ]]
+  if [[ "$name" == registration-timeout ]]; then label=runner-scale-set
+  else label=flux-infrastructure; fi
+  grep -Fxq "ARC registration pending: $label" "$scratch/stderr" || {
+    printf 'FAIL: safe registration diagnostic was suppressed\n' >&2; exit 1;
+  }
 done
+run_case registration-diagnostic-redaction fail
+grep -Fxq 'ARC registration pending: runner-scale-set' "$scratch/stderr" || exit 1
+if grep -Fq 'private-registration-error-canary' "$scratch/stdout" "$scratch/stderr"; then
+  printf 'FAIL: raw or unrecognized registration diagnostic escaped\n' >&2; exit 1
+fi
 cp "$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml" "$scratch/controller-aggregate"
 cp "$scratch/k8s/providers/hetzner/infrastructure/kustomization.yaml" "$scratch/runner-aggregate"
 sed 's/^resources:/bases:/' "$scratch/controller-aggregate" >"$scratch/k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"

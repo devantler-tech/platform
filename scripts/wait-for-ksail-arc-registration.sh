@@ -6,6 +6,7 @@ set -euo pipefail
 readonly revision="latest@$1"
 readonly deadline=$((SECONDS + 600))
 kc() { timeout 35s kubectl --context admin@prod --request-timeout=30s "$@" 2>/dev/null; }
+pending() { printf 'ARC registration pending: %s\n' "$1" >&2; }
 
 while ((SECONDS < deadline)); do
   ready=true
@@ -17,6 +18,7 @@ while ((SECONDS < deadline)); do
         any(.status.conditions[]; .type == "Ready" and .status == "True")
       ' <<<"$state" >/dev/null 2>&1; then
       ready=false
+      pending "flux-$layer"
     fi
   done
   # The pinned provider caches by reference name, across namespaces and kinds.
@@ -33,12 +35,17 @@ while ((SECONDS < deadline)); do
         "namespace":"arc-runners","name":"arc-github-app","key":"provider-credentials"}}
     ' <<<"$state" >/dev/null 2>&1; then
     ready=false
+    pending provider-config
   fi
   for resource in clusterproviderconfigs.github.m.upbound.io providerconfigs.github.upbound.io; do
     if ! state=$(kc get "$resource" -o json) ||
       ! jq -e '[.items[] | select(.metadata.name == "arc-runtime-platform-app")] | length == 0' \
         <<<"$state" >/dev/null 2>&1; then
       ready=false
+      case "$resource" in
+        clusterproviderconfigs.github.m.upbound.io) pending provider-collision-cluster ;;
+        providerconfigs.github.upbound.io) pending provider-collision-legacy ;;
+      esac
     fi
   done
   # The provider observation comes from the existing organization's App.
@@ -71,6 +78,7 @@ while ((SECONDS < deadline)); do
       any(.status.conditions[]; .type == "Synced" and .status == "True" and .observedGeneration == $generation)
     ' <<<"$state" >/dev/null 2>&1; then
     ready=false
+    pending runner-group
   fi
   if ! state=$(kc -n arc-runners get autoscalingrunnerset.actions.github.com platform-linux -o json) ||
     ! jq -e '
@@ -82,6 +90,7 @@ while ((SECONDS < deadline)); do
       .metadata.annotations["actions.github.com/runner-scale-set-name"] == "platform-linux"
     ' <<<"$state" >/dev/null 2>&1; then
     ready=false
+    pending runner-scale-set
   fi
   if "$ready"; then
     printf 'ARC layers and registration converged at the deployed revision\n'

@@ -26,6 +26,11 @@ func TestWholeJobCgroupMeasurement(t *testing.T) {
 		ok                        bool
 	}{
 		{"complete", "15032385536", "9876543210", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\n", true},
+		{"socket throttled zero", "15032385536", "9876543210", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n", true},
+		{"socket throttled nonzero", "15032385536", "9876543210", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 2\n", true},
+		{"duplicate socket counter", "15032385536", "10", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\nsock_throttled 0\n", false},
+		{"malformed socket counter", "15032385536", "10", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled nope\n", false},
+		{"socket counter cannot replace required event", "15032385536", "10", "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\nsock_throttled 0\n", false},
 		{"missing limit", "", "10", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"unbounded", "max", "10", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
 		{"wrong cgroup", "17179869184", "10", "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n", false},
@@ -92,5 +97,51 @@ func TestWholeJobCgroupMeasurement(t *testing.T) {
 				t.Fatalf("wrong measurement: %+v", got)
 			}
 		})
+	}
+}
+
+func TestMetricsFixturesArePortableAndProductionReadsRemainBounded(t *testing.T) {
+	root := t.TempDir()
+	for name, value := range map[string]string{
+		"memory.max": "15032385536\n", "memory.peak": "9876543210\n",
+		"memory.events": "low 0\nhigh 0\nmax 3\noom 0\noom_kill 0\noom_group_kill 0\n",
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bin := t.TempDir()
+	log := filepath.Join(bin, "timeout-invocations")
+	if err := os.WriteFile(filepath.Join(bin, "timeout"), []byte("#!/bin/bash\nprintf '%s\\n' \"$*\" >> \"$TIMEOUT_LOG\"\nexit 124\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	script, err := filepath.Abs(filepath.Join(repoRoot, metricsScript))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, production := range []bool{false, true} {
+		cgroup := root
+		if production {
+			cgroup = "/sys/fs/cgroup"
+		}
+		cmd := exec.Command("bash", "-c", `source "$1"; arc_job_metrics "$2"`, "metrics-test", script, cgroup)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "TIMEOUT_LOG="+log)
+		output, err := cmd.CombinedOutput()
+		if production {
+			if err == nil || strings.Contains(string(output), "KSail ARC whole-job cgroup:") {
+				t.Fatalf("unbounded production receipt: %s", output)
+			}
+			calls, readErr := os.ReadFile(log)
+			if readErr != nil || string(calls) != "5s cat /sys/fs/cgroup/memory.max\n" {
+				t.Fatalf("production timeout not used: %q, %v", calls, readErr)
+			}
+		} else {
+			if err != nil || !strings.Contains(string(output), "KSail ARC whole-job cgroup:") {
+				t.Fatalf("fixture required GNU timeout: %s", output)
+			}
+			if _, err := os.Stat(log); !os.IsNotExist(err) {
+				t.Fatalf("fixture invoked production timeout: %v", err)
+			}
+		}
 	}
 }

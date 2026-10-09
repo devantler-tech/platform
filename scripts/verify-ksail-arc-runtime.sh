@@ -199,6 +199,19 @@ quiet bash scripts/wait-for-platform-flux-revision.sh "$PLATFORM_MANIFEST_DIGEST
 # revision/generation join before taking the immutable acceptance snapshots.
 stage=registration-convergence
 if ! quiet timeout 660s bash scripts/wait-for-ksail-arc-registration.sh "$PLATFORM_MANIFEST_DIGEST"; then
+  # Preserve fixed check labels even when the outer timeout stops the waiter.
+  # Captured command diagnostics may contain private cluster values.
+  while IFS= read -r line; do
+    case "$line" in
+      'ARC registration pending: flux-infrastructure'|\
+      'ARC registration pending: flux-apps'|\
+      'ARC registration pending: provider-config'|\
+      'ARC registration pending: provider-collision-cluster'|\
+      'ARC registration pending: provider-collision-legacy'|\
+      'ARC registration pending: runner-group'|\
+      'ARC registration pending: runner-scale-set') printf '%s\n' "$line" >&2 ;;
+    esac
+  done <"$scratch/command-error"
   fail registration-convergence
 fi
 for layer in infrastructure apps; do
