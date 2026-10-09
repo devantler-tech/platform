@@ -166,7 +166,7 @@ func TestPauseAcknowledgmentIsFreshAndBound(t *testing.T) {
 			if failure == "mixed malformed" {
 				b = append(b, []byte("\nnot JSON")...)
 			}
-			if pauseAcknowledged(b, testNow.Add(-time.Second), testNow) != (failure == "") {
+			if pauseAcknowledged(b, testNow.Add(-time.Second), testNow, nil) != (failure == "") {
 				t.Fatalf("incorrect acknowledgment for %q", failure)
 			}
 		})
@@ -201,6 +201,42 @@ func TestOperatorLeaderBindingIsComplete(t *testing.T) {
 			_, err := c.leader(context.Background())
 			if (err == nil) != (failure == "") {
 				t.Fatalf("failure=%q returned %v", failure, err)
+			}
+		})
+	}
+}
+
+// TestOperatorLeaderAllowsOnlyBoundedClockSkew keeps expired leases invalid.
+func TestOperatorLeaderAllowsOnlyBoundedClockSkew(t *testing.T) {
+	for _, offset := range []time.Duration{time.Millisecond, 2 * time.Second, 2*time.Second + time.Nanosecond, -15*time.Second - time.Nanosecond} {
+		t.Run(offset.String(), func(t *testing.T) {
+			lease, pod := leaderFixture()
+			at(lease, "spec")["renewTime"] = testNow.Add(offset).Format(time.RFC3339Nano)
+			c := client{now: func() time.Time { return testNow }, command: func(_ context.Context, args []string, _ []byte) ([]byte, error) {
+				if args[1] == "lease" {
+					return json.Marshal(lease)
+				}
+				return json.Marshal(pod)
+			}}
+			_, err := c.leader(context.Background())
+			want := offset > 0 && offset <= 2*time.Second
+			if (err == nil) != want {
+				t.Fatalf("renewal offset %s accepted=%v, want=%v: %v", offset, err == nil, want, err)
+			}
+		})
+	}
+}
+
+// TestPauseAcknowledgmentAllowsOnlyBoundedClockSkew checks both clock directions.
+func TestPauseAcknowledgmentAllowsOnlyBoundedClockSkew(t *testing.T) {
+	for _, offset := range []time.Duration{-2*time.Second - time.Nanosecond, -2 * time.Second, -time.Millisecond, time.Millisecond, 2 * time.Second, 2*time.Second + time.Nanosecond} {
+		t.Run(offset.String(), func(t *testing.T) {
+			r := pauseRecord()
+			r["ts"] = testNow.Add(offset).Format(time.RFC3339Nano)
+			b, _ := json.Marshal(r)
+			want := offset >= -2*time.Second && offset <= 2*time.Second
+			if got := pauseAcknowledged(b, testNow, testNow, nil); got != want {
+				t.Fatalf("acknowledgment offset %s accepted=%v, want=%v", offset, got, want)
 			}
 		})
 	}
@@ -279,11 +315,20 @@ func TestCompletedJoinBackupCensusDoesNotDropUnknownEntries(t *testing.T) {
 // TestCompletedJoinTransaction exercises real reads and mutations with a stateful
 // API stand-in, including the operator's ordinal reuse and pending fresh PVC.
 func TestCompletedJoinTransaction(t *testing.T) {
-	for _, failure := range []string{"", "read only", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
+	for _, failure := range []string{"", "read only", "runner ahead", "runner behind", "baseline read", "malformed baseline", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
 		t.Run(failure, func(t *testing.T) {
 			s, g := completedFixture()
 			lease, leaderPod := leaderFixture()
 			now := testNow
+			clockOffset := time.Duration(0)
+			if failure == "runner ahead" {
+				clockOffset = -time.Millisecond
+			} else if failure == "runner behind" {
+				clockOffset = time.Millisecond
+			}
+			if clockOffset != 0 {
+				at(lease, "spec")["renewTime"] = now.Add(clockOffset).Format(time.RFC3339Nano)
+			}
 			writes, waits := []string{}, 0
 			paused, acknowledged := false, false
 			pending := false
@@ -371,11 +416,24 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					return fakeRead(s, args[1:])
 				}
 				if args[0] == "logs" {
-					if !paused || args[1] != id(leaderPod).name {
-						t.Fatal("acknowledgment escaped paused leader")
+					if args[1] != id(leaderPod).name || !strings.Contains(strings.Join(args, " "), "--since-time="+testNow.Add(-2*time.Second).Format(time.RFC3339Nano)) || !strings.Contains(strings.Join(args, " "), "--limit-bytes=1048577") {
+						t.Fatal("acknowledgment escaped the bound leader or bounded skew window")
 					}
 					r := pauseRecord()
-					r["ts"] = now.Format(time.RFC3339Nano)
+					r["ts"] = now.Add(clockOffset).Format(time.RFC3339Nano)
+					if !paused {
+						if failure == "baseline read" {
+							return nil, errors.New("unreadable pre-pause logs")
+						}
+						if failure == "malformed baseline" {
+							return []byte("truncated"), nil
+						}
+						if failure != "replayed acknowledgment" {
+							r["msg"] = "ordinary reconciliation"
+							r["reconcileID"] = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+						}
+						return json.Marshal(r)
+					}
 					if failure == "no acknowledgment" {
 						r["msg"] = "other"
 					}
@@ -461,7 +519,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				}
 				return []byte(`{}`), nil
 			}
-			ok := failure == "" || failure == "read only" || failure == "pending claim"
+			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind"
 			err := quarantineCompletedJoin(context.Background(), c, testOptions(), g, failure != "read only")
 			if (err == nil) != ok {
 				t.Fatalf("failure=%q writes=%v waits=%d returned %v", failure, writes, waits, err)
@@ -472,12 +530,12 @@ func TestCompletedJoinTransaction(t *testing.T) {
 			if failure == "job removal read" && waits != 0 {
 				t.Fatal("failed consumer read was retried rather than stopping immediately")
 			}
-			if failure == "" || failure == "pending claim" {
+			if failure == "" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" {
 				if !reflect.DeepEqual(writes, []string{"pause", "job", "claim", "resume"}) || waits < 1 {
 					t.Fatalf("unexpected transaction %v / separated waits=%d", writes, waits)
 				}
 			}
-			maximum := map[string]int{"source": 0, "namespace read": 0, "malformed volumes": 0, "unlabelled consumer": 0, "pause CAS": 1, "no acknowledgment": 1, "leader changed": 1, "pause owner": 1, "job CAS": 2, "job removal read": 2, "PVC CAS": 3, "PV loss": 3, "old CSI reused": 4, "unselected old CSI": 4, "backing read": 0, "backing UID drift": 2, "backing attached": 2, "backing terminating": 2}
+			maximum := map[string]int{"baseline read": 0, "malformed baseline": 0, "replayed acknowledgment": 1, "source": 0, "namespace read": 0, "malformed volumes": 0, "unlabelled consumer": 0, "pause CAS": 1, "no acknowledgment": 1, "leader changed": 1, "pause owner": 1, "job CAS": 2, "job removal read": 2, "PVC CAS": 3, "PV loss": 3, "old CSI reused": 4, "unselected old CSI": 4, "backing read": 0, "backing UID drift": 2, "backing attached": 2, "backing terminating": 2}
 			if n, exists := maximum[failure]; exists && len(writes) != n {
 				t.Fatalf("failure %q escaped stop boundary: %v", failure, writes)
 			}
