@@ -26,6 +26,58 @@
 # pulls use the network. Requires docker.
 set -euo pipefail
 
+# #4693: use Google's documented Docker Hub cache without changing the pinned
+# images or the outage assertions. This mode is invoked only before the hosted
+# fixture starts; local and self-hosted Docker daemons are never reconfigured.
+if [ "$#" -gt 0 ]; then
+  [ "$#" = 1 ] && [ "$1" = --configure-registry-cache ] || {
+    printf 'FAIL: unexpected runtime fixture argument\n' >&2; exit 1;
+  }
+  [ "${GITHUB_ACTIONS:-}" = true ] &&
+    [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
+    [ "${RUNNER_OS:-}" = Linux ] || {
+      printf 'FAIL: registry cache setup requires a hosted Linux runner\n' >&2; exit 1;
+    }
+  umask 077
+  cache_dir="$(mktemp -d)"
+  trap 'rm -rf "${cache_dir}"' EXIT
+  docker ps -q >"${cache_dir}/containers"
+  [ ! -s "${cache_dir}/containers" ] || {
+    printf 'FAIL: registry cache setup requires an unused Docker daemon\n' >&2; exit 1;
+  }
+  if sudo test -e /etc/docker/daemon.json; then
+    sudo cat /etc/docker/daemon.json | tee "${cache_dir}/original.json" >/dev/null
+  else
+    sudo test ! -e /etc/docker/daemon.json
+    printf '{}\n' >"${cache_dir}/original.json"
+  fi
+  # Slurp rejects empty or multiple documents rather than treating either as
+  # an empty daemon configuration. No configuration values reach the job log.
+  jq -e -s '
+    if length != 1 or (.[0] | type) != "object" then error("invalid daemon configuration")
+    else .[0] end |
+    if has("registry-mirrors") and
+      (.["registry-mirrors"] | type != "array" or
+        any(.[]; type != "string" or length == 0))
+    then error("invalid registry mirrors") else . end |
+    .["registry-mirrors"] = (["https://mirror.gcr.io"] +
+      [(.["registry-mirrors"] // [])[] | select(. != "https://mirror.gcr.io")])
+  ' "${cache_dir}/original.json" >"${cache_dir}/daemon.json" 2>/dev/null || {
+    printf 'FAIL: invalid daemon or registry cache configuration\n' >&2; exit 1;
+  }
+  sudo dockerd --validate --config-file="${cache_dir}/daemon.json" >/dev/null
+  sudo mkdir -p /etc/docker
+  sudo install -m 600 "${cache_dir}/daemon.json" /etc/docker/daemon.json
+  sudo systemctl restart docker
+  docker info --format '{{json .RegistryConfig.Mirrors}}' |
+    jq -e 'type == "array" and any(.[]; . == "https://mirror.gcr.io/" or . == "https://mirror.gcr.io")' >/dev/null
+  printf 'PASS: hosted Docker registry cache configured and read back\n'
+  exit 0
+fi
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  bash "${BASH_SOURCE[0]}" --configure-registry-cache
+fi
+
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly manifest="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cron-job-crossview-login-alerter.yaml"

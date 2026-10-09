@@ -29,6 +29,92 @@ for tool in jq kubectl yq; do
   command -v "${tool}" >/dev/null 2>&1 || fail "${tool} is required"
 done
 
+# The runtime fixture configures only an ephemeral hosted daemon. Exercise the
+# actual command boundary, including failed setup, without touching this host.
+mkdir -p "${work_dir}/cache-bin"
+cat >"${work_dir}/cache-bin/sudo" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$1" >>"${CACHE_CASE}/calls"
+case "$1" in
+  test)
+    [ "${CACHE_MODE:-}" != test-failed ] || exit 2
+    if [ "$2" = ! ]; then test ! -e "${CACHE_CASE}/original.json"
+    else test -e "${CACHE_CASE}/original.json"; fi ;;
+  cat) cat "${CACHE_CASE}/original.json" ;;
+  dockerd) [ "${CACHE_MODE:-}" != invalid-daemon ] ;;
+  mkdir) : ;;
+  install)
+    [ "${CACHE_MODE:-}" != install-failed ] || exit 1
+    cp "$4" "${CACHE_CASE}/installed.json" ;;
+  systemctl) [ "${CACHE_MODE:-}" != restart-failed ] ;;
+  *) exit 93 ;;
+esac
+STUB
+cat >"${work_dir}/cache-bin/docker" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'docker-%s\n' "$1" >>"${CACHE_CASE}/calls"
+case "$1" in
+  ps)
+    [ "${CACHE_MODE:-}" != list-failed ] || exit 1
+    [ "${CACHE_MODE:-}" != occupied ] || printf 'fixture-container\n' ;;
+  info)
+    [ "${CACHE_MODE:-}" != readback-failed ] || exit 1
+    if [ "${CACHE_MODE:-}" = missing-mirror ]; then printf '[]\n'
+    else printf '["https://mirror.gcr.io/"]\n'; fi ;;
+  *) exit 94 ;;
+esac
+STUB
+chmod +x "${work_dir}/cache-bin/sudo" "${work_dir}/cache-bin/docker"
+cache_case() {
+  cache_dir="${work_dir}/cache-$1"
+  mkdir -p "${cache_dir}"
+  : >"${cache_dir}/calls"
+  if [ "$#" -ge 2 ]; then printf '%s\n' "$2" >"${cache_dir}/original.json"; fi
+}
+cache_run() {
+  cache_rc=0
+  PATH="${work_dir}/cache-bin:${PATH}" CACHE_CASE="${cache_dir}" CACHE_MODE="${1:-}" \
+    GITHUB_ACTIONS="${4:-true}" RUNNER_ENVIRONMENT="${2:-github-hosted}" RUNNER_OS="${3:-Linux}" \
+    bash "${root_dir}/scripts/tests/test-crossview-login-alerter-runtime.sh" --configure-registry-cache \
+    >"${cache_dir}/output" 2>&1 || cache_rc=$?
+}
+cache_case preserve '{"debug":false,"log-driver":"local","registry-mirrors":["https://mirror.example.invalid","https://mirror.gcr.io"]}'
+cache_run
+[ "${cache_rc}" = 0 ] || fail 'hosted cache setup must succeed'
+jq -e '.debug == false and .["log-driver"] == "local" and
+  .["registry-mirrors"] == ["https://mirror.gcr.io","https://mirror.example.invalid"]' \
+  "${cache_dir}/installed.json" >/dev/null || fail 'cache setup must preserve unrelated settings and mirrors'
+grep -q '^systemctl$' "${cache_dir}/calls" || fail 'the daemon must restart before cache readback'
+cache_case absent
+cache_run
+[ "${cache_rc}" = 0 ] || fail 'an absent daemon file must be initialized'
+for config in 'not-json' '[]' 'null' '{} {}' '{"registry-mirrors":null}' '{"registry-mirrors":"bad"}' '{"registry-mirrors":[7]}'; do
+  cache_case malformed "${config}"
+  cache_run
+  [ "${cache_rc}" != 0 ] || fail 'malformed daemon configuration must fail'
+  [ ! -e "${cache_dir}/installed.json" ] || fail 'malformed configuration must not be installed'
+done
+for mode in occupied list-failed test-failed invalid-daemon install-failed restart-failed readback-failed missing-mirror; do
+  cache_case "${mode}" '{}'
+  cache_run "${mode}"
+  [ "${cache_rc}" != 0 ] || fail "${mode} must fail instead of admitting the runtime fixture"
+done
+for runner in self-hosted ''; do
+  cache_case not-hosted '{}'
+  cache_run '' "${runner:-local}"
+  [ "${cache_rc}" != 0 ] || fail 'non-hosted daemon changes must be refused'
+  [ ! -s "${cache_dir}/calls" ] || fail 'non-hosted refusal must precede all daemon commands'
+done
+cache_case not-linux '{}'
+cache_run '' github-hosted macOS
+[ "${cache_rc}" != 0 ] && [ ! -s "${cache_dir}/calls" ] || fail 'non-Linux daemon changes must be refused'
+cache_case not-actions '{}'
+cache_run '' github-hosted Linux false
+[ "${cache_rc}" != 0 ] && [ ! -s "${cache_dir}/calls" ] || fail 'local daemon changes must be refused'
+pass 'hosted registry cache preserves configuration and fails closed without changing local daemons'
+
 readonly pod='.spec.jobTemplate.spec.template.spec'
 readonly container="${pod}.containers[] | select(.name == \"alerter\")"
 env_value() { yq -r "${container} | .env[] | select(.name == \"$1\") | .value" "${manifest}"; }
