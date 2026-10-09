@@ -56,7 +56,11 @@ Execution requires a first main dispatch with confirmation
 `retain-volume-rebuild-completed-standby`, the `prod` environment and the shared
 deployment lock. Its tests run before any production credentials are restored.
 Every write requires fresh observations and proof that its reviewed source remains
-current main. A failed mutation or unknown read stops immediately without retry
+current main. Cluster patches re-read the exact Cluster after the other evidence
+is gathered and revalidate its recovery predicates before using that final UID
+and resource version. Concurrent status updates during earlier inventory reads
+do not weaken those conditional tests; a change after the final read still fails
+the single attempt. A failed mutation or unknown read stops immediately without retry
 or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.

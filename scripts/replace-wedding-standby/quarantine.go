@@ -297,6 +297,30 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return nil
 	}
 	paused := false
+	// Rebind after unrelated reads: status reconciliation can advance the Cluster
+	// version while storage and leader evidence is collected. Keep the conditional
+	// write single-shot if anything changes after this final observation.
+	rebindCluster := func() error {
+		if e := c.proveSource(ctx); e != nil {
+			return e
+		}
+		cluster, e := c.read(ctx, "cluster.postgresql.cnpg.io", clusterName, "-n", namespace, "--show-managed-fields=true", "-o", "json")
+		if e != nil {
+			return e
+		}
+		s.cluster = cluster
+		o.now = c.now()
+		if id(cluster).name != clusterName {
+			return errors.New("cluster name changed during repair")
+		}
+		if e = protectedPeers(s, o, p); e != nil {
+			return e
+		}
+		if !recentBackup(s, o) || (paused && !ownedPause(cluster)) || str(cluster, "metadata", "annotations", fenceKey) != "" {
+			return errors.New("backup or pause ownership changed")
+		}
+		return nil
+	}
 	refresh := func() error {
 		if e := c.proveSource(ctx); e != nil {
 			return e
@@ -305,13 +329,6 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		s, e = c.snapshotPending(ctx, true)
 		if e != nil {
 			return e
-		}
-		o.now = c.now()
-		if e = protectedPeers(s, o, p); e != nil {
-			return e
-		}
-		if !recentBackup(s, o) || (paused && !ownedPause(s.cluster)) || str(s.cluster, "metadata", "annotations", fenceKey) != "" {
-			return errors.New("backup or pause ownership changed")
 		}
 		original, e := c.read(ctx, "pv", oldVolume.name, "-o", "json")
 		if e != nil {
@@ -328,7 +345,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if e != nil || current != leader {
 			return errors.New("operator leader changed; no further write")
 		}
-		return nil
+		return rebindCluster()
 	}
 	if err = refresh(); err != nil {
 		return err
@@ -453,6 +470,9 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	}
 	if absent, e := consumers(false); e != nil || !absent {
 		return errors.New("claim consumer absence is unproven")
+	}
+	if err = rebindCluster(); err != nil {
+		return err
 	}
 	ops = append(tests(s.cluster), testPath("/status/currentPrimary", p.primary.name), testPath("/status/targetPrimary", p.primary.name), testPath("/spec/instances", float64(3)), testPath("/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"), object{"op": "remove", "path": "/metadata/annotations/cnpg.io~1reconciliationLoop"})
 	if err = c.patch(ctx, "cluster", s.cluster, ops); err != nil {

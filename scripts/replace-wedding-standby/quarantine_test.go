@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -317,7 +318,7 @@ func TestCompletedJoinBackupCensusDoesNotDropUnknownEntries(t *testing.T) {
 // TestCompletedJoinTransaction exercises real reads and mutations with a stateful
 // API stand-in, including the operator's ordinal reuse and pending fresh PVC.
 func TestCompletedJoinTransaction(t *testing.T) {
-	for _, failure := range []string{"", "read only", "runner ahead", "runner behind", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
+	for _, failure := range []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
 		t.Run(failure, func(t *testing.T) {
 			s, g := completedFixture()
 			lease, leaderPod := leaderFixture()
@@ -333,6 +334,8 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				at(lease, "spec")["renewTime"] = now.Add(clockOffset).Format(time.RFC3339Nano)
 			}
 			writes, waits := []string{}, 0
+			clusterReads, version := 0, 10
+			resumeFinal := false
 			paused, acknowledged := false, false
 			pending := false
 			fresh := func() {
@@ -374,6 +377,59 @@ func TestCompletedJoinTransaction(t *testing.T) {
 			}}
 			c.command = func(_ context.Context, args []string, body []byte) ([]byte, error) {
 				if args[0] == "get" {
+					if args[1] == "pv" && failure == "cluster churn" && len(writes) < 4 {
+						version++
+						at(s.cluster, "metadata")["resourceVersion"] = strconv.Itoa(version)
+					}
+					if args[1] == "cluster.postgresql.cnpg.io" {
+						clusterReads++
+						if resumeFinal {
+							switch failure {
+							case "resume final cluster read":
+								return nil, errors.New("unreadable resume cluster")
+							case "resume final primary":
+								at(s.cluster, "status")["currentPrimary"] = targetName
+							case "resume final pause owner":
+								list(s.cluster, "metadata", "managedFields")[0]["manager"] = "other"
+							case "resume post-read conflict":
+								observed, err := json.Marshal(s.cluster)
+								at(s.cluster, "metadata")["resourceVersion"] = "changed-after-read"
+								return observed, err
+							}
+						}
+						if clusterReads == 3 {
+							switch failure {
+							case "final cluster read":
+								return nil, errors.New("unreadable cluster")
+							case "final cluster partial":
+								return json.Marshal(object{"metadata": object{"resourceVersion": "11"}})
+							case "final cluster UID":
+								at(s.cluster, "metadata")["uid"] = "different-cluster"
+							case "final primary":
+								at(s.cluster, "status")["currentPrimary"] = targetName
+							case "final target primary":
+								at(s.cluster, "status")["targetPrimary"] = targetName
+							case "final instances":
+								at(s.cluster, "spec")["instances"] = float64(2)
+							case "final ready instances":
+								at(s.cluster, "status")["readyInstances"] = float64(1)
+							case "final backup health":
+								for _, condition := range list(s.cluster, "status", "conditions") {
+									if str(condition, "type") == "ContinuousArchiving" {
+										condition["status"] = "False"
+									}
+								}
+							case "final fence":
+								at(s.cluster, "metadata", "annotations")[fenceKey] = `["wedding-db-1"]`
+							case "final pause":
+								at(s.cluster, "metadata", "annotations")[pauseKey] = "disabled"
+							case "post-read conflict":
+								observed, err := json.Marshal(s.cluster)
+								at(s.cluster, "metadata")["resourceVersion"] = "changed-after-read"
+								return observed, err
+							}
+						}
+					}
 					if args[1] == "volumes.longhorn.io" {
 						if failure == "backing read" {
 							return nil, errors.New("unreadable backing volume")
@@ -404,6 +460,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 						return json.Marshal(object{"items": []object{}})
 					}
 					if args[1] == "pods" && !strings.Contains(strings.Join(args, " "), " -l ") {
+						resumeFinal = len(writes) == 3 && len(s.claims) == 0
 						if failure == "namespace read" || (failure == "job removal read" && len(writes) == 2) {
 							return nil, errors.New("unreadable consumers")
 						}
@@ -458,6 +515,14 @@ func TestCompletedJoinTransaction(t *testing.T) {
 						t.Fatal(err)
 					}
 					if !reflect.DeepEqual(ops[:2], tests(s.cluster)) {
+						if failure == "post-read conflict" || failure == "resume post-read conflict" {
+							attempt := "pause"
+							if failure == "resume post-read conflict" {
+								attempt = "resume"
+							}
+							writes = append(writes, attempt)
+							return nil, errors.New("conflict")
+						}
 						t.Fatal("missing observed UID/version preconditions")
 					}
 					last := ops[len(ops)-1]
@@ -525,7 +590,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				}
 				return []byte(`{}`), nil
 			}
-			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind"
+			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn"
 			err := quarantineCompletedJoin(context.Background(), c, testOptions(), g, failure != "read only")
 			if (err == nil) != ok {
 				t.Fatalf("failure=%q writes=%v waits=%d returned %v", failure, writes, waits, err)
@@ -536,12 +601,20 @@ func TestCompletedJoinTransaction(t *testing.T) {
 			if (failure == "job removal read" || failure == "malformed acknowledgment") && waits != 0 {
 				t.Fatal("unknown observation was retried rather than stopping immediately")
 			}
-			if failure == "" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" {
+			if failure == "" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" {
 				if !reflect.DeepEqual(writes, []string{"pause", "job", "claim", "resume"}) || waits < 1 {
 					t.Fatalf("unexpected transaction %v / separated waits=%d", writes, waits)
 				}
 			}
 			maximum := map[string]int{"baseline read": 0, "malformed baseline": 0, "malformed acknowledgment": 1, "replayed acknowledgment": 1, "source": 0, "namespace read": 0, "malformed volumes": 0, "unlabelled consumer": 0, "pause CAS": 1, "no acknowledgment": 1, "leader changed": 1, "pause owner": 1, "job CAS": 2, "job removal read": 2, "PVC CAS": 3, "PV loss": 3, "old CSI reused": 4, "unselected old CSI": 4, "backing read": 0, "backing UID drift": 2, "backing attached": 2, "backing terminating": 2}
+			for _, final := range []string{"final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause"} {
+				maximum[final] = 0
+			}
+			maximum["post-read conflict"] = 1
+			for _, final := range []string{"resume final cluster read", "resume final primary", "resume final pause owner"} {
+				maximum[final] = 3
+			}
+			maximum["resume post-read conflict"] = 4
 			if n, exists := maximum[failure]; exists && len(writes) != n {
 				t.Fatalf("failure %q escaped stop boundary: %v", failure, writes)
 			}
