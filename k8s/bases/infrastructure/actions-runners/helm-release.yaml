@@ -64,7 +64,7 @@ spec:
                   path: job-metrics.sh
         initContainers:
           - name: init-runner-home
-            image: ghcr.io/devantler-tech/ksail-analysis-runner@sha256:1ab01644fd6f67e0b1ab0b456e10b78f58be92ac67e5e06d103cd8c12bbb119b
+            image: ghcr.io/devantler-tech/ksail-analysis-runner@sha256:f2fc508d5e426405bdc3732f652b251e093d93e7becdec34f46b1fe6f3309183
             command: ["/bin/sh", "-ec", "cp -R /home/runner/. /runner-data/"]
             securityContext:
               allowPrivilegeEscalation: false
@@ -86,7 +86,7 @@ spec:
                 mountPath: /runner-data
         containers:
           - name: runner
-            image: ghcr.io/devantler-tech/ksail-analysis-runner@sha256:1ab01644fd6f67e0b1ab0b456e10b78f58be92ac67e5e06d103cd8c12bbb119b
+            image: ghcr.io/devantler-tech/ksail-analysis-runner@sha256:f2fc508d5e426405bdc3732f652b251e093d93e7becdec34f46b1fe6f3309183
             command: ["/home/runner/run.sh"]
             env:
               - name: ACTIONS_RUNNER_HOOK_JOB_COMPLETED
