@@ -1073,7 +1073,50 @@ deployed_tag() {
   return 1
 }
 
-# Default resolver: "<signing revision>\t<current pin>\t<pinned|inferred>".
+# The report keeps the publisher repository and workflow attached to each revision.
+# pin_at_ref above remains legacy-only for the legacy approval generator.
+report_publisher_at_ref() {
+  local repo="$1" workflow="$2" ref="$3" body calls pattern
+  case "$workflow" in
+    publish-manifests) pattern='(actions|[.]github)' ;;
+    publish-app) pattern='actions' ;;
+    *) return 1 ;;
+  esac
+  body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml" \
+    --raw-field "ref=${ref}" -H "Accept: application/vnd.github.raw")" || return 1
+  [ -n "$body" ] || return 1
+  calls="$(printf '%s\n' "$body" | yq eval -o=json -I=0 '[.jobs[].uses // ""]' - 2>/dev/null)" || return 1
+  # Keep decoded calls intact: a second document, non-text value or embedded
+  # control cannot turn into a valid prefix. Count unsupported/floating callers
+  # before validating the sole identity; even identical jobs are separate callers.
+  printf '%s\n' "$calls" | jq -sre --arg workflow "$workflow" --arg family "$pattern" '
+    select(length == 1 and (.[0] | type == "array" and
+      all(.[]; type == "string" and (test("[[:cntrl:]]") | not)))) | .[0] |
+    [.[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] |
+    select(length == 1) | .[0] |
+    select(test("^devantler-tech/" + $family + "/[.]github/workflows/" + $workflow + "[.]yaml@[0-9a-f]{40}$"))
+  '
+}
+
+# Existing injected resolvers supply legacy SHAs. Fully qualified answers must
+# retain the exact supported repository/workflow identity, never a floating ref.
+report_publisher_identity() {
+  local answer="$1" workflow="$2" pattern
+  case "$workflow" in
+    publish-manifests) pattern='(actions|[.]github)' ;;
+    publish-app) pattern='actions' ;;
+    *) return 1 ;;
+  esac
+  if is_sha "$answer"; then
+    printf 'devantler-tech/actions/.github/workflows/%s.yaml@%s\n' "$workflow" "$answer"
+  elif [[ "$answer" =~ ^devantler-tech/${pattern}/[.]github/workflows/${workflow}[.]yaml@[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$answer"
+  else
+    return 1
+  fi
+}
+
+# Default resolver: "<signing identity>\t<current identity>\t<pinned|inferred>".
 default_resolver() {
   local repo="$1" workflow="$2" version="${3:-}" branch tagline tag origin tag_sha signing current
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
@@ -1086,10 +1129,10 @@ default_resolver() {
   # Fail closed rather than fall back to the tag: an empty or malformed third field would
   # restore exactly the mutable-ref read this change exists to close.
   is_sha "${tag_sha:-}" || return 1
-  current="$(pin_at_ref "$repo" "$workflow" "$branch")" || return 1
+  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
   # The COMMIT, never `$tag`. `$tag` remains the human-facing name and is what the Actions
   # run query above was scoped to; it is not a stable ref to read file content at.
-  signing="$(pin_at_ref "$repo" "$workflow" "$tag_sha")" || return 1
+  signing="$(report_publisher_at_ref "$repo" "$workflow" "$tag_sha")" || return 1
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
 }
 
@@ -1151,7 +1194,7 @@ main() {
   fi
 
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
-  local repo workflow version _artifact answer signing current origin field field_count
+  local repo workflow version _artifact answer signing current origin field field_count signing_identity current_identity
   local diverged=0 unresolved=0 examined=0
   # Scratch for one consumer's refusal diagnostic. A file rather than a process
   # substitution so the capture works under a plain POSIX-ish shell, and so the
@@ -1192,7 +1235,8 @@ main() {
     # The one-tab-free-line case that `cut -f2` without `-s` used to accept is covered by
     # the same shape check below: fewer than two fields is UNRESOLVED, never agreement.
     # A resolver answer must be EXACTLY one line of two or three tab-separated fields,
-    # each SHA field non-empty. Anything else is UNRESOLVED, never agreement.
+    # each revision is a legacy SHA or a fully qualified supported publisher.
+    # Anything else is UNRESOLVED, never agreement.
     #
     # 🔴 `read` IS NOT SAFE HERE, on two independent counts, both measured on this exact
     # path: it stops at the FIRST LINE, so a valid line followed by trailing output was
@@ -1216,7 +1260,8 @@ main() {
       *$'\n'*) field_count=0 ;;
     esac
     if [ "$field_count" -lt 2 ] || [ "$field_count" -gt 3 ] ||
-      ! is_sha "${signing:-}" || ! is_sha "${current:-}"; then
+      ! signing_identity="$(report_publisher_identity "${signing:-}" "$workflow")" ||
+      ! current_identity="$(report_publisher_identity "${current:-}" "$workflow")"; then
       unresolved=$((unresolved + 1))
       printf 'UNRESOLVED %-22s %-18s could not resolve both revisions to a commit SHA\n' \
         "$repo" "$workflow"
@@ -1240,17 +1285,34 @@ main() {
       inferred) mark=' (deployed version inferred from newest PUBLISHED tag; not applied-revision evidence)' ;;
       pinned) mark=' (deployed version is what the manifest PINS and was published; not applied-revision evidence)' ;;
     esac
-    if [ "$signing" = "$current" ]; then
+    # Preserve the legacy report format. If either side is canonical, print both
+    # complete identities so a SHA is never mistaken for an approval in another family.
+    if [[ "$signing_identity" == devantler-tech/actions/* && "$current_identity" == devantler-tech/actions/* ]]; then
+      signing="${signing_identity##*@}"
+      current="${current_identity##*@}"
+    else
+      signing="$signing_identity"
+      current="$current_identity"
+    fi
+    if [ "$signing_identity" = "$current_identity" ]; then
       printf 'IN-SYNC    %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"
-      printf '           allow-list must accept: %s\n' "$signing"
+      if is_sha "$signing"; then
+        printf '           allow-list must accept: %s\n' "$signing"
+      else
+        printf '           publisher identity to assess against approvals: %s\n' "$signing"
+      fi
     else
       diverged=$((diverged + 1))
       printf 'DIVERGED   %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"
       # AC4: an allow-list narrowed to the current pin alone would stop verifying the
       # deployed artifact. Naming BOTH is the actionable output of this whole script.
-      printf '           allow-list must accept: %s AND %s\n' "$signing" "$current"
+      if is_sha "$signing" && is_sha "$current"; then
+        printf '           allow-list must accept: %s AND %s\n' "$signing" "$current"
+      else
+        printf '           publisher identities to assess against approvals: %s AND %s\n' "$signing" "$current"
+      fi
     fi
   done <<<"$consumers"
   rm -f "$why_file"
