@@ -57,11 +57,14 @@ set -euo pipefail
 printf 'docker-%s\n' "$1" >>"${CACHE_CASE}/calls"
 case "$1" in
   ps)
+    [ "$2" = -aq ] || exit 95
     [ "${CACHE_MODE:-}" != list-failed ] || exit 1
     [ "${CACHE_MODE:-}" != occupied ] || printf 'fixture-container\n' ;;
   info)
     [ "${CACHE_MODE:-}" != readback-failed ] || exit 1
-    if [ "${CACHE_MODE:-}" = missing-mirror ]; then printf '[]\n'
+    if [ "${CACHE_MODE:-}" = missing-mirror ] ||
+      [ ! -e "${CACHE_CASE}/installed.json" ] ||
+      ! grep -qx systemctl "${CACHE_CASE}/calls"; then printf '[]\n'
     else printf '["https://mirror.gcr.io/"]\n'; fi ;;
   *) exit 94 ;;
 esac
@@ -114,6 +117,31 @@ cache_case not-actions '{}'
 cache_run '' github-hosted Linux false
 [ "${cache_rc}" != 0 ] && [ ! -s "${cache_dir}/calls" ] || fail 'local daemon changes must be refused'
 pass 'hosted registry cache preserves configuration and fails closed without changing local daemons'
+
+# The earlier changes-job fixture builds a pinned Docker Hub toolbox too. Its
+# hosted setup must finish before any build; failed setup must stop the fixture.
+cache_runtime_run() {
+  cache_rc=0
+  PATH="${work_dir}/cache-bin:${PATH}" CACHE_CASE="${cache_dir}" CACHE_MODE="${1:-}" \
+    GITHUB_ACTIONS="${2:-true}" RUNNER_ENVIRONMENT=github-hosted RUNNER_OS=Linux \
+    bash "${root_dir}/scripts/tests/test-wedding-backup-denial-runtime.sh" \
+    >"${cache_dir}/output" 2>&1 || cache_rc=$?
+}
+cache_case wedding-hosted '{}'
+cache_runtime_run
+[ "${cache_rc}" = 94 ] || fail 'the hosted Wedding fixture must reach the stubbed build only after setup'
+awk '/^docker-info$/ { readback=1 } /^docker-build$/ { if (!readback) exit 1; built=1 } END { if (!built) exit 1 }' \
+  "${cache_dir}/calls" || fail 'the Wedding build must follow cache readback'
+cache_case wedding-setup-failed '{}'
+cache_runtime_run invalid-daemon
+if [ "${cache_rc}" = 0 ] || grep -qx docker-build "${cache_dir}/calls"; then
+  fail 'failed cache setup must stop the Wedding fixture before its build'
+fi
+cache_case wedding-local '{}'
+cache_runtime_run '' false
+[ "${cache_rc}" = 94 ] && [ ! -e "${cache_dir}/installed.json" ] ||
+  fail 'a local Wedding fixture must build without reconfiguring Docker'
+pass 'both hosted runtime fixtures configure the cache before pulling pinned images'
 
 readonly pod='.spec.jobTemplate.spec.template.spec'
 readonly container="${pod}.containers[] | select(.name == \"alerter\")"

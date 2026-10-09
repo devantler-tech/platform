@@ -41,7 +41,7 @@ if [ "$#" -gt 0 ]; then
   umask 077
   cache_dir="$(mktemp -d)"
   trap 'rm -rf "${cache_dir}"' EXIT
-  docker ps -q >"${cache_dir}/containers"
+  docker ps -aq >"${cache_dir}/containers"
   [ ! -s "${cache_dir}/containers" ] || {
     printf 'FAIL: registry cache setup requires an unused Docker daemon\n' >&2; exit 1;
   }
