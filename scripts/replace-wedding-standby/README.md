@@ -1,10 +1,63 @@
 # Failed Wedding standby replacement
 
-This command repairs only the failed `wedding-db-1` replica. Its default mode is
+This command is restricted to the failed `wedding-db-1` replica. Its default mode is
 an OIDC-only, read-only plan. Mutations require the first, explicitly confirmed
 main dispatch of `Replace Failed Wedding Standby`, behind the `prod` environment
 and the shared production deployment lock. Publishing or merging this procedure
 does not authorize running it; the maintainer must approve the particular repair.
+
+## Completed-join recovery
+
+The initial keep-PVC repair did not restore three healthy instances. The audited
+operator reuses the missing ordinal and can adopt its detached claim and completed
+join Job. Preserving the claim name does not reserve a different replacement name.
+The completed-join HOLD needs the separately approved `Recover Retained Wedding
+Standby` workflow, not another attempt of the initial repair.
+
+This continuation requires current identities for the Cluster, completed join
+Pod and Job, detached claim, and retained volume. It proves the same two healthy
+database peers and a recent completed backup. It pauses only this Cluster through
+the [audited reconciliation annotation](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_controller.go)
+and requires a fresh, structured acknowledgment from the bound operator leader.
+Any leader change stops further writes; the annotation alone is not acknowledgment.
+
+While that pause remains exclusively owned, it removes only the exact completed
+join Job and its completed dependent Pod, waits until every namespace Pod has
+stopped referencing the old claim, then deletes the detached PVC with UID and
+resource-version preconditions. The original PV is never deleted, rebound or
+made available. Its existing `Retain` policy, original claim reservation and CSI
+backing volume identity must remain unchanged. Kubernetes documents this
+[released but retained state](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#retain).
+The backing Longhorn Volume must also remain present, detached, nonterminating
+and bound to its original UID at every stage; a retained PV alone is not enough.
+
+Reconciliation resumes only after the old claim and Job are absent and the old
+PV is Released, retained and reserved to the deleted claim's UID. The replacement
+may reuse the ordinal's name, but must use a different claim UID, PV and backing
+volume. Success requires two separated complete samples with three Ready instances,
+unchanged healthy peers, healthy backups and the original volume still retained.
+No primary, healthy standby, backup, disruption budget or underlying disk is
+deleted or relaxed. Retention preserves the volume's current contents; it does
+not prove that an earlier bootstrap left the original failure evidence untouched.
+
+The default completed-join plan uses only OIDC reads:
+
+```sh
+go run ./scripts/replace-wedding-standby --quarantine-completed-join \
+  --cluster-uid "$CLUSTER_UID" --pod-uid "$POD_UID" --job-uid "$JOB_UID" \
+  --claim-uid "$CLAIM_UID" --volume-uid "$VOLUME_UID"
+```
+
+Execution requires a first main dispatch with confirmation
+`retain-volume-rebuild-completed-standby`, the `prod` environment and the shared
+deployment lock. Its tests run before any production credentials are restored.
+Every write requires fresh observations and proof that its reviewed source remains
+current main. A failed mutation or unknown read stops immediately without retry
+or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
+read-only and obtain a separately reviewed and approved continuation. Never rerun
+a consumed dispatch or delete the retained PV as cleanup.
+
+## Initial failed-Pod procedure
 
 The procedure requires three observed database instances, a stable healthy primary,
 one other healthy replica, healthy archiving, and a completed cluster-bound backup
