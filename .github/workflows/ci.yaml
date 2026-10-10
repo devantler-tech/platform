@@ -500,6 +500,8 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/test-openbao-strategy-transition.sh'
+              - 'scripts/tests/openbao-strategy-transition/**'
               - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
@@ -1604,6 +1606,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         run: |
           shellcheck scripts/tests/test-openbao-standby-canary.sh
+          shellcheck scripts/tests/test-openbao-strategy-transition.sh
           bash scripts/tests/test-openbao-standby-canary.sh
 
       - name: 🧯 Validate daily and break-glass API boundaries

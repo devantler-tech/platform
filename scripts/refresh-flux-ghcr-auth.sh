@@ -5834,8 +5834,12 @@ flux_policy_handoff_is_owned() {
 # check stage writes Healthy=Unknown/Progressing, in the same status patch that
 # sets the Reconciling message to "Running health checks for revision <rev> ...".
 # A failed health check then leaves Healthy and Ready HealthCheckFailed and
-# finalizeStatus only relabels Reconciling as ProgressingWithRetry. The next
-# attempt's first patch rewrites the Reconciling message ("Fetching manifests"),
+# finalizeStatus only relabels Reconciling as ProgressingWithRetry. A dependency
+# failure returns before entering reconcile, changing Ready to DependencyNotReady
+# while retaining those failed-health conditions (v1.8.5). Accept that case only
+# with all three conditions observed at the current object generation and an
+# actual declared dependency. A next attempt that proceeds past dependencies
+# first rewrites the Reconciling message ("Fetching manifests"),
 # so any apply-stage reconcile, including one after a controller restart that
 # left a stale Healthy condition, fails these checks. Note lastAppliedRevision
 # cannot discriminate: it is written only after health checks pass. Anything
@@ -5856,6 +5860,7 @@ flux_policy_handoff_is_quiescent() {
         | only("Healthy") as $healthy
         | only("Ready") as $ready
         | (.status.lastAttemptedRevision // "") as $revision
+        | .metadata.generation as $generation
         | ($revision | type == "string" and length > 0)
         and (($r.message // "")
           | startswith("Running health checks for revision \($revision) "))
@@ -5870,7 +5875,15 @@ flux_policy_handoff_is_quiescent() {
             and $healthy.reason == "HealthCheckFailed"
             and $ready != null
             and $ready.status == "False"
-            and $ready.reason == "HealthCheckFailed")
+            and (
+              $ready.reason == "HealthCheckFailed"
+              or ($ready.reason == "DependencyNotReady"
+                and ($generation | type == "number" and . > 0)
+                and $r.observedGeneration == $generation
+                and $healthy.observedGeneration == $generation
+                and $ready.observedGeneration == $generation
+                and ((.spec.dependsOn // []) | type == "array" and length > 0))
+            ))
         )
       end
   ' "${flux_policy_handoff_state_file}" >/dev/null
