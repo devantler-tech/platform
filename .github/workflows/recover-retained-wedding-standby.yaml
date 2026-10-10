@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: retain-volume-rebuild-after-rejection (up to five fully re-proven Cluster requests per pause/resume phase)"
+        description: "Type retain-volume-rebuild-after-rejection for an unpaused repair, or continue-owned-pause-retain-volume for a separately approved existing-pause continuation"
         required: true
         type: string
       cluster_uid:
@@ -82,7 +82,8 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == retain-volume-rebuild-after-rejection && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${CONFIRM}" == retain-volume-rebuild-after-rejection || "${CONFIRM}" == continue-owned-pause-retain-volume ]]
       - name: 📑 Checkout reviewed main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,4 +122,8 @@ jobs:
           VOLUME_UID: ${{ inputs.volume_uid }}
         run: |
           set -euo pipefail
-          go run ./scripts/replace-wedding-standby --execute --quarantine-completed-join --cluster-uid "${CLUSTER_UID}" --pod-uid "${POD_UID}" --job-uid "${JOB_UID}" --claim-uid "${CLAIM_UID}" --volume-uid "${VOLUME_UID}"
+          mode=(--execute --quarantine-completed-join)
+          if [[ "${WEDDING_REPAIR_CONFIRM}" == continue-owned-pause-retain-volume ]]; then
+            mode+=(--continue-owned-pause)
+          fi
+          go run ./scripts/replace-wedding-standby "${mode[@]}" --cluster-uid "${CLUSTER_UID}" --pod-uid "${POD_UID}" --job-uid "${JOB_UID}" --claim-uid "${CLAIM_UID}" --volume-uid "${VOLUME_UID}"

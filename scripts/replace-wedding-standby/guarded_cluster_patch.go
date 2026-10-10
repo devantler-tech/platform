@@ -49,22 +49,33 @@ func protectedClusterState(cluster object) (object, error) {
 // on at most five new requests, and only rebinds after a verified non-commit.
 // The callback must re-prove every phase-specific guard before returning.
 func guardedClusterPatch(ctx context.Context, c client, cluster object, rebind func(context.Context) (object, error), patch func(object) []object) error {
+	remaining := clusterPatchAttempts
+	return guardedClusterPatchBudget(ctx, c, cluster, rebind, patch, &remaining)
+}
+
+// A continuation shares one pause-phase budget across its initial and refreshed
+// marker. Every attempted request consumes a slot, including rejected requests.
+func guardedClusterPatchBudget(ctx context.Context, c client, cluster object, rebind func(context.Context) (object, error), patch func(object) []object, remaining *int) error {
+	if remaining == nil || *remaining <= 0 || *remaining > clusterPatchAttempts {
+		return errors.New("guarded Cluster request budget exhausted; no further write")
+	}
 	baseline, err := protectedClusterState(cluster)
 	if err != nil {
 		return err
 	}
 	bounded, cancel := context.WithTimeout(ctx, clusterPatchDeadline)
 	defer cancel()
-	for attempt := 0; attempt < clusterPatchAttempts; attempt++ {
+	for *remaining > 0 {
 		if bounded.Err() != nil {
 			return errors.New("guarded Cluster request deadline reached; no further write")
 		}
+		*remaining--
 		err = c.patch(bounded, "cluster", cluster, patch(cluster))
 		if err == nil {
 			return nil
 		}
 		var failure conditionalWriteFailure
-		if !errors.As(err, &failure) || !failure.rejected || attempt == clusterPatchAttempts-1 {
+		if !errors.As(err, &failure) || !failure.rejected || *remaining == 0 {
 			return err
 		}
 		cluster, err = rebind(bounded)

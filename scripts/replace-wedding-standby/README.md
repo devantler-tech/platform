@@ -83,7 +83,10 @@ or `SERVER_INVALID_WITH_CAUSES`. Neither category identifies a failed predicate.
 Malformed, incomplete, oversized or mismatched envelopes retain `SERVER_INVALID`;
 response messages, fields and values are never printed or persisted.
 A completed-join recovery may send at most five separately guarded requests within
-one minute **per pause or resume phase** (at most ten across both). Only a complete,
+one minute **per pause or resume phase** (at most ten across both). In the
+continuation, the initial and refreshed markers share that same pause-phase
+request budget and deadline; the refresh does not receive another allowance.
+Only a complete,
 typed native HTTP 422 rejection admits a new request: the server rejected that
 request before persistence. Each new request re-proves current main, the same
 operator leader, protected peers, backups, retained backing identity and every
@@ -101,6 +104,41 @@ Any exhausted request bound, failed guard or unknown read stops without cleanup
 writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
+
+### Separately approved continuation of an existing pause
+
+The initial completed-join mode still rejects any existing pause. If an approved
+attempt stops after pausing but before storage cleanup, a **new** first-main
+dispatch may use `continue-owned-pause-retain-volume` only after fresh inspection
+and separate maintainer approval. This selects `--continue-owned-pause`; it cannot
+share the diagnostic or earlier fenced modes or reuse the initial confirmation.
+The read-only OIDC plan can select that flag with the same five current identities.
+
+This mode requires the disabled pause to be exclusively owned by
+`wedding-standby-repair` and the observation marker to be absent, including its
+managed-field ownership. It conditionally adds only a unique `<run-id>.1` marker
+at `platform.devantler.tech/standby-pause-observation`, binding the Cluster UID,
+resource version, unchanged primary, replica count and complete annotation map.
+The [audited controller's Cluster watch](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_controller.go)
+observes metadata updates, so reconciliation can acknowledge the existing pause
+without ever enabling it before quarantine. No old pause acknowledgment is reused.
+
+The bounded log baseline still excludes previously observed reconciliation IDs.
+The new acknowledgment's timestamp must also be at least the full two-second
+clock allowance after the marker request, including any positively rejected
+request's rebind. This refuses unseen pre-marker records even when the controller
+clock is ahead. If the immediate acknowledgment is too early, the continuation
+waits beyond both clock allowances, rechecks the existing guards, and advances
+only its owned marker to `<run-id>.1.2` once to request another paused reconcile.
+The freshness boundary stays bound to the first marker request; incidental
+operator events are not required. Missing fresh evidence still leaves the
+continuation at HOLD rather than authorize cleanup. The leader, pause owner and
+exact marker owner/value must remain unchanged
+through cleanup. After proving quarantine, one conditional patch removes only
+that run's marker and its owned pause. All existing storage, consumer, peer,
+backup, request-bound and two-separated-healthy-sample checks remain in force.
+An existing marker, failed read or uncertain request outcome stops this new
+attempt. It does not grant a retry or automatic cleanup.
 
 ## Non-persisting pause diagnostic
 
