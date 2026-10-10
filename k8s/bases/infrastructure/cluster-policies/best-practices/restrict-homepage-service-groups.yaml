@@ -84,7 +84,9 @@ spec:
           layout (k8s/bases/apps/homepage/config-map.yaml): Internal Developer
           Platform, Kubernetes, Observability, Security, Diagnostics, Device
           Management, Infrastructure as Code, Cloud, Network, Finance, Analytics,
-          Personal Sites, or Customer Sites. An undeclared group still renders,
+          Business, Clients, Personal, Personal Sites, or Customer Sites.
+          The two legacy site groups remain accepted during the tenant migration.
+          An undeclared group still renders,
           but sorts below every declared group with a generic icon. Bookmark
           group names are deliberately not accepted here.
         deny:
@@ -106,5 +108,8 @@ spec:
                   - Network
                   - Finance
                   - Analytics
+                  - Business
+                  - Clients
+                  - Personal
                   - Personal Sites
                   - Customer Sites

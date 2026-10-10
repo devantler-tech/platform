@@ -105,5 +105,20 @@ done <<EOF
 ${service_groups}
 EOF
 
+# Business-owned sites must not be mixed with personal or client sites.
+for group in Business Clients Personal; do
+  if ! printf '%s\n' "${service_groups}" | grep -qxF -- "${group}"; then
+    echo "::error::Homepage is missing the '${group}' service group"
+    exit 1
+  fi
+done
+
+business_groups="$(yq -r '.data."services.yaml"' "${config_map}" | yq -r '
+  .[] | to_entries[] | select(.value[][].href == "https://devantler.tech") | .key')"
+if [ "${business_groups}" != "Business" ]; then
+  echo "::error::devantler.tech must appear exactly once under Business (found: ${business_groups})"
+  exit 1
+fi
+
 count="$(printf '%s\n' "${service_groups}" | grep -c .)"
 echo "Homepage layout, Kyverno allow-list and deny message agree on ${count} service groups; rule enforces."
