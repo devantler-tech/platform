@@ -527,6 +527,7 @@ jobs:
               # denied by the fail-closed webhook and takes the whole provider
               # fleet to zero pods on the next revision bump (#3470).
               - 'scripts/tests/test-provider-drc-pod-seccomp.sh'
+              - 'scripts/tests/test-tetragon-agent-priority.sh'
               - 'tests/validate-pod-security-provider-deployment/**'
               - 'scripts/tests/test-pvc-prune-safety.sh'
               - 'scripts/tests/test-flux-kustomization-prune.sh'
@@ -1694,6 +1695,8 @@ jobs:
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
           shellcheck scripts/tests/test-hcloud-volume-priority.sh
           bash scripts/tests/test-hcloud-volume-priority.sh
+          shellcheck scripts/tests/test-tetragon-agent-priority.sh
+          bash scripts/tests/test-tetragon-agent-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
           bash scripts/tests/test-audit-privileged-rbac.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh

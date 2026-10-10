@@ -70,7 +70,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|metrics-server 85bf0a38ed8cbb3
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|snapshot-controller cb09ae779db06a3817f8ed3fde65bba42fe0c2194acdc010c6d809a770882769
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 8cc1b89c7760cbd9f65a142774e1a31ea91f76a35014dbdd39b792da4a9e5ba4
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed7181cae96f51b882f31d7ddd4298fbf097303de352864
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager 4ee4b8a2fc512253c45182114812f6b5ccf3b33492091169ac1f5a9bf5610e21
 
