@@ -39,6 +39,8 @@ type options struct {
 	clusterUID, podUID              string
 	now                             time.Time
 	fenced, detached, diagnosePause bool
+	continuePause                   bool
+	pauseObservation                string
 }
 
 type client struct {
@@ -142,15 +144,29 @@ func (c client) proveSource(ctx context.Context) error {
 	return nil
 }
 
-// write sends a single conditional mutation after its proof and fresh observation.
-// The repair caller never retries a rejected request or performs cleanup writes.
+// conditionalWriteFailure retains only a sanitized disposition, never a raw
+// command error. Only the native, complete rejection envelope proves no commit.
+type conditionalWriteFailure struct {
+	operation, reason string
+	rejected          bool
+}
+
+func (f conditionalWriteFailure) Error() string {
+	return fmt.Sprintf("conditional %s failed (reason=%s); no retry or cleanup write", f.operation, f.reason)
+}
+
+// write sends exactly one conditional mutation. A separately bounded Cluster
+// caller may re-prove a verified rejection; uncertain outcomes never permit it.
 func (c client) write(ctx context.Context, args []string, body any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 	if _, err = c.command(ctx, args, b); err != nil {
-		return fmt.Errorf("conditional %s failed (reason=%s); no retry or cleanup write", args[0], commandFailureReason(ctx, err))
+		reason := commandFailureReason(ctx, err)
+		var native clusterRequestFailure
+		rejected := ctx.Err() == nil && errors.As(err, &native) && (reason == "SERVER_INVALID_NO_CAUSES" || reason == "SERVER_INVALID_WITH_CAUSES")
+		return conditionalWriteFailure{args[0], reason, rejected}
 	}
 	return nil
 }
@@ -165,6 +181,10 @@ func commandFailureReason(ctx context.Context, err error) string {
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 		return "CONTEXT_CANCELLED"
 	}
+	var requestFailure clusterRequestFailure
+	if errors.As(err, &requestFailure) {
+		return requestFailure.reason
+	}
 	var failure *exec.ExitError
 	if !errors.As(err, &failure) || len(failure.Stderr) == 0 || len(failure.Stderr) > 8192 {
 		return "UNKNOWN"
@@ -177,12 +197,22 @@ func commandFailureReason(ctx context.Context, err error) string {
 	}
 	reason := ""
 	for _, line := range strings.Split(string(failure.Stderr), "\n") {
-		if !strings.HasPrefix(line, "Error from server (") {
+		next := ""
+		if line == "The request is invalid: the server rejected our request due to an error in our request" {
+			// kubectl special-cases the generic HTTP 422 response. The API
+			// server discards its underlying patch error, so this is not CAS
+			// attribution and must never authorize a retry.
+			next = "SERVER_INVALID"
+		} else if strings.HasPrefix(line, "Error from server (") {
+			status, _, ok := strings.Cut(strings.TrimPrefix(line, "Error from server ("), "): ")
+			if !ok {
+				return "UNKNOWN"
+			}
+			next = reasons[status]
+		} else {
 			continue
 		}
-		status, _, ok := strings.Cut(strings.TrimPrefix(line, "Error from server ("), "): ")
-		next := reasons[status]
-		if !ok || next == "" || (reason != "" && reason != next) {
+		if next == "" || (reason != "" && reason != next) {
 			return "UNKNOWN"
 		}
 		reason = next
@@ -884,6 +914,7 @@ func run() error {
 	proveFenced := flag.Bool("prove-fenced", false, "read the bound instance's fencing acknowledgment through the protected read-only workflow")
 	resumeFenced := flag.Bool("resume-fenced", false, "continue this repair's retained, attached fenced HOLD")
 	quarantine := flag.Bool("quarantine-completed-join", false, "retain the old backing volume and replace the completed-join claim through a separately approved workflow")
+	continuePause := flag.Bool("continue-owned-pause", false, "continue only this repair's existing pause through a new, separately approved first-main dispatch")
 	diagnose := flag.Bool("diagnose-pause", false, "submit only the guarded pause patch as a separately approved server-side dry-run")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
 	podUID := flag.String("pod-uid", "", "expected failed Pod or completed join Pod UID")
@@ -893,6 +924,9 @@ func run() error {
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return errors.New("unexpected argument")
+	}
+	if *continuePause && (!*quarantine || *diagnose || *proveFenced || *resumeFenced) {
+		return errors.New("owned-pause continuation requires completed-join guards and cannot share other continuation or diagnostic modes")
 	}
 	if *diagnose && (!*quarantine || *execute || *proveFenced || *resumeFenced) {
 		return errors.New("pause diagnostic cannot share execution, proof or continuation modes and requires completed-join guards")
@@ -921,7 +955,11 @@ func run() error {
 		}
 		contextName = "admin@prod"
 	} else if *execute && *quarantine {
-		if !storageDispatchAllowed(os.Getenv) {
+		allowed := storageDispatchAllowed(os.Getenv)
+		if *continuePause {
+			allowed = ownedPauseDispatchAllowed(os.Getenv)
+		}
+		if !allowed {
 			return errors.New("execution requires the separately confirmed first protected completed-join main dispatch")
 		}
 		contextName = "admin@prod"
@@ -943,10 +981,14 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	c := client{now: time.Now}
-	c.command = func(ctx context.Context, args []string, body []byte) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context", contextName, "--request-timeout=30s"}, args...)...)
-		cmd.Stdin = bytes.NewReader(body)
-		return cmd.Output()
+	c.command = kubectlCommand(contextName)
+	if *quarantine && (*execute || *diagnose) {
+		command, closeTransport, err := protectedClusterCommand(ctx, c.command)
+		if err != nil {
+			return err
+		}
+		defer closeTransport()
+		c.command = command
 	}
 	c.source = func(ctx context.Context) error {
 		return exec.CommandContext(ctx, "bash", "scripts/verify-prod-recovery-source.sh", os.Getenv("GITHUB_SHA")).Run()
@@ -959,7 +1001,10 @@ func run() error {
 		return nil
 	}
 	result := "PLAN=PASS no writes"
-	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced, diagnosePause: *diagnose}
+	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced, diagnosePause: *diagnose, continuePause: *continuePause}
+	if *continuePause && *execute {
+		o.pauseObservation = os.Getenv("GITHUB_RUN_ID") + ".1"
+	}
 	if *quarantine {
 		if err := quarantineCompletedJoin(ctx, c, o, storageGuards{*jobUID, *claimUID, *volumeUID}, *execute); err != nil {
 			return err
