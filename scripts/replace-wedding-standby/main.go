@@ -165,6 +165,10 @@ func commandFailureReason(ctx context.Context, err error) string {
 	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
 		return "CONTEXT_CANCELLED"
 	}
+	var requestFailure clusterRequestFailure
+	if errors.As(err, &requestFailure) {
+		return requestFailure.reason
+	}
 	var failure *exec.ExitError
 	if !errors.As(err, &failure) || len(failure.Stderr) == 0 || len(failure.Stderr) > 8192 {
 		return "UNKNOWN"
@@ -953,10 +957,14 @@ func run() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	c := client{now: time.Now}
-	c.command = func(ctx context.Context, args []string, body []byte) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context", contextName, "--request-timeout=30s"}, args...)...)
-		cmd.Stdin = bytes.NewReader(body)
-		return cmd.Output()
+	c.command = kubectlCommand(contextName)
+	if *quarantine && (*execute || *diagnose) {
+		command, closeTransport, err := protectedClusterCommand(ctx, c.command)
+		if err != nil {
+			return err
+		}
+		defer closeTransport()
+		c.command = command
 	}
 	c.source = func(ctx context.Context) error {
 		return exec.CommandContext(ctx, "bash", "scripts/verify-prod-recovery-source.sh", os.Getenv("GITHUB_SHA")).Run()
