@@ -74,11 +74,6 @@ data:
     # — and note tenant repositories carry their own routes, so a group can be
     # claimed from outside this repository.
     layout:
-      # First on the page: the Internal Developer Platform (Backstage and any
-      # future self-service portals). Keep this entry first so the IDP is the
-      # landing focus.
-      Internal Developer Platform:
-        icon: mdi-developer-board
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:

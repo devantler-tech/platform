@@ -3322,3 +3322,11 @@ devantler-tech/ksail could list usage but not the limit.
 These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
 which is not the approved renderer; the required CI job re-renders with the
 approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.
+
+## Retire the unused developer portal (#4266)
+
+The production surface loses its portal HelmRelease and HelmRepository. The
+Dex HelmRelease changes only by removing that retired route's two OAuth callback
+addresses. No identity, role, permission boundary, or remaining callback changes.
+The ledger was recomputed using the existing surface evaluator and verified with
+the approved kubectl v1.36.2 / Kustomize v5.8.1 renderer.

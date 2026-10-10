@@ -54,7 +54,7 @@ spec:
   # username=coroot_monitor), generated once by External Secrets and consumed
   # only by the least-privilege monitoring role. Intra-namespace,
   # so the base allow-coroot policy already permits the scrape (no extra
-  # NetworkPolicy, unlike the cross-namespace umami/backstage DBs; the wedding-app
+  # NetworkPolicy, unlike the cross-namespace umami DB; the wedding-app
   # tenant ships its own equivalent in its repo's deploy/networkpolicy.yaml).
   # sslmode=require works whether CNPG's pg_hba uses `host` or `hostssl`.
   inheritedMetadata:

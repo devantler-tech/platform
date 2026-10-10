@@ -1026,10 +1026,10 @@ cat >"${pinned_logs_dir}/alerts.json" <<'JSON'
     "details":[{"name":"Sample","value":"failed loading pod spec"}]
   },
   {
-    "id":"backstage-controlled-db-failover",
+    "id":"retired-portal-db-disconnect",
     "fingerprint":"019fd2a540f61820",
     "suppressed":false,"resolved_at":null,"rule_id":"new-log-patterns","updated_at":1000000,
-    "application_id":"95rsc5yp:backstage:Deployment:backstage",
+    "application_id":"95rsc5yp:retired-portal:Deployment:retired-portal",
     "details":[{"name":"Sample","value":"Connection Error: Connection ended unexpectedly"}]
   },
   {
@@ -1105,7 +1105,7 @@ JSON
 run_scenario "${pinned_logs_dir}" >/dev/null
 [ -f "${pinned_logs_dir}/suppressed.json" ] ||
   fail "the exact control-plane and runtime log fingerprints were not suppressed"
-jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "backstage-controlled-db-failover", "h9q7onv4l20i", "kubescape-deleted-runtime-probe", "longhorn-clone-log-alert", "longhorn-deleted-autoscale-node", "longhorn-reboot-reconnect", "metrics-removed-autoscale-node", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
+jq -e '.ids | sort == ["7f3auk0cezgo", "9qrrrlq3eooh", "h9q7onv4l20i", "kubescape-deleted-runtime-probe", "longhorn-clone-log-alert", "longhorn-deleted-autoscale-node", "longhorn-reboot-reconnect", "metrics-removed-autoscale-node", "nested-clone-retry-alert", "provisioner-delete-retry-alert", "rotated-post-timeout-alert", "rotated-runtime-alert", "sandbox-resize-alert"]' \
   "${pinned_logs_dir}/suppressed.json" >/dev/null ||
   fail "the reviewed log exemptions were broader than their exact fingerprints and message shapes"
 pass "exact benign control-plane and runtime fingerprints survive ID rotation while near matches stay visible"

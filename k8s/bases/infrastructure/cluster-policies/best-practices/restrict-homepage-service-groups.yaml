@@ -95,7 +95,6 @@ spec:
               - key: "{{ request.object.metadata.annotations.\"gethomepage.dev/group\" || 'MISSING' }}"
                 operator: NotIn
                 value:
-                  - Internal Developer Platform
                   - Kubernetes
                   - Observability
                   - Security

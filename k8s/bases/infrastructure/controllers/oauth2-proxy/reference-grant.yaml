@@ -14,9 +14,6 @@ spec:
       namespace: actual-budget
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      namespace: backstage
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
       namespace: crossview
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
