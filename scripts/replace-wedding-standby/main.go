@@ -177,12 +177,22 @@ func commandFailureReason(ctx context.Context, err error) string {
 	}
 	reason := ""
 	for _, line := range strings.Split(string(failure.Stderr), "\n") {
-		if !strings.HasPrefix(line, "Error from server (") {
+		next := ""
+		if line == "The request is invalid: the server rejected our request due to an error in our request" {
+			// kubectl special-cases the generic HTTP 422 response. The API
+			// server discards its underlying patch error, so this is not CAS
+			// attribution and must never authorize a retry.
+			next = "SERVER_INVALID"
+		} else if strings.HasPrefix(line, "Error from server (") {
+			status, _, ok := strings.Cut(strings.TrimPrefix(line, "Error from server ("), "): ")
+			if !ok {
+				return "UNKNOWN"
+			}
+			next = reasons[status]
+		} else {
 			continue
 		}
-		status, _, ok := strings.Cut(strings.TrimPrefix(line, "Error from server ("), "): ")
-		next := reasons[status]
-		if !ok || next == "" || (reason != "" && reason != next) {
+		if next == "" || (reason != "" && reason != next) {
 			return "UNKNOWN"
 		}
 		reason = next
