@@ -159,7 +159,10 @@ jobs:
           bash scripts/tests/test-verify-arc-transport.sh
 
       - name: 🛑 Validate ARC recovery metadata proof
-        run: go test -race ./scripts/guard-arc-recovery
+        run: |
+          go test -race ./scripts/guard-arc-recovery ./scripts/retire-arc-pool
+          shellcheck scripts/retire-arc-pool.sh scripts/tests/test-retire-arc-pool.sh
+          bash scripts/tests/test-retire-arc-pool.sh
 
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
@@ -1651,6 +1654,12 @@ jobs:
         uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
         with:
           release: ${{ steps.kyverno-version.outputs.release }}
+
+      - name: 🛑 Validate owned ARC retirement admission
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-arc-retirement-fence.sh
+          bash scripts/tests/test-arc-retirement-fence.sh
 
       - name: 🔒 Validate Umami provisioning serialization
         if: needs.changes.outputs.k8s == 'true'

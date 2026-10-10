@@ -46,5 +46,13 @@
   "validate-replica-ceiling/cap-scaledobject-max-replicas": "Audit",
   "validate-replica-floor/require-replica-floor": "Audit",
   "enforce-flux-best-practices/kustomization-recommended-settings": "Enforce",
-  "enforce-flux-best-practices/helmrelease-recommended-settings": "Enforce"
+  "enforce-flux-best-practices/helmrelease-recommended-settings": "Enforce",
+  "restrict-arc-retirement/fence-pool-retirement": "Enforce",
+  "restrict-arc-retirement/fence-scale-set-retirement": "Enforce",
+  "restrict-arc-retirement/fence-listener-retirement": "Enforce",
+  "restrict-arc-retirement/fence-retired-listener-pod": "Enforce",
+  "restrict-arc-retirement/fence-credential-recreation": "Enforce",
+  "restrict-arc-retirement/fence-retired-secret": "Enforce",
+  "restrict-arc-retirement/preserve-retirement-journal": "Enforce",
+  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce"
 }
