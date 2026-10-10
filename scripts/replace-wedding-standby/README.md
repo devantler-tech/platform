@@ -144,7 +144,10 @@ A failure returns `REPAIR=HOLD`, never health clearance. Earlier successful
 steps may remain: a Retain volume, a fenced failed replica, or a detached claim.
 Rejected commands include only a bounded reason category: a recognized server
 status, caller cancellation/deadline, or UNKNOWN. Raw stderr and command error
-text are never published. A server status does not establish a particular
+text are never published. Kubectl's native generic invalid-request response is
+reported as `SERVER_INVALID`; Kubernetes has already discarded the underlying
+patch error, so that category cannot identify a failed precondition or grant a retry.
+A server status does not establish a particular
 admission policy, failed JSON-patch test or transport cause; ambiguous, oversized
 or unrecognized evidence stays UNKNOWN.
 There is no automatic destructive cleanup, reverse ownership change, WAL reset,

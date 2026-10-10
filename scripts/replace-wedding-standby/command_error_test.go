@@ -22,6 +22,14 @@ func TestRejectedWriteReportsOnlyABoundedReason(t *testing.T) {
 		{"forbidden", "SERVER_FORBIDDEN", exitError("Error from server (Forbidden): " + secret)},
 		{"conflict", "SERVER_CONFLICT", exitError("Warning: ignored warning\nError from server (Conflict): " + secret)},
 		{"invalid", "SERVER_INVALID", exitError("Error from server (Invalid): " + secret)},
+		// kubectl formats the generic HTTP 422 from a rejected JSON-patch test
+		// specially. This literal was reproduced with the installed v1.36.2.
+		{"native invalid", "SERVER_INVALID", exitError("The request is invalid: the server rejected our request due to an error in our request\n")},
+		{"native invalid with warning", "SERVER_INVALID", exitError("Warning: " + secret + "\nThe request is invalid: the server rejected our request due to an error in our request\n")},
+		{"native invalid lookalike", "UNKNOWN", exitError(secret + ": The request is invalid: the server rejected our request due to an error in our request")},
+		{"native invalid extended", "UNKNOWN", exitError("The request is invalid: the server rejected our request due to an error in our request " + secret)},
+		{"native invalid ambiguous", "UNKNOWN", exitError("The request is invalid: the server rejected our request due to an error in our request\nError from server (Forbidden): " + secret)},
+		{"native invalid oversized", "UNKNOWN", exitError("The request is invalid: the server rejected our request due to an error in our request\n" + strings.Repeat(secret, 1024))},
 		{"bad request", "SERVER_BAD_REQUEST", exitError("Error from server (BadRequest): " + secret)},
 		{"unauthorized", "SERVER_UNAUTHORIZED", exitError("Error from server (Unauthorized): " + secret)},
 		{"internal", "SERVER_INTERNAL", exitError("Error from server (InternalError): " + secret)},
