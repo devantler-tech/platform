@@ -79,9 +79,9 @@ func leaderFixture() (object, object) {
 	return lease, pod
 }
 
-// pauseRecord models the operator's fresh cluster-specific pause acknowledgment.
+// pauseRecord models the audited controller's fresh info-level acknowledgment.
 func pauseRecord() object {
-	return object{"level": "warning", "ts": testNow.Format(time.RFC3339Nano), "msg": pauseMessage, "namespace": namespace, "name": clusterName, "Cluster": object{"namespace": namespace, "name": clusterName}, "reconcileID": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+	return object{"level": "info", "ts": testNow.Format(time.RFC3339Nano), "msg": pauseMessage, "controller": "cluster", "controllerGroup": "postgresql.cnpg.io", "controllerKind": "Cluster", "namespace": namespace, "name": clusterName, "Cluster": object{"namespace": namespace, "name": clusterName}, "reconcileID": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
 }
 
 // TestCompletedJoinPlanRejectsUnsafeHold preserves every recovery admission gate.
@@ -158,7 +158,7 @@ func TestPauseAcknowledgmentIsFreshAndBound(t *testing.T) {
 			case "missing reconcile":
 				delete(r, "reconcileID")
 			case "wrong level":
-				r["level"] = "info"
+				r["level"] = "warning"
 			case "malformed reconcile":
 				r["reconcileID"] = "unknown"
 			}

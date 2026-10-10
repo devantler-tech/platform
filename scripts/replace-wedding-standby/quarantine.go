@@ -197,7 +197,9 @@ func pauseLogRecords(b []byte) ([]object, error) {
 }
 
 // pauseAcknowledged accepts only a bound, recent reconciliation not observed
-// before the pause. The clock allowance never admits an observed reconciliation replay.
+// before the pause. The audited controller logger emits Warning through Info;
+// its structured protocol is info, not the wrapper's method name.
+// The clock allowance never admits an observed reconciliation replay.
 func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool) (bool, error) {
 	records, err := pauseLogRecords(b)
 	if err != nil {
@@ -206,7 +208,7 @@ func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool)
 	found := false
 	for _, record := range records {
 		t, err := time.Parse(time.RFC3339Nano, str(record, "ts"))
-		if err == nil && !t.Before(since.Add(-operatorClockSkew)) && !t.After(now.Add(operatorClockSkew)) && str(record, "level") == "warning" && str(record, "msg") == pauseMessage && str(record, "namespace") == namespace && str(record, "name") == clusterName && str(record, "Cluster", "namespace") == namespace && str(record, "Cluster", "name") == clusterName && recoveryUUID.MatchString(str(record, "reconcileID")) && !previous[str(record, "reconcileID")] {
+		if err == nil && !t.Before(since.Add(-operatorClockSkew)) && !t.After(now.Add(operatorClockSkew)) && str(record, "level") == "info" && str(record, "msg") == pauseMessage && str(record, "namespace") == namespace && str(record, "name") == clusterName && str(record, "Cluster", "namespace") == namespace && str(record, "Cluster", "name") == clusterName && recoveryUUID.MatchString(str(record, "reconcileID")) && !previous[str(record, "reconcileID")] {
 			found = true
 		}
 	}
