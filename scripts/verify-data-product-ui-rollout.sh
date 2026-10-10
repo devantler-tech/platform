@@ -16,6 +16,7 @@ readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
 expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/apps/data-product-controller/helm-release.yaml"
 readonly expected_helm_file
+# fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
   # Once a snapshot pair has differed, every later refusal still names what moved.
   if [[ -n "$changed" ]]; then
@@ -25,6 +26,7 @@ fail() {
   fi
   exit "${2:-1}"
 }
+# cleanup stops owned read processes and removes the private snapshot directory.
 cleanup() {
   for pid in "$active" "$watchdog"; do
     if [[ -n "$pid" ]]; then
@@ -66,10 +68,12 @@ scratch=$(mktemp -d) || fail private_storage_unavailable
 chmod 700 "$scratch"
 readonly deadline=$((started_at + timeout_seconds))
 set -m
+# remaining enforces the shared deadline and records the time left for reads.
 remaining() {
   left=$((deadline - SECONDS))
   [[ $left -gt 0 ]] || fail deadline_exceeded
 }
+# bounded runs one read within the remaining budget and reaps its process group.
 bounded() {
   local result=0
   remaining
@@ -90,6 +94,7 @@ bounded() {
   remaining
   return "$result"
 }
+# read_expected_state accepts only the declared dormant or active flag profile.
 read_expected_state() {
   yq -o=json '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]' "$expected_helm_file" 2>/dev/null |
     jq -ers 'if length!=1 then error("ambiguous expected flags") elif .[0]==[false,false,false] then "dormant"
@@ -97,6 +102,7 @@ read_expected_state() {
 }
 bounded read_expected_state || fail invalid_expected_state 2
 expected_state=$(<"$scratch/readiness-state")
+# read_verify_policy validates and copies the single public artifact identity policy.
 read_verify_policy() {
   [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
   jq -se 'length==1 and (.[0]|type=="object" and keys==["matchOIDCIdentity","provider"] and
@@ -394,11 +400,13 @@ all([["route-registry","data-product-controller-registry","data-products",{name:
       ($conditions|length)==1 and $conditions[0].status=="True" and $conditions[0].observedGeneration==$generation)))
 JQ
 
+# project_read stores only the reviewed fields from one resource response.
 project_read() {
   local role=$1 destination=$2
   shift 2
   kubectl "$@" 2>/dev/null | jq -se --arg role "$role" --arg namespace "$namespace" -f "$scratch/project.jq" >"$destination" 2>/dev/null
 }
+# read_resource fetches and projects one fixed target within the shared deadline.
 read_resource() {
   local directory=$1 role=$2 ns=$3 resource=$4 name=${5:-} request_seconds
   remaining
@@ -409,6 +417,7 @@ read_resource() {
   args+=(-o json)
   bounded project_read "$role" "$directory/$role.json" "${args[@]}" || fail read_incomplete
 }
+# collect gathers every resource needed to judge a complete rollout snapshot.
 collect() {
   local directory=$1
   mkdir -p "$directory"
@@ -436,6 +445,7 @@ collect() {
   read_resource "$directory" gateway kube-system gateways.gateway.networking.k8s.io platform
   bounded aggregate "$directory" || fail read_incomplete
 }
+# aggregate keeps only owned rollout descendants and relevant endpoint slices.
 aggregate() {
   jq -s '
     def owner_in($kind;$uids): any(.metadata.owners[]?;
@@ -450,15 +460,18 @@ aggregate() {
       $slice.metadata.labels["kubernetes.io/service-name"]==$service.metadata.name or any($slice.metadata.owners[]?;.uid==$service.metadata.uid)))) | sort_by(.metadata.uid))
   ' "$1/"*.json >"$1/snapshot" 2>/dev/null
 }
+# make_runtime_json records the unique allowed runtime digests for the predicates.
 make_runtime_json() { printf '%s\n' "${runtime_digests[@]}" | jq -Rsc 'split("\n")[:-1]|unique' >"$scratch/runtime-digests.json"; }
 bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
+# check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
   jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
 
+# fetch retrieves one bounded HTTPS response without browser credentials.
 fetch() {
   local url=$1 result
   remaining
@@ -469,12 +482,14 @@ fetch() {
     --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || return 1
   [[ "$result" == 200 ]]
 }
+# header_is requires exactly one response header with the expected value.
 header_is() {
   awk -v name="$1" -v expected="$2" '
     {sub(/\r$/, "")} index(tolower($0),tolower(name) ":")==1 {
       value=substr($0,length(name)+2); sub(/^[ \t]+/,"",value); count++; if(value!=expected) wrong=1
     } END {exit(count!=1 || wrong)}' "$scratch/headers"
 }
+# public_checks verifies the fixed public contracts, assets and response policies.
 public_checks() {
   local sample="https://harbour-data.$domain" kit="https://product-ui.$domain" path
   fetch "$sample/healthz" || return 1
@@ -505,6 +520,7 @@ public_checks() {
     esac
   done
 }
+# quiet_public_checks prevents response details from reaching the rollout receipt.
 quiet_public_checks() { public_checks >/dev/null 2>&1; }
 # name_changes: which parts of the rollout differ between the two snapshots, as
 # the helper's own role and field names only. A name that is not plain letters

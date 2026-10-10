@@ -5,6 +5,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly script="${root_dir}/scripts/verify-data-product-ui-rollout.sh"
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
+# fail reports the violated fixture invariant and stops the regression suite.
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
@@ -265,6 +266,7 @@ SH
 chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
 
 expected_urls=9
+# run_case exercises one fixture and checks its verdict, cleanup and sanitized output.
 run_case() {
   local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-15}
   local fixture="${scratch}/${name}"
@@ -319,6 +321,7 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 mutate_case() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
@@ -377,6 +380,7 @@ run_case active-settled-label pass
 expected_urls=9
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/active-settled-label/stdout" >/dev/null ||
   fail 'active-settled-label: the active report did not name the change that settled'
+# active_mutation verifies that an active-profile mutation reaches snapshot rejection.
 active_mutation() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
