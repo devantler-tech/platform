@@ -48,14 +48,14 @@ func equal(t *testing.T, value, want any) {
 	}
 }
 
-func TestRecoveryControllerReconcilesWhileOrganizationPoolStaysSuspended(t *testing.T) {
+func TestReleasesUsePinnedCharts(t *testing.T) {
 	for _, component := range []string{
 		"k8s/bases/infrastructure/controllers/actions-runner-controller",
 		"k8s/bases/infrastructure/actions-runners",
 	} {
 		t.Run(filepath.Base(component), func(t *testing.T) {
 			release := readYAML(t, component+"/helm-release.yaml")
-			equal(t, field(t, release, "spec", "suspend"), filepath.Base(component) == "actions-runners")
+			equal(t, field(t, release, "spec", "suspend"), false)
 			equal(t, field(t, release, "spec", "chartRef", "kind"), "OCIRepository")
 			source := readYAML(t, component+"/oci-repository.yaml")
 			equal(t, field(t, source, "spec", "ref", "tag"), "0.15.0")
@@ -105,7 +105,8 @@ func TestPoolCannotCreateUnboundedOrPrivilegedRunners(t *testing.T) {
 	runner := containers[0]
 	equal(t, field(t, runner, "name"), "runner")
 	image, ok := field(t, runner, "image").(string)
-	if !ok || !strings.HasPrefix(image, "ghcr.io/actions/actions-runner@sha256:") {
+	if !ok || (!strings.HasPrefix(image, "ghcr.io/actions/actions-runner@sha256:") &&
+		!strings.HasPrefix(image, analysisRepository+"@sha256:")) {
 		t.Fatal("runner image must be digest-pinned")
 	}
 	for _, name := range []string{"privileged", "allowPrivilegeEscalation"} {
@@ -308,21 +309,24 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 	}
 	for _, step := range field(t, changes, "steps").([]any) {
 		mapping := step.(map[string]any)
-		if mapping["run"] == "go test ./scripts/tests/arc-staging" {
-			if _, conditional := mapping["if"]; conditional {
-				t.Fatal("staging guard cannot be conditional")
+		run, _ := mapping["run"].(string)
+		for _, line := range strings.Split(run, "\n") {
+			if strings.TrimSpace(line) == "go test ./scripts/tests/arc-staging" {
+				if _, conditional := mapping["if"]; conditional {
+					t.Fatal("staging guard cannot be conditional")
+				}
+				return
 			}
-			return
 		}
 	}
 	t.Fatal("missing unconditional staging guard")
 }
 
-func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
+func TestDeploymentAggregatesRestrictARCToProduction(t *testing.T) {
 	const retainedControllerAggregate = "k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml"
 	const retainedControllerReference = "../../../../bases/infrastructure/controllers/actions-runner-controller/"
 	controllerFound := false
-	credentialStageFound := false
+	poolFound := false
 	err := filepath.WalkDir(filepath.Join(repoRoot, "k8s"), func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -341,6 +345,13 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		if err := yaml.Unmarshal(data, &document); err != nil {
 			return err
 		}
+		if strings.HasSuffix(path, "k8s/providers/hetzner/infrastructure/kustomization.yaml") {
+			for _, reference := range document.Resources {
+				if reference == "arc-credential-transport/" {
+					t.Fatal("activation must not duplicate credential staging resources")
+				}
+			}
+		}
 		for _, reference := range append(document.Resources, document.Components...) {
 			if strings.Contains(reference, "actions-runner-controller") || strings.Contains(reference, "actions-runners") {
 				relative, err := filepath.Rel(repoRoot, path)
@@ -351,9 +362,9 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 					controllerFound = true
 					continue
 				}
-				if relative == "k8s/providers/hetzner/infrastructure/arc-credential-transport/kustomization.yaml" &&
-					reference == "../../../../bases/infrastructure/actions-runners/credentials/" && !credentialStageFound {
-					credentialStageFound = true
+				if relative == "k8s/providers/hetzner/infrastructure/kustomization.yaml" &&
+					reference == "../../../bases/infrastructure/actions-runners/" && !poolFound {
+					poolFound = true
 					continue
 				}
 				t.Errorf("%s activates ARC through %q", path, reference)
@@ -365,10 +376,10 @@ func TestNoDeploymentAggregateActivatesARC(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !controllerFound {
-		t.Fatal("production must retain the scoped controller in its inventory")
+		t.Fatal("production must declare its bounded controller")
 	}
-	if !credentialStageFound {
-		t.Fatal("production must stage only the dedicated credential authentication resources")
+	if !poolFound {
+		t.Fatal("production must declare its bounded pool")
 	}
 }
 
@@ -386,7 +397,10 @@ func TestRetainedAnalysisResourcesCannotActivateOrLosePruneProtection(t *testing
 	equal(t, field(t, release, "spec", "values", "maxRunners"), 0)
 	controller := readYAML(t, "k8s/bases/infrastructure/controllers/actions-runner-controller/helm-release.yaml")
 	equal(t, field(t, controller, "spec", "values", "flags", "watchSingleNamespace"), "arc-runners")
-	equal(t, field(t, controller, "metadata", "annotations", "platform.devantler.tech/arc-recovery"), "drain-only")
+	annotations := field(t, controller, "metadata", "annotations").(map[string]any)
+	if _, exists := annotations["platform.devantler.tech/arc-recovery"]; exists {
+		t.Fatal("reviewed activation must explicitly retire the drain-only marker")
+	}
 }
 
 func TestRecoveryMetadataProofSurroundsPublicationAndReconciliation(t *testing.T) {

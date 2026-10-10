@@ -146,15 +146,22 @@ func TestCredentialStoreRequiresDedicatedVerifiedTLS(t *testing.T) {
 	equal(t, field(t, vault, "caProvider", "key"), "ca.crt")
 }
 
-func TestCredentialAuthenticationStagingDoesNotReadAppKeys(t *testing.T) {
-	stage := readYAML(t, "k8s/providers/hetzner/infrastructure/arc-credential-transport/kustomization.yaml")
-	resources := field(t, stage, "resources").([]any)
-	if len(resources) != 1 {
-		t.Fatal("credential staging must contain only its authentication component")
+func TestCredentialAuthenticationComponentDoesNotReadAppKeys(t *testing.T) {
+	pool := readYAML(t, "k8s/bases/infrastructure/actions-runners/kustomization.yaml")
+	count := 0
+	for _, resource := range field(t, pool, "resources").([]any) {
+		if resource == "credentials/" {
+			count++
+		}
+		if resource == "secret-store.yaml" || resource == "service-account.yaml" {
+			t.Fatal("pool duplicates its authentication component")
+		}
 	}
-	equal(t, resources[0], "../../../../bases/infrastructure/actions-runners/credentials/")
+	if count != 1 {
+		t.Fatal("pool must include its authentication component exactly once")
+	}
 	credentials := readYAML(t, "k8s/bases/infrastructure/actions-runners/credentials/kustomization.yaml")
-	resources = field(t, credentials, "resources").([]any)
+	resources := field(t, credentials, "resources").([]any)
 	if len(resources) != 2 {
 		t.Fatal("authentication staging must not include any key reader or runner")
 	}

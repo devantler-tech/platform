@@ -1,23 +1,15 @@
 # Organization Linux runners
 
-The organization Linux pool is prepared but inactive and remains outside the
-deployment aggregate and its HelmRelease is suspended. Production reconciles the
-scoped controller and the former analysis release in Flux inventory to preserve
-ownership of resources left by failed activation. The former release has explicit
-zero minimum and maximum runner bounds. Suspension stops Helm reconciliation,
-does not drain an installed scale set, and prevents a failed release from recovering
-its readiness status. Native Flux and Helm health checks stay enabled. The protected
-deploy proves complete, empty metadata lists for organization runner sets, releases,
-credential-sync resources, retained runner children, both runner namespaces' pods
-and labeled listeners in the controller namespace before publication and after
-reconciliation. The retained namespace may contain only the exact chart-declared
-AutoscalingRunnerSet; Helm keeps that declaration with both runner bounds at zero.
-After reconciliation the guard also proves the installed controller is fully
-rolled out and excludes that retained namespace. Native empty `items: null` is
-accepted only with a complete current-revision list; missing or paginated items
-cannot prove absence. It requests no App credentials, JIT configuration or full
-Pod responses. Registration, execution and cleanup still
-need the separate proofs below before KSail #7131 can close.
+The production definition includes the ARC controller and bounded organization
+Linux pool. The protected deployment must prove the existing runtime App,
+registration and isolated canary before activation can merge. Initial access
+admits only KSail's main-branch delivery preflight. Managed analysis remains on its
+existing route until actual runner delivery and full-source calibration pass;
+declaring the pool does not resolve KSail #7131. The former analysis release
+reconciles with explicit zero minimum and maximum runner bounds and remains
+protected in Flux inventory. The scoped controller excludes its namespace.
+Suspension does not drain an installed scale set and prevents failed Helm
+readiness from recovering. Native Flux, Helm and orphan checks stay enabled.
 
 The controller chart and runner-set chart use the same immutable 0.15.0 artifacts.
 The runner image is digest-pinned. The controller manages runner sets only in the
@@ -25,8 +17,8 @@ The runner image is digest-pinned. The controller manages runner sets only in th
 with `devantler-tech` in the dedicated `platform` runner group and exposes the
 `platform-linux` scale-set name. Repository access is opt-in through the group;
 no existing workflow or managed analysis setting is changed. Other repositories
-can opt in without another App or a repository-specific pool. KSail is a proposed
-first consumer, not the scope of the capability.
+can opt in through reviewed access changes without another App or another pool.
+KSail is the first selected consumer.
 
 The pool has zero idle runners and a maximum of one job runner **across all
 opted-in repositories**, not one runner per repository. There is no container mode,
@@ -39,8 +31,9 @@ checksum-checked Go and Node archives provide compiler headers without job-time
 root access. The publisher builds and exercises the image on pull requests,
 then publishes, attests and signs only on a push to KSail main. Kyverno and Talos
 accept that workflow identity only for the exact analysis image repository.
-The pool does not select that image until a verified published digest and the
-consumer's runtime proof are available.
+The pool selects the published KSail-owned image by immutable digest. The
+protected canary verifies its signature, toolchain and resource limits before
+any managed-analysis route changes.
 
 The toolchain smoke test starts the copied runner and compiles a Go program
 against GTK and WebKit as UID/GID 1001, with a read-only root filesystem and no
@@ -108,7 +101,7 @@ absence readback are mandatory. This workflow reads no App key and requests no
 reader token. Its counts-only result is transport evidence, not stored-key,
 runner-registration or managed-analysis evidence.
 
-Activation requires a separate reviewed change and all of these proofs:
+Activation and subsequent consumer admission require all of these proofs:
 
 1. Reuse the production platform App used for GitHub sign-in, identified by
    `github_app_client_id` in the production bootstrap configuration. This is
@@ -139,8 +132,14 @@ Activation requires a separate reviewed change and all of these proofs:
    Reuse does not narrow the shared App's authority: the runner group controls
    job access, not what the App credential can do. Never mount the private key in
    a job runner.
-2. An authorized organization operator creates and verifies the `platform`
-   runner group **before** enabling the pool. Use **Selected repositories**, not
+2. The namespaced `arc-runtime-platform-app` ProviderConfig manages the
+   `platform` group using the existing `arc-github-app` Secret in `arc-runners`.
+   Its additional JSON credential key preserves ARC's three original keys;
+   the private key never moves to the GitHub-management namespace. The provider
+   name is distinct because the pinned provider caches configurations by name;
+   the registration gate rejects a same-name configuration in another namespace
+   or provider kind.
+   Verify the observed group **before** delivering a job. Use **Selected repositories**, not
    all repositories, and select only explicitly approved consumers. Repository
    access alone does not make arbitrary code trusted. Before admitting a public
    repository, prove the group's selected-workflow/ref restrictions admit only
@@ -150,6 +149,11 @@ Activation requires a separate reviewed change and all of these proofs:
    repository excluded. Do not weaken organization-wide runner restrictions or
    disable GitHub-hosted runners. A failed or unauthorized group read is unknown,
    not permission to use the unrestricted default group.
+   Initial selection is exactly KSail and
+   `devantler-tech/ksail/.github/workflows/verify-ksail-arc-delivery.yaml@refs/heads/main`.
+   The native dynamic Code Quality workflow is not admitted by this initial
+   selection. Its identity, supported restrictions and intercepted fork-job
+   denial require separate API and runtime proof before routing analysis.
 3. Use the declared `autoscale-arc-runners` CX53 pool for isolated organization
    runner capacity. It has a minimum of zero and maximum of one node, sharing the
    unchanged cluster ceiling of nine nodes and account ceiling of ten. The
@@ -196,13 +200,13 @@ Activation requires a separate reviewed change and all of these proofs:
    removed before declaring that bug fixed. Those bug-specific acceptance
    criteria do not route or onboard other repositories automatically.
 
-For staged validation, run `go test ./scripts/tests/arc-staging` and build both
-component directories directly with `kubectl kustomize`. Local trees exclude ARC;
-production retains the reconciled controller and drained protected legacy analysis resources
-without including the organization pool. The unconditional CI guard runs on
-pull requests and merge groups. A deliberate activation revises that guard in
-the same reviewed change, alongside its evidence; deleting the guard alone is
-not activation proof.
+For configuration validation, run `go test ./scripts/tests/arc-staging` and build
+both component directories directly with `kubectl kustomize`. Local trees exclude
+ARC. The unconditional guard permits activation only through the two named
+production aggregates, with immutable images and the mandatory protected
+runtime canary. It runs on pull requests and merge groups; deleting it is not activation
+proof. Credential staging is absorbed by the full pool component at activation,
+so the reader and encrypted store have exactly one reconciled declaration.
 
 ## Repository opt-in
 
@@ -228,16 +232,52 @@ finish. It does not require retiring the shared platform App.
 
 ## Rollout and recovery
 
-After the gates above are approved, verify the scoped controller is healthy and
-retire its `platform.devantler.tech/arc-recovery: drain-only` marker in the reviewed
-activation change. The recovery guard intentionally refuses a credentialed pool
-while that marker remains. That component creates both
-namespaces before the chart installs its namespace-scoped RBAC. The controller's
-network policy also covers the listener, which ARC creates in that namespace.
-Only then reference the pool in
-the infrastructure layer, which creates its dedicated secret store and reader
-identity. Verify SecretStore and ExternalSecret readiness before admitting jobs. Keep
-the opt-in runner name out of workflows that have not completed onboarding.
+The controller layer creates both namespaces before namespace-scoped RBAC
+reconciles. Its network policy also covers the listener. The infrastructure
+layer declares the pool, dedicated credential reader and native runner group.
+Verify the stored App identity and encrypted credential boundary before
+activating this layer. The reviewed activation explicitly retires the controller's
+`platform.devantler.tech/arc-recovery: drain-only` marker: that metadata guard
+refuses a credentialed pool while the marker remains. Its implementation and
+regression tests remain present. The protected canary joins the deployed Flux revision,
+current provider/group observations, ARC registration and exact image before
+it exercises admission, allowed connectivity, intercepted denials and cleanup.
+Verify SecretStore and ExternalSecret readiness before admitting jobs. Keep the
+opt-in runner name out of workflows that have not completed onboarding.
+
+The protected canary reserves admission with the fixed `arc-runtime-admission`
+ResourceQuota in the runner namespace. Its zero-pod `NotTerminating` scope blocks
+new ordinary runner Pods while existing jobs finish naturally. The deadline-bound
+probe is outside that scope. The verifier checks retained runner templates, proves
+the real runner template is denied by this quota, and waits up to twenty minutes
+for existing runners and the dedicated node to drain. It leaves the quota in place
+until probe deletion and node cleanup are verified, then deletes only the
+invocation-owned quota with UID and resource-version preconditions. It changes no
+runner bounds, Helm reconciliation, App permission or capacity ceiling.
+
+A later protected deployment can recover a quota left by a completed prior
+workflow attempt. The quota records the fixed repository and workflow, run and
+attempt, producing job, run-head and checkout revisions, manifest digest and
+successfully created probe UID. Recovery joins the exact attempt and its complete
+job list using the existing read-only Actions permission. It retains admission
+while deleting only that recorded, standalone probe with a UID precondition,
+proving absence and natural node drain, then deleting the unchanged quota with
+UID and resource-version preconditions. It proves quota absence before creating
+the new invocation's fence.
+
+Active or unknown writers, incomplete job lists, missing provenance, ambiguous
+creation, replacement objects and incomplete cleanup remain HOLD. Same-attempt
+Heal Prod cannot recover a fence while its attempt is still running. The first
+activation therefore also depends on the inactive-main recovery support in
+[#4638](https://github.com/devantler-tech/platform/issues/4638) and
+[#4641](https://github.com/devantler-tech/platform/pull/4641); candidate-only
+acceptance does not establish a recoverable rollout. A legacy fence without the
+recorded proof needs explicit manual recovery: prove its producing job and
+attempt have stopped, verify invocation ownership and probe absence, prove the
+dedicated pool has drained, and use the current UID and resource version as
+deletion preconditions. Never release a live or unknown invocation's fence to
+make a deployment pass. Quota behavior and its deadline scopes are defined
+in the [Kubernetes resource quota documentation](https://kubernetes.io/docs/concepts/policy/resource-quotas/).
 
 To stop admitting jobs, restore every consumer's prior runner configuration
 and verify the readbacks, then use a reviewed values change to set both runner

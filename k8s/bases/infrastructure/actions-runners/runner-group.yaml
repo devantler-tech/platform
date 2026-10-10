@@ -1,0 +1,20 @@
+# Initial access is restricted to the main-only KSail delivery preflight.
+# Dynamic managed-analysis admission requires its own verified selection.
+apiVersion: actions.github.m.upbound.io/v1alpha1
+kind: RunnerGroup
+metadata:
+  name: platform
+  namespace: arc-runners
+spec:
+  managementPolicies: [Observe, Create, Update]
+  providerConfigRef:
+    name: arc-runtime-platform-app
+    kind: ProviderConfig
+  forProvider:
+    name: platform
+    visibility: selected
+    allowsPublicRepositories: true
+    selectedRepositoryIds: [737584922]
+    restrictedToWorkflows: true
+    selectedWorkflows:
+      - devantler-tech/ksail/.github/workflows/verify-ksail-arc-delivery.yaml@refs/heads/main

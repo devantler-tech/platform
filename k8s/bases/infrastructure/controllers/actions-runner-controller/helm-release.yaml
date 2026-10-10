@@ -1,5 +1,5 @@
-# Production reconciles this scoped release in Flux inventory. The organization
-# pool stays unreferenced; activation is separate. See docs/operations/arc-runners.md.
+# Active controller for the bounded organization pool. Protected deployment must
+# prove registration and isolation before any consumer routes a job here.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -7,7 +7,6 @@ metadata:
   namespace: arc-systems
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
-    platform.devantler.tech/arc-recovery: drain-only
   labels:
     helm.toolkit.fluxcd.io/crds: enabled
 spec:

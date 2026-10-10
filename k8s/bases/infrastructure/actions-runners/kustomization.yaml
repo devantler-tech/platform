@@ -1,9 +1,25 @@
 # Opt-in organization runner pool; activation is a separate reviewed change.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+replacements:
+  - source:
+      kind: ConfigMap
+      version: v1
+      namespace: arc-runners
+      fieldPath: metadata.name
+    targets:
+      - select:
+          kind: HelmRelease
+          name: platform-runners
+          namespace: arc-runners
+        fieldPaths:
+          - spec.values.template.spec.volumes.[name=runner-metrics].configMap.name
 resources:
+  - config-map-job-metrics.yaml
   - oci-repository.yaml
   - helm-release.yaml
   - credentials/
   - external-secret.yaml
+  - provider-config.yaml
+  - runner-group.yaml
   - cilium-network-policy-runner.yaml

@@ -3,10 +3,11 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  # Prod-only: the organization runner pool (max one runner), authenticated by the shared App.
+  - ../../../bases/infrastructure/actions-runners/
   # Re-adopt the retained release without activating a runner. Suspension does
   # not drain an installed scale set; runtime acceptance remains a separate gate.
   - retained-ksail-analysis/
-  - arc-credential-transport/
   # Issuance restrictions must be active before credentials or runners are used.
   # This layer follows installation of the Kyverno admission controller.
   - cluster-policies/restrict-arc-openbao-certificate.yaml

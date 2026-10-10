@@ -3322,3 +3322,56 @@ devantler-tech/ksail could list usage but not the limit.
 These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
 which is not the approved renderer; the required CI job re-renders with the
 approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.
+
+## 2026-10-09 — ARC metrics source repair retains its authorization boundary
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer reproduces
+exactly one changed authorization entry for #4544 at `d82bcd49`, compared with
+its preceding reviewed source at `b0a77dd4`: HelmRelease
+arc-runners/platform-runners. Its fingerprint moves from
+`0dd16e9d373fe4e3aa26d6b0fc3e31d4d977cf623acfc0e172b8c5b99033a95f` to
+`52f89508024a6a9d9547f85a1f292b6fa05819f679fed5f5e3ee3972cd6eb388`.
+
+All five production layers contain 686 rendered documents before and after.
+The generated metrics ConfigMap changes name from
+`ksail-arc-job-metrics-d6e7291092` to `ksail-arc-job-metrics-6f02a2616f`; the
+HelmRelease's corresponding ConfigMap volume reference is its only scalar
+change. Every other complete rendered document is equal. Integrating main at
+`ce0be361` adds no rendered change. The metrics script repair makes regular
+offline fixture reads portable and accepts the optional kernel counter while
+retaining bounded production reads and every mandatory memory/OOM counter.
+No IAM/RBAC grant, App permission, runner identity, image, resource bound or
+security setting changes.
+
+The old entry fails with precisely this mismatch. Renewing only this entry
+passes the complete authorization package (74 tests and 253 subtests, no
+skips) and its CLI. Negative controls retain rejection of expanded grants,
+missing, duplicated or newly added authorization resources, changed Flux
+handoff and unauthorized AWS identity bindings. Local validation uses cached
+Go 1.26.9; required native CI uses the repository's Go 1.26.6 pin and remains
+the authority. This approval establishes no runtime or activation clearance.
+
+## 2026-10-09 — ARC over-budget measurements remain visible without accepting them
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 renderer compares all five
+production layers against #4544 at `1451f9cf`. Both renders contain 686
+documents, with no duplicate identities. Only the generated metrics ConfigMap
+and its HelmRelease volume reference change. The ConfigMap name moves from
+`ksail-arc-job-metrics-6f02a2616f` to `ksail-arc-job-metrics-2fbcf0b1d7`.
+Removing that single reference scalar makes the complete HelmRelease equal;
+every other complete rendered document is equal.
+
+The script now emits a canonical measurement for a transient peak above the
+kernel limit, then returns the existing budget failure with a nonzero exit.
+The 14 GiB limit, positive numeric peak, complete event counters and zero-OOM
+requirements remain enforced. Over-budget measurements with invalid events or
+OOM events still emit no receipt. Runtime acceptance continues to reject an
+over-budget peak. No IAM/RBAC grant, App permission, runner identity, image,
+resource bound or security setting changes.
+
+The validator reproduces only the pool entry's fingerprint change from
+`52f89508024a6a9d9547f85a1f292b6fa05819f679fed5f5e3ee3972cd6eb388` to
+`442c4bc77b77c3a927b1c479592d6960d535627050bf408ce55e794aa3ec505a`.
+Renew only this entry; all authorization checks and negative controls remain
+enabled. Local validation uses cached Go 1.26.9; native CI's repository pin
+remains authoritative. This audit grants no runtime or activation clearance.

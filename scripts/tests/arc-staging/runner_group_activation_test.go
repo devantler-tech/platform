@@ -12,7 +12,7 @@ import (
 const arcActivationFile = "managed-resource-activation-policy-arc.yaml"
 const arcRunnerGroupResource = "runnergroups.actions.github.m.upbound.io"
 
-func validateARCActivation(policy map[string]any, resources []any) error {
+func validateARCRunnerGroupActivation(policy map[string]any, resources []any) error {
 	if policy["apiVersion"] != "apiextensions.crossplane.io/v1alpha1" || policy["kind"] != "ManagedResourceActivationPolicy" {
 		return fmt.Errorf("expected a provider activation policy")
 	}
@@ -71,7 +71,7 @@ func TestARCResourceIsExplicitlyActivated(t *testing.T) {
 	const component = "k8s/providers/hetzner/infrastructure/crossplane/"
 	policy := readYAML(t, component+arcActivationFile)
 	resources := field(t, readYAML(t, component+"kustomization.yaml"), "resources").([]any)
-	if err := validateARCActivation(policy, resources); err != nil {
+	if err := validateARCRunnerGroupActivation(policy, resources); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -95,7 +95,7 @@ func TestARCActivationRejectsBroaderResourcesAndMissingInclusion(t *testing.T) {
 				"metadata": map[string]any{"name": "github-arc-runners"},
 				"spec":     map[string]any{"activate": test.activation},
 			}
-			if err := validateARCActivation(policy, test.resources); err == nil {
+			if err := validateARCRunnerGroupActivation(policy, test.resources); err == nil {
 				t.Fatal("accepted an unsafe or unreconciled activation policy")
 			}
 		})

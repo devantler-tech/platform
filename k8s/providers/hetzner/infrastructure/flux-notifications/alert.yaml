@@ -89,6 +89,9 @@ spec:
       namespace: actual-budget
     - kind: HelmRelease
       name: "*"
+      namespace: arc-runners
+    - kind: HelmRelease
+      name: "*"
       namespace: arc-ksail-analysis
     - kind: HelmRelease
       name: "*"
@@ -183,5 +186,11 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: whoami
+    - kind: OCIRepository
+      name: "*"
+      namespace: arc-runners
+    - kind: OCIRepository
+      name: "*"
+      namespace: arc-systems
   eventMetadata:
     summary: "Flux reconciliation error — prod platform"
