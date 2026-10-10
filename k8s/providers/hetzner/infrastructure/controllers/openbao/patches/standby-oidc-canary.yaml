@@ -12,6 +12,14 @@ metadata:
   name: openbao
   namespace: openbao
 spec:
+  # SSA retains an old rollingUpdate field owned by a prior update, even when
+  # the new strategy omits it. Helm's three-way merge clears it in the same
+  # validated patch that sets OnDelete, without force-replacing the StatefulSet.
+  # Keep rollback on the same in-place protocol.
+  upgrade:
+    serverSideApply: disabled
+  rollback:
+    serverSideApply: disabled
   postRenderers:
     - kustomize:
         patches:
