@@ -162,13 +162,13 @@ func TestCredentialAuthenticationStagingDoesNotReadAppKeys(t *testing.T) {
 	equal(t, resources[1], "secret-store.yaml")
 }
 
-func TestCredentialTLSDoesNotAdvanceTheHeldRaftRollout(t *testing.T) {
+func TestCredentialTLSDoesNotReplaceRunningRaftServers(t *testing.T) {
 	canary := readYAML(t, "k8s/providers/hetzner/infrastructure/controllers/openbao/patches/standby-oidc-canary.yaml")
 	patches := field(t, canary, "spec", "postRenderers").([]any)
 	patch := field(t, patches[0], "kustomize", "patches").([]any)[0]
 	text := field(t, patch, "patch").(string)
-	if !strings.Contains(text, "partition: 2") {
-		t.Fatal("TLS must not advance the held lower Raft ordinals")
+	if !strings.Contains(text, "type: OnDelete") || strings.Contains(text, "RollingUpdate") {
+		t.Fatal("TLS must not replace a running Raft server")
 	}
 	service := readYAML(t, transportPath+"service.yaml")
 	equal(t, field(t, service, "spec", "selector", "statefulset.kubernetes.io/pod-name"), "openbao-2")
