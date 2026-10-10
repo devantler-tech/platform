@@ -1,5 +1,6 @@
 // Command replace-wedding-standby provides a narrowly scoped, volume-preserving
-// repair for the failed Wedding replica. Without --execute it only reads.
+// repair for the failed Wedding replica. Its default mode only reads; a separate
+// protected diagnostic submits one non-persisting server-side dry-run request.
 package main
 
 import (
@@ -35,9 +36,9 @@ type plan struct {
 }
 
 type options struct {
-	clusterUID, podUID string
-	now                time.Time
-	fenced, detached   bool
+	clusterUID, podUID              string
+	now                             time.Time
+	fenced, detached, diagnosePause bool
 }
 
 type client struct {
@@ -62,6 +63,12 @@ func (c client) read(ctx context.Context, args ...string) (object, error) {
 
 // snapshot joins the cluster, operator, instances, old storage, jobs and backups.
 func (c client) snapshot(ctx context.Context) (inventory, error) {
+	return c.snapshotPending(ctx, false)
+}
+
+// snapshotPending also admits a positively observed Pending replacement claim;
+// it never infers a volume binding or health from that intermediate state.
+func (c client) snapshotPending(ctx context.Context, allowPending bool) (inventory, error) {
 	s := inventory{volumes: map[string]object{}}
 	var err error
 	s.cluster, err = c.read(ctx, "cluster.postgresql.cnpg.io", clusterName, "-n", namespace, "--show-managed-fields=true", "-o", "json")
@@ -81,7 +88,11 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 		{"backups.postgresql.cnpg.io", "cnpg.io/cluster=" + clusterName, &s.backups},
 		{"jobs", "cnpg.io/cluster=" + clusterName, &s.jobs},
 	} {
-		obj, e := c.read(ctx, entry.kind, "-n", namespace, "-l", entry.selector, "-o", "json")
+		args := []string{entry.kind, "-n", namespace}
+		if !allowPending || entry.kind != "backups.postgresql.cnpg.io" {
+			args = append(args, "-l", entry.selector)
+		}
+		obj, e := c.read(ctx, append(args, "-o", "json")...)
 		if e != nil {
 			return s, e
 		}
@@ -93,10 +104,25 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 		if len(*entry.dst) != len(items) {
 			return s, errors.New("malformed resource listing")
 		}
+		if allowPending && entry.kind == "backups.postgresql.cnpg.io" {
+			var relevant []object
+			for _, backup := range *entry.dst {
+				if str(backup, "spec", "cluster", "name") == "" || !validMeta(backup, namespace) {
+					return s, errors.New("incomplete namespace backup coverage")
+				}
+				if str(backup, "spec", "cluster", "name") == clusterName {
+					relevant = append(relevant, backup)
+				}
+			}
+			*entry.dst = relevant
+		}
 	}
 	for _, claim := range s.claims {
 		name := str(claim, "spec", "volumeName")
 		if name == "" {
+			if allowPending && validMeta(claim, namespace) && str(claim, "status", "phase") == "Pending" {
+				continue
+			}
 			return s, errors.New("missing claim volume binding")
 		}
 		v, e := c.read(ctx, "pv", name, "-o", "json")
@@ -124,9 +150,47 @@ func (c client) write(ctx context.Context, args []string, body any) error {
 		return err
 	}
 	if _, err = c.command(ctx, args, b); err != nil {
-		return fmt.Errorf("conditional %s failed; no retry or cleanup write", args[0])
+		return fmt.Errorf("conditional %s failed (reason=%s); no retry or cleanup write", args[0], commandFailureReason(ctx, err))
 	}
 	return nil
+}
+
+// commandFailureReason emits only finite categories from bounded, recognized
+// kubectl status lines. It never returns raw process errors, stderr or payloads.
+// A status reason is not proof of a particular admission rule or CAS failure.
+func commandFailureReason(ctx context.Context, err error) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) || errors.Is(err, context.DeadlineExceeded) {
+		return "CONTEXT_DEADLINE"
+	}
+	if errors.Is(ctx.Err(), context.Canceled) || errors.Is(err, context.Canceled) {
+		return "CONTEXT_CANCELLED"
+	}
+	var failure *exec.ExitError
+	if !errors.As(err, &failure) || len(failure.Stderr) == 0 || len(failure.Stderr) > 8192 {
+		return "UNKNOWN"
+	}
+	reasons := map[string]string{
+		"Forbidden": "SERVER_FORBIDDEN", "Conflict": "SERVER_CONFLICT",
+		"Invalid": "SERVER_INVALID", "BadRequest": "SERVER_BAD_REQUEST",
+		"Unauthorized": "SERVER_UNAUTHORIZED", "InternalError": "SERVER_INTERNAL",
+		"ServiceUnavailable": "SERVER_UNAVAILABLE", "Timeout": "SERVER_TIMEOUT",
+	}
+	reason := ""
+	for _, line := range strings.Split(string(failure.Stderr), "\n") {
+		if !strings.HasPrefix(line, "Error from server (") {
+			continue
+		}
+		status, _, ok := strings.Cut(strings.TrimPrefix(line, "Error from server ("), "): ")
+		next := reasons[status]
+		if !ok || next == "" || (reason != "" && reason != next) {
+			return "UNKNOWN"
+		}
+		reason = next
+	}
+	if reason == "" {
+		return "UNKNOWN"
+	}
+	return reason
 }
 
 // tests pins a JSON patch to one observed resource identity and version.
@@ -147,6 +211,11 @@ const fieldManager = "wedding-standby-repair"
 
 // patch scopes mutations to the observed resource and explicit API group.
 func (c client) patch(ctx context.Context, kind string, o object, ops []object) error {
+	return c.write(ctx, patchArgs(kind, o), ops)
+}
+
+// patchArgs keeps repair and diagnostic resource targeting identical.
+func patchArgs(kind string, o object) []string {
 	if kind == "cluster" {
 		kind = "cluster.postgresql.cnpg.io"
 	}
@@ -154,7 +223,7 @@ func (c client) patch(ctx context.Context, kind string, o object, ops []object) 
 	if kind != "pv" {
 		args = append(args, "-n", namespace)
 	}
-	return c.write(ctx, args, ops)
+	return args
 }
 
 // fencePatch changes only this repair's fence while pinning the primary and size.
@@ -519,7 +588,7 @@ func protectedPeers(s inventory, o options, p plan) error {
 				if peer == p.primary {
 					role = "primary"
 				}
-				found = validMeta(pod, namespace) && owned(pod, o.clusterUID) && condition(pod, "Ready") && str(pod, "metadata", "labels", "cnpg.io/instanceRole") == role
+				found = validMeta(pod, namespace) && owned(pod, o.clusterUID) && str(pod, "status", "phase") == "Running" && condition(pod, "Ready") && str(pod, "metadata", "labels", "cnpg.io/instanceRole") == role
 			}
 		}
 		if !found {
@@ -530,7 +599,7 @@ func protectedPeers(s inventory, o options, p plan) error {
 }
 
 // recovered joins three Ready instances to fresh replacement storage, not the old claim.
-func (c client) recovered(ctx context.Context, s inventory, o options, p plan, oldClaim identity) (bool, error) {
+func (c client) recovered(ctx context.Context, s inventory, o options, p plan, oldClaim identity, retainedVolume ...object) (bool, error) {
 	if num(s.cluster, "status", "readyInstances") != 3 || !condition(s.cluster, "Ready") || !condition(s.cluster, "ContinuousArchiving") || str(s.cluster, "metadata", "annotations", fenceKey) != "" || len(s.pods) != 3 {
 		return false, nil
 	}
@@ -557,9 +626,6 @@ func (c client) recovered(ctx context.Context, s inventory, o options, p plan, o
 				continue
 			}
 			mounted++
-			if name == oldClaim.name {
-				return false, errors.New("replacement attempted to reuse retained storage")
-			}
 			claim, err := c.read(ctx, "pvc", name, "-n", namespace, "-o", "json")
 			if err != nil {
 				return false, err
@@ -573,6 +639,14 @@ func (c client) recovered(ctx context.Context, s inventory, o options, p plan, o
 			}
 			if !validMeta(pv, "") || str(pv, "status", "phase") != "Bound" || str(pv, "spec", "claimRef", "uid") != id(claim).uid || str(pv, "spec", "claimRef", "name") != name || str(pv, "spec", "claimRef", "namespace") != namespace {
 				return false, errors.New("replacement volume binding is incomplete")
+			}
+			// Check the actual mounted volume, not only selector-listed claims.
+			// A differently labelled claim must not bypass physical disk freshness.
+			if len(retainedVolume) != 0 {
+				old := retainedVolume[0]
+				if len(retainedVolume) != 1 || id(pv).name == id(old).name || id(pv).uid == id(old).uid || str(pv, "spec", "csi", "driver") != retainedCSIDriver || str(pv, "spec", "csi", "volumeHandle") == "" || str(pv, "spec", "csi", "volumeHandle") == str(old, "spec", "csi", "volumeHandle") {
+					return false, errors.New("actual replacement backing volume is not fresh")
+				}
 			}
 		}
 		if mounted != 1 {
@@ -809,11 +883,19 @@ func run() error {
 	execute := flag.Bool("execute", false, "replace the failed standby through the protected main workflow")
 	proveFenced := flag.Bool("prove-fenced", false, "read the bound instance's fencing acknowledgment through the protected read-only workflow")
 	resumeFenced := flag.Bool("resume-fenced", false, "continue this repair's retained, attached fenced HOLD")
+	quarantine := flag.Bool("quarantine-completed-join", false, "retain the old backing volume and replace the completed-join claim through a separately approved workflow")
+	diagnose := flag.Bool("diagnose-pause", false, "submit only the guarded pause patch as a separately approved server-side dry-run")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
-	podUID := flag.String("pod-uid", "", "expected failed Pod UID")
+	podUID := flag.String("pod-uid", "", "expected failed Pod or completed join Pod UID")
+	jobUID := flag.String("job-uid", "", "expected completed join Job UID")
+	claimUID := flag.String("claim-uid", "", "expected detached original PVC UID")
+	volumeUID := flag.String("volume-uid", "", "expected retained original PV UID")
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return errors.New("unexpected argument")
+	}
+	if *diagnose && (!*quarantine || *execute || *proveFenced || *resumeFenced) {
+		return errors.New("pause diagnostic cannot share execution, proof or continuation modes and requires completed-join guards")
 	}
 	uuid := regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 	if !uuid.MatchString(*clusterUID) || !uuid.MatchString(*podUID) {
@@ -822,8 +904,28 @@ func run() error {
 	if *execute && *proveFenced {
 		return errors.New("read-only proof cannot share the repair execution mode")
 	}
+	if *quarantine && (*proveFenced || *resumeFenced) {
+		return errors.New("completed-join recovery cannot share a legacy proof or continuation mode")
+	}
+	if *quarantine {
+		if !uuid.MatchString(*jobUID) || !uuid.MatchString(*claimUID) || !uuid.MatchString(*volumeUID) {
+			return errors.New("explicit current completed Job, claim and volume UIDs are required")
+		}
+	} else if *jobUID != "" || *claimUID != "" || *volumeUID != "" {
+		return errors.New("storage identity guards require the completed-join mode")
+	}
 	contextName := "oidc@prod"
-	if *execute {
+	if *diagnose {
+		if !pauseDiagnosticDispatchAllowed(os.Getenv) {
+			return errors.New("pause diagnostic requires the separately confirmed first protected main diagnostic dispatch")
+		}
+		contextName = "admin@prod"
+	} else if *execute && *quarantine {
+		if !storageDispatchAllowed(os.Getenv) {
+			return errors.New("execution requires the separately confirmed first protected completed-join main dispatch")
+		}
+		contextName = "admin@prod"
+	} else if *execute {
 		resumeInput := os.Getenv("WEDDING_REPAIR_RESUME_FENCED")
 		if (resumeInput != "" && resumeInput != "false" && resumeInput != "true") || *resumeFenced != (resumeInput == "true") {
 			return errors.New("continuation must be explicitly selected by the protected dispatch")
@@ -856,12 +958,23 @@ func run() error {
 		fmt.Println("FENCE_PROOF=PASS instanceAcknowledged=1 retainedClaims=1 noMutations=1")
 		return nil
 	}
-	if err := repair(ctx, c, options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced}, *execute); err != nil {
-		return err
-	}
 	result := "PLAN=PASS no writes"
-	if *execute {
-		result = "REPAIR=PASS readyInstances=3 retainedClaims=1 separatedSamples=2"
+	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced, diagnosePause: *diagnose}
+	if *quarantine {
+		if err := quarantineCompletedJoin(ctx, c, o, storageGuards{*jobUID, *claimUID, *volumeUID}, *execute); err != nil {
+			return err
+		}
+		result = quarantineResult(*execute)
+		if *diagnose {
+			result = "PAUSE_DIAGNOSTIC=PASS requestAccepted=1 persistedMutations=0"
+		}
+	} else {
+		if err := repair(ctx, c, o, *execute); err != nil {
+			return err
+		}
+		if *execute {
+			result = "REPAIR=PASS readyInstances=3 retainedClaims=1 separatedSamples=2"
+		}
 	}
 	fmt.Println(result)
 	if *execute {
