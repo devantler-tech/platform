@@ -1,0 +1,15 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: kro
+  namespace: kro-system
+spec:
+  interval: 10m
+  # Fetch the chart artifact directly so the source exposes real readiness.
+  url: oci://registry.k8s.io/kro/charts/kro
+  ref:
+    tag: 0.9.2
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
