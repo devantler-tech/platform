@@ -142,15 +142,29 @@ func (c client) proveSource(ctx context.Context) error {
 	return nil
 }
 
-// write sends a single conditional mutation after its proof and fresh observation.
-// The repair caller never retries a rejected request or performs cleanup writes.
+// conditionalWriteFailure retains only a sanitized disposition, never a raw
+// command error. Only the native, complete rejection envelope proves no commit.
+type conditionalWriteFailure struct {
+	operation, reason string
+	rejected          bool
+}
+
+func (f conditionalWriteFailure) Error() string {
+	return fmt.Sprintf("conditional %s failed (reason=%s); no retry or cleanup write", f.operation, f.reason)
+}
+
+// write sends exactly one conditional mutation. A separately bounded Cluster
+// caller may re-prove a verified rejection; uncertain outcomes never permit it.
 func (c client) write(ctx context.Context, args []string, body any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 	if _, err = c.command(ctx, args, b); err != nil {
-		return fmt.Errorf("conditional %s failed (reason=%s); no retry or cleanup write", args[0], commandFailureReason(ctx, err))
+		reason := commandFailureReason(ctx, err)
+		var native clusterRequestFailure
+		rejected := ctx.Err() == nil && errors.As(err, &native) && (reason == "SERVER_INVALID_NO_CAUSES" || reason == "SERVER_INVALID_WITH_CAUSES")
+		return conditionalWriteFailure{args[0], reason, rejected}
 	}
 	return nil
 }

@@ -53,14 +53,14 @@ go run ./scripts/replace-wedding-standby --quarantine-completed-join \
 ```
 
 Execution requires a first main dispatch with confirmation
-`retain-volume-rebuild-completed-standby`, the `prod` environment and the shared
+`retain-volume-rebuild-after-rejection`, the `prod` environment and the shared
 deployment lock. Its tests run before any production credentials are restored.
 Every write requires fresh observations and proof that its reviewed source remains
 current main. Cluster patches re-read the exact Cluster after the other evidence
 is gathered and revalidate its recovery predicates before using that final UID
 and resource version. Concurrent status updates during earlier inventory reads
-do not weaken those conditional tests; a change after the final read still fails
-the single attempt. The protected completed-join and diagnostic paths resolve
+do not weaken those conditional tests; a change after the final read still rejects
+that request without persisting it. The protected completed-join and diagnostic paths resolve
 their existing selected certificate context once, then use a persistent, fixed-path
 Cluster connection for the final GET and PATCH. This removes subprocess discovery
 and kubectl patch's additional target GET without changing any precondition.
@@ -78,8 +78,23 @@ and classified by their verified Kubernetes Status envelope: `SERVER_INVALID_NO_
 or `SERVER_INVALID_WITH_CAUSES`. Neither category identifies a failed predicate.
 Malformed, incomplete, oversized or mismatched envelopes retain `SERVER_INVALID`;
 response messages, fields and values are never printed or persisted.
-A failed mutation or unknown read stops immediately without retry
-or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
+A completed-join recovery may send at most five separately guarded requests within
+one minute **per pause or resume phase** (at most ten across both). Only a complete,
+typed native HTTP 422 rejection admits a new request: the server rejected that
+request before persistence. Each new request re-proves current main, the same
+operator leader, protected peers, backups, retained backing identity and every
+phase-specific storage and consumer guard. It also compares all Cluster spec,
+status and metadata with the phase's first observation, allowing only resource
+version, diagnostic `phaseReason`, that leaf's managed-field ownership and the
+timestamp of its status-only ownership entry to vary. Manager, operation,
+generation, other ownership fields and primary history remain frozen. Every new
+patch retains fresh UID and resource-version tests. This does not identify which
+predicate failed or replay an HTTP request. Unknown, malformed, cancelled,
+timed-out, throttled, conflicting and other failed outcomes stop without a second
+request. Diagnostics and storage deletions remain single-shot.
+
+Any exhausted request bound, failed guard or unknown read stops without cleanup
+writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
 
@@ -169,7 +184,7 @@ A server status does not establish a particular
 admission policy, failed JSON-patch test or transport cause; ambiguous, oversized
 or unrecognized evidence stays UNKNOWN.
 There is no automatic destructive cleanup, reverse ownership change, WAL reset,
-or repeated mutation. Inspect the current state with OIDC reads and prepare a
+or unguarded repeated mutation. Inspect the current state with OIDC reads and prepare a
 reviewed continuation. Keep the old claim and volume for diagnosis; retirement
 is a separately approved data-lifecycle operation.
 
@@ -197,7 +212,11 @@ a continuation or declare the database recovered.
 
 ```sh
 go test -race -count=1 ./scripts/replace-wedding-standby
+go test -mod=readonly -modfile=scripts/replace-wedding-standby/cas-test.mod \
+  -tags=apiserverpatch -race -count=1 ./scripts/replace-wedding-standby
 ```
 
-The workflow runs this package on its pull request, merge group and explicit
-dispatch before any production credentials are restored.
+The workflow runs the complete tagged suite on its pull request, merge group and
+explicit dispatch before any production credentials are restored. The test-only
+module pins the API server's JSON-patch implementation for the real conditional
+PATCH fixture without changing dependencies of platform validation or deploy tools.

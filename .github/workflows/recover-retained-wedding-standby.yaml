@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: retain-volume-rebuild-completed-standby"
+        description: "Type exactly: retain-volume-rebuild-after-rejection (up to five fully re-proven Cluster requests per pause/resume phase)"
         required: true
         type: string
       cluster_uid:
@@ -54,7 +54,9 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Test bound observations and conditional recovery writes
-        run: go test -race -count=1 -timeout=5m ./scripts/replace-wedding-standby
+        # Test-only module pins the apiserver's patch implementation without
+        # changing dependencies of the platform's validation or deploy tools.
+        run: go test -mod=readonly -modfile=scripts/replace-wedding-standby/cas-test.mod -tags=apiserverpatch -race -count=1 -timeout=5m ./scripts/replace-wedding-standby
 
   repair:
     name: 💒 Retain old volume and rebuild the stalled standby
@@ -80,7 +82,7 @@ jobs:
           DISPATCH_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == retain-volume-rebuild-completed-standby && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == retain-volume-rebuild-after-rejection && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
       - name: 📑 Checkout reviewed main revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

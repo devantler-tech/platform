@@ -261,7 +261,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return err
 	}
 	// Verify every namespace consumer before any mutation, including unlabelled Pods.
-	consumers := func(allowJoin bool) (bool, error) {
+	consumers := func(ctx context.Context, allowJoin bool) (bool, error) {
 		pods, e := c.namespacePods(ctx)
 		if e != nil {
 			return false, e
@@ -277,7 +277,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 		return allowJoin || !present, nil
 	}
-	if _, err = consumers(true); err != nil {
+	if _, err = consumers(ctx, true); err != nil {
 		return err
 	}
 	since := c.now()
@@ -300,10 +300,8 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return nil
 	}
 	paused := false
-	// Rebind after unrelated reads: status reconciliation can advance the Cluster
-	// version while storage and leader evidence is collected. Keep the conditional
-	// write single-shot if anything changes after this final observation.
-	rebindCluster := func() error {
+	// Rebind after unrelated reads without removing the version precondition.
+	rebindCluster := func(ctx context.Context) error {
 		if e := c.proveSource(ctx); e != nil {
 			return e
 		}
@@ -324,7 +322,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 		return nil
 	}
-	refresh := func() error {
+	refresh := func(ctx context.Context) error {
 		if e := c.proveSource(ctx); e != nil {
 			return e
 		}
@@ -348,9 +346,9 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if e != nil || current != leader {
 			return errors.New("operator leader changed; no further write")
 		}
-		return rebindCluster()
+		return rebindCluster(ctx)
 	}
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	if _, err = completedJoinPlan(s, o, g); err != nil {
@@ -363,14 +361,28 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		args := append(patchArgs("cluster", s.cluster), "--dry-run=server")
 		return c.write(ctx, args, ops)
 	}
-	if err = c.patch(ctx, "cluster", s.cluster, ops); err != nil {
+	if err = guardedClusterPatch(ctx, c, s.cluster, func(ctx context.Context) (object, error) {
+		if e := refresh(ctx); e != nil {
+			return nil, e
+		}
+		if _, e := completedJoinPlan(s, o, g); e != nil {
+			return nil, e
+		}
+		if _, e := consumers(ctx, true); e != nil {
+			return nil, e
+		}
+		if e := rebindCluster(ctx); e != nil {
+			return nil, e
+		}
+		return s.cluster, nil
+	}, func(cluster object) []object { return pausePatch(cluster, p.primary.name) }); err != nil {
 		return err
 	}
 	paused = true
 	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ackCtx); err != nil {
 			return err
 		}
 		b, e := c.command(ackCtx, logArgs, nil)
@@ -388,7 +400,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 			return errors.New("operator did not acknowledge pause; storage unchanged")
 		}
 	}
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	if !retained(s, oldClaim, oldVolume, true) {
@@ -397,7 +409,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if len(s.jobs) != 1 || id(s.jobs[0]) != (identity{targetName + "-join", g.jobUID}) || !owned(s.jobs[0], o.clusterUID) || !validMeta(s.jobs[0], namespace) || str(s.jobs[0], "metadata", "labels", "cnpg.io/jobRole") != "join" || str(s.jobs[0], "metadata", "labels", "cnpg.io/instanceName") != targetName || num(s.jobs[0], "status", "succeeded") != 1 || num(s.jobs[0], "status", "active") != 0 || num(s.jobs[0], "status", "failed") != 0 {
 		return errors.New("completed job changed")
 	}
-	if _, err = consumers(true); err != nil {
+	if _, err = consumers(ctx, true); err != nil {
 		return err
 	}
 	job := s.jobs[0]
@@ -406,14 +418,14 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return err
 	}
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ctx); err != nil {
 			return err
 		}
 		if !retained(s, oldClaim, oldVolume, true) {
 			return errors.New("retention changed during job removal")
 		}
 		if len(s.jobs) == 0 {
-			absent, e := consumers(false)
+			absent, e := consumers(ctx, false)
 			if e != nil {
 				return e
 			}
@@ -428,13 +440,13 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 	}
 	// Rebind the same observations immediately before the PVC delete.
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	if len(s.jobs) != 0 || !retained(s, oldClaim, oldVolume, true) {
 		return errors.New("retained claim delete preconditions changed")
 	}
-	if absent, e := consumers(false); e != nil || !absent {
+	if absent, e := consumers(ctx, false); e != nil || !absent {
 		return errors.New("claim consumer absence is unproven")
 	}
 	deletion = object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": object{"uid": oldClaim.uid, "resourceVersion": str(s.claims[0], "metadata", "resourceVersion")}, "propagationPolicy": "Background"}
@@ -442,7 +454,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return err
 	}
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ctx); err != nil {
 			return err
 		}
 		v, e := c.read(ctx, "pv", oldVolume.name, "-o", "json")
@@ -462,7 +474,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 			return errors.New("original volume did not become safely retained")
 		}
 	}
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	v, err := c.read(ctx, "pv", oldVolume.name, "-o", "json")
@@ -472,20 +484,39 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if len(s.jobs) != 0 || len(s.claims) != 0 || !released(v, oldClaim, oldVolume) {
 		return errors.New("quarantine readback changed before resume")
 	}
-	if absent, e := consumers(false); e != nil || !absent {
+	if absent, e := consumers(ctx, false); e != nil || !absent {
 		return errors.New("claim consumer absence is unproven")
 	}
-	if err = rebindCluster(); err != nil {
+	if err = rebindCluster(ctx); err != nil {
 		return err
 	}
-	ops = append(tests(s.cluster), testPath("/status/currentPrimary", p.primary.name), testPath("/status/targetPrimary", p.primary.name), testPath("/spec/instances", float64(3)), testPath("/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"), object{"op": "remove", "path": "/metadata/annotations/cnpg.io~1reconciliationLoop"})
-	if err = c.patch(ctx, "cluster", s.cluster, ops); err != nil {
+	if err = guardedClusterPatch(ctx, c, s.cluster, func(ctx context.Context) (object, error) {
+		if e := refresh(ctx); e != nil {
+			return nil, e
+		}
+		v, e := c.read(ctx, "pv", oldVolume.name, "-o", "json")
+		if e != nil {
+			return nil, e
+		}
+		if len(s.jobs) != 0 || len(s.claims) != 0 || !released(v, oldClaim, oldVolume) {
+			return nil, errors.New("quarantine readback changed after resume rejection")
+		}
+		if absent, e := consumers(ctx, false); e != nil || !absent {
+			return nil, errors.New("claim consumer absence is unproven")
+		}
+		if e := rebindCluster(ctx); e != nil {
+			return nil, e
+		}
+		return s.cluster, nil
+	}, func(cluster object) []object {
+		return append(tests(cluster), testPath("/status/currentPrimary", p.primary.name), testPath("/status/targetPrimary", p.primary.name), testPath("/spec/instances", float64(3)), testPath("/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"), object{"op": "remove", "path": "/metadata/annotations/cnpg.io~1reconciliationLoop"})
+	}); err != nil {
 		return err
 	}
 	paused = false
 	good := 0
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ctx); err != nil {
 			return err
 		}
 		v, err = c.read(ctx, "pv", oldVolume.name, "-o", "json")
@@ -536,7 +567,7 @@ func pausePatch(cluster object, primary string) []object {
 
 // storageDispatchAllowed admits only the separately approved, first main dispatch.
 func storageDispatchAllowed(env func(string) string) bool {
-	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volume-rebuild-completed-standby" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
+	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volume-rebuild-after-rejection" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
 }
 
 // quarantineResult reports only aggregate evidence, not storage identifiers.
