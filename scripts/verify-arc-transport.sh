@@ -140,23 +140,28 @@ jq -e '(.items | length) > 0 and all(.items[]; .metadata.uid != null and .spec.n
  all(.status.containerStatuses[]; .ready == true and .containerID != ""))' "$scratch/eso.json" >/dev/null
 { printf '%s\n' "$bao_node"; jq -r '.items[].spec.nodeName' "$scratch/eso.json"; } | sort -u >"$scratch/nodes"
 [[ "$(wc -l <"$scratch/nodes")" -le 4 ]] || fail exposure-bound
-stage=healthy-tls-forward
-kubectl --context "$context" --request-timeout=30s -n openbao port-forward --address=127.0.0.1 pod/openbao-2 :8204 >"$scratch/forward" 2>"$scratch/forward-error" &
+stage=healthy-health-forward
+# Positive health controls use loopback-only tunnels to this exact Pod. The
+# API-server proxy is not an allowed HTTP client under OpenBao's network policy.
+# Direct same-node HTTP/TLS denial challenges below remain unchanged.
+kubectl --context "$context" --request-timeout=30s -n openbao port-forward --address=127.0.0.1 pod/openbao-2 :8204 :8200 >"$scratch/forward" 2>"$scratch/forward-error" &
 forward_pid=$!
 for _ in {1..30}; do
   kill -0 "$forward_pid" 2>/dev/null || fail port-forward
   port=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 8204$/\1/p' "$scratch/forward")
-  [[ "$port" =~ ^[0-9]+$ ]] && break
+  http_port=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) -> 8200$/\1/p' "$scratch/forward")
+  [[ "$port" =~ ^[0-9]+$ && "$http_port" =~ ^[0-9]+$ ]] && break
   sleep 1
 done
-[[ "$port" =~ ^[0-9]+$ ]] || fail port-forward
+[[ "$port" =~ ^[0-9]+$ && "$http_port" =~ ^[0-9]+$ ]] || fail port-forward
 healthy() {
   stage=healthy-tls-health
   curl --noproxy '*' --proto '=https' --tlsv1.2 --cacert "$scratch/ca.pem" --resolve "$host:$port:127.0.0.1" \
     --fail --silent --show-error --max-time 15 "https://$host:$port/v1/sys/health?standbyok=true" >"$scratch/tls-health" 2>"$scratch/tls-error"
   "$scratch/evidence" health <"$scratch/tls-health"
   stage=healthy-http-health
-  kc get --raw '/api/v1/namespaces/openbao/pods/openbao-2:8200/proxy/v1/sys/health?standbyok=true' >"$scratch/http-health"
+  curl --noproxy '*' --proto '=http' --fail --silent --show-error --max-time 15 \
+    "http://127.0.0.1:$http_port/v1/sys/health?standbyok=true" >"$scratch/http-health" 2>"$scratch/http-error"
   "$scratch/evidence" health <"$scratch/http-health"
   stage=healthy-health-binding
   [[ "$(jq -r .cluster_id "$scratch/tls-health")" == "$(jq -r .cluster_id "$scratch/http-health")" ]] || fail split-health

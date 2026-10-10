@@ -1,5 +1,6 @@
 # Additional -config listeners append; Raft, audit, unseal and the legacy
-# listener stay in the base. The existing partition still replaces only #2.
+# listener stay in the base. This patch replaces the earlier post-renderer list,
+# so it repeats the OnDelete strategy from patches/standby-oidc-canary.yaml.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -26,9 +27,8 @@ spec:
                 namespace: openbao
               spec:
                 updateStrategy:
-                  type: RollingUpdate
-                  rollingUpdate:
-                    partition: 2
+                  type: OnDelete
+                  rollingUpdate: null
                 template:
                   metadata:
                     labels:

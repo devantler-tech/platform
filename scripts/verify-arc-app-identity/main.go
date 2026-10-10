@@ -23,6 +23,9 @@ import (
 const baoTLSName = "openbao-arc.openbao.svc.cluster.local"
 
 func main() {
+	if len(os.Args) == 2 && (os.Args[1] == "--preflight-runner-group" || os.Args[1] == "--verify-runner-group") {
+		os.Exit(runRunnerGroup(os.Args[1:], ".", os.Stdout, verifyRunnerGroupProduction))
+	}
 	os.Exit(run(os.Args[1:], ".", os.Stdout, runtimeModes{identity: verifyProduction, transport: verifyTransportProduction}))
 }
 
@@ -110,6 +113,8 @@ type runtimeOperations struct {
 }
 
 func verifyRuntime(ctx context.Context, reviewed configuration, operations runtimeOperations) outcome {
+	cleanup, dispose := cleanupContext(ctx)
+	defer dispose()
 	ca, status := liveConfiguration(ctx, reviewed, operations.execute)
 	if status != pass {
 		return status
@@ -122,7 +127,8 @@ func verifyRuntime(ctx context.Context, reviewed configuration, operations runti
 	if !ok {
 		return holdTransport
 	}
-	endpoint, stop, err := operations.forward(ctx, port)
+	// Keep the authenticated tunnel alive through bounded credential cleanup.
+	endpoint, stop, err := operations.forward(cleanup, port)
 	if err != nil {
 		return failTransport
 	}
@@ -141,7 +147,7 @@ func verifyRuntime(ctx context.Context, reviewed configuration, operations runti
 	if !regexp.MustCompile(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`).MatchString(reader) {
 		return "HOLD_READER"
 	}
-	return operations.identity(ctx, verificationOptions{baoURL: endpoint, githubURL: "https://api.github.com", expectedClientID: reviewed.clientID, readerJWT: reader, client: secureClient(nil, ""), baoClient: secureClient(roots, baoTLSName), now: time.Now})
+	return operations.identity(ctx, verificationOptions{baoURL: endpoint, githubURL: "https://api.github.com", expectedClientID: reviewed.clientID, readerJWT: reader, client: secureClient(nil, ""), baoClient: secureClient(roots, baoTLSName), now: time.Now, cleanup: cleanup})
 }
 
 func listenerTLS(ctx context.Context, endpoint string, ca []byte) error {

@@ -3277,6 +3277,29 @@ changes. The required authorization gate and its negative controls remain
 enabled. Production TLS, actual credential identity and untrusted workload
 isolation remain separate protected runtime checks before ARC activation.
 
+## 2026-10-06 — Canonical manifest publisher accepted alongside the legacy one
+
+platform#4502 records one reviewed commit of the canonical manifest publishing
+workflow, `devantler-tech/.github` at
+`2fa404276b0ce5c0527683b080e39045045c4e42`, as an additional accepted signer
+for the two manifest artifacts. The reviewed writer regenerated both cosign
+subjects from the record; every legacy revision accepted before is still in
+each subject.
+
+The production-authorization job on the checksum-verified renderer (run
+37444690606, job 112208384114) measured exactly two changed entries against
+base `530f81bb` and nothing added or removed:
+
+- OCIRepository aws/aws moves from
+  `f900dbd1860a7494381bb0fe0bd044ebedeaa1570bc9a230b7879e2b4d752163` to
+  `0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3`.
+- OCIRepository github-config/github-config moves from
+  `56d973136e535da94263547ab49101420a05e55f301e3f4c9c3f191354da7365` to
+  `b6c432af595e2aaa0b41cc114cb4d85a21125a02e5b7a60e5abfc4e034c03e40`.
+
+The source delta is the two subjects alone. No RBAC, IAM, service account, or
+permission grant changes.
+
 ## 2026-10-07 — Read-only service-quota listing for the EKS CI role
 
 The renderer measured exactly one changed authorization entry for
@@ -3299,3 +3322,51 @@ devantler-tech/ksail could list usage but not the limit.
 These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
 which is not the approved renderer; the required CI job re-renders with the
 approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.
+
+## 2026-10-10 — Recover the missing secret-store server without replacing its peers
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry for #4709 against main
+`6a566925a52a98f9cce3aece5a87fa9e4fd1da10`: HelmRelease openbao/openbao.
+Nothing was added or removed. Its approved fingerprint moves from
+`5f42ca30331162fc4ee98a0487fa3651140f0542ff49b573a99a46a343582616` to
+`83c3232f567e9320bf9561380834fb64ba0e34f974c4dfd026bef228bf59ecd3`.
+
+The source changes the production StatefulSet strategy to OnDelete and removes
+the rolling-update partition from both post-renderers. A missing server uses
+the current pod template; running peers are not replaced automatically. The
+pinned chart regression checks the combined production renderer and the
+local/default chart strategy. Kubernetes controller semantics and protected
+live recreation remain separate evidence. No RBAC, IAM, service account, credential, listener,
+storage, disruption budget, or permission grant changes.
+
+This carries the reviewed source from #4653 at
+`41d374f2e4b9d101ffd2eadd568c5059c900a20a`, together with the independently
+tested credential-probe request correction from #4666 at
+`3491077c4179cf4c738ba368ada7bba3826cd781`. The whole production authorization
+contract and its negative controls pass on the combined fresh-main tree.
+
+## 2026-10-10 — Complete the retained-field transition for the recovery
+
+The preceding entry records the initial candidate, not the final approved
+surface. The protected deployment rejected that candidate because server-side
+apply retained the old StatefulSet `rollingUpdate` field. At source commit
+`46d2e3af25b91b438b6e0c9017734e465b11d4ee`, the checksum-verified kubectl
+v1.36.2 / Kustomize v5.8.1 renderer measured the same single changed entry
+against main `6a566925a52a98f9cce3aece5a87fa9e4fd1da10`: HelmRelease
+openbao/openbao, with nothing added or removed. The final approved fingerprint
+is `c0392359b17c7e56b14ca80929ad85644922a658a1d9cb85bf6b64138684262c`,
+superseding the initial candidate's
+`83c3232f567e9320bf9561380834fb64ba0e34f974c4dfd026bef228bf59ecd3`.
+
+The additional source delta disables server-side apply for both Helm upgrade
+and rollback. Both actions use Helm's three-way merge without force replacement
+to remove the retained `rollingUpdate` field; the post-renderers explicitly
+remove it while retaining OnDelete. The real local Kubernetes API and the
+production controller's pinned Helm SDK exercise upgrade, rollback and
+re-upgrade for both previous field owners, preserving the StatefulSet UID and
+every other spec field. CI run 38079488354 passed the complete authorization
+gate and transition regression on that source commit. No RBAC, IAM, service
+account, credential, listener, storage, disruption budget or permission grant
+changes. Actual production recreation and peer preservation remain separate
+protected deployment and readback evidence.
