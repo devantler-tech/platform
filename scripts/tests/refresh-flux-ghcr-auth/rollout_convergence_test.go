@@ -3037,6 +3037,71 @@ func TestFluxChildWaitingOnHealthChecksDoesNotBlockPolicyHandoff(t *testing.T) {
 	}
 }
 
+// v1.8.5 checks dependencies before entering reconcile. A dependency retry
+// changes Ready but retains the previous failed-health conditions; it never
+// starts another apply. Reproduce the protected recovery failure, including the
+// per-condition generation (the top-level observedGeneration can lag).
+func TestFluxChildDependencyRetryRequiresCurrentFailedHealthEvidence(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name      string
+		overrides map[string]string
+		allowed   bool
+	}{
+		{name: "current failed health followed by dependency retry", allowed: true},
+		{name: "stale failed health", overrides: map[string]string{"FAKE_FLUX_POLICY_HEALTHY_GENERATION": "12"}},
+		{name: "stale reconciling", overrides: map[string]string{"FAKE_FLUX_POLICY_RECONCILING_GENERATION": "12"}},
+		{name: "stale dependency condition", overrides: map[string]string{"FAKE_FLUX_POLICY_READY_GENERATION": "12"}},
+		{name: "missing generations", overrides: map[string]string{"FAKE_FLUX_POLICY_CONDITION_GENERATION": ""}},
+		{name: "no declared dependency", overrides: map[string]string{"FAKE_FLUX_POLICY_CHILD_NO_DEPENDENCIES": "true"}},
+		{name: "wrong revision", overrides: map[string]string{"FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION": "latest@sha256:other"}},
+		{name: "fetch stage with retained failed health", overrides: map[string]string{"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Fetching manifests for revision " + fixtureFluxRevision + " with a timeout of 20m0s"}},
+		{name: "apply stage with retained failed health", overrides: map[string]string{"FAKE_FLUX_POLICY_RECONCILING_MESSAGE": "Detecting drift for revision " + fixtureFluxRevision + " with a timeout of 20m0s"}},
+		{name: "duplicate Ready", overrides: map[string]string{"FAKE_FLUX_POLICY_DUPLICATE_CONDITION": "Ready"}},
+		{name: "duplicate Healthy", overrides: map[string]string{"FAKE_FLUX_POLICY_DUPLICATE_CONDITION": "Healthy"}},
+		{name: "duplicate Reconciling", overrides: map[string]string{"FAKE_FLUX_POLICY_DUPLICATE_CONDITION": "Reconciling"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{
+				"FAKE_FLUX_POLICY_RECONCILING":                "true",
+				"FAKE_FLUX_POLICY_RECONCILING_REASON":         "ProgressingWithRetry",
+				"FAKE_FLUX_POLICY_RECONCILING_MESSAGE":        healthCheckStageMessage,
+				"FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION":    fixtureFluxRevision,
+				"FAKE_FLUX_POLICY_HEALTHY_STATUS":             "False",
+				"FAKE_FLUX_POLICY_HEALTHY_REASON":             "HealthCheckFailed",
+				"FAKE_FLUX_POLICY_HEALTHY_MESSAGE":            "timeout waiting for: [Job/fixture/config status: 'InProgress']",
+				"FAKE_FLUX_POLICY_CHILD_DEPENDENCY_NOT_READY": "infrastructure-controllers",
+				"FAKE_FLUX_POLICY_CONDITION_GENERATION":       "13",
+				"FAKE_LOG_FLUX_CONTROLLER_RESTART":            "true",
+			}
+			for key, value := range tc.overrides {
+				env[key] = value
+			}
+			f := newFixture(t)
+			result := f.runHelper(validConfig(), nil, env)
+			operations := readLines(f.operationLog)
+			if tc.allowed {
+				requireSuccessResult(t, result)
+				pause := lineIndex(t, operations, "flux-policy-pause:infrastructure")
+				restart := lineIndex(t, operations, "flux-controller-restart:kustomize-controller")
+				policy := lineIndex(t, operations, "ivpol-policy-apply:verify-app-images")
+				resume := lineIndex(t, operations, "flux-policy-resume:infrastructure")
+				if pause >= restart || restart >= policy || policy >= resume {
+					t.Fatalf("unsafe dependency-retry handoff: pause=%d restart=%d policy=%d resume=%d", pause, restart, policy, resume)
+				}
+				return
+			}
+			requireFailureResult(t, result)
+			requireContains(t, result.stdout+result.stderr, "did not quiesce before the image-verification policy handoff")
+			requireNoLine(t, operations, "flux-policy-pause:infrastructure")
+			requireNoLine(t, operations, "ivpol-policy-apply:verify-app-images")
+			requireLine(t, operations, "flux-policy-parent-resume:flux-system")
+		})
+	}
+}
+
 // Every state that can still be applying, or that the gate cannot positively
 // place in the health-check stage, keeps the handoff refused.
 func TestFluxChildNotProvablyPastApplyBlocksPolicyHandoff(t *testing.T) {
