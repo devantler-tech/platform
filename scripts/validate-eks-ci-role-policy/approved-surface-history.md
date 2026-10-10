@@ -3335,8 +3335,9 @@ Nothing was added or removed. Its approved fingerprint moves from
 The source changes the production StatefulSet strategy to OnDelete and removes
 the rolling-update partition from both post-renderers. A missing server uses
 the current pod template; running peers are not replaced automatically. The
-pinned chart regression verifies that behavior with and without the credential
-transport renderer. No RBAC, IAM, service account, credential, listener,
+pinned chart regression checks the combined production renderer and the
+local/default chart strategy. Kubernetes controller semantics and protected
+live recreation remain separate evidence. No RBAC, IAM, service account, credential, listener,
 storage, disruption budget, or permission grant changes.
 
 This carries the reviewed source from #4653 at
