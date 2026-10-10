@@ -60,7 +60,20 @@ current main. Cluster patches re-read the exact Cluster after the other evidence
 is gathered and revalidate its recovery predicates before using that final UID
 and resource version. Concurrent status updates during earlier inventory reads
 do not weaken those conditional tests; a change after the final read still fails
-the single attempt. A failed mutation or unknown read stops immediately without retry
+the single attempt. The protected completed-join and diagnostic paths resolve
+their existing selected certificate context once, then use a persistent, fixed-path
+Cluster connection for the final GET and PATCH. This removes subprocess discovery
+and kubectl patch's additional target GET without changing any precondition.
+Default OIDC planning and other resource operations still use kubectl. Unsupported
+credential, impersonation or explicit proxy settings fail before API access;
+CA verification and any configured TLS server name remain required. Credential
+output is bounded in memory and is never printed or persisted.
+
+The Cluster connection uses HTTP/1 and a non-replayable PATCH body, refuses
+redirects, and retains the explicit repair field manager and server-side dry-run
+query. Throttling and lost responses grant no retry. A shorter request window
+does not guarantee acceptance during concurrent status updates or identify the
+cause of an earlier rejection. A failed mutation or unknown read stops immediately without retry
 or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
