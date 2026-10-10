@@ -3322,3 +3322,25 @@ devantler-tech/ksail could list usage but not the limit.
 These values were computed locally with kubectl v1.37.1 / Kustomize v5.8.1,
 which is not the approved renderer; the required CI job re-renders with the
 approved kubectl v1.36.2 / Kustomize v5.8.1 and is the authority.
+
+## 2026-10-10 — Recover the missing secret-store server without replacing its peers
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry for #4709 against main
+`6a566925a52a98f9cce3aece5a87fa9e4fd1da10`: HelmRelease openbao/openbao.
+Nothing was added or removed. Its approved fingerprint moves from
+`5f42ca30331162fc4ee98a0487fa3651140f0542ff49b573a99a46a343582616` to
+`83c3232f567e9320bf9561380834fb64ba0e34f974c4dfd026bef228bf59ecd3`.
+
+The source changes the production StatefulSet strategy to OnDelete and removes
+the rolling-update partition from both post-renderers. A missing server uses
+the current pod template; running peers are not replaced automatically. The
+pinned chart regression verifies that behavior with and without the credential
+transport renderer. No RBAC, IAM, service account, credential, listener,
+storage, disruption budget, or permission grant changes.
+
+This carries the reviewed source from #4653 at
+`41d374f2e4b9d101ffd2eadd568c5059c900a20a`, together with the independently
+tested credential-probe request correction from #4666 at
+`3491077c4179cf4c738ba368ada7bba3826cd781`. The whole production authorization
+contract and its negative controls pass on the combined fresh-main tree.

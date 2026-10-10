@@ -3007,6 +3007,14 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 		container["imagePullPolicy"] != "Always" || securityContext["allowPrivilegeEscalation"] != false {
 		return commandFailure(91, "runtime probe does not prove a private package pull")
 	}
+	// The probe names its node, so the kubelet alone admits it, and refuses it when the node has
+	// less memory left to request than the probe asks for (#4664). The smallest request the
+	// namespace accepts keeps that refusal to a node with nothing left at all.
+	resources, _ := container["resources"].(map[string]any)
+	requests, _ := resources["requests"].(map[string]any)
+	if requests["memory"] != "1Mi" || requests["cpu"] != "1m" {
+		return commandFailure(91, "runtime probe asks its node for more than the minimum request")
+	}
 	probeName, _ := metadata["name"].(string)
 	probeNode, _ := spec["nodeName"].(string)
 	if probeName == "" || probeNode == "" {
