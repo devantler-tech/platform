@@ -382,6 +382,10 @@ runs:
         steps.longhorn_client_prepare.outcome == 'failure' ||
         steps.longhorn_client_prepare.outcome == 'cancelled')
       shell: bash
+      env:
+        # Only a step that never ran proves the candidate was not published.
+        # A failed publish may have moved the tag and is never treated as skipped.
+        LONGHORN_PUBLICATION_NOT_STARTED: ${{ steps.publish_platform_manifest.outcome == 'skipped' || steps.publish_platform_manifest.outcome == '' }}
       run: go run ./scripts/maintain-longhorn-clients restore
 
     - name: 🛑 Verify ARC stayed inactive across recovery

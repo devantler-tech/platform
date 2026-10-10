@@ -5,6 +5,12 @@ its system-managed component selector. Database hibernation requires healthy
 clusters first. Changing the selector without satisfying both conditions can
 leave volume clients and pending database standbys unable to start.
 
+Delivery is staged. Merge this procedure and its legacy-publication guard
+without changing the live selector first. A follow-up configuration repair then
+activates the audited chart migration. Recovery uses the already-merged guard:
+it refuses to restore the obsolete selector after the migration is live. That
+refusal remains a visible failure, not a successful rollback or relaxed gate.
+
 The protected production deploy invokes four phases:
 
 1. `before-publish` inventories consumers, retained storage, primary identities,
@@ -24,16 +30,26 @@ The protected production deploy invokes four phases:
    identities, retained detached recovery storage, and ready resumed consumers.
 4. `restore` also runs on failure or cancellation. It attempts every owned
    restoration, even when another fails, and refuses replaced resources,
-   foreign ownership, or intervening specification changes.
+   foreign ownership, or intervening specification changes. Once publication
+   might have started, consumers remain paused until the new clients positively
+   converge. A failed publication is not evidence that it published nothing.
+   A failed transition stays HOLD for protected recovery, never a false success.
 
-The journal is created before any mutation and is never overwritten or adopted
-by another run. A completed migration is not repeated. An unfinished journal
-requires its owning run's restoration; it is a hold, not permission to replay an
-outage. The command never force-deletes Pods and never deletes claims, volumes,
+The journal is created before any mutation. A completed migration is not
+repeated. An unfinished pause requires its owning run's restoration. A fully
+restored journal can be superseded only after live proof that all original
+resources are unpaused with unchanged identities and specifications, and a
+UID/resourceVersion-guarded journal replacement. The command never force-deletes Pods and never deletes claims, volumes,
 databases, or backup objects. Supported CNPG hibernation gracefully terminates
 database Pods while retaining their claims.
 Backstage currently has no configured backup plugin; this procedure does not
 claim otherwise.
+
+Temporary legacy client eligibility can create an empty default disk while the
+old disk setting is active. Fail-closed admission and the existing storage
+policies must still exclude every compute worker from replica placement; the
+procedure checks this before hibernation and after migration. It never removes
+those restrictions or deletes a disk to clean up evidence.
 
 These phases are not local administration commands. They require the protected
 workflow identity and run only through the existing serialized production

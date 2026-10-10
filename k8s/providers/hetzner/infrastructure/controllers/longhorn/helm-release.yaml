@@ -75,11 +75,10 @@ spec:
       # Only create default disks on nodes explicitly labeled for storage.
       # This prevents control plane nodes (which lack dedicated volumes)
       # from hosting replicas and running out of memory.
-      createDefaultDiskLabeledNodes: true
-      # Engine instance-managers and CSI clients must also run on compute-only
-      # workers that consume volumes. Replica placement is restricted by the
-      # default-disk label and the autoscale storage policies, not this selector.
-      systemManagedComponentsNodeSelector: ""
+      createDefaultDiskOnLabeledNodesOnly: true
+      # Restrict Longhorn system-managed pods (instance-managers, etc.)
+      # to storage nodes. Prevents ~100Mi overhead per non-storage node.
+      systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
       # Tell Longhorn this cluster runs the Cluster Autoscaler: Longhorn then
       # annotates its system-managed per-node pods (instance-managers, etc.)
       # as safe-to-evict where no replica pins them, so the autoscaler can
@@ -152,11 +151,12 @@ spec:
       # the same change that introduces an encrypted volume.
       allowControllerSecretAccess: false
 
-    # The manager provides the node-local volume client on compute-only workers
-    # too. Existing taints/tolerations still govern worker eligibility; this
-    # does not create default disks or permit autoscale replica scheduling.
+    # Restrict Longhorn DaemonSets to storage-labeled nodes only.
+    # Control planes don't carry disks and no pods on them mount Longhorn
+    # volumes — running longhorn-manager there wastes ~250Mi per node.
     longhornManager:
-      nodeSelector: {}
+      nodeSelector:
+        node.longhorn.io/create-default-disk: "true"
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}

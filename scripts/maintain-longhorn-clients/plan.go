@@ -244,7 +244,9 @@ func buildPlan(s inventory, now time.Time) (plan, error) {
 
 func escape(s string) string { return strings.ReplaceAll(strings.ReplaceAll(s, "~", "~0"), "/", "~1") }
 func tests(o object) []object {
-	return []object{{"op": "test", "path": "/metadata/uid", "value": val(o, "metadata", "uid")}, {"op": "test", "path": "/metadata/resourceVersion", "value": val(o, "metadata", "resourceVersion")}}
+	// Kubernetes enforces the supplied resourceVersion on update. Replacing it
+	// gives a typed 409 Conflict on status races, rather than JSON-test 422s.
+	return []object{{"op": "test", "path": "/metadata/uid", "value": val(o, "metadata", "uid")}, {"op": "replace", "path": "/metadata/resourceVersion", "value": val(o, "metadata", "resourceVersion")}}
 }
 func restorePatch(before, current object, holder string, deployment bool) ([]object, error) {
 	if !meta(current) || key(before) != key(current) || str(before, "metadata", "uid") != str(current, "metadata", "uid") || str(current, "metadata", "annotations", ownerKey) != holder {
@@ -267,7 +269,11 @@ func restorePatch(before, current object, holder string, deployment bool) ([]obj
 	}
 	if deployment {
 		copied := object{}
-		for k, v := range expected.(map[string]any) {
+		spec, ok := expected.(map[string]any)
+		if !ok {
+			return nil, errors.New("original deployment spec is malformed")
+		}
+		for k, v := range spec {
 			copied[k] = v
 		}
 		copied["replicas"] = float64(0)
@@ -275,7 +281,11 @@ func restorePatch(before, current object, holder string, deployment bool) ([]obj
 	}
 	if str(before, "kind") == "HelmRelease" {
 		copied := object{}
-		for k, v := range expected.(map[string]any) {
+		spec, ok := expected.(map[string]any)
+		if !ok {
+			return nil, errors.New("original Helm owner spec is malformed")
+		}
+		for k, v := range spec {
 			copied[k] = v
 		}
 		copied["suspend"] = true

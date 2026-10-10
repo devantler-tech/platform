@@ -200,6 +200,11 @@ func (a *fakeAPI) command(_ context.Context, input []byte, args ...string) ([]by
 		}
 		o := objects[0]
 		for _, op := range ops {
+			if str(op, "path") == "/metadata/resourceVersion" && !reflect.DeepEqual(val(o, "metadata", "resourceVersion"), op["value"]) {
+				return nil, errors.New("Error from server (Conflict): resourceVersion changed")
+			}
+		}
+		for _, op := range ops {
 			path := str(op, "path")
 			switch str(op, "op") {
 			case "test":
@@ -332,8 +337,12 @@ func TestTimeoutAndFailedPublishAlwaysLeaveStorageUntouched(t *testing.T) {
 		if err == nil {
 			t.Fatal("failure accepted")
 		}
-		if err = e.restore(context.Background()); err != nil {
-			t.Fatal(err)
+		restored := e.restore(context.Background())
+		if detach && restored != nil {
+			t.Fatal(restored)
+		}
+		if !detach && (restored == nil || !a.stopped()) {
+			t.Fatal("failed publication did not hold consumers safely paused")
 		}
 		if a.migrated {
 			t.Fatal("failed migration accepted")
@@ -413,6 +422,7 @@ func TestMissingComputeClientIsBootstrappedWithoutChangingReplicaPlacement(t *te
 	if str(node, "metadata", "labels", "node.longhorn.io/create-default-disk") != "true" || !a.stopped() {
 		t.Fatal("client bootstrap did not precede supported hibernation")
 	}
+	e.publicationNotStarted = true // This test has not invoked publication.
 	if err := e.restore(context.Background()); err != nil {
 		t.Fatal(err)
 	}
