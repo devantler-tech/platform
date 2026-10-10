@@ -102,6 +102,36 @@ writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
 
+### Separately approved continuation of an existing pause
+
+The initial completed-join mode still rejects any existing pause. If an approved
+attempt stops after pausing but before storage cleanup, a **new** first-main
+dispatch may use `continue-owned-pause-retain-volume` only after fresh inspection
+and separate maintainer approval. This selects `--continue-owned-pause`; it cannot
+share the diagnostic or earlier fenced modes or reuse the initial confirmation.
+The read-only OIDC plan can select that flag with the same five current identities.
+
+This mode requires the disabled pause to be exclusively owned by
+`wedding-standby-repair` and the observation marker to be absent, including its
+managed-field ownership. It conditionally adds only a unique `<run-id>.1` marker
+at `platform.devantler.tech/standby-pause-observation`, binding the Cluster UID,
+resource version, unchanged primary, replica count and complete annotation map.
+The [audited controller's Cluster watch](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_controller.go)
+observes metadata updates, so reconciliation can acknowledge the existing pause
+without ever enabling it before quarantine. No old pause acknowledgment is reused.
+
+The bounded log baseline still excludes previously observed reconciliation IDs.
+The new acknowledgment must also be timestamped at or after the marker request,
+including any positively rejected request's rebind. Unlike the initial mode, no
+backward clock allowance admits a pre-marker record; a controller clock behind
+the runner may therefore leave the continuation at HOLD rather than authorize
+cleanup. The leader, pause owner and exact marker owner/value must remain unchanged
+through cleanup. After proving quarantine, one conditional patch removes only
+that run's marker and its owned pause. All existing storage, consumer, peer,
+backup, request-bound and two-separated-healthy-sample checks remain in force.
+An existing marker, failed read or uncertain request outcome stops this new
+attempt. It does not grant a retry or automatic cleanup.
+
 ## Non-persisting pause diagnostic
 
 A rejected first pause request can be examined only through the separately

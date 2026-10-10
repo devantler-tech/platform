@@ -320,7 +320,20 @@ func TestCompletedJoinBackupCensusDoesNotDropUnknownEntries(t *testing.T) {
 // TestCompletedJoinTransaction exercises real reads and mutations with a stateful
 // API stand-in, including the operator's ordinal reuse and pending fresh PVC.
 func TestCompletedJoinTransaction(t *testing.T) {
+	testCompletedJoinTransaction(t, false)
+}
+
+// The continuation must complete the same guarded transaction without ever
+// enabling reconciliation before the old job and claim are safely quarantined.
+func TestOwnedPauseContinuationTransaction(t *testing.T) {
+	testCompletedJoinTransaction(t, true)
+}
+
+func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 	failures := []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "verified pause rejection", "verified resume rejection", "verified both rejections", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"}
+	if continuation {
+		failures = append(failures, "pre-marker acknowledgment", "changed observation", "foreign observation owner", "missing observation nonce")
+	}
 	for _, phase := range []string{"pause", "resume"} {
 		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer"} {
 			failures = append(failures, "rebind "+phase+" "+guard)
@@ -329,6 +342,15 @@ func TestCompletedJoinTransaction(t *testing.T) {
 	for _, failure := range failures {
 		t.Run(failure, func(t *testing.T) {
 			s, g := completedFixture()
+			opts := testOptions()
+			if continuation {
+				opts.continuePause, opts.pauseObservation = true, "123.1"
+				at(s.cluster, "metadata", "annotations")[pauseKey] = "disabled"
+				at(s.cluster, "metadata")["managedFields"] = []any{object{"manager": fieldManager, "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseKey: object{}}}}}}
+				if failure == "missing observation nonce" {
+					opts.pauseObservation = ""
+				}
+			}
 			lease, leaderPod := leaderFixture()
 			now := testNow
 			clockOffset := time.Duration(0)
@@ -407,6 +429,17 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					}
 					if args[1] == "cluster.postgresql.cnpg.io" {
 						clusterReads++
+						if continuation && clusterReads == 3 {
+							now = now.Add(5 * time.Second)
+							at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
+						}
+						if continuation && len(writes) == 1 {
+							if failure == "changed observation" {
+								at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "other"
+							} else if failure == "foreign observation owner" {
+								at(s.cluster, "metadata")["managedFields"] = append(value(s.cluster, "metadata", "managedFields").([]any), object{"manager": "other", "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseObservationKey: object{}}}}})
+							}
+						}
 						if resumeFinal {
 							switch failure {
 							case "resume final cluster read":
@@ -447,6 +480,9 @@ func TestCompletedJoinTransaction(t *testing.T) {
 								at(s.cluster, "metadata", "annotations")[fenceKey] = `["wedding-db-1"]`
 							case "final pause":
 								at(s.cluster, "metadata", "annotations")[pauseKey] = "disabled"
+								if continuation {
+									list(s.cluster, "metadata", "managedFields")[0]["manager"] = "other"
+								}
 							case "post-read conflict":
 								observed, err := json.Marshal(s.cluster)
 								at(s.cluster, "metadata")["resourceVersion"] = "changed-after-read"
@@ -524,6 +560,9 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					if failure == "no acknowledgment" {
 						r["msg"] = "other"
 					}
+					if failure == "pre-marker acknowledgment" {
+						r["ts"] = testNow.Add(time.Second).Format(time.RFC3339Nano)
+					}
 					if failure == "malformed acknowledgment" {
 						return []byte("truncated"), nil
 					}
@@ -563,6 +602,17 @@ func TestCompletedJoinTransaction(t *testing.T) {
 							return nil, clusterRequestFailure{"SERVER_INVALID_NO_CAUSES"}
 						}
 						writes = append(writes, "pause")
+						if continuation {
+							if str(last, "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" || str(last, "value") != "123.1" || !reflect.DeepEqual(ops[len(ops)-2], testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations"))) {
+								t.Fatal("continuation did not bind a new observation to the complete paused annotation map")
+							}
+							for _, op := range ops {
+								if str(op, "op") != "test" && str(op, "path") != str(last, "path") {
+									t.Fatal("continuation changed the existing pause before quarantine")
+								}
+							}
+							at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "123.1"
+						}
 						if failure == "pause CAS" {
 							return nil, errors.New("conflict")
 						}
@@ -573,6 +623,11 @@ func TestCompletedJoinTransaction(t *testing.T) {
 							manager = "other"
 						}
 						at(s.cluster, "metadata")["managedFields"] = []any{object{"manager": manager, "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseKey: object{}}}}}}
+						if continuation {
+							at(list(s.cluster, "metadata", "managedFields")[0], "fieldsV1", "f:metadata", "f:annotations")["f:"+pauseObservationKey] = object{}
+							now = now.Add(3 * time.Second)
+							at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
+						}
 					} else if str(last, "op") == "remove" && str(last, "path") == "/metadata/annotations/cnpg.io~1reconciliationLoop" {
 						resumeAttempts++
 						if resumeAttempts == 1 && (failure == "verified resume rejection" || failure == "verified both rejections" || strings.HasPrefix(failure, "rebind resume ")) {
@@ -586,6 +641,13 @@ func TestCompletedJoinTransaction(t *testing.T) {
 							t.Fatal("resume preceded old-volume quarantine")
 						}
 						writes = append(writes, "resume")
+						if continuation {
+							if !reflect.DeepEqual(ops[len(ops)-3], testPath("/metadata/annotations/platform.devantler.tech~1standby-pause-observation", "123.1")) || str(ops[len(ops)-2], "op") != "remove" || str(ops[len(ops)-2], "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" {
+								t.Fatal("resume did not conditionally remove its own observation")
+							}
+							delete(at(s.cluster, "metadata", "annotations"), pauseObservationKey)
+							delete(at(list(s.cluster, "metadata", "managedFields")[0], "fieldsV1", "f:metadata", "f:annotations"), "f:"+pauseObservationKey)
+						}
 						paused = false
 						delete(at(s.cluster, "metadata", "annotations"), pauseKey)
 						if failure == "pending claim" {
@@ -635,7 +697,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 			}
 			rejected := strings.HasPrefix(failure, "verified ")
 			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" || rejected
-			err := quarantineCompletedJoin(context.Background(), c, testOptions(), g, failure != "read only")
+			err := quarantineCompletedJoin(context.Background(), c, opts, g, failure != "read only")
 			if (err == nil) != ok {
 				t.Fatalf("failure=%q writes=%v waits=%d returned %v", failure, writes, waits, err)
 			}
@@ -671,6 +733,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				maximum[final] = 3
 			}
 			maximum["resume post-read conflict"] = 4
+			maximum["pre-marker acknowledgment"], maximum["changed observation"], maximum["foreign observation owner"], maximum["missing observation nonce"] = 1, 1, 1, 0
 			if strings.HasPrefix(failure, "rebind pause ") {
 				maximum[failure] = 0
 				if pauseAttempts != 1 || resumeAttempts != 0 {

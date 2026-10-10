@@ -39,6 +39,8 @@ type options struct {
 	clusterUID, podUID              string
 	now                             time.Time
 	fenced, detached, diagnosePause bool
+	continuePause                   bool
+	pauseObservation                string
 }
 
 type client struct {
@@ -912,6 +914,7 @@ func run() error {
 	proveFenced := flag.Bool("prove-fenced", false, "read the bound instance's fencing acknowledgment through the protected read-only workflow")
 	resumeFenced := flag.Bool("resume-fenced", false, "continue this repair's retained, attached fenced HOLD")
 	quarantine := flag.Bool("quarantine-completed-join", false, "retain the old backing volume and replace the completed-join claim through a separately approved workflow")
+	continuePause := flag.Bool("continue-owned-pause", false, "continue only this repair's existing pause through a new, separately approved first-main dispatch")
 	diagnose := flag.Bool("diagnose-pause", false, "submit only the guarded pause patch as a separately approved server-side dry-run")
 	clusterUID := flag.String("cluster-uid", "", "expected current Cluster UID")
 	podUID := flag.String("pod-uid", "", "expected failed Pod or completed join Pod UID")
@@ -921,6 +924,9 @@ func run() error {
 	flag.Parse()
 	if flag.NArg() != 0 {
 		return errors.New("unexpected argument")
+	}
+	if *continuePause && (!*quarantine || *diagnose || *proveFenced || *resumeFenced) {
+		return errors.New("owned-pause continuation requires completed-join guards and cannot share other continuation or diagnostic modes")
 	}
 	if *diagnose && (!*quarantine || *execute || *proveFenced || *resumeFenced) {
 		return errors.New("pause diagnostic cannot share execution, proof or continuation modes and requires completed-join guards")
@@ -949,7 +955,11 @@ func run() error {
 		}
 		contextName = "admin@prod"
 	} else if *execute && *quarantine {
-		if !storageDispatchAllowed(os.Getenv) {
+		allowed := storageDispatchAllowed(os.Getenv)
+		if *continuePause {
+			allowed = ownedPauseDispatchAllowed(os.Getenv)
+		}
+		if !allowed {
 			return errors.New("execution requires the separately confirmed first protected completed-join main dispatch")
 		}
 		contextName = "admin@prod"
@@ -991,7 +1001,10 @@ func run() error {
 		return nil
 	}
 	result := "PLAN=PASS no writes"
-	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced, diagnosePause: *diagnose}
+	o := options{clusterUID: *clusterUID, podUID: *podUID, now: time.Now(), fenced: *resumeFenced, diagnosePause: *diagnose, continuePause: *continuePause}
+	if *continuePause && *execute {
+		o.pauseObservation = os.Getenv("GITHUB_RUN_ID") + ".1"
+	}
 	if *quarantine {
 		if err := quarantineCompletedJoin(ctx, c, o, storageGuards{*jobUID, *claimUID, *volumeUID}, *execute); err != nil {
 			return err
