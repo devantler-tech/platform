@@ -37,6 +37,40 @@ type fixture struct {
 	redirect    string
 }
 
+type cleanupRoundTrip func(*http.Request) (*http.Response, error)
+
+func (call cleanupRoundTrip) RoundTrip(request *http.Request) (*http.Response, error) {
+	return call(request)
+}
+
+func TestCancellationBoundsOpenBaoRevocationAlreadyInProgress(t *testing.T) {
+	f := newFixture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := *f.options.client
+	base := client.Transport
+	var cancelledAt time.Time
+	client.Transport = cleanupRoundTrip(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Path == "/v1/auth/token/revoke-self" {
+			cancelledAt = time.Now()
+			cancel()
+			select {
+			case <-request.Context().Done():
+				return nil, request.Context().Err()
+			case <-time.After(8 * time.Second):
+			}
+		}
+		return base.RoundTrip(request)
+	})
+	f.options.baoClient = &client
+	if got := verify(ctx, f.options); got != failCleanup {
+		t.Fatalf("unconfirmed OpenBao cleanup returned %s", got)
+	}
+	if cancelledAt.IsZero() || time.Since(cancelledAt) > 7*time.Second {
+		t.Fatal("OpenBao cleanup exceeded the aggregate cancellation budget")
+	}
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	key := fixtureKey()

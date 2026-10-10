@@ -97,6 +97,22 @@ var auditedFoldInputs = []struct {
 		"go.mod":                     "e7265f2eee822033c9047eb50e7720872756aa03",
 		"go.sum":                     "3e87842cfa29b03933d8a57c23204b340cf3c2b7",
 	}},
+	{"7.202.3", map[string]string{
+		"pkg/fsutil/configmanager":   "ac334b6ba5b7e474bfa88e13486a1ab0d1d6feea",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "c4ed7098f7dce6dca0c65649cd8ab3aaeccdf6f4",
+		"go.mod":                     "3ef4674d6c9d1507ec198883c78712ce74819866",
+		"go.sum":                     "c780001120d55f3eb85838940f5f149e62202fab",
+	}},
+	{"7.202.28", map[string]string{
+		"pkg/fsutil/configmanager":   "8c46721a9c9703046eb099dd29ccb693dc166d42",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "a3fec71c3c9ba1d8ecf78fe9b95943f32e5499ab",
+		"go.mod":                     "aa4556d3ce50ca3a2f7397a5f0125d302bb9431f",
+		"go.sum":                     "5c4e0d2343d48b4844bbbe1fd7e706b0e767439a",
+	}},
 }
 
 // verifyFoldInputs passes only when every fold input of the pinned release was

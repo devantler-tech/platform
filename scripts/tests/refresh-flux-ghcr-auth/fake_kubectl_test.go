@@ -306,9 +306,27 @@ func fakeFluxPolicyChildObject() map[string]any {
 			"message": os.Getenv("FAKE_FLUX_POLICY_HEALTHY_MESSAGE"),
 		})
 	}
+	if conditionGeneration := os.Getenv("FAKE_FLUX_POLICY_CONDITION_GENERATION"); conditionGeneration != "" {
+		for _, item := range conditions {
+			condition := item.(map[string]any)
+			key := "FAKE_FLUX_POLICY_" + strings.ToUpper(condition["type"].(string)) + "_GENERATION"
+			condition["observedGeneration"] = parseInt(defaultString(os.Getenv(key), conditionGeneration), 0)
+		}
+	}
+	if duplicate := os.Getenv("FAKE_FLUX_POLICY_DUPLICATE_CONDITION"); duplicate != "" {
+		for _, item := range conditions {
+			if item.(map[string]any)["type"] == duplicate {
+				conditions = append(conditions, item)
+				break
+			}
+		}
+	}
 	status := map[string]any{
 		"observedGeneration": 13,
 		"conditions":         conditions,
+	}
+	if os.Getenv("FAKE_FLUX_POLICY_CHILD_NO_DEPENDENCIES") == "true" {
+		delete(spec, "dependsOn")
 	}
 	if revision := os.Getenv("FAKE_FLUX_POLICY_LAST_ATTEMPTED_REVISION"); revision != "" {
 		status["lastAttemptedRevision"] = revision
@@ -3006,6 +3024,14 @@ func fakeKubectlCreateRuntimeProbe(namespace, manifestFile string) int {
 		image != fakeRuntimeProbeImage("devantler-tech/ascoachingogvaner")) ||
 		container["imagePullPolicy"] != "Always" || securityContext["allowPrivilegeEscalation"] != false {
 		return commandFailure(91, "runtime probe does not prove a private package pull")
+	}
+	// The probe names its node, so the kubelet alone admits it, and refuses it when the node has
+	// less memory left to request than the probe asks for (#4664). The smallest request the
+	// namespace accepts keeps that refusal to a node with nothing left at all.
+	resources, _ := container["resources"].(map[string]any)
+	requests, _ := resources["requests"].(map[string]any)
+	if requests["memory"] != "1Mi" || requests["cpu"] != "1m" {
+		return commandFailure(91, "runtime probe asks its node for more than the minimum request")
 	}
 	probeName, _ := metadata["name"].(string)
 	probeNode, _ := spec["nodeName"].(string)

@@ -3330,3 +3330,51 @@ Dex HelmRelease changes only by removing that retired route's two OAuth callback
 addresses. No identity, role, permission boundary, or remaining callback changes.
 The ledger was recomputed using the existing surface evaluator and verified with
 the approved kubectl v1.36.2 / Kustomize v5.8.1 renderer.
+
+## 2026-10-10 — Recover the missing secret-store server without replacing its peers
+
+The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry for #4709 against main
+`6a566925a52a98f9cce3aece5a87fa9e4fd1da10`: HelmRelease openbao/openbao.
+Nothing was added or removed. Its approved fingerprint moves from
+`5f42ca30331162fc4ee98a0487fa3651140f0542ff49b573a99a46a343582616` to
+`83c3232f567e9320bf9561380834fb64ba0e34f974c4dfd026bef228bf59ecd3`.
+
+The source changes the production StatefulSet strategy to OnDelete and removes
+the rolling-update partition from both post-renderers. A missing server uses
+the current pod template; running peers are not replaced automatically. The
+pinned chart regression checks the combined production renderer and the
+local/default chart strategy. Kubernetes controller semantics and protected
+live recreation remain separate evidence. No RBAC, IAM, service account, credential, listener,
+storage, disruption budget, or permission grant changes.
+
+This carries the reviewed source from #4653 at
+`41d374f2e4b9d101ffd2eadd568c5059c900a20a`, together with the independently
+tested credential-probe request correction from #4666 at
+`3491077c4179cf4c738ba368ada7bba3826cd781`. The whole production authorization
+contract and its negative controls pass on the combined fresh-main tree.
+
+## 2026-10-10 — Complete the retained-field transition for the recovery
+
+The preceding entry records the initial candidate, not the final approved
+surface. The protected deployment rejected that candidate because server-side
+apply retained the old StatefulSet `rollingUpdate` field. At source commit
+`46d2e3af25b91b438b6e0c9017734e465b11d4ee`, the checksum-verified kubectl
+v1.36.2 / Kustomize v5.8.1 renderer measured the same single changed entry
+against main `6a566925a52a98f9cce3aece5a87fa9e4fd1da10`: HelmRelease
+openbao/openbao, with nothing added or removed. The final approved fingerprint
+is `c0392359b17c7e56b14ca80929ad85644922a658a1d9cb85bf6b64138684262c`,
+superseding the initial candidate's
+`83c3232f567e9320bf9561380834fb64ba0e34f974c4dfd026bef228bf59ecd3`.
+
+The additional source delta disables server-side apply for both Helm upgrade
+and rollback. Both actions use Helm's three-way merge without force replacement
+to remove the retained `rollingUpdate` field; the post-renderers explicitly
+remove it while retaining OnDelete. The real local Kubernetes API and the
+production controller's pinned Helm SDK exercise upgrade, rollback and
+re-upgrade for both previous field owners, preserving the StatefulSet UID and
+every other spec field. CI run 38079488354 passed the complete authorization
+gate and transition regression on that source commit. No RBAC, IAM, service
+account, credential, listener, storage, disruption budget or permission grant
+changes. Actual production recreation and peer preservation remain separate
+protected deployment and readback evidence.
