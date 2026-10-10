@@ -16,9 +16,7 @@ checked_postrenderer_changes() {
   jq -en --slurpfile before "$1" --slurpfile after "$2" '
     ($before | length) == 1 and ($after | length) == 1 and
     $after[0].spec.replicas == 3 and
-    $after[0].spec.updateStrategy == {
-      type: "RollingUpdate", rollingUpdate: {partition: 2}
-    } and
+    $after[0].spec.updateStrategy == {type: "OnDelete"} and
     $after[0].spec.template.spec.automountServiceAccountToken == false and
     $before[0].spec.template.metadata.labels["platform.devantler.tech/arc-transport"] == null and
     $after[0].spec.template.metadata.labels["platform.devantler.tech/arc-transport"] == "tls" and
@@ -88,6 +86,16 @@ yq '.spec.values' "${release}" >"${scratch}/values.yaml"
 # Substitute only the configured Flux placeholder; literal effective values must
 # remain visible to the rendered replica-count guard rather than being overridden.
 resolve_replica_placeholder "${scratch}/values.yaml" "${replicas}"
+# The real API validates quantities and selector values too. Resolve the two
+# remaining public cluster placeholders exactly as Flux does, without replacing
+# literal chart values or changing the strategy under test.
+OPENBAO_STORAGE_PLACEHOLDER="\${openbao_storage_size:=1Gi}" \
+OPENBAO_CANARY_STORAGE="$(yq -er '.data.openbao_storage_size' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" \
+OPENBAO_CANARY_CLUSTER="$(yq -er '.data.cluster_name' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")" \
+yq -i '
+  (.server.dataStorage.size | select(. == strenv(OPENBAO_STORAGE_PLACEHOLDER))) = strenv(OPENBAO_CANARY_STORAGE) |
+  .server.affinity |= sub("\\$\\{cluster_name\\}", strenv(OPENBAO_CANARY_CLUSTER))
+' "${scratch}/values.yaml"
 helm template openbao "${archive}" --namespace openbao --values "${scratch}/values.yaml" \
   >"${scratch}/rendered.yaml"
 
@@ -102,7 +110,7 @@ yq -o=json '.spec.postRenderers' "${release}" | jq -e '
     "group": "apps", "version": "v1", "kind": "StatefulSet",
     "name": "openbao", "namespace": "openbao"
   }
-' >/dev/null || fail 'production OpenBao must permit only the highest-ordinal canary replacement'
+' >/dev/null || fail 'production OpenBao must carry exactly one reviewed StatefulSet post-renderer patch'
 yq '.spec.postRenderers[0].kustomize.patches // [] |
   {"apiVersion": "kustomize.config.k8s.io/v1beta1", "kind": "Kustomization",
    "resources": ["rendered.yaml"], "patches": .}' "${release}" >"${scratch}/kustomization.yaml"
@@ -110,13 +118,21 @@ kubectl kustomize "${scratch}" |
   yq ea 'select(.kind == "StatefulSet" and .metadata.name == "openbao")' - >"${scratch}/statefulset.yaml"
 readonly statefulset="${scratch}/statefulset.yaml"
 
-yq -e '.spec.updateStrategy.type == "RollingUpdate" and
-  .spec.updateStrategy.rollingUpdate.partition == 2 and
+# A clean render alone cannot prove a transition from retained live fields.
+OPENBAO_TRANSITION_MANIFEST="${statefulset}" \
+OPENBAO_TRANSITION_RELEASE="${release}" \
+  bash "${root_dir}/scripts/tests/test-openbao-strategy-transition.sh"
+
+# A partitioned rolling update recreates a lost lower ordinal from the stored
+# current revision, which admission refuses in production (#4391). OnDelete
+# recreates it from the newest revision and replaces no running server.
+yq -e '.spec.updateStrategy.type == "OnDelete" and
+  (.spec.updateStrategy | length) == 1 and
   .spec.replicas == 3' "${statefulset}" >/dev/null ||
-  fail 'production OpenBao must permit only the highest-ordinal canary replacement'
+  fail 'production OpenBao must recreate a lost server from the newest revision and replace no running one'
 yq -e '.spec.template.spec.containers[] | select(.name == "openbao") |
   .image == "quay.io/openbao/openbao:2.6.3"' "${statefulset}" >/dev/null ||
-  fail 'the canary must use the released standby OIDC repair'
+  fail 'a recreated server must use the released standby OIDC repair'
 
 yq -e '.spec.template.spec.automountServiceAccountToken == false' "${statefulset}" >/dev/null ||
   fail 'the certificate reload helper must not receive an injected API token'
@@ -125,7 +141,7 @@ yq ea -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "openbao
   "${scratch}/rendered.yaml" >"${scratch}/before.json"
 yq -o=json -I=0 '.' "${statefulset}" >"${scratch}/after.json"
 checked_postrenderer_changes "${scratch}/before.json" "${scratch}/after.json" ||
-  fail 'the canary post-renderer must change only partition, token injection and the exact TLS identity label'
+  fail 'the canary post-renderer must change only token injection and the exact TLS identity label'
 
 # Exercise rejected mutations against the actual chart and Flux-rendered Pod.
 # Allowing one retained identity label must not permit other metadata or spec edits.
@@ -137,8 +153,9 @@ for mutation in \
   '.spec.template.metadata.labels["app.kubernetes.io/name"] = "other"' \
   '.spec.template.spec.serviceAccountName = "other"' \
   '.spec.template.spec.automountServiceAccountToken = true' \
-  '.spec.updateStrategy.rollingUpdate.partition = 0' \
-  '.spec.updateStrategy.rollingUpdate.maxUnavailable = 1' \
+  '.spec.updateStrategy = {"type": "RollingUpdate"}' \
+  '.spec.updateStrategy = {"type": "RollingUpdate", "rollingUpdate": {"partition": 2}}' \
+  '.spec.updateStrategy.rollingUpdate = {"partition": 0}' \
   '.spec.replicas = 1'; do
   jq "$mutation" "${scratch}/after.json" >"${scratch}/mutated.json"
   if checked_postrenderer_changes "${scratch}/before.json" "${scratch}/mutated.json"; then
@@ -178,4 +195,4 @@ grep -Fq "'scripts/tests/test-openbao-standby-canary.sh'" "${root_dir}/.github/w
 grep -Fq 'bash scripts/tests/test-openbao-standby-canary.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute the OpenBao canary regression'
 
-printf 'PASS: OpenBao 2.6.3 rollout is confined to the production canary\n'
+printf 'PASS: rendered OpenBao strategy and in-place Helm transitions preserve the server template and storage; live recreation needs deployment proof\n'
