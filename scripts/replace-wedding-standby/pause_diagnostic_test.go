@@ -93,7 +93,14 @@ func TestPauseDiagnosticStopsAfterOneNonPersistingPatch(t *testing.T) {
 			if failure == "unready peer" {
 				list(s.pods[2], "status", "conditions")[0]["status"] = "False"
 			}
-			before, _ := json.Marshal(s)
+			before, snapshotErr := json.Marshal([]any{s.cluster, s.operator, s.pods, s.claims, s.backups, s.jobs, s.volumes})
+			if snapshotErr != nil {
+				t.Fatal(snapshotErr)
+			}
+			var recorded []json.RawMessage
+			if err := json.Unmarshal(before, &recorded); err != nil || len(recorded) != 7 {
+				t.Fatal("unchanged-inventory evidence does not cover all seven resource families")
+			}
 			patches, sourceReads := 0, 0
 			c := client{now: func() time.Time { return testNow }, source: func(context.Context) error {
 				if patches != 0 {
@@ -151,7 +158,10 @@ func TestPauseDiagnosticStopsAfterOneNonPersistingPatch(t *testing.T) {
 			if failure == "" || failure == "rejected patch" {
 				wantPatches = 1
 			}
-			after, _ := json.Marshal(s)
+			after, snapshotErr := json.Marshal([]any{s.cluster, s.operator, s.pods, s.claims, s.backups, s.jobs, s.volumes})
+			if snapshotErr != nil {
+				t.Fatal(snapshotErr)
+			}
 			if patches != wantPatches || (err == nil) != (failure == "") || !reflect.DeepEqual(before, after) {
 				t.Fatalf("diagnostic patches=%d expected=%d error=%v", patches, wantPatches, err)
 			}
