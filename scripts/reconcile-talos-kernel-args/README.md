@@ -201,6 +201,34 @@ the subsequent fold, using CI's already-generated install sections. It does not
 register a schematic, replace installer images, contact a cluster or change
 production configuration. Missing machine/install sections are not fabricated.
 
+**7.202.3** is audited against 7.197.1 for the released same-version boot-image
+recovery repair (#4668). The configuration manager adds a provider-specific
+Kubernetes network patch, applied only for the nested Kubernetes provider;
+the production Hetzner provider returns its existing configuration unchanged.
+`applySchematic`, `schematicKernelArgs`, `reconcileFoldedKernelArgs` and the
+explicit schematic-selection boundary are unchanged. The Talos generator tree
+is byte-identical. The cluster API and chart edits add nested-network defaults
+and clarify floating-IP and schema-location behavior; the extensions and
+schematic-ID fields retain their names, types and defaults. The module inputs
+include unrelated dependency updates, but the Talos machinery and YAML encoding
+versions used by the fold do not move. The offline render regression verifies
+both roles with the pinned Talos client. This adoption leaves the intended
+production schematic and strict node-image readback unchanged.
+
+**7.202.28**, commit `349f4a104cc9fe6d3b8db2e963b6203246ad8f4f`, is audited
+against 7.202.3 for the released cluster-update ownership repair. Among the six
+governed inputs, only the K3d Dockerfile image pin, the operator chart README,
+`go.mod` and `go.sum` change. The complete Talos generator and cluster API trees
+are byte-identical. Both the Talos configuration manager and the distribution
+caller are byte-identical, preserving extension activation, the argument union
+and reconciliation for both roles, and explicit schematic-ID precedence. The
+Talos machinery, Image Factory, YAML and protobuf versions and checksums are
+unchanged. Chart manifests, extension defaults and schematic-ID defaults are
+unchanged. The offline render regression verifies both roles in production and
+local configurations with the pinned Talos client. The ownership repair changes
+how cluster updates cooperate with existing Helm owners; this adoption preserves
+the intended production schematic and strict node-image readback.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
@@ -216,3 +244,21 @@ The same actual caller preserves both roles' arguments and UKI values with an
 explicit schematic ID, while a whitespace-only ID still permits folding.
 `TALOSCTL_BIN` may point at a locally verified client of the pinned version.
 No local cluster is started.
+
+**7.202.3**, commit `f9172ab810fdcb94b47351d04d70708f6878e10a`, is audited as
+the range 7.197.1 → 7.202.3. The Talos generator is byte-identical. The changed
+configuration manager adds pod/service network patches for the nested Kubernetes
+provider; that path is a no-op for this platform's Hetzner provider. The fold's
+trigger, argument normalization, both-role output, installer-image selection and
+explicit schematic-ID boundary are unchanged. The API and chart changes add
+network defaults and clarify existing settings; the extensions and schematic-ID
+fields retain their names, types and defaults. Dependency updates do not change
+Talos machinery or its YAML encoder. The offline render test still exercises both
+roles and rejects invalid patches.
+
+This release also contains [KSail #7300](https://github.com/devantler-tech/ksail/pull/7300):
+same-version boot-image changes now trigger a node rollout instead of being
+silently skipped. Its [final-head provider trial](https://github.com/devantler-tech/ksail/actions/runs/37591901167)
+verified a same-version image update, readiness, a second no-change plan and
+cleanup on a temporary single-node cluster. That trial does not cover autoscaled
+nodes or an interrupted rollout; the release's regression tests cover those paths.

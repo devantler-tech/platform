@@ -216,6 +216,40 @@ func TestEveryAuditedSetIsCompleteAndDistinct(t *testing.T) {
 	}
 }
 
+func TestReleasedImageRecoveryFoldInputsAreAccepted(t *testing.T) {
+	// Read independently from the v7.202.3 tag. Rejecting this audited source
+	// prevents adoption of the released same-version boot-image recovery.
+	inputs := map[string]string{
+		"pkg/fsutil/configmanager":   "ac334b6ba5b7e474bfa88e13486a1ab0d1d6feea",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "c4ed7098f7dce6dca0c65649cd8ab3aaeccdf6f4",
+		"go.mod":                     "3ef4674d6c9d1507ec198883c78712ce74819866",
+		"go.sum":                     "c780001120d55f3eb85838940f5f149e62202fab",
+	}
+	_, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return inputs, nil })
+	if err != nil {
+		t.Fatalf("released image recovery source was rejected: %v", err)
+	}
+}
+
+func TestReleasedOwnershipRecoveryFoldInputsAreAccepted(t *testing.T) {
+	// Read independently from the v7.202.28 tag. This release carries the
+	// ownership repair required by production recovery, without changing the fold.
+	inputs := map[string]string{
+		"pkg/fsutil/configmanager":   "8c46721a9c9703046eb099dd29ccb693dc166d42",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "a3fec71c3c9ba1d8ecf78fe9b95943f32e5499ab",
+		"go.mod":                     "aa4556d3ce50ca3a2f7397a5f0125d302bb9431f",
+		"go.sum":                     "5c4e0d2343d48b4844bbbe1fd7e706b0e767439a",
+	}
+	_, err := verifyFoldInputs("7.202.28", func(string) (map[string]string, error) { return inputs, nil })
+	if err != nil {
+		t.Fatalf("released ownership recovery source was rejected: %v", err)
+	}
+}
+
 func TestUnchangedFoldInputsPassWhateverTheVersion(t *testing.T) {
 	// A later release with the audited inputs needs no edit here: the check
 	// compares content, not the version's name.
@@ -229,6 +263,29 @@ func TestUnchangedFoldInputsPassWhateverTheVersion(t *testing.T) {
 	}
 	if asked != "7.999.0" {
 		t.Fatalf("inputs resolved for %q, not the pinned release", asked)
+	}
+}
+
+func TestSameVersionRolloutReleaseFoldInputs(t *testing.T) {
+	// Read independently from the v7.202.3 tag (f9172ab810fdcb94b47351d04d70708f6878e10a),
+	// not from the acceptance registry. This is the release carrying the image-only
+	// rollout needed to apply the production AppArmor schematic at the same Talos version.
+	ids := map[string]string{
+		"pkg/fsutil/configmanager":   "ac334b6ba5b7e474bfa88e13486a1ab0d1d6feea",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "c4ed7098f7dce6dca0c65649cd8ab3aaeccdf6f4",
+		"go.mod":                     "3ef4674d6c9d1507ec198883c78712ce74819866",
+		"go.sum":                     "c780001120d55f3eb85838940f5f149e62202fab",
+	}
+	if _, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return ids, nil }); err != nil {
+		t.Fatalf("audited rollout release rejected: %v", err)
+	}
+	// A near match is not the reviewed source. Do not let this audit accept the
+	// newer config manager with a dependency blob from a different release.
+	ids["go.mod"] = "e7265f2eee822033c9047eb50e7720872756aa03"
+	if _, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return ids, nil }); err == nil {
+		t.Fatal("unaudited mix of releases accepted")
 	}
 }
 
