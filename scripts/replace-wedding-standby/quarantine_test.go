@@ -715,6 +715,46 @@ func TestReprovedRecoveryRequiresNewConfirmation(t *testing.T) {
 	}
 }
 
+// TestRecoveryFixtureFitsWorkflowToolchain catches a test-only module requiring
+// a newer compiler than the root module that configures actions/setup-go.
+func TestRecoveryFixtureFitsWorkflowToolchain(t *testing.T) {
+	goVersion := func(path string) [3]int {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 || fields[0] != "go" {
+				continue
+			}
+			parts := strings.Split(fields[1], ".")
+			if len(parts) < 2 || len(parts) > 3 {
+				t.Fatalf("invalid Go requirement in %s", path)
+			}
+			var version [3]int
+			for i, part := range parts {
+				version[i], err = strconv.Atoi(part)
+				if err != nil || version[i] < 0 {
+					t.Fatalf("invalid Go requirement in %s", path)
+				}
+			}
+			return version
+		}
+		t.Fatalf("missing Go requirement in %s", path)
+		return [3]int{}
+	}
+	installed, required := goVersion("../../go.mod"), goVersion("cas-test.mod")
+	for i := range installed {
+		if required[i] < installed[i] {
+			return
+		}
+		if required[i] > installed[i] {
+			t.Fatalf("recovery fixture requires Go %v but workflow installs %v", required, installed)
+		}
+	}
+}
+
 // TestReprovedWorkflowKeepsAllSafetyGuards binds the larger request bound to a
 // new first-main-dispatch grant and keeps its real apiserver fixture in CI.
 func TestReprovedWorkflowKeepsAllSafetyGuards(t *testing.T) {
