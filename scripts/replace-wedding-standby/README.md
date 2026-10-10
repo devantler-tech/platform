@@ -20,6 +20,10 @@ database peers and a recent completed backup. It pauses only this Cluster throug
 the [audited reconciliation annotation](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_controller.go)
 and requires a fresh, structured acknowledgment from the bound operator leader.
 Any leader change stops further writes; the annotation alone is not acknowledgment.
+The pinned controller's logging adapter emits this acknowledgment at **info**
+level, although the controller calls its
+[Warning method](https://github.com/cloudnative-pg/machinery/blob/v0.6.0/pkg/log/log.go#L135).
+Only that exact structured info-level message is accepted, not arbitrary levels.
 Leader renewals and acknowledgment timestamps allow at most two seconds of clock
 skew; lease expiry is not extended. A bounded, structured log snapshot is read
 before pausing, and any reconciliation ID already seen there is rejected as a
