@@ -121,10 +121,11 @@ observes metadata updates, so reconciliation can acknowledge the existing pause
 without ever enabling it before quarantine. No old pause acknowledgment is reused.
 
 The bounded log baseline still excludes previously observed reconciliation IDs.
-The new acknowledgment must also be timestamped at or after the marker request,
-including any positively rejected request's rebind. Unlike the initial mode, no
-backward clock allowance admits a pre-marker record; a controller clock behind
-the runner may therefore leave the continuation at HOLD rather than authorize
+The new acknowledgment's timestamp must also be at least the full two-second
+clock allowance after the marker request, including any positively rejected
+request's rebind. This refuses unseen pre-marker records even when the controller
+clock is ahead. An immediate acknowledgment, or a controller clock behind the
+runner, may therefore leave the continuation at HOLD rather than authorize
 cleanup. The leader, pause owner and exact marker owner/value must remain unchanged
 through cleanup. After proving quarantine, one conditional patch removes only
 that run's marker and its owned pause. All existing storage, consumer, peer,

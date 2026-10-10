@@ -332,7 +332,7 @@ func TestOwnedPauseContinuationTransaction(t *testing.T) {
 func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 	failures := []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "verified pause rejection", "verified resume rejection", "verified both rejections", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"}
 	if continuation {
-		failures = append(failures, "pre-marker acknowledgment", "changed observation", "foreign observation owner", "missing observation nonce")
+		failures = append(failures, "pre-marker acknowledgment", "pre-marker acknowledgment with fast controller clock", "changed observation", "foreign observation owner", "missing observation nonce")
 	}
 	for _, phase := range []string{"pause", "resume"} {
 		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer"} {
@@ -353,6 +353,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 			}
 			lease, leaderPod := leaderFixture()
 			now := testNow
+			var markerTime time.Time
 			clockOffset := time.Duration(0)
 			switch failure {
 			case "runner ahead":
@@ -563,6 +564,14 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 					if failure == "pre-marker acknowledgment" {
 						r["ts"] = testNow.Add(time.Second).Format(time.RFC3339Nano)
 					}
+					if failure == "pre-marker acknowledgment with fast controller clock" {
+						// Emitted 500 ms before the marker, with a controller clock
+						// one second ahead. Its ID was absent from the baseline.
+						if markerTime.IsZero() {
+							t.Fatal("missing actual marker request boundary")
+						}
+						r["ts"] = markerTime.Add(500 * time.Millisecond).Format(time.RFC3339Nano)
+					}
 					if failure == "malformed acknowledgment" {
 						return []byte("truncated"), nil
 					}
@@ -603,6 +612,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 						}
 						writes = append(writes, "pause")
 						if continuation {
+							markerTime = now
 							if str(last, "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" || str(last, "value") != "123.1" || !reflect.DeepEqual(ops[len(ops)-2], testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations"))) {
 								t.Fatal("continuation did not bind a new observation to the complete paused annotation map")
 							}
@@ -734,6 +744,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 			}
 			maximum["resume post-read conflict"] = 4
 			maximum["pre-marker acknowledgment"], maximum["changed observation"], maximum["foreign observation owner"], maximum["missing observation nonce"] = 1, 1, 1, 0
+			maximum["pre-marker acknowledgment with fast controller clock"] = 1
 			if strings.HasPrefix(failure, "rebind pause ") {
 				maximum[failure] = 0
 				if pauseAttempts != 1 || resumeAttempts != 0 {

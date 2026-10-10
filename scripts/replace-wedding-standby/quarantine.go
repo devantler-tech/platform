@@ -431,9 +431,10 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 		ackSince := since
 		if o.continuePause {
-			// Cancel the parser's backward clock allowance for this already-paused
-			// mode: unseen records from before the marker must not authorize cleanup.
-			ackSince = since.Add(operatorClockSkew)
+			// The parser subtracts one clock allowance. Add two so the effective
+			// cutoff remains one allowance after the request: even a fast
+			// controller clock cannot admit an unseen pre-marker record.
+			ackSince = since.Add(2 * operatorClockSkew)
 		}
 		acknowledged, e := pauseAcknowledged(b, ackSince, c.now(), previous)
 		if e != nil {
