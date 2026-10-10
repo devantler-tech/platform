@@ -52,8 +52,8 @@ and timestamps would fail on a group-writable Kubernetes volume.
 
 Production prepares credential transport separately from runner activation.
 The dedicated native TLS listener is served by the already repaired highest
-Raft ordinal; the held partition is unchanged. Standby requests use OpenBao's
-authenticated cluster connection to reach the leader. The existing API listener,
+Raft ordinal, and enabling it replaces no running server. Standby requests use
+OpenBao's authenticated cluster connection to reach the leader. The existing API listener,
 Raft storage, audit configuration and unseal hook remain in the base configuration.
 An additional listener file is appended through the pinned chart.
 
