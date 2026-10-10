@@ -327,6 +327,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return nil
 	}
 	paused, marked := o.continuePause, false
+	observation := o.pauseObservation
 	// Rebind after unrelated reads without removing the version precondition.
 	rebindCluster := func(ctx context.Context) error {
 		if e := c.proveSource(ctx); e != nil {
@@ -346,7 +347,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 		markerValid := observationAbsent(cluster)
 		if marked {
-			markerValid = ownedAnnotation(cluster, pauseObservationKey, o.pauseObservation)
+			markerValid = ownedAnnotation(cluster, pauseObservationKey, observation)
 		}
 		if !recentBackup(s, o) || (paused && !ownedPause(cluster)) || !markerValid || str(cluster, "metadata", "annotations", fenceKey) != "" {
 			return errors.New("backup or pause ownership changed")
@@ -421,6 +422,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	marked = o.continuePause
 	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	refreshedObservation := false
 	for {
 		if err = refresh(ackCtx); err != nil {
 			return err
@@ -445,6 +447,37 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 		if err = c.pause(ackCtx); err != nil {
 			return errors.New("operator did not acknowledge pause; storage unchanged")
+		}
+		if o.continuePause && !refreshedObservation && !c.now().Before(since.Add(2*operatorClockSkew)) {
+			// An immediate first event may be too early under the strict clock
+			// boundary. Advance only this run's owned marker once, after waiting
+			// beyond both clock allowances. This requests another paused reconcile
+			// without relying on incidental operator events or widening freshness.
+			nextObservation := o.pauseObservation + ".2"
+			refreshObservation := func(ctx context.Context) (object, error) {
+				if e := refresh(ctx); e != nil {
+					return nil, e
+				}
+				if !retained(s, oldClaim, oldVolume, true) {
+					return nil, errors.New("old retention changed before observation refresh")
+				}
+				if _, e := consumers(ctx, true); e != nil {
+					return nil, e
+				}
+				if e := rebindCluster(ctx); e != nil {
+					return nil, e
+				}
+				return s.cluster, nil
+			}
+			if _, err = refreshObservation(ackCtx); err != nil {
+				return err
+			}
+			if err = guardedClusterPatch(ackCtx, c, s.cluster, refreshObservation, func(cluster object) []object {
+				return observationPatch(cluster, p.primary.name, nextObservation)
+			}); err != nil {
+				return err
+			}
+			observation, refreshedObservation = nextObservation, true
 		}
 	}
 	if err = refresh(ctx); err != nil {
@@ -558,7 +591,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	}, func(cluster object) []object {
 		marker := ""
 		if marked {
-			marker = o.pauseObservation
+			marker = observation
 		}
 		return resumePausePatch(cluster, p.primary.name, marker)
 	}); err != nil {

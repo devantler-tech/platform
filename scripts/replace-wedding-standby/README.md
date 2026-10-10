@@ -124,9 +124,13 @@ The bounded log baseline still excludes previously observed reconciliation IDs.
 The new acknowledgment's timestamp must also be at least the full two-second
 clock allowance after the marker request, including any positively rejected
 request's rebind. This refuses unseen pre-marker records even when the controller
-clock is ahead. An immediate acknowledgment, or a controller clock behind the
-runner, may therefore leave the continuation at HOLD rather than authorize
-cleanup. The leader, pause owner and exact marker owner/value must remain unchanged
+clock is ahead. If the immediate acknowledgment is too early, the continuation
+waits beyond both clock allowances, rechecks the existing guards, and advances
+only its owned marker to `<run-id>.1.2` once to request another paused reconcile.
+The freshness boundary stays bound to the first marker request; incidental
+operator events are not required. Missing fresh evidence still leaves the
+continuation at HOLD rather than authorize cleanup. The leader, pause owner and
+exact marker owner/value must remain unchanged
 through cleanup. After proving quarantine, one conditional patch removes only
 that run's marker and its owned pause. All existing storage, consumer, peer,
 backup, request-bound and two-separated-healthy-sample checks remain in force.

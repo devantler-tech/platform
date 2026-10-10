@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -16,10 +17,15 @@ import (
 // Exercise the actual marker patch over the fixed mTLS transport with the pinned
 // apiserver JSON-patch library, not a mock that merely accepts supplied operations.
 func TestOwnedPauseMarkerUsesRealConditionalPatch(t *testing.T) {
-	for _, drift := range []string{"", "UID", "version", "primary", "pause", "annotations"} {
+	for _, drift := range []string{"", "UID", "version", "primary", "pause", "annotations", "refresh", "refresh annotations"} {
 		t.Run(drift, func(t *testing.T) {
 			s, _ := completedFixture()
 			at(s.cluster, "metadata", "annotations")[pauseKey] = "disabled"
+			marker := "123.1"
+			if strings.HasPrefix(drift, "refresh") {
+				at(s.cluster, "metadata", "annotations")[pauseObservationKey] = marker
+				marker += ".2"
+			}
 			var state object
 			if err := json.Unmarshal(transportJSON(t, s.cluster), &state); err != nil {
 				t.Fatal(err)
@@ -33,7 +39,7 @@ func TestOwnedPauseMarkerUsesRealConditionalPatch(t *testing.T) {
 				at(state, "status")["currentPrimary"] = "other"
 			case "pause":
 				delete(at(state, "metadata", "annotations"), pauseKey)
-			case "annotations":
+			case "annotations", "refresh annotations":
 				at(state, "metadata", "annotations")[pauseObservationKey] = "foreign"
 			}
 			before := string(transportJSON(t, state))
@@ -67,12 +73,13 @@ func TestOwnedPauseMarkerUsesRealConditionalPatch(t *testing.T) {
 			})
 			var fallback atomic.Int32
 			c := client{command: configuredCommand(t, config, &fallback)}
-			err := c.write(context.Background(), patchArgs("cluster", s.cluster), observationPatch(s.cluster, str(s.cluster, "status", "currentPrimary"), "123.1"))
-			if (err == nil) != (drift == "") || requests != 1 || fallback.Load() != 0 {
+			err := c.write(context.Background(), patchArgs("cluster", s.cluster), observationPatch(s.cluster, str(s.cluster, "status", "currentPrimary"), marker))
+			accepted := drift == "" || drift == "refresh"
+			if (err == nil) != accepted || requests != 1 || fallback.Load() != 0 {
 				t.Fatalf("drift=%s requests=%d error=%v", drift, requests, err)
 			}
-			if drift == "" {
-				if str(state, "metadata", "annotations", pauseKey) != "disabled" || str(state, "metadata", "annotations", pauseObservationKey) != "123.1" {
+			if accepted {
+				if str(state, "metadata", "annotations", pauseKey) != "disabled" || str(state, "metadata", "annotations", pauseObservationKey) != marker {
 					t.Fatal("accepted observation did not leave reconciliation disabled")
 				}
 			} else if string(transportJSON(t, state)) != before {

@@ -333,6 +333,10 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 	failures := []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "verified pause rejection", "verified resume rejection", "verified both rejections", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"}
 	if continuation {
 		failures = append(failures, "pre-marker acknowledgment", "pre-marker acknowledgment with fast controller clock", "changed observation", "foreign observation owner", "missing observation nonce")
+		failures = append(failures, "immediate acknowledgment", "immediate acknowledgment with slow controller clock")
+		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer", "owner", "marker", "CAS"} {
+			failures = append(failures, "refresh marker "+guard)
+		}
 	}
 	for _, phase := range []string{"pause", "resume"} {
 		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer"} {
@@ -360,11 +364,14 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 				clockOffset = -time.Millisecond
 			case "runner behind":
 				clockOffset = time.Millisecond
+			case "immediate acknowledgment with slow controller clock":
+				clockOffset = -operatorClockSkew
 			}
 			if clockOffset != 0 {
 				at(lease, "spec")["renewTime"] = now.Add(clockOffset).Format(time.RFC3339Nano)
 			}
 			writes, waits := []string{}, 0
+			markerValue := "123.1"
 			clusterReads, version := 0, 10
 			pauseAttempts, resumeAttempts := 0, 0
 			rebindFailure := func() bool {
@@ -405,7 +412,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 				appendCondition(s.cluster, object{"type": "Ready", "status": "True"})
 			}
 			c := client{now: func() time.Time { return now }, source: func(context.Context) error {
-				if failure == "source" || rebindFailure() && strings.HasSuffix(failure, " source") {
+				if failure == "source" || rebindFailure() && strings.HasSuffix(failure, " source") || failure == "refresh marker source" && waits > 0 {
 					return errors.New("source changed")
 				}
 				return nil
@@ -413,6 +420,14 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 				waits++
 				now = now.Add(20 * time.Second)
 				at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
+				if strings.HasPrefix(failure, "refresh marker ") {
+					changeGuard()
+					if failure == "refresh marker owner" {
+						list(s.cluster, "metadata", "managedFields")[0]["manager"] = "other"
+					} else if failure == "refresh marker marker" {
+						at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "other"
+					}
+				}
 				if pending {
 					pending = false
 					fresh()
@@ -496,7 +511,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 							return nil, errors.New("unreadable backing volume")
 						}
 						v := object{"metadata": object{"name": "original-volume", "namespace": "longhorn-system", "uid": "backing-uid", "resourceVersion": "10"}, "status": object{"state": "detached"}}
-						if rebindFailure() && strings.HasSuffix(failure, " backing") {
+						if rebindFailure() && strings.HasSuffix(failure, " backing") || failure == "refresh marker backing" && waits > 0 {
 							at(v, "metadata")["uid"] = "different-backing"
 						}
 						if len(writes) == 2 {
@@ -529,7 +544,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 							return nil, errors.New("unreadable consumers")
 						}
 						pods := append([]object{}, s.pods...)
-						if failure == "unlabelled consumer" || rebindFailure() && strings.HasSuffix(failure, " consumer") {
+						if failure == "unlabelled consumer" || rebindFailure() && strings.HasSuffix(failure, " consumer") || failure == "refresh marker consumer" && waits > 0 {
 							pods = append(pods, object{"metadata": object{"name": "unknown", "namespace": namespace, "uid": "other", "resourceVersion": "10"}, "spec": object{"volumes": []any{object{"persistentVolumeClaim": object{"claimName": targetName}}}}})
 						}
 						if failure == "malformed volumes" {
@@ -572,6 +587,11 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 						}
 						r["ts"] = markerTime.Add(500 * time.Millisecond).Format(time.RFC3339Nano)
 					}
+					if (strings.HasPrefix(failure, "immediate acknowledgment") || strings.HasPrefix(failure, "refresh marker ")) && markerValue == "123.1" {
+						// The first metadata event is immediate; only a later, guarded
+						// metadata refresh can produce an eligible acknowledgment.
+						r["ts"] = markerTime.Add(time.Millisecond + clockOffset).Format(time.RFC3339Nano)
+					}
 					if failure == "malformed acknowledgment" {
 						return []byte("truncated"), nil
 					}
@@ -602,6 +622,23 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 					}
 					last := ops[len(ops)-1]
 					if str(last, "op") == "add" {
+						if continuation && str(last, "value") == "123.1.2" {
+							if waits < 1 || !ownedPause(s.cluster) || !ownedAnnotation(s.cluster, pauseObservationKey, "123.1") || !reflect.DeepEqual(ops[len(ops)-2], testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations"))) {
+								t.Fatal("observation refresh escaped the separated owned-pause boundary")
+							}
+							for _, op := range ops {
+								if str(op, "op") != "test" && str(op, "path") != pauseObservationPath {
+									t.Fatal("observation refresh changed the pause")
+								}
+							}
+							writes = append(writes, "observation")
+							if failure == "refresh marker CAS" {
+								return nil, errors.New("uncertain observation request")
+							}
+							markerValue = "123.1.2"
+							at(s.cluster, "metadata", "annotations")[pauseObservationKey] = markerValue
+							return []byte(`{}`), nil
+						}
 						pauseAttempts++
 						if pauseAttempts == 1 && (failure == "verified pause rejection" || failure == "verified both rejections" || strings.HasPrefix(failure, "rebind pause ")) {
 							version++
@@ -652,7 +689,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 						}
 						writes = append(writes, "resume")
 						if continuation {
-							if !reflect.DeepEqual(ops[len(ops)-3], testPath("/metadata/annotations/platform.devantler.tech~1standby-pause-observation", "123.1")) || str(ops[len(ops)-2], "op") != "remove" || str(ops[len(ops)-2], "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" {
+							if !reflect.DeepEqual(ops[len(ops)-3], testPath("/metadata/annotations/platform.devantler.tech~1standby-pause-observation", markerValue)) || str(ops[len(ops)-2], "op") != "remove" || str(ops[len(ops)-2], "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" {
 								t.Fatal("resume did not conditionally remove its own observation")
 							}
 							delete(at(s.cluster, "metadata", "annotations"), pauseObservationKey)
@@ -706,13 +743,16 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 				return []byte(`{}`), nil
 			}
 			rejected := strings.HasPrefix(failure, "verified ")
-			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" || rejected
+			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" || strings.HasPrefix(failure, "immediate acknowledgment") || rejected
 			err := quarantineCompletedJoin(context.Background(), c, opts, g, failure != "read only")
 			if (err == nil) != ok {
 				t.Fatalf("failure=%q writes=%v waits=%d returned %v", failure, writes, waits, err)
 			}
 			if failure == "read only" && len(writes) != 0 {
 				t.Fatal("planning performed mutations")
+			}
+			if strings.HasPrefix(failure, "immediate acknowledgment") && (!reflect.DeepEqual(writes, []string{"pause", "observation", "job", "claim", "resume"}) || waits < 2) {
+				t.Fatalf("missing bounded metadata refresh or separated health samples: %v / waits=%d", writes, waits)
 			}
 			if (failure == "job removal read" || failure == "malformed acknowledgment") && waits != 0 {
 				t.Fatal("unknown observation was retried rather than stopping immediately")
@@ -743,8 +783,17 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 				maximum[final] = 3
 			}
 			maximum["resume post-read conflict"] = 4
-			maximum["pre-marker acknowledgment"], maximum["changed observation"], maximum["foreign observation owner"], maximum["missing observation nonce"] = 1, 1, 1, 0
-			maximum["pre-marker acknowledgment with fast controller clock"] = 1
+			maximum["pre-marker acknowledgment"], maximum["changed observation"], maximum["foreign observation owner"], maximum["missing observation nonce"] = 2, 1, 1, 0
+			maximum["pre-marker acknowledgment with fast controller clock"] = 2
+			if continuation {
+				maximum["replayed acknowledgment"] = 2
+			}
+			if strings.HasPrefix(failure, "refresh marker ") {
+				maximum[failure] = 1
+				if failure == "refresh marker CAS" {
+					maximum[failure] = 2
+				}
+			}
 			if strings.HasPrefix(failure, "rebind pause ") {
 				maximum[failure] = 0
 				if pauseAttempts != 1 || resumeAttempts != 0 {
