@@ -236,6 +236,9 @@ func released(volume object, oldClaim, oldVolume identity) bool {
 // quarantineCompletedJoin is a separate, non-resumable recovery. Its only
 // deletions are the bound completed Job and detached PVC, never any PV or peer.
 func quarantineCompletedJoin(ctx context.Context, c client, o options, g storageGuards, execute bool) error {
+	if o.diagnosePause && execute {
+		return errors.New("pause diagnostic cannot share recovery execution")
+	}
 	s, err := c.snapshotPending(ctx, true)
 	if err != nil {
 		return err
@@ -293,7 +296,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 			previous[reconcile] = true
 		}
 	}
-	if !execute {
+	if !execute && !o.diagnosePause {
 		return nil
 	}
 	paused := false
@@ -353,11 +356,12 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if _, err = completedJoinPlan(s, o, g); err != nil {
 		return err
 	}
-	ops := append(tests(s.cluster), testPath("/status/currentPrimary", p.primary.name), testPath("/status/targetPrimary", p.primary.name), testPath("/spec/instances", float64(3)))
-	if value(s.cluster, "metadata", "annotations") == nil {
-		ops = append(ops, editPath("add", "/metadata/annotations", object{pauseKey: "disabled"}))
-	} else {
-		ops = append(ops, testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations")), editPath("add", "/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"))
+	ops := pausePatch(s.cluster, p.primary.name)
+	if o.diagnosePause {
+		// A dry-run response is an observation only. Return before setting pause
+		// ownership, waiting for acknowledgment or entering any cleanup path.
+		args := append(patchArgs("cluster", s.cluster), "--dry-run=server")
+		return c.write(ctx, args, ops)
 	}
 	if err = c.patch(ctx, "cluster", s.cluster, ops); err != nil {
 		return err
@@ -518,6 +522,16 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 			return errors.New("replacement did not reach two healthy observations")
 		}
 	}
+}
+
+// pausePatch binds the same first request to the observed identity, version,
+// stable primary, replica count and complete annotation map in both modes.
+func pausePatch(cluster object, primary string) []object {
+	ops := append(tests(cluster), testPath("/status/currentPrimary", primary), testPath("/status/targetPrimary", primary), testPath("/spec/instances", float64(3)))
+	if value(cluster, "metadata", "annotations") == nil {
+		return append(ops, editPath("add", "/metadata/annotations", object{pauseKey: "disabled"}))
+	}
+	return append(ops, testPath("/metadata/annotations", value(cluster, "metadata", "annotations")), editPath("add", "/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"))
 }
 
 // storageDispatchAllowed admits only the separately approved, first main dispatch.

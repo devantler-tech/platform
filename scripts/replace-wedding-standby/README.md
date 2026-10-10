@@ -65,6 +65,27 @@ or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
 
+## Non-persisting pause diagnostic
+
+A rejected first pause request can be examined only through the separately
+confirmed `Diagnose Wedding Pause` workflow. Its first current-main dispatch
+requires `dry-run-retained-wedding-pause`, the same five object identities, the
+`prod` environment and the existing deployment lock. It uses the same source,
+retained-storage, backup, healthy-peer and operator guards, then submits exactly
+the recovery's first conditional pause patch with `--dry-run=server`.
+
+[Server-side dry-run](https://kubernetes.io/docs/reference/using-api/api-concepts/#dry-run)
+runs request validation and compatible admission without persisting the request.
+The command returns immediately after that one request, even when it fails. It
+does not await a pause acknowledgment, fence an instance, delete a Job or claim,
+resume reconciliation or perform a cleanup write. It cannot combine with
+execution, proof or continuation flags and cannot reuse a recovery confirmation.
+
+A successful diagnostic proves only that its bound request was accepted at that
+observation. It does not prove that the failed recovery had the same cause, that
+a later write would pass, or that recovery is authorized. Publishing this
+workflow does not authorize dispatching it; obtain separate diagnostic approval.
+
 ## Initial failed-Pod procedure
 
 The procedure requires three observed database instances, a stable healthy primary,
