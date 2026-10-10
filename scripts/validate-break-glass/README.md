@@ -8,17 +8,19 @@ unsupported configuration shapes and trailing documents are rejected.
 
 The tool prints generic verdicts only. It never prints keys, values, configuration
 contents, parser excerpts or filesystem error details. Input is bounded to 1 MiB
-and JSON nesting to 64 levels. Run it without shell tracing:
+and JSON nesting to 64 levels. Create a fresh private directory (`0700`), set
+`umask 077`, and run it without shell tracing. Replace `/private/path` below
+with that directory, including for the binary:
 
 ```bash
-go build -mod=readonly -o /private/tmp/validate-recovery-fields ./scripts/validate-break-glass
-/private/tmp/validate-recovery-fields < /private/path/recovery-export.json
+go build -mod=readonly -o /private/path/validate-recovery-fields ./scripts/validate-break-glass
+/private/path/validate-recovery-fields < /private/path/recovery-export.json
 ```
 
 Use an existing private directory for optional extraction:
 
 ```bash
-/private/tmp/validate-recovery-fields \
+/private/path/validate-recovery-fields \
   --field kubeconfig --output /private/path/new-recovery.yaml \
   < /private/path/recovery-export.json
 ```
@@ -36,7 +38,8 @@ failure. Use a built binary to distinguish nonzero codes; `go run` wraps them.
 This checks local structure only. It does not retrieve or repair stored values,
 verify certificates or authorization, contact an API, or establish production
 recovery coverage. Follow the approved private operator procedure for those steps.
-The stored-value repair and runtime acceptance remain on #4188.
+The [Talos access runbook](../../docs/talos-access.md#named-openbao-recovery-fields)
+documents the stored field names, full-export retrieval and client-use boundary.
 
 ```bash
 go test -race ./scripts/validate-break-glass

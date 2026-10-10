@@ -42,5 +42,36 @@ operation, retrieve it into a short-lived mode-`0600` file, pass that path with
 `--talosconfig`, perform the minimal operation, and remove the file. Confirm
 afterward that `talosctl config info` again reports `os:reader`.
 
+### Named OpenBao recovery fields
+
+The existing recovery entry holds exactly two named string values: `kubeconfig`
+and `talosconfig`. Each value is the complete configuration file, including its
+original line breaks. Do not use serialized configuration documents as field
+names or reconstruct them from an exported key.
+
+Use the approved administrator identity and existing recovery entry; this
+procedure grants no additional access. With shell tracing disabled, create a
+fresh private directory (`0700`) and set `umask 077` before writing the export.
+Retrieve the full KV v2 response without printing it:
+
+```bash
+bao kv get -format=json '<approved-recovery-entry>' > /private/path/recovery-export.json
+```
+
+The JSON must retain the `data.data` envelope. Browser field-only JSON and
+`bao kv get -field=...` output are not that envelope. Before using either file,
+follow [named recovery field validation](../scripts/validate-break-glass/README.md)
+to validate both fields and extract `--field talosconfig` or `--field kubeconfig`
+to a new file in that private directory. Extraction preserves the exact bytes,
+creates mode-`0600` files, and refuses an existing file or symlink.
+
+Pass the extracted file and approved context explicitly to the relevant client.
+Check Kubernetes API readiness and the intended recovery authorization, and use
+a read-only Talos API call before an approved node operation. Shape validation
+alone proves neither live access nor recovery coverage. Never print the export,
+configuration values, or raw client configuration into logs. Remove the export,
+extracted files and validator binary after use; daily access remains Kubernetes
+OIDC and Talos `os:reader`.
+
 If no admin Talos configuration remains, recovery is a cluster-PKI disaster
 recovery event; follow [Cryptographic custody](./dr/crypto-custody.md).
