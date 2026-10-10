@@ -73,7 +73,12 @@ The Cluster connection uses HTTP/1 and a non-replayable PATCH body, refuses
 redirects, and retains the explicit repair field manager and server-side dry-run
 query. Throttling and lost responses grant no retry. A shorter request window
 does not guarantee acceptance during concurrent status updates or identify the
-cause of an earlier rejection. A failed mutation or unknown read stops immediately without retry
+cause of an earlier rejection. HTTP 422 responses are read only in bounded memory
+and classified by their verified Kubernetes Status envelope: `SERVER_INVALID_NO_CAUSES`
+or `SERVER_INVALID_WITH_CAUSES`. Neither category identifies a failed predicate.
+Malformed, incomplete, oversized or mismatched envelopes retain `SERVER_INVALID`;
+response messages, fields and values are never printed or persisted.
+A failed mutation or unknown read stops immediately without retry
 or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
