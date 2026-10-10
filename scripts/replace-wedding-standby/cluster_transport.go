@@ -104,6 +104,43 @@ type clusterRequestFailure struct{ reason string }
 // Error excludes endpoint, response and credential details from failure output.
 func (clusterRequestFailure) Error() string { return "protected Cluster request failed" }
 
+// invalidResponseReason classifies only a complete Kubernetes Status envelope.
+// Response text stays in bounded memory and never identifies a failed predicate.
+func invalidResponseReason(body io.Reader) string {
+	const unclassified = "SERVER_INVALID"
+	const statusByteLimit = 64 << 10
+	data, err := io.ReadAll(io.LimitReader(body, statusByteLimit+1))
+	if err != nil || len(data) > statusByteLimit {
+		return unclassified
+	}
+	var status struct {
+		APIVersion string `json:"apiVersion"`
+		Kind       string `json:"kind"`
+		Status     string `json:"status"`
+		Reason     string `json:"reason"`
+		Code       int    `json:"code"`
+		Details    *struct {
+			Causes []struct {
+				Reason  string `json:"reason"`
+				Field   string `json:"field"`
+				Message string `json:"message"`
+			} `json:"causes"`
+		} `json:"details"`
+	}
+	if json.Unmarshal(data, &status) != nil || status.APIVersion != "v1" || status.Kind != "Status" || status.Status != "Failure" || status.Reason != "Invalid" || status.Code != http.StatusUnprocessableEntity {
+		return unclassified
+	}
+	if status.Details == nil || len(status.Details.Causes) == 0 {
+		return "SERVER_INVALID_NO_CAUSES"
+	}
+	for _, cause := range status.Details.Causes {
+		if cause.Reason == "" {
+			return unclassified
+		}
+	}
+	return "SERVER_INVALID_WITH_CAUSES"
+}
+
 // protectedClusterCommand resolves credentials once, before the final source
 // proof and GET. Only the fixed Cluster GET/PATCH shapes use the reused mTLS
 // connection; all other existing operations keep their kubectl implementation.
@@ -190,6 +227,9 @@ func protectedClusterCommand(ctx context.Context, command recoveryCommand) (reco
 		if response.StatusCode != http.StatusOK {
 			reasons := map[int]string{400: "SERVER_BAD_REQUEST", 401: "SERVER_UNAUTHORIZED", 403: "SERVER_FORBIDDEN", 404: "SERVER_NOT_FOUND", 409: "SERVER_CONFLICT", 422: "SERVER_INVALID", 429: "SERVER_THROTTLED", 500: "SERVER_INTERNAL", 503: "SERVER_UNAVAILABLE", 504: "SERVER_TIMEOUT"}
 			reason := reasons[response.StatusCode]
+			if response.StatusCode == http.StatusUnprocessableEntity {
+				reason = invalidResponseReason(response.Body)
+			}
 			if reason == "" {
 				reason = "UNKNOWN"
 			}

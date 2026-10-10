@@ -201,6 +201,61 @@ func TestRejectedClusterPatchDoesNotRetry(t *testing.T) {
 	}
 }
 
+// TestInvalidClusterResponseReportsOnlyEnvelopeShape exercises the production
+// patch boundary without printing or attributing the server's private details.
+func TestInvalidClusterResponseReportsOnlyEnvelopeShape(t *testing.T) {
+	const generic = `{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Invalid","code":422,"message":"fixture-private-message","details":{}}`
+	const structured = `{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Invalid","code":422,"message":"fixture-private-message","details":{"causes":[{"reason":"FieldValueInvalid","field":"fixture-private-field","message":"fixture-private-value"}]}}`
+	for _, test := range []struct {
+		name, body, want string
+		truncated        bool
+	}{
+		{"no causes", generic, "SERVER_INVALID_NO_CAUSES", false},
+		{"absent details", strings.Replace(generic, `,"details":{}`, "", 1), "SERVER_INVALID_NO_CAUSES", false},
+		{"null details", strings.Replace(generic, `"details":{}`, `"details":null`, 1), "SERVER_INVALID_NO_CAUSES", false},
+		{"empty causes", strings.Replace(generic, `"details":{}`, `"details":{"causes":[]}`, 1), "SERVER_INVALID_NO_CAUSES", false},
+		{"structured causes", structured, "SERVER_INVALID_WITH_CAUSES", false},
+		{"malformed", "{", "SERVER_INVALID", false},
+		{"trailing JSON", generic + generic, "SERVER_INVALID", false},
+		{"not Status", strings.Replace(generic, `"kind":"Status"`, `"kind":"Cluster"`, 1), "SERVER_INVALID", false},
+		{"wrong API version", strings.Replace(generic, `"apiVersion":"v1"`, `"apiVersion":"private/v2"`, 1), "SERVER_INVALID", false},
+		{"wrong status", strings.Replace(generic, `"status":"Failure"`, `"status":"Success"`, 1), "SERVER_INVALID", false},
+		{"wrong reason", strings.Replace(generic, `"reason":"Invalid"`, `"reason":"Forbidden"`, 1), "SERVER_INVALID", false},
+		{"wrong code", strings.Replace(generic, `"code":422`, `"code":403`, 1), "SERVER_INVALID", false},
+		{"nonobject details", strings.Replace(generic, `"details":{}`, `"details":[]`, 1), "SERVER_INVALID", false},
+		{"nonobject cause", strings.Replace(generic, `"details":{}`, `"details":{"causes":["private"]}`, 1), "SERVER_INVALID", false},
+		{"empty cause", strings.Replace(generic, `"details":{}`, `"details":{"causes":[{}]}`, 1), "SERVER_INVALID", false},
+		{"null cause", strings.Replace(generic, `"details":{}`, `"details":{"causes":[null]}`, 1), "SERVER_INVALID", false},
+		{"oversized", generic + strings.Repeat(" ", 64<<10), "SERVER_INVALID", false},
+		{"incomplete body", generic, "SERVER_INVALID", true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var patches, fallback atomic.Int32
+			snapshot := clusterResponse()
+			_, config := transportFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				patches.Add(1)
+				if r.Method != http.MethodPatch || r.URL.Path != clusterAPIPath || r.URL.RawQuery != "dryRun=All&fieldManager="+fieldManager {
+					t.Error("diagnostic changed its non-persisting scope")
+				}
+				_, _ = io.Copy(io.Discard, r.Body)
+				if test.truncated {
+					w.Header().Set("Content-Length", "65536")
+				}
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = io.WriteString(w, test.body)
+			})
+			command := configuredCommand(t, config, &fallback)
+			c := client{command: func(ctx context.Context, args []string, body []byte) ([]byte, error) {
+				return command(ctx, append(args, "--dry-run=server"), body)
+			}}
+			err := c.patch(context.Background(), "cluster", snapshot, pausePatch(snapshot, str(snapshot, "status", "currentPrimary")))
+			if err == nil || err.Error() != "conditional patch failed (reason="+test.want+"); no retry or cleanup write" || patches.Load() != 1 || fallback.Load() != 0 {
+				t.Fatalf("category or single-request contract failed: error=%v patches=%d fallback=%d", err, patches.Load(), fallback.Load())
+			}
+		})
+	}
+}
+
 // TestProtectedConfigRefusesChangedIdentity prevents incomplete credentials or
 // ignored auth/impersonation fields from changing the effective protected user.
 func TestProtectedConfigRefusesChangedIdentity(t *testing.T) {
