@@ -393,7 +393,10 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		args := append(patchArgs("cluster", s.cluster), "--dry-run=server")
 		return c.write(ctx, args, ops)
 	}
-	if err = guardedClusterPatch(ctx, c, s.cluster, func(ctx context.Context) (object, error) {
+	pauseCtx, cancelPause := context.WithTimeout(ctx, clusterPatchDeadline)
+	defer cancelPause()
+	pauseRequests := clusterPatchAttempts
+	if err = guardedClusterPatchBudget(pauseCtx, c, s.cluster, func(ctx context.Context) (object, error) {
 		if e := refresh(ctx); e != nil {
 			return nil, e
 		}
@@ -415,7 +418,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 			return observationPatch(cluster, p.primary.name, o.pauseObservation)
 		}
 		return pausePatch(cluster, p.primary.name)
-	}); err != nil {
+	}, &pauseRequests); err != nil {
 		return err
 	}
 	paused = true
@@ -469,12 +472,12 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 				}
 				return s.cluster, nil
 			}
-			if _, err = refreshObservation(ackCtx); err != nil {
+			if _, err = refreshObservation(pauseCtx); err != nil {
 				return err
 			}
-			if err = guardedClusterPatch(ackCtx, c, s.cluster, refreshObservation, func(cluster object) []object {
+			if err = guardedClusterPatchBudget(pauseCtx, c, s.cluster, refreshObservation, func(cluster object) []object {
 				return observationPatch(cluster, p.primary.name, nextObservation)
-			}); err != nil {
+			}, &pauseRequests); err != nil {
 				return err
 			}
 			observation, refreshedObservation = nextObservation, true

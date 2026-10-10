@@ -333,7 +333,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 	failures := []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "verified pause rejection", "verified resume rejection", "verified both rejections", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"}
 	if continuation {
 		failures = append(failures, "pre-marker acknowledgment", "pre-marker acknowledgment with fast controller clock", "changed observation", "foreign observation owner", "missing observation nonce")
-		failures = append(failures, "immediate acknowledgment", "immediate acknowledgment with slow controller clock")
+		failures = append(failures, "immediate acknowledgment", "immediate acknowledgment with slow controller clock", "exhausted observation rejections")
 		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer", "owner", "marker", "CAS"} {
 			failures = append(failures, "refresh marker "+guard)
 		}
@@ -374,6 +374,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 			markerValue := "123.1"
 			clusterReads, version := 0, 10
 			pauseAttempts, resumeAttempts := 0, 0
+			refreshAttempts := 0
 			rebindFailure := func() bool {
 				return strings.HasPrefix(failure, "rebind pause ") && pauseAttempts > 0 || strings.HasPrefix(failure, "rebind resume ") && resumeAttempts > 0
 			}
@@ -587,7 +588,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 						}
 						r["ts"] = markerTime.Add(500 * time.Millisecond).Format(time.RFC3339Nano)
 					}
-					if (strings.HasPrefix(failure, "immediate acknowledgment") || strings.HasPrefix(failure, "refresh marker ")) && markerValue == "123.1" {
+					if (strings.HasPrefix(failure, "immediate acknowledgment") || strings.HasPrefix(failure, "refresh marker ") || failure == "exhausted observation rejections") && markerValue == "123.1" {
 						// The first metadata event is immediate; only a later, guarded
 						// metadata refresh can produce an eligible acknowledgment.
 						r["ts"] = markerTime.Add(time.Millisecond + clockOffset).Format(time.RFC3339Nano)
@@ -623,6 +624,7 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 					last := ops[len(ops)-1]
 					if str(last, "op") == "add" {
 						if continuation && str(last, "value") == "123.1.2" {
+							refreshAttempts++
 							if waits < 1 || !ownedPause(s.cluster) || !ownedAnnotation(s.cluster, pauseObservationKey, "123.1") || !reflect.DeepEqual(ops[len(ops)-2], testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations"))) {
 								t.Fatal("observation refresh escaped the separated owned-pause boundary")
 							}
@@ -630,6 +632,12 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 								if str(op, "op") != "test" && str(op, "path") != pauseObservationPath {
 									t.Fatal("observation refresh changed the pause")
 								}
+							}
+							if failure == "exhausted observation rejections" {
+								version++
+								at(s.cluster, "metadata")["resourceVersion"] = strconv.Itoa(version)
+								at(s.cluster, "status")["phaseReason"] = "Creating replica synthetic-join"
+								return nil, clusterRequestFailure{"SERVER_INVALID_NO_CAUSES"}
 							}
 							writes = append(writes, "observation")
 							if failure == "refresh marker CAS" {
@@ -753,6 +761,9 @@ func testCompletedJoinTransaction(t *testing.T, continuation bool) {
 			}
 			if strings.HasPrefix(failure, "immediate acknowledgment") && (!reflect.DeepEqual(writes, []string{"pause", "observation", "job", "claim", "resume"}) || waits < 2) {
 				t.Fatalf("missing bounded metadata refresh or separated health samples: %v / waits=%d", writes, waits)
+			}
+			if failure == "exhausted observation rejections" && (refreshAttempts != 4 || !reflect.DeepEqual(writes, []string{"pause"})) {
+				t.Fatalf("initial and refreshed observation exceeded their shared five-request budget: refresh=%d writes=%v", refreshAttempts, writes)
 			}
 			if (failure == "job removal read" || failure == "malformed acknowledgment") && waits != 0 {
 				t.Fatal("unknown observation was retried rather than stopping immediately")

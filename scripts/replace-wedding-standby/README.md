@@ -83,7 +83,10 @@ or `SERVER_INVALID_WITH_CAUSES`. Neither category identifies a failed predicate.
 Malformed, incomplete, oversized or mismatched envelopes retain `SERVER_INVALID`;
 response messages, fields and values are never printed or persisted.
 A completed-join recovery may send at most five separately guarded requests within
-one minute **per pause or resume phase** (at most ten across both). Only a complete,
+one minute **per pause or resume phase** (at most ten across both). In the
+continuation, the initial and refreshed markers share that same pause-phase
+request budget and deadline; the refresh does not receive another allowance.
+Only a complete,
 typed native HTTP 422 rejection admits a new request: the server rejected that
 request before persistence. Each new request re-proves current main, the same
 operator leader, protected peers, backups, retained backing identity and every
