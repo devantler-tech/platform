@@ -502,6 +502,7 @@ jobs:
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/openbao-transport-runtime/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
+              - 'scripts/tests/test-reloader-rendered-placement.sh'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
               - 'scripts/tests/test-world-zone-trial.sh'
@@ -3169,6 +3170,11 @@ jobs:
         run: |
           bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --release whoami/whoami \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
+
+      - name: 🧩 Verify independent reloader placement
+        run: |
+          shellcheck scripts/tests/test-reloader-rendered-placement.sh
+          bash scripts/tests/test-reloader-rendered-placement.sh
 
       - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart
         env:
