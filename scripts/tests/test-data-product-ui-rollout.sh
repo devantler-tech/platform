@@ -5,6 +5,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly script="${root_dir}/scripts/verify-data-product-ui-rollout.sh"
 scratch="$(mktemp -d)"
 trap 'rm -rf "${scratch}"' EXIT
+# fail reports the violated fixture invariant and stops the regression suite.
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
   exit 1
@@ -31,9 +32,32 @@ if [[ "${MODE:-}" == hang || "${MODE:-}" == preflight-timeout ]]; then
     sleep 2
   fi
 fi
+# A timeout alone cannot prove a mutated snapshot was rejected on a busy host.
+# Record actual projection/predicate rejection before accepting that control.
+for argument in "$@"; do
+  if [[ "$argument" == */project.jq || "$argument" == */check.jq ]]; then
+    if "$REAL_JQ" "$@"; then
+      exit 0
+    else
+      result=$?
+      printf '%s\n' "$result" >>"$FIXTURE/rejections"
+      exit "$result"
+    fi
+  fi
+done
 exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
+
+# Production derives the expected state from the checked-out Helm declaration,
+# never from the live object being judged. Keep that read explicit in fixtures.
+cat >"${scratch}/bin/yq" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ $# == 3 && "$1" == -o=json && "$2" == '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]' && "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
+cat "$FIXTURE/expected-flags.json"
+SH
+chmod +x "${scratch}/bin/yq"
 
 cat >"${scratch}/fixtures.jq" <<'JQ'
 def meta($name;$ns): {name:$name,namespace:$ns,uid:($name+"-uid"),generation:3};
@@ -65,7 +89,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
 {apps:{apiVersion:"kustomize.toolkit.fluxcd.io/v1",kind:"Kustomization",metadata:meta("apps";"flux-system"),spec:{suspend:false,sourceRef:{kind:"OCIRepository",name:"flux-system"}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAppliedRevision:("latest@"+$apps)}},
  root:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("flux-system";"flux-system"),spec:{suspend:false,verify:root_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:("latest@"+$apps),digest:("sha256:"+([range(64)|"e"]|join("")))}}},
  chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",ref:{digest:$chart},verify:chart_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
- product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{ui:{url:"https://harbour-data.example.com/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}},status:{observedGeneration:3,conditions:[condition("Ready")]}},
+ product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{outputs:[{name:"observations",url:"https://harbour-data.example.com/api/observations",contractUrl:"https://harbour-data.example.com/openapi.json"}],ui:{url:"https://harbour-data.example.com/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}},status:{observedGeneration:3,conditions:[condition("Ready")]}},
  helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},uiContract:{enabled:true,additionalHostOrigins:["https://product-ui.example.com"]},uiAppearance:{enabled:true},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"},connectorReadiness:{enabled:false},contractReadiness:{enabled:false},contractProbe:{enabled:false}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"data-product-controller",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
  "deployment-controller":(deployment("data-product-controller";"controller") | .spec.template.spec.containers[0].env=[
    {name:"CONNECTOR_READINESS_ENABLED",value:"false"},{name:"CONTRACT_READINESS_ENABLED",value:"false"}]),
@@ -99,6 +123,7 @@ JQ
 jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps "$apps" \
   --arg repo 'ghcr.io/devantler-tech/data-product-controller' -f "${scratch}/fixtures.jq" >"${scratch}/all.json"
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
+printf '[false,false,false]\n' >"${scratch}/healthy/expected-flags.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
@@ -241,8 +266,9 @@ SH
 chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
 
 expected_urls=9
+# run_case exercises one fixture and checks its verdict, cleanup and sanitized output.
 run_case() {
-  local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-10}
+  local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-15}
   local fixture="${scratch}/${name}"
   [[ -d "$fixture" ]] || {
     mkdir "$fixture"
@@ -250,16 +276,20 @@ run_case() {
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+    EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
-    if [[ "$result" != 0 ]] || ! jq -e '.complete == true and .deployments == 4 and .pods == 6 and .routes == 3 and .publicChecks == 9 and .readinessState == "dormant"' "$fixture/stdout" >/dev/null; then
+    local expected_state expected_pods
+    expected_state=$(jq -r 'if .==[true,true,false] then "active" else "dormant" end' "$fixture/expected-flags.json")
+    if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
+    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == 9 and .readinessState == $state' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
       case "$reason" in
-      invalid_arguments | missing_dependency | private_storage_unavailable | deadline_exceeded | invalid_verification_policy | read_incomplete | public_contract_incomplete | rollout_changed | interrupted) ;;
-      *) reason=invalid_report ;;
+        invalid_arguments | missing_dependency | private_storage_unavailable | deadline_exceeded | invalid_verification_policy | invalid_expected_state | read_incomplete | public_contract_incomplete | rollout_changed | interrupted) ;;
+        *) reason=invalid_report ;;
       esac
       fail "$name: healthy live-shaped rollout was not accepted (helper exit $result, $reason)"
     fi
@@ -291,14 +321,21 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 mutate_case() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
   jq "$mutation" "${scratch}/healthy/$key.json" >"${scratch}/$name/$key.json"
   run_case "$name" fail '' "${4:-3}"
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 
+mkdir "${scratch}/declared-activation-but-live-dormant"
+cp "${scratch}/healthy/"*.json "${scratch}/declared-activation-but-live-dormant/"
+printf '[true,true,false]\n' >"${scratch}/declared-activation-but-live-dormant/expected-flags.json"
+run_case declared-activation-but-live-dormant fail
+[[ -s "${scratch}/declared-activation-but-live-dormant/rejections" ]] || fail 'declared activation mismatch did not reach snapshot validation'
 mutate_case probe-supplemental-network probe-policy '.specs=[(.spec | .egress=[{toEntities:["world"]}])]'
 mutate_case probe-object-network probe-policy '.specs={}'
 mutate_case probe-string-network probe-policy '.specs=""'
@@ -307,6 +344,92 @@ mutate_case helm-missing-connector-flag helm 'del(.spec.values.connectorReadines
 mutate_case helm-missing-contract-flag helm 'del(.spec.values.contractReadiness.enabled)'
 mutate_case helm-missing-probe-flag helm 'del(.spec.values.contractProbe.enabled)'
 run_case healthy pass
+mutate_case dormant-wrong-output-url product '.spec.outputs[0].url="https://other.example.com/api/observations"' 15
+mutate_case dormant-missing-output-url product 'del(.spec.outputs[0].url)'
+mkdir "${scratch}/active"
+jq --arg child "$child" '
+  .helm.spec.values.connectorReadiness.enabled=true | .helm.spec.values.contractReadiness.enabled=true |
+  ."deployment-controller".spec.template.spec.containers[0].env[].value="true" |
+  .product.spec.connector={adapter:"deployment/v1",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-harbour"}} |
+  .product.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}] |
+  .product.spec.outputs=[{name:"observations",url:"https://harbour-data.example.com/api/observations",contractUrl:"https://harbour-data.example.com/openapi.json"}] |
+  .product.status.conditions=[{type:"Ready",status:"True",observedGeneration:3,reason:"DependenciesReady"},
+    {type:"ConnectorReady",status:"True",observedGeneration:3,reason:"ConnectorReady"},
+    {type:"ContractsReady",status:"True",observedGeneration:3,reason:"ContractsReady"}] |
+  ."deployment-probe".metadata.annotations={"deployment.kubernetes.io/revision":"8"} |
+  ."deployment-probe".spec.replicas=2 | ."deployment-probe".status={observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2} |
+  ."deployment-probe".spec.template.spec.containers[0].env[1].value="true" |
+  ."deployment-probe" as $probe |
+  {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:{name:($probe.metadata.name+"-new"),namespace:"data-product-controller",uid:($probe.metadata.name+"-new-uid"),generation:3,
+    annotations:$probe.metadata.annotations,ownerReferences:[{apiVersion:"apps/v1",kind:"Deployment",name:$probe.metadata.name,uid:$probe.metadata.uid,controller:true}]},
+    spec:{replicas:2,template:$probe.spec.template},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}} as $set |
+  .replicasets.items += [$set] |
+  .pods.items += [range(1;3) as $ordinal | {apiVersion:"v1",kind:"Pod",metadata:{name:($probe.metadata.name+"-pod-"+($ordinal|tostring)),namespace:"data-product-controller",
+    uid:($probe.metadata.name+"-pod-"+($ordinal|tostring)+"-uid"),labels:$probe.spec.template.metadata.labels,
+    ownerReferences:[{apiVersion:"apps/v1",kind:"ReplicaSet",name:$set.metadata.name,uid:$set.metadata.uid,controller:true}]},
+    spec:$probe.spec.template.spec,status:{phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:"contract-probe",ready:true,imageID:("containerd://"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}}]
+' "${scratch}/all.json" >"${scratch}/active.json"
+while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json" >"${scratch}/active/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/active.json")
+printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
+run_case active pass
+mkdir -p "${scratch}/active-settled-label/after"
+cp "${scratch}/active/"*.json "${scratch}/active-settled-label/"
+jq '.metadata.labels.settled="yes"' "${scratch}/active/apps.json" >"${scratch}/active-settled-label/after/apps.json"
+expected_urls=18
+run_case active-settled-label pass
+expected_urls=9
+jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/active-settled-label/stdout" >/dev/null ||
+  fail 'active-settled-label: the active report did not name the change that settled'
+# active_mutation verifies that an active-profile mutation reaches snapshot rejection.
+active_mutation() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/active/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/active/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' "${4:-3}"
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+}
+active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
+active_mutation active-false-connector product '.status.conditions[1].status="False"'
+active_mutation active-missing-contract-condition product '.status.conditions |= map(select(.type!="ContractsReady"))'
+active_mutation active-duplicate-condition product '.status.conditions += [.status.conditions[2]]'
+active_mutation active-wrong-reason product '.status.conditions[2].reason="DependenciesReady"'
+active_mutation active-wrong-connector product '.spec.connector.resourceRef.name="other-workload"'
+active_mutation active-foreign-scope product '.spec.connector.resourceRef.namespace="other"'
+active_mutation active-wrong-output product '.spec.contractChecks[0].output="other"'
+active_mutation active-wrong-url product '.spec.outputs[0].contractUrl="https://other.example.com/openapi.json"'
+active_mutation active-wrong-output-url product '.spec.outputs[0].url="https://other.example.com/api/observations"' 15
+active_mutation active-missing-output-url product 'del(.spec.outputs[0].url)'
+active_mutation active-wrong-probe product '.spec.contractChecks[0].resourceRef.name="data-product-controller-harbour"'
+active_mutation active-disabled-controller deployment-controller '.spec.template.spec.containers[0].env[1].value="false"'
+active_mutation active-missing-connector-flag helm 'del(.spec.values.connectorReadiness.enabled)'
+active_mutation active-missing-contract-flag helm 'del(.spec.values.contractReadiness.enabled)'
+active_mutation active-missing-probe-flag helm 'del(.spec.values.contractProbe.enabled)'
+active_mutation active-disabled-helm helm '.spec.values.contractReadiness.enabled=false'
+active_mutation active-disabled-probe deployment-probe '.spec.template.spec.containers[0].env[1].value="false"'
+active_mutation active-zero-probe deployment-probe '.spec.replicas=0'
+active_mutation active-partial-probe deployment-probe '.status.readyReplicas=1'
+active_mutation active-old-probe-rs replicasets '.items[-1].metadata.annotations["deployment.kubernetes.io/revision"]="7"'
+active_mutation active-unready-probe-pod pods '.items[-1].status.containerStatuses[0].ready=false'
+active_mutation active-foreign-probe-image pods '.items[-1].status.containerStatuses[0].imageID="containerd://sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+active_mutation active-probe-pod-token pods '.items[-1].spec.automountServiceAccountToken=true'
+active_mutation active-probe-pod-init pods '.items[-1].spec.initContainers=[{name:"unexpected",image:"example.invalid/other:latest"}]'
+active_mutation active-probe-pod-label pods 'del(.items[-1].metadata.labels["app.kubernetes.io/component"])'
+active_mutation active-probe-pod-target pods '.items[-1].spec.containers[0].env[0].value="https://other.example.com/openapi.json"'
+active_mutation active-probe-pod-liveness pods '.items[-1].spec.containers[0].readinessProbe.httpGet.path="/healthz"'
+active_mutation active-probe-pod-env-from pods '.items[-1].spec.containers[0].envFrom=[{configMapRef:{name:"unexpected"}}]'
+active_mutation active-retained-exemption deployment-probe '.metadata.labels["platform.devantler.tech/replica-floor"]="exempt"'
+active_mutation declared-dormancy-but-live-active expected-flags '.=[false,false,false]'
+for state in '[true,false,false]' '[true,true,true]' '[null,null,null]' '["true",true,false]' '[]' '[true,true,false]\n[true,true,false]'; do
+  name="invalid-expected-state-${RANDOM}"
+  mkdir "${scratch}/$name"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  printf '%b\n' "$state" >"${scratch}/$name/expected-flags.json"
+  run_case "$name" fail
+  jq -e '.failure=="invalid_expected_state"' "${scratch}/$name/stdout" >/dev/null || fail "$name: wrong configuration failure"
+  [[ ! -e "${scratch}/$name/reads" ]] || fail "$name: invalid expectation reached the cluster"
+done
+if [[ ${TEST_READINESS_ONLY:-false} == true ]]; then exit 0; fi
 mutate_case probe-extra-init deployment-probe '.spec.template.spec.initContainers=[{name:"unexpected",image:"example.invalid/other:latest",envFrom:[{secretRef:{name:"environment-canary"}}]}]'
 mutate_case helm-unplanned-observation helm '.spec.values.connectorReadiness.enabled=true'
 mutate_case helm-unplanned-contracts helm '.spec.values.contractReadiness.enabled=true'
@@ -327,7 +450,9 @@ mutate_case observer-wrong-account observer-binding '.subjects[0].name="other-co
 mutate_case probe-broad-network probe-policy '.spec.egress += [{toEntities:["world"]}]'
 mutate_case dormant-product-reference product '.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}]'
 run_case partial-observer fail partial-observer
-run_case healthy-acceptance-bound pass '' 3
+# A healthy snapshot pair also parses the declared feature state. Allow host scheduling
+# overhead here; the one-second expiry controls below still enforce the total deadline.
+run_case healthy-acceptance-bound pass "" 10
 run_case orphan-plugin pass orphan
 while IFS= read -r pid; do
   if kill -0 "$pid" 2>/dev/null; then fail 'successful read left a credential-plugin child running'; fi
@@ -427,7 +552,9 @@ jq -e '(has("retaken") or has("settled")) == false' "${scratch}/first-pair-agree
 mkdir -p "${scratch}/settled-wrong/after"
 cp "${scratch}/healthy/"*.json "${scratch}/settled-wrong/"
 jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/settled-wrong/after/apps.json"
-run_case settled-wrong fail '' 3
+# Reach both snapshots before testing the retained change name. A three-second
+# budget can expire during the first collection on a loaded runner.
+run_case settled-wrong fail '' 15
 jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"]' "${scratch}/settled-wrong/stdout" >/dev/null ||
   fail 'settled-wrong: a rollout that settled into a wrong state was not refused with the change named'
 # Public checks that fail once while the rollout moves are retaken with it.
@@ -440,7 +567,8 @@ expected_urls=9
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/moving-public/stdout" >/dev/null ||
   fail 'moving-public: the accepted report did not name the change that settled'
 # Against a rollout that holds still, one failed public check refuses the deploy.
-run_case still-public fail flaky-public 3
+# This reason requires a failed public request and two complete snapshots.
+run_case still-public fail flaky-public 15
 jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
   fail 'still-public: a failed public check against an unchanged rollout was not refused as such'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
