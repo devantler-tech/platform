@@ -161,6 +161,9 @@ jobs:
       - name: 🛑 Validate ARC recovery metadata proof
         run: go test -race ./scripts/guard-arc-recovery
 
+      - name: 💾 Validate protected Longhorn client maintenance
+        run: go test -race ./scripts/maintain-longhorn-clients
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
@@ -578,6 +581,8 @@ jobs:
               # and the reused pinned grant (#3918).
               - 'tests/longhorn-csi-plugin-baseline-context/**'
               - 'scripts/tests/test-longhorn-csi-plugin-baseline-context.sh'
+              - 'scripts/tests/test-longhorn-compute-clients.sh'
+              - 'scripts/maintain-longhorn-clients/**'
               # The same retrofit for the default engine-image DaemonSet, its
               # fixtures and its own pinned grant (#3918).
               - 'tests/longhorn-engine-image-baseline-context/**'
@@ -1745,6 +1750,8 @@ jobs:
           bash scripts/tests/test-csi-sidecar-baseline-context.sh
           shellcheck scripts/tests/test-longhorn-csi-plugin-baseline-context.sh
           bash scripts/tests/test-longhorn-csi-plugin-baseline-context.sh
+          shellcheck scripts/tests/test-longhorn-compute-clients.sh
+          bash scripts/tests/test-longhorn-compute-clients.sh
           shellcheck scripts/tests/test-longhorn-engine-image-baseline-context.sh
           bash scripts/tests/test-longhorn-engine-image-baseline-context.sh
           shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh

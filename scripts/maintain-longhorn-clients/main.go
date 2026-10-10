@@ -1,0 +1,883 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"reflect"
+	"regexp"
+	"strings"
+	"time"
+
+	"sigs.k8s.io/yaml"
+)
+
+const journalName = "longhorn-client-maintenance"
+const journalNS = "flux-system"
+const restrictedSelector = "node.longhorn.io/create-default-disk:true"
+
+type command func(context.Context, []byte, ...string) ([]byte, error)
+type client struct{ command command }
+type journal struct {
+	Holder, Source, Phase                 string
+	Clusters, Claims, PVs, Volumes, Nodes []object
+	Release, Deployment                   object
+	Extra                                 []workload
+}
+type engine struct {
+	c              client
+	holder, source string
+	now            func() time.Time
+	sleep          func(time.Duration)
+	wait           time.Duration
+}
+
+func (c client) read(ctx context.Context, kind, ns, name string) (object, error) {
+	a := []string{"get", kind}
+	if name != "" {
+		a = append(a, name)
+	}
+	if ns == "*" {
+		a = append(a, "-A")
+	} else if ns != "" {
+		a = append(a, "-n", ns)
+	}
+	a = append(a, "-o", "json")
+	b, e := c.command(ctx, nil, a...)
+	if e != nil {
+		return nil, e
+	}
+	var o object
+	e = json.Unmarshal(b, &o)
+	if e != nil || o == nil {
+		return nil, errors.New("resource read is not a JSON object")
+	}
+	return o, nil
+}
+func (c client) list(ctx context.Context, kind, ns string) ([]object, error) {
+	o, e := c.read(ctx, kind, ns, "")
+	if e != nil {
+		return nil, e
+	}
+	a, ok := val(o, "items").([]any)
+	if !ok || val(o, "metadata", "continue") != nil && str(o, "metadata", "continue") != "" {
+		return nil, errors.New("resource list is incomplete")
+	}
+	r := items(o, "items")
+	if len(r) != len(a) {
+		return nil, errors.New("resource list contains malformed entries")
+	}
+	return r, nil
+}
+func (c client) patch(ctx context.Context, kind string, o object, p []object) error {
+	b, e := json.Marshal(p)
+	if e != nil {
+		return e
+	}
+	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--patch", string(b), "-o", "name"}
+	_, e = c.command(ctx, nil, a...)
+	return e
+}
+func (e engine) collect(ctx context.Context) (inventory, error) {
+	s := inventory{}
+	for _, q := range []struct {
+		kind, ns string
+		dst      *[]object
+	}{
+		{"clusters.postgresql.cnpg.io", "*", &s.clusters}, {"pods", "*", &s.pods}, {"persistentvolumeclaims", "*", &s.claims}, {"persistentvolumes", "", &s.pvs}, {"volumes.longhorn.io", "longhorn-system", &s.volumes}, {"backups.postgresql.cnpg.io", "*", &s.backups}, {"replicasets", "*", &s.replicasets},
+	} {
+		a, err := e.c.list(ctx, q.kind, q.ns)
+		if err != nil {
+			return s, err
+		}
+		*q.dst = a
+	}
+	var err error
+	s.release, err = e.c.read(ctx, "helmrelease", "crossview", "crossview")
+	if err != nil {
+		return s, err
+	}
+	s.deployment, err = e.c.read(ctx, "deployment", "crossview", "crossview-postgres")
+	if err != nil {
+		return s, err
+	}
+	for _, t := range extraTargets {
+		r, err := e.c.read(ctx, "helmrelease", t.ns, t.release)
+		if err != nil {
+			return s, err
+		}
+		d, err := e.c.read(ctx, "deployment", t.ns, t.deployment)
+		if err != nil {
+			return s, err
+		}
+		s.extra = append(s.extra, workload{r, d})
+	}
+	return s, err
+}
+func (e engine) readJournal(ctx context.Context) (journal, object, error) {
+	o, err := e.c.read(ctx, "configmap", journalNS, journalName)
+	if err != nil {
+		return journal{}, nil, err
+	}
+	var j journal
+	err = json.Unmarshal([]byte(str(o, "data", "journal.json")), &j)
+	if err != nil || !meta(o) || str(o, "metadata", "annotations", ownerKey) != j.Holder || j.Holder == "" || j.Source == "" {
+		return j, o, errors.New("maintenance journal is malformed")
+	}
+	return j, o, nil
+}
+func (e engine) writeJournal(ctx context.Context, j journal, o object) error {
+	b, err := json.Marshal(j)
+	if err != nil {
+		return err
+	}
+	if o != nil {
+		return e.c.patch(ctx, "configmap", o, append(tests(o), object{"op": "replace", "path": "/data/journal.json", "value": string(b)}))
+	}
+	v := object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": object{"name": journalName, "namespace": journalNS, "annotations": object{ownerKey: j.Holder}}, "data": object{"journal.json": string(b)}}
+	b, err = json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = e.c.command(ctx, b, "create", "-f", "-", "-o", "name")
+	return err
+}
+func (e engine) ownerJournal(ctx context.Context) (journal, object, error) {
+	j, o, err := e.readJournal(ctx)
+	if err == nil && (j.Holder != e.holder || j.Source != e.source) {
+		err = errors.New("maintenance belongs to another run or source; refusing adoption")
+	}
+	return j, o, err
+}
+
+func (e engine) poll(ctx context.Context, label string, check func(context.Context) (bool, error)) error {
+	deadline := e.now().Add(e.wait)
+	for {
+		ok, err := check(ctx)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+		if !e.now().Before(deadline) {
+			return fmt.Errorf("bounded %s wait expired", label)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+		e.sleep(10 * time.Second)
+	}
+}
+func resourceKind(o object) string {
+	switch str(o, "kind") {
+	case "Cluster":
+		return "clusters.postgresql.cnpg.io"
+	case "HelmRelease":
+		return "helmrelease"
+	case "Deployment":
+		return "deployment"
+	case "Node":
+		return "node"
+	}
+	return ""
+}
+func pausePatch(o object, holder string) []object {
+	p := tests(o)
+	if val(o, "metadata", "annotations") == nil {
+		p = append(p, object{"op": "add", "path": "/metadata/annotations", "value": object{}})
+	}
+	if str(o, "kind") == "Node" {
+		p = append(p, object{"op": "add", "path": "/metadata/annotations/" + escape(ownerKey), "value": holder})
+		return append(p, object{"op": "add", "path": "/metadata/labels/node.longhorn.io~1create-default-disk", "value": "true"})
+	}
+	for k, v := range map[string]string{ownerKey: holder, reconcileKey: "disabled"} {
+		p = append(p, object{"op": "add", "path": "/metadata/annotations/" + escape(k), "value": v})
+	}
+	switch str(o, "kind") {
+	case "Cluster":
+		p = append(p, object{"op": "add", "path": "/metadata/annotations/" + escape(hibernateKey), "value": "on"})
+	case "HelmRelease":
+		p = append(p, object{"op": "add", "path": "/spec/suspend", "value": true})
+	case "Deployment":
+		p = append(p, object{"op": "replace", "path": "/spec/replicas", "value": 0})
+	}
+	return p
+}
+
+func (e engine) detached(ctx context.Context, j journal) (bool, error) {
+	volumes, err := e.c.list(ctx, "volumes.longhorn.io", "longhorn-system")
+	if err != nil {
+		return false, err
+	}
+	if len(volumes) != len(j.Volumes) {
+		return false, errors.New("volume inventory changed during maintenance")
+	}
+	byKey, err := index(volumes)
+	if err != nil {
+		return false, err
+	}
+	for _, old := range j.Volumes {
+		v := byKey[key(old)]
+		if v == nil || str(v, "metadata", "uid") != str(old, "metadata", "uid") {
+			return false, errors.New("backing volume identity changed")
+		}
+		if str(v, "status", "state") != "detached" {
+			return false, nil
+		}
+	}
+	for _, old := range j.Clusters {
+		c, err := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
+		if err != nil {
+			return false, err
+		}
+		if str(c, "metadata", "uid") != str(old, "metadata", "uid") || str(c, "metadata", "annotations", ownerKey) != e.holder || !reflect.DeepEqual(val(c, "spec"), val(old, "spec")) {
+			return false, errors.New("database maintenance identity changed")
+		}
+		if !condition(c, hibernateKey) {
+			return false, nil
+		}
+	}
+	pods, err := e.c.list(ctx, "pods", "*")
+	if err != nil {
+		return false, err
+	}
+	claims := map[string]bool{}
+	for _, c := range j.Claims {
+		claims[key(c)] = true
+	}
+	for _, p := range pods {
+		if str(p, "status", "phase") == "Succeeded" || str(p, "status", "phase") == "Failed" {
+			continue
+		}
+		for _, v := range items(p, "spec", "volumes") {
+			if claims[str(p, "metadata", "namespace")+"/"+str(v, "persistentVolumeClaim", "claimName")] {
+				return false, nil
+			}
+		}
+	}
+	return true, nil
+}
+
+func (e engine) clientsReady(ctx context.Context) (bool, error) {
+	for _, setting := range []struct{ name, value string }{{"system-managed-components-node-selector", ""}, {"create-default-disk-labeled-nodes", "true"}} {
+		o, err := e.c.read(ctx, "settings.longhorn.io", "longhorn-system", setting.name)
+		if err != nil {
+			return false, err
+		}
+		if val(o, "value") != setting.value {
+			return false, nil
+		}
+	}
+	for _, name := range []string{"longhorn-manager", "longhorn-csi-plugin"} {
+		o, err := e.c.read(ctx, "daemonset", "longhorn-system", name)
+		if err != nil {
+			return false, err
+		}
+		if str(o, "spec", "template", "spec", "nodeSelector", "node.longhorn.io/create-default-disk") != "" || num(o, "status", "desiredNumberScheduled") < 3 || num(o, "status", "numberReady") != num(o, "status", "desiredNumberScheduled") || num(o, "status", "updatedNumberScheduled") != num(o, "status", "desiredNumberScheduled") || num(o, "status", "observedGeneration") != num(o, "metadata", "generation") {
+			return false, nil
+		}
+	}
+	daemonsets, err := e.c.list(ctx, "daemonsets", "longhorn-system")
+	if err != nil {
+		return false, err
+	}
+	engines := 0
+	for _, d := range daemonsets {
+		if str(d, "metadata", "labels", "longhorn.io/component") != "engine-image" {
+			continue
+		}
+		engines++
+		if str(d, "spec", "template", "spec", "nodeSelector", "node.longhorn.io/create-default-disk") != "" || num(d, "status", "desiredNumberScheduled") < 3 || num(d, "status", "numberReady") != num(d, "status", "desiredNumberScheduled") || num(d, "status", "updatedNumberScheduled") != num(d, "status", "desiredNumberScheduled") || num(d, "status", "observedGeneration") != num(d, "metadata", "generation") {
+			return false, nil
+		}
+	}
+	if engines == 0 {
+		return false, errors.New("engine-image client coverage is incomplete")
+	}
+	nodes, err := e.c.list(ctx, "nodes", "")
+	if err != nil {
+		return false, err
+	}
+	csi, err := e.c.list(ctx, "csinodes", "")
+	if err != nil {
+		return false, err
+	}
+	lh, err := e.c.list(ctx, "nodes.longhorn.io", "longhorn-system")
+	if err != nil {
+		return false, err
+	}
+	byName := map[string]object{}
+	for _, n := range csi {
+		byName[str(n, "metadata", "name")] = n
+	}
+	byLH := map[string]object{}
+	for _, n := range lh {
+		byLH[str(n, "metadata", "name")] = n
+	}
+	workers := 0
+	for _, n := range nodes {
+		if val(n, "metadata", "labels", "node-role.kubernetes.io/control-plane") != nil {
+			continue
+		}
+		if !condition(n, "Ready") {
+			return false, nil
+		}
+		workers++
+		registered := false
+		for _, d := range items(byName[str(n, "metadata", "name")], "spec", "drivers") {
+			if str(d, "name") == "driver.longhorn.io" {
+				registered = true
+			}
+		}
+		if !registered {
+			return false, nil
+		}
+		if strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") {
+			l := byLH[str(n, "metadata", "name")]
+			if l == nil || val(l, "spec", "allowScheduling") != false || val(l, "spec", "evictionRequested") != true {
+				return false, errors.New("compute-worker replica exclusion is unproven")
+			}
+		}
+	}
+	if workers < 3 {
+		return false, errors.New("worker coverage is incomplete")
+	}
+	replicas, err := e.c.list(ctx, "replicas.longhorn.io", "longhorn-system")
+	if err != nil {
+		return false, err
+	}
+	for _, r := range replicas {
+		if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") {
+			return false, errors.New("replica storage exists on a compute worker")
+		}
+	}
+	return true, nil
+}
+
+func (e engine) prepare(ctx context.Context) error {
+	// Existing journals are never overwritten or silently adopted. A completed
+	// migration is only a no-op when its live result is still positively proven.
+	journals, err := e.c.list(ctx, "configmaps", journalNS)
+	if err != nil {
+		return err
+	}
+	for _, o := range journals {
+		if str(o, "metadata", "name") == journalName {
+			j, _, err := e.readJournal(ctx)
+			if err != nil {
+				return err
+			}
+			if j.Phase != "complete" {
+				return errors.New("unfinished maintenance journal requires its owning run's restoration")
+			}
+			ok, err := e.clientsReady(ctx)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return errors.New("completed maintenance drifted; a new reviewed repair is required")
+			}
+			return nil
+		}
+	}
+	ready, err := e.clientsReady(ctx)
+	if err != nil {
+		return err
+	}
+	if ready {
+		return nil
+	}
+	setting, err := e.c.read(ctx, "settings.longhorn.io", "longhorn-system", "system-managed-components-node-selector")
+	if err != nil {
+		return err
+	}
+	if val(setting, "value") != restrictedSelector {
+		return errors.New("live selector is outside the reviewed migration")
+	}
+	s, err := e.collect(ctx)
+	if err != nil {
+		return err
+	}
+	p, err := buildPlan(s, e.now())
+	if err != nil {
+		return err
+	}
+	hpas, err := e.c.list(ctx, "horizontalpodautoscalers", "*")
+	if err != nil {
+		return err
+	}
+	for _, h := range hpas {
+		if str(h, "spec", "scaleTargetRef", "name") == "crossview-postgres" || str(h, "spec", "scaleTargetRef", "name") == "storage" || str(h, "spec", "scaleTargetRef", "name") == "actual-budget-actualbudget" {
+			return errors.New("bundled database has another replica owner")
+		}
+	}
+	nodes, err := e.c.list(ctx, "nodes", "")
+	if err != nil {
+		return err
+	}
+	storageNodes := 0
+	for _, n := range nodes {
+		if condition(n, "Ready") && !strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && str(n, "metadata", "labels", "node.longhorn.io/create-default-disk") == "true" {
+			storageNodes++
+		}
+	}
+	if storageNodes < 3 {
+		return errors.New("three ready baseline storage workers are required")
+	}
+	replicas, err := e.c.list(ctx, "replicas.longhorn.io", "longhorn-system")
+	if err != nil {
+		return err
+	}
+	for _, r := range replicas {
+		if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") {
+			return errors.New("compute-worker replica storage must be evacuated before this migration")
+		}
+	}
+	compute := []object{}
+	for _, n := range nodes {
+		if strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && val(n, "spec", "unschedulable") != true && str(n, "metadata", "labels", "node.longhorn.io/create-default-disk") != "true" {
+			if !meta(n) || !condition(n, "Ready") || str(n, "metadata", "labels", "ksail.io/autoscaled") != "true" || str(n, "metadata", "annotations", ownerKey) != "" {
+				return errors.New("compute-worker identity or ownership is unproven")
+			}
+			compute = append(compute, n)
+		}
+	}
+	if len(compute) > 0 {
+		// Prove the admission mutation without creating any object, and require
+		// fail-closed Longhorn Node admission before borrowing the legacy label.
+		webhook, err := e.c.read(ctx, "mutatingwebhookconfiguration", "", "kyverno-resource-mutating-webhook-cfg")
+		if err != nil {
+			return err
+		}
+		failClosed := false
+		for _, w := range items(webhook, "webhooks") {
+			if str(w, "failurePolicy") != "Fail" {
+				continue
+			}
+			for _, r := range items(w, "rules") {
+				groups, _ := val(r, "apiGroups").([]any)
+				resources, _ := val(r, "resources").([]any)
+				operations, _ := val(r, "operations").([]any)
+				versions, _ := val(r, "apiVersions").([]any)
+				has := func(a []any, s string) bool {
+					for _, v := range a {
+						if v == s {
+							return true
+						}
+					}
+					return false
+				}
+				if has(groups, "longhorn.io") && has(resources, "nodes") && has(operations, "CREATE") && has(operations, "UPDATE") && has(versions, "v1beta2") {
+					failClosed = true
+				}
+			}
+		}
+		if !failClosed {
+			return errors.New("compute-worker replica exclusion is not fail-closed")
+		}
+		probe := object{"apiVersion": "longhorn.io/v1beta2", "kind": "Node", "metadata": object{"name": "autoscale-client-preflight-" + strings.ReplaceAll(e.holder, ".", "-"), "namespace": "longhorn-system"}, "spec": object{"allowScheduling": true, "evictionRequested": false, "disks": object{}}}
+		b, _ := json.Marshal(probe)
+		b, err = e.c.command(ctx, b, "create", "--dry-run=server", "-f", "-", "-o", "json")
+		if err != nil {
+			return err
+		}
+		var result object
+		if json.Unmarshal(b, &result) != nil || val(result, "spec", "allowScheduling") != false || val(result, "spec", "evictionRequested") != true {
+			return errors.New("admission did not exclude replica storage")
+		}
+	}
+	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", Clusters: p.clusters, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Nodes: compute, Release: p.release, Deployment: p.deployment, Extra: p.extra}
+	if err = e.writeJournal(ctx, j, nil); err != nil {
+		return err
+	}
+	for _, n := range compute {
+		if err = e.c.patch(ctx, "node", n, pausePatch(n, e.holder)); err != nil {
+			return err
+		}
+	}
+	// CNPG 1.30.1 intentionally refuses to begin hibernation while unhealthy.
+	// Install the missing clients through the old selector first, without
+	// relaxing replica storage. Pending standbys can then attach normally.
+	if err = e.poll(ctx, "database health before hibernation", func(c context.Context) (bool, error) {
+		clusters, err := e.c.list(c, "clusters.postgresql.cnpg.io", "*")
+		if err != nil {
+			return false, err
+		}
+		if err = preserved(j.Clusters, clusters); err != nil {
+			return false, err
+		}
+		byKey, _ := index(clusters)
+		for _, old := range j.Clusters {
+			v := byKey[key(old)]
+			if !condition(v, "Ready") || num(v, "status", "readyInstances") != num(v, "spec", "instances") || str(v, "status", "phase") != "Cluster in healthy state" || str(v, "status", "currentPrimary") != str(old, "status", "currentPrimary") || str(v, "status", "targetPrimary") != str(v, "status", "currentPrimary") {
+				return false, nil
+			}
+		}
+		for _, w := range append([]workload{{j.Release, j.Deployment}}, j.Extra...) {
+			d, err := e.c.read(c, "deployment", str(w.Deployment, "metadata", "namespace"), str(w.Deployment, "metadata", "name"))
+			if err != nil {
+				return false, err
+			}
+			if str(d, "metadata", "uid") != str(w.Deployment, "metadata", "uid") || !reflect.DeepEqual(val(d, "spec"), val(w.Deployment, "spec")) {
+				return false, errors.New("storage-consumer identity changed")
+			}
+			if num(d, "status", "readyReplicas") != num(d, "spec", "replicas") {
+				return false, nil
+			}
+		}
+		lh, err := e.c.list(c, "nodes.longhorn.io", "longhorn-system")
+		if err != nil {
+			return false, err
+		}
+		byLH := map[string]object{}
+		for _, n := range lh {
+			byLH[str(n, "metadata", "name")] = n
+		}
+		for _, n := range compute {
+			v := byLH[str(n, "metadata", "name")]
+			if v == nil || val(v, "spec", "allowScheduling") != false || val(v, "spec", "evictionRequested") != true {
+				return false, nil
+			}
+		}
+		replicas, err := e.c.list(c, "replicas.longhorn.io", "longhorn-system")
+		if err != nil {
+			return false, err
+		}
+		for _, r := range replicas {
+			if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") {
+				return false, errors.New("temporary client eligibility admitted replica storage")
+			}
+		}
+		return true, nil
+	}); err != nil {
+		return err
+	}
+	// Journal before every write; resourceVersion+UID tests prevent race adoption.
+	resources := []object{p.release}
+	for _, w := range p.extra {
+		resources = append(resources, w.Release)
+	}
+	resources = append(resources, p.deployment)
+	for _, w := range p.extra {
+		resources = append(resources, w.Deployment)
+	}
+	resources = append(resources, p.clusters...)
+	for _, old := range resources {
+		o, readErr := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
+		if readErr != nil {
+			return readErr
+		}
+		if str(o, "metadata", "uid") != str(old, "metadata", "uid") || !reflect.DeepEqual(val(o, "spec"), val(old, "spec")) || !unpaused(o) {
+			return errors.New("resource changed before its owned pause")
+		}
+		if err = e.c.patch(ctx, resourceKind(o), o, pausePatch(o, e.holder)); err != nil {
+			return err
+		}
+	}
+	if err = e.poll(ctx, "all-volume detachment", func(c context.Context) (bool, error) { return e.detached(c, j) }); err != nil {
+		return err
+	}
+	j, o, err := e.ownerJournal(ctx)
+	if err != nil {
+		return err
+	}
+	j.Phase = "detached"
+	return e.writeJournal(ctx, j, o)
+}
+
+func (e engine) restore(ctx context.Context) error {
+	all, err := e.c.list(ctx, "configmaps", journalNS)
+	if err != nil {
+		return err
+	}
+	exists := false
+	for _, o := range all {
+		if str(o, "metadata", "name") == journalName {
+			exists = true
+		}
+	}
+	if !exists {
+		return nil
+	}
+	j, o, err := e.readJournal(ctx)
+	if err != nil {
+		return err
+	}
+	if j.Phase == "complete" {
+		return nil
+	}
+	if j.Holder != e.holder || j.Source != e.source {
+		return errors.New("restoration refuses a foreign journal")
+	}
+	var failures []error
+	// Resume every owned resource even if one restoration fails. Never overwrite
+	// an operator/maintainer's intervening spec or another run's annotation.
+	resources := append(append([]object{}, j.Nodes...), j.Clusters...)
+	resources = append(resources, j.Deployment)
+	for _, w := range j.Extra {
+		resources = append(resources, w.Deployment)
+	}
+	resources = append(resources, j.Release)
+	for _, w := range j.Extra {
+		resources = append(resources, w.Release)
+	}
+	for _, old := range resources {
+		current, err := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		if str(current, "metadata", "annotations", ownerKey) == "" && str(current, "metadata", "uid") == str(old, "metadata", "uid") && reflect.DeepEqual(val(current, "spec"), val(old, "spec")) && val(current, "metadata", "annotations", hibernateKey) == val(old, "metadata", "annotations", hibernateKey) && val(current, "metadata", "annotations", reconcileKey) == val(old, "metadata", "annotations", reconcileKey) && (str(old, "kind") != "Node" || val(current, "metadata", "labels", "node.longhorn.io/create-default-disk") == val(old, "metadata", "labels", "node.longhorn.io/create-default-disk")) {
+			continue
+		}
+		patch, err := restorePatch(old, current, e.holder, str(old, "kind") == "Deployment")
+		if err == nil {
+			err = e.c.patch(ctx, resourceKind(old), current, patch)
+		}
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+	if len(failures) > 0 {
+		return errors.Join(failures...)
+	}
+	j.Phase = "restored"
+	return e.writeJournal(ctx, j, o)
+}
+
+func (e engine) afterPublish(ctx context.Context) error {
+	all, err := e.c.list(ctx, "configmaps", journalNS)
+	if err != nil {
+		return err
+	}
+	exists := false
+	for _, o := range all {
+		if str(o, "metadata", "name") == journalName {
+			exists = true
+		}
+	}
+	if !exists {
+		return nil
+	}
+	j, _, err := e.readJournal(ctx)
+	if err != nil {
+		return err
+	}
+	if j.Phase == "complete" {
+		return nil
+	}
+	if j.Holder != e.holder || j.Source != e.source || j.Phase != "detached" {
+		return errors.New("post-publication requires this run's detached journal")
+	}
+	ok, err := e.detached(ctx, j)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return errors.New("volumes reattached before selector migration")
+	}
+	// Only the infrastructure-controller layer needs to converge while the
+	// explicitly owned database resources are hibernated. Full Flux reconciliation
+	// and all original health gates run after their restoration, never skipped.
+	controller, err := e.c.read(ctx, "kustomization", "flux-system", "infrastructure-controllers")
+	if err != nil {
+		return err
+	}
+	request := tests(controller)
+	if val(controller, "metadata", "annotations") == nil {
+		request = append(request, object{"op": "add", "path": "/metadata/annotations", "value": object{}})
+	}
+	request = append(request, object{"op": "add", "path": "/metadata/annotations/reconcile.fluxcd.io~1requestedAt", "value": e.now().UTC().Format(time.RFC3339Nano)})
+	err = e.c.patch(ctx, "kustomization", controller, request)
+	if err != nil {
+		return err
+	}
+	if err = e.poll(ctx, "client rollout", e.clientsReady); err != nil {
+		return err
+	}
+	return e.restore(ctx)
+}
+
+func (e engine) verify(ctx context.Context) error {
+	all, err := e.c.list(ctx, "configmaps", journalNS)
+	if err != nil {
+		return err
+	}
+	exists := false
+	for _, o := range all {
+		if str(o, "metadata", "name") == journalName {
+			exists = true
+		}
+	}
+	if !exists {
+		return nil
+	}
+	j, o, err := e.readJournal(ctx)
+	if err != nil {
+		return err
+	}
+	if j.Phase == "complete" {
+		return nil
+	}
+	if j.Holder != e.holder || j.Source != e.source || j.Phase != "restored" {
+		return errors.New("maintenance restoration was not proven")
+	}
+	proof := func(c context.Context) (bool, error) {
+		s, err := e.collect(c)
+		if err != nil {
+			return false, err
+		}
+		if err = preserved(j.Claims, s.claims); err != nil {
+			return false, err
+		}
+		if err = preserved(j.PVs, s.pvs); err != nil {
+			return false, err
+		}
+		for _, claim := range s.claims {
+			for _, old := range j.Claims {
+				if key(claim) == key(old) && str(claim, "status", "phase") != "Bound" {
+					return false, errors.New("retained claim is no longer bound")
+				}
+			}
+		}
+		volumes, err := index(s.volumes)
+		if err != nil {
+			return false, err
+		}
+		for _, pv := range s.pvs {
+			if str(pv, "spec", "csi", "driver") != "driver.longhorn.io" {
+				continue
+			}
+			v := volumes["longhorn-system/"+str(pv, "spec", "csi", "volumeHandle")]
+			if str(pv, "status", "phase") == "Released" {
+				if str(pv, "spec", "persistentVolumeReclaimPolicy") != "Retain" || str(v, "status", "state") != "detached" {
+					return false, errors.New("retired backing is not retained and detached")
+				}
+			} else if str(pv, "status", "phase") != "Bound" {
+				return false, errors.New("persistent-volume binding is unknown")
+			}
+			if str(v, "status", "robustness") == "faulted" || (str(v, "status", "state") != "attached" && str(v, "status", "state") != "detached") || (str(v, "status", "state") == "attached" && str(v, "status", "robustness") != "healthy") {
+				return false, nil
+			}
+		}
+		if err = backingPreserved(j.Volumes, s.volumes); err != nil {
+			return false, err
+		}
+		if err = preserved(j.Clusters, s.clusters); err != nil {
+			return false, err
+		}
+		byKey, _ := index(s.clusters)
+		for _, old := range j.Clusters {
+			current := byKey[key(old)]
+			if !unpaused(current) || num(current, "status", "readyInstances") != num(current, "spec", "instances") || !condition(current, "Ready") || !condition(current, "ContinuousArchiving") || str(current, "status", "systemID") != str(old, "status", "systemID") || str(current, "status", "currentPrimary") != str(old, "status", "currentPrimary") || str(current, "status", "targetPrimary") != str(current, "status", "currentPrimary") {
+				return false, nil
+			}
+		}
+		if num(s.deployment, "status", "readyReplicas") != 1 || !reflect.DeepEqual(val(s.deployment, "spec"), val(j.Deployment, "spec")) || str(s.deployment, "metadata", "uid") != str(j.Deployment, "metadata", "uid") || str(s.release, "metadata", "uid") != str(j.Release, "metadata", "uid") || !unpaused(s.deployment) || !unpaused(s.release) || !reflect.DeepEqual(val(s.release, "spec"), val(j.Release, "spec")) {
+			return false, nil
+		}
+		if len(s.extra) != len(j.Extra) {
+			return false, errors.New("storage-consumer coverage changed")
+		}
+		for i, w := range s.extra {
+			old := j.Extra[i]
+			if str(w.Deployment, "metadata", "uid") != str(old.Deployment, "metadata", "uid") || str(w.Release, "metadata", "uid") != str(old.Release, "metadata", "uid") || !reflect.DeepEqual(val(w.Deployment, "spec"), val(old.Deployment, "spec")) || !reflect.DeepEqual(val(w.Release, "spec"), val(old.Release, "spec")) || !unpaused(w.Deployment) || !unpaused(w.Release) || num(w.Deployment, "status", "readyReplicas") != num(w.Deployment, "spec", "replicas") {
+				return false, nil
+			}
+		}
+		return e.clientsReady(c)
+	}
+	for sample := 0; sample < 2; sample++ {
+		if sample > 0 {
+			e.sleep(10 * time.Second)
+		}
+		if err = e.poll(ctx, "database redundancy", proof); err != nil {
+			return err
+		}
+	}
+	j.Phase = "complete"
+	return e.writeJournal(ctx, j, o)
+}
+
+func armed() (bool, error) {
+	b, err := os.ReadFile("k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml")
+	if err != nil {
+		return false, err
+	}
+	var o object
+	if err = yaml.Unmarshal(b, &o); err != nil {
+		return false, err
+	}
+	if val(o, "spec", "values", "defaultSettings", "systemManagedComponentsNodeSelector") != "" {
+		return false, nil
+	}
+	// This migration belongs only to the audited chart, not every future release.
+	if str(o, "spec", "chart", "spec", "version") != "1.13.0" {
+		return false, nil
+	}
+	if val(o, "spec", "values", "defaultSettings", "createDefaultDiskLabeledNodes") != true || !reflect.DeepEqual(val(o, "spec", "values", "longhornManager", "nodeSelector"), object{}) {
+		return false, errors.New("desired selector migration differs from the reviewed chart contract")
+	}
+	return true, nil
+}
+func main() {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "one maintenance phase required")
+		os.Exit(2)
+	}
+	phase := os.Args[1]
+	if phase != "before-publish" && phase != "after-publish" && phase != "restore" && phase != "verify" {
+		os.Exit(2)
+	}
+	a, err := armed()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	if !a {
+		return
+	}
+	source := os.Getenv("GITHUB_SHA")
+	run := os.Getenv("GITHUB_RUN_ID")
+	attempt := os.Getenv("GITHUB_RUN_ATTEMPT")
+	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(source) || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(run) || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(attempt) {
+		fmt.Fprintln(os.Stderr, "protected production workflow identity is required")
+		os.Exit(1)
+	}
+	cmd := func(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+		command := exec.CommandContext(ctx, "kubectl", append([]string{"--context", "admin@prod", "--request-timeout=20s"}, args...)...)
+		command.Stdin = bytes.NewReader(input)
+		var stdout, stderr bytes.Buffer
+		command.Stdout = &stdout
+		command.Stderr = &stderr
+		if err := command.Run(); err != nil {
+			return nil, fmt.Errorf("maintenance %s failed: %w", args[0], err)
+		}
+		return stdout.Bytes(), nil
+	}
+	e := engine{c: client{command: cmd}, holder: run + "." + attempt, source: source, now: time.Now, sleep: time.Sleep, wait: 20 * time.Minute}
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+	defer cancel()
+	switch phase {
+	case "before-publish":
+		err = e.prepare(ctx)
+	case "after-publish":
+		err = e.afterPublish(ctx)
+	case "restore":
+		err = e.restore(ctx)
+	case "verify":
+		err = e.verify(ctx)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD:", err)
+		os.Exit(1)
+	}
+	fmt.Println("PASS: Longhorn client maintenance phase", phase)
+}
