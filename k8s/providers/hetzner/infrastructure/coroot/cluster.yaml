@@ -38,8 +38,9 @@ metadata:
     # CloudNativePG treats this supported annotation as a requested rolling
     # restart. The timestamp is fixed declarative desired state: changing it is
     # an intentional one-shot request, while reconciliation remains idempotent.
-    kubectl.kubernetes.io/restartedAt: "2026-09-14T22:48:00Z"
+    kubectl.kubernetes.io/restartedAt: "2026-10-10T23:35:00Z"
 spec:
+  priorityClassName: hcloud-volume-workload
   # Pin the PostgreSQL operand image to clear fixable base-OS + PostgreSQL CVEs in
   # the CNPG operator default (18.3-system-trixie) — same rationale and Renovate
   # wiring as umami-db. CNPG rolls the image in place across the HA instances.
