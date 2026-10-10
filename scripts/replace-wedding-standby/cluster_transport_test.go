@@ -24,6 +24,7 @@ import (
 
 const clusterAPIPath = "/apis/postgresql.cnpg.io/v1/namespaces/wedding-app/clusters/wedding-db"
 
+// clusterGetArgs names the only supported read shape without API discovery.
 func clusterGetArgs() []string {
 	return []string{"get", "cluster.postgresql.cnpg.io", clusterName, "-n", namespace, "--show-managed-fields=true", "-o", "json"}
 }
@@ -51,12 +52,14 @@ func transportFixture(t *testing.T, handler http.HandlerFunc) (*httptest.Server,
 	return s, config
 }
 
+// clusterResponse adds the API identity to the existing completed-join fixture.
 func clusterResponse() object {
 	s, _ := completedFixture()
 	s.cluster["apiVersion"], s.cluster["kind"] = "postgresql.cnpg.io/v1", "Cluster"
 	return s.cluster
 }
 
+// configuredCommand verifies one local credential export and tracks CLI fallback.
 func configuredCommand(t *testing.T, config object, fallback *atomic.Int32) recoveryCommand {
 	t.Helper()
 	configReads := 0
@@ -75,6 +78,43 @@ func configuredCommand(t *testing.T, config object, fallback *atomic.Int32) reco
 	return command
 }
 
+// transportJSON refuses an unserializable fixture instead of sending empty data.
+func transportJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal("transport fixture serialization failed")
+	}
+	return data
+}
+
+// transportObjects checks the synthetic configuration's collection shape.
+func transportObjects(t *testing.T, config object, key string) []object {
+	t.Helper()
+	objects, ok := config[key].([]object)
+	if !ok || len(objects) == 0 {
+		t.Fatal("transport fixture collection is missing")
+	}
+	return objects
+}
+
+// TestProtectedTransportRefusesUnavailableDefault prevents a changed process
+// default from panicking or silently changing the protected transport contract.
+func TestProtectedTransportRefusesUnavailableDefault(t *testing.T) {
+	original := http.DefaultTransport
+	defer func() { http.DefaultTransport = original }()
+	var missing *http.Transport
+	for _, transport := range []http.RoundTripper{nil, missing} {
+		var requests atomic.Int32
+		_, config := transportFixture(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
+		http.DefaultTransport = transport
+		command, closeTransport, err := protectedClusterCommand(context.Background(), func(context.Context, []string, []byte) ([]byte, error) { return json.Marshal(config) })
+		if err == nil || command != nil || closeTransport != nil || requests.Load() != 0 {
+			t.Fatal("unavailable default transport did not fail closed before API access")
+		}
+	}
+}
+
 // TestClusterTransportReusesTheFinalReadConnection removes discovery and the
 // implicit target GET that kubectl patch otherwise adds to the CAS window.
 func TestClusterTransportReusesTheFinalReadConnection(t *testing.T) {
@@ -82,7 +122,7 @@ func TestClusterTransportReusesTheFinalReadConnection(t *testing.T) {
 	var connections []string
 	var fallback atomic.Int32
 	snapshot := clusterResponse()
-	patch, _ := json.Marshal(pausePatch(snapshot, str(snapshot, "status", "currentPrimary")))
+	patch := transportJSON(t, pausePatch(snapshot, str(snapshot, "status", "currentPrimary")))
 	_, config := transportFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		trace = append(trace, r.Method)
 		connections = append(connections, r.RemoteAddr)
@@ -130,7 +170,12 @@ func TestRejectedClusterPatchDoesNotRetry(t *testing.T) {
 				patches.Add(1)
 				_, _ = io.Copy(io.Discard, r.Body)
 				if status == 0 {
-					conn, _, err := w.(http.Hijacker).Hijack()
+					hijacker, ok := w.(http.Hijacker)
+					if !ok {
+						t.Error("lost-response fixture has no HTTP/1 hijacker")
+						return
+					}
+					conn, _, err := hijacker.Hijack()
 					if err != nil {
 						t.Error("lost-response fixture failed")
 						return
@@ -163,9 +208,9 @@ func TestProtectedConfigRefusesChangedIdentity(t *testing.T) {
 		t.Run(failure, func(t *testing.T) {
 			var requests atomic.Int32
 			_, config := transportFixture(t, func(http.ResponseWriter, *http.Request) { requests.Add(1) })
-			selected := config["contexts"].([]object)
-			clusters := config["clusters"].([]object)
-			users := config["users"].([]object)
+			selected := transportObjects(t, config, "contexts")
+			clusters := transportObjects(t, config, "clusters")
+			users := transportObjects(t, config, "users")
 			cluster, user := at(clusters[0], "cluster"), at(users[0], "user")
 			switch failure {
 			case "context":
@@ -211,6 +256,7 @@ func TestProtectedConfigRefusesChangedIdentity(t *testing.T) {
 	}
 }
 
+// TestProtectedConfigRefusesUnboundedOrMalformedExport guards the export parser.
 func TestProtectedConfigRefusesUnboundedOrMalformedExport(t *testing.T) {
 	for _, data := range [][]byte{nil, []byte("null"), []byte("{"), []byte(`{"current-context":"admin@prod"}`), []byte(strings.Repeat("x", transportByteLimit+1))} {
 		command, closeTransport, err := protectedClusterCommand(context.Background(), func(context.Context, []string, []byte) ([]byte, error) { return data, nil })
@@ -220,10 +266,11 @@ func TestProtectedConfigRefusesUnboundedOrMalformedExport(t *testing.T) {
 	}
 }
 
+// TestClusterTransportDryRunAndScope keeps diagnostics non-persisting and scoped.
 func TestClusterTransportDryRunAndScope(t *testing.T) {
 	var requests, fallback atomic.Int32
 	snapshot := clusterResponse()
-	patch, _ := json.Marshal(pausePatch(snapshot, str(snapshot, "status", "currentPrimary")))
+	patch := transportJSON(t, pausePatch(snapshot, str(snapshot, "status", "currentPrimary")))
 	_, config := transportFixture(t, func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		body, _ := io.ReadAll(r.Body)
@@ -249,6 +296,7 @@ func TestClusterTransportDryRunAndScope(t *testing.T) {
 	}
 }
 
+// TestClusterTransportRefusesUnverifiableResponse covers failed TLS and reads.
 func TestClusterTransportRefusesUnverifiableResponse(t *testing.T) {
 	for _, failure := range []string{"TLS server name", "wrong CA", "oversized", "truncated", "wrong resource", "cancelled"} {
 		t.Run(failure, func(t *testing.T) {
@@ -265,7 +313,7 @@ func TestClusterTransportRefusesUnverifiableResponse(t *testing.T) {
 				}
 			})
 			if failure == "TLS server name" {
-				at(config["clusters"].([]object)[0], "cluster")["tls-server-name"] = "wrong.invalid"
+				at(transportObjects(t, config, "clusters")[0], "cluster")["tls-server-name"] = "wrong.invalid"
 			}
 			if failure == "wrong CA" {
 				certificate, err := x509.ParseCertificate(server.TLS.Certificates[0].Certificate[0])
@@ -280,7 +328,7 @@ func TestClusterTransportRefusesUnverifiableResponse(t *testing.T) {
 				if err != nil {
 					t.Fatal("synthetic CA fixture failed")
 				}
-				at(config["clusters"].([]object)[0], "cluster")["certificate-authority-data"] = base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
+				at(transportObjects(t, config, "clusters")[0], "cluster")["certificate-authority-data"] = base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}))
 			}
 			command := configuredCommand(t, config, &fallback)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -313,6 +361,7 @@ func TestKubeconfigExportHelper(t *testing.T) {
 	os.Exit(0)
 }
 
+// TestKubeconfigCaptureBoundAndDeadline bounds both subprocess output streams.
 func TestKubeconfigCaptureBoundAndDeadline(t *testing.T) {
 	for _, mode := range []string{"stdout", "stderr", "blocked"} {
 		t.Run(mode, func(t *testing.T) {
@@ -334,6 +383,7 @@ func TestKubeconfigCaptureBoundAndDeadline(t *testing.T) {
 	}
 }
 
+// TestCredentialCaptureBoundsIOCopy detects promoted-method byte-bound bypasses.
 func TestCredentialCaptureBoundsIOCopy(t *testing.T) {
 	var capture limitedCapture
 	reader := io.LimitReader(strings.NewReader(strings.Repeat("x", transportByteLimit+1)), transportByteLimit+1)

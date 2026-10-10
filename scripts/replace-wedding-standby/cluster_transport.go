@@ -28,8 +28,10 @@ var configViewArgs = []string{"config", "view", "--minify", "--flatten", "--raw"
 // the exported kubeconfig nor its stderr is printed or persisted.
 type limitedCapture struct{ buffer bytes.Buffer }
 
+// Len reports captured bytes without exposing their contents.
 func (b *limitedCapture) Len() int { return b.buffer.Len() }
 
+// Write refuses output beyond the bound, including writes made by io.Copy.
 func (b *limitedCapture) Write(p []byte) (int, error) {
 	remaining := transportByteLimit - b.Len()
 	if len(p) > remaining {
@@ -39,6 +41,7 @@ func (b *limitedCapture) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
+// captureConfig bounds both streams and returns only sanitized failure text.
 func captureConfig(cmd *exec.Cmd) ([]byte, error) {
 	var stdout, stderr limitedCapture
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
@@ -98,6 +101,7 @@ type protectedConfig struct {
 
 type clusterRequestFailure struct{ reason string }
 
+// Error excludes endpoint, response and credential details from failure output.
 func (clusterRequestFailure) Error() string { return "protected Cluster request failed" }
 
 // protectedClusterCommand resolves credentials once, before the final source
@@ -131,7 +135,11 @@ func protectedClusterCommand(ctx context.Context, command recoveryCommand) (reco
 	if caErr != nil || certErr != nil || keyErr != nil || pairErr != nil || !pool.AppendCertsFromPEM(ca) {
 		return nil, nil, refuse
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok || defaultTransport == nil {
+		return nil, nil, refuse
+	}
+	transport := defaultTransport.Clone()
 	transport.TLSClientConfig = &tls.Config{RootCAs: pool, Certificates: []tls.Certificate{pair}, ServerName: cluster.Cluster.TLSServerName, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}}
 	transport.ForceAttemptHTTP2 = false
 	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
