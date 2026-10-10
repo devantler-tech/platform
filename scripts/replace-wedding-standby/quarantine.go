@@ -12,12 +12,16 @@ import (
 )
 
 const pauseKey = "cnpg.io/reconciliationLoop"
+const pauseObservationKey = "platform.devantler.tech/standby-pause-observation"
+const pauseObservationPath = "/metadata/annotations/platform.devantler.tech~1standby-pause-observation"
 const pauseMessage = "Disable reconciliation loop annotation set, skipping the reconciliation."
 const leaderLease = "db9c8771.cnpg.io"
 const retainedCSIDriver = "driver.longhorn.io"
 const operatorClockSkew = 2 * time.Second
 
 var recoveryUUID = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var observationID = regexp.MustCompile(`^[1-9][0-9]{0,19}\.1$`)
+var recoverySHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 type storageGuards struct{ jobUID, claimUID, volumeUID string }
 type operatorLeader struct {
@@ -77,7 +81,7 @@ func mountsClaim(pod object, name string) bool {
 // completedJoinPlan accepts only the already-detached, completed-bootstrap HOLD.
 func completedJoinPlan(s inventory, o options, g storageGuards) (plan, error) {
 	p := plan{}
-	if o.now.IsZero() || o.clusterUID == "" || o.podUID == "" || g.jobUID == "" || g.claimUID == "" || g.volumeUID == "" || !validMeta(s.cluster, namespace) || id(s.cluster).name != clusterName || id(s.cluster).uid != o.clusterUID || !auditedOperator(s.operator) || num(s.cluster, "spec", "instances") != 3 || num(s.cluster, "status", "readyInstances") != 2 || str(s.cluster, "status", "currentPrimary") == "" || str(s.cluster, "status", "currentPrimary") == targetName || str(s.cluster, "status", "targetPrimary") != str(s.cluster, "status", "currentPrimary") || str(s.cluster, "metadata", "annotations", fenceKey) != "" || str(s.cluster, "metadata", "annotations", pauseKey) != "" || value(s.cluster, "spec", "nodeMaintenanceWindow", "inProgress") == true || value(s.cluster, "spec", "replica") != nil {
+	if o.now.IsZero() || o.clusterUID == "" || o.podUID == "" || g.jobUID == "" || g.claimUID == "" || g.volumeUID == "" || !validMeta(s.cluster, namespace) || id(s.cluster).name != clusterName || id(s.cluster).uid != o.clusterUID || !auditedOperator(s.operator) || num(s.cluster, "spec", "instances") != 3 || num(s.cluster, "status", "readyInstances") != 2 || str(s.cluster, "status", "currentPrimary") == "" || str(s.cluster, "status", "currentPrimary") == targetName || str(s.cluster, "status", "targetPrimary") != str(s.cluster, "status", "currentPrimary") || str(s.cluster, "metadata", "annotations", fenceKey) != "" || !observationAbsent(s.cluster) || (o.continuePause && !ownedPause(s.cluster)) || (!o.continuePause && str(s.cluster, "metadata", "annotations", pauseKey) != "") || value(s.cluster, "spec", "nodeMaintenanceWindow", "inProgress") == true || value(s.cluster, "spec", "replica") != nil {
 		return p, errors.New("completed-join recovery requires the unchanged two-peer HOLD")
 	}
 	if len(s.jobs) != 1 || len(s.pods) != 3 || len(s.claims) != 1 {
@@ -197,7 +201,9 @@ func pauseLogRecords(b []byte) ([]object, error) {
 }
 
 // pauseAcknowledged accepts only a bound, recent reconciliation not observed
-// before the pause. The clock allowance never admits an observed reconciliation replay.
+// before the pause. The audited controller logger emits Warning through Info;
+// its structured protocol is info, not the wrapper's method name.
+// The clock allowance never admits an observed reconciliation replay.
 func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool) (bool, error) {
 	records, err := pauseLogRecords(b)
 	if err != nil {
@@ -206,7 +212,7 @@ func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool)
 	found := false
 	for _, record := range records {
 		t, err := time.Parse(time.RFC3339Nano, str(record, "ts"))
-		if err == nil && !t.Before(since.Add(-operatorClockSkew)) && !t.After(now.Add(operatorClockSkew)) && str(record, "level") == "warning" && str(record, "msg") == pauseMessage && str(record, "namespace") == namespace && str(record, "name") == clusterName && str(record, "Cluster", "namespace") == namespace && str(record, "Cluster", "name") == clusterName && recoveryUUID.MatchString(str(record, "reconcileID")) && !previous[str(record, "reconcileID")] {
+		if err == nil && !t.Before(since.Add(-operatorClockSkew)) && !t.After(now.Add(operatorClockSkew)) && str(record, "level") == "info" && str(record, "msg") == pauseMessage && str(record, "namespace") == namespace && str(record, "name") == clusterName && str(record, "Cluster", "namespace") == namespace && str(record, "Cluster", "name") == clusterName && recoveryUUID.MatchString(str(record, "reconcileID")) && !previous[str(record, "reconcileID")] {
 			found = true
 		}
 	}
@@ -215,16 +221,34 @@ func pauseAcknowledged(b []byte, since, now time.Time, previous map[string]bool)
 
 // ownedPause requires exclusive ownership, not just a disabled annotation.
 func ownedPause(cluster object) bool {
+	return ownedAnnotation(cluster, pauseKey, "disabled")
+}
+
+func ownedAnnotation(cluster object, key, expected string) bool {
 	found := false
 	for _, f := range list(cluster, "metadata", "managedFields") {
-		if value(f, "fieldsV1", "f:metadata", "f:annotations", "f:"+pauseKey) != nil {
+		if value(f, "fieldsV1", "f:metadata", "f:annotations", "f:"+key) != nil {
 			if str(f, "manager") != fieldManager {
 				return false
 			}
 			found = true
 		}
 	}
-	return found && str(cluster, "metadata", "annotations", pauseKey) == "disabled"
+	return found && str(cluster, "metadata", "annotations", key) == expected
+}
+
+// Even an empty or previously owned marker means this is not a new attempt.
+func observationAbsent(cluster object) bool {
+	annotations, _ := value(cluster, "metadata", "annotations").(map[string]any)
+	if _, exists := annotations[pauseObservationKey]; exists {
+		return false
+	}
+	for _, f := range list(cluster, "metadata", "managedFields") {
+		if value(f, "fieldsV1", "f:metadata", "f:annotations", "f:"+pauseObservationKey) != nil {
+			return false
+		}
+	}
+	return true
 }
 
 // released retains the original PV and stale claim reservation, never clearing it
@@ -236,8 +260,11 @@ func released(volume object, oldClaim, oldVolume identity) bool {
 // quarantineCompletedJoin is a separate, non-resumable recovery. Its only
 // deletions are the bound completed Job and detached PVC, never any PV or peer.
 func quarantineCompletedJoin(ctx context.Context, c client, o options, g storageGuards, execute bool) error {
-	if o.diagnosePause && execute {
+	if o.diagnosePause && (execute || o.continuePause) {
 		return errors.New("pause diagnostic cannot share recovery execution")
+	}
+	if execute && o.continuePause && !observationID.MatchString(o.pauseObservation) {
+		return errors.New("owned-pause continuation requires a new first-run observation identity")
 	}
 	s, err := c.snapshotPending(ctx, true)
 	if err != nil {
@@ -261,7 +288,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return err
 	}
 	// Verify every namespace consumer before any mutation, including unlabelled Pods.
-	consumers := func(allowJoin bool) (bool, error) {
+	consumers := func(ctx context.Context, allowJoin bool) (bool, error) {
 		pods, e := c.namespacePods(ctx)
 		if e != nil {
 			return false, e
@@ -277,7 +304,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 		return allowJoin || !present, nil
 	}
-	if _, err = consumers(true); err != nil {
+	if _, err = consumers(ctx, true); err != nil {
 		return err
 	}
 	since := c.now()
@@ -299,11 +326,10 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if !execute && !o.diagnosePause {
 		return nil
 	}
-	paused := false
-	// Rebind after unrelated reads: status reconciliation can advance the Cluster
-	// version while storage and leader evidence is collected. Keep the conditional
-	// write single-shot if anything changes after this final observation.
-	rebindCluster := func() error {
+	paused, marked := o.continuePause, false
+	observation := o.pauseObservation
+	// Rebind after unrelated reads without removing the version precondition.
+	rebindCluster := func(ctx context.Context) error {
 		if e := c.proveSource(ctx); e != nil {
 			return e
 		}
@@ -319,12 +345,16 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if e = protectedPeers(s, o, p); e != nil {
 			return e
 		}
-		if !recentBackup(s, o) || (paused && !ownedPause(cluster)) || str(cluster, "metadata", "annotations", fenceKey) != "" {
+		markerValid := observationAbsent(cluster)
+		if marked {
+			markerValid = ownedAnnotation(cluster, pauseObservationKey, observation)
+		}
+		if !recentBackup(s, o) || (paused && !ownedPause(cluster)) || !markerValid || str(cluster, "metadata", "annotations", fenceKey) != "" {
 			return errors.New("backup or pause ownership changed")
 		}
 		return nil
 	}
-	refresh := func() error {
+	refresh := func(ctx context.Context) error {
 		if e := c.proveSource(ctx); e != nil {
 			return e
 		}
@@ -348,9 +378,9 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if e != nil || current != leader {
 			return errors.New("operator leader changed; no further write")
 		}
-		return rebindCluster()
+		return rebindCluster(ctx)
 	}
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	if _, err = completedJoinPlan(s, o, g); err != nil {
@@ -363,21 +393,55 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		args := append(patchArgs("cluster", s.cluster), "--dry-run=server")
 		return c.write(ctx, args, ops)
 	}
-	if err = c.patch(ctx, "cluster", s.cluster, ops); err != nil {
+	pauseCtx, cancelPause := context.WithTimeout(ctx, clusterPatchDeadline)
+	defer cancelPause()
+	pauseRequests := clusterPatchAttempts
+	if err = guardedClusterPatchBudget(pauseCtx, c, s.cluster, func(ctx context.Context) (object, error) {
+		if e := refresh(ctx); e != nil {
+			return nil, e
+		}
+		if _, e := completedJoinPlan(s, o, g); e != nil {
+			return nil, e
+		}
+		if _, e := consumers(ctx, true); e != nil {
+			return nil, e
+		}
+		if e := rebindCluster(ctx); e != nil {
+			return nil, e
+		}
+		return s.cluster, nil
+	}, func(cluster object) []object {
+		if o.continuePause {
+			// Capture the actual request boundary, including a positively rejected
+			// request's rebind. A baseline-time or pre-marker record is insufficient.
+			since = c.now()
+			return observationPatch(cluster, p.primary.name, o.pauseObservation)
+		}
+		return pausePatch(cluster, p.primary.name)
+	}, &pauseRequests); err != nil {
 		return err
 	}
 	paused = true
+	marked = o.continuePause
 	ackCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	refreshedObservation := false
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ackCtx); err != nil {
 			return err
 		}
 		b, e := c.command(ackCtx, logArgs, nil)
 		if e != nil {
 			return errors.New("operator pause acknowledgment read failed")
 		}
-		acknowledged, e := pauseAcknowledged(b, since, c.now(), previous)
+		ackSince := since
+		if o.continuePause {
+			// The parser subtracts one clock allowance. Add two so the effective
+			// cutoff remains one allowance after the request: even a fast
+			// controller clock cannot admit an unseen pre-marker record.
+			ackSince = since.Add(2 * operatorClockSkew)
+		}
+		acknowledged, e := pauseAcknowledged(b, ackSince, c.now(), previous)
 		if e != nil {
 			return e
 		}
@@ -387,8 +451,39 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		if err = c.pause(ackCtx); err != nil {
 			return errors.New("operator did not acknowledge pause; storage unchanged")
 		}
+		if o.continuePause && !refreshedObservation && !c.now().Before(since.Add(2*operatorClockSkew)) {
+			// An immediate first event may be too early under the strict clock
+			// boundary. Advance only this run's owned marker once, after waiting
+			// beyond both clock allowances. This requests another paused reconcile
+			// without relying on incidental operator events or widening freshness.
+			nextObservation := o.pauseObservation + ".2"
+			refreshObservation := func(ctx context.Context) (object, error) {
+				if e := refresh(ctx); e != nil {
+					return nil, e
+				}
+				if !retained(s, oldClaim, oldVolume, true) {
+					return nil, errors.New("old retention changed before observation refresh")
+				}
+				if _, e := consumers(ctx, true); e != nil {
+					return nil, e
+				}
+				if e := rebindCluster(ctx); e != nil {
+					return nil, e
+				}
+				return s.cluster, nil
+			}
+			if _, err = refreshObservation(pauseCtx); err != nil {
+				return err
+			}
+			if err = guardedClusterPatchBudget(pauseCtx, c, s.cluster, refreshObservation, func(cluster object) []object {
+				return observationPatch(cluster, p.primary.name, nextObservation)
+			}, &pauseRequests); err != nil {
+				return err
+			}
+			observation, refreshedObservation = nextObservation, true
+		}
 	}
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	if !retained(s, oldClaim, oldVolume, true) {
@@ -397,7 +492,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if len(s.jobs) != 1 || id(s.jobs[0]) != (identity{targetName + "-join", g.jobUID}) || !owned(s.jobs[0], o.clusterUID) || !validMeta(s.jobs[0], namespace) || str(s.jobs[0], "metadata", "labels", "cnpg.io/jobRole") != "join" || str(s.jobs[0], "metadata", "labels", "cnpg.io/instanceName") != targetName || num(s.jobs[0], "status", "succeeded") != 1 || num(s.jobs[0], "status", "active") != 0 || num(s.jobs[0], "status", "failed") != 0 {
 		return errors.New("completed job changed")
 	}
-	if _, err = consumers(true); err != nil {
+	if _, err = consumers(ctx, true); err != nil {
 		return err
 	}
 	job := s.jobs[0]
@@ -406,14 +501,14 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return err
 	}
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ctx); err != nil {
 			return err
 		}
 		if !retained(s, oldClaim, oldVolume, true) {
 			return errors.New("retention changed during job removal")
 		}
 		if len(s.jobs) == 0 {
-			absent, e := consumers(false)
+			absent, e := consumers(ctx, false)
 			if e != nil {
 				return e
 			}
@@ -428,13 +523,13 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		}
 	}
 	// Rebind the same observations immediately before the PVC delete.
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	if len(s.jobs) != 0 || !retained(s, oldClaim, oldVolume, true) {
 		return errors.New("retained claim delete preconditions changed")
 	}
-	if absent, e := consumers(false); e != nil || !absent {
+	if absent, e := consumers(ctx, false); e != nil || !absent {
 		return errors.New("claim consumer absence is unproven")
 	}
 	deletion = object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": object{"uid": oldClaim.uid, "resourceVersion": str(s.claims[0], "metadata", "resourceVersion")}, "propagationPolicy": "Background"}
@@ -442,7 +537,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 		return err
 	}
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ctx); err != nil {
 			return err
 		}
 		v, e := c.read(ctx, "pv", oldVolume.name, "-o", "json")
@@ -462,7 +557,7 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 			return errors.New("original volume did not become safely retained")
 		}
 	}
-	if err = refresh(); err != nil {
+	if err = refresh(ctx); err != nil {
 		return err
 	}
 	v, err := c.read(ctx, "pv", oldVolume.name, "-o", "json")
@@ -472,20 +567,44 @@ func quarantineCompletedJoin(ctx context.Context, c client, o options, g storage
 	if len(s.jobs) != 0 || len(s.claims) != 0 || !released(v, oldClaim, oldVolume) {
 		return errors.New("quarantine readback changed before resume")
 	}
-	if absent, e := consumers(false); e != nil || !absent {
+	if absent, e := consumers(ctx, false); e != nil || !absent {
 		return errors.New("claim consumer absence is unproven")
 	}
-	if err = rebindCluster(); err != nil {
+	if err = rebindCluster(ctx); err != nil {
 		return err
 	}
-	ops = append(tests(s.cluster), testPath("/status/currentPrimary", p.primary.name), testPath("/status/targetPrimary", p.primary.name), testPath("/spec/instances", float64(3)), testPath("/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"), object{"op": "remove", "path": "/metadata/annotations/cnpg.io~1reconciliationLoop"})
-	if err = c.patch(ctx, "cluster", s.cluster, ops); err != nil {
+	if err = guardedClusterPatch(ctx, c, s.cluster, func(ctx context.Context) (object, error) {
+		if e := refresh(ctx); e != nil {
+			return nil, e
+		}
+		v, e := c.read(ctx, "pv", oldVolume.name, "-o", "json")
+		if e != nil {
+			return nil, e
+		}
+		if len(s.jobs) != 0 || len(s.claims) != 0 || !released(v, oldClaim, oldVolume) {
+			return nil, errors.New("quarantine readback changed after resume rejection")
+		}
+		if absent, e := consumers(ctx, false); e != nil || !absent {
+			return nil, errors.New("claim consumer absence is unproven")
+		}
+		if e := rebindCluster(ctx); e != nil {
+			return nil, e
+		}
+		return s.cluster, nil
+	}, func(cluster object) []object {
+		marker := ""
+		if marked {
+			marker = observation
+		}
+		return resumePausePatch(cluster, p.primary.name, marker)
+	}); err != nil {
 		return err
 	}
 	paused = false
+	marked = false
 	good := 0
 	for {
-		if err = refresh(); err != nil {
+		if err = refresh(ctx); err != nil {
 			return err
 		}
 		v, err = c.read(ctx, "pv", oldVolume.name, "-o", "json")
@@ -534,9 +653,28 @@ func pausePatch(cluster object, primary string) []object {
 	return append(ops, testPath("/metadata/annotations", value(cluster, "metadata", "annotations")), editPath("add", "/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"))
 }
 
+// observationPatch changes only a new run-bound marker. The audited controller
+// watches Cluster metadata updates, so this requests a fresh paused reconcile
+// without briefly enabling the operator or removing the existing pause.
+func observationPatch(cluster object, primary, marker string) []object {
+	return append(tests(cluster), testPath("/status/currentPrimary", primary), testPath("/status/targetPrimary", primary), testPath("/spec/instances", float64(3)), testPath("/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"), testPath("/metadata/annotations", value(cluster, "metadata", "annotations")), editPath("add", pauseObservationPath, marker))
+}
+
+func resumePausePatch(cluster object, primary, marker string) []object {
+	ops := append(tests(cluster), testPath("/status/currentPrimary", primary), testPath("/status/targetPrimary", primary), testPath("/spec/instances", float64(3)), testPath("/metadata/annotations", value(cluster, "metadata", "annotations")), testPath("/metadata/annotations/cnpg.io~1reconciliationLoop", "disabled"))
+	if marker != "" {
+		ops = append(ops, testPath(pauseObservationPath, marker), object{"op": "remove", "path": pauseObservationPath})
+	}
+	return append(ops, object{"op": "remove", "path": "/metadata/annotations/cnpg.io~1reconciliationLoop"})
+}
+
 // storageDispatchAllowed admits only the separately approved, first main dispatch.
 func storageDispatchAllowed(env func(string) string) bool {
-	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volume-rebuild-completed-standby" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
+	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "retain-volume-rebuild-after-rejection" && regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(env("GITHUB_SHA"))
+}
+
+func ownedPauseDispatchAllowed(env func(string) string) bool {
+	return env("GITHUB_WORKFLOW_REF") == "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main" && env("GITHUB_REPOSITORY") == "devantler-tech/platform" && env("GITHUB_REF") == "refs/heads/main" && env("GITHUB_EVENT_NAME") == "workflow_dispatch" && env("GITHUB_RUN_ATTEMPT") == "1" && env("WEDDING_REPAIR_CONFIRM") == "continue-owned-pause-retain-volume" && recoverySHA.MatchString(env("GITHUB_SHA")) && observationID.MatchString(env("GITHUB_RUN_ID")+".1")
 }
 
 // quarantineResult reports only aggregate evidence, not storage identifiers.

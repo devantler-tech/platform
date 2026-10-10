@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 // TestRecoveryChecksClaimIdentityRatherThanReusableName checks ordinal reuse.
@@ -77,9 +79,9 @@ func leaderFixture() (object, object) {
 	return lease, pod
 }
 
-// pauseRecord models the operator's fresh cluster-specific pause acknowledgment.
+// pauseRecord models the audited controller's fresh info-level acknowledgment.
 func pauseRecord() object {
-	return object{"level": "warning", "ts": testNow.Format(time.RFC3339Nano), "msg": pauseMessage, "namespace": namespace, "name": clusterName, "Cluster": object{"namespace": namespace, "name": clusterName}, "reconcileID": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
+	return object{"level": "info", "ts": testNow.Format(time.RFC3339Nano), "msg": pauseMessage, "controller": "cluster", "controllerGroup": "postgresql.cnpg.io", "controllerKind": "Cluster", "namespace": namespace, "name": clusterName, "Cluster": object{"namespace": namespace, "name": clusterName}, "reconcileID": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
 }
 
 // TestCompletedJoinPlanRejectsUnsafeHold preserves every recovery admission gate.
@@ -156,7 +158,7 @@ func TestPauseAcknowledgmentIsFreshAndBound(t *testing.T) {
 			case "missing reconcile":
 				delete(r, "reconcileID")
 			case "wrong level":
-				r["level"] = "info"
+				r["level"] = "warning"
 			case "malformed reconcile":
 				r["reconcileID"] = "unknown"
 			}
@@ -318,23 +320,76 @@ func TestCompletedJoinBackupCensusDoesNotDropUnknownEntries(t *testing.T) {
 // TestCompletedJoinTransaction exercises real reads and mutations with a stateful
 // API stand-in, including the operator's ordinal reuse and pending fresh PVC.
 func TestCompletedJoinTransaction(t *testing.T) {
-	for _, failure := range []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"} {
+	testCompletedJoinTransaction(t, false)
+}
+
+// The continuation must complete the same guarded transaction without ever
+// enabling reconciliation before the old job and claim are safely quarantined.
+func TestOwnedPauseContinuationTransaction(t *testing.T) {
+	testCompletedJoinTransaction(t, true)
+}
+
+func testCompletedJoinTransaction(t *testing.T, continuation bool) {
+	failures := []string{"", "read only", "runner ahead", "runner behind", "cluster churn", "verified pause rejection", "verified resume rejection", "verified both rejections", "final cluster read", "final cluster partial", "final cluster UID", "final primary", "final target primary", "final instances", "final ready instances", "final backup health", "final fence", "final pause", "post-read conflict", "resume final cluster read", "resume final primary", "resume final pause owner", "resume post-read conflict", "baseline read", "malformed baseline", "malformed acknowledgment", "replayed acknowledgment", "source", "namespace read", "malformed volumes", "unlabelled consumer", "pause CAS", "no acknowledgment", "leader changed", "job CAS", "job removal read", "PVC CAS", "PV loss", "pause owner", "old CSI reused", "unselected old CSI", "pending claim", "backing read", "backing UID drift", "backing attached", "backing terminating"}
+	if continuation {
+		failures = append(failures, "pre-marker acknowledgment", "pre-marker acknowledgment with fast controller clock", "changed observation", "foreign observation owner", "missing observation nonce")
+		failures = append(failures, "immediate acknowledgment", "immediate acknowledgment with slow controller clock", "exhausted observation rejections")
+		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer", "owner", "marker", "CAS"} {
+			failures = append(failures, "refresh marker "+guard)
+		}
+	}
+	for _, phase := range []string{"pause", "resume"} {
+		for _, guard := range []string{"source", "backup", "peer", "leader", "backing", "retention", "consumer"} {
+			failures = append(failures, "rebind "+phase+" "+guard)
+		}
+	}
+	for _, failure := range failures {
 		t.Run(failure, func(t *testing.T) {
 			s, g := completedFixture()
+			opts := testOptions()
+			if continuation {
+				opts.continuePause, opts.pauseObservation = true, "123.1"
+				at(s.cluster, "metadata", "annotations")[pauseKey] = "disabled"
+				at(s.cluster, "metadata")["managedFields"] = []any{object{"manager": fieldManager, "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseKey: object{}}}}}}
+				if failure == "missing observation nonce" {
+					opts.pauseObservation = ""
+				}
+			}
 			lease, leaderPod := leaderFixture()
 			now := testNow
+			var markerTime time.Time
 			clockOffset := time.Duration(0)
 			switch failure {
 			case "runner ahead":
 				clockOffset = -time.Millisecond
 			case "runner behind":
 				clockOffset = time.Millisecond
+			case "immediate acknowledgment with slow controller clock":
+				clockOffset = -operatorClockSkew
 			}
 			if clockOffset != 0 {
 				at(lease, "spec")["renewTime"] = now.Add(clockOffset).Format(time.RFC3339Nano)
 			}
 			writes, waits := []string{}, 0
+			markerValue := "123.1"
 			clusterReads, version := 0, 10
+			pauseAttempts, resumeAttempts := 0, 0
+			refreshAttempts := 0
+			rebindFailure := func() bool {
+				return strings.HasPrefix(failure, "rebind pause ") && pauseAttempts > 0 || strings.HasPrefix(failure, "rebind resume ") && resumeAttempts > 0
+			}
+			changeGuard := func() {
+				switch {
+				case strings.HasSuffix(failure, " backup"):
+					at(s.backups[0], "status")["phase"] = "running"
+				case strings.HasSuffix(failure, " peer"):
+					list(s.pods[len(s.pods)-1], "status", "conditions")[0]["status"] = "False"
+				case strings.HasSuffix(failure, " leader"):
+					at(lease, "spec")["holderIdentity"] = "another-leader_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+				case strings.HasSuffix(failure, " retention"):
+					at(s.volumes["old-pv"], "spec")["persistentVolumeReclaimPolicy"] = "Delete"
+				}
+			}
 			resumeFinal := false
 			paused, acknowledged := false, false
 			pending := false
@@ -358,7 +413,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				appendCondition(s.cluster, object{"type": "Ready", "status": "True"})
 			}
 			c := client{now: func() time.Time { return now }, source: func(context.Context) error {
-				if failure == "source" {
+				if failure == "source" || rebindFailure() && strings.HasSuffix(failure, " source") || failure == "refresh marker source" && waits > 0 {
 					return errors.New("source changed")
 				}
 				return nil
@@ -366,6 +421,14 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				waits++
 				now = now.Add(20 * time.Second)
 				at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
+				if strings.HasPrefix(failure, "refresh marker ") {
+					changeGuard()
+					if failure == "refresh marker owner" {
+						list(s.cluster, "metadata", "managedFields")[0]["manager"] = "other"
+					} else if failure == "refresh marker marker" {
+						at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "other"
+					}
+				}
 				if pending {
 					pending = false
 					fresh()
@@ -383,6 +446,17 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					}
 					if args[1] == "cluster.postgresql.cnpg.io" {
 						clusterReads++
+						if continuation && clusterReads == 3 {
+							now = now.Add(5 * time.Second)
+							at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
+						}
+						if continuation && len(writes) == 1 {
+							if failure == "changed observation" {
+								at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "other"
+							} else if failure == "foreign observation owner" {
+								at(s.cluster, "metadata")["managedFields"] = append(value(s.cluster, "metadata", "managedFields").([]any), object{"manager": "other", "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseObservationKey: object{}}}}})
+							}
+						}
 						if resumeFinal {
 							switch failure {
 							case "resume final cluster read":
@@ -423,6 +497,9 @@ func TestCompletedJoinTransaction(t *testing.T) {
 								at(s.cluster, "metadata", "annotations")[fenceKey] = `["wedding-db-1"]`
 							case "final pause":
 								at(s.cluster, "metadata", "annotations")[pauseKey] = "disabled"
+								if continuation {
+									list(s.cluster, "metadata", "managedFields")[0]["manager"] = "other"
+								}
 							case "post-read conflict":
 								observed, err := json.Marshal(s.cluster)
 								at(s.cluster, "metadata")["resourceVersion"] = "changed-after-read"
@@ -435,6 +512,9 @@ func TestCompletedJoinTransaction(t *testing.T) {
 							return nil, errors.New("unreadable backing volume")
 						}
 						v := object{"metadata": object{"name": "original-volume", "namespace": "longhorn-system", "uid": "backing-uid", "resourceVersion": "10"}, "status": object{"state": "detached"}}
+						if rebindFailure() && strings.HasSuffix(failure, " backing") || failure == "refresh marker backing" && waits > 0 {
+							at(v, "metadata")["uid"] = "different-backing"
+						}
 						if len(writes) == 2 {
 							switch failure {
 							case "backing UID drift":
@@ -465,7 +545,7 @@ func TestCompletedJoinTransaction(t *testing.T) {
 							return nil, errors.New("unreadable consumers")
 						}
 						pods := append([]object{}, s.pods...)
-						if failure == "unlabelled consumer" {
+						if failure == "unlabelled consumer" || rebindFailure() && strings.HasSuffix(failure, " consumer") || failure == "refresh marker consumer" && waits > 0 {
 							pods = append(pods, object{"metadata": object{"name": "unknown", "namespace": namespace, "uid": "other", "resourceVersion": "10"}, "spec": object{"volumes": []any{object{"persistentVolumeClaim": object{"claimName": targetName}}}}})
 						}
 						if failure == "malformed volumes" {
@@ -497,6 +577,22 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					if failure == "no acknowledgment" {
 						r["msg"] = "other"
 					}
+					if failure == "pre-marker acknowledgment" {
+						r["ts"] = testNow.Add(time.Second).Format(time.RFC3339Nano)
+					}
+					if failure == "pre-marker acknowledgment with fast controller clock" {
+						// Emitted 500 ms before the marker, with a controller clock
+						// one second ahead. Its ID was absent from the baseline.
+						if markerTime.IsZero() {
+							t.Fatal("missing actual marker request boundary")
+						}
+						r["ts"] = markerTime.Add(500 * time.Millisecond).Format(time.RFC3339Nano)
+					}
+					if (strings.HasPrefix(failure, "immediate acknowledgment") || strings.HasPrefix(failure, "refresh marker ") || failure == "exhausted observation rejections") && markerValue == "123.1" {
+						// The first metadata event is immediate; only a later, guarded
+						// metadata refresh can produce an eligible acknowledgment.
+						r["ts"] = markerTime.Add(time.Millisecond + clockOffset).Format(time.RFC3339Nano)
+					}
 					if failure == "malformed acknowledgment" {
 						return []byte("truncated"), nil
 					}
@@ -527,7 +623,51 @@ func TestCompletedJoinTransaction(t *testing.T) {
 					}
 					last := ops[len(ops)-1]
 					if str(last, "op") == "add" {
+						if continuation && str(last, "value") == "123.1.2" {
+							refreshAttempts++
+							if waits < 1 || !ownedPause(s.cluster) || !ownedAnnotation(s.cluster, pauseObservationKey, "123.1") || !reflect.DeepEqual(ops[len(ops)-2], testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations"))) {
+								t.Fatal("observation refresh escaped the separated owned-pause boundary")
+							}
+							for _, op := range ops {
+								if str(op, "op") != "test" && str(op, "path") != pauseObservationPath {
+									t.Fatal("observation refresh changed the pause")
+								}
+							}
+							if failure == "exhausted observation rejections" {
+								version++
+								at(s.cluster, "metadata")["resourceVersion"] = strconv.Itoa(version)
+								at(s.cluster, "status")["phaseReason"] = "Creating replica synthetic-join"
+								return nil, clusterRequestFailure{"SERVER_INVALID_NO_CAUSES"}
+							}
+							writes = append(writes, "observation")
+							if failure == "refresh marker CAS" {
+								return nil, errors.New("uncertain observation request")
+							}
+							markerValue = "123.1.2"
+							at(s.cluster, "metadata", "annotations")[pauseObservationKey] = markerValue
+							return []byte(`{}`), nil
+						}
+						pauseAttempts++
+						if pauseAttempts == 1 && (failure == "verified pause rejection" || failure == "verified both rejections" || strings.HasPrefix(failure, "rebind pause ")) {
+							version++
+							at(s.cluster, "metadata")["resourceVersion"] = strconv.Itoa(version)
+							at(s.cluster, "status")["phaseReason"] = "Creating replica synthetic-join"
+							changeGuard()
+							return nil, clusterRequestFailure{"SERVER_INVALID_NO_CAUSES"}
+						}
 						writes = append(writes, "pause")
+						if continuation {
+							markerTime = now
+							if str(last, "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" || str(last, "value") != "123.1" || !reflect.DeepEqual(ops[len(ops)-2], testPath("/metadata/annotations", value(s.cluster, "metadata", "annotations"))) {
+								t.Fatal("continuation did not bind a new observation to the complete paused annotation map")
+							}
+							for _, op := range ops {
+								if str(op, "op") != "test" && str(op, "path") != str(last, "path") {
+									t.Fatal("continuation changed the existing pause before quarantine")
+								}
+							}
+							at(s.cluster, "metadata", "annotations")[pauseObservationKey] = "123.1"
+						}
 						if failure == "pause CAS" {
 							return nil, errors.New("conflict")
 						}
@@ -538,11 +678,31 @@ func TestCompletedJoinTransaction(t *testing.T) {
 							manager = "other"
 						}
 						at(s.cluster, "metadata")["managedFields"] = []any{object{"manager": manager, "fieldsV1": object{"f:metadata": object{"f:annotations": object{"f:" + pauseKey: object{}}}}}}
+						if continuation {
+							at(list(s.cluster, "metadata", "managedFields")[0], "fieldsV1", "f:metadata", "f:annotations")["f:"+pauseObservationKey] = object{}
+							now = now.Add(3 * time.Second)
+							at(lease, "spec")["renewTime"] = now.Add(-time.Second).Format(time.RFC3339Nano)
+						}
 					} else if str(last, "op") == "remove" && str(last, "path") == "/metadata/annotations/cnpg.io~1reconciliationLoop" {
+						resumeAttempts++
+						if resumeAttempts == 1 && (failure == "verified resume rejection" || failure == "verified both rejections" || strings.HasPrefix(failure, "rebind resume ")) {
+							version++
+							at(s.cluster, "metadata")["resourceVersion"] = strconv.Itoa(version)
+							delete(at(s.cluster, "status"), "phaseReason")
+							changeGuard()
+							return nil, clusterRequestFailure{"SERVER_INVALID_NO_CAUSES"}
+						}
 						if !paused || !released(s.volumes["old-pv"], identity{targetName, "claim-uid"}, identity{"old-pv", "pv-uid"}) || len(s.claims) != 0 || len(s.jobs) != 0 {
 							t.Fatal("resume preceded old-volume quarantine")
 						}
 						writes = append(writes, "resume")
+						if continuation {
+							if !reflect.DeepEqual(ops[len(ops)-3], testPath("/metadata/annotations/platform.devantler.tech~1standby-pause-observation", markerValue)) || str(ops[len(ops)-2], "op") != "remove" || str(ops[len(ops)-2], "path") != "/metadata/annotations/platform.devantler.tech~1standby-pause-observation" {
+								t.Fatal("resume did not conditionally remove its own observation")
+							}
+							delete(at(s.cluster, "metadata", "annotations"), pauseObservationKey)
+							delete(at(list(s.cluster, "metadata", "managedFields")[0], "fieldsV1", "f:metadata", "f:annotations"), "f:"+pauseObservationKey)
+						}
 						paused = false
 						delete(at(s.cluster, "metadata", "annotations"), pauseKey)
 						if failure == "pending claim" {
@@ -590,20 +750,39 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				}
 				return []byte(`{}`), nil
 			}
-			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn"
-			err := quarantineCompletedJoin(context.Background(), c, testOptions(), g, failure != "read only")
+			rejected := strings.HasPrefix(failure, "verified ")
+			ok := failure == "" || failure == "read only" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" || strings.HasPrefix(failure, "immediate acknowledgment") || rejected
+			err := quarantineCompletedJoin(context.Background(), c, opts, g, failure != "read only")
 			if (err == nil) != ok {
 				t.Fatalf("failure=%q writes=%v waits=%d returned %v", failure, writes, waits, err)
 			}
 			if failure == "read only" && len(writes) != 0 {
 				t.Fatal("planning performed mutations")
 			}
+			if strings.HasPrefix(failure, "immediate acknowledgment") && (!reflect.DeepEqual(writes, []string{"pause", "observation", "job", "claim", "resume"}) || waits < 2) {
+				t.Fatalf("missing bounded metadata refresh or separated health samples: %v / waits=%d", writes, waits)
+			}
+			if failure == "exhausted observation rejections" && (refreshAttempts != 4 || !reflect.DeepEqual(writes, []string{"pause"})) {
+				t.Fatalf("initial and refreshed observation exceeded their shared five-request budget: refresh=%d writes=%v", refreshAttempts, writes)
+			}
 			if (failure == "job removal read" || failure == "malformed acknowledgment") && waits != 0 {
 				t.Fatal("unknown observation was retried rather than stopping immediately")
 			}
-			if failure == "" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" {
+			if failure == "" || failure == "pending claim" || failure == "runner ahead" || failure == "runner behind" || failure == "cluster churn" || rejected {
 				if !reflect.DeepEqual(writes, []string{"pause", "job", "claim", "resume"}) || waits < 1 {
 					t.Fatalf("unexpected transaction %v / separated waits=%d", writes, waits)
+				}
+			}
+			if rejected {
+				wantPause, wantResume := 1, 1
+				if failure != "verified resume rejection" {
+					wantPause = 2
+				}
+				if failure != "verified pause rejection" {
+					wantResume = 2
+				}
+				if pauseAttempts != wantPause || resumeAttempts != wantResume {
+					t.Fatalf("unexpected bounded attempts pause=%d resume=%d", pauseAttempts, resumeAttempts)
 				}
 			}
 			maximum := map[string]int{"baseline read": 0, "malformed baseline": 0, "malformed acknowledgment": 1, "replayed acknowledgment": 1, "source": 0, "namespace read": 0, "malformed volumes": 0, "unlabelled consumer": 0, "pause CAS": 1, "no acknowledgment": 1, "leader changed": 1, "pause owner": 1, "job CAS": 2, "job removal read": 2, "PVC CAS": 3, "PV loss": 3, "old CSI reused": 4, "unselected old CSI": 4, "backing read": 0, "backing UID drift": 2, "backing attached": 2, "backing terminating": 2}
@@ -615,6 +794,28 @@ func TestCompletedJoinTransaction(t *testing.T) {
 				maximum[final] = 3
 			}
 			maximum["resume post-read conflict"] = 4
+			maximum["pre-marker acknowledgment"], maximum["changed observation"], maximum["foreign observation owner"], maximum["missing observation nonce"] = 2, 1, 1, 0
+			maximum["pre-marker acknowledgment with fast controller clock"] = 2
+			if continuation {
+				maximum["replayed acknowledgment"] = 2
+			}
+			if strings.HasPrefix(failure, "refresh marker ") {
+				maximum[failure] = 1
+				if failure == "refresh marker CAS" {
+					maximum[failure] = 2
+				}
+			}
+			if strings.HasPrefix(failure, "rebind pause ") {
+				maximum[failure] = 0
+				if pauseAttempts != 1 || resumeAttempts != 0 {
+					t.Fatal("changed guard allowed a second pause request")
+				}
+			} else if strings.HasPrefix(failure, "rebind resume ") {
+				maximum[failure] = 3
+				if pauseAttempts != 1 || resumeAttempts != 1 {
+					t.Fatal("changed guard allowed a second resume request")
+				}
+			}
 			if n, exists := maximum[failure]; exists && len(writes) != n {
 				t.Fatalf("failure %q escaped stop boundary: %v", failure, writes)
 			}
@@ -636,10 +837,90 @@ func TestPauseLogCoverageIsBounded(t *testing.T) {
 	}
 }
 
+// TestReprovedRecoveryRequiresNewConfirmation rejects the consumed one-shot grant.
+func TestReprovedRecoveryRequiresNewConfirmation(t *testing.T) {
+	env := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": strings.Repeat("a", 40), "WEDDING_REPAIR_CONFIRM": "retain-volume-rebuild-after-rejection"}
+	if !storageDispatchAllowed(func(k string) string { return env[k] }) {
+		t.Fatal("new bounded-rebind confirmation was not admitted")
+	}
+	env["WEDDING_REPAIR_CONFIRM"] = "retain-volume-rebuild-completed-standby"
+	if storageDispatchAllowed(func(k string) string { return env[k] }) {
+		t.Fatal("consumed one-shot confirmation admitted the revised recovery")
+	}
+}
+
+// TestRecoveryFixtureFitsWorkflowToolchain catches a test-only module requiring
+// a newer compiler than the root module that configures actions/setup-go.
+func TestRecoveryFixtureFitsWorkflowToolchain(t *testing.T) {
+	goVersion := func(path string) [3]int {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(b), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) != 2 || fields[0] != "go" {
+				continue
+			}
+			parts := strings.Split(fields[1], ".")
+			if len(parts) < 2 || len(parts) > 3 {
+				t.Fatalf("invalid Go requirement in %s", path)
+			}
+			var version [3]int
+			for i, part := range parts {
+				version[i], err = strconv.Atoi(part)
+				if err != nil || version[i] < 0 {
+					t.Fatalf("invalid Go requirement in %s", path)
+				}
+			}
+			return version
+		}
+		t.Fatalf("missing Go requirement in %s", path)
+		return [3]int{}
+	}
+	installed, required := goVersion("../../go.mod"), goVersion("cas-test.mod")
+	for i := range installed {
+		if required[i] < installed[i] {
+			return
+		}
+		if required[i] > installed[i] {
+			t.Fatalf("recovery fixture requires Go %v but workflow installs %v", required, installed)
+		}
+	}
+}
+
+// TestReprovedWorkflowKeepsAllSafetyGuards binds the larger request bound to a
+// new first-main-dispatch grant and keeps its real apiserver fixture in CI.
+func TestReprovedWorkflowKeepsAllSafetyGuards(t *testing.T) {
+	b, err := os.ReadFile("../../.github/workflows/recover-retained-wedding-standby.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w object
+	if err := yaml.Unmarshal(b, &w); err != nil {
+		t.Fatal(err)
+	}
+	j := at(w, "jobs", "repair")
+	if str(j, "environment") != "prod" || str(j, "concurrency", "group") != "prod-deploy" || value(j, "concurrency", "cancel-in-progress") != false || len(at(j, "permissions")) != 1 || str(j, "permissions", "contents") != "read" || str(j, "if") != "${{ github.event_name == 'workflow_dispatch' }}" || str(j, "needs") != "tests" {
+		t.Fatal("recovery lost protected dispatch-only least-privilege isolation")
+	}
+	steps := list(j, "steps")
+	if len(steps) < 3 || !strings.Contains(str(steps[0], "run"), "refs/heads/main") || !strings.Contains(str(steps[0], "run"), "retain-volume-rebuild-after-rejection") || !strings.Contains(str(steps[0], "run"), "GITHUB_RUN_ATTEMPT") || str(steps[1], "with", "ref") != "${{ github.sha }}" || value(steps[1], "with", "persist-credentials") != false || !strings.Contains(str(steps[2], "run"), "verify-prod-recovery-source.sh") {
+		t.Fatal("reviewed-source or new confirmation guard changed")
+	}
+	testSteps := list(w, "jobs", "tests", "steps")
+	testCommand := str(testSteps[len(testSteps)-1], "run")
+	for _, required := range []string{"-mod=readonly", "-modfile=scripts/replace-wedding-standby/cas-test.mod", "-tags=apiserverpatch", "-race", "-count=1", "-timeout=5m", "./scripts/replace-wedding-standby"} {
+		if !strings.Contains(testCommand, required) {
+			t.Fatal("recovery validation no longer runs the complete apiserver fixture")
+		}
+	}
+}
+
 // TestCompletedJoinCLIRequiresSeparateApproval binds execution to the new grant,
 // not the consumed legacy grant.
 func TestCompletedJoinCLIRequiresSeparateApproval(t *testing.T) {
-	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": strings.Repeat("a", 40), "WEDDING_REPAIR_CONFIRM": "retain-volume-rebuild-completed-standby"}
+	good := map[string]string{"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/recover-retained-wedding-standby.yaml@refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": strings.Repeat("a", 40), "WEDDING_REPAIR_CONFIRM": "retain-volume-rebuild-after-rejection"}
 	for _, failure := range []string{"workflow", "confirm", "branch", "attempt", "SHA", "missing UID", "resume", "proof"} {
 		t.Run(failure, func(t *testing.T) {
 			for k, v := range good {

@@ -20,6 +20,10 @@ database peers and a recent completed backup. It pauses only this Cluster throug
 the [audited reconciliation annotation](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_controller.go)
 and requires a fresh, structured acknowledgment from the bound operator leader.
 Any leader change stops further writes; the annotation alone is not acknowledgment.
+The pinned controller's logging adapter emits this acknowledgment at **info**
+level, although the controller calls its
+[Warning method](https://github.com/cloudnative-pg/machinery/blob/v0.6.0/pkg/log/log.go#L135).
+Only that exact structured info-level message is accepted, not arbitrary levels.
 Leader renewals and acknowledgment timestamps allow at most two seconds of clock
 skew; lease expiry is not extended. A bounded, structured log snapshot is read
 before pausing, and any reconciliation ID already seen there is rejected as a
@@ -53,17 +57,88 @@ go run ./scripts/replace-wedding-standby --quarantine-completed-join \
 ```
 
 Execution requires a first main dispatch with confirmation
-`retain-volume-rebuild-completed-standby`, the `prod` environment and the shared
+`retain-volume-rebuild-after-rejection`, the `prod` environment and the shared
 deployment lock. Its tests run before any production credentials are restored.
 Every write requires fresh observations and proof that its reviewed source remains
 current main. Cluster patches re-read the exact Cluster after the other evidence
 is gathered and revalidate its recovery predicates before using that final UID
 and resource version. Concurrent status updates during earlier inventory reads
-do not weaken those conditional tests; a change after the final read still fails
-the single attempt. A failed mutation or unknown read stops immediately without retry
-or cleanup writes. The pause or retained volume may remain at HOLD; inspect them
+do not weaken those conditional tests; a change after the final read still rejects
+that request without persisting it. The protected completed-join and diagnostic paths resolve
+their existing selected certificate context once, then use a persistent, fixed-path
+Cluster connection for the final GET and PATCH. This removes subprocess discovery
+and kubectl patch's additional target GET without changing any precondition.
+Default OIDC planning and other resource operations still use kubectl. Unsupported
+credential, impersonation or explicit proxy settings fail before API access;
+CA verification and any configured TLS server name remain required. Credential
+output is bounded in memory and is never printed or persisted.
+
+The Cluster connection uses HTTP/1 and a non-replayable PATCH body, refuses
+redirects, and retains the explicit repair field manager and server-side dry-run
+query. Throttling and lost responses grant no retry. A shorter request window
+does not guarantee acceptance during concurrent status updates or identify the
+cause of an earlier rejection. HTTP 422 responses are read only in bounded memory
+and classified by their verified Kubernetes Status envelope: `SERVER_INVALID_NO_CAUSES`
+or `SERVER_INVALID_WITH_CAUSES`. Neither category identifies a failed predicate.
+Malformed, incomplete, oversized or mismatched envelopes retain `SERVER_INVALID`;
+response messages, fields and values are never printed or persisted.
+A completed-join recovery may send at most five separately guarded requests within
+one minute **per pause or resume phase** (at most ten across both). In the
+continuation, the initial and refreshed markers share that same pause-phase
+request budget and deadline; the refresh does not receive another allowance.
+Only a complete,
+typed native HTTP 422 rejection admits a new request: the server rejected that
+request before persistence. Each new request re-proves current main, the same
+operator leader, protected peers, backups, retained backing identity and every
+phase-specific storage and consumer guard. It also compares all Cluster spec,
+status and metadata with the phase's first observation, allowing only resource
+version, diagnostic `phaseReason`, that leaf's managed-field ownership and the
+timestamp of its status-only ownership entry to vary. Manager, operation,
+generation, other ownership fields and primary history remain frozen. Every new
+patch retains fresh UID and resource-version tests. This does not identify which
+predicate failed or replay an HTTP request. Unknown, malformed, cancelled,
+timed-out, throttled, conflicting and other failed outcomes stop without a second
+request. Diagnostics and storage deletions remain single-shot.
+
+Any exhausted request bound, failed guard or unknown read stops without cleanup
+writes. The pause or retained volume may remain at HOLD; inspect them
 read-only and obtain a separately reviewed and approved continuation. Never rerun
 a consumed dispatch or delete the retained PV as cleanup.
+
+### Separately approved continuation of an existing pause
+
+The initial completed-join mode still rejects any existing pause. If an approved
+attempt stops after pausing but before storage cleanup, a **new** first-main
+dispatch may use `continue-owned-pause-retain-volume` only after fresh inspection
+and separate maintainer approval. This selects `--continue-owned-pause`; it cannot
+share the diagnostic or earlier fenced modes or reuse the initial confirmation.
+The read-only OIDC plan can select that flag with the same five current identities.
+
+This mode requires the disabled pause to be exclusively owned by
+`wedding-standby-repair` and the observation marker to be absent, including its
+managed-field ownership. It conditionally adds only a unique `<run-id>.1` marker
+at `platform.devantler.tech/standby-pause-observation`, binding the Cluster UID,
+resource version, unchanged primary, replica count and complete annotation map.
+The [audited controller's Cluster watch](https://github.com/cloudnative-pg/cloudnative-pg/blob/v1.30.1/internal/controller/cluster_controller.go)
+observes metadata updates, so reconciliation can acknowledge the existing pause
+without ever enabling it before quarantine. No old pause acknowledgment is reused.
+
+The bounded log baseline still excludes previously observed reconciliation IDs.
+The new acknowledgment's timestamp must also be at least the full two-second
+clock allowance after the marker request, including any positively rejected
+request's rebind. This refuses unseen pre-marker records even when the controller
+clock is ahead. If the immediate acknowledgment is too early, the continuation
+waits beyond both clock allowances, rechecks the existing guards, and advances
+only its owned marker to `<run-id>.1.2` once to request another paused reconcile.
+The freshness boundary stays bound to the first marker request; incidental
+operator events are not required. Missing fresh evidence still leaves the
+continuation at HOLD rather than authorize cleanup. The leader, pause owner and
+exact marker owner/value must remain unchanged
+through cleanup. After proving quarantine, one conditional patch removes only
+that run's marker and its owned pause. All existing storage, consumer, peer,
+backup, request-bound and two-separated-healthy-sample checks remain in force.
+An existing marker, failed read or uncertain request outcome stops this new
+attempt. It does not grant a retry or automatic cleanup.
 
 ## Non-persisting pause diagnostic
 
@@ -151,7 +226,7 @@ A server status does not establish a particular
 admission policy, failed JSON-patch test or transport cause; ambiguous, oversized
 or unrecognized evidence stays UNKNOWN.
 There is no automatic destructive cleanup, reverse ownership change, WAL reset,
-or repeated mutation. Inspect the current state with OIDC reads and prepare a
+or unguarded repeated mutation. Inspect the current state with OIDC reads and prepare a
 reviewed continuation. Keep the old claim and volume for diagnosis; retirement
 is a separately approved data-lifecycle operation.
 
@@ -179,7 +254,11 @@ a continuation or declare the database recovered.
 
 ```sh
 go test -race -count=1 ./scripts/replace-wedding-standby
+go test -mod=readonly -modfile=scripts/replace-wedding-standby/cas-test.mod \
+  -tags=apiserverpatch -race -count=1 ./scripts/replace-wedding-standby
 ```
 
-The workflow runs this package on its pull request, merge group and explicit
-dispatch before any production credentials are restored.
+The workflow runs the complete tagged suite on its pull request, merge group and
+explicit dispatch before any production credentials are restored. The test-only
+module pins the API server's JSON-patch implementation for the real conditional
+PATCH fixture without changing dependencies of platform validation or deploy tools.
