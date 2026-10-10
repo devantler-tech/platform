@@ -202,6 +202,9 @@ runs:
       # baseline-context-coroot label; a reverted label disarms without
       # reading the cluster. While armed, every deploy re-proves the six
       # operator-generated templates, since an operator upgrade can start a loop.
+      # A template that is already unready does not refuse the deployment when
+      # all six carry both fields and none is rewritten over three samples: it
+      # is recorded in preexisting_unready and re-checked after reconcile.
       shell: bash
       run: bash scripts/guard-coroot-baseline-context.sh before-publish
 
@@ -404,9 +407,14 @@ runs:
     - name: 🧪 Verify the Coroot baseline context
       if: steps.coroot_baseline.outputs.rollout_required == 'true'
       # Fails the deployment when a template lacks either field, is not ready,
-      # or is rewritten repeatedly by the operator during observation.
+      # or is rewritten repeatedly by the operator during observation. A template
+      # the pre-publication check recorded as already unready is held to the
+      # same fields and stability, must not get worse, and is reported as
+      # PREEXISTING-UNREADY instead of a pass.
       shell: bash
-      run: bash scripts/guard-coroot-baseline-context.sh after-reconcile
+      env:
+        COROOT_BASELINE_PREEXISTING_UNREADY: ${{ steps.coroot_baseline.outputs.preexisting_unready }}
+      run: bash scripts/guard-coroot-baseline-context.sh after-reconcile --tolerate-unready "${COROOT_BASELINE_PREEXISTING_UNREADY:-[]}"
 
     - name: 🧾 Record the successful Longhorn UI canary proof
       if: steps.longhorn_ui_baseline.outputs.rollout_required == 'true'

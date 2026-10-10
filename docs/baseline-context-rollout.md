@@ -88,6 +88,15 @@ them:
    requires the stored population to be exactly the six reviewed templates,
    each controller-owned by the `Coroot` resource and fully ready. An API
    failure is an error, never an empty population.
+   A template that is already unready is a refusal only when it could be
+   the admission loop: when a template lacks a field, has a generation its
+   controller has not observed, or is rewritten, replaced or written twice
+   over three samples in 30 seconds. Otherwise the fault is unrelated to the
+   label, so the guard records the template with its generation, UID and
+   ready count and lets the deployment continue. Only a template unready at
+   the first read is excused: one that loses readiness, or gets less ready,
+   during those samples is still a refusal. Refusing a settled fault would also
+   refuse the deployment that repairs production.
 2. After Flux reports the released revision Ready,
    `scripts/admit-coroot-baseline-context.sh` writes each template that still
    lacks a field. Every read must return exactly the six reviewed templates,
@@ -105,6 +114,11 @@ them:
    `seLinuxOptions` at pod level or on every container, then observes them
    three times over 30 seconds. A changed generation or UID, a removed field,
    lost readiness, or two writes to the same template fail the deployment.
+   A template recorded before publication is excused from readiness only
+   while it is the same object at the same generation and no less ready
+   than recorded. Every other check still applies to it. If it is still
+   unready at the end, the guard reports `PREEXISTING-UNREADY` with a
+   warning instead of `PASS`.
 
 Unlike the UI canary it records no receipt: while the label is declared, every
 deployment re-proves convergence, because an operator upgrade can change its
