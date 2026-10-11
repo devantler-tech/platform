@@ -79,6 +79,6 @@ actually ran and any limitations in a PR comment. Keep operational instructions
 and longer explanations in the relevant guide rather than expanding the README.
 
 Address review findings and wait for required CI and review before the PR is
-marked ready. Maintainers use the merge queue; its production deployment gate
-must also pass before the change merges. CI on a pull request validates and
-scans configuration but does not boot a test cluster.
+marked ready. Maintainers use the merge queue; for Kubernetes changes, its
+production deployment gate must also pass before the change merges. CI on a
+pull request validates and scans configuration but does not boot a test cluster.

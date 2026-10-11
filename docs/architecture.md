@@ -159,10 +159,13 @@ graph TB
   apps -- "depends on" --> infra
 ```
 
-Each layer in that chain has a matching folder under
+The controllers, infrastructure, and apps layers have matching folders under
 `providers/<provider-name>/` and `bases/`. The `infrastructure` layer, for
 example, is backed by `k8s/providers/<provider-name>/infrastructure/` and
 `k8s/bases/infrastructure/`.
+
+Bootstrap is cluster-specific: its Kustomization maps to
+`k8s/clusters/<cluster-name>/bootstrap/`, not a provider folder.
 
 The layer definitions themselves are written once in `k8s/clusters/base/` with
 placeholders where the cluster and provider names go; each cluster's overlay

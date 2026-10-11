@@ -57,7 +57,7 @@ plain local bring-up has no PostgreSQL instance running.
 Everything heavier (observability, request-rate autoscaling, backup, runtime
 security, the VM stack, …) and all apps are opt-in. For infrastructure,
 uncomment the desired controllers, matching resources, and patches. For apps,
-replace `resources: []` with the desired entries and add their matching patches.
+replace `resources: []` with the desired entries and add any required patches.
 These files carry copy-paste templates; after editing them, re-run
 `ksail workload push && ksail workload reconcile`:
 
