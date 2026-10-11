@@ -211,7 +211,7 @@ func TestFinishedAttemptEvidenceIsExactAndFailClosed(t *testing.T) {
 }
 
 func TestIsolatedRevisionBindsCheckoutBaseAndProductionChangeInventory(t *testing.T) {
-	for _, variation := range []string{"selector-only", "consumer-change", "base-missing", "wrong-head", "wrong-checkout", "manual"} {
+	for _, variation := range []string{"selector-only", "consumer-change", "base-missing", "wrong-head", "wrong-checkout", "manual", "manual-accumulated-change"} {
 		t.Run(variation, func(t *testing.T) {
 			t.Chdir(t.TempDir())
 			git := func(args ...string) string {
@@ -235,6 +235,14 @@ func TestIsolatedRevisionBindsCheckoutBaseAndProductionChangeInventory(t *testin
 			git("add", "--", path)
 			git("-c", "commit.gpgsign=false", "commit", "-qm", "fixture base")
 			base := git("rev-parse", "HEAD")
+			if variation == "manual-accumulated-change" {
+				other := "k8s/consumer.yaml"
+				if err := os.WriteFile(other, []byte("undeployed consumer change"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				git("add", "--", other)
+				git("-c", "commit.gpgsign=false", "commit", "-qm", "undeployed consumer")
+			}
 			if err := os.WriteFile(path, []byte("new"), 0600); err != nil {
 				t.Fatal(err)
 			}
@@ -264,11 +272,11 @@ func TestIsolatedRevisionBindsCheckoutBaseAndProductionChangeInventory(t *testin
 			}
 			t.Setenv("GITHUB_EVENT_PATH", "event.json")
 			t.Setenv("GITHUB_EVENT_NAME", "merge_group")
-			if variation == "manual" {
+			if strings.HasPrefix(variation, "manual") {
 				t.Setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
 			}
 			err := isolatedRevision(context.Background(), source)
-			allowed := variation == "selector-only" || variation == "manual"
+			allowed := variation == "selector-only"
 			if (err == nil) != allowed {
 				t.Fatalf("unexpected revision safety verdict: %v", err)
 			}

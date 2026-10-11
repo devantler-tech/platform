@@ -314,11 +314,10 @@ func isolatedRevision(ctx context.Context, source string) error {
 		}
 		base = event.MergeGroup.Base
 	} else if os.Getenv("GITHUB_EVENT_NAME") == "workflow_dispatch" {
-		b, err = exec.CommandContext(ctx, "git", "rev-parse", "HEAD^").Output()
-		if err != nil {
-			return errors.New("publication parent is unavailable")
-		}
-		base = strings.TrimSpace(string(b))
+		// A parent commit is not evidence of the last deployed revision. A
+		// manual run may include earlier, undeployed consumer changes, so it
+		// cannot prove that this initial migration is isolated.
+		return errors.New("manual selector migration has no proven deployed baseline; use the protected merge-group publication")
 	}
 	if !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(base) || base == strings.Repeat("0", 40) {
 		return errors.New("publication base is unbound")

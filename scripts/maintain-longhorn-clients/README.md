@@ -73,6 +73,10 @@ or interrupted maintenance continues to require the original capacity too.
 The initial migration revision must change no production manifest except the
 Longhorn selector manifest. A combined consumer upgrade is rejected before any
 pause rather than verifying it against stale pre-publication specifications.
+Manual initial migration is refused because its parent commit does not prove the
+last deployed revision; publish the isolated migration through the protected
+merge-group path. This restriction does not prevent recovery of an existing
+owned journal.
 Fail-closed admission and every existing autoscaled Longhorn Node's storage
 exclusion are checked even when the compute pool is empty or already labeled.
 
