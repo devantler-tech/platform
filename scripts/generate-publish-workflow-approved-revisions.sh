@@ -22,6 +22,10 @@
 #              `job_workflow_ref` claim is minted from and needs no package read.
 #   pin      â `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
 #              `pin_at_ref`.
+# For canonical publications, these current observations retain the full
+# repository/workflow identity in publish-workflow-approved-revisions.identities.tsv.
+# The original set retains the last proven legacy publication and pin for
+# compatibility; it never relabels a canonical commit as a legacy signer.
 #
 # THE RELEASE CANDIDATE (#3960, #4416)
 # Consumers move their pin to a new `devantler-tech/actions` release by dependency
@@ -60,6 +64,28 @@ source "$REPORT"
 
 readonly OUTPUT="${APPROVED_REVISIONS_FILE:-$REPO_ROOT/scripts/publish-workflow-approved-revisions.tsv}"
 readonly HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on'
+readonly IDENTITIES_OUTPUT="${APPROVED_IDENTITIES_FILE:-${OUTPUT%.tsv}.identities.tsv}"
+readonly IDENTITIES_HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_publisher_identity\tmain_publisher_identity\tobserved_on'
+
+# The eight-column set records legacy compatibility. Once a consumer publishes
+# canonically, keep its last proven legacy artifact and pin instead of assigning
+# a canonical commit to the legacy repository. Current observations live in the
+# identity-qualified companion file. Canonical approvals remain hand-reviewed.
+require_canonical_approval() {
+  local repo="$1" workflow="$2" identity="$3" approved_commit
+  if [ "$canonical_baseline_checked" -eq 0 ]; then
+    APPROVED_REVISIONS_FILE="$OUTPUT" APPROVED_REVISIONS_ENFORCE=1 \
+      bash "$GEN_DIR/guard-publish-workflow-approved-revisions.sh" >/dev/null || return 1
+    canonical_baseline_checked=1
+  fi
+  approved_commit="$(awk -F'\t' -v repo="$repo" -v workflow="$workflow" \
+    '$1==repo && $2==workflow && $3=="devantler-tech/.github" {print $4}' \
+    "${CANONICAL_APPROVALS_FILE:-$REPO_ROOT/scripts/publish-workflow-canonical-approvals.tsv}")" || return 1
+  if [ "$identity" != "devantler-tech/.github/.github/workflows/${workflow}.yaml@${approved_commit}" ]; then
+    refuse "$repo: canonical publisher revision is not approved for this consumer"
+    return 1
+  fi
+}
 
 refuse() {
   printf 'generate-publish-workflow-approved-revisions: %s\n' "$*" >&2
@@ -163,7 +189,8 @@ signer_for_tag() {
     # jq treats empty input as no input and iterates an object's values like an array's, so
     # both an empty body and a mis-shaped listing would otherwise read as "no signing run".
     printf '%s' "$runs" | jq -e -s \
-      'length == 1 and (.[0] | type == "object" and (.workflow_runs | type) == "array")' \
+      'length == 1 and (.[0] | type == "object" and (.workflow_runs | type) == "array"
+        and (.total_count | type) == "number" and .total_count == (.workflow_runs | length))' \
       >/dev/null 2>&1 || {
       refuse "$repo: the Actions runs listing for $tag is not one object with a workflow_runs array"
       return 1
@@ -173,13 +200,15 @@ signer_for_tag() {
        | select(.head_branch == $t and .path == ".github/workflows/cd.yaml"
                 and .head_sha == $s and .conclusion == "success")
        | .referenced_workflows[]?
-       | select(.path | startswith("devantler-tech/actions/.github/workflows/" + $w + ".yaml@"))
-       | .sha] | unique | .[]' 2>/dev/null)" || {
+       | select((.sha | type) == "string" and (.sha | test("^[0-9a-f]{40}$")))
+       | select(.path == ("devantler-tech/actions/.github/workflows/" + $w + ".yaml@" + .sha)
+           or ($w == "publish-manifests" and .path == ("devantler-tech/.github/.github/workflows/" + $w + ".yaml@" + .sha)))
+       | .path] | unique | .[]' 2>/dev/null)" || {
       refuse "$repo: the Actions runs listing for $tag was not parseable"
       return 1
     }
     count="$(printf '%s' "$shas" | grep -c . || true)"
-    if [ "$count" -eq 1 ] && is_sha "$shas"; then
+    if [ "$count" -eq 1 ] && report_publisher_identity "$shas" "$workflow" >/dev/null; then
       if [ "$attempt" -gt 1 ]; then
         # The tag may have moved during the wait, and the signer just found belongs to the
         # commit resolved before it. Accept it only while the tag still points there.
@@ -205,7 +234,7 @@ signer_for_tag() {
     sleep $((attempt * 15))
     attempt=$((attempt + 1))
   done
-  if [ "$count" -ne 1 ] || ! is_sha "$shas"; then
+  if [ "$count" -ne 1 ] || ! report_publisher_identity "$shas" "$workflow" >/dev/null; then
     summary="$(printf '%s' "$runs" | jq -r --arg t "$tag" --arg s "$sha" '
       [.workflow_runs[] | select(.head_branch == $t)] as $b
       | [$b[] | select(.path == ".github/workflows/cd.yaml")] as $cd
@@ -222,7 +251,10 @@ signer_for_tag() {
     refuse "$repo: runs listing for $tag at ${sha:0:12} after $attempt read(s): $summary signer_refs=$count conclusions=${conclusions:--}"
     return 1
   fi
-  printf '%s\n' "$shas"
+  case "$shas" in
+    devantler-tech/actions/*) printf '%s\n' "${shas##*@}" ;;
+    *) printf '%s\n' "$shas" ;;
+  esac
 }
 
 default_observer() {
@@ -241,10 +273,14 @@ default_observer() {
 }
 
 default_pin_resolver() {
-  local repo="$1" workflow="$2" branch
+  local repo="$1" workflow="$2" branch identity
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
   plausible_ref "$branch" || return 1
-  pin_at_ref "$repo" "$workflow" "$branch"
+  identity="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  case "$identity" in
+    devantler-tech/actions/*) printf '%s\n' "${identity##*@}" ;;
+    *) printf '%s\n' "$identity" ;;
+  esac
 }
 
 # The commit of the latest published `devantler-tech/actions` release, provided that commit
@@ -284,6 +320,21 @@ main() {
   local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidates='' release_attempted=' '
   local today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
   is_date "$today" || { refuse "APPROVED_REVISIONS_OBSERVED_ON must be YYYY-MM-DD, got '$today'"; exit 1; }
+  [ "$OUTPUT" != "$IDENTITIES_OUTPUT" ] || {
+    refuse 'compatibility and observed identities outputs must be different files'; exit 1;
+  }
+  if [ -L "$OUTPUT" ] || [ -L "$IDENTITIES_OUTPUT" ]; then
+    refuse 'generation outputs must not be symlinks'; exit 1
+  fi
+  local canonical_baseline_checked=0
+  if [ -f "$IDENTITIES_OUTPUT" ]; then
+    [ "$(head -n1 "$IDENTITIES_OUTPUT")" = "$IDENTITIES_HEADER" ] || {
+      refuse 'observed identities header is malformed; no file written'; exit 1;
+    }
+    awk -F'\t' 'NR>1 && (NF!=7 || seen[$1]++) {bad=1} END {exit bad}' "$IDENTITIES_OUTPUT" || {
+      refuse 'observed identities rows are malformed or duplicated; no file written'; exit 1;
+    }
+  fi
 
   local consumers
   consumers="$("$REPORT" --list-consumers)" || { refuse 'consumer discovery failed; see the report above'; exit 1; }
@@ -300,7 +351,7 @@ main() {
     awk -F'\t' -v c="$1" -v w="$2" '$1 == c && $2 == w { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7 "\t" $8; exit }' "$OUTPUT"
   }
 
-  local repo workflow _version answer pin rows='' unresolved=0 examined=0 changed=0
+  local repo workflow _version answer pin rows='' identities_rows='' unresolved=0 examined=0 changed=0
   while IFS=$'\t' read -r repo workflow _version; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
@@ -310,7 +361,9 @@ main() {
       answer="$(default_observer "$repo" "$workflow")" || answer=''
     fi
     split_observation "$answer"
-    if [ "$OBS_COUNT" -ne 3 ] || ! plausible_tag "$OBS_TAG" || ! is_digest "$OBS_DIGEST" || ! is_sha "$OBS_SIGNER"; then
+    local signer_identity='' pin_identity=''
+    signer_identity="$(report_publisher_identity "$OBS_SIGNER" "$workflow")" || signer_identity=''
+    if [ "$OBS_COUNT" -ne 3 ] || ! plausible_tag "$OBS_TAG" || ! is_digest "$OBS_DIGEST" || [ -z "$signer_identity" ]; then
       refuse "$repo ($workflow): applied revision not resolved to <tag>, <sha256:digest> and one signer SHA; refusing to write a set with one revision"
       unresolved=$((unresolved + 1))
       continue
@@ -321,11 +374,42 @@ main() {
       pin="$(default_pin_resolver "$repo" "$workflow")" || pin=''
     fi
     case "$pin" in *$'\n'*) pin='' ;; esac
-    if ! is_sha "${pin:-}"; then
+    pin_identity="$(report_publisher_identity "$pin" "$workflow")" || pin_identity=''
+    if [ -z "$pin_identity" ]; then
       refuse "$repo ($workflow): default-branch pin not resolved to one commit SHA; refusing to write a set with one revision"
       unresolved=$((unresolved + 1))
       continue
     fi
+    local actual_tag="$OBS_TAG" actual_digest="$OBS_DIGEST" previous_legacy
+    previous_legacy="$(prev_row "$repo" "$workflow")"
+    case "$signer_identity" in
+      devantler-tech/.github/*)
+        if ! require_canonical_approval "$repo" "$workflow" "$signer_identity"; then
+          unresolved=$((unresolved + 1)); continue
+        fi
+        OBS_TAG="$(printf '%s\n' "$previous_legacy" | cut -f1)"
+        OBS_DIGEST="$(printf '%s\n' "$previous_legacy" | cut -f2)"
+        OBS_SIGNER="$(printf '%s\n' "$previous_legacy" | cut -f3)"
+        if ! plausible_tag "$OBS_TAG" || ! is_digest "$OBS_DIGEST" || ! is_sha "$OBS_SIGNER"; then
+          refuse "$repo: retained legacy publication evidence is missing or malformed"
+          unresolved=$((unresolved + 1)); continue
+        fi
+        ;;
+      *) OBS_SIGNER="${signer_identity##*@}" ;;
+    esac
+    case "$pin_identity" in
+      devantler-tech/.github/*)
+        if ! require_canonical_approval "$repo" "$workflow" "$pin_identity"; then
+          unresolved=$((unresolved + 1)); continue
+        fi
+        pin="$(printf '%s\n' "$previous_legacy" | cut -f4)"
+        if ! is_sha "$pin"; then
+          refuse "$repo: retained legacy pin evidence is missing or malformed"
+          unresolved=$((unresolved + 1)); continue
+        fi
+        ;;
+      *) pin="${pin_identity##*@}" ;;
+    esac
     # Resolve at most once per workflow, including failed reads. Reusing an app-only
     # lookup would not prove the released commit carries the manifests publisher.
     local candidate=''
@@ -362,6 +446,15 @@ main() {
       changed=$((changed + 1))
     fi
     rows="${rows}${key}	${tuple}	${observed}"$'\n'
+    local identity_tuple="$actual_tag"$'\t'"$actual_digest"$'\t'"$signer_identity"$'\t'"$pin_identity" identity_date="$today" old_identity
+    old_identity=''
+    if [ -f "$IDENTITIES_OUTPUT" ]; then
+      old_identity="$(awk -F'\t' -v c="$repo" -v w="$workflow" '$1==c && $2==w {print $3 "\t" $4 "\t" $5 "\t" $6 "\t" $7}' "$IDENTITIES_OUTPUT")"
+    fi
+    if [ -n "$old_identity" ] && [ "${old_identity%$'\t'*}" = "$identity_tuple" ] && is_date "${old_identity##*$'\t'}"; then
+      identity_date="${old_identity##*$'\t'}"
+    fi
+    identities_rows="${identities_rows}${repo}"$'\t'"${workflow}"$'\t'"${identity_tuple}"$'\t'"${identity_date}"$'\n'
   done <<<"$consumers"
 
   if [ "$unresolved" -gt 0 ]; then
@@ -370,16 +463,22 @@ main() {
   fi
   [ "$examined" -gt 0 ] || { refuse 'no consumers examined; no file written'; exit 1; }
 
-  local tmp
+  local tmp identities_tmp
   tmp="$(mktemp "${OUTPUT}.XXXXXX")"
-  trap 'rm -f "$tmp"' EXIT
+  identities_tmp="$(mktemp "${IDENTITIES_OUTPUT}.XXXXXX")"
+  trap 'rm -f "$tmp" "$identities_tmp"' EXIT
   {
     printf '%s\n' "$HEADER"
     printf '%s' "$rows" | LC_ALL=C sort
   } >"$tmp"
+  {
+    printf '%s\n' "$IDENTITIES_HEADER"
+    printf '%s' "$identities_rows" | LC_ALL=C sort
+  } >"$identities_tmp"
   # mktemp creates 0600; the committed data file is an ordinary 0644 file and must stay one.
-  chmod 0644 "$tmp"
+  chmod 0644 "$tmp" "$identities_tmp"
   mv "$tmp" "$OUTPUT"
+  mv "$identities_tmp" "$IDENTITIES_OUTPUT"
   trap - EXIT
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }

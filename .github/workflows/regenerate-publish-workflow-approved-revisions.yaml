@@ -158,6 +158,7 @@ jobs:
           set -euo pipefail
           paths=(
             scripts/publish-workflow-approved-revisions.tsv
+            scripts/publish-workflow-approved-revisions.identities.tsv
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -209,6 +210,7 @@ jobs:
           # the refusal above: even a change that slipped past it cannot be committed.
           add-paths: |
             scripts/publish-workflow-approved-revisions.tsv
+            scripts/publish-workflow-approved-revisions.identities.tsv
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
