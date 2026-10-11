@@ -74,7 +74,9 @@ if [ "$#" -gt 0 ]; then
   printf 'PASS: hosted Docker registry cache configured and read back\n'
   exit 0
 fi
-if [ "${GITHUB_ACTIONS:-}" = true ]; then
+if [ "${GITHUB_ACTIONS:-}" = true ] &&
+  [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
+  [ "${RUNNER_OS:-}" = Linux ]; then
   bash "${BASH_SOURCE[0]}" --configure-registry-cache
 fi
 
