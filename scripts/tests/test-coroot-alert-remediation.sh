@@ -20,6 +20,7 @@ fail() {
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required'
+command -v jq >/dev/null 2>&1 || fail 'jq is required'
 
 # The heartbeat calls a dotted public hostname, not a relative cluster service.
 # Keep its resolver change local to that template, without replacing cluster DNS.
@@ -304,7 +305,29 @@ database_restart_request="$(
   yq -er '.metadata.annotations."kubectl.kubernetes.io/restartedAt"' "${coroot_db}"
 )" || fail 'the Coroot database declarative restart request is missing'
 readonly database_restart_request
-[[ "${database_restart_request}" == '2026-09-14T22:48:00Z' ]] ||
-  fail 'the Coroot database must request the reviewed post-policy rolling restart'
+
+# A later supported rollout must preserve the DNS-policy restart requirement.
+# Round-trip the timestamp so normalized invalid dates cannot pass the floor.
+valid_database_restart_request() {
+  jq -en --arg request "$1" '
+    ($request | fromdateiso8601) as $requested_at |
+    ($requested_at | todateiso8601) == $request and
+    $requested_at >= ("2026-09-14T22:48:00Z" | fromdateiso8601)
+  ' >/dev/null
+}
+
+for request in '2026-09-14T22:48:00Z' '2026-10-10T23:35:00Z' '2028-02-29T00:00:00Z'; do
+  valid_database_restart_request "${request}" ||
+    fail 'the restart guard must accept valid post-policy requests'
+done
+for request in '2026-09-14T22:47:59Z' '2027-02-30T00:00:00Z' '2026-10-32T00:00:00Z' \
+  '2026-10-10T23:35:00' 'later' ''; do
+  if valid_database_restart_request "${request}" 2>/dev/null; then
+    fail 'the restart guard must reject malformed and pre-policy requests'
+  fi
+done
+
+valid_database_restart_request "${database_restart_request}" ||
+  fail 'the Coroot database must request a valid restart at or after the reviewed post-policy rollout'
 
 printf 'Coroot alert remediation contract is valid.\n'
