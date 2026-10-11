@@ -3,6 +3,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
+  # Temporary database-only control/replication for the protected retirement
+  # orphan. #4266 removes this after verified retained-data cleanup.
+  - retained-backstage-db/namespace.yaml
+  - retained-backstage-db/cilium-network-policy.yaml
   # Prod-only tenant: the UniFi network managed declaratively through Crossplane
   # Managed Resources (providers/hetzner/apps/unifi/). Lives in the hetzner apps
   # overlay because its provider and the controller API it reaches are
