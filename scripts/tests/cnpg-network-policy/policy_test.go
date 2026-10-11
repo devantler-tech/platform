@@ -161,7 +161,7 @@ func readYAML(t *testing.T, path string, target any) {
 		t.Fatal(err)
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		t.Fatalf("expected exactly one document in %s; additional document or error: %v", path, err)
 	}
 }
