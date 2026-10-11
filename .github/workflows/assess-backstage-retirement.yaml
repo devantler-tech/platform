@@ -2,6 +2,11 @@ name: Assess Backstage Retirement
 
 on:
   workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type ASSESS BACKSTAGE FOOTPRINT for this read-only assessment
+        required: true
+        type: string
 
 permissions: {}
 
@@ -22,11 +27,13 @@ jobs:
       - name: Require the current reviewed main commit before credentials
         shell: bash
         env:
+          CONFIRMATION: ${{ inputs.confirmation }}
           RUN_REF: ${{ github.ref }}
           RUN_SHA: ${{ github.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          [[ "$CONFIRMATION" == 'ASSESS BACKSTAGE FOOTPRINT' ]]
           [[ "$RUN_REF" == refs/heads/main ]]
           [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]

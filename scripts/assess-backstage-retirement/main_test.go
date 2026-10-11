@@ -304,7 +304,7 @@ func TestProtectedWorkflowUsesOnlyReviewedReadSurface(t *testing.T) {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(workflow["on"], map[string]any{"workflow_dispatch": nil}) || len(object(workflow["permissions"])) != 0 {
+	if !reflect.DeepEqual(workflow["on"], map[string]any{"workflow_dispatch": map[string]any{"inputs": map[string]any{"confirmation": map[string]any{"description": "Type ASSESS BACKSTAGE FOOTPRINT for this read-only assessment", "required": true, "type": "string"}}}}) || len(object(workflow["permissions"])) != 0 {
 		t.Fatal("unexpected workflow trigger or permissions")
 	}
 	if !reflect.DeepEqual(workflow["concurrency"], map[string]any{"group": "prod-deploy", "cancel-in-progress": false, "queue": "max"}) {
@@ -327,7 +327,10 @@ func TestProtectedWorkflowUsesOnlyReviewedReadSurface(t *testing.T) {
 		t.Fatal("reviewed checksum not used to verify the archive")
 	}
 	gate := text(object(steps[0])["run"])
-	for _, check := range []string{`[[ "$RUN_REF" == refs/heads/main ]]`, `[[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]`} {
+	if object(object(steps[0])["env"])["CONFIRMATION"] != "${{ inputs.confirmation }}" {
+		t.Fatal("typed confirmation not passed through the safe environment boundary")
+	}
+	for _, check := range []string{`[[ "$CONFIRMATION" == 'ASSESS BACKSTAGE FOOTPRINT' ]]`, `[[ "$RUN_REF" == refs/heads/main ]]`, `[[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]`} {
 		if !strings.Contains(gate, check) {
 			t.Fatal("current-main gate missing before credentials")
 		}
