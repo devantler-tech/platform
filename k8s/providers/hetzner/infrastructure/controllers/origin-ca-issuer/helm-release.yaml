@@ -8,13 +8,9 @@ spec:
     - name: cert-manager
   interval: 10m
   timeout: 10m
-  chart:
-    spec:
-      chart: origin-ca-issuer
-      version: 0.6.4
-      sourceRef:
-        kind: HelmRepository
-        name: origin-ca-issuer
+  chartRef:
+    kind: OCIRepository
+    name: origin-ca-issuer
   # https://github.com/cloudflare/origin-ca-issuer/blob/trunk/deploy/charts/origin-ca-issuer/values.yaml
   values:
     # Chart 0.6.4 nests the deployment count under controller. The old
