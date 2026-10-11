@@ -1,0 +1,368 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const deploymentManifest = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backstage
+  namespace: backstage
+spec:
+  template:
+    spec:
+      containers:
+        - name: backstage
+          image: example.invalid/backstage:1
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backstage
+  namespace: backstage
+`
+
+func fixture() (map[string]any, map[string]any) {
+	release := map[string]any{
+		"name": "backstage", "namespace": "backstage", "version": 4,
+		"info":     map[string]any{"status": "deployed"},
+		"manifest": deploymentManifest,
+		"config":   map[string]any{"password": "DO_NOT_PRINT"},
+	}
+	live := map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{
+		map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": metadata("backstage", "deployment-uid"), "spec": map[string]any{
+			"selector": map[string]any{"matchLabels": portalLabels()},
+			"template": map[string]any{"spec": map[string]any{"containers": []any{map[string]any{"name": "backstage"}}, "volumes": []any{map[string]any{"name": "tmp", "emptyDir": map[string]any{}}}}},
+		}},
+		map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": podMetadata(), "spec": map[string]any{
+			"containers": []any{map[string]any{"name": "backstage"}}, "volumes": []any{map[string]any{"name": "config", "configMap": map[string]any{"name": "backstage-app-config"}}},
+		}},
+		map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "metadata": metadata("backstage-db", "database-uid")},
+		map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": metadata("backstage-db-3", "claim-uid")},
+	}}
+	return release, live
+}
+
+func metadata(name, uid string) map[string]any {
+	return map[string]any{"name": name, "namespace": "backstage", "uid": uid, "resourceVersion": "12"}
+}
+
+func podMetadata() map[string]any {
+	m := metadata("backstage-pod", "pod-uid")
+	m["labels"] = portalLabels()
+	return m
+}
+
+func portalLabels() map[string]any {
+	return map[string]any{"app.kubernetes.io/name": "backstage", "app.kubernetes.io/instance": "backstage", "app.kubernetes.io/component": "backstage"}
+}
+
+func encode(t *testing.T, value any) []byte {
+	t.Helper()
+	b, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+func TestInstalledStatelessReleaseAssessment(t *testing.T) {
+	release, live := fixture()
+	got := assess(encode(t, release), encode(t, live))
+	if got.Code != "ASSESSED_STATELESS" || got.Objects != 2 {
+		t.Fatalf("installed stateless release not assessed: %+v", got)
+	}
+	// A retained CNPG-owned claim is not part of Helm's stateless footprint.
+	items := live["items"].([]any)
+	items[3].(map[string]any)["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid"}}
+	if got := assess(encode(t, release), encode(t, live)); got.Code != "ASSESSED_STATELESS" {
+		t.Fatalf("retained database owner refused: %+v", got)
+	}
+}
+
+func TestUnsafeOrIncompleteFootprintNeverPasses(t *testing.T) {
+	cases := map[string]func(map[string]any, map[string]any){
+		"wrong release":    func(r, _ map[string]any) { r["name"] = "other" },
+		"wrong namespace":  func(r, _ map[string]any) { r["namespace"] = "other" },
+		"pending upgrade":  func(r, _ map[string]any) { r["info"] = map[string]any{"status": "pending-upgrade"} },
+		"missing revision": func(r, _ map[string]any) { delete(r, "version") },
+		"empty manifest":   func(r, _ map[string]any) { r["manifest"] = "" },
+		"malformed YAML":   func(r, _ map[string]any) { r["manifest"] = "apiVersion: [" },
+		"duplicate YAML": func(r, _ map[string]any) {
+			r["manifest"] = strings.ReplaceAll(deploymentManifest, "kind: Service", "kind: Service\nkind: Deployment")
+		},
+		"duplicate object": func(r, _ map[string]any) { r["manifest"] = deploymentManifest + "---\n" + deploymentManifest },
+		"different API group": func(r, _ map[string]any) {
+			r["manifest"] = strings.ReplaceAll(deploymentManifest, "apps/v1", "other.invalid/v1")
+		},
+		"other namespace": func(r, _ map[string]any) {
+			r["manifest"] = strings.ReplaceAll(deploymentManifest, "namespace: backstage", "namespace: other")
+		},
+		"storage object": func(r, _ map[string]any) {
+			r["manifest"] = deploymentManifest + "---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata:\n  name: extra\n  namespace: backstage\n"
+		},
+		"database object": func(r, _ map[string]any) {
+			r["manifest"] = deploymentManifest + "---\napiVersion: postgresql.cnpg.io/v1\nkind: Cluster\nmetadata:\n  name: extra\n  namespace: backstage\n"
+		},
+		"stored delete hook": func(r, _ map[string]any) {
+			r["hooks"] = []any{map[string]any{"events": []any{"pre-delete"}, "manifest": "DO_NOT_PRINT"}}
+		},
+		"hook annotation": func(r, _ map[string]any) {
+			r["manifest"] = strings.Replace(deploymentManifest, "  name: backstage", "  annotations:\n    helm.sh/hook: pre-delete\n  name: backstage", 1)
+		},
+		"retained Helm object": func(r, _ map[string]any) {
+			r["manifest"] = strings.Replace(deploymentManifest, "  name: backstage", "  annotations:\n    helm.sh/resource-policy: keep\n  name: backstage", 1)
+		},
+		"missing live deployment": func(_, l map[string]any) { l["items"] = l["items"].([]any)[1:] },
+		"changed pod selector": func(_, l map[string]any) {
+			item(l, 0)["spec"].(map[string]any)["selector"] = map[string]any{"matchLabels": map[string]any{"other": "label"}}
+		},
+		"missing pods": func(_, l map[string]any) {
+			items := l["items"].([]any)
+			l["items"] = []any{items[0], items[2], items[3]}
+		},
+		"missing retained claims": func(_, l map[string]any) { l["items"] = l["items"].([]any)[:3] },
+		"missing database": func(_, l map[string]any) {
+			items := l["items"].([]any)
+			l["items"] = []any{items[0], items[1], items[3]}
+		},
+		"terminating claim": func(_, l map[string]any) {
+			item(l, 3)["metadata"].(map[string]any)["deletionTimestamp"] = "2026-01-01T00:00:00Z"
+		},
+		"claim owned by removed pod": func(_, l map[string]any) {
+			item(l, 3)["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"kind": "Pod", "uid": "pod-uid"}}
+		},
+		"wrong database owner UID": func(_, l map[string]any) {
+			item(l, 3)["metadata"].(map[string]any)["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "different-uid"}}
+		},
+	}
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+			r, l := fixture()
+			change(r, l)
+			if got := assess(encode(t, r), encode(t, l)); got.Code == "ASSESSED_STATELESS" {
+				t.Fatalf("unsafe footprint passed: %+v", got)
+			}
+		})
+	}
+}
+
+func protectedRunner(t *testing.T) {
+	t.Helper()
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "devantler-tech/platform")
+	t.Setenv("GITHUB_REF", "refs/heads/main")
+}
+
+func TestCLIIsBoundedReadOnlyAndDoesNotLeakEvidence(t *testing.T) {
+	protectedRunner(t)
+	r, l := fixture()
+	var commands []string
+	execute := func(_ context.Context, program string, args ...string) ([]byte, error) {
+		commands = append(commands, program+" "+strings.Join(args, " "))
+		if program == "helm" {
+			return encode(t, r), nil
+		}
+		return encode(t, l), nil
+	}
+	var output bytes.Buffer
+	if code := run([]string{"--live"}, nil, &output, execute); code != 0 {
+		t.Fatalf("CLI failed: %d %s", code, &output)
+	}
+	expected := []string{
+		"helm status backstage --namespace=backstage --kube-context=admin@prod --output=json",
+		"kubectl --context=admin@prod --namespace=backstage get deployment,pod,persistentvolumeclaim,clusters.postgresql.cnpg.io --output=json --request-timeout=30s",
+	}
+	if !reflect.DeepEqual(commands, append(expected, expected...)) {
+		t.Fatalf("unexpected command boundary: %v", commands)
+	}
+	if output.String() != "PORTAL-FOOTPRINT=ASSESSED_STATELESS objects=2 dataRetirement=UNASSESSED mutation=NONE\n" {
+		t.Fatalf("unsafe or ambiguous public output: %s", &output)
+	}
+	// Neither a transport error nor a malformed sensitive body is published.
+	output.Reset()
+	if run([]string{"--live"}, nil, &output, func(context.Context, string, ...string) ([]byte, error) { return nil, fmt.Errorf("DO_NOT_PRINT") }) != 2 || strings.Contains(output.String(), "DO_NOT_PRINT") {
+		t.Fatal("transport failure escaped")
+	}
+	output.Reset()
+	if run([]string{"--live"}, nil, &output, func(context.Context, string, ...string) ([]byte, error) { return []byte("DO_NOT_PRINT"), nil }) != 2 || strings.Contains(output.String(), "DO_NOT_PRINT") {
+		t.Fatal("raw body escaped")
+	}
+}
+
+func TestChangedSnapshotAndNonMainNeverPass(t *testing.T) {
+	protectedRunner(t)
+	r, l := fixture()
+	calls := 0
+	execute := func(_ context.Context, program string, _ ...string) ([]byte, error) {
+		calls++
+		if program == "helm" {
+			if calls > 2 {
+				r["version"] = 5
+			}
+			return encode(t, r), nil
+		}
+		return encode(t, l), nil
+	}
+	var output bytes.Buffer
+	if run([]string{"--live"}, nil, &output, execute) != 2 || !strings.Contains(output.String(), "HOLD_CHANGED_SNAPSHOT") {
+		t.Fatal("changing installed revision passed")
+	}
+	for _, ref := range []string{"refs/pull/1/merge", "refs/heads/gh-readonly-queue/main/pr-1", "refs/heads/feature"} {
+		t.Setenv("GITHUB_REF", ref)
+		calls = 0
+		if run([]string{"--live"}, nil, &output, execute) != 2 || calls != 0 {
+			t.Fatal("non-main accessed production")
+		}
+	}
+	for _, args := range [][]string{nil, {"--apply"}, {"--live", "other-target"}} {
+		calls = 0
+		if run(args, nil, &output, execute) != 2 || calls != 0 {
+			t.Fatal("unsupported mutation or target accepted")
+		}
+	}
+}
+
+func TestOfflineCLIRejectsDuplicateInputKeys(t *testing.T) {
+	r, l := fixture()
+	release, live := encode(t, r), encode(t, l)
+	var output bytes.Buffer
+	input := fmt.Sprintf(`{"Release":{},"Release":%s,"Live":%s}`, release, live)
+	if run([]string{"--stdin"}, strings.NewReader(input), &output, nil) != 2 {
+		t.Fatal("duplicate release silently overwritten")
+	}
+	output.Reset()
+	input = fmt.Sprintf(`{"Release":%s,"Live":%s}`, release, live)
+	if run([]string{"--stdin"}, strings.NewReader(input), &output, nil) != 0 {
+		t.Fatalf("offline consumer failed: %s", &output)
+	}
+	if strings.Contains(output.String(), "DO_NOT_PRINT") {
+		t.Fatal("sensitive evidence leaked")
+	}
+}
+
+func TestResponseLimit(t *testing.T) {
+	var output boundedOutput
+	if _, err := output.Write(bytes.Repeat([]byte("x"), maxResponse)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := output.Write([]byte("x")); err == nil {
+		t.Fatal("oversized command body accepted")
+	}
+	if assess(bytes.Repeat([]byte("x"), maxResponse+1), nil).Code == "ASSESSED_STATELESS" {
+		t.Fatal("oversized evidence accepted")
+	}
+}
+
+type failedOutput struct{}
+
+func (failedOutput) Write([]byte) (int, error) { return 0, fmt.Errorf("output unavailable") }
+
+func TestUnpublishedAssessmentCannotReportSuccess(t *testing.T) {
+	r, l := fixture()
+	input := encode(t, map[string]any{"Release": r, "Live": l})
+	if run([]string{"--stdin"}, bytes.NewReader(input), failedOutput{}, nil) == 0 {
+		t.Fatal("lost receipt reported success")
+	}
+}
+
+func TestNativeOfflineConsumer(t *testing.T) {
+	r, l := fixture()
+	input := encode(t, map[string]any{"Release": r, "Live": l})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "run", ".", "--stdin")
+	cmd.Stdin = bytes.NewReader(input)
+	output, err := cmd.CombinedOutput()
+	if err != nil || string(output) != "PORTAL-FOOTPRINT=ASSESSED_STATELESS objects=2 dataRetirement=UNASSESSED mutation=NONE\n" {
+		t.Fatalf("native offline CLI failed or disclosed raw evidence: %v", err)
+	}
+}
+
+func TestProtectedWorkflowUsesOnlyReviewedReadSurface(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "assess-backstage-retirement.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow map[string]any
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(workflow["on"], map[string]any{"workflow_dispatch": nil}) || len(object(workflow["permissions"])) != 0 {
+		t.Fatal("unexpected workflow trigger or permissions")
+	}
+	if !reflect.DeepEqual(workflow["concurrency"], map[string]any{"group": "prod-deploy", "cancel-in-progress": false, "queue": "max"}) {
+		t.Fatal("production lock changed")
+	}
+	jobs := object(workflow["jobs"])
+	job := object(jobs["assess"])
+	if len(jobs) != 1 || job["environment"] != "prod" || !reflect.DeepEqual(job["permissions"], map[string]any{"contents": "read"}) {
+		t.Fatal("protected read boundary changed")
+	}
+	steps := job["steps"].([]any)
+	gate := text(object(steps[0])["run"])
+	for _, check := range []string{`[[ "$RUN_REF" == refs/heads/main ]]`, `[[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]`} {
+		if !strings.Contains(gate, check) {
+			t.Fatal("current-main gate missing before credentials")
+		}
+	}
+	last := object(steps[len(steps)-1])
+	if last["run"] != "go run ./scripts/assess-backstage-retirement --live" || !reflect.DeepEqual(last["env"], map[string]any{"HELM_DRIVER": "secret"}) {
+		t.Fatal("reviewed reader changed")
+	}
+}
+
+func item(l map[string]any, index int) map[string]any {
+	return l["items"].([]any)[index].(map[string]any)
+}
+
+func TestLiveAndStoredWorkloadTerminationRisks(t *testing.T) {
+	for _, source := range []string{"stored", "deployment", "pod"} {
+		for _, risk := range []string{"persistentVolumeClaim", "ephemeral", "csi", "hostPath", "preStop", "init-preStop"} {
+			t.Run(source+"/"+risk, func(t *testing.T) {
+				r, l := fixture()
+				var spec map[string]any
+				if source == "stored" {
+					if strings.Contains(risk, "preStop") {
+						r["manifest"] = strings.Replace(deploymentManifest, "          image:", "          lifecycle:\n            preStop:\n              exec:\n                command: [DO_NOT_PRINT]\n          image:", 1)
+					} else {
+						r["manifest"] = strings.Replace(deploymentManifest, "emptyDir: {}", risk+": {}", 1)
+					}
+				} else {
+					spec = item(l, 1)["spec"].(map[string]any)
+					if source == "deployment" {
+						spec = item(l, 0)["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+					}
+					if strings.Contains(risk, "preStop") {
+						key := "containers"
+						if risk == "init-preStop" {
+							key = "initContainers"
+						}
+						spec[key] = []any{map[string]any{"name": "backstage", "lifecycle": map[string]any{"preStop": map[string]any{"exec": map[string]any{"command": []any{"DO_NOT_PRINT"}}}}}}
+					} else {
+						spec["volumes"] = []any{map[string]any{"name": "extra", risk: map[string]any{}}}
+					}
+				}
+				if got := assess(encode(t, r), encode(t, l)); got.Code == "ASSESSED_STATELESS" {
+					t.Fatalf("termination risk passed: %+v", got)
+				}
+			})
+		}
+	}
+}

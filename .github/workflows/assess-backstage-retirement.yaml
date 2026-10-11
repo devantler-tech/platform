@@ -1,0 +1,83 @@
+name: Assess Backstage Retirement
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  assess:
+    name: Assess the installed portal footprint without changing resources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the current reviewed main commit before credentials
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+          RUN_SHA: ${{ github.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_REF" == refs/heads/main ]]
+          [[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]
+
+      - name: Checkout the reviewed dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install the audited Helm reader
+        shell: bash
+        env:
+          HELM_VERSION: v4.2.0
+        run: |
+          set -euo pipefail
+          install_dir="$(mktemp -d)"
+          cd "$install_dir"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$archive" "https://get.helm.sh/$archive"
+          curl --fail --location --retry 3 --output "$archive.sha256sum" "https://get.helm.sh/$archive.sha256sum"
+          sha256sum --check "$archive.sha256sum"
+          tar -xzf "$archive"
+          echo "$install_dir/linux-amd64" >> "$GITHUB_PATH"
+
+      - name: Restore the established production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "$KUBE_CONFIG" > ~/.kube/config
+
+      - name: Select the stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      # Helm's stored release can contain credentials. Capture it only in Go
+      # process memory; never upload it, print it, or write it to the runner disk.
+      - name: Assess installed manifest, hooks and live ownership
+        shell: bash
+        env:
+          HELM_DRIVER: secret
+        run: go run ./scripts/assess-backstage-retirement --live
