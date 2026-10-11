@@ -1,0 +1,30 @@
+---
+# Deleting a route is never this policy's business (#4732). A retirement removes
+# a group from the allow-list and the last route using it in one deploy, and the
+# infrastructure layer lands first, so the route is deleted while its group is
+# already undeclared. The same resources are refused on create and update by
+# ../restrict-homepage-service-groups.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-homepage-service-groups-delete
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-homepage-service-groups.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-homepage-service-groups
+    rule: declared-service-group
+    resources:
+      - backstage/retired-group
+      - whoami/missing-group
+    kind: HTTPRoute
+    result: skip
+  - policy: restrict-homepage-service-groups
+    rule: declared-service-group
+    resources:
+      - whoami/ingress-retired-group
+    kind: Ingress
+    result: skip

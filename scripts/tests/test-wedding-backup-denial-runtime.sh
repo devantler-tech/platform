@@ -8,7 +8,9 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 # This fixture runs in the changes job, before the Crossview runtime fixture
 # in a separate job. Configure that hosted daemon before its own pinned build.
-if [ "${GITHUB_ACTIONS:-}" = true ]; then
+if [ "${GITHUB_ACTIONS:-}" = true ] &&
+  [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
+  [ "${RUNNER_OS:-}" = Linux ]; then
   bash "${root_dir}/scripts/tests/test-crossview-login-alerter-runtime.sh" --configure-registry-cache
 fi
 work_dir="$(mktemp -d)"

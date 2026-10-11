@@ -100,6 +100,13 @@ data:
         icon: mdi-finance
       Analytics:
         icon: si-umami
+      Business:
+        icon: mdi-briefcase
+      Clients:
+        icon: mdi-briefcase-account
+      Personal:
+        icon: mdi-web
+      # Temporary compatibility while tenant discovery annotations migrate.
       Personal Sites:
         icon: mdi-web
       Customer Sites:
@@ -169,16 +176,14 @@ data:
             icon: unifi
             href: https://unifi.ui.com
             description: Central hub for managing on-prem UniFi network infrastructure.
-    # Personal Sites also gains cluster-hosted entries from the
-    # gethomepage.dev annotations on other repositories' HTTPRoutes.
     # devantler.tech is not deployed from this cluster, so it
-    # is listed statically here; Homepage renders discovered services above
-    # static ones within the same group.
-    - Personal Sites:
+    # is listed statically under Business. Client and personal sites are
+    # discovered from gethomepage.dev annotations on tenant HTTPRoutes.
+    - Business:
         - devantler.tech:
             icon: mdi-web
             href: https://devantler.tech
-            description: Personal site — portfolio, guides and product documentation.
+            description: Business site — products, services, guides and documentation.
     # Analytics is populated dynamically from the gethomepage.dev annotations on
     # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
     # spec.service.apex.annotations).
