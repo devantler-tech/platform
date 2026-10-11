@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The prioritise-hcloud-volume-pods policy writes both the class name and its
+# The storage priority policies write both the class name and its
 # integer value onto a Pod. The Priority admission plugin refuses a Pod whose
 # spec.priority differs from its class's value, so if these two files drift
 # apart every Pod that mounts an hcloud volume is rejected at creation.
@@ -9,16 +9,19 @@ set -euo pipefail
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 class_file="${repo_root}/k8s/bases/bootstrap/priority-classes/hcloud-volume-workload.yaml"
-policy_file="${repo_root}/k8s/providers/hetzner/infrastructure/cluster-policies/prioritise-hcloud-volume-pods.yaml"
+policy_dir="${repo_root}/k8s/providers/hetzner/infrastructure/cluster-policies"
 
 class_name="$(yq -e 'select(.kind == "PriorityClass") | .metadata.name' "${class_file}")"
 class_value="$(yq -e 'select(.kind == "PriorityClass") | .value' "${class_file}")"
 
-# Every patch in the policy, whether directly under mutate or inside a foreach.
-patches="$(yq -o=json -I=0 '[.. | select(has("patchStrategicMerge")) | .patchStrategicMerge.spec]' "${policy_file}")"
+# Every patch, whether directly under mutate or inside a foreach. The database
+# policy must use the same class and value: a lower tier remains a victim.
+patches="$(yq ea -o=json -I=0 '[.. | select(has("patchStrategicMerge")) | .patchStrategicMerge.spec]' \
+  "${policy_dir}/prioritise-hcloud-volume-pods.yaml" \
+  "${policy_dir}/prioritise-database-pods.yaml")"
 count="$(jq 'length' <<<"${patches}")"
-if [[ "${count}" -lt 2 ]]; then
-  echo "FAIL: expected a patch per rule (claims and ephemeral volumes), found ${count}" >&2
+if [[ "${count}" -ne 3 ]]; then
+  echo "FAIL: expected three storage priority patches, found ${count}" >&2
   exit 1
 fi
 
@@ -31,3 +34,53 @@ if [[ -n "${bad}" ]]; then
 fi
 
 echo "OK: ${count} patches set ${class_name} with priority ${class_value}"
+
+# Admission only handles new Pods. Existing databases need their owning Cluster
+# declaration to request the tier so CNPG can roll immutable Pod priority.
+databases=''
+tenant_patches=''
+for layer in apps infrastructure; do
+  rendered="$(kubectl kustomize "${repo_root}/k8s/providers/hetzner/${layer}")"
+  databases+="$(yq ea -o=json -I=0 'select(.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Cluster")' <<<"${rendered}")"$'\n'
+  if [[ "${layer}" == apps ]]; then
+    tenant_patches="$(yq ea -e 'select(.apiVersion == "kustomize.toolkit.fluxcd.io/v1" and .kind == "Kustomization" and .metadata.namespace == "wedding-app" and .metadata.name == "wedding-app") | .spec.patches' <<<"${rendered}")"
+  fi
+done
+# The parent render contains only the tenant's Flux wiring, not its database.
+# Exercise the delivered patch list as Flux does against an unprioritised tenant
+# Cluster; checking the patch source text alone would miss an unwired override.
+fixture_dir="$(mktemp -d)"
+trap 'rm -r -- "${fixture_dir}"' EXIT
+cp "${script_dir}/fixtures/wedding-database-priority/cluster.yaml" "${fixture_dir}/cluster.yaml"
+printf '%s\n' "${tenant_patches}" >"${fixture_dir}/patches.yaml"
+PRIORITY_PATCHES="${fixture_dir}/patches.yaml" yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" | .kind = "Kustomization" |
+  .resources = ["cluster.yaml"] | .patches = load(strenv(PRIORITY_PATCHES))' \
+  >"${fixture_dir}/kustomization.yaml"
+tenant_render="$(kubectl kustomize "${fixture_dir}")"
+tenant_database="$(yq ea -o=json -I=0 'select(.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Cluster" and .metadata.name == "wedding-db" and .metadata.namespace == "wedding-app")' <<<"${tenant_render}")"
+if [[ "$(jq -s 'length' <<<"${tenant_database}")" -ne 1 ]]; then
+  echo 'FAIL: tenant delivery must cover exactly one Wedding database' >&2
+  exit 1
+fi
+databases+="${tenant_database}"$'\n'
+database_count="$(jq -s 'length' <<<"${databases}")"
+if [[ "${database_count}" -le 1 ]]; then
+  echo 'FAIL: no platform CNPG Cluster was checked alongside the tenant database' >&2
+  exit 1
+fi
+missing="$(jq -sr --arg n "${class_name}" '.[] | select(.spec.priorityClassName != $n) | .metadata.name' <<<"${databases}")"
+if [[ -n "${missing}" ]]; then
+  echo "FAIL: production databases do not declare ${class_name}: ${missing}" >&2
+  exit 1
+fi
+# CNPG 1.30.1 compares container environments, but ignores priorityClassName.
+# A stable environment marker makes old Pods differ from the desired template,
+# including Pods created after a fixed timestamp but before this deployment.
+missing_rollout="$(jq -sr --arg n "${class_name}" '.[] | select(
+  ([.spec.env[]? | select(.name == "PLATFORM_DATABASE_PRIORITY_CLASS" and .value == $n)] | length) != 1
+) | .metadata.name' <<<"${databases}")"
+if [[ -n "${missing_rollout}" ]]; then
+  echo "FAIL: production databases lack a priority-bound template rollout: ${missing_rollout}" >&2
+  exit 1
+fi
+echo "OK: ${database_count} production databases declare the storage priority tier"

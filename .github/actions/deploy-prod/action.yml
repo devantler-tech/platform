@@ -278,6 +278,16 @@ runs:
         --record-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
+    - name: 💾 Detach volumes for the reviewed Longhorn client migration
+      id: longhorn_client_prepare
+      # The pinned migration is a no-op after positive live completion proof.
+      # Its durable journal precedes every owned pause; it never deletes storage.
+      # Both production entrypoints already hold the prod-deploy concurrency lock.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: go run ./scripts/maintain-longhorn-clients before-publish
+
     - name: 📋 Record the Flux control-plane baseline
       # Before the mutable tag moves, because Flux may observe the new revision
       # before the reconcile step runs — the same reason the Cilium gate suspends
@@ -285,7 +295,9 @@ runs:
       # window would already be reflected in a snapshot taken inside the reconcile
       # wrapper, making its "before" and "after" identical and reporting a
       # cancellation this deploy inflicted on itself as a workload failure
-      # (#3478). Never fails the deploy: without a baseline the wrapper reads the
+      # (#3478). Also follow maintenance's completed controller rolls, which
+      # must not grant a retry for an unrelated later reconciliation failure.
+      # Never fails the deploy: without a baseline the wrapper reads the
       # generations itself, exactly as it did before this step existed.
       shell: bash
       env:
@@ -327,6 +339,10 @@ runs:
       shell: bash
       run: ./scripts/reassert-flux-root-verify.sh
 
+    - name: 💾 Apply Longhorn clients and restore the owned database pauses
+      shell: bash
+      run: go run ./scripts/maintain-longhorn-clients after-publish
+
     - name: 🔁 Trigger Flux reconciliation
       id: reconcile
       shell: bash
@@ -362,6 +378,23 @@ runs:
       env:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
+
+    - name: 💾 Verify restored database redundancy and retained storage
+      shell: bash
+      run: go run ./scripts/maintain-longhorn-clients verify
+
+    - name: 💾 Restore owned maintenance on every failure path
+      if: >-
+        always() &&
+        (steps.longhorn_client_prepare.outcome == 'success' ||
+        steps.longhorn_client_prepare.outcome == 'failure' ||
+        steps.longhorn_client_prepare.outcome == 'cancelled')
+      shell: bash
+      env:
+        # Only a step that never ran proves the candidate was not published.
+        # A failed publish may have moved the tag and is never treated as skipped.
+        LONGHORN_PUBLICATION_NOT_STARTED: ${{ steps.publish_platform_manifest.outcome == 'skipped' || steps.publish_platform_manifest.outcome == '' }}
+      run: go run ./scripts/maintain-longhorn-clients restore
 
     - name: 🛑 Verify ARC stayed inactive across recovery
       shell: bash

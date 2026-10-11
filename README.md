@@ -66,6 +66,7 @@ or a managed-service equivalent.
 ## Operating the platform
 
 - [Cluster access](docs/oidc-kubectl.md)
+- [Developer platform and workflow self-service](docs/developer-platform.md)
 - [Secrets and rotation](docs/secret-rotation.md)
 - [Storage and data retention](docs/deletion-and-data-retention.md)
 - [Backups and disaster recovery](docs/dr/README.md)

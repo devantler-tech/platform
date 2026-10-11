@@ -467,7 +467,7 @@ func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_DRAIN_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
 	output := result.stdout + result.stderr
-	requireContains(t, output, "drain: cannot evict pod backstage-db-4: would violate PodDisruptionBudget backstage-db-primary")
+	requireContains(t, output, "drain: cannot evict pod example-db-4: would violate PodDisruptionBudget example-db-primary")
 	operations := readLines(f.operationLog)
 	for _, expected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "node-uncordon:prod-worker-1"} {
 		requireLine(t, operations, expected)

@@ -41,9 +41,9 @@ spec:
     dcatCatalog:
       enabled: false
     connectorReadiness:
-      enabled: false
+      enabled: true
     contractReadiness:
-      enabled: false
+      enabled: true
     contractProbe:
       enabled: false
     route:
@@ -170,3 +170,19 @@ spec:
               - op: replace
                 path: /spec/ui/url
                 value: https://harbour-data.${domain}/ui
+              - op: add
+                path: /spec/connector
+                value:
+                  adapter: deployment/v1
+                  resourceRef:
+                    apiVersion: apps/v1
+                    kind: Deployment
+                    name: data-product-controller-harbour
+              - op: add
+                path: /spec/contractChecks
+                value:
+                  - output: observations
+                    resourceRef:
+                      apiVersion: apps/v1
+                      kind: Deployment
+                      name: data-product-controller-contract-probe

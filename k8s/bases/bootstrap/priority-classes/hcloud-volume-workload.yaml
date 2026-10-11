@@ -1,6 +1,6 @@
-# Priority tier for pods that mount an hcloud volume.
+# Storage scheduling tier for hcloud consumers and database instances.
 #
-# Such a pod can only run on a static baseline worker, because an hcloud volume
+# An hcloud consumer can only run on a static baseline worker, because its volume
 # attaches to exactly one node and require-baseline-workers-for-hcloud-volumes
 # pins its consumers there. Stateless pods are only nudged toward those same
 # workers (prefer-baseline-nodes), so they can fill them. At equal priority the
@@ -13,6 +13,9 @@
 # it fits, scaling an autoscaler node up if needed. Kept far below
 # platform-critical and the system-* classes, so it never outranks platform
 # infrastructure. Assigned by the prioritise-hcloud-volume-pods policy.
+# CloudNativePG instances also share this tier through prioritise-database-pods:
+# preemption must not displace a database in place of a stateless workload.
+# The existing class name is retained so its deployed consumers do not change.
 ---
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
@@ -22,6 +25,6 @@ value: 1000
 globalDefault: false
 preemptionPolicy: PreemptLowerPriority
 description: >-
-  Pods that mount an hcloud volume and so can only run on a static baseline
-  worker. Ranked just above normal workloads so a stateless pod is preempted
-  to make room, and far below platform-critical and the system-* classes.
+  hcloud volume consumers and database instances. Ranked just above normal
+  workloads so stateless pods can make room without preempting a database,
+  and far below platform-critical and the system-* classes.

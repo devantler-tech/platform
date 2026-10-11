@@ -194,7 +194,10 @@ while IFS= read -r node; do
   quiet kc create --dry-run=server -f "$scratch/pod.json"
   for negative in privileged hostpath hostnetwork hostpid netraw; do
     case "$negative" in
-      privileged) jq '.spec.containers[0].securityContext.privileged=true' "$scratch/pod.json" >"$scratch/negative.json" ;;
+      # The core API rejects privileged=true with escalation=false before
+      # admission can prove the privilege policy. Only this dry-run negative
+      # permits escalation; the ordinary probe retains its restricted context.
+      privileged) jq '.spec.containers[0].securityContext |= . + {privileged:true,allowPrivilegeEscalation:true}' "$scratch/pod.json" >"$scratch/negative.json" ;;
       hostpath) jq '.spec.volumes += [{name:"host",hostPath:{path:"/"}}]' "$scratch/pod.json" >"$scratch/negative.json" ;;
       hostnetwork) jq '.spec.hostNetwork=true' "$scratch/pod.json" >"$scratch/negative.json" ;;
       hostpid) jq '.spec.hostPID=true' "$scratch/pod.json" >"$scratch/negative.json" ;;

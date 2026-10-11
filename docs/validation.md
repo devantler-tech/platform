@@ -32,7 +32,14 @@ bash scripts/tests/test-guard-consumer-discovery-conservation.sh
 ```
 
 This check uses `yq`, `realpath` and `kubectl kustomize` without a cluster or
-credentials. The overlay and all production roots render from an isolated
+credentials. The approval generator records current publications and pins with
+their full publisher identity in
+`scripts/publish-workflow-approved-revisions.identities.tsv`. The original
+approved set keeps legacy compatibility evidence when a consumer moves to the
+canonical publisher. A canonical observation must match that consumer's fixed
+reviewed approval; daily regeneration cannot approve a new canonical revision.
+
+The overlay and all production roots render from an isolated
 snapshot of KSail's published `k8s` files: YAML/YML/JSON files selected by
 case-insensitive extension, without ignore-file filtering. Directory links are
 not traversed and other inputs are omitted; selected file links are read only

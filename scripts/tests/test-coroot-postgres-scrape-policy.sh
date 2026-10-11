@@ -16,7 +16,9 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required to inspect the rendered
 rendered="$(kubectl kustomize "${root_dir}/k8s/providers/hetzner/apps")" ||
   fail 'the production apps overlay must render successfully'
 
-for namespace in backstage umami; do
+namespaces=(umami)
+readonly namespaces
+for namespace in "${namespaces[@]}"; do
   selectors="$(
     printf '%s\n' "${rendered}" |
       NAMESPACE="${namespace}" yq ea -o=json -I=0 '[

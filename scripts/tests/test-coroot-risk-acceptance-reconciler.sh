@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 39 and
+  type == "array" and length == 38 and
   all(.[] | select(has("application"));
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -61,7 +61,6 @@ jq -e '
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
-  'backstage:Deployment:backstage'
   'kube-system:Deployment:cluster-autoscaler-hetzner-cluster-autoscaler'
   'observability:Deployment:coroot-cluster-agent'
   'observability:Deployment:coroot-operator'
@@ -162,16 +161,16 @@ fi
 
 setup_scenario() {
   local name="$1" mode="$2" dir
-  local backstage_reason
+  local crossview_reason
   dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
-  backstage_reason="$(jq -r '.[] | select(.application == "backstage:Deployment:backstage") | .reason' "${acceptances_file}")"
+  crossview_reason="$(jq -r '.[] | select(.application == "crossview:Deployment:crossview") | .reason' "${acceptances_file}")"
 
   jq -n '{data:{projects:[{id:"95rsc5yp",name:"platform"}]}}' >"${dir}/user.json"
   if [ "${mode}" = 'normal' ]; then
-    jq -n --arg backstage_reason "${backstage_reason}" '{data:{risks:[
+    jq -n --arg crossview_reason "${crossview_reason}" '{data:{risks:[
       {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:backstage:Deployment:backstage",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:$backstage_reason}},
+      {application_id:"95rsc5yp:crossview:Deployment:crossview",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:$crossview_reason}},
       {application_id:"95rsc5yp:retired:Deployment:old-tool",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual dismissal outside GitOps"}},
       {application_id:"95rsc5yp:new-service:Deployment:new-service",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:database:StatefulSet:database",key:{category:"Security",type:"db-internet-exposure"},dismissal:{reason:"owned by a separate security policy"}}

@@ -33,6 +33,11 @@ spec:
     upgradeCRDs: false
     image:
       repository: velero/velero
+      # Chart 12.2.0 still defaults to 1.18.2, which can wait forever after a
+      # PodVolumeBackup becomes Canceled. The released 1.18.4 includes the
+      # cancellation fix and preserves completed-volume metadata on timeout.
+      # Both the server and node-agent use this override (#4729).
+      tag: v1.18.4
     initContainers:
       - name: velero-plugin-for-aws
         # PINNED at v1.14.0 — do NOT bump until a release is explicitly verified

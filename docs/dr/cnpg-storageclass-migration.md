@@ -28,7 +28,7 @@ and harmless — we are deliberately throwing away a redundant copy, never the l
 3. **A fresh backup exists** (see `velero-cnpg.md` / `restore-drill.md`) taken within the last
    24h, and you have verified a restore drill at least once. This is the ultimate safety net.
 4. Do this **one cluster at a time**, in ascending criticality:
-   `umami-db` → `backstage-db` → `coroot-db` → `wedding-db` (user-facing — do last, ideally
+   `umami-db` → `coroot-db` → `wedding-db` (user-facing — do last, ideally
    with the maintainer watching).
 
 ## Per-cluster procedure

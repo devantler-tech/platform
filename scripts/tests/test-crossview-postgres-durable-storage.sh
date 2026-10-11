@@ -146,6 +146,11 @@ jq -e "[.[] | ${database_filter}] | length == 1" \
   "${scratch_dir}/workload.json" >/dev/null ||
   fail 'the pinned chart must render exactly one Crossview PostgreSQL Deployment'
 
+jq -e "[.[] | ${database_filter} |
+  .spec.template.spec.priorityClassName == \"hcloud-volume-workload\"
+] == [true]" "${scratch_dir}/workload.json" >/dev/null ||
+  fail 'the existing durable Crossview database must roll onto the protected storage priority'
+
 jq -e "[.[] | ${database_filter} | (
   .spec.replicas == 1 and
   .spec.strategy.type == \"RollingUpdate\" and
