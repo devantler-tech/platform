@@ -8,6 +8,10 @@ Always reference these instructions first; fall back to search or ad-hoc command
 
 This is a **GitOps-based Kubernetes platform**. Kubernetes YAML manifests are managed with Kustomize overlays and deployed via Flux CD; operational Go commands and Bash scripts live under `scripts/`.
 
+GitHub is the portfolio's developer platform: owning repositories are the application catalog,
+GitHub templates are project starters, README badges present Actions-evaluated scorecards, and
+approved `workflow_dispatch` workflows provide self-service. See [developer-platform.md](docs/developer-platform.md).
+
 ### Technology Stack
 
 - **Flux CD** — GitOps engine reconciling from OCI artifacts
