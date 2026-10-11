@@ -18,7 +18,8 @@ Install these tools:
 
 ## Prepare your instance
 
-> [!IMPORTANT] The committed secrets are encrypted for the maintained instance,
+> [!IMPORTANT]
+> The committed secrets are encrypted for the maintained instance,
 > so you cannot decrypt them. To run your own instance:
 >
 > 1. Fork this repo.

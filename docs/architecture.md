@@ -90,15 +90,15 @@ verifies changes against production.
 The cluster configuration is stored in the `k8s/*` directories where the
 structure is as follows:
 
-- [`clusters/`](../k8s/clusters): Contains the cluster specific configuration
+- [`clusters/`](../k8s/clusters): Contains the cluster-specific configuration
   for each environment.
   - [`base`](../k8s/clusters/base): Contains the shared Flux Kustomizations with
     sentinel paths (`__CLUSTER__`, `__PROVIDER__`).
-  - [`local`](../k8s/clusters/local): Contains the local cluster specific
+  - [`local`](../k8s/clusters/local): Contains the local cluster-specific
     configuration.
-  - [`prod`](../k8s/clusters/prod): Contains the production cluster specific
+  - [`prod`](../k8s/clusters/prod): Contains the production cluster-specific
     configuration.
-- [`providers/`](../k8s/providers): Contains the provider specific
+- [`providers/`](../k8s/providers): Contains the provider-specific
   configuration.
   - [`docker`](../k8s/providers/docker): Contains the Talos+Docker specific
     configuration for local development.

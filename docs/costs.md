@@ -27,9 +27,12 @@ load balancers are billed hourly up to their monthly caps. Budget from current
 public rates rather than assuming a legacy price will survive a replacement.
 
 The production configuration also keeps one warm spare worker running, so new
-workloads can start without waiting for a server to boot. The autoscaler
-normally holds it on its smallest pool, a CX43: **€16.49/month** with its
-Primary IPv4, or **€103.42/month** for compute and networking as deployed.
+workloads can start without waiting for a server to boot. One spare fits a
+single server of either autoscaled size, so the autoscaler's least-waste
+tiebreak picks the smaller CX43; the maintained instance ran a CX43 spare when
+checked on 11 October 2026. That is **€16.49/month** with its Primary IPv4, or
+**€103.42/month** for compute and networking as deployed. A CX53 spare would
+cost €29.99 instead.
 Remove the [capacity buffer](../k8s/providers/hetzner/infrastructure/overprovisioning/capacity-buffer.yaml)
 to run at the six-node figure, at the cost of slower scale-up.
 
