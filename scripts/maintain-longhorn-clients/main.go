@@ -33,6 +33,7 @@ type journal struct {
 	Schedules                      []object
 	Nodes                          []object // Unsupported pre-publication experiment; reject on read.
 	Release, Deployment            object
+	BackupRelease                  object
 	Extra                          []workload
 }
 type engine struct {
@@ -142,6 +143,7 @@ func journalResources(j journal) []object {
 	r := append([]object{}, j.Clusters...)
 	r = append(r, j.Schedules...)
 	r = append(r, j.Deployment, j.Release)
+	r = append(r, j.BackupRelease)
 	for _, w := range j.Extra {
 		r = append(r, w.Deployment, w.Release)
 	}
@@ -200,6 +202,10 @@ func (e engine) collect(ctx context.Context) (inventory, error) {
 		return s, err
 	}
 	s.schedules = append(s.schedules, veleroSchedules...)
+	s.backupRelease, err = e.c.read(ctx, "helmrelease", "velero", "velero")
+	if err != nil {
+		return s, err
+	}
 	s.release, err = e.c.read(ctx, "helmrelease", "crossview", "crossview")
 	if err != nil {
 		return s, err
@@ -608,7 +614,7 @@ func (e engine) prepare(ctx context.Context) error {
 	if err = e.replicaExclusion(ctx); err != nil {
 		return err
 	}
-	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Schedules: p.schedules, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Release: p.release, Deployment: p.deployment, Extra: p.extra}
+	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Schedules: p.schedules, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Release: p.release, Deployment: p.deployment, BackupRelease: p.backupRelease, Extra: p.extra}
 	if previous != nil {
 		if err = e.provenReleased(ctx, *previous); err != nil {
 			return err
@@ -660,7 +666,7 @@ func (e engine) prepare(ctx context.Context) error {
 		return true, nil
 	}
 	// Journal before every write; resourceVersion+UID tests prevent race adoption.
-	resources := []object{p.release}
+	resources := []object{p.release, p.backupRelease}
 	for _, w := range p.extra {
 		resources = append(resources, w.Release)
 	}
@@ -785,6 +791,8 @@ func (e engine) restore(ctx context.Context) error {
 		resources = append(resources, w.Release)
 	}
 	resources = append(resources, j.Schedules...)
+	// Resume the chart's schedule reconciler only after restoring schedules.
+	resources = append(resources, j.BackupRelease)
 	for _, old := range resources {
 		restorer := e
 		restorer.holder = resourceHolder(j)

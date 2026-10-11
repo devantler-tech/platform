@@ -103,6 +103,22 @@ func TestDetachmentRejectsAReleaseWhosePauseWasRemoved(t *testing.T) {
 	}
 }
 
+func TestDetachmentRejectsLostBackupReconcilerPause(t *testing.T) {
+	a := fakeFixture()
+	e := testEngine(a)
+	if err := e.prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	j, _, err := e.ownerJournal(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.objects[fakeKey("helmrelease", "velero", "velero")][0]["spec"].(object)["suspend"] = false
+	if ok, err := e.detached(context.Background(), j); err == nil || ok {
+		t.Fatal("publication accepted an unpaused backup reconciler")
+	}
+}
+
 func TestPrepareRetiresPrePauseFluxProcessesBeforeHibernation(t *testing.T) {
 	a := fakeFixture()
 	e := testEngine(a)
@@ -212,7 +228,11 @@ func TestPlatformBackupScheduleIsPausedAndRestored(t *testing.T) {
 	a.objects[fakeKey("schedules.velero.io", "velero", "")] = []object{s}
 	a.objects[fakeKey("schedules.velero.io", "velero", "velero-daily-full")] = []object{s}
 	e := testEngine(a)
+	r := a.objects[fakeKey("helmrelease", "velero", "velero")][0]
 	e.c.command = func(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+		if args[0] == "patch" && args[1] == "schedules.velero.io" && !a.migrated && val(r, "spec", "suspend") != true {
+			return nil, errors.New("Helm can still unpause the full-platform backup schedule")
+		}
 		if args[0] == "patch" && args[1] == "clusters.postgresql.cnpg.io" && !a.migrated && val(s, "spec", "paused") != true {
 			return nil, errors.New("full-platform backup can still start during hibernation")
 		}
@@ -226,6 +246,31 @@ func TestPlatformBackupScheduleIsPausedAndRestored(t *testing.T) {
 	}
 	if val(s, "spec", "paused") != nil || !unpaused(s) {
 		t.Fatal("original platform backup schedule was not restored")
+	}
+	if val(r, "spec", "suspend") != false || !unpaused(r) {
+		t.Fatal("original backup Helm release was not restored")
+	}
+}
+
+func TestUnprovenBackupHelmOwnershipBlocksEveryMaintenanceWrite(t *testing.T) {
+	for _, change := range []string{"missing", "foreign pause", "foreign layer", "foreign owner"} {
+		t.Run(change, func(t *testing.T) {
+			a := fakeFixture()
+			r := a.objects[fakeKey("helmrelease", "velero", "velero")][0]
+			switch change {
+			case "missing":
+				delete(a.objects, fakeKey("helmrelease", "velero", "velero"))
+			case "foreign pause":
+				r["spec"].(object)["suspend"] = true
+			case "foreign layer":
+				r["metadata"].(object)["labels"].(object)["kustomize.toolkit.fluxcd.io/name"] = "apps"
+			case "foreign owner":
+				r["metadata"].(object)["annotations"].(object)[ownerKey] = "other.1"
+			}
+			if err := testEngine(a).prepare(context.Background()); err == nil || a.writes != 0 {
+				t.Fatalf("unknown backup reconciler allowed maintenance writes: writes=%d err=%v", a.writes, err)
+			}
+		})
 	}
 }
 

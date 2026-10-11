@@ -59,6 +59,9 @@ func journalScope(j journal) error {
 	if !matches(j.Release, "HelmRelease", "crossview", "crossview") || !matches(j.Deployment, "Deployment", "crossview", "crossview-postgres") {
 		return errors.New("journal consumer scope differs")
 	}
+	if !matches(j.BackupRelease, "HelmRelease", "velero", "velero") {
+		return errors.New("journal backup reconciler scope differs")
+	}
 	for i, t := range extraTargets {
 		if !matches(j.Extra[i].Release, "HelmRelease", t.ns, t.release) || !matches(j.Extra[i].Deployment, "Deployment", t.ns, t.deployment) {
 			return errors.New("journal consumer scope differs")

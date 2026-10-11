@@ -18,7 +18,9 @@ The protected production deploy invokes four phases:
    already be fully healthy and every node Ready before any maintenance write.
    An unhealthy database requires recovery first; the procedure never borrows
    client labels. It journals the original identities and suspends each affected
-   Helm owner, database backup schedule, and the full-platform backup schedule.
+   Helm owner (including Velero), database backup schedule, and the full-platform
+   backup schedule. Velero's HelmRelease is fenced before its chart-managed
+   schedule; restoration releases it only after the schedules are restored.
    Active or unknown backups block maintenance. Suspension does not cancel an
    executing Flux reconcile, so both reconcilers must roll to new Ready processes
    and every old process must be gone, including terminating Pods. The owned

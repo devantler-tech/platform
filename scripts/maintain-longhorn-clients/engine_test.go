@@ -90,6 +90,10 @@ func fakeFixture() *fakeAPI {
 	controllerFixture(a)
 	a.objects[fakeKey("backups.velero.io", "velero", "")] = []object{}
 	a.objects[fakeKey("schedules.velero.io", "velero", "")] = []object{}
+	r := resource("HelmRelease", "velero", "velero")
+	r["metadata"].(object)["labels"] = object{"kustomize.toolkit.fluxcd.io/name": "infrastructure-controllers", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
+	r["spec"] = object{"suspend": false}
+	a.objects[fakeKey("helmrelease", "velero", "velero")] = []object{r}
 	return a
 }
 func (a *fakeAPI) stopped() bool {

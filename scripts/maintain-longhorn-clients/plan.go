@@ -27,6 +27,7 @@ type inventory struct {
 	clusters, pods, claims, pvs, volumes, backups, replicasets []object
 	schedules                                                  []object
 	release, deployment                                        object
+	backupRelease                                              object
 	extra                                                      []workload
 }
 type workload struct{ Release, Deployment object }
@@ -37,6 +38,7 @@ type plan struct {
 	clusters, claims, pvs, volumes []object
 	schedules                      []object
 	release, deployment            object
+	backupRelease                  object
 	extra                          []workload
 }
 
@@ -138,7 +140,7 @@ func suspensionField(o object) string {
 }
 
 func buildPlan(s inventory, now time.Time) (plan, error) {
-	p := plan{clusters: s.clusters, schedules: s.schedules, release: s.release, deployment: s.deployment, extra: s.extra}
+	p := plan{clusters: s.clusters, schedules: s.schedules, release: s.release, deployment: s.deployment, backupRelease: s.backupRelease, extra: s.extra}
 	clusters, err := index(s.clusters)
 	if err != nil {
 		return p, err
@@ -193,6 +195,9 @@ func buildPlan(s inventory, now time.Time) (plan, error) {
 		if !scheduleInScope(schedule, s.clusters) || !unpaused(schedule) || val(schedule, "spec", suspensionField(schedule)) == true {
 			return p, errors.New("scheduled backup scope or pause ownership is unproven")
 		}
+	}
+	if !meta(s.backupRelease) || str(s.backupRelease, "kind") != "HelmRelease" || key(s.backupRelease) != "velero/velero" || !unpaused(s.backupRelease) || val(s.backupRelease, "spec", "suspend") == true || str(s.backupRelease, "metadata", "labels", "kustomize.toolkit.fluxcd.io/name") != "infrastructure-controllers" || str(s.backupRelease, "metadata", "labels", "kustomize.toolkit.fluxcd.io/namespace") != "flux-system" {
+		return p, errors.New("backup schedule reconciler ownership is unproven")
 	}
 	if !meta(s.release) || key(s.release) != "crossview/crossview" || !unpaused(s.release) || val(s.release, "spec", "suspend") == true || str(s.release, "metadata", "labels", "kustomize.toolkit.fluxcd.io/name") != "apps" || str(s.release, "metadata", "labels", "kustomize.toolkit.fluxcd.io/namespace") != "flux-system" || !meta(s.deployment) || key(s.deployment) != "crossview/crossview-postgres" || !unpaused(s.deployment) || num(s.deployment, "spec", "replicas") != 1 || num(s.deployment, "status", "readyReplicas") != 1 || str(s.deployment, "metadata", "annotations", "meta.helm.sh/release-name") != "crossview" || str(s.deployment, "metadata", "annotations", "meta.helm.sh/release-namespace") != "crossview" {
 		return p, errors.New("bundled database ownership or readiness is unproven")

@@ -49,6 +49,9 @@ func fixture() inventory {
 	s.release = resource("HelmRelease", "crossview", "crossview")
 	s.release["metadata"].(object)["labels"] = object{"kustomize.toolkit.fluxcd.io/name": "apps", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
 	s.release["spec"] = object{"suspend": false}
+	s.backupRelease = resource("HelmRelease", "velero", "velero")
+	s.backupRelease["metadata"].(object)["labels"] = object{"kustomize.toolkit.fluxcd.io/name": "infrastructure-controllers", "kustomize.toolkit.fluxcd.io/namespace": "flux-system"}
+	s.backupRelease["spec"] = object{"suspend": false}
 	s.deployment = resource("Deployment", "crossview", "crossview-postgres")
 	s.deployment["metadata"].(object)["annotations"] = object{"meta.helm.sh/release-name": "crossview", "meta.helm.sh/release-namespace": "crossview"}
 	s.deployment["spec"] = object{"replicas": 1}
