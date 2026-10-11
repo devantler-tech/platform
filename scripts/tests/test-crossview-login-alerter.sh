@@ -127,8 +127,8 @@ pass 'hosted registry cache preserves configuration and fails closed without cha
 cache_runtime_run() {
   cache_rc=0
   PATH="${work_dir}/cache-bin:${PATH}" CACHE_CASE="${cache_dir}" CACHE_MODE="${1:-}" \
-    GITHUB_ACTIONS="${2:-true}" RUNNER_ENVIRONMENT=github-hosted RUNNER_OS=Linux \
-    bash "${root_dir}/scripts/tests/test-wedding-backup-denial-runtime.sh" \
+    GITHUB_ACTIONS="${2-true}" RUNNER_ENVIRONMENT="${3-github-hosted}" RUNNER_OS="${4-Linux}" \
+    bash "${root_dir}/scripts/tests/${5-test-wedding-backup-denial-runtime.sh}" \
     >"${cache_dir}/output" 2>&1 || cache_rc=$?
 }
 cache_case wedding-hosted '{}'
@@ -147,6 +147,49 @@ if [ "${cache_rc}" != 94 ] || [ -e "${cache_dir}/installed.json" ]; then
   fail 'a local Wedding fixture must build without reconfiguring Docker'
 fi
 pass 'both hosted runtime fixtures configure the cache before pulling pinned images'
+
+# Exercise each ordinary fixture's automatic setup decision, not just the
+# explicit hosted-only setup mode. Stop Crossview at rendering so these cases
+# never use Docker or fetch an image; Wedding stops at its stubbed build.
+cat >"${work_dir}/cache-bin/kubectl" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$1" = kustomize ] || exit 97
+printf 'fixture-render\n' >>"${CACHE_CASE}/calls"
+exit 96
+STUB
+chmod +x "${work_dir}/cache-bin/kubectl"
+for fixture in test-wedding-backup-denial-runtime.sh test-crossview-login-alerter-runtime.sh; do
+  case "${fixture}" in
+    test-wedding*) expected_rc=94; boundary='docker-build' ;;
+    *) expected_rc=1; boundary='fixture-render' ;;
+  esac
+  for runner_case in local self-hosted non-linux missing-environment missing-os; do
+    actions=true; environment=github-hosted; runner_os=Linux
+    case "${runner_case}" in
+      local) actions=false ;;
+      self-hosted) environment=self-hosted ;;
+      non-linux) runner_os=macOS ;;
+      missing-environment) environment='' ;;
+      missing-os) runner_os='' ;;
+    esac
+    cache_case "${fixture}-${runner_case}" '{}'
+    cache_runtime_run '' "${actions}" "${environment}" "${runner_os}" "${fixture}"
+    [ "${cache_rc}" = "${expected_rc}" ] || fail "${fixture}: ${runner_case} must continue the ordinary fixture"
+    [ ! -e "${cache_dir}/installed.json" ] || fail "${fixture}: ${runner_case} must not reconfigure Docker"
+    grep -qx "${boundary}" "${cache_dir}/calls" || fail "${fixture}: ${runner_case} never reached its ordinary runtime boundary"
+    if grep -qE '^(test|cat|dockerd|mkdir|install|systemctl|docker-ps|docker-info)$' "${cache_dir}/calls"; then
+      fail "${fixture}: ${runner_case} must not attempt hosted cache setup"
+    fi
+  done
+  cache_case "${fixture}-automatic-hosted" '{}'
+  cache_runtime_run '' true github-hosted Linux "${fixture}"
+  [ "${cache_rc}" = "${expected_rc}" ] || fail "${fixture}: hosted setup must continue the ordinary fixture"
+  awk -v boundary="${boundary}" '/^docker-info$/ { readback=1 } $0 == boundary { if (!readback) exit 1; reached=1 } END { if (!reached) exit 1 }' \
+    "${cache_dir}/calls" || fail "${fixture}: hosted cache readback must precede the ordinary fixture"
+done
+rm "${work_dir}/cache-bin/kubectl"
+pass 'automatic cache setup leaves local and self-hosted runtime fixtures usable'
 
 readonly pod='.spec.jobTemplate.spec.template.spec'
 readonly container="${pod}.containers[] | select(.name == \"alerter\")"
