@@ -4,6 +4,10 @@ A self-hosted Kubernetes platform for Devantler Tech's business services and
 personal applications. This repository contains the configuration for that live
 platform, shared as a reference—not a ready-to-use distribution.
 
+The goal is affordable production infrastructure: redundant cluster nodes,
+replicated storage, backups, monitoring, and reviewed deployments without a
+managed Kubernetes control-plane fee. You still own its operation and recovery.
+
 Want to build a similar platform for yourself? Start with
 [platform-template](https://github.com/devantler-tech/platform-template), the
 reusable template for creating your own instance.
@@ -32,6 +36,18 @@ and heavier components are opt-in. See the
 [architecture guide](docs/architecture.md) for the component inventory,
 environment differences, and how the layers fit together.
 
+## What does it cost?
+
+The configured six-node Hetzner baseline is approximately **€87/month for
+compute and networking, excluding VAT** at public prices checked on
+11 October 2026. This includes three control-plane nodes, three workers, a load
+balancer, and IPv4 addresses—not just worker compute.
+
+Storage, backups, domains, autoscaled capacity, and operator time are additional.
+See the [cost breakdown](docs/costs.md) for unit prices, a storage example, and
+the trade-offs behind the estimate. It is a starting budget, not an all-in bill
+or a managed-service equivalent.
+
 ## Start here
 
 - **Explore the design:** read the [architecture guide](docs/architecture.md),
@@ -44,9 +60,8 @@ environment differences, and how the layers fit together.
   [local development](docs/local-development.md). Its committed secrets cannot
   be decrypted with your keys; replace them with your own encrypted values.
 - **Host an application:** follow [tenant onboarding](docs/TENANTS.md).
-- **Contribute a change:** read [contributor guidance](AGENTS.md) and run the
-  [validation checks](docs/validation.md). Validation does not require starting
-  a cluster.
+- **Contribute a change:** start with [CONTRIBUTING.md](CONTRIBUTING.md).
+  Most checks do not require a running cluster.
 
 ## Operating the platform
 

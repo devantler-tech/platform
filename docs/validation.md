@@ -17,8 +17,9 @@ ksail --config ksail.prod.yaml workload validate
 These checks catch YAML errors, missing fields, and broken Kustomize overlays.
 Passing static validation does not prove production convergence.
 
-See [contributor guidance](../AGENTS.md#validation) for the complete validation
-contract, affected Go/Bash tests, and CI path filters.
+Start with [contributor guidance](../CONTRIBUTING.md#validation). The complete
+[validation contract](../AGENTS.md#validation) covers affected Go/Bash tests and
+CI path filters.
 
 ## Consumer discovery conservation
 
