@@ -92,8 +92,10 @@ func (c client) patch(ctx context.Context, kind string, o object, p []object) er
 	if e != nil {
 		return e
 	}
-	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--field-manager=platform-longhorn-client-maintenance", "--patch", string(b), "-o", "name"}
-	_, e = c.command(ctx, nil, a...)
+	// Journals can exceed Linux's per-argument limit. Keep the exact JSON Patch
+	// (including UID/resourceVersion tests) off argv and out of temporary files.
+	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--field-manager=platform-longhorn-client-maintenance", "--patch-file=/dev/stdin", "-o", "name"}
+	_, e = c.command(ctx, b, a...)
 	if e != nil && strings.Contains(e.Error(), "(Conflict)") {
 		return fmt.Errorf("%w: %w", errPatchConflict, e)
 	}
