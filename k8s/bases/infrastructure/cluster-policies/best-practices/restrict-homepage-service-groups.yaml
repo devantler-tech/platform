@@ -69,6 +69,13 @@ spec:
                 # Ingress cannot bypass the guard.
                 - HTTPRoute
                 - Ingress
+              # Never DELETE. On a delete Kyverno evaluates the object being
+              # removed, so a route whose group has left the list below could
+              # not be deleted at all — which blocked a retirement that removed
+              # a group and its last route in one deploy (#4732).
+              operations:
+                - CREATE
+                - UPDATE
       preconditions:
         all:
           # Only routes that opt into the dashboard. Everything else is none of
