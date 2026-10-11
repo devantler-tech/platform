@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -215,6 +216,81 @@ func identity(namespace, name, instance string) map[string]string {
 		labels["app.kubernetes.io/instance"] = instance
 	}
 	return labels
+}
+
+func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
+	// Evaluate the real production render: a correct but unreferenced policy
+	// cannot restore the retained instances' control or replication paths.
+	rendered, err := exec.Command("kubectl", "kustomize", "../../../k8s/providers/hetzner/apps").CombinedOutput()
+	if err != nil {
+		t.Fatalf("render production apps: %v: %s", err, rendered)
+	}
+	var policies []policy
+	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
+	for {
+		var document struct {
+			Kind   string `yaml:"kind"`
+			policy `yaml:",inline"`
+		}
+		if err := decoder.Decode(&document); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if document.Kind == "CiliumNetworkPolicy" && document.Metadata.Namespace == "backstage" {
+			policies = append(policies, document.policy)
+		}
+	}
+	database := identity("backstage", "postgres", "database")
+	database["cnpg.io/cluster"] = "backstage-db"
+	for _, port := range []string{"443", "6443"} {
+		if !allows(t, policies, false, database, nil, "kube-apiserver", port, "TCP") {
+			t.Errorf("retained database cannot coordinate through the Kubernetes API on %s", port)
+		}
+	}
+	for _, ingress := range []bool{false, true} {
+		if !allows(t, policies, ingress, database, database, "", "5432", "TCP") {
+			t.Errorf("retained database replication blocked (ingress=%t)", ingress)
+		}
+		for _, port := range []string{"7007", "8000", "443"} {
+			if allows(t, policies, ingress, database, database, "", port, "TCP") {
+				t.Errorf("database peer unexpectedly allowed on %s (ingress=%t)", port, ingress)
+			}
+		}
+	}
+	for _, namespace := range []string{"backstage", "untrusted-namespace"} {
+		for _, cluster := range []string{"", "another-db", "backstage-db"} {
+			if namespace == "backstage" && cluster == "backstage-db" {
+				continue
+			}
+			other := identity(namespace, "application", "application")
+			if cluster != "" {
+				other["cnpg.io/cluster"] = cluster
+			}
+			if allows(t, policies, false, other, nil, "kube-apiserver", "443", "TCP") {
+				t.Errorf("API access leaked to %s cluster=%q", namespace, cluster)
+			}
+			if allows(t, policies, true, database, other, "", "5432", "TCP") ||
+				allows(t, policies, false, database, other, "", "5432", "TCP") {
+				t.Errorf("database access leaked to %s cluster=%q", namespace, cluster)
+			}
+		}
+	}
+	for _, entity := range []string{"world", "host", "remote-node", "cluster"} {
+		if allows(t, policies, false, database, nil, entity, "443", "TCP") {
+			t.Errorf("retained database unexpectedly allowed to %s", entity)
+		}
+	}
+	for _, protocol := range []string{"TCP", "UDP"} {
+		for _, port := range []string{"80", "5432", "7007"} {
+			if allows(t, policies, false, database, nil, "kube-apiserver", port, protocol) {
+				t.Errorf("unexpected API access on %s/%s", port, protocol)
+			}
+		}
+	}
+	if allows(t, policies, false, database, nil, "kube-apiserver", "443", "UDP") {
+		t.Error("API access unexpectedly permits UDP")
+	}
 }
 
 func TestDatabaseManagementBoundary(t *testing.T) {
