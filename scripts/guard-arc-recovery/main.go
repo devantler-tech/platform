@@ -198,7 +198,7 @@ func readMetadata(ctx context.Context, client *http.Client, endpoint string) ([]
 	if err != nil {
 		return nil, errors.New("metadata read failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return nil, errors.New("metadata read refused or redirected")
 	}
@@ -304,7 +304,7 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 	if err != nil {
 		return errors.New("controller scope read failed")
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	if response.StatusCode != http.StatusOK {
 		return errors.New("controller scope read refused or redirected")
 	}
@@ -343,14 +343,18 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 	if decoder.Decode(&deployment) != nil || decoder.Decode(new(any)) != io.EOF || deployment.APIVersion != "apps/v1" || deployment.Kind != "Deployment" || deployment.Metadata.Name != "arc-controller" || deployment.Metadata.Namespace != "arc-systems" || deployment.Metadata.UID == "" || deployment.Metadata.Generation < 1 || deployment.Metadata.DeletionTimestamp != nil {
 		return errors.New("controller scope response invalid")
 	}
-	if deployment.Status.ObservedGeneration != deployment.Metadata.Generation || deployment.Spec.Replicas != 1 || deployment.Status.Replicas != 1 || deployment.Status.UpdatedReplicas != 1 || deployment.Status.ReadyReplicas != 1 || deployment.Status.AvailableReplicas != 1 || deployment.Status.UnavailableReplicas != 0 || len(deployment.Spec.Template.Spec.Containers) != 1 {
+	// Preserve recovery of the shipping single-replica controller while also
+	// admitting the reviewed HA rollout. Every declared replica must be current,
+	// ready and available; an arbitrary scale-out is not recovery evidence.
+	replicas := deployment.Spec.Replicas
+	if deployment.Status.ObservedGeneration != deployment.Metadata.Generation || replicas < 1 || replicas > 2 || deployment.Status.Replicas != replicas || deployment.Status.UpdatedReplicas != replicas || deployment.Status.ReadyReplicas != replicas || deployment.Status.AvailableReplicas != replicas || deployment.Status.UnavailableReplicas != 0 || len(deployment.Spec.Template.Spec.Containers) != 1 {
 		return errors.New("controller scope has not fully rolled out")
 	}
 	container := deployment.Spec.Template.Spec.Containers[0]
 	if container.Name != "manager" || len(container.Command) != 1 || container.Command[0] != "/manager" {
 		return errors.New("controller executable differs from the pinned chart")
 	}
-	scope, mode := 0, 0
+	scope, mode, election, electionID := 0, 0, 0, 0
 	option := regexp.MustCompile(`^--[a-z][a-z0-9-]*(=.*)?$`)
 	for _, arg := range container.Args {
 		if !option.MatchString(arg) {
@@ -369,10 +373,23 @@ func requireControllerScope(ctx context.Context, client *http.Client, endpoint s
 				return errors.New("controller mode differs from the pinned chart")
 			}
 			mode++
+		case strings.HasPrefix(arg, "--enable-leader-election"):
+			if arg != "--enable-leader-election" {
+				return errors.New("controller leader election differs from the pinned chart")
+			}
+			election++
+		case strings.HasPrefix(arg, "--leader-election-id"):
+			if arg != "--leader-election-id=arc-controller" {
+				return errors.New("controller leader identity differs from the pinned chart")
+			}
+			electionID++
 		}
 	}
 	if scope != 1 || mode != 1 {
 		return errors.New("controller watch scope or mode is missing or duplicated")
+	}
+	if election > 1 || electionID > 1 || (replicas == 2 && (election != 1 || electionID != 1)) {
+		return errors.New("HA controller leader election is missing or duplicated")
 	}
 	return nil
 }

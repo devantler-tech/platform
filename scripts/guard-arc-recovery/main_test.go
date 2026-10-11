@@ -246,11 +246,31 @@ func TestRecoveryUsesOnlyMetadataEndpoints(t *testing.T) {
 const recoveredDeployment = `{"apiVersion":"apps/v1","kind":"Deployment","metadata":{"name":"arc-controller","namespace":"arc-systems","uid":"synthetic","generation":2},"spec":{"replicas":1,"template":{"spec":{"containers":[{"name":"manager","command":["/manager"],"args":["--auto-scaling-runner-set-only","--watch-single-namespace=arc-runners"]}]}}},"status":{"observedGeneration":2,"replicas":1,"updatedReplicas":1,"readyReplicas":1,"availableReplicas":1}}`
 
 func TestRecoveryRequiresAppliedControllerScope(t *testing.T) {
+	ha := strings.NewReplacer(
+		`"replicas":1`, `"replicas":2`,
+		`"updatedReplicas":1`, `"updatedReplicas":2`,
+		`"readyReplicas":1`, `"readyReplicas":2`,
+		`"availableReplicas":1`, `"availableReplicas":2`,
+		`"args":[`, `"args":["--enable-leader-election","--leader-election-id=arc-controller",`,
+	).Replace(recoveredDeployment)
 	for _, tc := range []struct {
 		name, body string
 		ok         bool
 	}{
 		{"recovered", recoveredDeployment, true},
+		{"healthy two-replica controller", ha, true},
+		{"two replicas without election", strings.Replace(ha, `"--enable-leader-election",`, "", 1), false},
+		{"two replicas with disabled election", strings.Replace(ha, `"--enable-leader-election"`, `"--enable-leader-election=false"`, 1), false},
+		{"two replicas with duplicate election", strings.Replace(ha, `"--enable-leader-election"`, `"--enable-leader-election","--enable-leader-election"`, 1), false},
+		{"two replicas without election identity", strings.Replace(ha, `"--leader-election-id=arc-controller",`, "", 1), false},
+		{"two replicas with foreign election identity", strings.Replace(ha, "--leader-election-id=arc-controller", "--leader-election-id=foreign", 1), false},
+		{"two replicas with duplicate election identity", strings.Replace(ha, `"--leader-election-id=arc-controller"`, `"--leader-election-id=arc-controller","--leader-election-id=arc-controller"`, 1), false},
+		{"two replicas partially ready", strings.Replace(ha, `"readyReplicas":2`, `"readyReplicas":1`, 1), false},
+		{"two replicas partially updated", strings.Replace(ha, `"updatedReplicas":2`, `"updatedReplicas":1`, 1), false},
+		{"two replicas partially available", strings.Replace(ha, `"availableReplicas":2`, `"availableReplicas":1`, 1), false},
+		{"two replicas unavailable", strings.Replace(ha, `"availableReplicas":2`, `"availableReplicas":2,"unavailableReplicas":1`, 1), false},
+		{"two replicas with stale generation", strings.Replace(ha, `"observedGeneration":2`, `"observedGeneration":1`, 1), false},
+		{"unreviewed replica count", strings.NewReplacer(`"replicas":2`, `"replicas":3`, `"updatedReplicas":2`, `"updatedReplicas":3`, `"readyReplicas":2`, `"readyReplicas":3`, `"availableReplicas":2`, `"availableReplicas":3`).Replace(ha), false},
 		{"valid case-sensitive metadata keys", strings.Replace(recoveredDeployment, `"generation":2`, `"generation":2,"labels":{"App":"one","app":"two"},"annotations":{"Description":"one","description":"two"}`, 1), true},
 		{"legacy scope", strings.Replace(recoveredDeployment, "--watch-single-namespace=arc-runners", "--watch-single-namespace=arc-ksail-analysis", 1), false},
 		{"duplicate scope", strings.Replace(recoveredDeployment, `"--watch-single-namespace=arc-runners"`, `"--watch-single-namespace=arc-runners","--watch-single-namespace=arc-ksail-analysis"`, 1), false},
