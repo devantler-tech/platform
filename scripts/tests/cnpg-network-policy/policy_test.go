@@ -2,6 +2,8 @@ package cnpgnpolicy_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -221,7 +224,9 @@ func identity(namespace, name, instance string) map[string]string {
 func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
 	// Evaluate the real production render: a correct but unreferenced policy
 	// cannot restore the retained instances' control or replication paths.
-	rendered, err := exec.Command("kubectl", "kustomize", "../../../k8s/providers/hetzner/apps").CombinedOutput()
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	rendered, err := exec.CommandContext(ctx, "kubectl", "kustomize", "../../../k8s/providers/hetzner/apps").CombinedOutput()
 	if err != nil {
 		t.Fatalf("render production apps: %v: %s", err, rendered)
 	}
@@ -232,7 +237,7 @@ func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
 			Kind   string `yaml:"kind"`
 			policy `yaml:",inline"`
 		}
-		if err := decoder.Decode(&document); err == io.EOF {
+		if err := decoder.Decode(&document); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			t.Fatal(err)
