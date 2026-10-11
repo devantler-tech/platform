@@ -6,7 +6,9 @@ config=${1:-"$root_dir/talos/cluster/enable-apparmor.yaml"}
 schematic=${2:-"$root_dir/talos/factory-schematic.yaml"}
 cluster_config="$root_dir/ksail.prod.yaml"
 ci_workflow="$root_dir/.github/workflows/ci.yaml"
-expected_talos_version='v1.13.10'
+expected_talos_version='v1.13.11'
+# v1.13.11 pins pkgs 642a01b; kernel/build/config-amd64 retains the same
+# CONFIG_LSM inventory. Preserve that list while testing the required order.
 expected_modules='apparmor,bpf,integrity,landlock,loadpin,lockdown,safesetid,selinux,yama'
 
 if ! grep -Fq "'scripts/tests/test-talos-apparmor-lsm.sh'" "$ci_workflow" ||
