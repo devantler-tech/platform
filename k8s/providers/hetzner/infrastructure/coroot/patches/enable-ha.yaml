@@ -16,6 +16,13 @@ spec:
   # the cross-node spread that keep the two pods genuinely available live in
   # pod-disruption-budget.yaml and spec.affinity (below).
   replicas: 2
+  # Initial-mode VPA only sizes a StatefulSet Pod at admission. Both servers
+  # retained the recovery-time reservation after the recommendation fell back
+  # toward the authored baseline, leaving no room for a node-local backup
+  # transfer. Refresh only this server template through the operator's normal
+  # one-at-a-time StatefulSet rollout; keep the VPA policy and burst allowance.
+  podAnnotations:
+    platform.devantler.tech/vpa-recommendation-rollout: 2026-10-11-coroot-reservation-refresh
   # External Postgres datastore = the precondition for replicas > 1. Points at
   # the CloudNativePG cluster in cluster.yaml; CNPG owns the `coroot`
   # role's password and publishes it (with host/port/dbname) in the
