@@ -38,8 +38,11 @@ The protected production deploy invokes four phases:
 The journal is created before any mutation. A completed migration is not
 repeated. An unfinished pause requires its owning run's restoration. A fully
 restored journal can be superseded only after live proof that all original
-resources are unpaused with unchanged identities and specifications, and a
-UID/resourceVersion-guarded journal replacement. An interrupted writer can be
+resources have unchanged identities, cleared ownership and restored pause
+controls, and a UID/resourceVersion-guarded journal replacement. Later reviewed
+consumer upgrades may change unowned specifications; a fresh plan is collected
+before another pause. Pausing and interrupted restoration still require the
+strict original specification proof. An interrupted writer can be
 taken over only when GitHub proves its exact run attempt completed and live
 resource ownership and retained storage still match. It can resume a fully
 detached publication, or restore and restart the recorded transition. Live or

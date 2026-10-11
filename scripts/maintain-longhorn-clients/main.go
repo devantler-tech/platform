@@ -153,6 +153,30 @@ func journalResources(j journal) []object {
 	return r
 }
 
+// A finished restoration releases only the fields this procedure owns. Later
+// reviewed consumer upgrades must not leave a restored journal blocking forever.
+// Pausing and interrupted restoration still require released's strict spec proof.
+func ownershipReleased(old, current object) bool {
+	if !meta(current) || str(current, "metadata", "uid") != str(old, "metadata", "uid") || key(old) != key(current) || str(current, "metadata", "annotations", ownerKey) != "" {
+		return false
+	}
+	if str(old, "kind") == "Node" {
+		return released(old, current)
+	}
+	if val(current, "metadata", "annotations", hibernateKey) != val(old, "metadata", "annotations", hibernateKey) || val(current, "metadata", "annotations", reconcileKey) != val(old, "metadata", "annotations", reconcileKey) {
+		return false
+	}
+	switch str(old, "kind") {
+	case "HelmRelease":
+		return reflect.DeepEqual(val(current, "spec", "suspend"), val(old, "spec", "suspend"))
+	case "Deployment":
+		return reflect.DeepEqual(val(current, "spec", "replicas"), val(old, "spec", "replicas"))
+	case "Cluster":
+		return true
+	}
+	return false
+}
+
 func (e engine) provenReleased(ctx context.Context, j journal) error {
 	for _, old := range journalResources(j) {
 		current, err := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
@@ -162,7 +186,7 @@ func (e engine) provenReleased(ctx context.Context, j journal) error {
 		if err != nil {
 			return err
 		}
-		if !released(old, current) {
+		if !ownershipReleased(old, current) {
 			return errors.New("previous maintenance has not released its original resources")
 		}
 	}

@@ -3280,6 +3280,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: 🚀 Deploy to Production
         # Shared with cd.yaml's manual deploy via this composite action so the
@@ -3398,6 +3399,7 @@ jobs:
         with:
           ref: main
           persist-credentials: false
+          fetch-depth: 0
 
       - name: 🧭 Record the exact recovery checkout
         # Read this checkout even if the shell directory or inherited Git

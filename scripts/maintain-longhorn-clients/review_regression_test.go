@@ -10,6 +10,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"sigs.k8s.io/yaml"
 )
 
 func TestPauseAndRestoreRetryOnlyConflictsWithFreshOwnership(t *testing.T) {
@@ -95,6 +97,87 @@ func TestRestoredJournalCanBeSupersededOnlyAfterLiveReleaseProof(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestRestoredJournalAllowsUnownedConsumerUpgrade(t *testing.T) {
+	for _, drift := range []string{"chart-values", "database-image", "still-suspended", "still-scaled-down", "foreign-owner", "replaced", "hibernate", "reconcile"} {
+		t.Run(drift, func(t *testing.T) {
+			a := fakeFixture()
+			e := testEngine(a)
+			e.publicationNotStarted = true
+			ctx := context.Background()
+			if err := e.prepare(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.restore(ctx); err != nil {
+				t.Fatal(err)
+			}
+			hr := a.objects[fakeKey("helmrelease", "kubescape", "kubescape")][0]
+			switch drift {
+			case "chart-values":
+				fakeSet(hr, "/spec/values/nodeAgent/image/tag", "new-reviewed-release", false)
+			case "database-image":
+				fakeSet(a.objects[fakeKey("clusters.postgresql.cnpg.io", "backstage", "backstage-db")][0], "/spec/imageName", "new-reviewed-image", false)
+			case "still-suspended":
+				fakeSet(hr, "/spec/suspend", true, false)
+			case "still-scaled-down":
+				fakeSet(a.objects[fakeKey("deployment", "crossview", "crossview-postgres")][0], "/spec/replicas", float64(0), false)
+			case "foreign-owner":
+				fakeSet(hr, "/metadata/annotations/"+escape(ownerKey), "foreign", false)
+			case "replaced":
+				fakeSet(hr, "/metadata/uid", "replacement", false)
+			case "hibernate":
+				fakeSet(a.objects[fakeKey("clusters.postgresql.cnpg.io", "backstage", "backstage-db")][0], "/metadata/annotations/"+escape(hibernateKey), "on", false)
+			case "reconcile":
+				fakeSet(hr, "/metadata/annotations/"+escape(reconcileKey), "disabled", false)
+			}
+			allowed := drift == "chart-values" || drift == "database-image"
+			if err := e.legacyPublicationSafe(ctx); (err == nil) != allowed {
+				t.Fatalf("legacy release proof for %s: %v", drift, err)
+			}
+			e.holder = "101.1"
+			writes := a.writes
+			if err := e.prepare(ctx); (err == nil) != allowed {
+				t.Fatalf("fresh-plan supersession for %s: %v", drift, err)
+			}
+			if !allowed && a.writes != writes {
+				t.Fatal("unsafe supersession wrote resources")
+			}
+		})
+	}
+}
+
+func TestProductionMaintenanceCheckoutContainsPublicationBase(t *testing.T) {
+	checked := 0
+	for _, path := range []string{"../../.github/workflows/ci.yaml", "../../.github/workflows/cd.yaml"} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var workflow object
+		if err = yaml.Unmarshal(b, &workflow); err != nil {
+			t.Fatal(err)
+		}
+		for name, raw := range val(workflow, "jobs").(map[string]any) {
+			job := raw.(map[string]any)
+			var checkout object
+			for _, step := range items(job, "steps") {
+				if strings.HasPrefix(str(step, "uses"), "actions/checkout@") {
+					checkout = step
+				}
+				if str(step, "uses") != "./.github/actions/deploy-prod" {
+					continue
+				}
+				checked++
+				if val(checkout, "with", "fetch-depth") == nil || num(checkout, "with", "fetch-depth") != 0 {
+					t.Errorf("%s job %s deploys without the exact publication base available", path, name)
+				}
+			}
+		}
+	}
+	if checked != 3 {
+		t.Fatalf("expected merge-group, manual and recovery deployment paths, checked %d", checked)
 	}
 }
 
