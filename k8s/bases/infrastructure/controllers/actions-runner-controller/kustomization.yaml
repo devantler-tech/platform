@@ -5,4 +5,5 @@ resources:
   - namespace-runners.yaml
   - oci-repository.yaml
   - helm-release.yaml
+  - pod-disruption-budget.yaml
   - cilium-network-policy.yaml
