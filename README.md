@@ -1,9 +1,12 @@
 # Devantler Tech Platform ☸️⛴️
 
-A personal, self-hosted Kubernetes platform for running applications and the
-services they depend on. This repository contains the configuration for
-Devantler Tech's own platform, shared as a reference for people building
-something similar—not a ready-to-use distribution.
+A self-hosted Kubernetes platform for Devantler Tech's business services and
+personal applications. This repository contains the configuration for that live
+platform, shared as a reference—not a ready-to-use distribution.
+
+Want to build a similar platform for yourself? Start with
+[platform-template](https://github.com/devantler-tech/platform-template), the
+reusable template for creating your own instance.
 
 Changes are reviewed in Git. [Flux](https://fluxcd.io) applies the published
 configuration to the cluster automatically.
@@ -34,10 +37,12 @@ environment differences, and how the layers fit together.
 - **Explore the design:** read the [architecture guide](docs/architecture.md),
   then browse [shared components](k8s/bases),
   [provider overlays](k8s/providers), and [cluster definitions](k8s/clusters).
-- **Run your own instance:** start with the [forking guide](docs/TEMPLATING.md),
-  then follow [local development](docs/local-development.md). The committed
-  secrets cannot be decrypted with your keys; replace them with your own
-  encrypted values before bringing up a cluster.
+- **Build your own platform:** follow the template's
+  [bootstrap guide](https://github.com/devantler-tech/platform-template/blob/main/docs/BOOTSTRAP.md).
+  To adapt this reference instance directly instead, see
+  [customization](docs/TEMPLATING.md) and
+  [local development](docs/local-development.md). Its committed secrets cannot
+  be decrypted with your keys; replace them with your own encrypted values.
 - **Host an application:** follow [tenant onboarding](docs/TENANTS.md).
 - **Contribute a change:** read [contributor guidance](AGENTS.md) and run the
   [validation checks](docs/validation.md). Validation does not require starting
