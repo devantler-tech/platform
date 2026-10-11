@@ -30,13 +30,16 @@ public rates rather than assuming a legacy price will survive a replacement.
 
 The subtotal above deliberately excludes these variable costs:
 
-- **Persistent storage:** Hetzner [block storage][volumes] is €0.044 per
-  provisioned GB-month. Longhorn uses a dedicated volume on each storage
-  worker. As an illustration, three 50 GB volumes add **€6.60/month**, taking
-  compute, networking, and that storage to **€93.53/month** before VAT and the
-  other items below. This is an example, not a claim about live disk sizes.
-  Replication, snapshots, and free-space headroom reduce usable capacity;
-  150 GB of provisioned storage is not 150 GB of application data.
+- **Persistent storage:** Longhorn keeps its replicas on each worker's
+  included local disk, so replicated volumes add no separate charge. Their
+  capacity is bounded by that disk, and replication, snapshots, and free-space
+  headroom reduce it further; three workers do not give three disks of
+  application data. Hetzner [block storage][volumes] is charged only for
+  volumes created through the Hetzner CSI driver, at €0.044 per provisioned
+  GB-month. As an illustration, three 50 GB volumes would add **€6.60/month**,
+  taking compute, networking, and that storage to **€93.53/month** before VAT
+  and the other items below. This is an example, not a claim about live volume
+  sizes.
 - **Backups:** Cloudflare [R2 Standard storage][r2] costs $0.015 per GB-month
   beyond its free allowance; requests are charged separately. Retention,
   database write volume, and restore activity affect the bill. Check existing
