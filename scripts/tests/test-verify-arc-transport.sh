@@ -135,6 +135,13 @@ case "$args" in
     exit 1 ;;
   'create --dry-run=server '*)
     file=${args##* -f }
+    # Core API validation runs before the privileged-container policy can
+    # evaluate this request (Kubernetes ValidateSecurityContext).
+    if jq -e '.spec.containers[0].securityContext |
+      .privileged == true and .allowPrivilegeEscalation == false' "$file" >/dev/null; then
+      printf 'Error from server (Invalid): cannot set allowPrivilegeEscalation to false and privileged to true\n' >&2
+      exit 1
+    fi
     if jq -e '.spec.containers[0].securityContext.privileged == true' "$file" >/dev/null; then problem=privileged
     elif jq -e 'any(.spec.volumes[]; .hostPath != null)' "$file" >/dev/null; then problem=hostPath
     elif jq -e '.spec.hostNetwork == true' "$file" >/dev/null; then problem=hostNetwork
@@ -142,7 +149,11 @@ case "$args" in
     elif jq -e '.spec.containers[0].securityContext.capabilities.add == ["NET_RAW"]' "$file" >/dev/null; then problem=NET_RAW
     else exit 0; fi
     [[ "${PROOF_CASE:-}" != admit_privilege ]] || exit 0
-    if [[ "${PROOF_CASE:-}" == api_failure ]]; then printf 'connection refused\n' >&2; else printf 'violates PodSecurity restricted: %s\n' "$problem" >&2; fi
+    if [[ "${PROOF_CASE:-}" == api_failure ]]; then printf 'connection refused\n' >&2
+    elif [[ "${PROOF_CASE:-}" == api_validation_failure ]]; then printf 'Error from server (Invalid): privileged request failed core validation\n' >&2
+    elif [[ "${PROOF_CASE:-}" == unrelated_privilege_denial && "$problem" == privileged ]]; then printf 'violates PodSecurity restricted: NET_RAW\n' >&2
+    elif [[ "${PROOF_CASE:-}" == webhook_denied ]]; then printf 'admission webhook "validate.kyverno.svc" denied the request: %s\n' "$problem" >&2
+    else printf 'violates PodSecurity restricted: %s\n' "$problem" >&2; fi
     exit 1 ;;
   'create -f '*)
     file=$3
@@ -202,6 +213,7 @@ run_case() {
 }
 GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
 run_case healthy_denied 0
+run_case webhook_denied 0
 run_case source_explicit_false 0
 run_case source_explicit_drift 1
 run_case listener_read_failure 17
@@ -224,7 +236,7 @@ if grep -Fq private-error-sentinel "$scratch/error"; then
 fi
 grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
 [[ ! -e "$scratch/state/created" ]]
-for name in sealed split_health stale_probe admit_privilege api_failure wrong_node reachable cert_error wrong_reason lost_events \
+for name in sealed split_health stale_probe admit_privilege api_failure api_validation_failure unrelated_privilege_denial wrong_node reachable cert_error wrong_reason lost_events \
   listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
   listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override \
   listener_background_drift listener_existing_drift listener_unknown_field \
