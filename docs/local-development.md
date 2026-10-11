@@ -55,8 +55,10 @@ that the operator is installed but no database is created: apps are opt-in, so a
 plain local bring-up has no PostgreSQL instance running.
 
 Everything heavier (observability, request-rate autoscaling, backup, runtime
-security, the VM stack, …) and all apps are opt-in. Uncomment what you want in
-these files — each carries a copy-paste template — then re-run
+security, the VM stack, …) and all apps are opt-in. For infrastructure,
+uncomment the desired controllers, matching resources, and patches. For apps,
+replace `resources: []` with the desired entries and add their matching patches.
+These files carry copy-paste templates; after editing them, re-run
 `ksail workload push && ksail workload reconcile`:
 
 - [`k8s/providers/docker/infrastructure/controllers/kustomization.yaml`](../k8s/providers/docker/infrastructure/controllers/kustomization.yaml)

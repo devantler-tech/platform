@@ -5,8 +5,8 @@ services they depend on. This repository contains the configuration for
 Devantler Tech's own platform, shared as a reference for people building
 something similar—not a ready-to-use distribution.
 
-Changes are reviewed in Git and delivered by [Flux](https://fluxcd.io), which
-pulls the published cluster configuration as an OCI artifact.
+Changes are reviewed in Git. [Flux](https://fluxcd.io) applies the published
+configuration to the cluster automatically.
 [KSail](https://github.com/devantler-tech/ksail) manages the Talos clusters and
 the workload lifecycle.
 

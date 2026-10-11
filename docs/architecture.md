@@ -28,10 +28,9 @@ A high-level inventory of what Flux reconciles onto the cluster. The manifests
 live under [`k8s/bases/infrastructure/`](../k8s/bases/infrastructure) and
 [`k8s/bases/apps/`](../k8s/bases/apps), with provider-specific pieces (Hetzner
 CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](../k8s/providers).
-The exact set is overlay-dependent: the Hetzner/prod overlay deploys the full
-base set described below, while the local (docker) overlay is a thin manual
-test-bed that ships only the core controllers by default and makes the rest
-opt-in.
+The sections below describe the main building blocks, not every deployed
+resource. The provider overlays select the exact set; the local Docker overlay
+ships only core controllers by default and makes additional components opt-in.
 
 ### Infrastructure
 
