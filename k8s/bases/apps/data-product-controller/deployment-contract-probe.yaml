@@ -4,15 +4,11 @@ metadata:
   name: data-product-controller-contract-probe
   namespace: data-product-controller
   labels:
-    # The HA floor does not apply while this non-serving workload is dormant.
-    # Activation must remove this label and supply redundant probe replicas.
-    platform.devantler.tech/replica-floor: exempt
     app.kubernetes.io/name: data-product-controller
     app.kubernetes.io/instance: data-product-controller
     app.kubernetes.io/component: contract-probe
 spec:
-  # Prepare observation independently; a separate reviewed change activates it.
-  replicas: 0
+  replicas: 2
   selector:
     matchLabels:
       app.kubernetes.io/name: data-product-controller
@@ -46,7 +42,7 @@ spec:
             - name: CONTRACT_PROBE_URL
               value: https://harbour-data.${domain}/openapi.json
             - name: CONTRACT_READINESS_ENABLED
-              value: "false"
+              value: "true"
           ports:
             - name: management
               containerPort: 8081

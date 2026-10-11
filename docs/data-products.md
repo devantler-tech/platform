@@ -22,18 +22,19 @@ The release pins both the signed chart and controller image by immutable digest.
 The registry workspace is standard behavior and the sample is enabled. Portable UI
 status, resize and appearance grants are active for the publisher-approved registry
 origin, so System, Light and Dark appearance can reach the sandboxed sample without
-resetting its query. Provisioning, engine providers, connectors, composition, DCAT
-publication and contract probing remain disabled. The trial
+resetting its query. Provisioning, engine providers, source exports, composition
+and DCAT publication remain disabled. The trial
 has no database or persistent data volume. New capabilities and releases go through
 reviewed GitOps changes before activation.
 
-An independent contract-probe Deployment is prepared with zero replicas and
-literal observation disabled. Its token-free service account, exact-host HTTPS
-and DNS policy, and controller GET permission on just the Harbour and probe
-Deployments are installed without changing the sample's readiness. The deployment
-receipt requires this dormant state and rejects broader grants, target changes,
-or unexpected activation. See the [readiness decision](adr/data-product-readiness-observation.md)
-for the activation boundary.
+Harbour readiness observes its serving Deployment and a separate two-replica
+contract probe. The probe uses a token-free service account and an exact-host
+HTTPS and DNS policy; the controller can GET only the named Harbour and probe
+Deployments. All desired replicas must be current and ready. The deployment
+receipt requires current dependency conditions, the declared observations and contract URLs,
+and healthy probe Pods, and refuses a state that differs from the checked-out
+Helm declaration. See the [readiness decision](adr/data-product-readiness-observation.md)
+for rollback and the remaining fault/recovery acceptance before flag retirement.
 
 Flux owns the release, API definition, product registration, workloads, and routes.
 Helm installs the DataProduct API before registering the sample, so a clean rebuild
