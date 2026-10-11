@@ -133,7 +133,15 @@ func (e engine) patchOwned(ctx context.Context, old object, restoring bool) erro
 }
 
 func released(old, current object) bool {
-	return meta(current) && str(current, "metadata", "uid") == str(old, "metadata", "uid") && key(old) == key(current) && str(current, "metadata", "annotations", ownerKey) == "" && reflect.DeepEqual(val(current, "spec"), val(old, "spec")) && val(current, "metadata", "annotations", hibernateKey) == val(old, "metadata", "annotations", hibernateKey) && val(current, "metadata", "annotations", reconcileKey) == val(old, "metadata", "annotations", reconcileKey) && (str(old, "kind") != "Node" || val(current, "metadata", "labels", "node.longhorn.io/create-default-disk") == val(old, "metadata", "labels", "node.longhorn.io/create-default-disk"))
+	if !meta(current) || str(current, "metadata", "uid") != str(old, "metadata", "uid") || key(old) != key(current) || str(current, "metadata", "annotations", ownerKey) != "" {
+		return false
+	}
+	if str(old, "kind") == "Node" {
+		// Node restoration owns only this label and the ownership annotation.
+		// Preserve independent autoscaler cordons and taints, as restorePatch does.
+		return val(current, "metadata", "labels", "node.longhorn.io/create-default-disk") == val(old, "metadata", "labels", "node.longhorn.io/create-default-disk")
+	}
+	return reflect.DeepEqual(val(current, "spec"), val(old, "spec")) && val(current, "metadata", "annotations", hibernateKey) == val(old, "metadata", "annotations", hibernateKey) && val(current, "metadata", "annotations", reconcileKey) == val(old, "metadata", "annotations", reconcileKey)
 }
 
 func journalResources(j journal) []object {

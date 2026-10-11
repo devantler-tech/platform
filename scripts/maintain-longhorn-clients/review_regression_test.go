@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -293,6 +294,57 @@ func TestDeletedTemporaryComputeNodeDoesNotStrandRestoredJournal(t *testing.T) {
 			}
 			if replacement && err == nil {
 				t.Fatal("replacement node was adopted")
+			}
+		})
+	}
+}
+
+func TestReleasedNodeAllowsUnownedSpecDriftButNotOwnershipOrIdentityDrift(t *testing.T) {
+	for _, drift := range []string{"cordon-and-taint", "replacement", "foreign-owner", "temporary-label", "database-spec"} {
+		t.Run(drift, func(t *testing.T) {
+			a := fakeFixture()
+			e := testEngine(a)
+			ctx := context.Background()
+			if err := e.prepare(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.afterPublish(ctx); err != nil {
+				t.Fatal(err)
+			}
+			j, _, err := e.readJournal(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := resource("Node", "", "autoscale-cancelled")
+			old["metadata"].(object)["labels"] = object{"ksail.io/autoscaled": "true"}
+			old["spec"] = object{"podCIDR": "10.0.0.0/24"}
+			j.Nodes = []object{old}
+			current := clone(old)
+			fakeSet(current, "/spec/unschedulable", true, false)
+			fakeSet(current, "/spec/taints", []any{object{"key": "ToBeDeletedByClusterAutoscaler", "value": "1", "effect": "NoSchedule"}}, false)
+			fakeSet(current, "/metadata/labels/node.longhorn.io~1create-default-disk", "true", false)
+			fakeSet(current, "/metadata/annotations/"+escape(ownerKey), e.holder, false)
+			a.objects[fakeKey("node", "", "autoscale-cancelled")] = []object{current}
+			wantSpec := clone(current)["spec"]
+			if err = e.patchOwned(ctx, old, true); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(val(current, "spec"), wantSpec) {
+				t.Fatal("restoration changed unowned Node spec")
+			}
+			switch drift {
+			case "replacement":
+				fakeSet(current, "/metadata/uid", "replacement", false)
+			case "foreign-owner":
+				fakeSet(current, "/metadata/annotations/"+escape(ownerKey), "foreign", false)
+			case "temporary-label":
+				fakeSet(current, "/metadata/labels/node.longhorn.io~1create-default-disk", "true", false)
+			case "database-spec":
+				fakeSet(a.objects[fakeKey("deployment", "crossview", "crossview-postgres")][0], "/spec/replicas", float64(2), false)
+			}
+			err = e.provenReleased(ctx, j)
+			if (drift == "cordon-and-taint") != (err == nil) {
+				t.Fatalf("release proof for %s: %v", drift, err)
 			}
 		})
 	}
