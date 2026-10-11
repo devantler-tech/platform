@@ -38,13 +38,34 @@ echo "OK: ${count} patches set ${class_name} with priority ${class_value}"
 # Admission only handles new Pods. Existing databases need their owning Cluster
 # declaration to request the tier so CNPG can roll immutable Pod priority.
 databases=''
+tenant_patches=''
 for layer in apps infrastructure; do
   rendered="$(kubectl kustomize "${repo_root}/k8s/providers/hetzner/${layer}")"
   databases+="$(yq ea -o=json -I=0 'select(.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Cluster")' <<<"${rendered}")"$'\n'
+  if [[ "${layer}" == apps ]]; then
+    tenant_patches="$(yq ea -e 'select(.apiVersion == "kustomize.toolkit.fluxcd.io/v1" and .kind == "Kustomization" and .metadata.namespace == "wedding-app" and .metadata.name == "wedding-app") | .spec.patches' <<<"${rendered}")"
+  fi
 done
+# The parent render contains only the tenant's Flux wiring, not its database.
+# Exercise the delivered patch list as Flux does against an unprioritised tenant
+# Cluster; checking the patch source text alone would miss an unwired override.
+fixture_dir="$(mktemp -d)"
+trap 'rm -r -- "${fixture_dir}"' EXIT
+cp "${script_dir}/fixtures/wedding-database-priority/cluster.yaml" "${fixture_dir}/cluster.yaml"
+printf '%s\n' "${tenant_patches}" >"${fixture_dir}/patches.yaml"
+PRIORITY_PATCHES="${fixture_dir}/patches.yaml" yq -n '.apiVersion = "kustomize.config.k8s.io/v1beta1" | .kind = "Kustomization" |
+  .resources = ["cluster.yaml"] | .patches = load(strenv(PRIORITY_PATCHES))' \
+  >"${fixture_dir}/kustomization.yaml"
+tenant_render="$(kubectl kustomize "${fixture_dir}")"
+tenant_database="$(yq ea -o=json -I=0 'select(.apiVersion == "postgresql.cnpg.io/v1" and .kind == "Cluster" and .metadata.name == "wedding-db" and .metadata.namespace == "wedding-app")' <<<"${tenant_render}")"
+if [[ "$(jq -s 'length' <<<"${tenant_database}")" -ne 1 ]]; then
+  echo 'FAIL: tenant delivery must cover exactly one Wedding database' >&2
+  exit 1
+fi
+databases+="${tenant_database}"$'\n'
 database_count="$(jq -s 'length' <<<"${databases}")"
-if [[ "${database_count}" -eq 0 ]]; then
-  echo 'FAIL: no production CNPG Cluster was checked' >&2
+if [[ "${database_count}" -le 1 ]]; then
+  echo 'FAIL: no platform CNPG Cluster was checked alongside the tenant database' >&2
   exit 1
 fi
 missing="$(jq -sr --arg n "${class_name}" '.[] | select(.spec.priorityClassName != $n) | .metadata.name' <<<"${databases}")"

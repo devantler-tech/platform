@@ -3370,3 +3370,23 @@ gate and transition regression on that source commit. No RBAC, IAM, service
 account, credential, listener, storage, disruption budget or permission grant
 changes. Actual production recreation and peer preservation remain separate
 protected deployment and readback evidence.
+
+## 2026-10-11 — Include the tenant database in the protected-priority rollout
+
+For #4649 and the review correction in #4650, the checksum-verified kubectl
+v1.36.2 / Kustomize v5.8.1 renderer measured one changed selected entry against
+the prior PR head `7bcabf3c0b5b405d0a9fb5f427ce330268f67ac8`: the Wedding
+Kustomization. Its full-object fingerprint is
+`e5fe861265fbfca61eef46487823290a5afa2378abb7fe9a6f2634e87965a0c7`,
+independently reproduced with canonical JSON and SHA-256. Its identity-bound
+ledger fingerprint changes from
+`dbb1fefbf97f8d4947b418ad604503cda9504f2e097b1d6ac5e0a8c8685e0a1c` to
+`de8835fcb45d0d39ee9e366587eb4a34de3598720957426237f156d9b2fdcd74`.
+
+The existing operational-protection patch now sets the storage workload
+priority and the same supported CNPG rolling-restart request used by the
+platform databases. The tenant delivery regression applies the rendered Flux
+patch list to an existing unprioritised tenant Cluster, rather than inferring
+coverage from the parent render. No IAM, RBAC, service account, source,
+credential, backup destination, storage identity or permission grant changes.
+Hosted CI and the actual protected rollout remain separate required evidence.
