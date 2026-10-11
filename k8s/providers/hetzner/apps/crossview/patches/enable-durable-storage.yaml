@@ -47,6 +47,9 @@
           # Longhorn's volume is not idmapped, so only the database explicitly
           # retains the host user namespace.
           hostUsers: true
+          # Match the storage consumers' tier so they cannot preempt the database.
+          # Unlike CNPG, a Deployment rolls on the changed Pod template directly.
+          priorityClassName: hcloud-volume-workload
           containers:
             - name: postgres
               securityContext:

@@ -73,11 +73,14 @@ if [[ -n "${missing}" ]]; then
   echo "FAIL: production databases do not declare ${class_name}: ${missing}" >&2
   exit 1
 fi
-# CNPG 1.30.1 does not include priorityClassName in its Pod-spec comparison.
-# The common supported restart request must reach every existing Cluster.
-requests="$(jq -s '[.[].metadata.annotations["kubectl.kubernetes.io/restartedAt"]] | unique' <<<"${databases}")"
-if ! jq -e 'length == 1 and (.[0] | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))' <<<"${requests}" >/dev/null; then
-  echo 'FAIL: production databases lack a common controlled rolling-restart request' >&2
+# CNPG 1.30.1 compares container environments, but ignores priorityClassName.
+# A stable environment marker makes old Pods differ from the desired template,
+# including Pods created after a fixed timestamp but before this deployment.
+missing_rollout="$(jq -sr --arg n "${class_name}" '.[] | select(
+  ([.spec.env[]? | select(.name == "PLATFORM_DATABASE_PRIORITY_CLASS" and .value == $n)] | length) != 1
+) | .metadata.name' <<<"${databases}")"
+if [[ -n "${missing_rollout}" ]]; then
+  echo "FAIL: production databases lack a priority-bound template rollout: ${missing_rollout}" >&2
   exit 1
 fi
 echo "OK: ${database_count} production databases declare the storage priority tier"

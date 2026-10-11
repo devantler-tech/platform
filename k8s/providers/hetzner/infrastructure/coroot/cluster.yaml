@@ -35,12 +35,13 @@ metadata:
     # operator to resolve with a backup/restore plan. This annotation separately
     # prevents garbage collection if the database manifest is removed.
     kustomize.toolkit.fluxcd.io/prune: disabled
-    # CloudNativePG treats this supported annotation as a requested rolling
-    # restart. The timestamp is fixed declarative desired state: changing it is
-    # an intentional one-shot request, while reconciliation remains idempotent.
-    kubectl.kubernetes.io/restartedAt: "2026-10-10T23:35:00Z"
 spec:
   priorityClassName: hcloud-volume-workload
+  # CNPG 1.30.1 ignores priority in its Pod comparison, but compares environments.
+  # A stable marker requests the normal rollout even for recently recreated Pods.
+  env:
+    - name: PLATFORM_DATABASE_PRIORITY_CLASS
+      value: hcloud-volume-workload
   # Pin the PostgreSQL operand image to clear fixable base-OS + PostgreSQL CVEs in
   # the CNPG operator default (18.3-system-trixie) — same rationale and Renovate
   # wiring as umami-db. CNPG rolls the image in place across the HA instances.
@@ -62,8 +63,8 @@ spec:
     annotations:
       # set-observability-dns-ndots is admission-only. This token propagates to
       # newly created Pods; inherited metadata alone does not restart existing
-      # instances. The Cluster restart annotation above requests CNPG's normal
-      # controlled rollout so every instance is readmitted under the policy.
+      # instances. The environment change above requests CNPG's normal controlled
+      # rollout so every instance is readmitted under the policy.
       platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
       coroot.com/postgres-scrape: "true"
       coroot.com/postgres-scrape-port: "5432"
