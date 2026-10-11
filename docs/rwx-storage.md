@@ -76,6 +76,21 @@ The Talos machine config patch (`talos/workers/mount-longhorn-data.yaml`) handle
 > consistently appears as `/dev/sdb`. Confirm with `talosctl disks --nodes <worker-ip>`.
 > If the volume shows a different path, update `talos/workers/mount-longhorn-data.yaml` accordingly.
 
+## Storage consumers during client recovery
+
+Kubescape's persistent storage component is temporarily restricted to the
+Longhorn storage-worker label in the Hetzner overlay. This keeps its existing
+claim usable while compute-only workers lack the Longhorn volume client.
+The restriction affects only that component, not the security agents or local
+Docker deployments.
+
+The production regression renders the pinned chart for install and upgrade,
+checks scheduling eligibility and preserves the single-writer strategy and
+claim. Remove this recovery placement through
+[#4777](https://github.com/devantler-tech/platform/issues/4777) only after the
+protected client rollout completes, clients are registered on compute workers,
+and storage readiness remains healthy across separated samples.
+
 ## StorageClasses
 
 | StorageClass | Default | Access Modes | Backing |

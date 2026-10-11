@@ -1,0 +1,20 @@
+- op: add
+  path: /spec/postRenderers/-
+  value:
+    kustomize:
+      patches:
+        - target:
+            group: apps
+            version: v1
+            kind: Deployment
+            name: storage
+          patch: |-
+            apiVersion: apps/v1
+            kind: Deployment
+            metadata:
+              name: storage
+            spec:
+              template:
+                spec:
+                  nodeSelector:
+                    node.longhorn.io/create-default-disk: "true"
