@@ -3386,3 +3386,23 @@ gate and transition regression on that source commit. No RBAC, IAM, service
 account, credential, listener, storage, disruption budget or permission grant
 changes. Actual production recreation and peer preservation remain separate
 protected deployment and readback evidence.
+
+## 2026-10-11 — Separate volume clients from replica storage
+
+For #4718, the pinned kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry against main
+`9f9ac740d8c53c32542bdba1a044e39634b80c54`: HelmRelease
+longhorn-system/longhorn. Nothing is added or removed. Its fingerprint moves
+from `c5914be8554123d4821c96d9b18d75d0807c8d797dffd5727c11bb3f029f8629`
+to `c0f77790ab49bd8c26359b00eb32f6341ed1690cc9f3f92c974f3c415d429b8f`.
+
+The change removes the replica-storage selector from volume clients and uses
+the pinned chart's actual label-gated default-disk setting. The install and
+upgrade chart renders, including their Flux post-renderers, prove that only
+manager placement, its three lifecycle hooks and the two relevant settings
+change. Replica exclusion remains fail-closed and deployed. No RBAC, IAM,
+service-account, credential, storage-class, disruption-budget, resource
+reservation or permission grant changes. The maintainer approved preparing
+and running reviewed protected storage maintenance; #4719 must land first.
+Actual all-volume detachment, protected migration, restoration and separated
+live redundancy checks remain deployment evidence, not a result of this ledger.
