@@ -43,7 +43,7 @@ func fixture() (map[string]any, map[string]any) {
 		"name": "backstage", "namespace": "backstage", "version": 4,
 		"info":     map[string]any{"status": "deployed"},
 		"manifest": deploymentManifest,
-		"config":   map[string]any{"password": "DO_NOT_PRINT"},
+		"config":   map[string]any{"fixture_marker": "DO_NOT_PRINT"},
 	}
 	live := map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{
 		map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": metadata("backstage", "deployment-uid"), "spec": map[string]any{
@@ -316,6 +316,16 @@ func TestProtectedWorkflowUsesOnlyReviewedReadSurface(t *testing.T) {
 		t.Fatal("protected read boundary changed")
 	}
 	steps := job["steps"].([]any)
+	installer := object(steps[3])
+	if !reflect.DeepEqual(installer["env"], map[string]any{"HELM_VERSION": "v4.2.0", "HELM_SHA256": "97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096"}) {
+		t.Fatal("Helm reader lacks the reviewed independent checksum")
+	}
+	if strings.Contains(text(installer["run"]), "curl --fail --location --retry 3 --output \"$archive.sha256sum\"") {
+		t.Fatal("downloaded checksum substituted for reviewed trust anchor")
+	}
+	if !strings.Contains(text(installer["run"]), `printf '%s  %s\n' "$HELM_SHA256" "$archive" | sha256sum --check -`) {
+		t.Fatal("reviewed checksum not used to verify the archive")
+	}
 	gate := text(object(steps[0])["run"])
 	for _, check := range []string{`[[ "$RUN_REF" == refs/heads/main ]]`, `[[ "$RUN_SHA" =~ ^[0-9a-f]{40}$ ]]`, `[[ "$(gh api repos/devantler-tech/platform/branches/main --jq .commit.sha)" == "$RUN_SHA" ]]`} {
 		if !strings.Contains(gate, check) {

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -22,6 +23,7 @@ type result struct {
 	Objects int
 }
 
+// assess proves a bounded stateless release footprint, not data retirement safety.
 func assess(release, live []byte) result {
 	hold := result{Code: "HOLD_INPUT"}
 	r, ok := jsonObject(release)
@@ -46,7 +48,7 @@ func assess(release, live []byte) result {
 	deployment, service := false, false
 	for {
 		var resource map[string]any
-		if err := decoder.Decode(&resource); err == io.EOF {
+		if err := decoder.Decode(&resource); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			return hold
@@ -167,8 +169,11 @@ func assess(release, live []byte) result {
 	return result{Code: "ASSESSED_STATELESS", Objects: len(seen)}
 }
 
+// object returns nil for a malformed object so its caller fails the assessment.
 func object(value any) map[string]any { result, _ := value.(map[string]any); return result }
-func text(value any) string           { result, _ := value.(string); return result }
+
+// text returns an empty string for a non-string identity.
+func text(value any) string { result, _ := value.(string); return result }
 
 // yaml.v3 rejects duplicate JSON keys as well as duplicate YAML keys. Require
 // JSON syntax before decoding command output; never treat partial output as empty.
@@ -180,6 +185,7 @@ func jsonObject(data []byte) (map[string]any, bool) {
 	return result, true
 }
 
+// statelessPod rejects persistent volumes and termination hooks.
 func statelessPod(value any) bool {
 	spec := object(value)
 	containers, ok := spec["containers"].([]any)
@@ -233,6 +239,7 @@ func statelessPod(value any) bool {
 
 type command func(context.Context, string, ...string) ([]byte, error)
 
+// capture executes only collect's fixed readers and withholds raw stderr.
 func capture(ctx context.Context, program string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stderr = io.Discard
@@ -246,6 +253,7 @@ func capture(ctx context.Context, program string, args ...string) ([]byte, error
 
 type boundedOutput struct{ bytes.Buffer }
 
+// Write bounds captured output before any raw data reaches assessment.
 func (output *boundedOutput) Write(data []byte) (int, error) {
 	if output.Len()+len(data) > maxResponse {
 		return 0, fmt.Errorf("read too large")
@@ -253,6 +261,7 @@ func (output *boundedOutput) Write(data []byte) (int, error) {
 	return output.Buffer.Write(data)
 }
 
+// collect reads the stored release and live resources without mutating either.
 func collect(ctx context.Context, execute command) ([]byte, []byte, error) {
 	release, err := execute(ctx, "helm", "status", "backstage", "--namespace=backstage", "--kube-context=admin@prod", "--output=json")
 	if err != nil {
@@ -262,6 +271,7 @@ func collect(ctx context.Context, execute command) ([]byte, []byte, error) {
 	return release, live, err
 }
 
+// run fails closed and emits only the assessment code and object count.
 func run(args []string, input io.Reader, output io.Writer, execute command) int {
 	var release, live []byte
 	if len(args) != 1 {
@@ -317,4 +327,5 @@ func run(args []string, input io.Reader, output io.Writer, execute command) int 
 	return 0
 }
 
+// main routes the real CLI through the same tested boundary as offline fixtures.
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, capture)) }
