@@ -38,6 +38,7 @@ metadata:
   namespace: backstage
 `
 
+// fixture separates the synthetic installed release from retained database data.
 func fixture() (map[string]any, map[string]any) {
 	release := map[string]any{
 		"name": "backstage", "namespace": "backstage", "version": 4,
@@ -59,20 +60,24 @@ func fixture() (map[string]any, map[string]any) {
 	return release, live
 }
 
+// metadata gives each fixture a stable identity and concurrency version.
 func metadata(name, uid string) map[string]any {
 	return map[string]any{"name": name, "namespace": "backstage", "uid": uid, "resourceVersion": "12"}
 }
 
+// podMetadata supplies the reviewed portal selector without selecting database pods.
 func podMetadata() map[string]any {
 	m := metadata("backstage-pod", "pod-uid")
 	m["labels"] = portalLabels()
 	return m
 }
 
+// portalLabels is the exact known selector; near matches must not pass.
 func portalLabels() map[string]any {
 	return map[string]any{"app.kubernetes.io/name": "backstage", "app.kubernetes.io/instance": "backstage", "app.kubernetes.io/component": "backstage"}
 }
 
+// encode fails the test when its locally constructed fixture cannot be serialized.
 func encode(t *testing.T, value any) []byte {
 	t.Helper()
 	b, err := json.Marshal(value)
@@ -82,6 +87,7 @@ func encode(t *testing.T, value any) []byte {
 	return b
 }
 
+// TestInstalledStatelessReleaseAssessment proves the positive control with retained data.
 func TestInstalledStatelessReleaseAssessment(t *testing.T) {
 	release, live := fixture()
 	got := assess(encode(t, release), encode(t, live))
@@ -96,6 +102,7 @@ func TestInstalledStatelessReleaseAssessment(t *testing.T) {
 	}
 }
 
+// TestUnsafeOrIncompleteFootprintNeverPasses rejects one risk or missing proof at a time.
 func TestUnsafeOrIncompleteFootprintNeverPasses(t *testing.T) {
 	cases := map[string]func(map[string]any, map[string]any){
 		"wrong release":    func(r, _ map[string]any) { r["name"] = "other" },
@@ -163,6 +170,7 @@ func TestUnsafeOrIncompleteFootprintNeverPasses(t *testing.T) {
 	}
 }
 
+// protectedRunner emulates only the environment guards, never real credentials.
 func protectedRunner(t *testing.T) {
 	t.Helper()
 	t.Setenv("GITHUB_ACTIONS", "true")
@@ -170,6 +178,7 @@ func protectedRunner(t *testing.T) {
 	t.Setenv("GITHUB_REF", "refs/heads/main")
 }
 
+// TestCLIIsBoundedReadOnlyAndDoesNotLeakEvidence binds the fixed reader and output boundary.
 func TestCLIIsBoundedReadOnlyAndDoesNotLeakEvidence(t *testing.T) {
 	protectedRunner(t)
 	r, l := fixture()
@@ -206,6 +215,7 @@ func TestCLIIsBoundedReadOnlyAndDoesNotLeakEvidence(t *testing.T) {
 	}
 }
 
+// TestChangedSnapshotAndNonMainNeverPass prevents stale or unreviewed assessment.
 func TestChangedSnapshotAndNonMainNeverPass(t *testing.T) {
 	protectedRunner(t)
 	r, l := fixture()
@@ -239,6 +249,7 @@ func TestChangedSnapshotAndNonMainNeverPass(t *testing.T) {
 	}
 }
 
+// TestOfflineCLIRejectsDuplicateInputKeys prevents ambiguous wrapper evidence.
 func TestOfflineCLIRejectsDuplicateInputKeys(t *testing.T) {
 	r, l := fixture()
 	release, live := encode(t, r), encode(t, l)
@@ -257,6 +268,7 @@ func TestOfflineCLIRejectsDuplicateInputKeys(t *testing.T) {
 	}
 }
 
+// TestResponseLimit proves bounded command capture and withheld raw error details.
 func TestResponseLimit(t *testing.T) {
 	var output boundedOutput
 	if _, err := output.Write(bytes.Repeat([]byte("x"), maxResponse)); err != nil {
@@ -272,8 +284,10 @@ func TestResponseLimit(t *testing.T) {
 
 type failedOutput struct{}
 
+// Write models a failed assessment sink without accepting any bytes.
 func (failedOutput) Write([]byte) (int, error) { return 0, fmt.Errorf("output unavailable") }
 
+// TestUnpublishedAssessmentCannotReportSuccess rejects loss of the final receipt.
 func TestUnpublishedAssessmentCannotReportSuccess(t *testing.T) {
 	r, l := fixture()
 	input := encode(t, map[string]any{"Release": r, "Live": l})
@@ -282,6 +296,7 @@ func TestUnpublishedAssessmentCannotReportSuccess(t *testing.T) {
 	}
 }
 
+// TestNativeOfflineConsumer exercises the actual CLI without cluster access.
 func TestNativeOfflineConsumer(t *testing.T) {
 	r, l := fixture()
 	input := encode(t, map[string]any{"Release": r, "Live": l})
@@ -295,6 +310,7 @@ func TestNativeOfflineConsumer(t *testing.T) {
 	}
 }
 
+// TestProtectedWorkflowUsesOnlyReviewedReadSurface binds main, confirmation and tool trust.
 func TestProtectedWorkflowUsesOnlyReviewedReadSurface(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "assess-backstage-retirement.yaml"))
 	if err != nil {
@@ -341,10 +357,12 @@ func TestProtectedWorkflowUsesOnlyReviewedReadSurface(t *testing.T) {
 	}
 }
 
+// item selects a locally constructed fixture, never an untrusted production object.
 func item(l map[string]any, index int) map[string]any {
 	return l["items"].([]any)[index].(map[string]any)
 }
 
+// TestLiveAndStoredWorkloadTerminationRisks rejects persistent mounts and stop hooks.
 func TestLiveAndStoredWorkloadTerminationRisks(t *testing.T) {
 	for _, source := range []string{"stored", "deployment", "pod"} {
 		for _, risk := range []string{"persistentVolumeClaim", "ephemeral", "csi", "hostPath", "preStop", "init-preStop"} {
