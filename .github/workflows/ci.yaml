@@ -445,6 +445,14 @@ jobs:
           shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
           bash scripts/tests/test-headlamp-oidc-version-gate.sh
 
+      # The renderer's Helm SDK follows the deployed controller, not Helm's own
+      # releases. This spans the build guard and the Renovate policy, so it runs
+      # here for the same reason as the Headlamp gate above (#4738).
+      - name: 📌 Validate the controller Helm SDK Renovate pin
+        run: |
+          shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
+          bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
+
       # Renovate moves only the source commit of the vendored origin-ca-issuer CRDs, and
       # the bytes do not change with it, so nothing but the updater's own record can tell
       # a bump from a refresh (#4136). The test runs a copy of the updater against stub
