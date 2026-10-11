@@ -168,9 +168,43 @@ func (e engine) legacyPublicationSafe(ctx context.Context) error {
 		if str(o, "metadata", "name") != journalName {
 			continue
 		}
-		j, _, err := e.readJournal(ctx)
+		j, original, err := e.readJournal(ctx)
 		if err != nil {
 			return err
+		}
+		// The failed deploy and its protected heal share one run attempt,
+		// but the heal checks out validated main. Restore that attempt's
+		// owned pauses before deciding whether legacy publication is safe.
+		// A foreign attempt still needs the separate terminal takeover path.
+		if (j.Phase == "prepared" || j.Phase == "detached") && j.Holder == e.holder {
+			if err = e.replicaExclusion(ctx); err != nil {
+				return err
+			}
+			if err = e.storagePreserved(ctx, j); err != nil {
+				return err
+			}
+			for _, old := range journalResources(j) {
+				current, readErr := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
+				if readErr != nil {
+					return readErr
+				}
+				if !released(old, current) {
+					if _, err = restorePatch(old, current, resourceHolder(j), str(old, "kind") == "Deployment"); err != nil {
+						return err
+					}
+				}
+			}
+			j.Source = e.source
+			if err = e.writeJournal(ctx, j, original); err != nil {
+				return err
+			}
+			if err = e.restore(ctx); err != nil {
+				return err
+			}
+			j, _, err = e.readJournal(ctx)
+			if err != nil {
+				return err
+			}
 		}
 		if j.Phase != "restored" || !j.PublicationNotStarted {
 			return errors.New("legacy publication after maintenance began is refused")

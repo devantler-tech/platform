@@ -53,8 +53,16 @@ strict original specification proof. An interrupted writer can be
 taken over only when GitHub proves its exact run attempt completed and live
 resource ownership and retained storage still match. It can resume a fully
 detached publication, or restore and restart the recorded transition. Live or
-unknown previous writers remain HOLD. An unchanged legacy selector can be
-republished after positively unstarted publication only once release of every
+unknown previous writers remain HOLD. Interrupted pauses can be recovered by
+the protected heal job in the same run attempt even though that
+job checks out validated main rather than the candidate. Original storage,
+resource identities, specifications and pause ownership must still match before
+the journal source is adopted and owned consumers resume. This restoration
+never grants permission to republish the old selector after publication began.
+The reconciliation retry baseline follows the completed maintenance controller
+rolls and remains before publication; those completed rolls cannot justify
+retrying an unrelated first reconciliation failure. An unchanged legacy
+selector can be republished after positively unstarted publication only once release of every
 original resource and backing identity is proven. A later storage expansion
 does not block that released-state proof: claim/PV bindings and every other
 specification field, plus backing identity and format, must still match. Active

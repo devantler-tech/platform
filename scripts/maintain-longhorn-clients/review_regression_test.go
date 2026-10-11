@@ -336,6 +336,120 @@ func TestEmptySelectorRequiresAuditedChartVersion(t *testing.T) {
 	}
 }
 
+func TestSameAttemptLegacyHealRestoresInterruptedPauses(t *testing.T) {
+	for _, variation := range []string{"prepared", "detached", "different-holder", "replaced-storage", "foreign-owner", "changed-spec", "might-have-published"} {
+		t.Run(variation, func(t *testing.T) {
+			a := fakeFixture()
+			e := testEngine(a)
+			ctx := context.Background()
+			if err := e.prepare(ctx); err != nil {
+				t.Fatal(err)
+			}
+			j, o, err := e.readJournal(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if variation == "prepared" {
+				j.Phase = "prepared"
+			}
+			j.PublicationNotStarted = variation != "might-have-published"
+			if err = e.writeJournal(ctx, j, o); err != nil {
+				t.Fatal(err)
+			}
+			// Heal checks out validated main in the same run attempt, not the
+			// failed merge-group source. The attempt is not terminal yet.
+			e.source = strings.Repeat("b", 40)
+			e.previousFinished = func(context.Context, journal) error {
+				t.Fatal("same-attempt heal queried terminal run status")
+				return errors.New("run is still active")
+			}
+			switch variation {
+			case "different-holder":
+				e.holder = "101.1"
+			case "replaced-storage":
+				fakeSet(a.objects[fakeKey("persistentvolumeclaims", "*", "")][0], "/metadata/uid", "replacement", false)
+			case "foreign-owner":
+				fakeSet(a.objects[fakeKey("deployment", "crossview", "crossview-postgres")][0], "/metadata/annotations/"+escape(ownerKey), "foreign", false)
+			case "changed-spec":
+				fakeSet(a.objects[fakeKey("helmrelease", "crossview", "crossview")][0], "/spec/values", object{"changed": true}, false)
+			case "might-have-published":
+				// Corrected clients can safely restore consumers, but never
+				// authorize publishing the old selector afterward.
+				if _, err = a.command(ctx, nil, "patch", "kustomization", "infrastructure-controllers", "-n", "flux-system"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writes := a.writes
+			err = e.legacyPublicationSafe(ctx)
+			allowed := variation == "prepared" || variation == "detached"
+			if (err == nil) != allowed {
+				t.Fatalf("same-attempt heal verdict for %s: %v", variation, err)
+			}
+			if allowed || variation == "might-have-published" {
+				current, _, readErr := e.readJournal(ctx)
+				if readErr != nil || current.Phase != "restored" || current.Source != e.source || e.provenReleased(ctx, current) != nil {
+					t.Fatalf("heal left its original resources paused: phase=%s source=%s err=%v", current.Phase, current.Source, readErr)
+				}
+			} else if a.writes != writes {
+				t.Fatal("unsafe heal mutated resources")
+			}
+		})
+	}
+}
+
+func TestMigrationArmingUsesPinnedChartDiskSetting(t *testing.T) {
+	b, err := os.ReadFile("../../k8s/providers/hetzner/infrastructure/controllers/longhorn/helm-release.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var shipping object
+	if err = yaml.Unmarshal(b, &shipping); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"createDefaultDiskLabeledNodes", "createDefaultDiskOnLabeledNodesOnly"} {
+		t.Run(key, func(t *testing.T) {
+			manifest := clone(shipping)
+			settings := val(manifest, "spec", "values", "defaultSettings").(object)
+			delete(settings, "createDefaultDiskLabeledNodes")
+			delete(settings, "createDefaultDiskOnLabeledNodesOnly")
+			settings["systemManagedComponentsNodeSelector"] = ""
+			settings[key] = true
+			val(manifest, "spec", "values", "longhornManager").(object)["nodeSelector"] = object{}
+			t.Chdir(t.TempDir())
+			path := "k8s/providers/hetzner/infrastructure/controllers/longhorn"
+			if err = os.MkdirAll(path, 0700); err != nil {
+				t.Fatal(err)
+			}
+			b, err = yaml.Marshal(manifest)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = os.WriteFile(filepath.Join(path, "helm-release.yaml"), b, 0600); err != nil {
+				t.Fatal(err)
+			}
+			active, err := armed()
+			valid := key == "createDefaultDiskLabeledNodes"
+			if active != valid || (err == nil) != valid {
+				t.Fatalf("chart setting %s: active=%v err=%v", key, active, err)
+			}
+		})
+	}
+}
+
+func TestFluxBaselineFollowsMaintenanceQuiescence(t *testing.T) {
+	b, err := os.ReadFile("../../.github/actions/deploy-prod/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(b)
+	prepare := strings.Index(text, "id: longhorn_client_prepare")
+	baseline := strings.Index(text, "name: 📋 Record the Flux control-plane baseline")
+	publish := strings.Index(text, "id: publish_platform_manifest")
+	if prepare < 0 || baseline < prepare || publish < baseline {
+		t.Fatal("baseline must follow completed maintenance controller rolls and precede publication")
+	}
+}
+
 func TestClientReadinessExcludesOnlyDeclaredRunnerOnlyNodes(t *testing.T) {
 	for _, variation := range []string{"runner-only", "no-taint", "wrong-value", "wrong-effect", "wrong-pool", "no-label", "unhealthy"} {
 		t.Run(variation, func(t *testing.T) {

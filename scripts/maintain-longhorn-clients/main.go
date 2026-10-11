@@ -1040,13 +1040,17 @@ func main() {
 		}
 		selector := val(desired, "spec", "values", "defaultSettings", "systemManagedComponentsNodeSelector")
 		if selector != "" {
-			live, readErr := e.c.read(ctx, "settings.longhorn.io", "longhorn-system", "system-managed-components-node-selector")
-			if selector != restrictedSelector || readErr != nil || val(live, "value") != selector {
+			if selector != restrictedSelector {
 				fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD: unsafe selector rollback refused")
 				os.Exit(1)
 			}
 			if err = e.legacyPublicationSafe(ctx); err != nil {
 				fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD:", err)
+				os.Exit(1)
+			}
+			live, readErr := e.c.read(ctx, "settings.longhorn.io", "longhorn-system", "system-managed-components-node-selector")
+			if readErr != nil || val(live, "value") != selector {
+				fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD: unsafe selector rollback refused")
 				os.Exit(1)
 			}
 		}
