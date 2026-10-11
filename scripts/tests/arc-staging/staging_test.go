@@ -401,9 +401,17 @@ func TestRecoveryMetadataProofSurroundsPublicationAndReconciliation(t *testing.T
 			reconcile = index
 		}
 		for stage, target := range map[string]*int{"before-publish": &before, "after-reconcile": &after} {
-			if value["run"] == "go run ./scripts/guard-arc-recovery "+stage {
+			command := "go run ./scripts/guard-arc-recovery " + stage
+			run, _ := value["run"].(string)
+			for _, line := range strings.Split(run, "\n") {
+				if strings.TrimSpace(line) != command {
+					continue
+				}
 				if _, conditional := value["if"]; conditional {
 					t.Fatal("recovery proof must not be skipped")
+				}
+				if *target != -1 {
+					t.Fatal("recovery proof must run exactly once per stage")
 				}
 				*target = index
 			}
