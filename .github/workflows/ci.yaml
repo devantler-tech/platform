@@ -824,6 +824,7 @@ jobs:
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
+              - 'scripts/tests/test-velero-cancellation-release.sh'
               - 'scripts/tests/test-coroot-reservation-refresh.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               - 'scripts/tests/test-cronjob-failure-alert.sh'
@@ -2153,6 +2154,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-velero-data-mover-resources.sh
           bash scripts/tests/test-velero-data-mover-resources.sh
+
+      - name: 💾 Validate the released Velero cancellation fix
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-velero-cancellation-release.sh
+          bash scripts/tests/test-velero-cancellation-release.sh
 
       - name: 🔄 Validate the Coroot reservation refresh
         if: needs.changes.outputs.k8s == 'true'
