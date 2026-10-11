@@ -26,6 +26,12 @@ spec:
             # if its manifest is removed; immutable changes need an operator plan.
             kustomize.toolkit.fluxcd.io/prune: disabled
         spec:
+          priorityClassName: hcloud-volume-workload
+          # CNPG compares environments, unlike priorityClassName. This stable
+          # marker rolls old Pods without relying on a restart timestamp.
+          env:
+            - name: PLATFORM_DATABASE_PRIORITY_CLASS
+              value: hcloud-volume-workload
           # Quorum-based SYNCHRONOUS replication, same rationale as umami-db: a
           # longhorn instance-manager restart that kills the primary must not be
           # able to fork the timeline and strand the old primary on a pg_rewind
