@@ -48,7 +48,10 @@ resource ownership and retained storage still match. It can resume a fully
 detached publication, or restore and restart the recorded transition. Live or
 unknown previous writers remain HOLD. An unchanged legacy selector can be
 republished after positively unstarted publication only once release of every
-original resource and backing identity is proven.
+original resource and backing identity is proven. A later storage expansion
+does not block that released-state proof: claim/PV bindings and every other
+specification field, plus backing identity and format, must still match. Active
+or interrupted maintenance continues to require the original capacity too.
 
 The initial migration revision must change no production manifest except the
 Longhorn selector manifest. A combined consumer upgrade is rejected before any

@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"time"
@@ -329,9 +330,57 @@ func preserved(before, current []object) error {
 	return nil
 }
 
+// A restored operation does not own later storage expansions. Compare every
+// other claim/PV spec field, including the full claim and physical CSI binding.
+func storageBindingsPreserved(before, current []object) error {
+	m, err := index(current)
+	if err != nil {
+		return err
+	}
+	for _, old := range before {
+		o := m[key(old)]
+		if o == nil || str(o, "kind") != str(old, "kind") || str(o, "metadata", "uid") != str(old, "metadata", "uid") {
+			return errors.New("retained storage identity changed")
+		}
+		var path []string
+		switch str(old, "kind") {
+		case "PersistentVolumeClaim":
+			path = []string{"resources", "requests", "storage"}
+		case "PersistentVolume":
+			path = []string{"capacity", "storage"}
+		default:
+			return errors.New("unknown retained storage kind")
+		}
+		if !reflect.DeepEqual(withoutField(val(old, "spec"), path), withoutField(val(o, "spec"), path)) {
+			return errors.New("retained storage binding or non-capacity specification changed")
+		}
+	}
+	return nil
+}
+
+// Copy just the projected path: comparison must not mutate the live inventory
+// or the journal snapshot that active recovery still checks strictly.
+func withoutField(value any, path []string) any {
+	m, ok := value.(map[string]any)
+	if !ok || len(path) == 0 {
+		return value
+	}
+	copy := maps.Clone(m)
+	if len(path) == 1 {
+		delete(copy, path[0])
+	} else if child, exists := copy[path[0]]; exists {
+		copy[path[0]] = withoutField(child, path[1:])
+	}
+	return copy
+}
+
 // Attachment targets are controller-owned and must change when consumers move.
 // Retain physical backing identity and data format, not the old worker placement.
 func backingPreserved(before, current []object) error {
+	return backingFieldsPreserved(before, current, []string{"size", "dataEngine", "frontend", "fromBackup", "backingImage"})
+}
+
+func backingFieldsPreserved(before, current []object, fields []string) error {
 	m, e := index(current)
 	if e != nil {
 		return e
@@ -344,7 +393,7 @@ func backingPreserved(before, current []object) error {
 		if o == nil || str(o, "metadata", "uid") != str(old, "metadata", "uid") {
 			return errors.New("backing volume identity changed")
 		}
-		for _, field := range []string{"size", "dataEngine", "frontend", "fromBackup", "backingImage"} {
+		for _, field := range fields {
 			if !reflect.DeepEqual(val(o, "spec", field), val(old, "spec", field)) {
 				return errors.New("backing volume data format changed")
 			}

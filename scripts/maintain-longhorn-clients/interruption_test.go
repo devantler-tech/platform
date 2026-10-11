@@ -74,7 +74,7 @@ func TestReleasedInterruptedJournalDoesNotRequireManualDeletion(t *testing.T) {
 }
 
 func TestTerminalInterruptedHolderCanResumeOnlyOriginalPausedIdentities(t *testing.T) {
-	for _, state := range []string{"terminal", "running", "unknown", "foreign-spec", "foreign-owner", "replaced-storage"} {
+	for _, state := range []string{"terminal", "running", "unknown", "foreign-spec", "foreign-owner", "replaced-storage", "resized-storage"} {
 		t.Run(state, func(t *testing.T) {
 			a := fakeFixture()
 			e := testEngine(a)
@@ -96,6 +96,8 @@ func TestTerminalInterruptedHolderCanResumeOnlyOriginalPausedIdentities(t *testi
 				fakeSet(a.objects[fakeKey("deployment", "crossview", "crossview-postgres")][0], "/metadata/annotations/"+escape(ownerKey), "foreign", false)
 			case "replaced-storage":
 				fakeSet(a.objects[fakeKey("persistentvolumeclaims", "*", "")][0], "/metadata/uid", "replacement", false)
+			case "resized-storage":
+				fakeSet(a.objects[fakeKey("persistentvolumeclaims", "*", "")][0], "/spec/resources/requests/storage", "2Gi", false)
 			}
 			writes := a.writes
 			err := e.prepare(ctx)

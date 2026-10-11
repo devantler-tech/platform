@@ -170,7 +170,18 @@ func (e engine) legacyPublicationSafe(ctx context.Context) error {
 		if err = e.provenReleased(ctx, j); err != nil {
 			return err
 		}
-		return e.storagePreserved(ctx, j)
+		s, err := e.collect(ctx)
+		if err != nil {
+			return err
+		}
+		if err = storageBindingsPreserved(j.Claims, s.claims); err != nil {
+			return err
+		}
+		if err = storageBindingsPreserved(j.PVs, s.pvs); err != nil {
+			return err
+		}
+		// Capacity is no longer owned; backing identity and format still are.
+		return backingFieldsPreserved(j.Volumes, s.volumes, []string{"dataEngine", "frontend", "fromBackup", "backingImage"})
 	}
 	return nil
 }

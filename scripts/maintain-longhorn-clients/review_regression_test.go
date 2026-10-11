@@ -147,6 +147,66 @@ func TestRestoredJournalAllowsUnownedConsumerUpgrade(t *testing.T) {
 	}
 }
 
+func TestReleasedJournalAllowsStorageResizeButRetainsBindings(t *testing.T) {
+	for _, drift := range []string{"resize", "claim-replaced", "claim-deleted", "claim-rebound", "pv-rebound", "pv-replaced", "claim-ref-changed", "other-request-changed", "backing-replaced", "format-changed", "deleting"} {
+		t.Run(drift, func(t *testing.T) {
+			a := fakeFixture()
+			claim := a.objects[fakeKey("persistentvolumeclaims", "*", "")][0]
+			pv := a.objects[fakeKey("persistentvolumes", "", "")][0]
+			volume := a.objects[fakeKey("volumes.longhorn.io", "longhorn-system", "")][0]
+			fakeSet(claim, "/spec/resources/requests/storage", "1Gi", false)
+			fakeSet(pv, "/spec/capacity/storage", "1Gi", false)
+			fakeSet(volume, "/spec/size", "1073741824", false)
+			e := testEngine(a)
+			e.publicationNotStarted = true
+			ctx := context.Background()
+			if err := e.prepare(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.restore(ctx); err != nil {
+				t.Fatal(err)
+			}
+			// An unrelated reviewed expansion happened after this operation released ownership.
+			fakeSet(claim, "/spec/resources/requests/storage", "2Gi", false)
+			fakeSet(pv, "/spec/capacity/storage", "2Gi", false)
+			fakeSet(volume, "/spec/size", "2147483648", false)
+			switch drift {
+			case "claim-replaced":
+				fakeSet(claim, "/metadata/uid", "replacement", false)
+			case "claim-deleted":
+				a.objects[fakeKey("persistentvolumeclaims", "*", "")] = a.objects[fakeKey("persistentvolumeclaims", "*", "")][1:]
+			case "claim-rebound":
+				fakeSet(claim, "/spec/volumeName", "different-volume", false)
+			case "pv-rebound":
+				fakeSet(pv, "/spec/csi/volumeHandle", "different-backing", false)
+			case "pv-replaced":
+				fakeSet(pv, "/metadata/uid", "replacement", false)
+			case "claim-ref-changed":
+				fakeSet(pv, "/spec/claimRef/uid", "different-claim", false)
+			case "other-request-changed":
+				fakeSet(claim, "/spec/resources/requests/unrelated", "2", false)
+			case "backing-replaced":
+				fakeSet(volume, "/metadata/uid", "replacement", false)
+			case "format-changed":
+				fakeSet(volume, "/spec/dataEngine", "v2", false)
+			case "deleting":
+				fakeSet(claim, "/metadata/deletionTimestamp", "2026-10-11T00:00:00Z", false)
+			}
+			writes := a.writes
+			err := e.legacyPublicationSafe(ctx)
+			if (err == nil) != (drift == "resize") {
+				t.Fatalf("released storage proof for %s: %v", drift, err)
+			}
+			if a.writes != writes {
+				t.Fatal("released storage proof mutated resources")
+			}
+			if str(claim, "spec", "resources", "requests", "storage") != "2Gi" || str(pv, "spec", "capacity", "storage") != "2Gi" {
+				t.Fatal("comparison mutated live capacities")
+			}
+		})
+	}
+}
+
 func TestProductionMaintenanceCheckoutContainsPublicationBase(t *testing.T) {
 	checked := 0
 	for _, path := range []string{"../../.github/workflows/ci.yaml", "../../.github/workflows/cd.yaml"} {
