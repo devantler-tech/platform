@@ -403,6 +403,9 @@ func (e engine) clientsReady(ctx context.Context) (bool, error) {
 		if !condition(n, "Ready") {
 			return false, nil
 		}
+		if runnerOnlyNode(n) {
+			continue
+		}
 		workers++
 		registered := false
 		for _, d := range items(byName[str(n, "metadata", "name")], "spec", "drivers") {
@@ -436,6 +439,21 @@ func (e engine) clientsReady(ctx context.Context) (bool, error) {
 		}
 	}
 	return true, nil
+}
+
+// The declared runner-only pool deliberately cannot schedule Longhorn clients.
+// Require all three signals: a similarly named ordinary worker must still prove
+// CSI registration, and unhealthy workers are rejected before this exception.
+func runnerOnlyNode(n object) bool {
+	if !strings.HasPrefix(str(n, "metadata", "name"), "autoscale-arc-runners-") || str(n, "metadata", "labels", "platform.devantler.tech/ci-runner") != "enabled" {
+		return false
+	}
+	for _, t := range items(n, "spec", "taints") {
+		if str(t, "key") == "platform.devantler.tech/ci-runner" && str(t, "value") == "enabled" && str(t, "effect") == "NoSchedule" {
+			return true
+		}
+	}
+	return false
 }
 
 func (e engine) prepare(ctx context.Context) error {
@@ -926,7 +944,7 @@ func armed() (bool, error) {
 	}
 	// This migration belongs only to the audited chart, not every future release.
 	if str(o, "spec", "chart", "spec", "version") != "1.13.0" {
-		return false, nil
+		return false, errors.New("empty-selector maintenance requires the audited Longhorn chart version")
 	}
 	if val(o, "spec", "values", "defaultSettings", "createDefaultDiskLabeledNodes") != true || !reflect.DeepEqual(val(o, "spec", "values", "longhornManager", "nodeSelector"), object{}) {
 		return false, errors.New("desired selector migration differs from the reviewed chart contract")
