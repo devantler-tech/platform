@@ -62,17 +62,29 @@ later="$(jq -r --arg module "${module}" '
   (.packageRules | map((.matchPackageNames // []) | index($module) != null) | index(true)) as $at |
   [.packageRules[$at + 1:][] |
     select(has("allowedVersions") or has("enabled")) |
-    select((has("matchPackageNames") or has("matchPackagePatterns") or has("matchFileNames") or has("matchDatasources")) | not) |
-    select(((.matchManagers // ["gomod"]) | index("gomod")) != null)] | length
+    select(((.matchManagers // ["gomod"]) | index("gomod")) != null) |
+    select(
+      ((.matchPackageNames // []) | length) == 0 or
+      any(.matchPackageNames[];
+        . == $module or (test("^[A-Za-z0-9@][A-Za-z0-9._/@-]*$") | not))
+    )] | length
 ' "${renovate_config}")" || fail 'cannot inspect the rules after the Helm SDK pin'
+# matchPackageNames accepts globs, regexes and negations. Only a later rule that
+# names other packages literally is provably unrelated; anything else may match.
 [[ "${later}" == '0' ]] ||
-  fail "a later broad gomod rule sets allowedVersions or enabled and would override the ${module} pin"
+  fail "a later rule that may match ${module} sets allowedVersions or enabled and would override the pin"
 
 # Every Go module that requires the SDK must already be on the required version.
+# grep exits 1 on no match and 2 on a read error; neither may read as a pass.
+go_mods="$(grep -rl --include=go.mod -F "${module} " "${MODULE_ROOT:-${root_dir}/scripts}")" ||
+  fail "found no go.mod that requires ${module}, so nothing was compared with the controller's ${required}"
+checked=0
 while IFS= read -r go_mod; do
   version="$(awk -v module="${module}" '$1 == module { print $2 } $1 == "require" && $2 == module { print $3 }' "${go_mod}")"
   [[ "${version}" == "${required}" ]] ||
-    fail "${go_mod#"${root_dir}"/} requires ${module} ${version}, not the controller's ${required}"
-done < <(grep -rl --include=go.mod -F "${module} " "${root_dir}/scripts")
+    fail "${go_mod#"${root_dir}"/} requires ${module} '${version}', not the controller's ${required}"
+  checked=$((checked + 1))
+done <<<"${go_mods}"
+[[ "${checked}" -ge 1 ]] || fail "compared no go.mod with the controller's ${required}"
 
 printf 'PASS: Renovate holds %s at %s, the version %s requires\n' "${module}" "${required}" "${build_script#"${root_dir}"/}"
