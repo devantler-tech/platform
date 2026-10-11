@@ -30,6 +30,7 @@ type journal struct {
 	ResourceHolder                 string
 	PublicationNotStarted          bool
 	Clusters, Claims, PVs, Volumes []object
+	Schedules                      []object
 	Nodes                          []object // Unsupported pre-publication experiment; reject on read.
 	Release, Deployment            object
 	Extra                          []workload
@@ -90,7 +91,7 @@ func (c client) patch(ctx context.Context, kind string, o object, p []object) er
 	if e != nil {
 		return e
 	}
-	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--patch", string(b), "-o", "name"}
+	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--field-manager=platform-longhorn-client-maintenance", "--patch", string(b), "-o", "name"}
 	_, e = c.command(ctx, nil, a...)
 	if e != nil && strings.Contains(e.Error(), "(Conflict)") {
 		return fmt.Errorf("%w: %w", errPatchConflict, e)
@@ -139,6 +140,7 @@ func released(old, current object) bool {
 
 func journalResources(j journal) []object {
 	r := append([]object{}, j.Clusters...)
+	r = append(r, j.Schedules...)
 	r = append(r, j.Deployment, j.Release)
 	for _, w := range j.Extra {
 		r = append(r, w.Deployment, w.Release)
@@ -157,8 +159,8 @@ func ownershipReleased(old, current object) bool {
 		return false
 	}
 	switch str(old, "kind") {
-	case "HelmRelease":
-		return reflect.DeepEqual(val(current, "spec", "suspend"), val(old, "spec", "suspend"))
+	case "HelmRelease", "ScheduledBackup", "Schedule":
+		return reflect.DeepEqual(val(current, "spec", suspensionField(old)), val(old, "spec", suspensionField(old)))
 	case "Deployment":
 		return reflect.DeepEqual(val(current, "spec", "replicas"), val(old, "spec", "replicas"))
 	case "Cluster":
@@ -185,7 +187,7 @@ func (e engine) collect(ctx context.Context) (inventory, error) {
 		kind, ns string
 		dst      *[]object
 	}{
-		{"clusters.postgresql.cnpg.io", "*", &s.clusters}, {"pods", "*", &s.pods}, {"persistentvolumeclaims", "*", &s.claims}, {"persistentvolumes", "", &s.pvs}, {"volumes.longhorn.io", "longhorn-system", &s.volumes}, {"backups.postgresql.cnpg.io", "*", &s.backups}, {"replicasets", "*", &s.replicasets},
+		{"clusters.postgresql.cnpg.io", "*", &s.clusters}, {"pods", "*", &s.pods}, {"persistentvolumeclaims", "*", &s.claims}, {"persistentvolumes", "", &s.pvs}, {"volumes.longhorn.io", "longhorn-system", &s.volumes}, {"backups.postgresql.cnpg.io", "*", &s.backups}, {"scheduledbackups.postgresql.cnpg.io", "*", &s.schedules}, {"replicasets", "*", &s.replicasets},
 	} {
 		a, err := e.c.list(ctx, q.kind, q.ns)
 		if err != nil {
@@ -193,7 +195,11 @@ func (e engine) collect(ctx context.Context) (inventory, error) {
 		}
 		*q.dst = a
 	}
-	var err error
+	veleroSchedules, err := e.c.list(ctx, "schedules.velero.io", "velero")
+	if err != nil {
+		return s, err
+	}
+	s.schedules = append(s.schedules, veleroSchedules...)
 	s.release, err = e.c.read(ctx, "helmrelease", "crossview", "crossview")
 	if err != nil {
 		return s, err
@@ -279,6 +285,10 @@ func resourceKind(o object) string {
 	switch str(o, "kind") {
 	case "Cluster":
 		return "clusters.postgresql.cnpg.io"
+	case "ScheduledBackup":
+		return "scheduledbackups.postgresql.cnpg.io"
+	case "Schedule":
+		return "schedules.velero.io"
 	case "HelmRelease":
 		return "helmrelease"
 	case "Deployment":
@@ -297,8 +307,8 @@ func pausePatch(o object, holder string) []object {
 	switch str(o, "kind") {
 	case "Cluster":
 		p = append(p, object{"op": "add", "path": "/metadata/annotations/" + escape(hibernateKey), "value": "on"})
-	case "HelmRelease":
-		p = append(p, object{"op": "add", "path": "/spec/suspend", "value": true})
+	case "HelmRelease", "ScheduledBackup", "Schedule":
+		p = append(p, object{"op": "add", "path": "/spec/" + suspensionField(o), "value": true})
 	case "Deployment":
 		p = append(p, object{"op": "replace", "path": "/spec/replicas", "value": 0})
 	}
@@ -306,6 +316,15 @@ func pausePatch(o object, holder string) []object {
 }
 
 func (e engine) detached(ctx context.Context, j journal) (bool, error) {
+	if err := e.provePaused(ctx, journalResources(j), resourceHolder(j)); err != nil {
+		return false, err
+	}
+	if err := e.scheduleIdentities(ctx, j.Schedules); err != nil {
+		return false, err
+	}
+	if idle, err := e.backupsIdle(ctx); err != nil || !idle {
+		return false, errors.New("backup activity is not quiescent at publication")
+	}
 	volumes, err := e.c.list(ctx, "volumes.longhorn.io", "longhorn-system")
 	if err != nil {
 		return false, err
@@ -549,6 +568,9 @@ func (e engine) prepare(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if idle, err := e.backupsIdle(ctx); err != nil || !idle {
+		return errors.New("active or unknown backup requires completion before maintenance")
+	}
 	hpas, err := e.c.list(ctx, "horizontalpodautoscalers", "*")
 	if err != nil {
 		return err
@@ -586,7 +608,7 @@ func (e engine) prepare(ctx context.Context) error {
 	if err = e.replicaExclusion(ctx); err != nil {
 		return err
 	}
-	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Release: p.release, Deployment: p.deployment, Extra: p.extra}
+	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Schedules: p.schedules, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Release: p.release, Deployment: p.deployment, Extra: p.extra}
 	if previous != nil {
 		if err = e.provenReleased(ctx, *previous); err != nil {
 			return err
@@ -596,9 +618,10 @@ func (e engine) prepare(ctx context.Context) error {
 		return err
 	}
 	// CNPG 1.30.1 intentionally refuses to begin hibernation while unhealthy.
-	// Require full health before any maintenance write, then reassert it here.
+	// Require full health before any maintenance write, then reassert it after
+	// backup schedules and in-flight reconciliation have been fenced.
 	// Never borrow node labels: failure cleanup must not remove an in-use client.
-	if err = e.poll(ctx, "database health before hibernation", func(c context.Context) (bool, error) {
+	healthy := func(c context.Context) (bool, error) {
 		clusters, err := e.c.list(c, "clusters.postgresql.cnpg.io", "*")
 		if err != nil {
 			return false, err
@@ -609,7 +632,7 @@ func (e engine) prepare(ctx context.Context) error {
 		byKey, _ := index(clusters)
 		for _, old := range j.Clusters {
 			v := byKey[key(old)]
-			if !condition(v, "Ready") || num(v, "status", "readyInstances") != num(v, "spec", "instances") || str(v, "status", "phase") != "Cluster in healthy state" || str(v, "status", "currentPrimary") != str(old, "status", "currentPrimary") || str(v, "status", "targetPrimary") != str(v, "status", "currentPrimary") {
+			if !condition(v, "Ready") || !archiveHealthy(v) || (len(items(v, "spec", "plugins")) > 0 && !condition(v, "LastBackupSucceeded")) || num(v, "status", "readyInstances") != num(v, "spec", "instances") || str(v, "status", "phase") != "Cluster in healthy state" || str(v, "status", "currentPrimary") != str(old, "status", "currentPrimary") || str(v, "status", "targetPrimary") != str(v, "status", "currentPrimary") {
 				return false, nil
 			}
 		}
@@ -635,14 +658,36 @@ func (e engine) prepare(ctx context.Context) error {
 			}
 		}
 		return true, nil
-	}); err != nil {
-		return err
 	}
 	// Journal before every write; resourceVersion+UID tests prevent race adoption.
 	resources := []object{p.release}
 	for _, w := range p.extra {
 		resources = append(resources, w.Release)
 	}
+	resources = append(resources, p.schedules...)
+	for _, old := range resources {
+		if err = e.patchOwned(ctx, old, false); err != nil {
+			return err
+		}
+	}
+	// Suspension does not cancel a reconcile already executing. Retire both
+	// pre-pause processes while live reconciliation exclusions remain owned.
+	if err = e.quiesceReconcilers(ctx, resources); err != nil {
+		return err
+	}
+	if err = e.poll(ctx, "database backup completion", e.backupsIdle); err != nil {
+		return err
+	}
+	if err = e.poll(ctx, "database health before hibernation", healthy); err != nil {
+		return err
+	}
+	if err = e.scheduleIdentities(ctx, j.Schedules); err != nil {
+		return err
+	}
+	if err = e.provePaused(ctx, resources, e.holder); err != nil {
+		return err
+	}
+	resources = nil
 	resources = append(resources, p.deployment)
 	for _, w := range p.extra {
 		resources = append(resources, w.Deployment)
@@ -655,6 +700,10 @@ func (e engine) prepare(ctx context.Context) error {
 	}
 	if err = e.poll(ctx, "all-volume detachment", func(c context.Context) (bool, error) { return e.detached(c, j) }); err != nil {
 		return err
+	}
+	e.sleep(10 * time.Second)
+	if ok, err := e.detached(ctx, j); err != nil || !ok {
+		return errors.New("publication boundary lost detachment or an owned pause")
 	}
 	j, o, err := e.ownerJournal(ctx)
 	if err != nil {
@@ -735,6 +784,7 @@ func (e engine) restore(ctx context.Context) error {
 	for _, w := range j.Extra {
 		resources = append(resources, w.Release)
 	}
+	resources = append(resources, j.Schedules...)
 	for _, old := range resources {
 		restorer := e
 		restorer.holder = resourceHolder(j)
@@ -880,7 +930,7 @@ func (e engine) verify(ctx context.Context) error {
 		byKey, _ := index(s.clusters)
 		for _, old := range j.Clusters {
 			current := byKey[key(old)]
-			if !unpaused(current) || num(current, "status", "readyInstances") != num(current, "spec", "instances") || !condition(current, "Ready") || !condition(current, "ContinuousArchiving") || str(current, "status", "systemID") != str(old, "status", "systemID") || str(current, "status", "currentPrimary") != str(old, "status", "currentPrimary") || str(current, "status", "targetPrimary") != str(current, "status", "currentPrimary") {
+			if !unpaused(current) || num(current, "status", "readyInstances") != num(current, "spec", "instances") || !condition(current, "Ready") || !archiveHealthy(current) || len(items(current, "spec", "plugins")) > 0 && !condition(current, "LastBackupSucceeded") || str(current, "status", "systemID") != str(old, "status", "systemID") || str(current, "status", "currentPrimary") != str(old, "status", "currentPrimary") || str(current, "status", "targetPrimary") != str(current, "status", "currentPrimary") {
 				return false, nil
 			}
 		}
@@ -895,6 +945,9 @@ func (e engine) verify(ctx context.Context) error {
 			if str(w.Deployment, "metadata", "uid") != str(old.Deployment, "metadata", "uid") || str(w.Release, "metadata", "uid") != str(old.Release, "metadata", "uid") || !reflect.DeepEqual(val(w.Deployment, "spec"), val(old.Deployment, "spec")) || !reflect.DeepEqual(val(w.Release, "spec"), val(old.Release, "spec")) || !unpaused(w.Deployment) || !unpaused(w.Release) || num(w.Deployment, "status", "readyReplicas") != num(w.Deployment, "spec", "replicas") {
 				return false, nil
 			}
+		}
+		if err = e.provenReleased(c, j); err != nil {
+			return false, err
 		}
 		return e.clientsReady(c)
 	}

@@ -25,6 +25,7 @@ var clusterTargets = []struct {
 
 type inventory struct {
 	clusters, pods, claims, pvs, volumes, backups, replicasets []object
+	schedules                                                  []object
 	release, deployment                                        object
 	extra                                                      []workload
 }
@@ -34,6 +35,7 @@ var extraTargets = []struct{ ns, release, deployment, layer string }{{"actual-bu
 
 type plan struct {
 	clusters, claims, pvs, volumes []object
+	schedules                      []object
 	release, deployment            object
 	extra                          []workload
 }
@@ -101,8 +103,42 @@ func unpaused(o object) bool {
 	return str(o, "metadata", "annotations", ownerKey) == "" && str(o, "metadata", "annotations", hibernateKey) != "on" && str(o, "metadata", "annotations", "cnpg.io/reconciliationLoop") == "" && str(o, "metadata", "annotations", reconcileKey) == ""
 }
 
+func archiveHealthy(c object) bool {
+	if val(c, "spec", "backup", "barmanObjectStore") != nil {
+		return condition(c, "ContinuousArchiving")
+	}
+	for _, plugin := range items(c, "spec", "plugins") {
+		if val(plugin, "isWALArchiver") == true && val(plugin, "enabled") != false {
+			return condition(c, "ContinuousArchiving")
+		}
+	}
+	return true // No WAL archiver is configured; this is not backup evidence.
+}
+
+func scheduleInScope(o object, clusters []object) bool {
+	if meta(o) && str(o, "kind") == "Schedule" {
+		return str(o, "apiVersion") == "velero.io/v1" && key(o) == "velero/velero-daily-full"
+	}
+	if !meta(o) || str(o, "kind") != "ScheduledBackup" {
+		return false
+	}
+	for _, c := range clusters {
+		if str(o, "metadata", "namespace") == str(c, "metadata", "namespace") && str(o, "spec", "cluster", "name") == str(c, "metadata", "name") {
+			return true
+		}
+	}
+	return false
+}
+
+func suspensionField(o object) string {
+	if str(o, "kind") == "Schedule" {
+		return "paused"
+	}
+	return "suspend"
+}
+
 func buildPlan(s inventory, now time.Time) (plan, error) {
-	p := plan{clusters: s.clusters, release: s.release, deployment: s.deployment, extra: s.extra}
+	p := plan{clusters: s.clusters, schedules: s.schedules, release: s.release, deployment: s.deployment, extra: s.extra}
 	clusters, err := index(s.clusters)
 	if err != nil {
 		return p, err
@@ -112,7 +148,7 @@ func buildPlan(s inventory, now time.Time) (plan, error) {
 	}
 	for _, t := range clusterTargets {
 		c := clusters[t.ns+"/"+t.name]
-		if c == nil || !unpaused(c) || num(c, "spec", "instances") != t.instances || num(c, "status", "readyInstances") != t.instances || !condition(c, "Ready") || str(c, "status", "phase") != "Cluster in healthy state" || str(c, "status", "systemID") == "" || str(c, "status", "currentPrimary") == "" || str(c, "status", "currentPrimary") != str(c, "status", "targetPrimary") || !condition(c, "ContinuousArchiving") {
+		if c == nil || !unpaused(c) || num(c, "spec", "instances") != t.instances || num(c, "status", "readyInstances") != t.instances || !condition(c, "Ready") || str(c, "status", "phase") != "Cluster in healthy state" || str(c, "status", "systemID") == "" || str(c, "status", "currentPrimary") == "" || str(c, "status", "currentPrimary") != str(c, "status", "targetPrimary") || !archiveHealthy(c) {
 			return p, errors.New("database primary, archiving or maintenance ownership is unproven")
 		}
 		ready := false
@@ -128,6 +164,9 @@ func buildPlan(s inventory, now time.Time) (plan, error) {
 		// successful backups for every cluster that does declare one; never invent
 		// a backup or count another cluster incarnation's catalogue as protection.
 		if len(items(c, "spec", "plugins")) > 0 {
+			if !condition(c, "LastBackupSucceeded") {
+				return p, errors.New("latest database backup success is unproven")
+			}
 			fresh := false
 			for _, b := range s.backups {
 				if str(b, "metadata", "namespace") != t.ns || str(b, "spec", "cluster", "name") != t.name {
@@ -145,6 +184,14 @@ func buildPlan(s inventory, now time.Time) (plan, error) {
 			if !fresh {
 				return p, errors.New("fresh database backup is unproven")
 			}
+		}
+	}
+	if _, err := index(s.schedules); err != nil {
+		return p, err
+	}
+	for _, schedule := range s.schedules {
+		if !scheduleInScope(schedule, s.clusters) || !unpaused(schedule) || val(schedule, "spec", suspensionField(schedule)) == true {
+			return p, errors.New("scheduled backup scope or pause ownership is unproven")
 		}
 	}
 	if !meta(s.release) || key(s.release) != "crossview/crossview" || !unpaused(s.release) || val(s.release, "spec", "suspend") == true || str(s.release, "metadata", "labels", "kustomize.toolkit.fluxcd.io/name") != "apps" || str(s.release, "metadata", "labels", "kustomize.toolkit.fluxcd.io/namespace") != "flux-system" || !meta(s.deployment) || key(s.deployment) != "crossview/crossview-postgres" || !unpaused(s.deployment) || num(s.deployment, "spec", "replicas") != 1 || num(s.deployment, "status", "readyReplicas") != 1 || str(s.deployment, "metadata", "annotations", "meta.helm.sh/release-name") != "crossview" || str(s.deployment, "metadata", "annotations", "meta.helm.sh/release-namespace") != "crossview" {
@@ -266,7 +313,7 @@ func restorePatch(before, current object, holder string, deployment bool) ([]obj
 		copied["replicas"] = float64(0)
 		expected = copied
 	}
-	if str(before, "kind") == "HelmRelease" {
+	if str(before, "kind") == "HelmRelease" || str(before, "kind") == "ScheduledBackup" || str(before, "kind") == "Schedule" {
 		copied := object{}
 		spec, ok := expected.(map[string]any)
 		if !ok {
@@ -275,7 +322,7 @@ func restorePatch(before, current object, holder string, deployment bool) ([]obj
 		for k, v := range spec {
 			copied[k] = v
 		}
-		copied["suspend"] = true
+		copied[suspensionField(before)] = true
 		expected = copied
 	}
 	if !reflect.DeepEqual(expected, val(current, "spec")) {
@@ -304,12 +351,13 @@ func restorePatch(before, current object, holder string, deployment bool) ([]obj
 	if deployment {
 		patch = append(patch, object{"op": "replace", "path": "/spec/replicas", "value": val(before, "spec", "replicas")})
 	}
-	if str(before, "kind") == "HelmRelease" {
-		old := val(before, "spec", "suspend")
+	if str(before, "kind") == "HelmRelease" || str(before, "kind") == "ScheduledBackup" || str(before, "kind") == "Schedule" {
+		field := suspensionField(before)
+		old := val(before, "spec", field)
 		if old == nil {
-			patch = append(patch, object{"op": "remove", "path": "/spec/suspend"})
+			patch = append(patch, object{"op": "remove", "path": "/spec/" + field})
 		} else {
-			patch = append(patch, object{"op": "replace", "path": "/spec/suspend", "value": old})
+			patch = append(patch, object{"op": "replace", "path": "/spec/" + field, "value": old})
 		}
 	}
 	patch = append(patch, object{"op": "remove", "path": "/metadata/annotations/" + escape(ownerKey)})

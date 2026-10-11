@@ -48,6 +48,14 @@ func journalScope(j journal) error {
 			return errors.New("journal database scope differs")
 		}
 	}
+	if _, err := index(j.Schedules); err != nil {
+		return errors.New("journal scheduled backup identities are malformed")
+	}
+	for _, schedule := range j.Schedules {
+		if !scheduleInScope(schedule, j.Clusters) {
+			return errors.New("journal scheduled backup scope differs")
+		}
+	}
 	if !matches(j.Release, "HelmRelease", "crossview", "crossview") || !matches(j.Deployment, "Deployment", "crossview", "crossview-postgres") {
 		return errors.New("journal consumer scope differs")
 	}

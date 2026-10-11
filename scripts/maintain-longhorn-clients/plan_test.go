@@ -20,7 +20,7 @@ func fixture() inventory {
 	for _, target := range clusterTargets {
 		c := resource("Cluster", target.ns, target.name)
 		c["spec"] = object{"instances": target.instances, "storage": object{"storageClass": "longhorn-wffc"}}
-		c["status"] = object{"readyInstances": target.instances, "phase": "Cluster in healthy state", "currentPrimary": target.name + "-1", "targetPrimary": target.name + "-1", "systemID": "123", "conditions": []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}}}
+		c["status"] = object{"readyInstances": target.instances, "phase": "Cluster in healthy state", "currentPrimary": target.name + "-1", "targetPrimary": target.name + "-1", "systemID": "123", "conditions": []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}, object{"type": "LastBackupSucceeded", "status": "True"}}}
 		s.clusters = append(s.clusters, c)
 		p := resource("Pod", target.ns, target.name+"-1")
 		p["metadata"].(object)["ownerReferences"] = []any{object{"kind": "Cluster", "uid": str(c, "metadata", "uid"), "name": target.name, "controller": true}}
@@ -39,7 +39,7 @@ func fixture() inventory {
 		volume["status"] = object{"state": "attached", "robustness": "healthy"}
 		s.volumes = append(s.volumes, volume)
 		if target.name != "backstage-db" {
-			c["spec"].(object)["plugins"] = []any{object{"name": "barman-cloud.cloudnative-pg.io"}}
+			c["spec"].(object)["plugins"] = []any{object{"name": "barman-cloud.cloudnative-pg.io", "isWALArchiver": true, "enabled": true}}
 			b := resource("Backup", target.ns, "backup-"+target.name)
 			b["spec"] = object{"cluster": object{"name": target.name}, "method": "plugin"}
 			b["status"] = object{"phase": "completed", "stoppedAt": "2026-10-10T03:30:00Z", "pluginMetadata": object{"clusterUID": str(c, "metadata", "uid")}}
@@ -92,7 +92,7 @@ func TestPlanFailsBeforeAnyWriteOnUnknownOrUnsafeScope(t *testing.T) {
 		},
 		"primary switch": func(s *inventory) { s.clusters[0]["status"].(object)["targetPrimary"] = "different" },
 		"missing archive": func(s *inventory) {
-			s.clusters[0]["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}}
+			s.clusters[1]["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "LastBackupSucceeded", "status": "True"}}
 		},
 		"unready cluster": func(s *inventory) {
 			s.clusters[0]["status"].(object)["conditions"] = []any{object{"type": "ContinuousArchiving", "status": "True"}}

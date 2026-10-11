@@ -49,7 +49,7 @@ func fakeFixture() *fakeAPI {
 	for _, c := range s.clusters {
 		c["status"].(object)["readyInstances"] = val(c, "spec", "instances")
 		c["status"].(object)["phase"] = "Cluster in healthy state"
-		c["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}}
+		c["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}, object{"type": "LastBackupSucceeded", "status": "True"}}
 		a.objects[fakeKey("clusters.postgresql.cnpg.io", str(c, "metadata", "namespace"), str(c, "metadata", "name"))] = []object{c}
 	}
 	for _, v := range s.volumes {
@@ -86,6 +86,10 @@ func fakeFixture() *fakeAPI {
 	}
 	a.objects[fakeKey("nodes.longhorn.io", "longhorn-system", "")] = []object{}
 	admissionFixture(a)
+	scheduledFixture(a)
+	controllerFixture(a)
+	a.objects[fakeKey("backups.velero.io", "velero", "")] = []object{}
+	a.objects[fakeKey("schedules.velero.io", "velero", "")] = []object{}
 	return a
 }
 func (a *fakeAPI) stopped() bool {
@@ -200,6 +204,7 @@ func (a *fakeAPI) command(_ context.Context, input []byte, args ...string) ([]by
 			}
 		}
 		o := objects[0]
+		restartBefore := str(o, "spec", "template", "metadata", "annotations", quiesceKey)
 		for _, op := range ops {
 			if str(op, "path") == "/metadata/resourceVersion" && !reflect.DeepEqual(val(o, "metadata", "resourceVersion"), op["value"]) {
 				return nil, errors.New("Error from server (Conflict): resourceVersion changed")
@@ -229,8 +234,11 @@ func (a *fakeAPI) command(_ context.Context, input []byte, args ...string) ([]by
 				o["status"].(object)["conditions"] = append(itemsAsAny(items(o, "status", "conditions")), object{"type": hibernateKey, "status": "True"})
 			} else {
 				o["status"].(object)["readyInstances"] = val(o, "spec", "instances")
-				o["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}}
+				o["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}, object{"type": "LastBackupSucceeded", "status": "True"}}
 			}
+		}
+		if kind == "deployment" && ns == "flux-system" && restartBefore != str(o, "spec", "template", "metadata", "annotations", quiesceKey) {
+			fakeControllerRollout(a, o)
 		}
 		return []byte("patched"), nil
 	}

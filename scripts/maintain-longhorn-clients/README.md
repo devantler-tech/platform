@@ -17,17 +17,24 @@ The protected production deploy invokes four phases:
    and fresh backups where a backup plugin is configured. Every database must
    already be fully healthy and every node Ready before any maintenance write.
    An unhealthy database requires recovery first; the procedure never borrows
-   client labels. It journals the original identities, suspends each affected Helm owner, pauses
-   the three storage-consuming Deployments, and uses supported CNPG hibernation.
-   Publication is refused until every volume is detached and no active Pod uses
-   the retained claims.
+   client labels. It journals the original identities and suspends each affected
+   Helm owner, database backup schedule, and the full-platform backup schedule.
+   Active or unknown backups block maintenance. Suspension does not cancel an
+   executing Flux reconcile, so both reconcilers must roll to new Ready processes
+   and every old process must be gone, including terminating Pods. The owned
+   pauses and backup health are rechecked before the three storage-consuming
+   Deployments pause and supported CNPG hibernation begins. Publication requires
+   two separated proofs of every volume detached, no active Pod using retained
+   claims, unchanged schedule identities, no active backup, and every owned pause
+   still held.
 2. `after-publish` requests infrastructure-controller reconciliation without
    waiting for temporarily suspended consumers. It checks client rollout, CSI
    registration, the corrected disk setting, and compute-worker replica
    exclusion, then restores owned service pauses.
 3. `verify` follows the existing full Flux gates. Two separated samples must
-   prove database redundancy and archiving, unchanged primary and storage
-   identities, retained detached recovery storage, and ready resumed consumers.
+   prove database redundancy and configured archiving, successful database
+   backups, unchanged primary and storage identities, retained detached recovery
+   storage, ready resumed consumers, and restoration of backup schedules.
 4. `restore` also runs on failure or cancellation. It attempts every owned
    restoration, even when another fails, and refuses replaced resources,
    foreign ownership, or intervening specification changes. Once publication
@@ -63,7 +70,9 @@ The command never force-deletes Pods and never deletes claims, volumes,
 databases, or backup objects. Supported CNPG hibernation gracefully terminates
 database Pods while retaining their claims.
 Backstage currently has no configured backup plugin; this procedure does not
-claim otherwise.
+claim otherwise or require an unconfigured WAL archiver's condition. Configured
+archivers and backup plugins retain their health checks. Restoring the original
+backup schedule is not proof that a full-platform backup completed.
 
 Fail-closed admission and the existing storage policies must still exclude every
 compute worker from replica placement before hibernation and after migration.
