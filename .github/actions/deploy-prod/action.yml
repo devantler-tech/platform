@@ -296,6 +296,8 @@ runs:
       # Its durable journal precedes every owned pause; it never deletes storage.
       # Both production entrypoints already hold the prod-deploy concurrency lock.
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: go run ./scripts/maintain-longhorn-clients before-publish
 
     # Publish the GitOps manifests (stage → sign → attest → promote → reconcile) BEFORE

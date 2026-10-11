@@ -39,7 +39,21 @@ The journal is created before any mutation. A completed migration is not
 repeated. An unfinished pause requires its owning run's restoration. A fully
 restored journal can be superseded only after live proof that all original
 resources are unpaused with unchanged identities and specifications, and a
-UID/resourceVersion-guarded journal replacement. The command never force-deletes Pods and never deletes claims, volumes,
+UID/resourceVersion-guarded journal replacement. An interrupted writer can be
+taken over only when GitHub proves its exact run attempt completed and live
+resource ownership and retained storage still match. It can resume a fully
+detached publication, or restore and restart the recorded transition. Live or
+unknown previous writers remain HOLD. An unchanged legacy selector can be
+republished after positively unstarted publication only once release of every
+original resource and backing identity is proven.
+
+The initial migration revision must change no production manifest except the
+Longhorn selector manifest. A combined consumer upgrade is rejected before any
+pause rather than verifying it against stale pre-publication specifications.
+Fail-closed admission and every existing autoscaled Longhorn Node's storage
+exclusion are checked even when the compute pool is empty or already labeled.
+
+The command never force-deletes Pods and never deletes claims, volumes,
 databases, or backup objects. Supported CNPG hibernation gracefully terminates
 database Pods while retaining their claims.
 Backstage currently has no configured backup plugin; this procedure does not

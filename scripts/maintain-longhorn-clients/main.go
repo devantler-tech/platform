@@ -27,6 +27,8 @@ type command func(context.Context, []byte, ...string) ([]byte, error)
 type client struct{ command command }
 type journal struct {
 	Holder, Source, Phase                 string
+	ResourceHolder                        string
+	PublicationNotStarted                 bool
 	Clusters, Claims, PVs, Volumes, Nodes []object
 	Release, Deployment                   object
 	Extra                                 []workload
@@ -38,6 +40,8 @@ type engine struct {
 	sleep                 func(time.Duration)
 	wait                  time.Duration
 	publicationNotStarted bool
+	previousFinished      func(context.Context, journal) error
+	revisionSafe          func(context.Context) error
 }
 
 func (c client) read(ctx context.Context, kind, ns, name string) (object, error) {
@@ -202,6 +206,9 @@ func (e engine) readJournal(ctx context.Context) (journal, object, error) {
 	if err != nil || !meta(o) || str(o, "metadata", "annotations", ownerKey) != j.Holder || j.Holder == "" || j.Source == "" {
 		return j, o, errors.New("maintenance journal is malformed")
 	}
+	if err = journalScope(j); err != nil {
+		return j, o, err
+	}
 	return j, o, nil
 }
 func (e engine) writeJournal(ctx context.Context, j journal, o object) error {
@@ -311,7 +318,7 @@ func (e engine) detached(ctx context.Context, j journal) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		if str(c, "metadata", "uid") != str(old, "metadata", "uid") || str(c, "metadata", "annotations", ownerKey) != e.holder || !reflect.DeepEqual(val(c, "spec"), val(old, "spec")) {
+		if str(c, "metadata", "uid") != str(old, "metadata", "uid") || str(c, "metadata", "annotations", ownerKey) != resourceHolder(j) || !reflect.DeepEqual(val(c, "spec"), val(old, "spec")) {
 			return false, errors.New("database maintenance identity changed")
 		}
 		if !condition(c, hibernateKey) {
@@ -457,8 +464,8 @@ func runnerOnlyNode(n object) bool {
 }
 
 func (e engine) prepare(ctx context.Context) error {
-	// Unfinished pauses are never adopted. A restored journal can be superseded
-	// only after proving release of every original identity and under CAS.
+	// Interrupted holders require terminal-owner and live identity proof before
+	// CAS takeover; a live or unknown holder remains a hard stop.
 	journals, err := e.c.list(ctx, "configmaps", journalNS)
 	if err != nil {
 		return err
@@ -479,7 +486,7 @@ func (e engine) prepare(ctx context.Context) error {
 				break
 			}
 			if j.Phase != "complete" {
-				return errors.New("unfinished maintenance journal requires its owning run's restoration")
+				return e.recoverInterrupted(ctx, j, original)
 			}
 			if err = e.poll(ctx, "completed client placement", e.clientsReady); err != nil {
 				return fmt.Errorf("completed maintenance drifted; a new reviewed repair is required: %w", err)
@@ -492,6 +499,14 @@ func (e engine) prepare(ctx context.Context) error {
 		return err
 	}
 	if val(setting, "value") == "" {
+		if previous != nil {
+			if e.revisionSafe == nil {
+				return errors.New("published revision proof is missing")
+			}
+			if err = e.revisionSafe(ctx); err != nil {
+				return err
+			}
+		}
 		if err = e.poll(ctx, "migrated client placement", e.clientsReady); err != nil {
 			return err
 		}
@@ -506,6 +521,12 @@ func (e engine) prepare(ctx context.Context) error {
 	}
 	if val(setting, "value") != restrictedSelector {
 		return errors.New("live selector is outside the reviewed migration")
+	}
+	if e.revisionSafe == nil {
+		return errors.New("published revision proof is missing")
+	}
+	if err = e.revisionSafe(ctx); err != nil {
+		return err
 	}
 	s, err := e.collect(ctx)
 	if err != nil {
@@ -555,54 +576,10 @@ func (e engine) prepare(ctx context.Context) error {
 			compute = append(compute, n)
 		}
 	}
-	if len(compute) > 0 {
-		// Prove the admission mutation without creating any object, and require
-		// fail-closed Longhorn Node admission before borrowing the legacy label.
-		webhook, err := e.c.read(ctx, "mutatingwebhookconfiguration", "", "kyverno-resource-mutating-webhook-cfg")
-		if err != nil {
-			return err
-		}
-		failClosed := false
-		for _, w := range items(webhook, "webhooks") {
-			if str(w, "failurePolicy") != "Fail" {
-				continue
-			}
-			for _, r := range items(w, "rules") {
-				groups, _ := val(r, "apiGroups").([]any)
-				resources, _ := val(r, "resources").([]any)
-				operations, _ := val(r, "operations").([]any)
-				versions, _ := val(r, "apiVersions").([]any)
-				has := func(a []any, s string) bool {
-					for _, v := range a {
-						if v == s {
-							return true
-						}
-					}
-					return false
-				}
-				if has(groups, "longhorn.io") && has(resources, "nodes") && has(operations, "CREATE") && has(operations, "UPDATE") && has(versions, "v1beta2") {
-					failClosed = true
-				}
-			}
-		}
-		if !failClosed {
-			return errors.New("compute-worker replica exclusion is not fail-closed")
-		}
-		probe := object{"apiVersion": "longhorn.io/v1beta2", "kind": "Node", "metadata": object{"name": "autoscale-client-preflight-" + strings.ReplaceAll(e.holder, ".", "-"), "namespace": "longhorn-system"}, "spec": object{"allowScheduling": true, "evictionRequested": false, "disks": object{}}}
-		b, err := json.Marshal(probe)
-		if err != nil {
-			return err
-		}
-		b, err = e.c.command(ctx, b, "create", "--dry-run=server", "-f", "-", "-o", "json")
-		if err != nil {
-			return err
-		}
-		var result object
-		if json.Unmarshal(b, &result) != nil || val(result, "spec", "allowScheduling") != false || val(result, "spec", "evictionRequested") != true {
-			return errors.New("admission did not exclude replica storage")
-		}
+	if err = e.replicaExclusion(ctx); err != nil {
+		return err
 	}
-	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", Clusters: p.clusters, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Nodes: compute, Release: p.release, Deployment: p.deployment, Extra: p.extra}
+	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Nodes: compute, Release: p.release, Deployment: p.deployment, Extra: p.extra}
 	if previous != nil {
 		if err = e.provenReleased(ctx, *previous); err != nil {
 			return err
@@ -696,6 +673,7 @@ func (e engine) prepare(ctx context.Context) error {
 		return err
 	}
 	j.Phase = "detached"
+	j.PublicationNotStarted = false // The following publication may be partial.
 	return e.writeJournal(ctx, j, o)
 }
 
@@ -723,13 +701,25 @@ func (e engine) restore(ctx context.Context) error {
 	if j.Holder != e.holder || j.Source != e.source {
 		return errors.New("restoration refuses a foreign journal")
 	}
+	if e.publicationNotStarted && !j.PublicationNotStarted {
+		// Persist this positive step-outcome proof before releasing resources.
+		// It is never inferred from a failed publication or the current selector.
+		j.PublicationNotStarted = true
+		if err = e.writeJournal(ctx, j, o); err != nil {
+			return err
+		}
+		j, o, err = e.ownerJournal(ctx)
+		if err != nil {
+			return err
+		}
+	}
 	// Publication can trigger asynchronous selector reconciliation even when
 	// after-publish fails. Never reattach consumers during that transition.
 	// A prepared journal (or positively skipped publication) has not exposed
 	// the candidate and can restore against the unchanged old selector.
 	if j.Phase != "restored" {
 		safe := e.clientsReady
-		if j.Phase == "prepared" || e.publicationNotStarted {
+		if j.PublicationNotStarted {
 			safe = func(c context.Context) (bool, error) {
 				setting, err := e.c.read(c, "settings.longhorn.io", "longhorn-system", "system-managed-components-node-selector")
 				if err != nil {
@@ -758,7 +748,9 @@ func (e engine) restore(ctx context.Context) error {
 		resources = append(resources, w.Release)
 	}
 	for _, old := range resources {
-		err := e.patchOwned(ctx, old, true)
+		restorer := e
+		restorer.holder = resourceHolder(j)
+		err := restorer.patchOwned(ctx, old, true)
 		if err != nil {
 			failures = append(failures, err)
 		}
@@ -992,7 +984,7 @@ func main() {
 		}
 		return stdout.Bytes(), nil
 	}
-	e := engine{c: client{command: cmd}, holder: run + "." + attempt, source: source, now: time.Now, sleep: time.Sleep, wait: 20 * time.Minute, publicationNotStarted: os.Getenv("LONGHORN_PUBLICATION_NOT_STARTED") == "true"}
+	e := engine{c: client{command: cmd}, holder: run + "." + attempt, source: source, now: time.Now, sleep: time.Sleep, wait: 20 * time.Minute, publicationNotStarted: os.Getenv("LONGHORN_PUBLICATION_NOT_STARTED") == "true", previousFinished: finishedAttempt, revisionSafe: func(ctx context.Context) error { return isolatedRevision(ctx, source) }}
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 	if !a {
@@ -1012,16 +1004,9 @@ func main() {
 				fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD: unsafe selector rollback refused")
 				os.Exit(1)
 			}
-			journals, readErr := e.c.list(ctx, "configmaps", journalNS)
-			if readErr != nil {
-				fmt.Fprintln(os.Stderr, "cannot establish prior maintenance state")
+			if err = e.legacyPublicationSafe(ctx); err != nil {
+				fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD:", err)
 				os.Exit(1)
-			}
-			for _, j := range journals {
-				if str(j, "metadata", "name") == journalName {
-					fmt.Fprintln(os.Stderr, "Longhorn client maintenance HOLD: legacy publication after maintenance began is refused")
-					os.Exit(1)
-				}
 			}
 		}
 		return

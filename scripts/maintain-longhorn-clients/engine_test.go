@@ -85,6 +85,7 @@ func fakeFixture() *fakeAPI {
 		a.objects[fakeKey("csinodes", "", "")] = append(a.objects[fakeKey("csinodes", "", "")], csi)
 	}
 	a.objects[fakeKey("nodes.longhorn.io", "longhorn-system", "")] = []object{}
+	admissionFixture(a)
 	return a
 }
 func (a *fakeAPI) stopped() bool {
@@ -267,7 +268,7 @@ func itemsAsAny(o []object) []any {
 }
 func testEngine(a *fakeAPI) engine {
 	now := time.Date(2026, 10, 10, 23, 0, 0, 0, time.UTC)
-	return engine{c: client{command: a.command}, holder: "100.1", source: strings.Repeat("a", 40), now: func() time.Time { return now }, sleep: func(d time.Duration) { now = now.Add(d) }, wait: 20 * time.Second}
+	return engine{c: client{command: a.command}, holder: "100.1", source: strings.Repeat("a", 40), now: func() time.Time { return now }, sleep: func(d time.Duration) { now = now.Add(d) }, wait: 20 * time.Second, revisionSafe: func(context.Context) error { return nil }}
 }
 
 func TestFullMaintenanceAndEveryPartialPauseRestore(t *testing.T) {

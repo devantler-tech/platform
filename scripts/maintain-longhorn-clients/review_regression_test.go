@@ -271,7 +271,7 @@ func TestDeletedTemporaryComputeNodeDoesNotStrandRestoredJournal(t *testing.T) {
 			}
 			n := resource("Node", "", "autoscale-retired")
 			n["spec"] = object{}
-			n["metadata"].(object)["labels"] = object{}
+			n["metadata"].(object)["labels"] = object{"ksail.io/autoscaled": "true"}
 			j.Nodes = []object{n}
 			if err = e.writeJournal(ctx, j, o); err != nil {
 				t.Fatal(err)
