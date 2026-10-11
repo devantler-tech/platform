@@ -238,27 +238,41 @@ while IFS= read -r node; do
     healthy
     start=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
     scheme=http; [[ "$destination_port" == 8204 ]] && scheme=https
+    stage=same-node-denial-challenge
     if quiet kc -n "$namespace" exec "$probe" -c probe -- curl --noproxy '*' --connect-timeout 3 --max-time 5 \
       --silent --show-error --output /dev/null "$scheme://$bao_ip:$destination_port/v1/sys/health?standbyok=true"; then fail reachable-openbao; else result=$?; fi
     [[ "$result" == 28 ]] || fail unproven-network-timeout
-    quiet kc -n "$namespace" exec "$probe" -c probe -- test -f /tmp/ready
+    stage=same-node-probe-liveness
+    # quiet redirects an inherited ERR trap too. Report the failure outside
+    # that redirection, preserving the command's exit status.
+    quiet kc -n "$namespace" exec "$probe" -c probe -- test -f /tmp/ready || {
+      result=$?
+      printf 'ARC transport: FAIL at %s\n' "$stage" >&2
+      exit "$result"
+    }
     end=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
+    stage=same-node-observer-collection
     kc -n kube-system exec "$agent" -c cilium-agent -- hubble observe --server unix:///var/run/cilium/hubble.sock --timeout 5s \
       --since "$start" --until "$end" --from-ip "$source_ip" --from-pod "$namespace/$probe" --to-ip "$bao_ip" \
       --to-port "$destination_port" --protocol tcp --verdict DROPPED --drop-reason-desc POLICY_DENIED --output jsonpb >"$scratch/flows"
     [[ ! -s "$scratch/kubectl-error" ]] || fail observer-diagnostics
+    stage=same-node-evidence-validation
     "$scratch/evidence" denial --pod "$probe" --source "$source_ip" --destination "$bao_ip" --port "$destination_port" \
       --node "$cluster/$node" --since "$start" --until "$end" <"$scratch/flows"
     healthy
   done
+  stage=same-node-workload-bindings
   for binding in 'arc-runners probe' 'kube-system agent' 'openbao bao'; do
     read -r ns object <<<"$binding"
     name=$probe; [[ "$object" == agent ]] && name=$agent; [[ "$object" == bao ]] && name=openbao-2
     identity <"$scratch/$object.json" >"$scratch/before"
-    kc -n "$ns" get pod "$name" -o json | identity >"$scratch/after"
+    kc -n "$ns" get pod "$name" -o json >"$scratch/current-pod.json"
+    identity <"$scratch/current-pod.json" >"$scratch/after"
     cmp -s "$scratch/before" "$scratch/after" || fail workload-churn
   done
-  kc get node "$node" -o json | jq -ce '{uid:.metadata.uid,ready:[.status.conditions[]|select(.type=="Ready")|.status]}' >"$scratch/after"
+  stage=same-node-node-bindings
+  kc get node "$node" -o json >"$scratch/current-node.json"
+  jq -ce '{uid:.metadata.uid,ready:[.status.conditions[]|select(.type=="Ready")|.status]}' "$scratch/current-node.json" >"$scratch/after"
   jq -ce '{uid:.metadata.uid,ready:[.status.conditions[]|select(.type=="Ready")|.status]}' "$scratch/node.json" >"$scratch/before"
   cmp -s "$scratch/before" "$scratch/after" || fail node-churn
   cleanup_probe || { printf 'ARC transport: FAIL cleanup\n' >&2; exit 4; }

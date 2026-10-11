@@ -109,7 +109,9 @@ case "$args" in
     else cat "$PROOF_TEST_ROOT/policy.json"; fi ;;
   'get kustomization '*) printf '{"metadata":{"generation":1},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conditions":[{"type":"Ready","status":"True"}]}}' ;;
   'get service '*) printf '{"spec":{"selector":{"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"},"ports":[{"name":"arc-tls","port":8204,"targetPort":8204,"protocol":"TCP"}]}}' ;;
-  'get node '*) printf '{"metadata":{"uid":"node-uid","labels":{}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' ;;
+  'get node '*)
+    if [[ "${PROOF_CASE:-}" == node_read_failure && -e "$state/attempt" ]]; then printf 'private-error-sentinel\n' >&2; exit 23; fi
+    printf '{"metadata":{"uid":"node-uid","labels":{}},"status":{"conditions":[{"type":"Ready","status":"True"}]}}' ;;
   'get --raw '*)
     printf 'HTTP proxy positive control is not an admitted client identity\n' >&2; exit 99 ;;
   'get pods '*arc-role=runner*) : ;;
@@ -117,14 +119,19 @@ case "$args" in
     if [[ "${PROOF_CASE:-}" == stale_probe && ! -e "$state/created" ]]; then printf '{"items":[{}]}'; else printf '{"items":[]}'; fi ;;
   'get pods '*external-secrets*) printf '{"items":[{"metadata":{"uid":"eso-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.3","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"eso","ready":true,"restartCount":0,"containerID":"containerd://eso"}]}}]}' ;;
   'get pods '*k8s-app=cilium*) printf '{"items":[{"metadata":{"name":"cilium-a","uid":"agent-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.4","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"containerd://agent"}]}}]}' ;;
-  'get pod openbao-2 '*) printf '{"metadata":{"uid":"bao-uid"},"spec":{"nodeName":"node-a","containers":[{"name":"openbao"},{"name":"arc-tls-reload"}]},"status":{"podIP":"10.1.1.2","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"openbao","ready":true,"restartCount":0,"containerID":"containerd://bao"},{"name":"arc-tls-reload","ready":true,"restartCount":0,"containerID":"containerd://reload"}]}}' ;;
+  'get pod openbao-2 '*)
+    if [[ "${PROOF_CASE:-}" == bao_read_failure && -e "$state/attempt" ]]; then printf 'private-error-sentinel\n' >&2; exit 21; fi
+    printf '{"metadata":{"uid":"bao-uid"},"spec":{"nodeName":"node-a","containers":[{"name":"openbao"},{"name":"arc-tls-reload"}]},"status":{"podIP":"10.1.1.2","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"openbao","ready":true,"restartCount":0,"containerID":"containerd://bao"},{"name":"arc-tls-reload","ready":true,"restartCount":0,"containerID":"containerd://reload"}]}}' ;;
   'get ciliumendpoint openbao-2 '*)
     owner=bao-uid; [[ "${PROOF_CASE:-}" != identity_stale ]] || owner=replaced-bao-uid
     jq -n --arg owner "$owner" '{metadata:{ownerReferences:[{kind:"Pod",uid:$owner}]},status:{identity:{id:123,labels:["k8s:app.kubernetes.io/name=openbao","k8s:app.kubernetes.io/instance=openbao","k8s:io.kubernetes.pod.namespace=openbao","k8s:platform.devantler.tech/arc-transport=tls"]}}}' |
       if [[ "${PROOF_CASE:-}" == identity_ordinal_only ]]; then jq '.status.identity.labels |= map(select(. != "k8s:platform.devantler.tech/arc-transport=tls"))'; else cat; fi ;;
-  'get pod cilium-a '*) printf '{"metadata":{"uid":"agent-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.4","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"containerd://agent"}]}}' ;;
+  'get pod cilium-a '*)
+    if [[ "${PROOF_CASE:-}" == agent_read_failure ]]; then printf 'private-error-sentinel\n' >&2; exit 21; fi
+    printf '{"metadata":{"uid":"agent-uid"},"spec":{"nodeName":"node-a"},"status":{"podIP":"10.1.1.4","conditions":[{"type":"Ready","status":"True"}],"containerStatuses":[{"name":"cilium-agent","ready":true,"restartCount":0,"containerID":"containerd://agent"}]}}' ;;
   'get pod arc-transport-'*)
     [[ -e "$state/created" ]] || exit 0
+    if [[ "${PROOF_CASE:-}" == probe_read_failure && -e "$state/attempt" && "$args" != *--ignore-not-found* ]]; then printf 'private-error-sentinel\n' >&2; exit 21; fi
     if [[ "${PROOF_CASE:-}" == replacement && -e "$state/attempt" ]]; then jq '.metadata.uid="replacement-uid"' "$state/pod.json"; else cat "$state/pod.json"; fi ;;
   'replace --dry-run=server '*)
     file=${args##* -f }
@@ -163,6 +170,7 @@ case "$args" in
   'wait '*) : ;;
   'exec '*hubble\ status*) : ;;
   'exec '*hubble\ observe*)
+    if [[ "${PROOF_CASE:-}" == observer_failure ]]; then printf 'private-error-sentinel\n' >&2; exit 19; fi
     while [[ "$#" -gt 0 ]]; do
       case "$1" in --since) when=$2;; --to-port) port=$2;; esac; shift
     done
@@ -170,7 +178,8 @@ case "$args" in
     jq -n --arg reason "$reason" --arg when "$when" --argjson port "$port" '{flow:{verdict:"DROPPED",drop_reason_desc:$reason,traffic_direction:"EGRESS",time:$when,node_name:"prod/node-a",source:{namespace:"arc-runners",pod_name:"arc-transport-12345-1-1"},destination:{namespace:"openbao",pod_name:"openbao-2"},IP:{source:"10.1.1.1",destination:"10.1.1.2"},l4:{TCP:{destination_port:$port,flags:{SYN:true}}}}}'
     [[ "${PROOF_CASE:-}" != lost_events ]] || printf '\n{"lost_events":{}}\n' ;;
   'exec '*curl*) touch "$state/attempt"; [[ "${PROOF_CASE:-}" != reachable ]] || exit 0; [[ "${PROOF_CASE:-}" != cert_error ]] || exit 60; exit 28 ;;
-  'exec '*test*) : ;;
+  'exec '*test*)
+    if [[ "${PROOF_CASE:-}" == liveness_failure ]]; then printf 'private-error-sentinel\n' >&2; exit 17; fi ;;
   'delete --raw='*)
     [[ "${PROOF_CASE:-}" != cleanup_failure ]] || exit 1
     jq -e '.preconditions.uid == "probe-uid"' "${args##* -f }" >/dev/null
@@ -182,7 +191,7 @@ chmod +x "$scratch/bin/gh" "$scratch/bin/go" "$scratch/bin/curl" "$scratch/bin/k
 export PATH="$scratch/bin:$PATH"
 cases=0
 run_case() {
-  local name=$1 expected=$2 result=0
+  local name=$1 expected=$2 result=0 expected_phase=${3:-}
   rm -f "$scratch/state/"*
   if [[ "$name" == source_explicit_* ]]; then
     (cd "$scratch/source"; PROOF_CASE=$name bash "$script" --same-node) >"$scratch/output" 2>"$scratch/error" || result=$?
@@ -190,6 +199,12 @@ run_case() {
     PROOF_CASE=$name bash "$script" --same-node >"$scratch/output" 2>"$scratch/error" || result=$?
   fi
   [[ "$result" == "$expected" ]] || { printf 'FAIL %s: exit %s expected %s\n' "$name" "$result" "$expected"; cat "$scratch/error"; exit 1; }
+  if [[ -n "$expected_phase" ]]; then
+    grep -Fxq "ARC transport: FAIL at $expected_phase" "$scratch/error" || { printf 'FAIL %s: incorrect failure phase\n' "$name"; cat "$scratch/error"; exit 1; }
+    ! grep -Fq private-error-sentinel "$scratch/error" || { printf 'FAIL %s: private diagnostic leaked\n' "$name"; exit 1; }
+    grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output" || { printf 'FAIL %s: missing cleanup\n' "$name"; exit 1; }
+    [[ ! -e "$scratch/state/created" ]] || { printf 'FAIL %s: probe remained after cleanup\n' "$name"; exit 1; }
+  fi
   if [[ -f "$scratch/state/port-forward-pid" ]]; then
     local forward_pid
     forward_pid=$(cat "$scratch/state/port-forward-pid")
@@ -213,6 +228,14 @@ run_case() {
 }
 GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
 run_case healthy_denied 0
+run_case observer_failure 19 same-node-observer-collection
+run_case liveness_failure 17 same-node-probe-liveness
+run_case probe_read_failure 21 same-node-workload-bindings
+run_case agent_read_failure 21 same-node-workload-bindings
+run_case bao_read_failure 21 same-node-workload-bindings
+run_case node_read_failure 23 same-node-node-bindings
+run_case wrong_reason 1 same-node-evidence-validation
+run_case lost_events 1 same-node-evidence-validation
 run_case webhook_denied 0
 run_case source_explicit_false 0
 run_case source_explicit_drift 1
@@ -236,7 +259,7 @@ if grep -Fq private-error-sentinel "$scratch/error"; then
 fi
 grep -Fxq 'ARC transport: owned probe cleanup verified' "$scratch/output"
 [[ ! -e "$scratch/state/created" ]]
-for name in sealed split_health stale_probe admit_privilege api_failure api_validation_failure unrelated_privilege_denial wrong_node reachable cert_error wrong_reason lost_events \
+for name in sealed split_health stale_probe admit_privilege api_failure api_validation_failure unrelated_privilege_denial wrong_node reachable cert_error \
   listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
   listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override \
   listener_background_drift listener_existing_drift listener_unknown_field \
