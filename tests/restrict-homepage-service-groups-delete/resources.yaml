@@ -1,0 +1,40 @@
+---
+# A route whose group was retired from the allow-list in the same deploy.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-group
+  namespace: backstage
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Backstage
+    gethomepage.dev/group: A Retired Group
+spec:
+  hostnames:
+    - backstage.platform.devantler.tech
+---
+# A route that already violates the policy must stay deletable too.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: missing-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: whoami
+spec:
+  hostnames:
+    - whoami.platform.devantler.tech
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-retired-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: whoami
+    gethomepage.dev/group: A Retired Group
+spec:
+  rules:
+    - host: whoami.platform.devantler.tech
