@@ -1,0 +1,13 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: homepage
+  namespace: homepage
+spec:
+  interval: 10m
+  url: oci://ghcr.io/m0nsterrr/helm-charts/homepage
+  ref:
+    tag: 4.11.1
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
