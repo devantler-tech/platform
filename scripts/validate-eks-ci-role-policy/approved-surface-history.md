@@ -3373,19 +3373,36 @@ protected deployment and readback evidence.
 
 ## 2026-10-11 — Include the tenant database in the protected-priority rollout
 
-For #4649 and the review correction in #4650, the checksum-verified kubectl
-v1.36.2 / Kustomize v5.8.1 renderer measured one changed selected entry against
-the prior PR head `7bcabf3c0b5b405d0a9fb5f427ce330268f67ac8`: the Wedding
-Kustomization. Its full-object fingerprint is
-`e5fe861265fbfca61eef46487823290a5afa2378abb7fe9a6f2634e87965a0c7`,
-independently reproduced with canonical JSON and SHA-256. Its identity-bound
-ledger fingerprint changes from
-`dbb1fefbf97f8d4947b418ad604503cda9504f2e097b1d6ac5e0a8c8685e0a1c` to
-`de8835fcb45d0d39ee9e366587eb4a34de3598720957426237f156d9b2fdcd74`.
+For #4649 and the review corrections in #4650, the final source at
+`22e37f0ed880894dd0e27e002f6ffdf679735d29` changes two selected ledger entries
+against the PR base `7a62ba2adb2f9266eaa0f2796ca3d87b025964bf`, with none added
+or removed:
 
-The existing operational-protection patch now sets the storage workload
-priority and the same supported CNPG rolling-restart request used by the
-platform databases. The tenant delivery regression applies the rendered Flux
+- HelmRelease `crossview/crossview`: the identity-bound fingerprint changes
+  from `4e1e58c881413b308d488a91e732cdc7cb5fa43dfc8e92b51ab6ebb50e4d7a54`
+  to `af2a47b174fe83715da88c9f3f7af900916a17f38a089d5bbc1a4d9f336efb60`.
+  The existing durable PostgreSQL Deployment post-renderer now sets the
+  storage workload priority in its Pod template, which requests a rollout.
+- Kustomization `wedding-app/wedding-app`: the identity-bound fingerprint
+  changes from `dbb1fefbf97f8d4947b418ad604503cda9504f2e097b1d6ac5e0a8c8685e0a1c`
+  to `7ee82dc4494f585162e66b074d47a5e3e4427d85745ea7d68107a09d47798b3e`.
+  The platform-owned tenant patch sets the storage workload priority and a
+  stable CNPG environment marker, which rolls existing instances because
+  CNPG 1.30.1 compares environments but omits priorityClassName.
+
+The earlier single-Wedding candidate against PR head
+`7bcabf3c0b5b405d0a9fb5f427ce330268f67ac8` was superseded. Its full-object
+fingerprint `e5fe861265fbfca61eef46487823290a5afa2378abb7fe9a6f2634e87965a0c7`
+and ledger fingerprint `de8835fcb45d0d39ee9e366587eb4a34de3598720957426237f156d9b2fdcd74`
+are historical candidate values, not the final approvals.
+
+The complete production-authorization job in CI run 38112528896, job
+114391799409, passed on the final source using checksum-verified kubectl
+v1.36.2 / Kustomize v5.8.1. An independent local execution of the same complete
+validator with that checksum-verified renderer reproduced the committed
+ledger. The source and ledger diff names only the two changes above.
+
+The tenant delivery regression applies the rendered Flux
 patch list to an existing unprioritised tenant Cluster, rather than inferring
 coverage from the parent render. No IAM, RBAC, service account, source,
 credential, backup destination, storage identity or permission grant changes.
