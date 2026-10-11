@@ -87,6 +87,7 @@ func (c client) list(ctx context.Context, kind, ns string) ([]object, error) {
 	}
 	return r, nil
 }
+// patch transports the unchanged guarded JSON Patch through stdin and retains conflict classification.
 func (c client) patch(ctx context.Context, kind string, o object, p []object) error {
 	b, e := json.Marshal(p)
 	if e != nil {

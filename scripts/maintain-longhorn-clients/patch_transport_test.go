@@ -14,6 +14,7 @@ import (
 	"time"
 )
 
+// TestLargeJournalPatchUsesStdinAndPreservesCAS rejects argv transport and changed identity guards.
 func TestLargeJournalPatchUsesStdinAndPreservesCAS(t *testing.T) {
 	o := resource("ConfigMap", journalNS, journalName)
 	payload := strings.Repeat("retained-evidence-", 32000)
@@ -92,6 +93,7 @@ func TestNativeKubectlConsumesLargePatchAndRejectsWrongUID(t *testing.T) {
 	}
 }
 
+// TestStdinPatchKeepsConflictClassification preserves the caller's conflict error contract.
 func TestStdinPatchKeepsConflictClassification(t *testing.T) {
 	client := client{command: func(context.Context, []byte, ...string) ([]byte, error) {
 		return nil, errors.New("server rejected request (Conflict)")

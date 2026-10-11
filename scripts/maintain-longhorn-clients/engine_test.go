@@ -126,6 +126,7 @@ func fakeSet(o object, path string, v any, remove bool) {
 		m[k] = v
 	}
 }
+// command models the fixed maintenance commands, including stdin patch preconditions and injected failures.
 func (a *fakeAPI) command(_ context.Context, input []byte, args ...string) ([]byte, error) {
 	if args[0] == "patch" && args[1] == "kustomization" {
 		if a.failReconcile {
