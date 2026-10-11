@@ -29,7 +29,9 @@ run_case() {
   (cd "$scratch/repo" && PATH="$scratch/bin:$PATH" BASE_SHA="$base" RENDER_RECEIPT="$receipt" bash -e -o pipefail -c "$step") >"$scratch/output" 2>&1 || result=$?
   [[ "$result" == 0 ]] || fail "$name: workflow step failed"
   if [[ "$expected" == render ]]; then
-    [[ -f "$receipt" ]] && [[ "$(wc -l <"$receipt")" -eq 1 ]] || fail "$name: relevant change was not rendered exactly once"
+    if [[ ! -f "$receipt" ]] || [[ "$(wc -l <"$receipt")" -ne 1 ]]; then
+      fail "$name: relevant change was not rendered exactly once"
+    fi
   else
     [[ ! -e "$receipt" ]] || fail "$name: unrelated change pulled the chart"
   fi
