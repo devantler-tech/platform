@@ -29,11 +29,11 @@ yq -e '.spec.values.flags.watchSingleNamespace == "arc-runners" and
 }
 
 yq -e '.kind == "PodDisruptionBudget" and .metadata.namespace == "arc-systems" and
-  .spec.minAvailable == 1 and
+  .spec.maxUnavailable == 1 and .spec.minAvailable == null and
   .spec.selector.matchLabels."app.kubernetes.io/component" == "controller-manager" and
   .spec.selector.matchLabels."app.kubernetes.io/part-of" == "gha-rs-controller"' \
   "${base}/pod-disruption-budget.yaml" >/dev/null || {
-  printf 'FAIL: ARC controller must retain one replica during voluntary disruption\n' >&2
+  printf 'FAIL: ARC controller must allow one eviction without blocking a single-replica drain\n' >&2
   exit 1
 }
 
