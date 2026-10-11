@@ -49,7 +49,9 @@ type policySpec struct {
 
 type policy struct {
 	Metadata struct {
-		Namespace string `yaml:"namespace"`
+		Name        string            `yaml:"name"`
+		Namespace   string            `yaml:"namespace"`
+		Annotations map[string]string `yaml:"annotations"`
 	} `yaml:"metadata"`
 	Spec  policySpec   `yaml:"spec"`
 	Specs []policySpec `yaml:"specs"`
@@ -232,6 +234,7 @@ func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
 	}
 	var policies []policy
 	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
+	retainedNamespaces := 0
 	for {
 		var document struct {
 			Kind   string `yaml:"kind"`
@@ -245,6 +248,15 @@ func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
 		if document.Kind == "CiliumNetworkPolicy" && document.Metadata.Namespace == "backstage" {
 			policies = append(policies, document.policy)
 		}
+		if document.Kind == "Namespace" && document.Metadata.Name == "backstage" {
+			retainedNamespaces++
+			if document.Metadata.Annotations["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
+				t.Error("retained namespace must survive pruning until explicit data cleanup")
+			}
+		}
+	}
+	if retainedNamespaces != 1 {
+		t.Fatalf("rebuild cannot apply retained database policy: want one protected namespace, got %d", retainedNamespaces)
 	}
 	database := identity("backstage", "postgres", "database")
 	database["cnpg.io/cluster"] = "backstage-db"

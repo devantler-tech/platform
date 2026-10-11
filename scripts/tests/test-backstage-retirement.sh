@@ -29,7 +29,15 @@ for layer in bootstrap infrastructure/controllers infrastructure apps; do
   if [[ "${layer}" == apps ]]; then
     # Persistence protection keeps the retired database running until explicit
     # data retention and cleanup. Permit exactly its temporary control and
-    # replication policy, never the application or any broader access wiring.
+    # replication policy and protected namespace, never the application or any
+    # broader access wiring. The namespace must also exist on a fresh rebuild.
+    retained_namespace="$(jq -sc '[.[] | select(.kind == "Namespace" and .metadata.name == "backstage")]' <<< "${documents}")" ||
+      fail 'retained database namespace must decode'
+    jq -e '
+      length == 1 and .[0].apiVersion == "v1" and
+      .[0].metadata.annotations["kustomize.toolkit.fluxcd.io/prune"] == "disabled" and
+      .[0].metadata.labels["pod-security.kubernetes.io/enforce"] == "restricted"
+    ' <<< "${retained_namespace}" >/dev/null || fail 'retained database namespace is missing or unprotected'
     retained="$(jq -sc '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "backstage" and .metadata.name == "allow-retained-backstage-db")]' <<< "${documents}")" ||
       fail 'retained database policy must decode'
     jq -e '
@@ -43,7 +51,7 @@ for layer in bootstrap infrastructure/controllers infrastructure apps; do
         ]
       }
     ' <<< "${retained}" >/dev/null || fail 'retained database policy is missing or grants unexpected access'
-    documents="$(jq -c 'select(.kind != "CiliumNetworkPolicy" or .metadata.namespace != "backstage" or .metadata.name != "allow-retained-backstage-db")' <<< "${documents}")" ||
+    documents="$(jq -c 'select((.kind != "CiliumNetworkPolicy" or .metadata.namespace != "backstage" or .metadata.name != "allow-retained-backstage-db") and (.kind != "Namespace" or .metadata.name != "backstage"))' <<< "${documents}")" ||
       fail 'remaining production apps must decode'
   fi
   if grep -qi backstage <<< "${documents}"; then
