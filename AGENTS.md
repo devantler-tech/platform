@@ -211,11 +211,17 @@ record by hand; a record that is missing or malformed is a failed check, not a m
 unconditionally in the `changes` job: its first case validates the tree as committed, so it is the
 step that fails on a commit-only bump, on pull requests and in the merge group alike.
 
-That Renovate rule sets `minimumReleaseAge` to `0 days` for this one source. The age of a branch
+That Renovate rule sets `minimumReleaseAge` to `0 days` for this source. The age of a branch
 head is the age of its newest commit, so every upstream commit would restart the repository-wide
 cooldown, and a branch that moves at least weekly would never be proposed. Raising the PR adopts
 nothing: it cannot merge without the reviewed refresh. Expect a PR for every upstream commit, not
 only for CRD changes; a refresh that changes nothing but the record is the normal case.
+
+The Crossplane provider packages are the only other exception, for a different reason: neither
+`xpkg.upbound.io` nor `ghcr.io` gives Renovate a release date for them, and an undated release never
+clears the cooldown, so with it no provider update was ever proposed (#4754). Their rule also sets
+`0 days`. Keep it: provider updates are never automerged and cannot merge without the review, the
+signature check and the fingerprint re-approval that rule describes.
 
 ## Local Development Cluster
 
