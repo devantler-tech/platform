@@ -26,6 +26,13 @@ Rates come from Hetzner's [server price list][servers],
 load balancers are billed hourly up to their monthly caps. Budget from current
 public rates rather than assuming a legacy price will survive a replacement.
 
+The production configuration also keeps one warm spare worker running, so new
+workloads can start without waiting for a server to boot. The autoscaler
+normally holds it on its smallest pool, a CX43: **€16.49/month** with its
+Primary IPv4, or **€103.42/month** for compute and networking as deployed.
+Remove the [capacity buffer](../k8s/providers/hetzner/infrastructure/overprovisioning/capacity-buffer.yaml)
+to run at the six-node figure, at the cost of slower scale-up.
+
 ## Add storage and usage
 
 The subtotal above deliberately excludes these variable costs:
@@ -37,14 +44,15 @@ The subtotal above deliberately excludes these variable costs:
   application data. Hetzner [block storage][volumes] is charged only for
   volumes created through the Hetzner CSI driver, at €0.044 per provisioned
   GB-month. As an illustration, three 50 GB volumes would add **€6.60/month**,
-  taking compute, networking, and that storage to **€93.53/month** before VAT
-  and the other items below. This is an example, not a claim about live volume
+  taking the six-node subtotal and that storage to **€93.53/month** before
+  VAT and the other items below. This is an example, not a claim about live volume
   sizes.
 - **Backups:** Cloudflare [R2 Standard storage][r2] costs $0.015 per GB-month
   beyond its free allowance; requests are charged separately. Retention,
   database write volume, and restore activity affect the bill. Check existing
   R2 usage before budgeting from a free allowance.
-- **Burst capacity:** autoscaled CX43 and CX53 workers are extra, billed for
+- **Burst capacity:** autoscaled CX43 and CX53 workers beyond the warm spare
+  are extra, billed for
   their lifetime. Their monthly server caps are €15.99 and €29.49 respectively,
   plus allocated IPv4. Pools can scale to zero; a retained resource still costs
   money even if its workloads are idle.

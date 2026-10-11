@@ -44,7 +44,8 @@ ships only core controllers by default and makes additional components opt-in.
   [`docs/oidc-kubectl.md`](oidc-kubectl.md)
 - **Policy & runtime security** — Kyverno, Kubescape, Tetragon; see
   [`docs/runtime-security.md`](runtime-security.md)
-- **Storage** — Longhorn (replicated block/RWX, prod via Hetzner CSI),
+- **Storage** — Longhorn (replicated block/RWX, stored on each worker's own
+  disk), Hetzner CSI (separately billed block volumes, prod only),
   CloudNativePG (PostgreSQL operator); see
   [`docs/rwx-storage.md`](rwx-storage.md)
 - **Autoscaling** — Cluster Autoscaler (nodes), SIG Descheduler (pod

@@ -41,7 +41,9 @@ environment differences, and how the layers fit together.
 The configured six-node Hetzner baseline is approximately **€87/month for
 compute and networking, excluding VAT** at public prices checked on
 11 October 2026. This includes three control-plane nodes, three workers, a load
-balancer, and IPv4 addresses—not just worker compute.
+balancer, and IPv4 addresses—not just worker compute. As deployed, the platform
+also keeps one warm spare worker for fast scale-up, which brings it to about
+**€103/month**.
 
 Storage, backups, domains, autoscaled capacity, and operator time are additional.
 See the [cost breakdown](docs/costs.md) for unit prices, a storage example, and
