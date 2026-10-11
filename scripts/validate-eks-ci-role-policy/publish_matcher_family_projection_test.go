@@ -60,6 +60,23 @@ spec:
 		}
 	}
 
+	// While a canonical publisher moves from one reviewed commit to the next, the matcher
+	// holds both (#4713). That pair is its own approval: it differs from either commit
+	// alone, it depends on which two and in which order, and the legacy set inside it
+	// still rotates freely.
+	moving := entry(family(pattern, "("+k+"|"+x+")"))
+	if moving == familyBaseline || moving == legacyBaseline || moving == entry(family(pattern, x)) {
+		t.Fatal("accepting a second canonical commit did not move the approval fingerprint")
+	}
+	if entry(family(pattern, "("+x+"|"+k+")")) == moving {
+		t.Fatal("reordering the two canonical commits did not move the approval fingerprint")
+	}
+	for _, ref := range []string{a, "(" + a + "|" + b + ")", "(" + a + "|" + b + "|" + c + ")"} {
+		if entry(family(ref, "("+k+"|"+x+")")) != moving {
+			t.Errorf("legacy signer set %q inside a two-commit canonical matcher moved the approval fingerprint", ref)
+		}
+	}
+
 	narrowed := family("("+a+"|"+b+")", k)
 	mutations := []struct{ name, subject string }{
 		{"different canonical commit", family("("+a+"|"+b+")", x)},
@@ -124,20 +141,28 @@ spec:
 // left unprojected still reaches the fingerprint whole, so only the return value shows
 // that the projection declined it rather than normalising part of it.
 func TestProjectPublishSubjectRefusesWhatItCannotPlace(t *testing.T) {
-	a, k := strings.Repeat("1", 40), strings.Repeat("6", 40)
+	a, k, x := strings.Repeat("1", 40), strings.Repeat("6", 40), strings.Repeat("7", 40)
 	const host = `^https://github\.com/devantler-tech/`
 	legacy := `actions/\.github/workflows/publish-manifests\.yaml@`
 	canonical := `|\.github/\.github/workflows/publish-manifests\.yaml@`
 	if _, ok := projectPublishSubject(host+"("+legacy+a+canonical+k+")$", "publish-manifests"); !ok {
 		t.Fatal("the rendered two-family subject was not recognised")
 	}
+	if _, ok := projectPublishSubject(host+"("+legacy+a+canonical+"("+k+"|"+x+"))$", "publish-manifests"); !ok {
+		t.Fatal("the rendered two-family subject holding two canonical commits was not recognised")
+	}
 	refused := map[string]string{
-		"canonical pattern":       host + "(" + legacy + a + canonical + "[0-9a-f]{40})$",
-		"canonical branch":        host + "(" + legacy + a + canonical + "refs/heads/main)$",
-		"canonical short commit":  host + "(" + legacy + a + canonical + k[:39] + ")$",
-		"second canonical commit": host + "(" + legacy + a + canonical + k + canonical + k + ")$",
-		"legacy pattern":          host + "(" + legacy + "[0-9a-f]{40}" + canonical + k + ")$",
-		"no group suffix":         host + "(" + legacy + a + canonical + k + "$",
+		"canonical pattern":         host + "(" + legacy + a + canonical + "[0-9a-f]{40})$",
+		"canonical branch":          host + "(" + legacy + a + canonical + "refs/heads/main)$",
+		"canonical short commit":    host + "(" + legacy + a + canonical + k[:39] + ")$",
+		"canonical commit repeated": host + "(" + legacy + a + canonical + "(" + k + "|" + k + "))$",
+		"three canonical commits":   host + "(" + legacy + a + canonical + "(" + k + "|" + x + "|" + a + "))$",
+		"canonical set of one":      host + "(" + legacy + a + canonical + "(" + k + "))$",
+		"canonical pattern in set":  host + "(" + legacy + a + canonical + "(" + k + "|[0-9a-f]{40}))$",
+		"canonical wildcard in set": host + "(" + legacy + a + canonical + "(" + k + "|.*))$",
+		"second canonical commit":   host + "(" + legacy + a + canonical + k + canonical + k + ")$",
+		"legacy pattern":            host + "(" + legacy + "[0-9a-f]{40}" + canonical + k + ")$",
+		"no group suffix":           host + "(" + legacy + a + canonical + k + "$",
 	}
 	for name, subject := range refused {
 		if projected, ok := projectPublishSubject(subject, "publish-manifests"); ok {
