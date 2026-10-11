@@ -24,6 +24,11 @@ func resourceHolder(j journal) string {
 
 // Journal content is data, not authority to select arbitrary mutation targets.
 func journalScope(j journal) error {
+	// Temporary client-label borrowing was removed before this procedure shipped.
+	// Such a journal is outside the reviewed mutation scope, not cleanup authority.
+	if len(j.Nodes) != 0 {
+		return errors.New("temporary client-label journals are outside the reviewed maintenance scope")
+	}
 	holder := regexp.MustCompile(`^[1-9][0-9]*\.[1-9][0-9]*$`)
 	if !holder.MatchString(j.Holder) || !holder.MatchString(resourceHolder(j)) || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(j.Source) {
 		return errors.New("journal writer identity is malformed")
@@ -49,11 +54,6 @@ func journalScope(j journal) error {
 	for i, t := range extraTargets {
 		if !matches(j.Extra[i].Release, "HelmRelease", t.ns, t.release) || !matches(j.Extra[i].Deployment, "Deployment", t.ns, t.deployment) {
 			return errors.New("journal consumer scope differs")
-		}
-	}
-	for _, n := range j.Nodes {
-		if !meta(n) || str(n, "kind") != "Node" || str(n, "metadata", "namespace") != "" || !strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") || str(n, "metadata", "labels", "ksail.io/autoscaled") != "true" {
-			return errors.New("journal node scope differs")
 		}
 	}
 	for _, list := range [][]object{j.Claims, j.PVs, j.Volumes} {
@@ -89,9 +89,6 @@ func (e engine) recoverInterrupted(ctx context.Context, j journal, original obje
 	}
 	for _, old := range journalResources(j) {
 		current, err := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
-		if str(old, "kind") == "Node" && errors.Is(err, errResourceMissing) {
-			continue
-		}
 		if err != nil {
 			return err
 		}

@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -337,7 +336,7 @@ func TestFailureCleanupKeepsConsumersPausedDuringClientTransition(t *testing.T) 
 	}
 }
 
-func TestDeletedTemporaryComputeNodeDoesNotStrandRestoredJournal(t *testing.T) {
+func TestUnsupportedTemporaryNodeJournalRefusesDeletedOrReplacedTargets(t *testing.T) {
 	for _, replacement := range []bool{false, true} {
 		t.Run(fmt.Sprint(replacement), func(t *testing.T) {
 			a := fakeFixture()
@@ -371,64 +370,87 @@ func TestDeletedTemporaryComputeNodeDoesNotStrandRestoredJournal(t *testing.T) {
 				}
 				return a.command(ctx, input, args...)
 			}
+			writes := a.writes
 			err = e.restore(ctx)
-			if !replacement && err != nil {
-				t.Fatalf("deleted temporary node stranded cleanup: %v", err)
-			}
-			if replacement && err == nil {
-				t.Fatal("replacement node was adopted")
+			if err == nil || a.writes != writes {
+				t.Fatalf("unsupported node cleanup was adopted: writes=%d err=%v", a.writes-writes, err)
 			}
 		})
 	}
 }
 
-func TestReleasedNodeAllowsUnownedSpecDriftButNotOwnershipOrIdentityDrift(t *testing.T) {
-	for _, drift := range []string{"cordon-and-taint", "replacement", "foreign-owner", "temporary-label", "database-spec"} {
-		t.Run(drift, func(t *testing.T) {
+func TestHealthyMaintenanceNeverBorrowsComputeClientLabels(t *testing.T) {
+	for _, cancelled := range []bool{false, true} {
+		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
 			a := fakeFixture()
+			n := resource("Node", "", "autoscale-test")
+			n["metadata"].(object)["labels"] = object{"ksail.io/autoscaled": "true"}
+			n["spec"] = object{}
+			n["status"] = object{"conditions": []any{object{"type": "Ready", "status": "True"}}}
+			a.objects[fakeKey("nodes", "", "")] = append(a.objects[fakeKey("nodes", "", "")], n)
+			a.objects[fakeKey("node", "", "autoscale-test")] = []object{n}
 			e := testEngine(a)
+			e.publicationNotStarted = true
 			ctx := context.Background()
-			if err := e.prepare(ctx); err != nil {
+			nodeWrites := 0
+			e.c.command = func(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+				if args[0] == "patch" && (args[1] == "node" || args[1] == "nodes") {
+					nodeWrites++
+				}
+				return a.command(ctx, input, args...)
+			}
+			if cancelled {
+				a.failWrite = 3 // Cancel during a partial consumer pause.
+			}
+			err := e.prepare(ctx)
+			if cancelled != (err != nil) {
+				t.Fatalf("unexpected preparation result: %v", err)
+			}
+			if val(n, "metadata", "labels", "node.longhorn.io/create-default-disk") != nil || str(n, "metadata", "annotations", ownerKey) != "" {
+				t.Fatal("maintenance borrowed a compute client's label")
+			}
+			a.failWrite = 0
+			if err = e.restore(ctx); err != nil {
 				t.Fatal(err)
 			}
-			if err := e.afterPublish(ctx); err != nil {
-				t.Fatal(err)
-			}
-			j, _, err := e.readJournal(ctx)
-			if err != nil {
-				t.Fatal(err)
-			}
-			old := resource("Node", "", "autoscale-cancelled")
-			old["metadata"].(object)["labels"] = object{"ksail.io/autoscaled": "true"}
-			old["spec"] = object{"podCIDR": "10.0.0.0/24"}
-			j.Nodes = []object{old}
-			current := clone(old)
-			fakeSet(current, "/spec/unschedulable", true, false)
-			fakeSet(current, "/spec/taints", []any{object{"key": "ToBeDeletedByClusterAutoscaler", "value": "1", "effect": "NoSchedule"}}, false)
-			fakeSet(current, "/metadata/labels/node.longhorn.io~1create-default-disk", "true", false)
-			fakeSet(current, "/metadata/annotations/"+escape(ownerKey), e.holder, false)
-			a.objects[fakeKey("node", "", "autoscale-cancelled")] = []object{current}
-			wantSpec := clone(current)["spec"]
-			if err = e.patchOwned(ctx, old, true); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(val(current, "spec"), wantSpec) {
-				t.Fatal("restoration changed unowned Node spec")
-			}
-			switch drift {
-			case "replacement":
-				fakeSet(current, "/metadata/uid", "replacement", false)
-			case "foreign-owner":
-				fakeSet(current, "/metadata/annotations/"+escape(ownerKey), "foreign", false)
-			case "temporary-label":
-				fakeSet(current, "/metadata/labels/node.longhorn.io~1create-default-disk", "true", false)
-			case "database-spec":
-				fakeSet(a.objects[fakeKey("deployment", "crossview", "crossview-postgres")][0], "/spec/replicas", float64(2), false)
-			}
-			err = e.provenReleased(ctx, j)
-			if (drift == "cordon-and-taint") != (err == nil) {
-				t.Fatalf("release proof for %s: %v", drift, err)
+			if nodeWrites != 0 {
+				t.Fatalf("maintenance performed %d Node writes", nodeWrites)
 			}
 		})
+	}
+}
+
+func TestTemporaryClientJournalCannotRemoveAnInUseClient(t *testing.T) {
+	a := fakeFixture()
+	e := testEngine(a)
+	e.publicationNotStarted = true
+	ctx := context.Background()
+	if err := e.prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	j, o, err := e.readJournal(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := resource("Node", "", "autoscale-test")
+	n["metadata"].(object)["labels"] = object{"ksail.io/autoscaled": "true"}
+	j.Nodes = []object{clone(n)}
+	current := clone(n)
+	fakeSet(current, "/metadata/labels/node.longhorn.io~1create-default-disk", "true", false)
+	fakeSet(current, "/metadata/annotations/"+escape(ownerKey), e.holder, false)
+	a.objects[fakeKey("node", "", "autoscale-test")] = []object{current}
+	j.Phase, j.PublicationNotStarted = "prepared", true
+	if err = e.writeJournal(ctx, j, o); err != nil {
+		t.Fatal(err)
+	}
+	fakeSet(a.objects[fakeKey("pods", "*", "")][0], "/spec/nodeName", "autoscale-test", false)
+	fakeSet(a.objects[fakeKey("volumes.longhorn.io", "longhorn-system", "")][0], "/spec/nodeID", "autoscale-test", false)
+	fakeSet(a.objects[fakeKey("volumes.longhorn.io", "longhorn-system", "")][0], "/status/state", "attached", false)
+	writes := a.writes
+	if err = e.restore(ctx); err == nil || a.writes != writes {
+		t.Fatalf("unsupported temporary-client journal reached cleanup: writes=%d err=%v", a.writes-writes, err)
+	}
+	if str(current, "metadata", "labels", "node.longhorn.io/create-default-disk") != "true" {
+		t.Fatal("cleanup removed an in-use client's label")
 	}
 }

@@ -8,7 +8,7 @@ import (
 )
 
 // A pool scaled to zero still needs admission proof: it can grow while paused.
-// Existing nodes are checked independently of which need temporary client labels.
+// Existing nodes are checked independently of which currently run clients.
 func (e engine) replicaExclusion(ctx context.Context) error {
 	w, err := e.c.read(ctx, "mutatingwebhookconfiguration", "", "kyverno-resource-mutating-webhook-cfg")
 	if err != nil {

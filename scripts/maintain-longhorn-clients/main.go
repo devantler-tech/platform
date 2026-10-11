@@ -26,12 +26,13 @@ var errResourceMissing = errors.New("resource not found")
 type command func(context.Context, []byte, ...string) ([]byte, error)
 type client struct{ command command }
 type journal struct {
-	Holder, Source, Phase                 string
-	ResourceHolder                        string
-	PublicationNotStarted                 bool
-	Clusters, Claims, PVs, Volumes, Nodes []object
-	Release, Deployment                   object
-	Extra                                 []workload
+	Holder, Source, Phase          string
+	ResourceHolder                 string
+	PublicationNotStarted          bool
+	Clusters, Claims, PVs, Volumes []object
+	Nodes                          []object // Unsupported pre-publication experiment; reject on read.
+	Release, Deployment            object
+	Extra                          []workload
 }
 type engine struct {
 	c                     client
@@ -102,9 +103,6 @@ func (c client) patch(ctx context.Context, kind string, o object, p []object) er
 func (e engine) patchOwned(ctx context.Context, old object, restoring bool) error {
 	for attempt := 0; attempt < 5; attempt++ {
 		current, err := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
-		if restoring && str(old, "kind") == "Node" && errors.Is(err, errResourceMissing) {
-			return nil
-		}
 		if err != nil {
 			return err
 		}
@@ -136,16 +134,11 @@ func released(old, current object) bool {
 	if !meta(current) || str(current, "metadata", "uid") != str(old, "metadata", "uid") || key(old) != key(current) || str(current, "metadata", "annotations", ownerKey) != "" {
 		return false
 	}
-	if str(old, "kind") == "Node" {
-		// Node restoration owns only this label and the ownership annotation.
-		// Preserve independent autoscaler cordons and taints, as restorePatch does.
-		return val(current, "metadata", "labels", "node.longhorn.io/create-default-disk") == val(old, "metadata", "labels", "node.longhorn.io/create-default-disk")
-	}
 	return reflect.DeepEqual(val(current, "spec"), val(old, "spec")) && val(current, "metadata", "annotations", hibernateKey) == val(old, "metadata", "annotations", hibernateKey) && val(current, "metadata", "annotations", reconcileKey) == val(old, "metadata", "annotations", reconcileKey)
 }
 
 func journalResources(j journal) []object {
-	r := append(append([]object{}, j.Nodes...), j.Clusters...)
+	r := append([]object{}, j.Clusters...)
 	r = append(r, j.Deployment, j.Release)
 	for _, w := range j.Extra {
 		r = append(r, w.Deployment, w.Release)
@@ -159,9 +152,6 @@ func journalResources(j journal) []object {
 func ownershipReleased(old, current object) bool {
 	if !meta(current) || str(current, "metadata", "uid") != str(old, "metadata", "uid") || key(old) != key(current) || str(current, "metadata", "annotations", ownerKey) != "" {
 		return false
-	}
-	if str(old, "kind") == "Node" {
-		return released(old, current)
 	}
 	if val(current, "metadata", "annotations", hibernateKey) != val(old, "metadata", "annotations", hibernateKey) || val(current, "metadata", "annotations", reconcileKey) != val(old, "metadata", "annotations", reconcileKey) {
 		return false
@@ -180,9 +170,6 @@ func ownershipReleased(old, current object) bool {
 func (e engine) provenReleased(ctx context.Context, j journal) error {
 	for _, old := range journalResources(j) {
 		current, err := e.c.read(ctx, resourceKind(old), str(old, "metadata", "namespace"), str(old, "metadata", "name"))
-		if str(old, "kind") == "Node" && errors.Is(err, errResourceMissing) {
-			continue
-		}
 		if err != nil {
 			return err
 		}
@@ -296,8 +283,6 @@ func resourceKind(o object) string {
 		return "helmrelease"
 	case "Deployment":
 		return "deployment"
-	case "Node":
-		return "node"
 	}
 	return ""
 }
@@ -305,10 +290,6 @@ func pausePatch(o object, holder string) []object {
 	p := tests(o)
 	if val(o, "metadata", "annotations") == nil {
 		p = append(p, object{"op": "add", "path": "/metadata/annotations", "value": object{}})
-	}
-	if str(o, "kind") == "Node" {
-		p = append(p, object{"op": "add", "path": "/metadata/annotations/" + escape(ownerKey), "value": holder})
-		return append(p, object{"op": "add", "path": "/metadata/labels/node.longhorn.io~1create-default-disk", "value": "true"})
 	}
 	for k, v := range map[string]string{ownerKey: holder, reconcileKey: "disabled"} {
 		p = append(p, object{"op": "add", "path": "/metadata/annotations/" + escape(k), "value": v})
@@ -583,6 +564,9 @@ func (e engine) prepare(ctx context.Context) error {
 	}
 	storageNodes := 0
 	for _, n := range nodes {
+		if !meta(n) || !condition(n, "Ready") || str(n, "metadata", "annotations", ownerKey) != "" {
+			return errors.New("node readiness or maintenance ownership is unproven")
+		}
 		if condition(n, "Ready") && !strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && str(n, "metadata", "labels", "node.longhorn.io/create-default-disk") == "true" {
 			storageNodes++
 		}
@@ -599,19 +583,10 @@ func (e engine) prepare(ctx context.Context) error {
 			return errors.New("compute-worker replica storage must be evacuated before this migration")
 		}
 	}
-	compute := []object{}
-	for _, n := range nodes {
-		if strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && val(n, "spec", "unschedulable") != true && str(n, "metadata", "labels", "node.longhorn.io/create-default-disk") != "true" {
-			if !meta(n) || !condition(n, "Ready") || str(n, "metadata", "labels", "ksail.io/autoscaled") != "true" || str(n, "metadata", "annotations", ownerKey) != "" {
-				return errors.New("compute-worker identity or ownership is unproven")
-			}
-			compute = append(compute, n)
-		}
-	}
 	if err = e.replicaExclusion(ctx); err != nil {
 		return err
 	}
-	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Nodes: compute, Release: p.release, Deployment: p.deployment, Extra: p.extra}
+	j := journal{Holder: e.holder, Source: e.source, Phase: "prepared", PublicationNotStarted: true, Clusters: p.clusters, Claims: p.claims, PVs: p.pvs, Volumes: p.volumes, Release: p.release, Deployment: p.deployment, Extra: p.extra}
 	if previous != nil {
 		if err = e.provenReleased(ctx, *previous); err != nil {
 			return err
@@ -620,14 +595,9 @@ func (e engine) prepare(ctx context.Context) error {
 	if err = e.writeJournal(ctx, j, previousObject); err != nil {
 		return err
 	}
-	for _, n := range compute {
-		if err = e.patchOwned(ctx, n, false); err != nil {
-			return err
-		}
-	}
 	// CNPG 1.30.1 intentionally refuses to begin hibernation while unhealthy.
-	// Install the missing clients through the old selector first, without
-	// relaxing replica storage. Pending standbys can then attach normally.
+	// Require full health before any maintenance write, then reassert it here.
+	// Never borrow node labels: failure cleanup must not remove an in-use client.
 	if err = e.poll(ctx, "database health before hibernation", func(c context.Context) (bool, error) {
 		clusters, err := e.c.list(c, "clusters.postgresql.cnpg.io", "*")
 		if err != nil {
@@ -655,27 +625,13 @@ func (e engine) prepare(ctx context.Context) error {
 				return false, nil
 			}
 		}
-		lh, err := e.c.list(c, "nodes.longhorn.io", "longhorn-system")
-		if err != nil {
-			return false, err
-		}
-		byLH := map[string]object{}
-		for _, n := range lh {
-			byLH[str(n, "metadata", "name")] = n
-		}
-		for _, n := range compute {
-			v := byLH[str(n, "metadata", "name")]
-			if v == nil || val(v, "spec", "allowScheduling") != false || val(v, "spec", "evictionRequested") != true {
-				return false, nil
-			}
-		}
 		replicas, err := e.c.list(c, "replicas.longhorn.io", "longhorn-system")
 		if err != nil {
 			return false, err
 		}
 		for _, r := range replicas {
 			if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") {
-				return false, errors.New("temporary client eligibility admitted replica storage")
+				return false, errors.New("compute-worker replica storage exclusion changed")
 			}
 		}
 		return true, nil
@@ -770,7 +726,7 @@ func (e engine) restore(ctx context.Context) error {
 	var failures []error
 	// Resume every owned resource even if one restoration fails. Never overwrite
 	// an operator/maintainer's intervening spec or another run's annotation.
-	resources := append(append([]object{}, j.Nodes...), j.Clusters...)
+	resources := append([]object{}, j.Clusters...)
 	resources = append(resources, j.Deployment)
 	for _, w := range j.Extra {
 		resources = append(resources, w.Deployment)

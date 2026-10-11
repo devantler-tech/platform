@@ -20,7 +20,7 @@ func fixture() inventory {
 	for _, target := range clusterTargets {
 		c := resource("Cluster", target.ns, target.name)
 		c["spec"] = object{"instances": target.instances, "storage": object{"storageClass": "longhorn-wffc"}}
-		c["status"] = object{"readyInstances": target.instances - 1, "currentPrimary": target.name + "-1", "targetPrimary": target.name + "-1", "systemID": "123", "conditions": []any{object{"type": "ContinuousArchiving", "status": "True"}}}
+		c["status"] = object{"readyInstances": target.instances, "phase": "Cluster in healthy state", "currentPrimary": target.name + "-1", "targetPrimary": target.name + "-1", "systemID": "123", "conditions": []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}}}
 		s.clusters = append(s.clusters, c)
 		p := resource("Pod", target.ns, target.name+"-1")
 		p["metadata"].(object)["ownerReferences"] = []any{object{"kind": "Cluster", "uid": str(c, "metadata", "uid"), "name": target.name, "controller": true}}
@@ -90,8 +90,17 @@ func TestPlanFailsBeforeAnyWriteOnUnknownOrUnsafeScope(t *testing.T) {
 		"foreign reconcile disable": func(s *inventory) {
 			s.clusters[0]["metadata"].(object)["annotations"] = object{"kustomize.toolkit.fluxcd.io/reconcile": "disabled"}
 		},
-		"primary switch":   func(s *inventory) { s.clusters[0]["status"].(object)["targetPrimary"] = "different" },
-		"missing archive":  func(s *inventory) { s.clusters[0]["status"].(object)["conditions"] = []any{} },
+		"primary switch": func(s *inventory) { s.clusters[0]["status"].(object)["targetPrimary"] = "different" },
+		"missing archive": func(s *inventory) {
+			s.clusters[0]["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}}
+		},
+		"unready cluster": func(s *inventory) {
+			s.clusters[0]["status"].(object)["conditions"] = []any{object{"type": "ContinuousArchiving", "status": "True"}}
+		},
+		"missing replica": func(s *inventory) { s.clusters[0]["status"].(object)["readyInstances"] = 1 },
+		"unhealthy phase": func(s *inventory) {
+			s.clusters[0]["status"].(object)["phase"] = "Waiting for the instances to become active"
+		},
 		"unready primary":  func(s *inventory) { s.pods[0]["status"].(object)["conditions"] = []any{} },
 		"active backup":    func(s *inventory) { s.backups[0]["status"].(object)["phase"] = "running" },
 		"wrong backup UID": func(s *inventory) { s.backups[0]["status"].(object)["pluginMetadata"] = object{"clusterUID": "wrong"} },

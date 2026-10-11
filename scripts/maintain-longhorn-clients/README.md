@@ -14,17 +14,17 @@ refusal remains a visible failure, not a successful rollback or relaxed gate.
 The protected production deploy invokes four phases:
 
 1. `before-publish` inventories consumers, retained storage, primary identities,
-   and fresh backups where a backup plugin is configured. If missing clients
-   prevent healthy database redundancy, it proves fail-closed replica exclusion
-   and temporarily enables only the reviewed compute workers' clients. It then
-   journals the original identities, suspends each affected Helm owner, pauses
+   and fresh backups where a backup plugin is configured. Every database must
+   already be fully healthy and every node Ready before any maintenance write.
+   An unhealthy database requires recovery first; the procedure never borrows
+   client labels. It journals the original identities, suspends each affected Helm owner, pauses
    the three storage-consuming Deployments, and uses supported CNPG hibernation.
    Publication is refused until every volume is detached and no active Pod uses
    the retained claims.
 2. `after-publish` requests infrastructure-controller reconciliation without
    waiting for temporarily suspended consumers. It checks client rollout, CSI
    registration, the corrected disk setting, and compute-worker replica
-   exclusion, then restores owned pauses and temporary labels.
+   exclusion, then restores owned service pauses.
 3. `verify` follows the existing full Flux gates. Two separated samples must
    prove database redundancy and archiving, unchanged primary and storage
    identities, retained detached recovery storage, and ready resumed consumers.
@@ -62,11 +62,12 @@ database Pods while retaining their claims.
 Backstage currently has no configured backup plugin; this procedure does not
 claim otherwise.
 
-Temporary legacy client eligibility can create an empty default disk while the
-old disk setting is active. Fail-closed admission and the existing storage
-policies must still exclude every compute worker from replica placement; the
-procedure checks this before hibernation and after migration. It never removes
-those restrictions or deletes a disk to clean up evidence.
+Fail-closed admission and the existing storage policies must still exclude every
+compute worker from replica placement before hibernation and after migration.
+The procedure never patches Kubernetes Nodes, removes storage restrictions or
+deletes disks. Journals containing temporary client-label targets are outside
+the reviewed scope and are rejected before cleanup; that experimental path was
+removed before this procedure was deployed.
 
 These phases are not local administration commands. They require the protected
 workflow identity and run only through the existing serialized production

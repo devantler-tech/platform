@@ -111,7 +111,7 @@ func buildPlan(s inventory, now time.Time) (plan, error) {
 	}
 	for _, t := range clusterTargets {
 		c := clusters[t.ns+"/"+t.name]
-		if c == nil || !unpaused(c) || num(c, "spec", "instances") != t.instances || num(c, "status", "readyInstances") < 1 || str(c, "status", "systemID") == "" || str(c, "status", "currentPrimary") == "" || str(c, "status", "currentPrimary") != str(c, "status", "targetPrimary") || !condition(c, "ContinuousArchiving") {
+		if c == nil || !unpaused(c) || num(c, "spec", "instances") != t.instances || num(c, "status", "readyInstances") != t.instances || !condition(c, "Ready") || str(c, "status", "phase") != "Cluster in healthy state" || str(c, "status", "systemID") == "" || str(c, "status", "currentPrimary") == "" || str(c, "status", "currentPrimary") != str(c, "status", "targetPrimary") || !condition(c, "ContinuousArchiving") {
 			return p, errors.New("database primary, archiving or maintenance ownership is unproven")
 		}
 		ready := false
@@ -253,20 +253,6 @@ func restorePatch(before, current object, holder string, deployment bool) ([]obj
 		return nil, errors.New("restoration ownership changed")
 	}
 	expected := val(before, "spec")
-	if str(before, "kind") == "Node" {
-		if str(current, "metadata", "labels", "node.longhorn.io/create-default-disk") != "true" {
-			return nil, errors.New("temporary client label changed")
-		}
-		patch := tests(current)
-		path := "/metadata/labels/node.longhorn.io~1create-default-disk"
-		old := val(before, "metadata", "labels", "node.longhorn.io/create-default-disk")
-		if old == nil {
-			patch = append(patch, object{"op": "remove", "path": path})
-		} else {
-			patch = append(patch, object{"op": "replace", "path": path, "value": old})
-		}
-		return append(patch, object{"op": "remove", "path": "/metadata/annotations/" + escape(ownerKey)}), nil
-	}
 	if deployment {
 		copied := object{}
 		spec, ok := expected.(map[string]any)

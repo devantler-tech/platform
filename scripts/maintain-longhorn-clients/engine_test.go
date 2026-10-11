@@ -232,16 +232,6 @@ func (a *fakeAPI) command(_ context.Context, input []byte, args ...string) ([]by
 				o["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}}
 			}
 		}
-		if kind == "node" && str(o, "metadata", "labels", "node.longhorn.io/create-default-disk") == "true" {
-			for _, c := range a.objects[fakeKey("clusters.postgresql.cnpg.io", "*", "")] {
-				c["status"].(object)["readyInstances"] = val(c, "spec", "instances")
-				c["status"].(object)["phase"] = "Cluster in healthy state"
-				c["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "ContinuousArchiving", "status": "True"}}
-			}
-			n := resource("Node", "longhorn-system", str(o, "metadata", "name"))
-			n["spec"] = object{"allowScheduling": false, "evictionRequested": true}
-			a.objects[fakeKey("nodes.longhorn.io", "longhorn-system", "")] = append(a.objects[fakeKey("nodes.longhorn.io", "longhorn-system", "")], n)
-		}
 		return []byte("patched"), nil
 	}
 	if a.stopped() && !a.blockDetach {
@@ -400,7 +390,7 @@ func TestVerificationRejectsBrokenPhysicalStorageAndReplacedHelmOwner(t *testing
 		})
 	}
 }
-func TestMissingComputeClientIsBootstrappedWithoutChangingReplicaPlacement(t *testing.T) {
+func TestUnhealthyDatabaseRequiresRecoveryBeforeAnyMaintenanceWrite(t *testing.T) {
 	a := fakeFixture()
 	node := resource("Node", "", "autoscale-test")
 	node["metadata"].(object)["labels"] = object{"ksail.io/autoscaled": "true"}
@@ -417,18 +407,8 @@ func TestMissingComputeClientIsBootstrappedWithoutChangingReplicaPlacement(t *te
 	w["webhooks"] = []any{object{"failurePolicy": "Fail", "rules": []any{object{"apiGroups": []any{"longhorn.io"}, "apiVersions": []any{"v1beta2"}, "resources": []any{"nodes"}, "operations": []any{"CREATE", "UPDATE"}}}}}
 	a.objects[fakeKey("mutatingwebhookconfiguration", "", "kyverno-resource-mutating-webhook-cfg")] = []object{w}
 	e := testEngine(a)
-	if err := e.prepare(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if str(node, "metadata", "labels", "node.longhorn.io/create-default-disk") != "true" || !a.stopped() {
-		t.Fatal("client bootstrap did not precede supported hibernation")
-	}
-	e.publicationNotStarted = true // This test has not invoked publication.
-	if err := e.restore(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if val(node, "metadata", "labels", "node.longhorn.io/create-default-disk") != nil || str(node, "metadata", "annotations", ownerKey) != "" {
-		t.Fatal("temporary eligibility label was not removed")
+	if err := e.prepare(context.Background()); err == nil || a.writes != 0 {
+		t.Fatalf("unhealthy database reached maintenance writes: writes=%d err=%v", a.writes, err)
 	}
 }
 
