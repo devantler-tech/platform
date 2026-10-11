@@ -101,6 +101,10 @@ data:
         icon: si-hetzner
       Network:
         icon: si-cloudflare
+      # Devices in the home: heating and other IoT. Network gear stays under
+      # Network, because a UniFi site is not tied to one physical location. The
+      # house is in the group's name, so it takes no icon of its own.
+      Home 🏡: {}
       Finance:
         icon: mdi-finance
       Analytics:
@@ -181,6 +185,14 @@ data:
             icon: unifi
             href: https://unifi.ui.com
             description: Central hub for managing on-prem UniFi network infrastructure.
+    # Devices in the home. The link carries no installation number on purpose:
+    # this repository is public, and StokerCloud shows a boiler's data to anyone
+    # who knows its number. Log in there instead.
+    - Home 🏡:
+        - StokerCloud:
+            icon: mdi-water-boiler
+            href: https://stokercloud.dk/v3/
+            description: NBE pellet boiler monitoring and control.
     # devantler.tech is not deployed from this cluster, so it
     # is listed statically under Business. Client and personal sites are
     # discovered from gethomepage.dev annotations on tenant HTTPRoutes.

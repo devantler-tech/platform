@@ -15,6 +15,7 @@ results:
     resources:
       - observability/declared-group
       - crossview/infrastructure-as-code-group
+      - whoami/home-group
     kind: HTTPRoute
     result: pass
 
