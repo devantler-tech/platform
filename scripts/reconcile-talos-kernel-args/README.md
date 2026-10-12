@@ -229,6 +229,22 @@ local configurations with the pinned Talos client. The ownership repair changes
 how cluster updates cooperate with existing Helm owners; this adoption preserves
 the intended production schematic and strict node-image readback.
 
+**7.202.56**, commit `5e387655892643dcf322a03d2ceb6d9ca6030979`, is audited
+against 7.202.28 for bounded Image Factory registration retries. The Talos
+generator and cluster API trees are byte-identical. The configuration manager
+reapplies a selected cluster name after inherited patches during regeneration;
+its kernel-argument fold and distribution caller are unchanged. Extension
+activation, the union and reconciliation of both roles' arguments, and explicit
+schematic-ID precedence therefore remain unchanged. The chart changes normalize
+its label and quote a README example; the extension and schematic-ID fields,
+types and defaults are unchanged. Go and unrelated dependencies move, with
+qualified source-authentication and Kubernetes compatibility replacements;
+Talos machinery, Image Factory, YAML and protobuf versions and checksums are
+unchanged. The offline render regression exercises both production and local
+roles with the pinned Talos client. This adoption retains the intended production
+schematic and strict node-image readback; retries share the original deadline
+and do not accept permanent registration failures.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
