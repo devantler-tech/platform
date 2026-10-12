@@ -19,8 +19,38 @@ on:
 permissions: {}
 
 jobs:
+  # A run that has nothing to repair used to join prod-deploy before it had a runner, and
+  # held a place among the deploys while it waited for one (#4598). This job reads the same
+  # queue state WITHOUT the lock, so a busy queue ends the run before the job below can join
+  # the group. It only ever declines: an idle answer here authorizes nothing, because the
+  # job below reads the queue again under the lock. A failed read fails this job, and the
+  # job below is then skipped.
+  queue-preflight:
+    name: 🚦 Queue Preflight
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout the gate script and read the merge queue
+      actions: read # list merge-group runs of ci.yaml
+    outputs:
+      stranded: ${{ steps.gate.outputs.stranded }}
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🚦 Check the merge queue is idle
+        id: gate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STRANDED_REPOSITORY: ${{ github.repository }}
+        run: ./scripts/prod-stranded-gate.sh
+
   restore-stranded-prod:
     name: 🧭 Restore Stranded Prod
+    needs: queue-preflight
+    # Skipped on a busy queue, so the run never waits in prod-deploy for nothing.
+    if: needs.queue-preflight.outputs.stranded == 'true'
     runs-on: ubuntu-latest
     # Shared with every deploy, heal and convergence observer, so the gate, the report and
     # the dispatch happen while nothing can promote `:latest`. queue: max keeps a scheduled
@@ -49,7 +79,8 @@ jobs:
           cache: false
 
       # Read BEFORE main and `:latest`: with the lock held nothing can promote `:latest`,
-      # and a group can only merge from a queue this read found empty.
+      # and a group can only merge from a queue this read found empty. This is the read that
+      # decides; the preflight above ran without the lock and a group may have queued since.
       - name: 🚦 Check the merge queue is idle
         id: gate
         env:
