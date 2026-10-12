@@ -110,11 +110,6 @@ data:
         icon: mdi-briefcase-account
       Personal:
         icon: mdi-web
-      # Temporary compatibility while tenant discovery annotations migrate.
-      Personal Sites:
-        icon: mdi-web
-      Customer Sites:
-        icon: mdi-briefcase-account
       # Bookmark groups (bookmarks.yaml). Listing them here is what gives them a
       # real icon and a deterministic position; unlisted groups fall back to
       # alphabetical with a generic icon, which is why the bookmark rail used to
