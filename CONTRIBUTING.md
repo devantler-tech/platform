@@ -31,23 +31,22 @@ One example is adding a link to the platform's start page:
 2. In [`k8s/bases/apps/homepage/config-map.yaml`](k8s/bases/apps/homepage/config-map.yaml),
    add an entry under an existing group in the `bookmarks.yaml` block, copying
    the shape of its neighbours: a name, an `icon` and an `https://` `href`.
-3. From the repository root, run the checks that cover that file:
+3. From the repository root, run the two checks that cover that file:
 
    ```bash
    bash scripts/validate-homepage-bookmarks.sh
-   bash scripts/validate-embedded-json.sh
    kubectl kustomize k8s/bases/apps/homepage/ > /dev/null
    ```
 
    The first prints how many bookmarks it checked and fails on a missing icon,
-   a link without HTTPS or a duplicate name. The second checks the JSON embedded
-   in ConfigMaps. The third confirms the folder still builds. The first run
-   downloads Go modules; after that they take a few seconds.
+   a link without HTTPS or a duplicate name. The second confirms the folder
+   still builds. The first run may download Go modules; after that both take a
+   few seconds.
 4. Open a draft pull request as described under
    [Propose the change](#propose-the-change).
 
-None of these commands contacts a cluster or uses a credential; they write
-only temporary build files. The change itself reaches the running start page only after review,
+None of these commands contacts a cluster or uses a credential. They leave
+your checkout unchanged; Go keeps downloaded modules in its own cache. The change itself reaches the running start page only after review,
 when the pull request merges.
 
 Other good first changes are corrections to a guide or a directory README. The

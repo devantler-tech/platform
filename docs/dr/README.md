@@ -21,5 +21,6 @@ Three further documents record one-off work rather than a standing procedure:
 | [openbao-raft-ha-migration.md](./openbao-raft-ha-migration.md)     | Record of the move from one OpenBao server to three.                         |
 | [spire-server-ha.md](./spire-server-ha.md)                         | A design that is not implemented; SPIRE is currently switched off.           |
 
-These are operator documents. Their commands change a running cluster and need
-production access; none of them is a check to run on a contribution.
+These are operator documents. The commands in the first two change a running
+cluster and need production access; the third is a design with nothing to run.
+None of them is a check to run on a contribution.

@@ -6,7 +6,8 @@ policy, secrets, single sign-on, storage, observability and backups.
 Flux applies this directory as two layers, in order:
 
 1. [`controllers/`](controllers) — one folder per component, holding its Helm
-   release and the resources that belong to it. Most install the custom resource
+   release (or, for a few, plain manifests) and the resources that belong to
+   it. Most install the custom resource
    types that the second layer uses.
 2. Everything else in this directory — resources that need those types to exist
    first (for example [`cluster-policies/`](cluster-policies) for Kyverno and

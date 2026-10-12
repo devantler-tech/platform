@@ -7,8 +7,8 @@ contributor's machine.
 ## Checks you can run without a cluster or credentials
 
 Run these from the repository root. Each reads only files in your checkout.
-You need Go (the version in [`go.mod`](../go.mod)); the first run downloads the
-Go modules the commands use.
+You need Go (the version in [`go.mod`](../go.mod)); the first run may download
+the Go modules the commands use. All but the last take a few seconds.
 
 | Check                                                                             | What it catches                                                        |
 | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -17,7 +17,7 @@ Go modules the commands use.
 | [`validate-feature-flags`](validate-feature-flags/README.md)                      | Invalid feature-flag definitions.                                      |
 | [`validate-talos-kubernetes-compatibility`](validate-talos-kubernetes-compatibility/README.md) | A Kubernetes version the pinned Talos version does not support.        |
 | [`guard-bash-local-initialization`](guard-bash-local-initialization/README.md)    | Bash functions that read a local variable before setting it.           |
-| [`guard-consumer-discovery-conservation.sh`](#consumer-discovery-conservation)    | Disagreement between two views of what production deploys. Also needs `kubectl`. |
+| [`guard-consumer-discovery-conservation.sh`](#consumer-discovery-conservation)    | Disagreement between two views of what production deploys. Also needs `kubectl`, `yq` v4 and `realpath`; takes about half a minute, and its fixture test a few minutes. |
 
 Most scripts have a regression test: a Go test beside the command
 (`go test ./scripts/<name>`) or a `test-*.sh` file in [`tests/`](tests).
