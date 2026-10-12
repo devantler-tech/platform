@@ -18,6 +18,41 @@ If you want your own platform rather than a change to this one, start with
 - Report vulnerabilities privately through the [security policy](SECURITY.md),
   not a public issue.
 
+## A first contribution
+
+A good first change is one you can check completely on your own machine. You
+need Git, [Go](https://go.dev/dl/) (the version in [`go.mod`](go.mod)) and
+`kubectl`. You do not need a cluster, an account on any cloud, or any of this
+repository's secrets.
+
+One example is adding a link to the platform's start page:
+
+1. Fork the repository, clone your fork and create a branch.
+2. In [`k8s/bases/apps/homepage/config-map.yaml`](k8s/bases/apps/homepage/config-map.yaml),
+   add an entry under an existing group in the `bookmarks.yaml` block, copying
+   the shape of its neighbours: a name, an `icon` and an `https://` `href`.
+3. From the repository root, run the two checks that cover that file:
+
+   ```bash
+   bash scripts/validate-homepage-bookmarks.sh
+   kubectl kustomize k8s/bases/apps/homepage/ > /dev/null
+   ```
+
+   The first prints how many bookmarks it checked and fails on a missing icon,
+   a link without HTTPS or a duplicate name. The second confirms the folder
+   still builds. The first run may download Go modules; after that both take a
+   few seconds.
+4. Open a draft pull request as described under
+   [Propose the change](#propose-the-change).
+
+None of these commands contacts a cluster or uses a credential. They leave
+your checkout unchanged; Go keeps downloaded modules in its own cache. The change itself reaches the running start page only after review,
+when the pull request merges.
+
+Other good first changes are corrections to a guide or a directory README. The
+[scripts index](scripts/README.md) lists the checks that are safe to run
+locally and names the operator procedures that are not.
+
 ## Work locally
 
 Fork the repository and create a branch for one change. If you work from the
