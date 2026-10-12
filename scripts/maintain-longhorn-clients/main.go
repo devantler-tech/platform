@@ -87,13 +87,16 @@ func (c client) list(ctx context.Context, kind, ns string) ([]object, error) {
 	}
 	return r, nil
 }
+// patch transports the unchanged guarded JSON Patch through stdin and retains conflict classification.
 func (c client) patch(ctx context.Context, kind string, o object, p []object) error {
 	b, e := json.Marshal(p)
 	if e != nil {
 		return e
 	}
-	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--field-manager=platform-longhorn-client-maintenance", "--patch", string(b), "-o", "name"}
-	_, e = c.command(ctx, nil, a...)
+	// Journals can exceed Linux's per-argument limit. Keep the exact JSON Patch
+	// (including UID/resourceVersion tests) off argv and out of temporary files.
+	a := []string{"patch", kind, str(o, "metadata", "name"), "-n", str(o, "metadata", "namespace"), "--type=json", "--field-manager=platform-longhorn-client-maintenance", "--patch-file=/dev/stdin", "-o", "name"}
+	_, e = c.command(ctx, b, a...)
 	if e != nil && strings.Contains(e.Error(), "(Conflict)") {
 		return fmt.Errorf("%w: %w", errPatchConflict, e)
 	}

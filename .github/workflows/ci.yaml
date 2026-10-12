@@ -167,6 +167,9 @@ jobs:
       - name: 💾 Validate protected Longhorn client maintenance
         run: go test -race ./scripts/maintain-longhorn-clients
 
+      - name: 🔎 Validate read-only portal retirement assessment
+        run: go test -race ./scripts/assess-backstage-retirement
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
@@ -573,6 +576,7 @@ jobs:
               - 'scripts/tests/test-add-default-deny-shape.sh'
               - 'scripts/tests/test-add-baseline-context.sh'
               - 'scripts/tests/test-longhorn-ui-baseline-context.sh'
+              - 'scripts/tests/test-longhorn-client-placement.sh'
               - 'scripts/tests/test-cilium-hubble-baseline-context.sh'
               - 'scripts/tests/test-guard-longhorn-ui-baseline-context.sh'
               - 'scripts/guard-longhorn-ui-baseline-context.sh'
@@ -826,6 +830,7 @@ jobs:
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
+              - 'scripts/tests/test-velero-node-agent-priority.sh'
               - 'scripts/tests/test-coroot-reservation-refresh.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               - 'scripts/tests/test-cronjob-failure-alert.sh'
@@ -925,6 +930,7 @@ jobs:
               # Both halves, for the same reason as the guards above.
               - 'scripts/guard-helm-post-renderers.sh'
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
+              - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
@@ -2164,6 +2170,12 @@ jobs:
           shellcheck scripts/tests/test-velero-cancellation-release.sh
           bash scripts/tests/test-velero-cancellation-release.sh
 
+      - name: 💾 Validate node-local backup agent admission priority
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-velero-node-agent-priority.sh
+          bash scripts/tests/test-velero-node-agent-priority.sh
+
       - name: 🔄 Validate the Coroot reservation refresh
         if: needs.changes.outputs.k8s == 'true'
         run: |
@@ -3226,6 +3238,24 @@ jobs:
           shellcheck scripts/tests/test-reloader-placement-selection.sh
           bash scripts/tests/test-reloader-placement-selection.sh
 
+      - name: 🧩 Verify Longhorn volume-client placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-longhorn-client-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml scripts/tests/test-longhorn-client-placement.sh \
+            scripts/build-controller-helm.sh scripts/render-helm-chart \
+            k8s/providers/hetzner/infrastructure/controllers/longhorn \
+            k8s/providers/hetzner/infrastructure/cluster-policies/restrict-storage-to-baseline-workers.yaml \
+            k8s/providers/hetzner/infrastructure/kustomization.yaml \
+            k8s/clusters/prod/bootstrap/config-map.yaml ksail.prod.yaml)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-longhorn-client-placement.sh
+          fi
+
       - name: 🧩 Apply the actual Whoami chart's post-renderers
         run: |
           bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --release whoami/whoami \
@@ -3256,6 +3286,27 @@ jobs:
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
             bash scripts/tests/test-reloader-rendered-placement.sh
+          fi
+
+      - name: 🧩 Verify Kubescape recovery storage placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-kubescape-storage-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/controllers/kubescape \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kubescape \
+            k8s/bases/components ksail.prod.yaml \
+            scripts/tests/test-kubescape-storage-placement.sh \
+            scripts/build-controller-helm.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-kubescape-storage-placement.sh
           fi
 
       - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart

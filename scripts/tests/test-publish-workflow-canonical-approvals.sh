@@ -182,9 +182,20 @@ for floating in main v7.1.2 refs/heads/main '[0-9a-f]{40}' "${SHA_K%?}" "${SHA_K
   expect_refusal "a commit of '$floating' is refused as not a 40-hex commit" "$root" "$manifest_consumer" 'is not a 40-hex commit'
 done
 
-root="$(build_tree record-duplicate)"
+# A consumer may hold two rows while its publisher moves from one reviewed commit to the next
+# (#4713): never a third, and never the same commit twice.
+root="$(build_tree record-third)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")" "$(record_row "$manifest_consumer" "$SHA_A")"
+expect_refusal 'a third canonical commit for one consumer is refused' "$root" "$manifest_consumer" 'at most two canonical commits'
+
+root="$(build_tree record-repeated)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_K")"
+expect_refusal 'the same canonical commit recorded twice is refused' "$root" "$manifest_consumer" "$SHA_K" 'twice'
+
+root="$(build_tree record-second-unrendered)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
-expect_refusal 'a second canonical commit for one consumer is refused' "$root" "$manifest_consumer" 'at most one canonical commit'
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+expect_refusal 'a second recorded commit the matcher does not carry is refused, naming both' "$root" "$manifest_consumer" "($SHA_K|$SHA_X)"
 
 root="$(build_tree record-app-consumer)"
 write_record "$root" "$(record_row "$app_consumer" "$SHA_K")"
@@ -232,6 +243,33 @@ write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests 
 write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "($SHA_E|$SHA_B|$SHA_A)" "$SHA_X")"
 expect_pass 'each manifest consumer carries its own recorded commit, legacy set in any order' "$root"
 
+# While a publisher moves, the matcher carries both recorded commits, in the record's order.
+root="$(build_tree family-moving)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+expect_pass 'a two-family matcher naming both recorded commits in record order passes' "$root"
+
+root="$(build_tree family-moving-other-consumer)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$other_manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+write_consumer "$root" "$other_manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
+expect_pass "one consumer's second commit leaves another consumer on its single commit" "$root"
+
+root="$(build_tree family-moving-reordered)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_X|$SHA_K)")"
+expect_refusal 'the two recorded commits in another order are not the rendered spelling' "$root" "$manifest_consumer" "($SHA_X|$SHA_K)" "($SHA_K|$SHA_X)"
+
+root="$(build_tree family-moving-unrecorded-second)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+expect_refusal 'a second canonical commit the record does not hold is refused, naming both' "$root" "$manifest_consumer" "($SHA_K|$SHA_X)" "@$SHA_K"
+
+root="$(build_tree family-moving-foreign-second)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
+write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_A)")"
+expect_refusal 'a second canonical commit other than the recorded one is refused' "$root" "$manifest_consumer" "($SHA_K|$SHA_A)"
+
 root="$(build_tree family-unrecorded)"
 write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
 expect_refusal 'a canonical family the record does not approve is refused' "$root" "$manifest_consumer" "$SHA_K" 'record none'
@@ -262,7 +300,7 @@ write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$PATTERN" "$SHA_K")"
 expect_refusal 'the pattern form stays refused under enforcement inside a two-family matcher' "$root" "$manifest_consumer" 'pattern form'
 
-for floating in "$PATTERN" '.+' 'refs/heads/main' "($SHA_K|$SHA_X)" "$SHA_K|$SHA_X"; do
+for floating in "$PATTERN" '.+' 'refs/heads/main' "$SHA_K|$SHA_X" "($SHA_K)" "($SHA_K|$SHA_K)" "($SHA_K|$SHA_X|$SHA_A)" "($SHA_K|$PATTERN)" "($SHA_K|.*)" "($SHA_K|$SHA_X).*"; do
   root="$(build_tree family-floating)"
   write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
   write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$floating")"
@@ -399,6 +437,30 @@ if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "
   pass 'writer: a withdrawn approval renders the legacy subject back'
 else
   fail 'writer: a withdrawn approval left the canonical family in the matcher'; printf '%s\n' "$out" >&2
+fi
+
+# Two recorded commits render as one grouped pair in the record's order, and dropping the first
+# row once the move has landed renders the single commit that remains.
+root="$(build_tree writer-moving)"
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$manifest_consumer" "$SHA_X")"
+want="$(family_subject publish-manifests "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
+  pass 'writer: renders two recorded commits as one grouped pair in record order'
+else
+  fail 'writer: did not render the expected two-commit canonical family'; printf '%s\n' "$out" >&2
+fi
+expect_pass 'writer: its two-commit output passes the enforcing guard' "$root"
+if out="$(run_in "$root" "$WRITER")" && case "$out" in *' 0 consumer matcher(s) changed'*) true ;; *) false ;; esac; then
+  pass 'writer: a second run changes nothing on a two-commit tree'
+else
+  fail 'writer: is not idempotent on a two-commit tree'; printf '%s\n' "$out" >&2
+fi
+write_record "$root" "$(record_row "$manifest_consumer" "$SHA_X")"
+want="$(family_subject publish-manifests "$LEGACY_SET" "$SHA_X")"
+if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$manifest_consumer")")" = "$want" ]; then
+  pass 'writer: dropping the first row renders the remaining commit alone'
+else
+  fail 'writer: left a withdrawn canonical commit in the matcher'; printf '%s\n' "$out" >&2
 fi
 
 root="$(build_tree writer-refuses)"

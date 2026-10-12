@@ -72,19 +72,23 @@ readonly IDENTITIES_HEADER=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tap
 # a canonical commit to the legacy repository. Current observations live in the
 # identity-qualified companion file. Canonical approvals remain hand-reviewed.
 require_canonical_approval() {
-  local repo="$1" workflow="$2" identity="$3" approved_commit
+  local repo="$1" workflow="$2" identity="$3" approved_commits approved_commit
   if [ "$canonical_baseline_checked" -eq 0 ]; then
     APPROVED_REVISIONS_FILE="$OUTPUT" APPROVED_REVISIONS_ENFORCE=1 \
       bash "$GEN_DIR/guard-publish-workflow-approved-revisions.sh" >/dev/null || return 1
     canonical_baseline_checked=1
   fi
-  approved_commit="$(awk -F'\t' -v repo="$repo" -v workflow="$workflow" \
+  approved_commits="$(awk -F'\t' -v repo="$repo" -v workflow="$workflow" \
     '$1==repo && $2==workflow && $3=="devantler-tech/.github" {print $4}' \
     "${CANONICAL_APPROVALS_FILE:-$REPO_ROOT/scripts/publish-workflow-canonical-approvals.tsv}")" || return 1
-  if [ "$identity" != "devantler-tech/.github/.github/workflows/${workflow}.yaml@${approved_commit}" ]; then
-    refuse "$repo: canonical publisher revision is not approved for this consumer"
-    return 1
-  fi
+  # A consumer holds two approved commits while its publisher moves from one to the next
+  # (#4713); the observed identity must be exactly one of them.
+  while IFS= read -r approved_commit; do
+    [ -n "$approved_commit" ] || continue
+    [ "$identity" != "devantler-tech/.github/.github/workflows/${workflow}.yaml@${approved_commit}" ] || return 0
+  done <<<"$approved_commits"
+  refuse "$repo: canonical publisher revision is not approved for this consumer"
+  return 1
 }
 
 refuse() {

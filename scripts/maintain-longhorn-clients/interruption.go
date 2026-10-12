@@ -178,8 +178,18 @@ func (e engine) legacyPublicationSafe(ctx context.Context) error {
 		// The failed deploy and its protected heal share one run attempt,
 		// but the heal checks out validated main. Restore that attempt's
 		// owned pauses before deciding whether legacy publication is safe.
-		// A foreign attempt still needs the separate terminal takeover path.
-		if (j.Phase == "prepared" || j.Phase == "detached") && j.Holder == e.holder {
+		// A new deployment can restore a terminal attempt only when publication
+		// positively never began. It must not call prepare and start another
+		// maintenance merely to publish the unchanged selector.
+		if j.Phase == "prepared" || j.Phase == "detached" {
+			if j.Holder != e.holder {
+				if !j.PublicationNotStarted || e.previousFinished == nil {
+					return errors.New("legacy restoration requires terminal unpublished owner proof")
+				}
+				if err = e.previousFinished(ctx, j); err != nil {
+					return err
+				}
+			}
 			if err = e.replicaExclusion(ctx); err != nil {
 				return err
 			}
@@ -196,6 +206,10 @@ func (e engine) legacyPublicationSafe(ctx context.Context) error {
 						return err
 					}
 				}
+			}
+			if j.Holder != e.holder {
+				j.ResourceHolder = resourceHolder(j)
+				j.Holder = e.holder
 			}
 			j.Source = e.source
 			if err = e.writeJournal(ctx, j, original); err != nil {

@@ -37,9 +37,12 @@ readonly SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/wo
 readonly PATTERN_REF='[0-9a-f]{40}'
 
 # ── Publisher families (#4502) ──────────────────────────────────────────────────────────
-# A manifest artifact may additionally accept ONE reviewed commit of the canonical manifest
-# workflow, which lives in a second repository. That approval is a fixed, hand-reviewed record
-# rather than a column of the generated set, so the daily regeneration can never move it.
+# A manifest artifact may additionally accept a reviewed commit of the canonical manifest
+# workflow, which lives in a second repository: ONE in the steady state, and TWO only while its
+# publisher moves from the first to the second (#4713), so the artifact signed at the old
+# commit and the one signed at the new are both accepted across the move. That approval is a
+# fixed, hand-reviewed record rather than a column of the generated set, so the daily
+# regeneration can never move it.
 # The matcher stays a single identity entry: one anchored subject whose only top-level group
 # holds the legacy family first and the canonical family second. A second identity entry
 # would be an OR beside the pair, which the attribution below already refuses.
@@ -171,7 +174,9 @@ done <<<"$approved"
 
 # ── 1b. The canonical approvals, read strictly ──────────────────────────────────────────
 # One row approves one reviewed commit of the canonical manifest workflow for one manifest
-# consumer. Anything this reader cannot place exactly is refused: an approval it skipped would
+# consumer. A consumer may hold two rows, never more: the commit its publisher is moving from
+# and the one it is moving to (#4713). The first row is dropped once the move has landed.
+# Anything this reader cannot place exactly is refused: an approval it skipped would
 # be an identity nobody rendered, and one it guessed at would be an identity nobody reviewed.
 [ -f "$CANONICAL_SET" ] || refuse "canonical approvals not found at $CANONICAL_SET; the file must exist even when it approves nothing"
 # `|| [ -n … ]` keeps a final row that has no trailing newline: dropping it would read a
@@ -180,7 +185,7 @@ canonical_header=""
 IFS= read -r canonical_header <"$CANONICAL_SET" || [ -n "$canonical_header" ] || refuse "canonical approvals at $CANONICAL_SET are empty"
 [ "$canonical_header" = "$CANONICAL_HEADER" ] || refuse "canonical approvals header is not 'consumer<TAB>workflow<TAB>repository<TAB>commit'; refusing to read it"
 
-# consumer → "commit"
+# consumer → "commit", or "(first|second)" in file order when the consumer holds two rows
 canonical=""
 line_no=0
 while IFS= read -r row || [ -n "$row" ]; do
@@ -201,13 +206,35 @@ while IFS= read -r row || [ -n "$row" ]; do
   [ -n "$set_record" ] || refuse "canonical approvals line $line_no names $consumer, which is not a registered consumer"
   [ "${set_record%%$'\t'*}" = "$CANONICAL_WORKFLOW" ] ||
     refuse "canonical approvals line $line_no: $consumer publishes with ${set_record%%$'\t'*}, and only $CANONICAL_WORKFLOW consumers may accept the canonical publisher"
-  [ -z "$(lookup "$canonical" "$consumer")" ] ||
-    refuse "canonical approvals name $consumer twice; a consumer accepts at most one canonical commit"
-  canonical="${canonical}${consumer}"$'\t'"${commit}"$'\n'
+  held="$(lookup "$canonical" "$consumer")"
+  case "$held" in
+    '') canonical="${canonical}${consumer}"$'\t'"${commit}"$'\n' ;;
+    '('*) refuse "canonical approvals name $consumer a third time; a consumer accepts at most two canonical commits, the one its publisher moves from and the one it moves to" ;;
+    "$commit") refuse "canonical approvals name $consumer with commit $commit twice; a repeated row approves nothing new" ;;
+    *)
+      # Replace the consumer's record in place so the lookup still finds exactly one.
+      canonical="$(printf '%s' "$canonical" | awk -F'\t' -v k="$consumer" -v add="$commit" \
+        '$1 "" == k "" { printf "%s\t(%s|%s)\n", $1, $2, add; next } { print }')"$'\n'
+      ;;
+  esac
 done <"$CANONICAL_SET"
 
-# approved_subject <workflow> <legacy-ref> <canonical-commit-or-empty> → the whole matcher subject.
-# Without a canonical commit this is the legacy subject, byte for byte.
+# canonical_ref_ok <ref> → success when <ref> is one 40-hex commit, or exactly two distinct ones
+# written as "(first|second)". Nothing else: no pattern, no third alternative, no repeat.
+canonical_ref_ok() {
+  local first second
+  is_sha "$1" && return 0
+  case "$1" in
+    '('*'|'*')') ;;
+    *) return 1 ;;
+  esac
+  first="${1#\(}"; first="${first%%\|*}"
+  second="${1#*\|}"; second="${second%\)}"
+  [ "$1" = "($first|$second)" ] && is_sha "$first" && is_sha "$second" && [ "$first" != "$second" ]
+}
+
+# approved_subject <workflow> <legacy-ref> <canonical-ref-or-empty> → the whole matcher subject.
+# Without a canonical ref this is the legacy subject, byte for byte.
 approved_subject() {
   local name="${1#publish-}"
   if [ -z "$3" ]; then
@@ -293,6 +320,7 @@ while IFS= read -r file; do
       ;;
     "$FAMILY_PREFIX"*)
       # ^…/(<legacy family><workflow>\.yaml@<ref>|<canonical family><workflow>\.yaml@<commit>)$
+      # where <commit> is one commit, or "(first|second)" while the publisher moves (#4713).
       # Legacy first, canonical second, each exactly once: any other arrangement is refused
       # rather than interpreted, so there is one spelling for the writer to produce and for
       # the guard to compare.
@@ -316,7 +344,7 @@ while IFS= read -r file; do
         *) refuse "$rel: canonical family has no '\\.yaml@' boundary: $subject" ;;
       esac
       canonical_ref="${canonical_part#*\\.yaml@}"
-      is_sha "$canonical_ref" || refuse "$rel: canonical family pins '@$canonical_ref', which is not one 40-hex commit"
+      canonical_ref_ok "$canonical_ref" || refuse "$rel: canonical family pins '@$canonical_ref', which is not one 40-hex commit, or two distinct ones written as (first|second)"
       rest="${legacy_part#"$LEGACY_FAMILY"}"          # <workflow>\.yaml@<ref>
       [ "publish-${canonical_part%%\\.yaml@*}" = "publish-${rest%%\\.yaml@*}" ] ||
         refuse "$rel: the two publisher families name different workflows: $subject"

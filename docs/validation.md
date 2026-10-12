@@ -36,8 +36,19 @@ credentials. The approval generator records current publications and pins with
 their full publisher identity in
 `scripts/publish-workflow-approved-revisions.identities.tsv`. The original
 approved set keeps legacy compatibility evidence when a consumer moves to the
-canonical publisher. A canonical observation must match that consumer's fixed
-reviewed approval; daily regeneration cannot approve a new canonical revision.
+canonical publisher. A canonical observation must match one of that consumer's
+fixed reviewed approvals; daily regeneration cannot approve a new canonical
+revision.
+
+To move a consumer's canonical publisher to a newer commit, review the workflow
+at that commit, add it as a second row for the consumer in
+`scripts/publish-workflow-canonical-approvals.tsv` below the current one, and run
+`bash scripts/write-publish-workflow-matchers.sh`. The matcher then accepts both
+commits, so the release signed at the old commit and the first one signed at the
+new commit both verify. Deploy that before the consumer moves its pin. Once the
+consumer has published from the new commit, remove the first row and run the
+writer again. A consumer holds at most two rows, and the change to the matcher
+is a reviewed entry in the production authorization ledger each time.
 
 The overlay and all production roots render from an isolated
 snapshot of KSail's published `k8s` files: YAML/YML/JSON files selected by

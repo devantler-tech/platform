@@ -3395,6 +3395,26 @@ account, credential, listener, storage, disruption budget or permission grant
 changes. Actual production recreation and peer preservation remain separate
 protected deployment and readback evidence.
 
+## 2026-10-11 — Separate volume clients from replica storage
+
+For #4718, the pinned kubectl v1.36.2 / Kustomize v5.8.1 renderer measured
+exactly one changed authorization entry against main
+`9f9ac740d8c53c32542bdba1a044e39634b80c54`: HelmRelease
+longhorn-system/longhorn. Nothing is added or removed. Its fingerprint moves
+from `c5914be8554123d4821c96d9b18d75d0807c8d797dffd5727c11bb3f029f8629`
+to `c0f77790ab49bd8c26359b00eb32f6341ed1690cc9f3f92c974f3c415d429b8f`.
+
+The change removes the replica-storage selector from volume clients and uses
+the pinned chart's actual label-gated default-disk setting. The install and
+upgrade chart renders, including their Flux post-renderers, prove that only
+manager placement, its three lifecycle hooks and the two relevant settings
+change. Replica exclusion remains fail-closed and deployed. No RBAC, IAM,
+service-account, credential, storage-class, disruption-budget, resource
+reservation or permission grant changes. The maintainer approved preparing
+and running reviewed protected storage maintenance; #4719 must land first.
+Actual all-volume detachment, protected migration, restoration and separated
+live redundancy checks remain deployment evidence, not a result of this ledger.
+
 ## 2026-10-11 — Include the tenant database in the protected-priority rollout
 
 For #4649 and the review corrections in #4650, the final source at
@@ -3431,3 +3451,33 @@ patch list to an existing unprioritised tenant Cluster, rather than inferring
 coverage from the parent render. No IAM, RBAC, service account, source,
 credential, backup destination, storage identity or permission grant changes.
 Hosted CI and the actual protected rollout remain separate required evidence.
+
+## 2026-10-11 — Next reviewed canonical publisher commit accepted beside the current one
+
+platform#4713 records a second reviewed commit of the canonical manifest
+publishing workflow, `devantler-tech/.github` at
+`63c59062489edbee907d2a4d5d06f01c57b7d58c` (v7.9.0), for the github-config
+artifact only. The commit accepted before,
+`2fa404276b0ce5c0527683b080e39045045c4e42`, and every legacy revision are still
+in the subject; the aws artifact's subject is unchanged. Between the two
+commits the workflow changes one line: its pinned Flux CLI setup action moves
+from v2.9.5 to v2.9.6, by commit.
+
+The canonical record may now hold two commits for one consumer, rendered as one
+group in the record's order, so a publisher can move from one reviewed commit
+to the next without the cluster rejecting either release. The ledger projection
+keeps the canonical commits as written, so adding, dropping, replacing or
+reordering one still moves the fingerprint; the legacy set inside the subject
+still rotates without doing so.
+
+The production-authorization job on the checksum-verified renderer (run
+38170959510, job 114564856097) measured exactly one changed entry against base
+`4d4fa1b4` at source `a5b43542`, and nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `b6c432af595e2aaa0b41cc114cb4d85a21125a02e5b7a60e5abfc4e034c03e40` to
+  `fb34648e8be3132abf0967a9123daf1f4af18b29e981473c4ee199a79155d95b`.
+
+No issuer, artifact, identity count, RBAC binding, IAM policy, credential or
+permission grant changes. The older commit is withdrawn in a later change, once
+the consumer has published from the newer one.
