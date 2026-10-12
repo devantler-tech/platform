@@ -171,6 +171,10 @@ stage=healthy-cluster-info
 cluster=$(kc -n kube-system get configmap cilium-config -o json | jq -er '.data["cluster-name"] | select(length > 0)')
 count=0
 while IFS= read -r node; do
+  # Cilium v1.20.2 omits the cluster prefix for its default cluster only.
+  # Derive one canonical identity; the evidence parser keeps exact equality.
+  observer_node="$node"
+  [[ "$cluster" == default ]] || observer_node="$cluster/$node"
   stage=same-node-challenge
   count=$((count+1))
   probe="arc-transport-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-$count"
@@ -263,7 +267,7 @@ while IFS= read -r node; do
     [[ ! -s "$scratch/kubectl-error" ]] || fail observer-diagnostics
     stage=same-node-evidence-validation
     "$scratch/evidence" denial --pod "$probe" --source "$source_ip" --destination "$bao_ip" --port "$destination_port" \
-      --node "$cluster/$node" --since "$start" --until "$end" <"$scratch/flows"
+      --node "$observer_node" --since "$start" --until "$end" <"$scratch/flows"
     healthy
   done
   stage=same-node-workload-bindings
