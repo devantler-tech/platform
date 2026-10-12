@@ -2,6 +2,8 @@
 # No credentials or cluster: execute the real orchestration and evidence parser
 # against bounded API/exec fixtures, including failure and replacement races.
 set -euo pipefail
+: "${HUBBLE_TEST_BIN:?requires the checksum-verified Hubble v1.20.2 binary}"
+[[ -x "$HUBBLE_TEST_BIN" ]] || { printf 'native Hubble parser is unavailable\n' >&2; exit 1; }
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin" "$scratch/state"
@@ -177,9 +179,7 @@ case "$args" in
       exit 1
     fi
     # The native CLI mode remains completely offline and uses synthetic data.
-    if [[ -n "${HUBBLE_TEST_BIN:-}" ]]; then
-      "$HUBBLE_TEST_BIN" "${@:7}" --print-raw-filters >/dev/null || exit 1
-    fi
+    "$HUBBLE_TEST_BIN" "${@:7}" --print-raw-filters >/dev/null || exit 1
     filter='' filter_count=0
     while [[ "$#" -gt 0 ]]; do
       case "$1" in --since) when=$2;; --allowlist) filter=$2; filter_count=$((filter_count+1));; esac; shift

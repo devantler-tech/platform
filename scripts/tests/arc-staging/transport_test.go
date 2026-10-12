@@ -17,6 +17,41 @@ const publicListenerHCL = `listener "tcp" {
 }
 `
 
+func TestTransportCIRequiresThePinnedNativeHubbleParser(t *testing.T) {
+	t.Parallel()
+
+	workflow := readYAML(t, ".github/workflows/ci.yaml")
+	steps := field(t, workflow, "jobs", "changes", "steps").([]any)
+	count := 0
+	for _, value := range steps {
+		step := value.(map[string]any)
+		run, _ := step["run"].(string)
+		if !strings.Contains(run, "bash scripts/tests/test-verify-arc-transport.sh") {
+			continue
+		}
+		count++
+		if _, conditional := step["if"]; conditional {
+			t.Fatal("native transport parser validation must run on every PR and merge group")
+		}
+		for _, required := range []string{
+			"https://github.com/cilium/hubble/releases/download/v1.20.2/hubble-linux-amd64.tar.gz",
+			"03f248a50cad11e728bf9383382392c57148fd6a19853ad359fb7598dae29312",
+			"sha256sum --check",
+			"export HUBBLE_TEST_BIN=",
+		} {
+			if !strings.Contains(run, required) {
+				t.Fatalf("transport CI does not require the pinned native parser: missing %s", required)
+			}
+		}
+		if strings.Index(run, "export HUBBLE_TEST_BIN=") > strings.Index(run, "bash scripts/tests/test-verify-arc-transport.sh") {
+			t.Fatal("the native parser must be available before the transport fixture runs")
+		}
+	}
+	if count != 1 {
+		t.Fatal("transport CI must run exactly one mandatory native parser fixture")
+	}
+}
+
 func TestPublicListenerNativeScanRunsAfterPinnedKSailSetup(t *testing.T) {
 	workflow := readYAML(t, ".github/workflows/ci.yaml")
 	steps := field(t, workflow, "jobs", "validate", "steps").([]any)
