@@ -167,6 +167,9 @@ jobs:
       - name: 💾 Validate protected Longhorn client maintenance
         run: go test -race ./scripts/maintain-longhorn-clients
 
+      - name: 🔎 Validate read-only portal retirement assessment
+        run: go test -race ./scripts/assess-backstage-retirement
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
