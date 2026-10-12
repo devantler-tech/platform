@@ -102,6 +102,13 @@ read_expected_state() {
 }
 bounded read_expected_state || fail invalid_expected_state 2
 expected_state=$(<"$scratch/readiness-state")
+# read_expected_releases binds source activation to this checkout, including rollback.
+read_expected_releases() {
+  yq -o=json '.spec.values.demoProduct.ksailReleases.enabled // false' "$expected_helm_file" 2>/dev/null |
+    jq -ers 'if length==1 and (.[0]|type=="boolean") then .[0]|tostring else error("invalid release flag") end' >"$scratch/release-state" 2>/dev/null
+}
+bounded read_expected_releases || fail invalid_expected_state 2
+expected_releases=$(<"$scratch/release-state")
 # read_verify_policy validates and copies the single public artifact identity policy.
 read_verify_policy() {
   [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
@@ -121,7 +128,7 @@ def metadata: {name,namespace,uid,generation,deletionTimestamp,labels,
 def conditions: [.[]? | {type,status,observedGeneration,reason}];
 def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,protocol:(.protocol//"TCP")}],
   command,args,envCount:(.env//[]|length),envFromCount:(.envFrom//[]|length),volumeMountCount:(.volumeMounts//[]|length),
-  env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED") |
+  env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") |
     {name,value,indirect:(.valueFrom!=null)}],readinessProbe,livenessProbe,securityContext}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,containers:(.spec.template.spec.containers|containers),
@@ -157,6 +164,11 @@ elif $role == "apps" then {apiVersion,kind,metadata:(.metadata|metadata),spec:{s
 elif $role == "chart" or $role == "root" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{suspend:.spec.suspend,url:.spec.url,ref:{digest:.spec.ref.digest},verify:.spec.verify},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),artifact:(.status.artifact|{revision,digest})}}
+elif $role == "release-product" then {apiVersion,kind,metadata:(.metadata|metadata),
+  spec:{id:.spec.id,name:.spec.name,version:.spec.version,owner:(.spec.owner|{name,url}),connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),
+    outputs:[.spec.outputs[]? | {name,protocol,url,contractUrl,mediaType}],
+    ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
+  status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions)}}
 elif $role == "product" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),outputs:[.spec.outputs[]? | {name,url,contractUrl}],
     ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
@@ -166,7 +178,7 @@ elif $role|startswith("service-") then {apiVersion,kind,metadata:(.metadata|meta
 elif $role == "helm" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{suspend:.spec.suspend,chartRef:.spec.chartRef,values:{image:(.spec.values.image|{repository,tag,digest}),
     uiContract:(.spec.values.uiContract|{enabled,additionalHostOrigins}),uiAppearance:(.spec.values.uiAppearance|{enabled}),
-    controller:{replicas:.spec.values.controller.replicas},demoProduct:(.spec.values.demoProduct|{enabled,replicas,publicBaseURL}),route:(.spec.values.route|{enabled,host}),
+    controller:{replicas:.spec.values.controller.replicas},demoProduct:(.spec.values.demoProduct|{enabled,replicas,publicBaseURL,ksailReleasesEnabled:(.ksailReleases.enabled//false)}),route:(.spec.values.route|{enabled,host}),
     observationFlags:[.spec.values | .connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]}},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),
     lastAttemptedRevision:.status.lastAttemptedRevision,lastAttemptedRevisionDigest:.status.lastAttemptedRevisionDigest,
@@ -365,6 +377,7 @@ def route($name;$host;$backend;$public):
   .spec.values.uiAppearance.enabled==true and .spec.values.controller.replicas==2 and .spec.values.demoProduct.enabled==true and
   .spec.values.observationFlags==[$readiness_state=="active",$readiness_state=="active",false] and
   .spec.values.demoProduct.replicas==2 and .spec.values.demoProduct.publicBaseURL==("https://harbour-data."+$domain) and
+  .spec.values.demoProduct.ksailReleasesEnabled==$ksail_enabled and
   .spec.values.route.enabled==true and .spec.values.route.host==("data-products."+$domain) and
   .status.lastAttemptedRevisionDigest==$chart_digest and .status.lastAttemptedRevision==($tag+"+"+$chart_digest[7:19]) and
   (.status.lastAttemptedConfigDigest|digest) and .status.history[0].status=="deployed" and (.status.history[0].version|positive) and
@@ -377,6 +390,22 @@ def route($name;$host;$backend;$public):
   .spec.ui.contract.apiVersion=="data-product-ui/v2" and
   (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
   (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"]) and
+(if $ksail_enabled then
+  (."release-product"|identity("DataProduct";"data.devantler.tech/v1alpha1";"ksail-releases";$namespace) and
+    .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
+    .spec.id=="https://github.com/devantler-tech/ksail/releases" and .spec.name=="KSail releases" and .spec.version=="v1.0.0" and
+    .spec.owner=={name:"devantler-tech",url:"https://github.com/devantler-tech/ksail"} and
+    .spec.connector==null and .spec.contractChecks==[] and
+    .spec.outputs==[{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",
+      contractUrl:("https://harbour-data."+$domain+"/ksail-releases/openapi.json"),mediaType:"application/json"}] and
+    .spec.ui.url==("https://harbour-data."+$domain+"/ksail-releases/ui") and .spec.ui.contract.apiVersion=="data-product-ui/v2" and
+    (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
+    (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"])
+  else true end) and
+([."deployment-harbour"] + [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
+  all(.[]; [.spec.containers[]? | select(.name=="product") | .env[]? | select(.name=="KSAIL_RELEASES_ENABLED")] as $flags |
+    if $ksail_enabled then $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"true",indirect:false}]
+    else $flags==[] or $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"false",indirect:false}] end)) and
 (.replicasets|inventory("ReplicaSet";"apps/v1")) and (.pods|inventory("Pod";"v1")) and
 (.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) and
 readiness_observation($snapshot;$tag) and
@@ -426,6 +455,9 @@ collect() {
   read_resource "$directory" chart "$namespace" ocirepositories.source.toolkit.fluxcd.io data-product-controller
   read_resource "$directory" helm "$namespace" helmreleases.helm.toolkit.fluxcd.io data-product-controller
   read_resource "$directory" product "$namespace" dataproducts.data.devantler.tech harbour-observations
+  if [[ "$expected_releases" == true ]]; then
+    read_resource "$directory" release-product "$namespace" dataproducts.data.devantler.tech ksail-releases
+  fi
   read_resource "$directory" service-harbour "$namespace" services data-product-controller-harbour
   read_resource "$directory" service-ui-kit "$namespace" services data-product-controller-ui-kit
   read_resource "$directory" endpoints "$namespace" endpointslices.discovery.k8s.io
@@ -466,7 +498,7 @@ bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
-  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" \
+  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
@@ -502,6 +534,20 @@ public_checks() {
   fetch "$sample/ui-contract-config" || return 1
   jq -se --arg registry "https://data-products.$domain" --arg kit "$kit" \
     'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || return 1
+  if [[ "$expected_releases" == true ]]; then
+    fetch "$sample/ksail-releases/ui" || return 1
+    header_is Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src $sample/ksail-releases/ui-contract-config https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'" || return 1
+    header_is Referrer-Policy no-referrer || return 1
+    header_is X-Content-Type-Options nosniff || return 1
+    grep -Fq '<meta name="product-kind" content="ksail-releases"' "$scratch/body" || return 1
+    fetch "$sample/ksail-releases/openapi.json" || return 1
+    jq -se 'length==1 and .[0].openapi=="3.1.0" and .[0].info.title=="KSail release history" and
+      .[0].servers==[{url:"https://api.github.com"}] and (.[0].paths|keys)==["/repos/devantler-tech/ksail/releases"] and
+      .[0].paths["/repos/devantler-tech/ksail/releases"].get.responses["200"]!=null' "$scratch/body" >/dev/null || return 1
+    fetch "$sample/ksail-releases/ui-contract-config" || return 1
+    jq -se --arg registry "https://data-products.$domain" --arg kit "$kit" \
+      'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || return 1
+  fi
   fetch "$kit/healthz" || return 1
   [[ $(cat "$scratch/body") == ok && $(wc -c <"$scratch/body") -eq 3 ]] || return 1
   local csp="default-src 'self'; connect-src 'none'; frame-src https:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
@@ -573,11 +619,12 @@ while :; do
 done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
+if [[ "$expected_releases" == true ]]; then public_count=12; else public_count=9; fi
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":9,"readinessState":"%s","retaken":%d,"settled":%s}\n' \
-    "$expected_pods" "$expected_state" "$((attempt - 1))" "$(<"$scratch/settled")"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"retaken":%d,"settled":%s}\n' \
+    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$((attempt - 1))" "$(<"$scratch/settled")"
 else
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":9,"readinessState":"%s"}\n' "$expected_pods" "$expected_state"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases"
 fi

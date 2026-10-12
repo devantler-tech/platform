@@ -1,8 +1,9 @@
 # Data product trial
 
 The **Data Products** tile on Homepage opens the registry behind the platform's
-maintainer-team SSO. Select **Harbour observations** to open its independently
-served UI in the registry's opaque sandbox, then run a query. The registry discovers
+maintainer-team SSO. Select **KSail releases** for live version and publication
+dates, or **Harbour observations** for the synthetic reference. Each product opens
+its independently served UI in the registry's opaque sandbox. The registry discovers
 the product descriptor; it does not compile or copy the product's UI.
 
 The registry is served at `https://data-products.${domain}`. The fixed Harbour
@@ -10,6 +11,17 @@ sample is public at `https://harbour-data.${domain}/ui`; its query API is
 `/api/observations`, and its OpenAPI contract is `/openapi.json` on that same host.
 The sample route removes cookies and authorization headers before forwarding.
 It contains synthetic observations and requires no data-source credentials.
+
+KSail's release view is public at
+`https://harbour-data.${domain}/ksail-releases/ui`. Its browser reads the fixed
+public `https://api.github.com/repos/devantler-tech/ksail/releases` endpoint with
+no cookies or credentials. Version and channel filters use the loaded page of
+at most 30 releases; Refresh reads GitHub again. An unavailable, partial or invalid
+response clears the rows and shows a retryable error. The controller and product
+workload do not fetch or store release records. The product's OpenAPI contract is
+`/ksail-releases/openapi.json` on the same public host and names GitHub as the server.
+Catalog readiness confirms registration and serving state; it does not claim that
+GitHub is reachable from every consumer's browser.
 
 Open `https://product-ui.${domain}` to try a product UI outside the registry. Paste
 the product's UI descriptor and select its declared permissions before connecting.
@@ -19,13 +31,19 @@ the registry and this host. Status, resize and appearance permissions are explic
 changing the connected product starts a new session.
 
 The release pins both the signed chart and controller image by immutable digest.
-The registry workspace is standard behavior and the sample is enabled. Portable UI
+The registry workspace is standard behavior and both product views are enabled. Portable UI
 status, resize and appearance grants are active for the publisher-approved registry
 origin, so System, Light and Dark appearance can reach the sandboxed sample without
 resetting its query. Provisioning, engine providers, source exports, composition
 and DCAT publication remain disabled. The trial
 has no database or persistent data volume. New capabilities and releases go through
 reviewed GitOps changes before activation.
+
+`demoProduct.ksailReleases.enabled` activates the release view and its descriptor
+on the existing two-replica reference workload. It adds no workload, service-account
+grant or cluster egress. Disable that value in a reviewed GitOps change to withdraw
+the product; source availability and independent publisher acceptance remain
+separate adoption decisions.
 
 Harbour readiness observes its serving Deployment and a separate two-replica
 contract probe. The probe uses a token-free service account and an exact-host
@@ -53,5 +71,9 @@ Every deployment checks the exact published Apps revision, signed chart, install
 release and running image, current route generations, and healthy current Pods.
 Anonymous registry access must require SSO; the sample query and contract must work
 directly. The portable host's health endpoint, assets and sandbox policy must also
-pass. Finish with an authenticated registry-to-sandbox query and a separately
+pass. The receipt also binds KSail activation to the checked-out Helm declaration,
+the live Helm value and serving Pod environments, current product registration,
+exact source/contract URLs, approved host origins and the public UI's restricted
+connection policy. It performs no GitHub source read; that check belongs to the
+consumer browser. Finish with an authenticated registry-to-sandbox query and a separately
 connected portable-host query in the browser, including Light and Dark appearance.

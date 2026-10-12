@@ -25,12 +25,13 @@ jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-pro
      and .spec.values.uiContract.additionalHostOrigins == ["https://product-ui.${domain}"]
      and .spec.values.uiAppearance.enabled == true
      and .spec.values.demoProduct.publicBaseURL == "https://harbour-data.${domain}"
+     and .spec.values.demoProduct.ksailReleases.enabled == true
      and ([.spec.values.engineProviders.enabled, .spec.values.provisionedSources.enabled,
            .spec.values.httpSource.enabled, .spec.values.composition.enabled,
            .spec.values.dcatCatalog.enabled, .spec.values.contractProbe.enabled]
           | all(. == false)) and .spec.values.connectorReadiness.enabled==true
      and .spec.values.contractReadiness.enabled==true)] == [true]' \
-  "${scratch}/apps.json" >/dev/null || fail "${provider}: the trial must enable only sample, appearance and independent readiness observation with the exact sample publication URL"
+  "${scratch}/apps.json" >/dev/null || fail "${provider}: the trial must enable sample, KSail releases, appearance and independent readiness observation with the exact product publication URL"
 jq -er '[.[] | select(.kind=="HelmRelease" and .metadata.name=="data-product-controller") |
   .spec.postRenderers[].kustomize.patches[] | select(.target.kind=="DataProduct" and .target.name=="harbour-observations")] |
   if length==1 then .[0].patch else error("ambiguous Harbour registration patch") end' \

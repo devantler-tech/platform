@@ -64,6 +64,8 @@ spec:
     demoProduct:
       enabled: true
       publicBaseURL: https://harbour-data.${domain}
+      ksailReleases:
+        enabled: true
       replicas: 2
       resources:
         requests:
