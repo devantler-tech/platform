@@ -257,6 +257,26 @@ func TestReleasedOwnershipRecoveryFoldInputsAreAccepted(t *testing.T) {
 	}
 }
 
+func TestReleasedFactoryRetryFoldInputsAreAccepted(t *testing.T) {
+	// Independently read from v7.202.56 (5e387655892643dcf322a03d2ceb6d9ca6030979).
+	// This source must pass before production can adopt its bounded Factory retry.
+	inputs := map[string]string{
+		"pkg/fsutil/configmanager":   "88779a5a93cc49f116d4f5eda8389becc14d1cd8",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "4351b93273821f333e9f0641e323ba99387844bb",
+		"go.mod":                     "b1d9e18582954ce6a9851a64bdd1c7344d36067a",
+		"go.sum":                     "b11643f42c4e3950f2513b6370c4ede1a99f3a0e",
+	}
+	if _, err := verifyFoldInputs("7.202.56", func(string) (map[string]string, error) { return inputs, nil }); err != nil {
+		t.Fatalf("released Factory retry source was rejected: %v", err)
+	}
+	inputs["go.mod"] = "aa4556d3ce50ca3a2f7397a5f0125d302bb9431f"
+	if _, err := verifyFoldInputs("7.202.56", func(string) (map[string]string, error) { return inputs, nil }); err == nil {
+		t.Fatal("new release mixed with an older dependency input was accepted")
+	}
+}
+
 func TestUnchangedFoldInputsPassWhateverTheVersion(t *testing.T) {
 	// A later release with the audited inputs needs no edit here: the check
 	// compares content, not the version's name.
