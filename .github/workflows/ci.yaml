@@ -576,6 +576,7 @@ jobs:
               - 'scripts/tests/test-add-default-deny-shape.sh'
               - 'scripts/tests/test-add-baseline-context.sh'
               - 'scripts/tests/test-longhorn-ui-baseline-context.sh'
+              - 'scripts/tests/test-longhorn-client-placement.sh'
               - 'scripts/tests/test-cilium-hubble-baseline-context.sh'
               - 'scripts/tests/test-guard-longhorn-ui-baseline-context.sh'
               - 'scripts/guard-longhorn-ui-baseline-context.sh'
@@ -3229,6 +3230,24 @@ jobs:
         run: |
           shellcheck scripts/tests/test-reloader-placement-selection.sh
           bash scripts/tests/test-reloader-placement-selection.sh
+
+      - name: 🧩 Verify Longhorn volume-client placement
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-longhorn-client-placement.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml scripts/tests/test-longhorn-client-placement.sh \
+            scripts/build-controller-helm.sh scripts/render-helm-chart \
+            k8s/providers/hetzner/infrastructure/controllers/longhorn \
+            k8s/providers/hetzner/infrastructure/cluster-policies/restrict-storage-to-baseline-workers.yaml \
+            k8s/providers/hetzner/infrastructure/kustomization.yaml \
+            k8s/clusters/prod/bootstrap/config-map.yaml ksail.prod.yaml)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-longhorn-client-placement.sh
+          fi
 
       - name: 🧩 Apply the actual Whoami chart's post-renderers
         run: |
