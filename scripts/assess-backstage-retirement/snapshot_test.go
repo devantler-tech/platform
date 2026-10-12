@@ -118,6 +118,36 @@ func TestMalformedDerivedListsHold(t *testing.T) {
 	}
 }
 
+// TestMissingRelatedEvidenceHolds catches Helm's successful-but-partial reads.
+func TestMissingRelatedEvidenceHolds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+	}{
+		{"missing resources", func(r map[string]any) { delete(object(r["info"]), "resources") }},
+		{"null resources", func(r map[string]any) { object(r["info"])["resources"] = nil }},
+		{"missing related pods", func(r map[string]any) {
+			delete(object(object(r["info"])["resources"]), "v1/Pod(related)")
+		}},
+		{"no related members", func(r map[string]any) { relatedList(r)["items"] = []any{} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			protectedRunner(t)
+			r, l := statusFixture()
+			tc.change(r)
+			var output bytes.Buffer
+			if code := run([]string{"--live"}, nil, &output, func(_ context.Context, program string, _ ...string) ([]byte, error) {
+				if program == "helm" {
+					return encode(t, r), nil
+				}
+				return encode(t, l), nil
+			}); code != 2 {
+				t.Fatalf("identical partial reads passed: %d %s", code, &output)
+			}
+		})
+	}
+}
+
 // TestNativeLiveCollector uses the real command capture against synthetic readers.
 func TestNativeLiveCollector(t *testing.T) {
 	protectedRunner(t)
