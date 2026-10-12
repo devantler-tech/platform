@@ -176,8 +176,8 @@ readonly AUTOSCALER_SCALE_DOWN_DISABLED_ANNOTATION="cluster-autoscaler.kubernete
 readonly AUTOSCALER_SCALE_DOWN_DISABLED_JSON_PATH="/metadata/annotations/cluster-autoscaler.kubernetes.io~1scale-down-disabled"
 readonly SCALE_DOWN_GUARD_OWNER_ANNOTATION="platform.devantler.tech/ghcr-auth-scale-down-owner"
 readonly SCALE_DOWN_GUARD_OWNER_JSON_PATH="/metadata/annotations/platform.devantler.tech~1ghcr-auth-scale-down-owner"
-KSAIL_OPERATOR_VERSION="$(yq -er '.spec.chart.spec.version' \
-  k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml)"
+KSAIL_OPERATOR_VERSION="$(yq -er '.spec.ref.tag' \
+  k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml)"
 readonly KSAIL_OPERATOR_VERSION
 readonly KSAIL_OPERATOR_IMAGE="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
 # Private first-party release workflows create/update latest alongside every

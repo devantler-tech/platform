@@ -1,0 +1,26 @@
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: ksail-operator
+  namespace: ksail-operator
+spec:
+  interval: 10m
+  # The ksail-operator chart lives in the KSail repo (charts/ksail-operator) and
+  # is published as an OCI artifact to GHCR. Fetch the chart artifact directly so
+  # the source exposes real readiness.
+  url: oci://ghcr.io/devantler-tech/charts/ksail-operator
+  ref:
+    tag: 7.202.28
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      # The chart is signed keylessly by KSail's own cd.yaml, run on a release
+      # tag (devantler-tech/ksail#7618; first signed chart is 7.202.16). Only a
+      # vX.Y.Z tag run of that workflow is trusted; a branch or pull request
+      # run is not.
+      - issuer: '^https://token\.actions\.githubusercontent\.com$'
+        subject: '^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
