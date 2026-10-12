@@ -360,6 +360,9 @@ func TestSameAttemptLegacyHealRestoresInterruptedPauses(t *testing.T) {
 			// failed merge-group source. The attempt is not terminal yet.
 			e.source = strings.Repeat("b", 40)
 			e.previousFinished = func(context.Context, journal) error {
+				if variation == "different-holder" {
+					return errors.New("previous owner terminal status unavailable")
+				}
 				t.Fatal("same-attempt heal queried terminal run status")
 				return errors.New("run is still active")
 			}
