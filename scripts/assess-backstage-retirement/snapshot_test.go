@@ -148,6 +148,50 @@ func TestMissingRelatedEvidenceHolds(t *testing.T) {
 	}
 }
 
+// TestOfflineRelatedEvidenceHolds requires the same complete evidence as live reads.
+func TestOfflineRelatedEvidenceHolds(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(map[string]any)
+		want   int
+	}{
+		{"complete evidence", func(_ map[string]any) {}, 0},
+		{"different collection clock", func(r map[string]any) {
+			object(relatedList(r)["metadata"])["resourceVersion"] = "101"
+		}, 0},
+		{"missing resources", func(r map[string]any) { delete(object(r["info"]), "resources") }, 2},
+		{"null resources", func(r map[string]any) { object(r["info"])["resources"] = nil }, 2},
+		{"missing related pods", func(r map[string]any) {
+			delete(object(object(r["info"])["resources"]), "v1/Pod(related)")
+		}, 2},
+		{"no related members", func(r map[string]any) { relatedList(r)["items"] = []any{} }, 2},
+		{"malformed collection clock", func(r map[string]any) {
+			object(relatedList(r)["metadata"])["resourceVersion"] = 100
+		}, 2},
+		{"missing member version", func(r map[string]any) {
+			pod := relatedList(r)["items"].([]any)[0].(map[string]any)
+			delete(object(pod["metadata"]), "resourceVersion")
+		}, 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, l := statusFixture()
+			tc.change(r)
+			input := encode(t, map[string]any{"Release": r, "Live": l})
+			var output bytes.Buffer
+			code := run([]string{"--stdin"}, bytes.NewReader(input), &output, func(context.Context, string, ...string) ([]byte, error) {
+				t.Fatal("offline evaluation accessed a live reader")
+				return nil, nil
+			})
+			if code != tc.want || tc.want == 2 && strings.Contains(output.String(), "ASSESSED_STATELESS") {
+				t.Fatalf("offline assessment = %d, want %d: %s", code, tc.want, &output)
+			}
+			if strings.Contains(output.String(), "DO_NOT_PRINT") {
+				t.Fatal("private evidence escaped")
+			}
+		})
+	}
+}
+
 // TestNativeLiveCollector uses the real command capture against synthetic readers.
 func TestNativeLiveCollector(t *testing.T) {
 	protectedRunner(t)

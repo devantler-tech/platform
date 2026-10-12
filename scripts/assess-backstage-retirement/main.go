@@ -27,7 +27,7 @@ type result struct {
 func assess(release, live []byte) result {
 	hold := result{Code: "HOLD_INPUT"}
 	r, ok := jsonObject(release)
-	if !ok || r["name"] != "backstage" || r["namespace"] != "backstage" || object(r["info"])["status"] != "deployed" {
+	if !ok || r["name"] != "backstage" || r["namespace"] != "backstage" || object(r["info"])["status"] != "deployed" || !validRelatedPodEvidence(r) {
 		return hold
 	}
 	if revision, ok := r["version"].(int); !ok || revision < 1 {
@@ -271,11 +271,8 @@ func collect(ctx context.Context, execute command) ([]byte, []byte, error) {
 	return release, live, err
 }
 
-// normalizeStatusClock excludes only Helm's derived related-list collection clock.
-// Helm 4.2 Status.Run appends KubeClient.Get(..., true), including PodLists
-// whose resourceVersion advances on unrelated writes. Their member identities,
-// versions and contents, and every stored release field, remain compared.
-func normalizeStatusClock(release map[string]any) bool {
+// validRelatedPodEvidence requires complete native evidence without changing it.
+func validRelatedPodEvidence(release map[string]any) bool {
 	raw, exists := object(release["info"])["resources"]
 	if !exists || raw == nil {
 		return false
@@ -311,7 +308,21 @@ func normalizeStatusClock(release map[string]any) bool {
 				return false
 			}
 		}
-		delete(meta, "resourceVersion")
+	}
+	return true
+}
+
+// normalizeStatusClock excludes only Helm's derived related-list collection clock.
+// Helm 4.2 Status.Run appends KubeClient.Get(..., true), including PodLists
+// whose resourceVersion advances on unrelated writes. Their member identities,
+// versions and contents, and every stored release field, remain compared.
+func normalizeStatusClock(release map[string]any) bool {
+	if !validRelatedPodEvidence(release) {
+		return false
+	}
+	lists := object(object(release["info"])["resources"])["v1/Pod(related)"].([]any)
+	for _, raw := range lists {
+		delete(object(object(raw)["metadata"]), "resourceVersion")
 	}
 	return true
 }

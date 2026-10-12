@@ -47,7 +47,9 @@ retention. It deletes nothing and does not change a reclaim policy.
 Run the offline regressions with
 `go test -race ./scripts/assess-backstage-retirement`.
 `--stdin` evaluates synthetic JSON containing `Release` and `Live` objects,
-without cluster access. Never persist production release data as a fixture.
+without cluster access. It requires the same complete related-Pod evidence as
+live assessment; only the live two-snapshot comparison removes collection clocks.
+Never persist production release data as a fixture.
 
 Reference: [Helm status](https://helm.sh/docs/helm/helm_status/)
 reads the installed release; [Helm uninstall](https://helm.sh/docs/helm/helm_uninstall/)
