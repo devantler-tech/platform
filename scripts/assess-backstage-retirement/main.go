@@ -271,6 +271,51 @@ func collect(ctx context.Context, execute command) ([]byte, []byte, error) {
 	return release, live, err
 }
 
+// normalizeStatusClock excludes only Helm's derived related-list collection clock.
+// Helm 4.2 Status.Run appends KubeClient.Get(..., true), including PodLists
+// whose resourceVersion advances on unrelated writes. Their member identities,
+// versions and contents, and every stored release field, remain compared.
+func normalizeStatusClock(release map[string]any) bool {
+	raw, exists := object(release["info"])["resources"]
+	if !exists || raw == nil {
+		return true
+	}
+	resources, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	raw, exists = resources["v1/Pod(related)"]
+	if !exists {
+		return true
+	}
+	lists, ok := raw.([]any)
+	if !ok || len(lists) == 0 {
+		return false
+	}
+	for _, raw := range lists {
+		list := object(raw)
+		meta := object(list["metadata"])
+		if list["apiVersion"] != "v1" || list["kind"] != "PodList" || text(meta["resourceVersion"]) == "" {
+			return false
+		}
+		items, ok := list["items"].([]any)
+		if !ok {
+			return false
+		}
+		for _, raw := range items {
+			pod := object(raw)
+			meta := object(pod["metadata"])
+			if pod["apiVersion"] != "v1" || pod["kind"] != "Pod" ||
+				meta["namespace"] != "backstage" || text(meta["name"]) == "" ||
+				text(meta["uid"]) == "" || text(meta["resourceVersion"]) == "" {
+				return false
+			}
+		}
+		delete(meta, "resourceVersion")
+	}
+	return true
+}
+
 // run fails closed and emits only the assessment code and object count.
 func run(args []string, input io.Reader, output io.Writer, execute command) int {
 	var release, live []byte
@@ -309,7 +354,9 @@ func run(args []string, input io.Reader, output io.Writer, execute command) int 
 		l, lok := jsonObject(live)
 		ar, arok := jsonObject(againRelease)
 		al, alok := jsonObject(againLive)
-		if err != nil || !rok || !lok || !arok || !alok || !reflect.DeepEqual(r, ar) || !reflect.DeepEqual(l, al) {
+		if err != nil || !rok || !lok || !arok || !alok ||
+			!normalizeStatusClock(r) || !normalizeStatusClock(ar) ||
+			!reflect.DeepEqual(r, ar) || !reflect.DeepEqual(l, al) {
 			_, _ = fmt.Fprintln(output, "PORTAL-FOOTPRINT=HOLD_CHANGED_SNAPSHOT")
 			return 2
 		}
