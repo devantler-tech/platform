@@ -561,18 +561,18 @@ func TestRequiredPackageCoverageProviderUpjetUnifiReferenceIsPreflighted(t *test
 
 func TestRequiredPackageCoverageExactDeclaredKsailOperatorImageIsPreflighted(t *testing.T) {
 	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
-	helmRelease := readRepositoryFile(t, "k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml")
+	chartSource := readRepositoryFile(t, "k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml")
 
 	ksailOperatorVersion := ""
-	for line := range strings.SplitSeq(helmRelease, "\n") {
+	for line := range strings.SplitSeq(chartSource, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "version:") {
-			ksailOperatorVersion = strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+		if strings.HasPrefix(line, "tag:") {
+			ksailOperatorVersion = strings.TrimSpace(strings.TrimPrefix(line, "tag:"))
 			break
 		}
 	}
 	requireContains(t, helper, `"devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"`)
-	requireContains(t, helper, ".spec.chart.spec.version")
+	requireContains(t, helper, ".spec.ref.tag")
 	if ksailOperatorVersion == "" {
 		t.Error("declared KSail operator version is empty")
 	}

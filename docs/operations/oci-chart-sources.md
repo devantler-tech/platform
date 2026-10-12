@@ -1,6 +1,6 @@
 # OCI chart source readiness
 
-The third-party OCI charts for Flux Operator, KRO, Homepage and Origin CA Issuer
+The OCI charts for Flux Operator, KRO, Homepage, Origin CA Issuer and KSail Operator
 use `OCIRepository` sources and `HelmRelease.spec.chartRef`. Each source names the
 complete chart URL, an exact version tag, a reconciliation interval, and the Helm
 chart layer with `operation: copy`. Versions live in the sources rather than the
@@ -15,11 +15,12 @@ The Flux Operator's dedicated Renovate manager reads the source's version tag.
 The other migrated charts retain built-in Flux dependency discovery. The existing
 release-age policy is unchanged.
 
-KSail Operator remains on its existing HelmRepository source. Its current chart
-has no published signature, while the platform requires first-party
-OCIRepository artifacts to verify a signing identity. Migrating it requires a
-signed chart and verified adoption; adding an exemption is not the repair.
-That remaining source can still produce the Coroot missing-conditions message.
+KSail Operator uses the same source shape and, because its chart is first-party,
+also verifies the signer: only a chart signed by KSail's `cd.yaml` on a release
+version is accepted. Charts before 7.202.16 carry no signature and cannot be
+installed from this source. Its version is still proposed from KSail's GitHub
+releases, read from the source's version, so a release that built no operator
+image is never proposed.
 
 `go test ./scripts/tests/oci-chart-sources` checks source/release bindings, fixed
 tags, chart layers, update discovery and negative controls. CI runs this alongside

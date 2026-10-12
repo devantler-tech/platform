@@ -23,6 +23,7 @@ var chartSources = []chartSource{
 	{"k8s/bases/infrastructure/controllers/kro", "kro", "kro-system", "oci://registry.k8s.io/kro/charts/kro"},
 	{"k8s/bases/apps/homepage", "homepage", "homepage", "oci://ghcr.io/m0nsterrr/helm-charts/homepage"},
 	{"k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer", "origin-ca-issuer", "cert-manager", "oci://ghcr.io/cloudflare/origin-ca-issuer-charts/origin-ca-issuer"},
+	{"k8s/bases/infrastructure/controllers/ksail-operator", "ksail-operator", "ksail-operator", "oci://ghcr.io/devantler-tech/charts/ksail-operator"},
 }
 
 func repositoryRoot(t *testing.T) string {
@@ -240,5 +241,86 @@ func TestCIExecutesMigrationContract(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("CI must execute the migration contract exactly once; found %d", count)
+	}
+}
+
+// The KSail operator chart is first-party, so its source must also verify the
+// signer, and its version must stay discoverable from KSail's GitHub releases:
+// a registry tag exists for releases that built no operator image.
+func TestKSailOperatorSourceVerifiesAndRemainsDiscoverable(t *testing.T) {
+	root := repositoryRoot(t)
+	path := "k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml"
+	source := readDocument(t, filepath.Join(root, path))
+	spec := object(source, "spec")
+	verify := object(spec, "verify")
+	identities, _ := verify["matchOIDCIdentity"].([]any)
+	if verify["provider"] != "cosign" || len(identities) != 1 {
+		t.Fatal("first-party chart source must verify exactly one cosign identity")
+	}
+	identity, _ := identities[0].(map[string]any)
+	subject, _ := identity["subject"].(string)
+	matcher, err := regexp.Compile(subject)
+	if err != nil || identity["issuer"] != `^https://token\.actions\.githubusercontent\.com$` {
+		t.Fatalf("chart signer must be a GitHub Actions identity: %v", err)
+	}
+	const workflow = "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@"
+	for candidate, trusted := range map[string]bool{
+		workflow + "refs/tags/v7.202.28":      true,
+		workflow + "refs/heads/main":          false,
+		workflow + "refs/pull/1/merge":        false,
+		workflow + "refs/tags/v7.202.28-rc.1": false,
+		"https://github.com/devantler-tech/ksail/.github/workflows/ci.yaml@refs/tags/v7.202.28": false,
+		"https://github.com/someone-else/ksail/.github/workflows/cd.yaml@refs/tags/v7.202.28":   false,
+		"x" + workflow + "refs/tags/v7.202.28":                                                  false,
+	} {
+		if matcher.MatchString(candidate) != trusted {
+			t.Fatalf("signer %q: trusted=%v, want %v", candidate, !trusted, trusted)
+		}
+	}
+
+	data, err := os.ReadFile(filepath.Join(root, ".github/renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		CustomManagers []struct {
+			ManagerFilePatterns []string `json:"managerFilePatterns"`
+			MatchStrings        []string `json:"matchStrings"`
+			DatasourceTemplate  string   `json:"datasourceTemplate"`
+			DepNameTemplate     string   `json:"depNameTemplate"`
+		} `json:"customManagers"`
+	}
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(filepath.Join(root, path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, manager := range config.CustomManagers {
+		if len(manager.ManagerFilePatterns) != 1 || !strings.Contains(manager.ManagerFilePatterns[0], "ksail-operator") {
+			continue
+		}
+		count++
+		if manager.DatasourceTemplate != "github-releases" || manager.DepNameTemplate != "devantler-tech/ksail" || len(manager.MatchStrings) != 1 {
+			t.Fatal("ksail-operator must stay tracked through KSail's GitHub releases")
+		}
+		pattern, err := regexp.Compile(strings.Trim(manager.ManagerFilePatterns[0], "/"))
+		if err != nil || !pattern.MatchString(path) {
+			t.Fatalf("version manager must read the migrated source: %v", err)
+		}
+		extract, err := regexp.Compile(manager.MatchStrings[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		matches := extract.FindAllStringSubmatch(string(text), -1)
+		index := extract.SubexpIndex("currentValue")
+		if len(matches) != 1 || index < 1 || matches[0][index] != object(spec, "ref")["tag"] {
+			t.Fatal("version manager must extract exactly the migrated chart's version")
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected one ksail-operator manager, found %d", count)
 	}
 }

@@ -135,11 +135,11 @@ func findRepoRoot() string {
 }
 
 func readKSailOperatorVersion() string {
-	path := filepath.Join(rootPath, "k8s", "bases", "infrastructure", "controllers", "ksail-operator", "helm-release.yaml")
+	path := filepath.Join(rootPath, "k8s", "bases", "infrastructure", "controllers", "ksail-operator", "oci-repository.yaml")
 	for _, line := range strings.Split(mustReadFile(path), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "version:") {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, "version:"))
+		if strings.HasPrefix(trimmed, "tag:") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "tag:"))
 		}
 	}
 	panic("KSail operator chart version not found")
