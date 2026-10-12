@@ -57,13 +57,17 @@ func fixture() (map[string]any, map[string]any) {
 		map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "metadata": metadata("backstage-db", "database-uid")},
 		map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "metadata": metadata("backstage-db-3", "claim-uid")},
 	}}
-	object(release["info"])["resources"] = map[string]any{"v1/Pod(related)": []any{
-		map[string]any{"apiVersion": "v1", "kind": "PodList",
-			"metadata": map[string]any{"resourceVersion": "100"},
-			"items": []any{map[string]any{"apiVersion": "v1", "kind": "Pod",
-				"metadata": podMetadata()}},
-		},
-	}}
+	object(release["info"])["resources"] = map[string]any{
+		"v1/Deployment": []any{live["items"].([]any)[0]},
+		"v1/Service": []any{map[string]any{"apiVersion": "v1", "kind": "Service",
+			"metadata": metadata("backstage", "service-uid")}},
+		"v1/Pod(related)": []any{
+			map[string]any{"apiVersion": "v1", "kind": "PodList",
+				"metadata": map[string]any{"resourceVersion": "100"},
+				"items": []any{map[string]any{"apiVersion": "v1", "kind": "Pod",
+					"metadata": podMetadata()}},
+			},
+		}}
 	return release, live
 }
 

@@ -13,15 +13,7 @@ import (
 
 // statusFixture mirrors Helm 4.2's derived related PodList, not stored release data.
 func statusFixture() (map[string]any, map[string]any) {
-	r, l := fixture()
-	object(r["info"])["resources"] = map[string]any{"v1/Pod(related)": []any{
-		map[string]any{"apiVersion": "v1", "kind": "PodList",
-			"metadata": map[string]any{"resourceVersion": "100"},
-			"items": []any{map[string]any{"apiVersion": "v1", "kind": "Pod",
-				"metadata": metadata("backstage-pod", "pod-uid")}},
-		},
-	}}
-	return r, l
+	return fixture()
 }
 
 // relatedList selects the single complete synthetic list supplied above.
@@ -190,6 +182,83 @@ func TestOfflineRelatedEvidenceHolds(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestObservedManifestResourcesHold reproduces successful but incomplete Helm GETs.
+func TestObservedManifestResourcesHold(t *testing.T) {
+	for _, mode := range []string{"--live", "--stdin"} {
+		for _, tc := range []struct {
+			name   string
+			change func(map[string]any)
+			want   int
+		}{
+			{"complete", func(map[string]any) {}, 0},
+			{"complete config", func(r map[string]any) { addObservedResource(r, "ConfigMap", "config") }, 0},
+			{"complete secret", func(r map[string]any) { addObservedResource(r, "Secret", "secret") }, 0},
+			{"complete account", func(r map[string]any) { addObservedResource(r, "ServiceAccount", "account") }, 0},
+			{"missing service", func(r map[string]any) { delete(object(object(r["info"])["resources"]), "v1/Service") }, 2},
+			{"empty service", func(r map[string]any) { object(object(r["info"])["resources"])["v1/Service"] = []any{} }, 2},
+			{"missing deployment", func(r map[string]any) { delete(object(object(r["info"])["resources"]), "v1/Deployment") }, 2},
+			{"wrong service name", func(r map[string]any) { object(observedService(r)["metadata"])["name"] = "other" }, 2},
+			{"wrong service namespace", func(r map[string]any) { object(observedService(r)["metadata"])["namespace"] = "other" }, 2},
+			{"wrong service API", func(r map[string]any) { observedService(r)["apiVersion"] = "other/v1" }, 2},
+			{"missing service UID", func(r map[string]any) { delete(object(observedService(r)["metadata"]), "uid") }, 2},
+			{"missing service version", func(r map[string]any) { delete(object(observedService(r)["metadata"]), "resourceVersion") }, 2},
+			{"duplicate service", func(r map[string]any) {
+				object(object(r["info"])["resources"])["v1/Service"] = []any{observedService(r), observedService(r)}
+			}, 2},
+			{"missing config", func(r map[string]any) {
+				r["manifest"] = deploymentManifest + "---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: config\n"
+			}, 2},
+			{"missing secret", func(r map[string]any) {
+				r["manifest"] = deploymentManifest + "---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: secret\n"
+			}, 2},
+			{"missing account", func(r map[string]any) {
+				r["manifest"] = deploymentManifest + "---\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: account\n"
+			}, 2},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				protectedRunner(t)
+				r, l := statusFixture()
+				tc.change(r)
+				var output bytes.Buffer
+				input := bytes.NewReader(encode(t, map[string]any{"Release": r, "Live": l}))
+				reads := 0
+				code := run([]string{mode}, input, &output, func(_ context.Context, program string, _ ...string) ([]byte, error) {
+					if mode == "--stdin" {
+						t.Fatal("offline assessment invoked a live reader")
+					}
+					if program == "helm" {
+						reads++
+						if reads == 2 {
+							object(relatedList(r)["metadata"])["resourceVersion"] = "101"
+						}
+						return encode(t, r), nil
+					}
+					return encode(t, l), nil
+				})
+				if code != tc.want || tc.want == 2 && strings.Contains(output.String(), "ASSESSED_STATELESS") {
+					t.Fatalf("incomplete observed resources: exit %d, want %d: %s", code, tc.want, &output)
+				}
+				if strings.Contains(output.String(), "DO_NOT_PRINT") {
+					t.Fatal("private evidence escaped")
+				}
+			})
+		}
+	}
+}
+
+// observedService selects only the synthetic observed Service under test.
+func observedService(r map[string]any) map[string]any {
+	return object(object(r["info"])["resources"])["v1/Service"].([]any)[0].(map[string]any)
+}
+
+// addObservedResource proves additional manifest members with defaulted namespaces.
+func addObservedResource(r map[string]any, kind, name string) {
+	r["manifest"] = deploymentManifest + "---\napiVersion: v1\nkind: " + kind + "\nmetadata:\n  name: " + name + "\n"
+	object(object(r["info"])["resources"])["v1/"+kind] = []any{map[string]any{
+		"apiVersion": "v1", "kind": kind, "metadata": metadata(name, name+"-uid"),
+	}}
 }
 
 // TestNativeLiveCollector uses the real command capture against synthetic readers.

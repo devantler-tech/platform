@@ -33,7 +33,9 @@ workload. It also checks that retained claims have no owner other than the
 separate database, and refuses changing snapshots or missing evidence. Helm's
 derived related-PodList collection clock is excluded from the comparison because
 unrelated writes advance it; every individual object version and content remains
-checked. Missing related-Pod evidence, empty lists and malformed derived lists
+checked. Every object required by the installed manifest must appear in Helm's
+observed resources with a complete identity; a successful partial GET is not
+accepted. Missing related-Pod evidence, empty lists and malformed derived lists
 still stop the assessment. Output
 contains only aggregate counts and fixed result codes; sensitive release values
 remain in process memory.
@@ -47,7 +49,7 @@ retention. It deletes nothing and does not change a reclaim policy.
 Run the offline regressions with
 `go test -race ./scripts/assess-backstage-retirement`.
 `--stdin` evaluates synthetic JSON containing `Release` and `Live` objects,
-without cluster access. It requires the same complete related-Pod evidence as
+without cluster access. It requires the same complete manifest and related-Pod evidence as
 live assessment; only the live two-snapshot comparison removes collection clocks.
 Never persist production release data as a fixture.
 
