@@ -278,7 +278,7 @@ func collect(ctx context.Context, execute command) ([]byte, []byte, error) {
 func normalizeStatusClock(release map[string]any) bool {
 	raw, exists := object(release["info"])["resources"]
 	if !exists || raw == nil {
-		return true
+		return false
 	}
 	resources, ok := raw.(map[string]any)
 	if !ok {
@@ -286,7 +286,7 @@ func normalizeStatusClock(release map[string]any) bool {
 	}
 	raw, exists = resources["v1/Pod(related)"]
 	if !exists {
-		return true
+		return false
 	}
 	lists, ok := raw.([]any)
 	if !ok || len(lists) == 0 {
@@ -299,7 +299,7 @@ func normalizeStatusClock(release map[string]any) bool {
 			return false
 		}
 		items, ok := list["items"].([]any)
-		if !ok {
+		if !ok || len(items) == 0 {
 			return false
 		}
 		for _, raw := range items {

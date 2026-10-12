@@ -33,7 +33,8 @@ workload. It also checks that retained claims have no owner other than the
 separate database, and refuses changing snapshots or missing evidence. Helm's
 derived related-PodList collection clock is excluded from the comparison because
 unrelated writes advance it; every individual object version and content remains
-checked. Malformed derived lists still stop the assessment. Output
+checked. Missing related-Pod evidence, empty lists and malformed derived lists
+still stop the assessment. Output
 contains only aggregate counts and fixed result codes; sensitive release values
 remain in process memory.
 
