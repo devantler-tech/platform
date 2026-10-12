@@ -27,7 +27,7 @@ type result struct {
 func assess(release, live []byte) result {
 	hold := result{Code: "HOLD_INPUT"}
 	r, ok := jsonObject(release)
-	if !ok || r["name"] != "backstage" || r["namespace"] != "backstage" || object(r["info"])["status"] != "deployed" {
+	if !ok || r["name"] != "backstage" || r["namespace"] != "backstage" || object(r["info"])["status"] != "deployed" || !validRelatedPodEvidence(r) || !validManifestResourceEvidence(r) {
 		return hold
 	}
 	if revision, ok := r["version"].(int); !ok || revision < 1 {
@@ -271,6 +271,120 @@ func collect(ctx context.Context, execute command) ([]byte, []byte, error) {
 	return release, live, err
 }
 
+// validRelatedPodEvidence requires complete native evidence without changing it.
+func validRelatedPodEvidence(release map[string]any) bool {
+	raw, exists := object(release["info"])["resources"]
+	if !exists || raw == nil {
+		return false
+	}
+	resources, ok := raw.(map[string]any)
+	if !ok {
+		return false
+	}
+	raw, exists = resources["v1/Pod(related)"]
+	if !exists {
+		return false
+	}
+	lists, ok := raw.([]any)
+	if !ok || len(lists) == 0 {
+		return false
+	}
+	for _, raw := range lists {
+		list := object(raw)
+		meta := object(list["metadata"])
+		if list["apiVersion"] != "v1" || list["kind"] != "PodList" || text(meta["resourceVersion"]) == "" {
+			return false
+		}
+		items, ok := list["items"].([]any)
+		if !ok || len(items) == 0 {
+			return false
+		}
+		for _, raw := range items {
+			pod := object(raw)
+			meta := object(pod["metadata"])
+			if pod["apiVersion"] != "v1" || pod["kind"] != "Pod" ||
+				meta["namespace"] != "backstage" || text(meta["name"]) == "" ||
+				text(meta["uid"]) == "" || text(meta["resourceVersion"]) == "" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// validManifestResourceEvidence rejects Helm GETs that omit required objects.
+// Helm 4.2 Get records per-object errors but can still return a successful status.
+func validManifestResourceEvidence(release map[string]any) bool {
+	resources := object(object(release["info"])["resources"])
+	observed := map[string]bool{}
+	for key, raw := range resources {
+		if key == "v1/Pod(related)" {
+			continue
+		}
+		members, ok := raw.([]any)
+		if !ok || len(members) == 0 {
+			return false
+		}
+		for _, raw := range members {
+			resource := object(raw)
+			meta := object(resource["metadata"])
+			api, kind, name := text(resource["apiVersion"]), text(resource["kind"]), text(meta["name"])
+			identity := api + "/" + kind + "/" + name
+			if api == "" || kind == "" || name == "" || meta["namespace"] != "backstage" ||
+				text(meta["uid"]) == "" || text(meta["resourceVersion"]) == "" ||
+				meta["deletionTimestamp"] != nil || observed[identity] || len(observed) >= 64 {
+				return false
+			}
+			observed[identity] = true
+		}
+	}
+	manifest := text(release["manifest"])
+	if manifest == "" || len(manifest) > maxResponse {
+		return false
+	}
+	decoder := yaml.NewDecoder(bytes.NewBufferString(manifest))
+	required := map[string]bool{}
+	for {
+		var resource map[string]any
+		if err := decoder.Decode(&resource); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return false
+		}
+		if len(resource) == 0 {
+			continue
+		}
+		meta := object(resource["metadata"])
+		api, kind, name := text(resource["apiVersion"]), text(resource["kind"]), text(meta["name"])
+		identity := api + "/" + kind + "/" + name
+		if api == "" || kind == "" || name == "" ||
+			(text(meta["namespace"]) != "" && meta["namespace"] != "backstage") ||
+			!observed[identity] || required[identity] || len(required) >= 64 {
+			return false
+		}
+		required[identity] = true
+	}
+	return len(required) > 0 && len(required) == len(observed)
+}
+
+// normalizeStatusClock excludes only Helm's derived related-list collection clock.
+// Helm 4.2 Status.Run appends KubeClient.Get(..., true), including PodLists
+// whose resourceVersion advances on unrelated writes. Their member identities,
+// versions and contents, and every stored release field, remain compared.
+func normalizeStatusClock(release map[string]any) bool {
+	if !validRelatedPodEvidence(release) || !validManifestResourceEvidence(release) {
+		return false
+	}
+	lists, ok := object(object(release["info"])["resources"])["v1/Pod(related)"].([]any)
+	if !ok {
+		return false
+	}
+	for _, raw := range lists {
+		delete(object(object(raw)["metadata"]), "resourceVersion")
+	}
+	return true
+}
+
 // run fails closed and emits only the assessment code and object count.
 func run(args []string, input io.Reader, output io.Writer, execute command) int {
 	var release, live []byte
@@ -309,7 +423,9 @@ func run(args []string, input io.Reader, output io.Writer, execute command) int 
 		l, lok := jsonObject(live)
 		ar, arok := jsonObject(againRelease)
 		al, alok := jsonObject(againLive)
-		if err != nil || !rok || !lok || !arok || !alok || !reflect.DeepEqual(r, ar) || !reflect.DeepEqual(l, al) {
+		if err != nil || !rok || !lok || !arok || !alok ||
+			!normalizeStatusClock(r) || !normalizeStatusClock(ar) ||
+			!reflect.DeepEqual(r, ar) || !reflect.DeepEqual(l, al) {
 			_, _ = fmt.Fprintln(output, "PORTAL-FOOTPRINT=HOLD_CHANGED_SNAPSHOT")
 			return 2
 		}

@@ -103,7 +103,10 @@ unprivileged, token-free probe on each current OpenBao-canary and secret-control
 node. Both legacy HTTP and native TLS connection attempts must time out and have
 a corresponding Hubble `DROPPED / POLICY_DENIED` flow for the exact Pod, addresses,
 node, port and attempt window. A certificate error, unreachable healthy control,
-observer loss or changed workload identity fails the proof. Server admission
+observer loss or changed workload identity fails the proof.
+The collector uses one structured Hubble filter so all flow constraints are
+conjunctive; its CLI cannot combine the source-address and source-Pod selectors.
+The separate evidence parser still checks every returned flow. Server admission
 must reject privileged, host-volume, host-network, host-process and `NET_RAW`
 variants. Only the owned probe Pods are created; UID-preconditioned deletion and
 absence readback are mandatory. This workflow reads no App key and requests no

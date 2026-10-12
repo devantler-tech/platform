@@ -7,6 +7,10 @@
 # (rolling back a group that has deployed but not merged), a gate read after the report,
 # a job outside the prod-deploy lock, or a lost schedule.
 #
+# The lock-free queue preflight (#4598) is pinned the same way. It may only ever decline:
+# it must hold no lock and no write permission, the locked job must depend on its answer,
+# and the locked job must keep its own gate, since the queue can fill after the preflight.
+#
 # Every assertion is ABLATED: a copy of the workflow is mutated in exactly one place and the
 # check must fail naming THAT assertion.
 #
@@ -16,6 +20,7 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly workflow="${root_dir}/.github/workflows/restore-stranded-prod.yaml"
 readonly job='.jobs["restore-stranded-prod"]'
+readonly preflight='.jobs["queue-preflight"]'
 
 work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
@@ -38,6 +43,20 @@ violation() {
   [ "$(yq "${job}.concurrency.group" "$file")" = prod-deploy ] || { echo lock; return; }
   [ "$(yq "${job}.concurrency.cancel-in-progress" "$file")" = false ] || { echo lock-cancel; return; }
   [ "$(yq "${job}.concurrency.queue" "$file")" = max ] || { echo lock-queue; return; }
+  [ "$(yq "[${preflight}.steps[] | select(.id == \"gate\" and .run == \"./scripts/prod-stranded-gate.sh\")] | length" "$file")" = 1 ] ||
+    { echo preflight-gate; return; }
+  [ "$(yq "${preflight} | has(\"concurrency\")" "$file")" = false ] || { echo preflight-unlocked; return; }
+  if [ "$(yq "${preflight}.permissions | length" "$file")" -lt 1 ] ||
+    [ "$(yq "[${preflight}.permissions[] | select(. != \"read\")] | length" "$file")" != 0 ]; then
+    echo preflight-read-only
+    return
+  fi
+  # shellcheck disable=SC2016  # the literal Actions expression is what the workflow carries.
+  [ "$(yq "${preflight}.outputs.stranded" "$file")" = '${{ steps.gate.outputs.stranded }}' ] ||
+    { echo preflight-output; return; }
+  [ "$(yq "${job}.needs" "$file")" = queue-preflight ] || { echo preflight-needed; return; }
+  [ "$(yq "${job}.if" "$file")" = "needs.queue-preflight.outputs.stranded == 'true'" ] ||
+    { echo preflight-gates-job; return; }
   gate="$(yq "${job}.steps | to_entries | map(select(.value.id == \"gate\")) | .[0].key // -1" "$file")"
   report="$(yq "${job}.steps | to_entries | map(select(.value.id == \"report\")) | .[0].key // -1" "$file")"
   if [ "$gate" -lt 0 ] || [ "$report" -le "$gate" ]; then echo gate-before-report; return; fi
@@ -71,6 +90,14 @@ ablate event-triggers '.on.push = {"branches": ["main"]}'
 ablate lock "${job}.concurrency.group = \"stranded\""
 ablate lock-cancel "${job}.concurrency.cancel-in-progress = true"
 ablate lock-queue "del(${job}.concurrency.queue)"
+ablate preflight-gate "(${preflight}.steps[] | select(.id == \"gate\") | .run) = \"true\""
+ablate preflight-unlocked "${preflight}.concurrency = {\"group\": \"prod-deploy\"}"
+ablate preflight-read-only "${preflight}.permissions.actions = \"write\""
+ablate preflight-read-only "del(${preflight}.permissions)"
+ablate preflight-output "del(${preflight}.outputs)"
+ablate preflight-needed "del(${job}.needs)"
+ablate preflight-gates-job "del(${job}.if)"
+ablate preflight-gates-job "${job}.if = \"always()\""
 ablate gate-before-report "${job}.steps |= (map(select(.id == \"report\")) + map(select(.id != \"report\")))"
 ablate gate-script "(${job}.steps[] | select(.id == \"gate\") | .run) = \"true\""
 ablate report-gated "del(${job}.steps[] | select(.id == \"report\") | .if)"

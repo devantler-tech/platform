@@ -154,6 +154,16 @@ jobs:
 
       - name: 🔐 Validate ARC transport proof boundaries
         run: |
+          set -euo pipefail
+          native_hubble="$(mktemp -d)"
+          trap 'rm -rf "$native_hubble"' EXIT
+          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+            https://github.com/cilium/hubble/releases/download/v1.20.2/hubble-linux-amd64.tar.gz \
+            --output "$native_hubble/hubble.tar.gz"
+          printf '%s  %s\n' 03f248a50cad11e728bf9383382392c57148fd6a19853ad359fb7598dae29312 "$native_hubble/hubble.tar.gz" \
+            | sha256sum --check
+          tar --extract --gzip --file "$native_hubble/hubble.tar.gz" --directory "$native_hubble"
+          export HUBBLE_TEST_BIN="$native_hubble/hubble"
           go test -race ./scripts/verify-arc-transport
           shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
           bash scripts/tests/test-verify-arc-transport.sh

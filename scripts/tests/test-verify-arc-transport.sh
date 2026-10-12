@@ -2,6 +2,8 @@
 # No credentials or cluster: execute the real orchestration and evidence parser
 # against bounded API/exec fixtures, including failure and replacement races.
 set -euo pipefail
+: "${HUBBLE_TEST_BIN:?requires the checksum-verified Hubble v1.20.2 binary}"
+[[ -x "$HUBBLE_TEST_BIN" ]] || { printf 'native Hubble parser is unavailable\n' >&2; exit 1; }
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin" "$scratch/state"
@@ -171,9 +173,23 @@ case "$args" in
   'exec '*hubble\ status*) : ;;
   'exec '*hubble\ observe*)
     if [[ "${PROOF_CASE:-}" == observer_failure ]]; then printf 'private-error-sentinel\n' >&2; exit 19; fi
+    # Hubble v1.20.2 rejects these CLI selectors before opening an RPC.
+    if [[ "$args" == *--from-ip* && "$args" == *--from-pod* ]]; then
+      printf 'filters --from-ip and --from-pod cannot be combined\n' >&2
+      exit 1
+    fi
+    # The native CLI mode remains completely offline and uses synthetic data.
+    "$HUBBLE_TEST_BIN" "${@:7}" --print-raw-filters >/dev/null || exit 1
+    filter='' filter_count=0
     while [[ "$#" -gt 0 ]]; do
-      case "$1" in --since) when=$2;; --to-port) port=$2;; esac; shift
+      case "$1" in --since) when=$2;; --allowlist) filter=$2; filter_count=$((filter_count+1));; esac; shift
     done
+    [[ "$filter_count" == 1 ]] || exit 99
+    jq -e '.source_ip == ["10.1.1.1"] and .source_pod == ["arc-runners/arc-transport-12345-1-1"] and
+      .destination_ip == ["10.1.1.2"] and (.destination_port == ["8200"] or .destination_port == ["8204"]) and
+      .protocol == ["tcp"] and .verdict == ["DROPPED"] and .drop_reason_desc == ["POLICY_DENIED"] and length == 7' \
+      <<<"$filter" >/dev/null || exit 99
+    port=$(jq -er '.destination_port[0]' <<<"$filter")
     reason=POLICY_DENIED; [[ "${PROOF_CASE:-}" != wrong_reason ]] || reason=CT_TRUNCATED_OR_INVALID_HEADER
     jq -n --arg reason "$reason" --arg when "$when" --argjson port "$port" '{flow:{verdict:"DROPPED",drop_reason_desc:$reason,traffic_direction:"EGRESS",time:$when,node_name:"prod/node-a",source:{namespace:"arc-runners",pod_name:"arc-transport-12345-1-1"},destination:{namespace:"openbao",pod_name:"openbao-2"},IP:{source:"10.1.1.1",destination:"10.1.1.2"},l4:{TCP:{destination_port:$port,flags:{SYN:true}}}}}'
     [[ "${PROOF_CASE:-}" != lost_events ]] || printf '\n{"lost_events":{}}\n' ;;
