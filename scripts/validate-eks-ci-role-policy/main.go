@@ -1320,7 +1320,7 @@ func authorizationSurfaceDocument(
 	document map[string]any,
 ) map[string]any {
 	if identity.kind == "OCIRepository" {
-		return publishMatcherSurfaceDocument(identity, document)
+		return chartSourceTagSurfaceDocument(identity, publishMatcherSurfaceDocument(identity, document))
 	}
 	if identity.kind == "Secret" {
 		return sopsSubstitutionSourceSurfaceDocument(identity, document)

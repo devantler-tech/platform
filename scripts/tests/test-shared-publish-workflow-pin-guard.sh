@@ -585,9 +585,39 @@ assert_line_rejected "a canonical ref that is a wildcard" \
   "$(family_line "${CONCRETE_SHA}" '.+')" \
   family-canonical-wildcard 'does not pin one concrete 40-hex commit'
 
-assert_line_rejected "a canonical ref that is an alternation of two commits" \
+# Two distinct commits written as one group are accepted (#4713): the commit a canonical
+# publisher moves from and the one it moves to. Nothing wider is.
+assert_line_accepted "a canonical ref that is a group of two distinct commits" \
   "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2})")" \
-  family-canonical-set 'does not pin one concrete 40-hex commit'
+  family-canonical-set
+
+assert_line_rejected "a canonical group naming the same commit twice" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA_2}|${CONCRETE_SHA_2})")" \
+  family-canonical-set-repeated 'names the same commit twice'
+
+assert_line_rejected "a canonical group of three commits" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2}|${CONCRETE_SHA})")" \
+  family-canonical-set-three 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical group of one commit" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA_2})")" \
+  family-canonical-set-one 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical group holding the pattern form" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA_2}|${SHA_PATTERN})")" \
+  family-canonical-set-pattern 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical group holding a wildcard" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA_2}|.*)")" \
+  family-canonical-set-wildcard 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "two canonical commits written without a group" \
+  "$(family_line "${CONCRETE_SHA}" "${CONCRETE_SHA}|${CONCRETE_SHA_2}")" \
+  family-canonical-set-ungrouped 'does not pin one concrete 40-hex commit'
+
+assert_line_rejected "a canonical group with a wildcard appended" \
+  "$(family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2}).*")" \
+  family-canonical-set-suffix 'does not pin one concrete 40-hex commit'
 
 assert_line_rejected "a short canonical commit" \
   "$(family_line "${CONCRETE_SHA}" '0123456')" \

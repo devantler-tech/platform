@@ -27,6 +27,20 @@ spec:
   hostnames:
     - crossview.platform.devantler.tech
 ---
+# A group whose name ends in an emoji: the allow-list must match it byte for byte.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: home-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/name: Example device
+    gethomepage.dev/group: Home 🏡
+spec:
+  hostnames:
+    - device.platform.devantler.tech
+---
 # The exact drift that motivated the policy: an undeclared group, which Homepage
 # accepts silently and renders below the bookmark rail.
 apiVersion: gateway.networking.k8s.io/v1
@@ -78,7 +92,7 @@ metadata:
   namespace: whoami
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/group: personal sites
+    gethomepage.dev/group: personal
 spec:
   hostnames:
     - case.platform.devantler.tech
@@ -119,3 +133,54 @@ metadata:
 spec:
   rules:
     - host: ingress.platform.devantler.tech
+---
+# The site groups tenant routes use today.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: clients-group
+  namespace: client-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Clients
+spec:
+  hostnames:
+    - client.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: personal-group
+  namespace: personal-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Personal
+spec:
+  hostnames:
+    - personal.platform.devantler.tech
+---
+# The two headings the site groups replaced. They were accepted only while
+# tenant routes migrated, and the layout no longer declares them.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-customer-sites-group
+  namespace: client-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Customer Sites
+spec:
+  hostnames:
+    - retired-client.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-personal-sites-group
+  namespace: personal-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Personal Sites
+spec:
+  hostnames:
+    - retired-personal.platform.devantler.tech

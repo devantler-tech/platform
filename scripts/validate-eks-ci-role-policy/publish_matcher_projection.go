@@ -85,6 +85,26 @@ func isExactPublishRevisionSet(ref string, limit int) bool {
 	return true
 }
 
+// isExactCanonicalCommitSet accepts one concrete commit, or exactly two distinct ones
+// written "(first|second)": the commit a canonical publisher moves from and the one it
+// moves to (#4713). The text is kept in the projection as written, so either commit
+// changing, or the second being added or dropped, moves the fingerprint.
+func isExactCanonicalCommitSet(ref string) bool {
+	if exactGitCommit.MatchString(ref) {
+		return true
+	}
+	inner, ok := strings.CutPrefix(ref, "(")
+	if !ok {
+		return false
+	}
+	inner, ok = strings.CutSuffix(inner, ")")
+	if !ok {
+		return false
+	}
+	first, second, ok := strings.Cut(inner, "|")
+	return ok && first != second && exactGitCommit.MatchString(first) && exactGitCommit.MatchString(second)
+}
+
 const (
 	publishSubjectHost     = `^https://github\.com/devantler-tech/`
 	legacyPublishFamily    = `actions/\.github/workflows/`
@@ -97,8 +117,8 @@ const (
 // projectPublishSubject replaces the generated legacy signer set with the shared pattern
 // and leaves everything else exactly as written. A legacy-only subject projects to the
 // approved pattern subject. A two-family subject keeps its group, its repository family
-// and its canonical commit, so adding, removing or moving the canonical approval always
-// moves the fingerprint, while the daily legacy regeneration inside it does not.
+// and its canonical commit or commits, so adding, removing or moving a canonical approval
+// always moves the fingerprint, while the daily legacy regeneration inside it does not.
 func projectPublishSubject(subject, workflow string) (string, bool) {
 	legacy := legacyPublishFamily + workflow + `\.yaml@`
 	if rest, ok := strings.CutPrefix(subject, publishSubjectHost+legacy); ok {
@@ -121,7 +141,7 @@ func projectPublishSubject(subject, workflow string) (string, bool) {
 	}
 	canonical := `|` + canonicalPublishFamily + workflow + `\.yaml@`
 	ref, commit, ok := strings.Cut(inner, canonical)
-	if !ok || !exactGitCommit.MatchString(commit) || !isExactPublishRevisionSet(ref, maxPublishRevisions()) {
+	if !ok || !isExactCanonicalCommitSet(commit) || !isExactPublishRevisionSet(ref, maxPublishRevisions()) {
 		return "", false
 	}
 	return publishSubjectHost + "(" + legacy + `[0-9a-f]{40}` + canonical + commit + ")$", true

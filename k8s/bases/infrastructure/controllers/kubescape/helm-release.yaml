@@ -293,7 +293,7 @@ spec:
         openvulnerabilityexchangecontainers:
           # A VEX record carries one statement per vulnerability match, so it
           # grows with the vulnerability feed even when the image does not
-          # change. Backstage 1.52.0 produced 6,604,551 bytes on 2026-09-20 and
+          # change. A scanned image produced 6,604,551 bytes on 2026-09-20 and
           # 8,551,938 bytes on 2026-10-06; the 8 MB ceiling chosen from the first
           # figure (about 21% headroom) refused every write from then on (#3955).
           # Use the finite ceiling the chart gives vulnerabilitymanifests, the

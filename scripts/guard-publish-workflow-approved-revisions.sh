@@ -19,9 +19,11 @@
 #
 # PUBLISHER FAMILIES (#4502)
 # A manifest consumer may also accept one reviewed commit of the canonical manifest workflow,
-# recorded in scripts/publish-workflow-canonical-approvals.tsv. That record is fixed and
-# hand-reviewed, never generated. A matcher must name exactly the commit the record gives its
-# consumer, and none where the record gives none; the legacy set is judged as before.
+# recorded in scripts/publish-workflow-canonical-approvals.tsv, and a second while its
+# publisher moves from the first to the next (#4713). That record is fixed and hand-reviewed,
+# never generated. A matcher must name exactly what the record gives its consumer, two commits
+# as "(first|second)" in the record's order, and none where the record gives none; the legacy
+# set is judged as before.
 #
 # SCOPE — GENERIC SUBJECTS ARE EXCLUDED BY NAME
 # Three subjects name the shared workflows without belonging to one consumer: the Kyverno

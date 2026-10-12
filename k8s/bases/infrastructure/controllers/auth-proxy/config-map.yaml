@@ -40,11 +40,6 @@ data:
           rule: "Host(`budget.${domain}`)"
           entryPoints: ["web"]
           service: actual-budget
-        # Backstage IDP (forward-auth, demo-image scaffold — see docs/backstage.md).
-        backstage:
-          rule: "Host(`backstage.${domain}`)"
-          entryPoints: ["web"]
-          service: backstage
         # Crossview also has native OIDC, but the outer oauth2-proxy hop keeps
         # its cluster-wide read surface restricted to the maintainer team.
         crossview:
@@ -119,10 +114,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://ksail-operator.ksail-operator.svc.cluster.local:8080"
-        backstage:
-          loadBalancer:
-            servers:
-              - url: "http://backstage.backstage.svc.cluster.local:7007"
         crossview:
           loadBalancer:
             servers:

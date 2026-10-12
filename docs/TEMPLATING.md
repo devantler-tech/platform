@@ -1,15 +1,14 @@
 # Templating guide
 
-This repository is structured so the shared platform scaffolding (bases,
-providers, cluster Flux Kustomizations) can stay untouched when you fork it
-for your own homelab. Everything a new instance needs to customise is listed
-below; anything not listed is template *body* and should be left alone unless
-you're upstreaming a change.
+For a new platform, start with
+[platform-template](https://github.com/devantler-tech/platform-template) and its
+[bootstrap guide](https://github.com/devantler-tech/platform-template/blob/main/docs/BOOTSTRAP.md).
+This repository is Devantler Tech's live reference instance for business
+services and personal applications.
 
-The long-term goal is to extract the template body into a standalone
-cookiecutter/copier template, with this repository remaining as a reference
-instance. Until that happens, "forking and editing the inputs" is the
-supported path.
+The sections below describe this instance's customization points if you choose
+to adapt it directly. Supply your own settings and credentials; its committed
+encrypted secrets cannot be decrypted with your keys.
 
 ## Template inputs (edit these)
 

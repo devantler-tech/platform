@@ -63,8 +63,10 @@
 # it is read by its own strict parse instead of by loosening that rule: the exact prefix,
 # the legacy family first, the canonical family second, each exactly once, and nothing
 # else. The legacy ref is judged by the same allow-list as every other subject. The
-# canonical ref must be ONE concrete 40-hex commit — the pattern form is not accepted
-# there, because the canonical family is approved one reviewed commit at a time. A subject
+# canonical ref must be ONE concrete 40-hex commit, or exactly TWO distinct ones written
+# `(first|second)` while a publisher moves from one reviewed commit to the next (#4713).
+# The pattern form is not accepted there, because the canonical family is approved one
+# reviewed commit at a time. A subject
 # naming only the canonical family, or the two in any other arrangement, is refused: an
 # arrangement nobody reviewed is not a spelling variant. Which commit is approved is still
 # the approved-revisions guard's question, not this one's.
@@ -310,7 +312,7 @@ judge_ref() {
 # judge_family_subject <location> <subject> — the strict parse of a two-family subject
 # (#4502). Returns non-zero, having said why, unless the subject is exactly the legacy
 # family followed by the canonical family, the legacy ref passes the allow-list and the
-# canonical ref is one concrete commit.
+# canonical ref is one concrete commit, or two distinct ones written `(first|second)`.
 #
 # The split is on the literal text that opens the canonical family, never on `|` or `@`
 # alone: the legacy ref is itself an alternation, so both characters occur inside it.
@@ -374,14 +376,26 @@ judge_family_subject() {
       ;;
   esac
 
-  # ONE concrete commit, matched whole. The pattern text `[0-9a-f]{40}` is deliberately
-  # not accepted here: it would admit every commit of the canonical repository, and the
-  # canonical family is approved one reviewed commit at a time.
-  if ! printf '%s' "$canonical_ref" | grep -qxE '[0-9a-f]{40}'; then
-    printf '%s: canonical ref %s does not pin one concrete 40-hex commit (subject: %s)\n' \
+  # ONE concrete commit, or exactly TWO written `(first|second)`, matched whole (#4713).
+  # The pattern text `[0-9a-f]{40}` is deliberately not accepted here: it would admit every
+  # commit of the canonical repository, and the canonical family is approved one reviewed
+  # commit at a time. Two is the ceiling: the commit a publisher moves from and the one it
+  # moves to. The same commit twice is refused as a spelling nobody reviewed.
+  if ! printf '%s' "$canonical_ref" | grep -qxE '[0-9a-f]{40}|\([0-9a-f]{40}\|[0-9a-f]{40}\)'; then
+    printf '%s: canonical ref %s does not pin one concrete 40-hex commit, or two written (first|second) (subject: %s)\n' \
       "$location" "$canonical_ref" "$subject" >&2
     return 1
   fi
+  case "$canonical_ref" in
+    '('*)
+      canonical_ref="${canonical_ref#\(}"
+      canonical_ref="${canonical_ref%\)}"
+      if [ "${canonical_ref%%\|*}" = "${canonical_ref#*\|}" ]; then
+        printf '%s: canonical ref names the same commit twice (subject: %s)\n' "$location" "$subject" >&2
+        return 1
+      fi
+      ;;
+  esac
 
   legacy_ref="${legacy_part#*@}"
   judge_ref "$location" "$legacy_ref"

@@ -124,15 +124,6 @@ pass 'the Cilium DNS proxy aggregation has a narrow application policy'
   fail 'the exact Talos apid application must have a finite memory-growth threshold'
 pass 'the Talos apid memory sawtooth has a narrow application policy'
 
-# The two Backstage PostgreSQL instances repeatedly return to a 40-130 MiB
-# weekly band under their 512 MiB limits. After the runtime rollout, cache
-# warmup produced a 40%/h short-window slope without OOM or pressure. Preserve
-# a finite ceiling above that measured slope and scope it to this database.
-# shellcheck disable=SC2016
-[[ "${script_body}" == *'reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup'* ]] ||
-  fail 'the exact Backstage database must have a finite cache-warmup threshold'
-pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
-
 # The Kubescape server performs one authored posture scan at 09:12 UTC. Its
 # working set rises during that scan but remains far below the 1 GiB hard limit,
 # with no OOM or pressure signal. Keep the exception exact and finite so an
@@ -490,7 +481,7 @@ case "${url}" in
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "known" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "wrong-object" ]; then
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"backstage-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"retired-demo-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "malformed" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":"not-an-object"}]}}'
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "mixed" ]; then
@@ -591,11 +582,11 @@ case "${url}" in
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
       elif [ "$(cat "${dir}/storage-mode")" = "known" ]; then
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/ghcr.io-backstage-backstage-1.52.0-993611.m: no such file or directory","service.name":"/k8s/kubescape/storage"}}]}}'
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/example-demo-image-993611.m: no such file or directory","service.name":"/k8s/kubescape/storage"}}]}}'
       elif [ "$(cat "${dir}/storage-mode")" = "malformed" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":null,"service.name":"/k8s/kubescape/storage"}}]}}'
       else
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/ghcr.io-backstage-backstage-1.52.0-993611.m: permission denied","service.name":"/k8s/kubescape/storage"}}]}}'
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/example-demo-image-993611.m: permission denied","service.name":"/k8s/kubescape/storage"}}]}}'
       fi
     else
       printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -765,7 +756,6 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aruntime/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Alonghorn-system%3ADaemonSet%3Aengine-image-ei-a4d05f02/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
-  any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akubescape%3ADeployment%3Akubescape/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 150) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and

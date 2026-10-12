@@ -1,326 +1,77 @@
 # Devantler Tech Platform ☸️⛴️
 
-<img width="989" height="957" alt="image" src="https://github.com/user-attachments/assets/c405c79a-8abf-4407-ae84-dd0acf58cc24" />
-
-My personal Kubernetes platform, in the open. Everything the cluster runs is described as files in
-this repository, and changes go live by being merged here rather than by anyone running commands
-against the cluster — that pattern is called *GitOps*, and [Flux](https://fluxcd.io) is what applies
-it.
-
-This is a working system rather than a product: it is shaped around what I run, and it is not
-packaged for reuse. Look around anyway — if you are building something similar, the repository
-layout and the guides in [`docs/`](docs) are the useful parts, and
-[`docs/TEMPLATING.md`](docs/TEMPLATING.md) lists exactly what a fork has to change. 🙌🏻
-
-## Prerequisites
-
-For local development:
-
-- [Docker](https://docs.docker.com/get-docker/) — runs the cluster on your machine.
-- [KSail](https://github.com/devantler-tech/ksail) — creates and manages that cluster. CI uses the
-  same tool to validate and security-scan manifests, but does not boot a cluster; running one is a
-  local step.
-
-For the production cluster:
-
-- [Hetzner Cloud](https://www.hetzner.com/cloud/) — Infrastructure provider and managed Cloud Load Balancer for cluster ingress. KSail's native Hetzner provider handles Talos boot, CCM, CSI, and kubeconfig.
-- [Cloudflare](https://www.cloudflare.com) — DNS (A/AAAA records pointed at the Hetzner Cloud Load Balancer) and Origin CA.
-- [Flux GitOps](https://fluxcd.io) — applies the manifests to the cluster. It does not read this
-  repository directly: the manifests are packaged and published as an OCI artifact, and Flux pulls
-  that.
-- [SOPS](https://getsops.io) and [Age](https://github.com/FiloSottile/age) — encrypt the starting
-  secrets that are committed here (the `*.enc.yaml` files), so they can live in Git safely.
-- [OpenBao](https://openbao.org) and the [External Secrets Operator](https://external-secrets.io) —
-  where **most** secrets live once the cluster is running. Selected values from the encrypted files
-  above are seeded into OpenBao, and the operator copies each one into the namespace that needs it.
-  The rest — the bootstrap-critical values, plus Dex and oauth2-proxy — are still substituted
-  straight into manifests by Flux at apply time, so OpenBao is not the runtime path for everything
-  committed here. Full picture: [`docs/secret-rotation.md`](docs/secret-rotation.md).
-
-## Usage
-
-> [!IMPORTANT]
-> The committed secrets are encrypted with my keys, so you cannot decrypt them. To run this locally
-> or in your own Hetzner project, swap in your own:
->
-> 1. Fork this repo.
-> 2. Create your own Age keys.
-> 3. Update `.sops.yaml` in the repository root.
-> 4. Put your Age key in your fork's GitHub secrets.
-> 5. Re-encrypt every `*.enc.yaml` file under `k8s/` with your own keys.
-
-To run this cluster locally, simply run:
-
-```bash
-ksail cluster create
-ksail workload push
-ksail workload reconcile
-```
-
-Ports 80 and 443 are mapped to localhost for you (via `extraPortMappings` in [`ksail.yaml`](ksail.yaml)),
-and the [`hosts`](hosts) file points the `*.platform.lan` names at `127.0.0.1` — so deployed services
-open in a browser.
-
-The local cluster is a **thin test-bed**: somewhere to try one component before promoting it to
-production, not a copy of production. It starts with core infrastructure only — networking and
-gateway, DNS, TLS, Flux, policy, vertical pod autoscaling, secrets, single sign-on, and the
-CloudNativePG operator. Note that the operator is installed but no database is created: apps are
-opt-in, so a plain local bring-up has no PostgreSQL instance running.
-
-Everything heavier (observability, request-rate autoscaling, backup, runtime security, the VM stack,
-…) and all apps are opt-in. Uncomment what you want in these files — each carries a copy-paste
-template — then re-run `ksail workload push && ksail workload reconcile`:
-
-- `k8s/providers/docker/infrastructure/controllers/kustomization.yaml`
-- `k8s/providers/docker/infrastructure/kustomization.yaml`
-- `k8s/providers/docker/apps/kustomization.yaml`
-
-To tear down:
-
-```bash
-ksail cluster delete
-```
-
-### Validating Changes
-
-Before pushing, validate manifests with schema-aware checks and Flux variable substitution:
-
-```bash
-# Validate local cluster manifests (default)
-ksail workload validate
-
-# Validate prod cluster manifests
-ksail --config ksail.prod.yaml workload validate
-```
-
-This is faster than a full cluster test and catches YAML errors, missing fields, and broken kustomize overlays.
-
-CI also checks that the publish-workflow signing-revision report discovers exactly the
-consumers declared by the production overlay and its Flux layers:
-
-```bash
-bash scripts/guard-consumer-discovery-conservation.sh
-bash scripts/tests/test-guard-consumer-discovery-conservation.sh
-```
-
-This check uses `yq`, `realpath` and `kubectl kustomize` without a cluster or credentials.
-The overlay and all production roots render from an isolated snapshot of KSail's published
-`k8s` files: YAML/YML/JSON files selected by case-insensitive extension, without
-ignore-file filtering. Directory links are not traversed and other inputs are omitted; selected file links
-are read only after their targets are bounded to the source tree and staged as regular bytes.
-Reachable resources, bases, components and file-loader inputs (patches, transformer
-configurations, CRDs, generators, replacements and OpenAPI definitions) must resolve within
-that artifact. Absolute, nonlocal, omitted or uninspectable inputs are unknown and fail before
-rendering. A separate declared-path count must match the complete extracted path census;
-successful but empty or truncated reader output cannot authorize a build. Inline patches,
-single-document transformer configs and generator literals remain supported. Inline generator
-and transformer strings must have exactly one document according to the YAML parser;
-decoded bytes must match the original serialized string, and multiple documents or incomplete
-parser receipts are unknown. Separators inside literal data
-remain supported.
-Contained relative manifest bases and selected file links remain supported; unused Kustomizations
-are not traversed. Empty regular selected files and selected directory links prevent publication
-and fail the check. Empty selected link targets are conservatively refused as unknown.
-It compares
-literal OCIRepository names and namespaces, exact URLs, effective refs and signer subjects.
-An overlay rename is a divergence even when it keeps the same artifact and revision.
-Identical consumer rows repeated across roots are deduplicated. All rendered top-level Flux
-OCI declarations are checked for conflicting contracts that could overwrite an attributed
-consumer, including unsigned sources; an absent namespace cannot establish disjointness.
-Such conflicts are unknown and fail the check. Unrelated unsigned identities remain outside
-the report. Guard-only identity rows preserve the
-report's four-column `--list-consumers` output and artifact-based revision tables. It binds the
-layers to the platform artifact configured in `ksail.prod.yaml` and the generated
-`OCIRepository/flux-system/flux-system` source. Agreeing references to a different source, or
-declarations that redirect that source, are unknown and fail the check. FluxInstance source
-patches are supported only when their operations preserve the source identity and artifact
-(verification and ref fields). Explicit source content selectors (`ignore` and `layerSelector`)
-are refused because the same URL can produce a different tree. A production root's non-empty
-`targetNamespace` is also an unseen Flux transform and is refused.
-
-Admission mutations that can match consumer or production-root kinds are refused, as are
-unbounded kind matches and unevaluated CEL mutations. Literal mutations of unrelated kinds
-remain supported. Mapping-backed controller templates cannot add a Kustomization on the
-platform source: its additional path would be missing from the rendered set. A declared
-`semverFilter` also fails closed because the signing-revision resolver does not evaluate
-Flux's tag filtering. Only objects in the Flux source API group count as OCI consumers,
-and an attributed source must have no suspension field or a literal boolean false.
-Generated sources, roots and controller carriers are refused; literal unrelated generated
-kinds remain supported. Consumer-producing kro instances are counted in mapping-backed
-controller carriers as well as top-level documents. Substituted structural or consumer
-contract keys are unknown, just like substituted contract values. Nested source
-references must also be literal, including an inherited namespace. An OCI-producing
-kro definition may retain dormant references only while its complete literal schema
-GVK has zero matching instances across every production render. Native mutating
-webhooks that can target sources, roots or their policy/controller carriers are
-refused because the static build cannot evaluate their callbacks; literal unrelated
-resource groups and Pod-only rules remain supported.
-The same boundary includes policies and controller carriers that can create or
-rewrite those resources later. Nested ResourceSet string templates and substituted
-carrier keys are unknown. Direct and foreach clone lists are checked against every
-consumer-producing kro schema across all production roots; only literal foreign
-group/version selectors can rule out a schema. CEL generation remains unevaluated.
-Mapping-backed [ResourceSet resources](https://fluxoperator.dev/docs/crd/resourceset/#resources-configuration) and Kyverno generation branches must name
-literal object types before that comparison. Controller template expressions in
-nested source references are also unknown; workload metadata references remain
-supported when the generated object type is literal.
-Nested FluxInstance templates also create sources and roots outside the static
-render and are refused. Dormant OCI-producing kro definitions retain the complete
-schema and zero-instance requirement across every root.
-
-Flux [substitutes the final YAML after the build](https://fluxcd.io/flux/components/kustomize/kustomizations/#post-build-variable-substitution),
-so a variable in an object or template kind or API version can hide an OCI consumer from literal discovery.
-The check refuses those object types, top-level source name/namespace variables, and consumer URL,
-ref or signer-subject variables; ordinary
-variables in workload fields, ConfigMap data and registry credentials remain supported. A
-same-named source with an omitted or empty namespace is checked as a possible platform source;
-an explicit different tenant namespace keeps its own source contract. A
-failed reader or render is unknown even when it produced partial output. Tenant artifacts
-and Helm chart output remain outside this repository's static comparison.
-
-## Clusters
-
-### Local
-
-Local development cluster running on Docker via KSail. Uses Talos with the Docker provider. A small, thin manual test-bed (see [Usage](#usage)) — bring up a component, try it, then promote it to prod.
-
-- 1 control-plane node + 1 worker node (Docker containers)
-- Config: [`ksail.yaml`](ksail.yaml)
-
-### Production
-
-Cloud cluster running on Hetzner Cloud via KSail's native Hetzner provider. Deployed via `v*` tags through the CD pipeline, and validated in the merge queue via the CI pipeline.
-
-- 3× [Hetzner CX33](https://www.hetzner.com/cloud/) control planes + 3× CX33 static workers + autoscaling (x86 4 vCPU 8GB RAM 80GB SSD each)
-- Config: [`ksail.prod.yaml`](ksail.prod.yaml)
-
-## Platform components
-
-A high-level inventory of what Flux reconciles onto the cluster. The manifests live under [`k8s/bases/infrastructure/`](k8s/bases/infrastructure) and [`k8s/bases/apps/`](k8s/bases/apps), with provider-specific pieces (Hetzner CCM/CSI, Longhorn, external-dns, …) under [`k8s/providers/`](k8s/providers). The exact set is overlay-dependent: the Hetzner/prod overlay deploys the full base set described below, while the local (docker) overlay is a thin manual test-bed that ships only the core controllers by default and makes the rest opt-in.
-
-**Infrastructure**
-
-- **GitOps & config** — Flux Operator, Reloader
-- **Networking** — Cilium (CNI + Gateway API), CoreDNS, external-dns (Cloudflare), Hetzner CCM (prod)
-- **Certificates** — cert-manager, trust-manager, Cloudflare Origin CA issuer
-- **Secrets** — OpenBao + External Secrets Operator (runtime), SOPS + Age (at-rest seeds)
-- **Identity / SSO** — Dex (OIDC) with oauth2-proxy / auth-proxy; see [`docs/oidc-kubectl.md`](docs/oidc-kubectl.md)
-- **Policy & runtime security** — Kyverno, Kubescape, Tetragon; see [`docs/runtime-security.md`](docs/runtime-security.md)
-- **Storage** — Longhorn (replicated block/RWX, prod via Hetzner CSI), CloudNativePG (PostgreSQL operator); see [`docs/rwx-storage.md`](docs/rwx-storage.md)
-- **Autoscaling** — Cluster Autoscaler (nodes), SIG Descheduler (pod rebalancing + node consolidation), Vertical Pod Autoscaler, KEDA request-rate autoscaling (homepage/umami); see [`docs/node-autoscaling.md`](docs/node-autoscaling.md)
-- **Progressive delivery** — Flagger (Gateway API canary deployments with SLO-gated automated rollback, metrics from Coroot); see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)
-- **Observability** — Coroot (self-hosted, eBPF: metrics, logs, traces, profiling, service map, SLO alerting, cost allocation); see [`docs/dr/alerting.md`](docs/dr/alerting.md)
-- **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](docs/dr)
-- **Virtualization** — KubeVirt + CDI *(local/CI only; disabled on the Hetzner/prod overlay)*
-- **Testing** — Testkube *(local/CI only; not deployed to prod)*
-
-**Apps** ([`k8s/bases/apps/`](k8s/bases/apps))
-
-- Homepage (dashboard), Headlamp (Kubernetes UI), Umami (analytics), Actual Budget (budgeting), `whoami` (debug)
-- FleetDM (device management) is parked — disabled 2026-06-03; its manifests are retained for re-enabling (see [`k8s/bases/apps/kustomization.yaml`](k8s/bases/apps/kustomization.yaml))
-- **Tenants** — apps deployed from their own repositories (`ascoachingogvaner`, `wedding-app`); see [`docs/TENANTS.md`](docs/TENANTS.md)
-
-## Structure
-
-The cluster uses Flux GitOps to reconcile the state of the cluster with the single source of truth stored in this repository and published as an OCI image. KSail is used for local development, CI/CD testing, and production deployments. For prod, nodes are provisioned on Hetzner Cloud by KSail's native Hetzner provider, which also installs the Hetzner CCM and CSI drivers.
-
-All environments use the Talos Kubernetes distribution. Local development and CI use Talos with the Docker provider; prod uses Talos with the Hetzner provider.
-
-The cluster configuration is stored in the `k8s/*` directories where the structure is as follows:
-
-- [`clusters/`](k8s/clusters): Contains the cluster specific configuration for each environment.
-  - [`base`](k8s/clusters/base): Contains the shared Flux Kustomizations with sentinel paths (`__CLUSTER__`, `__PROVIDER__`).
-  - [`local`](k8s/clusters/local): Contains the local cluster specific configuration.
-  - [`prod`](k8s/clusters/prod): Contains the production cluster specific configuration.
-- [`providers/`](k8s/providers): Contains the provider specific configuration.
-  - [`docker`](k8s/providers/docker): Contains the Talos+Docker specific configuration for local development.
-  - [`hetzner`](k8s/providers/hetzner): Contains the Talos+Hetzner specific configuration for production.
-- [`bases/`](k8s/bases): Contains the different bases that are used for the different clusters and providers.
-  - [`infrastructure`](k8s/bases/infrastructure): Contains the different infrastructure components that are used for the different clusters and providers.
-  - [`apps`](k8s/bases/apps): Contains the different apps that are used for the different clusters and providers.
-  - [`bootstrap`](k8s/bases/bootstrap): The foundational **bootstrap layer** (renamed from `variables/`). Holds the shared substitution variables (`variables-base` ConfigMap + SOPS-encrypted Secret) and cluster-scoped PriorityClasses (e.g. `platform-critical`), reconciled by the `bootstrap` Flux Kustomization before everything that `dependsOn` it.
-
-### How the layers fit together
-
-Two things stack up. First, each environment points at a provider, which patches the shared
-resources — so a change can be made for one cluster, for one provider, or for everything at once:
-
-```mermaid
-graph LR
-  subgraph "Cluster-specific"
-    local["clusters/local"]
-    prod["clusters/prod"]
-  end
-
-  subgraph "Provider-specific"
-    docker["providers/docker"]
-    hetzner["providers/hetzner"]
-  end
-
-  subgraph "Shared"
-    bases["bases/*"]
-  end
-
-  local --> docker
-  prod --> hetzner
-  docker --> bases
-  hetzner --> bases
-```
-
-Second, Flux applies those layers in order, each waiting for the one before it to come up:
-
-```mermaid
-graph TB
-  bootstrap["bootstrap"]
-  controllers["infrastructure-controllers"]
-  infra["infrastructure"]
-  apps["apps"]
-
-  controllers -- "depends on" --> bootstrap
-  infra -- "depends on" --> controllers
-  apps -- "depends on" --> infra
-```
-
-Each layer in that chain has a matching folder under `providers/<provider-name>/` and `bases/`. The
-`infrastructure` layer, for example, is backed by `k8s/providers/<provider-name>/infrastructure/` and
-`k8s/bases/infrastructure/`.
-
-The layer definitions themselves are written once in `k8s/clusters/base/` with placeholders where the
-cluster and provider names go; each cluster's overlay fills those in. Only the per-cluster
-`bootstrap/` directory holds manifests unique to one cluster.
-
-- [`docs/TEMPLATING.md`](docs/TEMPLATING.md) — the exact files a fork must edit, including how those
-  placeholders get filled in.
-- [`docs/TENANTS.md`](docs/TENANTS.md) — adding a **tenant**: an app that runs on the platform from
-  its own repository.
-
-## Documentation
-
-Deeper guides and design notes live in [`docs/`](docs):
-
-- [`TEMPLATING.md`](docs/TEMPLATING.md) — the exact set of files a fork needs to edit to stand up its own instance.
-- [`TENANTS.md`](docs/TENANTS.md) — onboarding a new GitOps tenant (an app that runs on the platform from its own repository).
-- [`deletion-and-data-retention.md`](docs/deletion-and-data-retention.md) — the decision that Git owns deletion and the storage layer keeps the data, and the order it rolls out in.
-- [`node-autoscaling.md`](docs/node-autoscaling.md) — how the Cluster Autoscaler is configured on Hetzner.
-- [`oidc-kubectl.md`](docs/oidc-kubectl.md) — authenticating `kubectl` against the cluster via OIDC.
-- [`progressive-delivery.md`](docs/progressive-delivery.md) — Flagger Gateway API canary deployments and the per-app onboarding recipe.
-- [`runtime-security.md`](docs/runtime-security.md) — Tetragon runtime security.
-- [`rwx-storage.md`](docs/rwx-storage.md) — Longhorn replicated / RWX storage.
-- [`secret-rotation.md`](docs/secret-rotation.md) — the secrets architecture (SOPS → OpenBao → External Secrets) and rotation design.
-- [`dr/`](docs/dr) — disaster-recovery runbooks (backup/restore drills, OpenBao crypto custody, Velero + CloudNativePG, alerting).
-
-## Monthly Cost
-
-> [!NOTE]
-> Prices are approximate and may be outdated.
-
-| Item                      | No. | Per unit | Total in Actual | Total in $ |
-| ------------------------- | --- | -------- | --------------- | ---------- |
-| Cloudflare Domains        | 2   | $0,87    | $1,74           | $1,74      |
-| Hetzner CX33 (prod)       | 6   | €6,49    | €38,94          | $44,21     |
-| Hetzner Cloud LB LB11 (prod) | 1 | €5,39   | €5,39           | $6,12      |
-| Total                     |     |          |                 | $52,07     |
-
-## Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=devantler-tech/platform&type=Date)](https://star-history.com/#devantler-tech/platform&Date)
+A self-hosted Kubernetes platform for Devantler Tech's business services and
+personal applications. This repository contains the configuration for that live
+platform, shared as a reference—not a ready-to-use distribution.
+
+The goal is affordable production infrastructure: redundant cluster nodes,
+replicated storage, backups, monitoring, and reviewed deployments without a
+managed Kubernetes control-plane fee. You still own its operation and recovery.
+
+Want to build a similar platform for yourself? Start with
+[platform-template](https://github.com/devantler-tech/platform-template), the
+reusable template for creating your own instance.
+
+Changes are reviewed in Git. [Flux](https://fluxcd.io) applies the published
+configuration to the cluster automatically.
+[KSail](https://github.com/devantler-tech/ksail) manages the Talos clusters and
+the workload lifecycle.
+
+## What's included
+
+- **Compute:** Talos Linux on Hetzner Cloud, with a smaller Docker-based local
+  test environment.
+- **Networking:** Cilium, Gateway API, Cloudflare DNS, and certificate
+  management.
+- **Access and secrets:** Dex single sign-on, OpenBao, External Secrets, and
+  SOPS-encrypted bootstrap secrets.
+- **Storage:** Longhorn volumes and CloudNativePG-managed PostgreSQL.
+- **Operations:** Coroot observability, autoscaling, progressive delivery, and
+  backup/recovery tooling.
+- **Applications:** shared platform services and tenant apps deployed from their
+  own repositories.
+
+The local environment includes only core infrastructure by default; applications
+and heavier components are opt-in. See the
+[architecture guide](docs/architecture.md) for the component inventory,
+environment differences, and how the layers fit together.
+
+## What does it cost?
+
+The configured six-node Hetzner baseline is approximately **€87/month for
+compute and networking, excluding VAT** at public prices checked on
+11 October 2026. This includes three control-plane nodes, three workers, a load
+balancer, and IPv4 addresses—not just worker compute. As deployed, the platform
+also keeps one warm spare worker for fast scale-up, which brings it to about
+**€103/month**.
+
+Storage, backups, domains, autoscaled capacity, and operator time are additional.
+See the [cost breakdown](docs/costs.md) for unit prices, a storage example, and
+the trade-offs behind the estimate. It is a starting budget, not an all-in bill
+or a managed-service equivalent.
+
+## Start here
+
+- **Explore the design:** read the [architecture guide](docs/architecture.md),
+  then browse [shared components](k8s/bases),
+  [provider overlays](k8s/providers), and [cluster definitions](k8s/clusters).
+- **Build your own platform:** follow the template's
+  [bootstrap guide](https://github.com/devantler-tech/platform-template/blob/main/docs/BOOTSTRAP.md).
+  To adapt this reference instance directly instead, see
+  [customization](docs/TEMPLATING.md) and
+  [local development](docs/local-development.md). Its committed secrets cannot
+  be decrypted with your keys; replace them with your own encrypted values.
+- **Host an application:** follow [tenant onboarding](docs/TENANTS.md).
+- **Contribute a change:** start with [CONTRIBUTING.md](CONTRIBUTING.md).
+  Most checks do not require a running cluster.
+
+## Operating the platform
+
+- [Cluster access](docs/oidc-kubectl.md)
+- [Developer platform and workflow self-service](docs/developer-platform.md)
+- [Secrets and rotation](docs/secret-rotation.md)
+- [Storage and data retention](docs/deletion-and-data-retention.md)
+- [Backups and disaster recovery](docs/dr/README.md)
+- [Production recovery](docs/operations/production-recovery.md)
+
+More topic-specific guides and design decisions live in [docs/](docs).

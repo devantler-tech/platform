@@ -20,6 +20,7 @@ resources:
   - cilium-network-policy-ui-kit.yaml
   - http-route-ui-kit.yaml
   - deployment-contract-probe.yaml
+  - pod-disruption-budget-contract-probe.yaml
   - service-account-contract-probe.yaml
   - role-readiness-observer.yaml
   - role-binding-readiness-observer.yaml

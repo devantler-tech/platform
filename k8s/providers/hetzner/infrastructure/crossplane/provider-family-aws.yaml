@@ -34,6 +34,6 @@ kind: Provider
 metadata:
   name: upbound-provider-family-aws
 spec:
-  package: xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
+  package: xpkg.upbound.io/upbound/provider-family-aws:v2.9.0
   runtimeConfigRef:
     name: provider-family-aws

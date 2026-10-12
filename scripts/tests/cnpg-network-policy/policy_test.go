@@ -2,12 +2,16 @@ package cnpgnpolicy_test
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -45,7 +49,9 @@ type policySpec struct {
 
 type policy struct {
 	Metadata struct {
-		Namespace string `yaml:"namespace"`
+		Name        string            `yaml:"name"`
+		Namespace   string            `yaml:"namespace"`
+		Annotations map[string]string `yaml:"annotations"`
 	} `yaml:"metadata"`
 	Spec  policySpec   `yaml:"spec"`
 	Specs []policySpec `yaml:"specs"`
@@ -157,7 +163,7 @@ func readYAML(t *testing.T, path string, target any) {
 		t.Fatal(err)
 	}
 	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
+	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		t.Fatalf("expected exactly one document in %s; additional document or error: %v", path, err)
 	}
 }
@@ -169,7 +175,6 @@ func loadPolicies(t *testing.T) []policy {
 		"k8s/bases/infrastructure/controllers/plugin-barman-cloud/cilium-network-policy-allow-plugin-barman-cloud.yaml",
 		"k8s/bases/infrastructure/controllers/plugin-barman-cloud/cilium-network-policy-allow-cnpg-to-plugin-barman-cloud.yaml",
 		"k8s/bases/apps/umami/cilium-network-policy.yaml",
-		"k8s/bases/apps/backstage/cilium-network-policy.yaml",
 		"k8s/providers/hetzner/infrastructure/coroot/cilium-network-policy.yaml",
 	}
 	var policies []policy
@@ -195,7 +200,7 @@ func loadPolicies(t *testing.T) []policy {
 			continue
 		}
 		found = true
-		for _, namespace := range []string{"tenant-example", "umami", "backstage", "observability"} {
+		for _, namespace := range []string{"tenant-example", "umami", "observability"} {
 			p := r.Generate.Data
 			p.Metadata.Namespace = namespace
 			policies = append(policies, p)
@@ -218,6 +223,93 @@ func identity(namespace, name, instance string) map[string]string {
 	return labels
 }
 
+func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
+	// Evaluate the real production render: a correct but unreferenced policy
+	// cannot restore the retained instances' control or replication paths.
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	rendered, err := exec.CommandContext(ctx, "kubectl", "kustomize", "../../../k8s/providers/hetzner/apps").CombinedOutput()
+	if err != nil {
+		t.Fatalf("render production apps: %v: %s", err, rendered)
+	}
+	var policies []policy
+	decoder := yaml.NewDecoder(bytes.NewReader(rendered))
+	retainedNamespaces := 0
+	for {
+		var document struct {
+			Kind   string `yaml:"kind"`
+			policy `yaml:",inline"`
+		}
+		if err := decoder.Decode(&document); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if document.Kind == "CiliumNetworkPolicy" && document.Metadata.Namespace == "backstage" {
+			policies = append(policies, document.policy)
+		}
+		if document.Kind == "Namespace" && document.Metadata.Name == "backstage" {
+			retainedNamespaces++
+			if document.Metadata.Annotations["kustomize.toolkit.fluxcd.io/prune"] != "disabled" {
+				t.Error("retained namespace must survive pruning until explicit data cleanup")
+			}
+		}
+	}
+	if retainedNamespaces != 1 {
+		t.Fatalf("rebuild cannot apply retained database policy: want one protected namespace, got %d", retainedNamespaces)
+	}
+	database := identity("backstage", "postgres", "database")
+	database["cnpg.io/cluster"] = "backstage-db"
+	for _, port := range []string{"443", "6443"} {
+		if !allows(t, policies, false, database, nil, "kube-apiserver", port, "TCP") {
+			t.Errorf("retained database cannot coordinate through the Kubernetes API on %s", port)
+		}
+	}
+	for _, ingress := range []bool{false, true} {
+		if !allows(t, policies, ingress, database, database, "", "5432", "TCP") {
+			t.Errorf("retained database replication blocked (ingress=%t)", ingress)
+		}
+		for _, port := range []string{"7007", "8000", "443"} {
+			if allows(t, policies, ingress, database, database, "", port, "TCP") {
+				t.Errorf("database peer unexpectedly allowed on %s (ingress=%t)", port, ingress)
+			}
+		}
+	}
+	for _, namespace := range []string{"backstage", "untrusted-namespace"} {
+		for _, cluster := range []string{"", "another-db", "backstage-db"} {
+			if namespace == "backstage" && cluster == "backstage-db" {
+				continue
+			}
+			other := identity(namespace, "application", "application")
+			if cluster != "" {
+				other["cnpg.io/cluster"] = cluster
+			}
+			if allows(t, policies, false, other, nil, "kube-apiserver", "443", "TCP") {
+				t.Errorf("API access leaked to %s cluster=%q", namespace, cluster)
+			}
+			if allows(t, policies, true, database, other, "", "5432", "TCP") ||
+				allows(t, policies, false, database, other, "", "5432", "TCP") {
+				t.Errorf("database access leaked to %s cluster=%q", namespace, cluster)
+			}
+		}
+	}
+	for _, entity := range []string{"world", "host", "remote-node", "cluster"} {
+		if allows(t, policies, false, database, nil, entity, "443", "TCP") {
+			t.Errorf("retained database unexpectedly allowed to %s", entity)
+		}
+	}
+	for _, protocol := range []string{"TCP", "UDP"} {
+		for _, port := range []string{"80", "5432", "7007"} {
+			if allows(t, policies, false, database, nil, "kube-apiserver", port, protocol) {
+				t.Errorf("unexpected API access on %s/%s", port, protocol)
+			}
+		}
+	}
+	if allows(t, policies, false, database, nil, "kube-apiserver", "443", "UDP") {
+		t.Error("API access unexpectedly permits UDP")
+	}
+}
+
 func TestDatabaseManagementBoundary(t *testing.T) {
 	policies := loadPolicies(t)
 	for _, namespace := range []string{"cnpg-system", "untrusted-namespace"} {
@@ -225,7 +317,7 @@ func TestDatabaseManagementBoundary(t *testing.T) {
 			for _, instance := range []string{"cloudnative-pg", "other", ""} {
 				source := identity(namespace, name, instance)
 				operator := namespace == "cnpg-system" && name == "cloudnative-pg" && instance == "cloudnative-pg"
-				for _, destinationNamespace := range []string{"tenant-example", "umami", "backstage", "observability"} {
+				for _, destinationNamespace := range []string{"tenant-example", "umami", "observability"} {
 					for _, database := range []bool{false, true} {
 						destination := identity(destinationNamespace, "application", "application")
 						if database {
