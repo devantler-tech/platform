@@ -830,6 +830,7 @@ jobs:
               - 'scripts/tests/test-coroot-helper-image-pull-policy.sh'
               - 'scripts/tests/test-velero-data-mover-resources.sh'
               - 'scripts/tests/test-velero-cancellation-release.sh'
+              - 'scripts/tests/test-velero-node-agent-priority.sh'
               - 'scripts/tests/test-coroot-reservation-refresh.sh'
               - 'scripts/tests/test-velero-maintenance-oom-alert.sh'
               - 'scripts/tests/test-cronjob-failure-alert.sh'
@@ -2168,6 +2169,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-velero-cancellation-release.sh
           bash scripts/tests/test-velero-cancellation-release.sh
+
+      - name: 💾 Validate node-local backup agent admission priority
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-velero-node-agent-priority.sh
+          bash scripts/tests/test-velero-node-agent-priority.sh
 
       - name: 🔄 Validate the Coroot reservation refresh
         if: needs.changes.outputs.k8s == 'true'

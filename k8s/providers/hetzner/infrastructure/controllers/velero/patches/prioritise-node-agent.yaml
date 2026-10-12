@@ -1,0 +1,13 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: velero
+  namespace: velero
+spec:
+  values:
+    nodeAgent:
+      # A node-local backup agent cannot move to a spare compute worker.
+      # Reuse the modest storage tier so movable default-priority workloads
+      # can make room, without preempting equal-priority database instances
+      # or higher-priority storage/platform infrastructure (#4781).
+      priorityClassName: hcloud-volume-workload
