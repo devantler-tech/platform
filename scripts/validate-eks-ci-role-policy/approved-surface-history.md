@@ -3431,3 +3431,33 @@ patch list to an existing unprioritised tenant Cluster, rather than inferring
 coverage from the parent render. No IAM, RBAC, service account, source,
 credential, backup destination, storage identity or permission grant changes.
 Hosted CI and the actual protected rollout remain separate required evidence.
+
+## 2026-10-11 — Next reviewed canonical publisher commit accepted beside the current one
+
+platform#4713 records a second reviewed commit of the canonical manifest
+publishing workflow, `devantler-tech/.github` at
+`63c59062489edbee907d2a4d5d06f01c57b7d58c` (v7.9.0), for the github-config
+artifact only. The commit accepted before,
+`2fa404276b0ce5c0527683b080e39045045c4e42`, and every legacy revision are still
+in the subject; the aws artifact's subject is unchanged. Between the two
+commits the workflow changes one line: its pinned Flux CLI setup action moves
+from v2.9.5 to v2.9.6, by commit.
+
+The canonical record may now hold two commits for one consumer, rendered as one
+group in the record's order, so a publisher can move from one reviewed commit
+to the next without the cluster rejecting either release. The ledger projection
+keeps the canonical commits as written, so adding, dropping, replacing or
+reordering one still moves the fingerprint; the legacy set inside the subject
+still rotates without doing so.
+
+The production-authorization job on the checksum-verified renderer (run
+38170959510, job 114564856097) measured exactly one changed entry against base
+`4d4fa1b4` at source `a5b43542`, and nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `b6c432af595e2aaa0b41cc114cb4d85a21125a02e5b7a60e5abfc4e034c03e40` to
+  `fb34648e8be3132abf0967a9123daf1f4af18b29e981473c4ee199a79155d95b`.
+
+No issuer, artifact, identity count, RBAC binding, IAM policy, credential or
+permission grant changes. The older commit is withdrawn in a later change, once
+the consumer has published from the newer one.

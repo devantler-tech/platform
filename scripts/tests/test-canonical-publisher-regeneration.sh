@@ -77,6 +77,21 @@ cp "$test_work/approved.identities.tsv" "$test_work/identities-before"
 run_generator
 cmp "$test_work/identities-before" "$test_work/approved.identities.tsv"
 
+# Every commit the record approves for this consumer is admitted as its current pin: while a
+# publisher moves from one reviewed commit to the next, the record holds both (#4713).
+approved_commits="$(awk -F'\t' '$1==".github" && $2=="publish-manifests" {print $4}' "$test_root/scripts/publish-workflow-canonical-approvals.tsv")"
+[[ -n "$approved_commits" ]] || { echo 'The record approves no canonical commit for .github; the cases below would prove nothing' >&2; exit 1; }
+while IFS= read -r approved_commit; do
+  export CANONICAL_PIN_SHA="$approved_commit"
+  if ! run_generator >"$test_work/admitted" 2>&1; then
+    echo "Approved canonical pin $approved_commit was refused" >&2; cat "$test_work/admitted" >&2; exit 1
+  fi
+  grep -qF "devantler-tech/.github/.github/workflows/publish-manifests.yaml@$approved_commit" "$test_work/approved.identities.tsv"
+  cp "$test_work/seed.tsv" "$test_work/approved.tsv"
+  cp "$test_work/identities-before" "$test_work/approved.identities.tsv"
+done <<<"$approved_commits"
+unset CANONICAL_PIN_SHA
+
 export CANONICAL_PIN_SHA=7777777777777777777777777777777777777777
 if run_generator >"$test_work/refusal" 2>&1; then
   echo 'Unapproved canonical current pin was admitted' >&2; exit 1
@@ -94,4 +109,4 @@ fi
 grep -q 'canonical publisher.*not approved' "$test_work/refusal"
 cmp "$test_work/seed.tsv" "$test_work/approved.tsv"
 cmp "$test_work/identities-before" "$test_work/approved.identities.tsv"
-printf 'PASS: canonical signing identity, retained compatibility, idempotence and unapproved refusal\n'
+printf 'PASS: canonical signing identity, retained compatibility, idempotence, every approved pin and unapproved refusal\n'

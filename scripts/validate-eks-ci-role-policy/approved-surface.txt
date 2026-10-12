@@ -404,7 +404,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer d6b3ec2e
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator 1811cdc5d66ca504568edb77b6d19d8cf46c30ad8f286c34b5563991629cfa17
 
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config b6c432af595e2aaa0b41cc114cb4d85a21125a02e5b7a60e5abfc4e034c03e40
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config fb34648e8be3132abf0967a9123daf1f4af18b29e981473c4ee199a79155d95b
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage 25656e31ba48d29ef4b92ff50871e495ff5ccb5c985548d984cc29c615df7b31
 
