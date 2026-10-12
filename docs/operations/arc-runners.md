@@ -106,7 +106,11 @@ node, port and attempt window. A certificate error, unreachable healthy control,
 observer loss or changed workload identity fails the proof.
 The collector uses one structured Hubble filter so all flow constraints are
 conjunctive; its CLI cannot combine the source-address and source-Pod selectors.
-The separate evidence parser still checks every returned flow. Server admission
+The separate evidence parser still checks every returned flow.
+Observer identities follow [the pinned Cilium naming contract](https://github.com/cilium/cilium/blob/v1.20.2/pkg/node/types/nodename.go):
+the default cluster uses the node name alone; a named cluster uses `cluster/node`.
+The proof derives one expected identity and retains exact equality, never an
+alias or suffix-only match. Server admission
 must reject privileged, host-volume, host-network, host-process and `NET_RAW`
 variants. Only the owned probe Pods are created; UID-preconditioned deletion and
 absence readback are mandatory. This workflow reads no App key and requests no

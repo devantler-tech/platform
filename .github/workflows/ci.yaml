@@ -35,6 +35,9 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🧪 Validate the complete Go helper regression suite
+        run: go test ./...
+
       - name: 💾 Validate storage audit regressions
         run: |
           go test ./scripts/audit-storage-retention

@@ -83,7 +83,11 @@ case "$args" in
   'get helmreleases '*) printf '{"items":[]}' ;;
   'get secretstore '*) jq -n '{spec:{provider:{vault:{server:"https://openbao-arc.openbao.svc.cluster.local:8204",caProvider:{type:"ConfigMap",name:"arc-openbao-ca",key:"ca.crt"},path:"secret",version:"v2",auth:{kubernetes:{mountPath:"kubernetes",role:"arc-secret-reader",serviceAccountRef:{name:"arc-secret-reader"}}}}}}}' ;;
   'get configmap arc-openbao-ca '*) printf '{"data":{"ca.crt":"-----BEGIN CERTIFICATE-----fixture"}}' ;;
-  'get configmap cilium-config '*) printf '{"data":{"cluster-name":"prod"}}' ;;
+  'get configmap cilium-config '*)
+    case "${PROOF_CASE:-}" in
+      default_cluster*) printf '{"data":{"cluster-name":"default"}}' ;;
+      *) printf '{"data":{"cluster-name":"prod"}}' ;;
+    esac ;;
   'get configmap arc-openbao-listener '*)
     if [[ "${PROOF_CASE:-}" == listener_content ]]; then jq '.data.password="synthetic"' "$PROOF_TEST_ROOT/listener.json"
     elif [[ "${PROOF_CASE:-}" == listener_churn && -e "$state/attempt" ]]; then jq '.metadata.uid="replacement-listener"' "$PROOF_TEST_ROOT/listener.json"
@@ -191,7 +195,16 @@ case "$args" in
       <<<"$filter" >/dev/null || exit 99
     port=$(jq -er '.destination_port[0]' <<<"$filter")
     reason=POLICY_DENIED; [[ "${PROOF_CASE:-}" != wrong_reason ]] || reason=CT_TRUNCATED_OR_INVALID_HEADER
-    jq -n --arg reason "$reason" --arg when "$when" --argjson port "$port" '{flow:{verdict:"DROPPED",drop_reason_desc:$reason,traffic_direction:"EGRESS",time:$when,node_name:"prod/node-a",source:{namespace:"arc-runners",pod_name:"arc-transport-12345-1-1"},destination:{namespace:"openbao",pod_name:"openbao-2"},IP:{source:"10.1.1.1",destination:"10.1.1.2"},l4:{TCP:{destination_port:$port,flags:{SYN:true}}}}}'
+    # Literal native identities, independently derived from pinned Cilium's
+    # node/types/nodename.go: the default cluster has no observer-name prefix.
+    observer_node=prod/node-a
+    case "${PROOF_CASE:-}" in
+      default_cluster) observer_node=node-a ;;
+      default_cluster_prefixed) observer_node=default/node-a ;;
+      default_cluster_wrong_node) observer_node=node-b ;;
+      named_cluster_wrong_cluster) observer_node=other/node-a ;;
+    esac
+    jq -n --arg node "$observer_node" --arg reason "$reason" --arg when "$when" --argjson port "$port" '{flow:{verdict:"DROPPED",drop_reason_desc:$reason,traffic_direction:"EGRESS",time:$when,node_name:$node,source:{namespace:"arc-runners",pod_name:"arc-transport-12345-1-1"},destination:{namespace:"openbao",pod_name:"openbao-2"},IP:{source:"10.1.1.1",destination:"10.1.1.2"},l4:{TCP:{destination_port:$port,flags:{SYN:true}}}}}'
     [[ "${PROOF_CASE:-}" != lost_events ]] || printf '\n{"lost_events":{}}\n' ;;
   'exec '*curl*) touch "$state/attempt"; [[ "${PROOF_CASE:-}" != reachable ]] || exit 0; [[ "${PROOF_CASE:-}" != cert_error ]] || exit 60; exit 28 ;;
   'exec '*test*)
@@ -244,6 +257,10 @@ run_case() {
 }
 GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
 run_case healthy_denied 0
+run_case default_cluster 0
+run_case default_cluster_prefixed 1 same-node-evidence-validation
+run_case default_cluster_wrong_node 1 same-node-evidence-validation
+run_case named_cluster_wrong_cluster 1 same-node-evidence-validation
 run_case observer_failure 19 same-node-observer-collection
 run_case liveness_failure 17 same-node-probe-liveness
 run_case probe_read_failure 21 same-node-workload-bindings
