@@ -252,9 +252,14 @@ while IFS= read -r node; do
     }
     end=$(date -u +%Y-%m-%dT%H:%M:%S.%NZ)
     stage=same-node-observer-collection
+    # Hubble's CLI rejects --from-ip with --from-pod. One raw filter retains
+    # the same conjunctive identity constraints; separate entries would be OR.
+    observer_filter=$(jq -nc --arg source "$source_ip" --arg pod "$namespace/$probe" \
+      --arg destination "$bao_ip" --arg port "$destination_port" \
+      '{source_ip:[$source],source_pod:[$pod],destination_ip:[$destination],destination_port:[$port],
+        protocol:["tcp"],verdict:["DROPPED"],drop_reason_desc:["POLICY_DENIED"]}')
     kc -n kube-system exec "$agent" -c cilium-agent -- hubble observe --server unix:///var/run/cilium/hubble.sock --timeout 5s \
-      --since "$start" --until "$end" --from-ip "$source_ip" --from-pod "$namespace/$probe" --to-ip "$bao_ip" \
-      --to-port "$destination_port" --protocol tcp --verdict DROPPED --drop-reason-desc POLICY_DENIED --output jsonpb >"$scratch/flows"
+      --since "$start" --until "$end" --allowlist "$observer_filter" --output jsonpb >"$scratch/flows"
     [[ ! -s "$scratch/kubectl-error" ]] || fail observer-diagnostics
     stage=same-node-evidence-validation
     "$scratch/evidence" denial --pod "$probe" --source "$source_ip" --destination "$bao_ip" --port "$destination_port" \
