@@ -54,7 +54,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|keda|keda 667d9298b1ca426e4c3ea1b623ead7d0
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro e467e5bf195a93f8d73f80a35f5542199c89b24a7886ff84342148e305696227
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator 5d624b379a44416a8058a8a8cf57588a2a642201878c5ccf4cda03ded9185480
+helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator d44e894a8c9a6616843915bc9822e90591999d7741d45e2705337acbb5aec403
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 7b1a93c61cca43e79ceed6b7cb91a1c3d638dc8791fe7e0aa106181e3ced83b9
 
@@ -350,8 +350,6 @@ source.toolkit.fluxcd.io/v1|HelmRepository|headlamp|headlamp 2fb5eb66c735ba1560c
 
 source.toolkit.fluxcd.io/v1|HelmRepository|keda|keda 0ac84176333ac006ba8e534c1403ea7e7a8f5052860c87bb788eb55c3cfc331c
 
-source.toolkit.fluxcd.io/v1|HelmRepository|ksail-operator|ksail-operator 9c09cb25e8a6f2ec27f4d59376a7a6bd35840a054f96b052a0ab0f577436523f
-
 source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|cilium f35184ba46c66023f433529f9e87bc4513351856c822e5e5550356e313457552
 
 source.toolkit.fluxcd.io/v1|HelmRepository|kube-system|descheduler 1f900af9d94ebb6ff01e0f3e04cc69024cb379f9ee368c61a3c9b774fc6a1442
@@ -409,6 +407,8 @@ source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config b6c432af59
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage 25656e31ba48d29ef4b92ff50871e495ff5ccb5c985548d984cc29c615df7b31
 
 source.toolkit.fluxcd.io/v1|OCIRepository|kro-system|kro be51466c076984816b671214fd42e95aaf92b7b525cf3fa407db2853ffeef824
+
+source.toolkit.fluxcd.io/v1|OCIRepository|ksail-operator|ksail-operator f1296004142c60862fd759f5372d6691d165141d3be289a51ee929801fd9ed70
 
 source.toolkit.fluxcd.io/v1|OCIRepository|wedding-app|wedding-app fe21870783af3f34cdae7bb34af577609fa452a9ea01b1ba886137712c600ad7
 
