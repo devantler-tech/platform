@@ -120,6 +120,13 @@ func TestRecoveryDependenciesAcceptEquivalentYAMLLists(t *testing.T) {
 	}
 }
 
+func TestRecoveryDependenciesIgnoreUnrelatedScalarNeeds(t *testing.T) {
+	workflow := validWorkflow + "  unrelated:\n    needs: changes\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ready\n"
+	if err := validateWorkflowContract(workflow); err != nil {
+		t.Fatalf("legal unrelated dependency rejected: %v", err)
+	}
+}
+
 func TestRecoveryDependenciesRejectChangedSetInBlockForm(t *testing.T) {
 	const original = "needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
 	for _, bad := range []string{

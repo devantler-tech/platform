@@ -139,15 +139,17 @@ func validateWorkflowContract(workflow string) error {
 // must not break the recovery gate. Missing, duplicate or extra entries still fail.
 func exactJobNeeds(workflow, key string, required []string) bool {
 	var parsed struct {
-		Jobs map[string]struct {
-			Needs []string `yaml:"needs"`
-		} `yaml:"jobs"`
+		Jobs map[string]yaml.Node `yaml:"jobs"`
 	}
 	if yaml.Unmarshal([]byte(workflow), &parsed) != nil {
 		return false
 	}
-	job, ok := parsed.Jobs[key]
-	if !ok || len(job.Needs) != len(required) {
+	node, ok := parsed.Jobs[key]
+	var job struct {
+		Needs []string `yaml:"needs"`
+	}
+	// Decode only the protected job. Other jobs may legally use scalar needs.
+	if !ok || node.Decode(&job) != nil || len(job.Needs) != len(required) {
 		return false
 	}
 	wanted := map[string]bool{}
