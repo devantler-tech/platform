@@ -707,7 +707,8 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e '
     ["Service", "data-product-controller-harbour"],
     ["Deployment", "data-product-controller"],
     ["Deployment", "data-product-controller-harbour"],
-    ["DataProduct", "harbour-observations"]
+    ["DataProduct", "harbour-observations"],
+    ["DataProduct", "ksail-releases"]
   ] | sort)
 ' >/dev/null || {
   printf 'FAIL: pinned chart child inventory is incomplete or unreviewed\n' >&2
@@ -775,7 +776,18 @@ trial_contract_matches() {
         .spec.template.spec.containers[0].env |
         ([.[] | select(.name == "PUBLIC_BASE_URL") | .value] == [$harbour] and
          [.[] | select(.name == "UI_HOST_ORIGINS") |
-           (.value | split(",") | sort) == $host_origins] == [true])] == [true] and
+           (.value | split(",") | sort) == $host_origins] == [true] and
+         [.[] | select(.name == "KSAIL_RELEASES_ENABLED") | .value] == ["true"])] == [true] and
+      [.[] | select(.kind == "DataProduct" and .metadata.name == "ksail-releases") |
+        (.metadata.namespace == "data-product-controller" and
+         .spec.id == "https://github.com/devantler-tech/ksail/releases" and
+         .spec.version == "v1.0.0" and
+         .spec.owner == {name:"devantler-tech",url:"https://github.com/devantler-tech/ksail"} and
+         .spec.outputs == [{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",
+           contractUrl:($harbour + "/ksail-releases/openapi.json"),mediaType:"application/json"}] and
+         .spec.ui.url == ($harbour + "/ksail-releases/ui") and
+         (.spec.ui.contract | .hostOrigins |= sort) == {"apiVersion":"data-product-ui/v2",
+           "hostOrigins":$host_origins,"capabilities":["status","resize","appearance"]})] == [true] and
       [.[] | select(.kind == "DataProduct" and .metadata.name == "harbour-observations") |
         (.spec.ui.contract | .hostOrigins |= sort) == {"apiVersion":"data-product-ui/v2",
           "hostOrigins":$host_origins,
@@ -798,49 +810,61 @@ trial_contract_matches "${render_dir}/resources.json" || {
 # lost listener, retired flag, lost gate, publication mismatch, inappropriate host
 # or disabled admission rule fails this assertion. Event writes must also retain
 # their required verbs and single, namespace-local controller recipient.
-for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole; do
+for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole release-activation release-source release-ui release-contract; do
   case "${broken}" in
-  event-wildcard-role) jq 'map(if .kind == "Role" and .metadata.name == "data-product-controller-leader-election" then
+    release-activation) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
+      (.spec.template.spec.containers[0].env[] | select(.name == "KSAIL_RELEASES_ENABLED") | .value) = "false"
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    release-source) jq 'map(if .kind == "DataProduct" and .metadata.name == "ksail-releases" then
+      .spec.outputs[0].url = "https://other.example.invalid/releases" else . end)' \
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    release-ui) jq 'map(if .kind == "DataProduct" and .metadata.name == "ksail-releases" then
+      .spec.ui.url = "https://other.example.invalid/ui" else . end)' \
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    release-contract) jq 'map(if .kind == "DataProduct" and .metadata.name == "ksail-releases" then
+      .spec.outputs[0].contractUrl = "https://other.example.invalid/openapi.json" else . end)' \
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    event-wildcard-role) jq 'map(if .kind == "Role" and .metadata.name == "data-product-controller-leader-election" then
       .rules += [{apiGroups:[""],resources:["*"],verbs:["create","patch"]}] else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  event-wildcard-clusterrole) jq 'map(if .kind == "ClusterRole" and .metadata.name == "data-product-controller" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    event-wildcard-clusterrole) jq 'map(if .kind == "ClusterRole" and .metadata.name == "data-product-controller" then
       .rules += [{apiGroups:[""],resources:["*"],verbs:["create","patch"]}] else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  event-grant) jq 'map(if .kind == "Role" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    event-grant) jq 'map(if .kind == "Role" then
       .rules |= map(select((.resources | index("events")) == null)) else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  event-verbs) jq 'map(if .kind == "Role" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    event-verbs) jq 'map(if .kind == "Role" then
       (.rules[] | select(.resources | index("events")) | .verbs) += ["delete"] else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  event-subject) jq 'map(if .kind == "RoleBinding" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    event-subject) jq 'map(if .kind == "RoleBinding" then
       .subjects += [{kind:"User",name:"other-user"}] else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  listener) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    listener) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
       (.spec.template.spec.containers[0].ports[] | select(.name == "registry") | .containerPort) = 8083
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  service) jq 'map(if .kind == "Service" and .metadata.name == "data-product-controller" then
+    service) jq 'map(if .kind == "Service" and .metadata.name == "data-product-controller" then
       (.spec.ports[] | select(.name == "http") | .targetPort) = "wrong-port"
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  retired-flag) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
+    retired-flag) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller" then
       .spec.template.spec.containers[0].env += [{name:"REGISTRY_UI_ENABLED",value:"false"}]
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  admission) jq 'map(if .kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech" then
+    admission) jq 'map(if .kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech" then
       (.spec.versions[] | select(.name == "v1alpha1") |
        .schema.openAPIV3Schema.properties.spec.properties.ui.properties.contract."x-kubernetes-validations"[].rule) = "true"
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  gate) jq 'map(if .kind == "Deployment" then
+    gate) jq 'map(if .kind == "Deployment" then
       (.spec.template.spec.containers[0].env[] | select(.name == "UI_APPEARANCE_ENABLED") | .value) = "false"
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  publication) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
+    publication) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
       (.spec.template.spec.containers[0].env[] | select(.name == "PUBLIC_BASE_URL") | .value) = $registry
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  origin) jq --arg harbour "${harbour_origin}" 'map(if .kind == "DataProduct" then
+    origin) jq --arg harbour "${harbour_origin}" 'map(if .kind == "DataProduct" then
       .spec.ui.contract.hostOrigins = [$harbour] else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  missing-portable-origin) jq --arg registry "${registry_origin}" 'map(if .kind == "DataProduct" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    missing-portable-origin) jq --arg registry "${registry_origin}" 'map(if .kind == "DataProduct" then
       .spec.ui.contract.hostOrigins = [$registry] else . end)' \
-    "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-  origin-desynchronization) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
+      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    origin-desynchronization) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
       (.spec.template.spec.containers[0].env[] | select(.name == "UI_HOST_ORIGINS") | .value) = $registry
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
   esac
