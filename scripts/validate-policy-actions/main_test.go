@@ -187,3 +187,65 @@ func TestCollectionAndAlias(t *testing.T) {
 		})
 	}
 }
+
+func TestRetirementFenceApprovedActions(t *testing.T) {
+	data, err := os.ReadFile("../../tests/policy-failure-actions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var baseline map[string]string
+	if err := yaml.Unmarshal(data, &baseline); err != nil {
+		t.Fatal(err)
+	}
+	const prefix = "restrict-backstage-retirement/"
+	approved := make(map[string]string)
+	for key, action := range baseline {
+		if strings.HasPrefix(key, prefix) {
+			if action != "Enforce" {
+				t.Fatalf("retirement safeguard %s is not enforced", key)
+			}
+			approved[key] = action
+		}
+	}
+	if len(approved) != 5 {
+		t.Fatalf("want five registered retirement safeguards, got %d", len(approved))
+	}
+	source, err := os.ReadFile("../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := func(t *testing.T, key string) {
+		t.Helper()
+		var policy map[string]any
+		if err := yaml.Unmarshal(source, &policy); err != nil {
+			t.Fatal(err)
+		}
+		if key != "" {
+			for _, item := range policy["spec"].(map[string]any)["rules"].([]any) {
+				rule := item.(map[string]any)
+				if prefix+rule["name"].(string) == key {
+					rule["validate"].(map[string]any)["failureAction"] = "Audit"
+				}
+			}
+		}
+		fixture, err := yaml.Marshal(policy)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), fixture, 0600); err != nil {
+			t.Fatal(err)
+		}
+		err = verify(dir, approved)
+		if key == "" && err != nil {
+			t.Fatal(err)
+		}
+		if key != "" && (err == nil || !strings.Contains(err.Error(), key+": expected Enforce, found Audit")) {
+			t.Fatalf("retirement downgrade was not rejected: %v", err)
+		}
+	}
+	t.Run("preserved", func(t *testing.T) { check(t, "") })
+	for key := range approved {
+		t.Run(key, func(t *testing.T) { check(t, key) })
+	}
+}

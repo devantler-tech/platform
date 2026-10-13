@@ -26,6 +26,19 @@ for layer in bootstrap infrastructure/controllers infrastructure apps; do
     fail "production ${layer} must render"
   documents="$(printf '%s\n' "${rendered}" | yq ea -o=json -I=0 '.' -)" ||
     fail "production ${layer} must decode"
+  if [[ "${layer}" == infrastructure ]]; then
+    # This names the retired app solely to protect native cleanup and retained
+    # data. It is not app deployment, routing, credential or access wiring.
+    fence="$(jq -sc '[.[] | select(.kind == "ClusterPolicy" and .metadata.name == "restrict-backstage-retirement")]' <<< "${documents}")" ||
+      fail 'retirement admission must decode'
+    jq -e 'length==1 and .[0].spec.background==false and
+      .[0].spec.webhookConfiguration.failurePolicy=="Fail" and
+      (.[0].spec.rules|length)==5 and
+      all(.[0].spec.rules[]; .validate.failureAction=="Enforce" and .validate.allowExistingViolations==false)' <<< "${fence}" >/dev/null ||
+      fail 'exact enforced retirement admission is missing'
+    documents="$(jq -c 'select(.kind != "ClusterPolicy" or .metadata.name != "restrict-backstage-retirement")' <<< "${documents}")" ||
+      fail 'remaining production infrastructure must decode'
+  fi
   if [[ "${layer}" == apps ]]; then
     # Persistence protection keeps the retired database running until explicit
     # data retention and cleanup. Permit exactly its temporary control and
