@@ -183,6 +183,22 @@ jobs:
       - name: 🔎 Validate read-only portal retirement assessment
         run: go test -race ./scripts/assess-backstage-retirement
 
+      - name: 🛡️ Validate stateless portal retirement preservation
+        shell: bash
+        env:
+          HELM_VERSION: v4.2.0
+          HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
+          PORTAL_REQUIRE_NATIVE_CONTROL: '1'
+        run: |
+          set -euo pipefail
+          native_dir="$(mktemp -d)"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
+          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
+          export PORTAL_HELM_TEST_BIN="$native_dir/linux-amd64/helm"
+          go test -race -count=1 ./scripts/retire-backstage-stateless
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases

@@ -53,6 +53,47 @@ without cluster access. It requires the same complete manifest and related-Pod e
 live assessment; only the live two-snapshot comparison removes collection clocks.
 Never persist production release data as a fixture.
 
+The separate **Retire Backstage Stateless Resources** workflow is a manually
+confirmed, first-attempt operation on reviewed current `main`. It shares the
+protected production environment and deployment lock. The supplied deployed
+revision must be joined to an accepted production deployment and fresh OIDC
+readback before dispatch; a matching source digest alone is not approval.
+
+The operation re-runs the read-only assessment and additionally requires exactly
+the reviewed Deployment, Service and app-config ConfigMap. It refuses a suspended
+owner, a missing native uninstall finalizer, active Helm reconciliation, credential
+resources in the release, stale source/inventory evidence, foreign chart consumers,
+changed snapshots and incomplete retained-data coverage. The controller's latest
+history snapshot must match the captured stored release's name, namespace, version
+and deployed status, before any write and again before owner deletion. It binds uninstall controls
+and deletion to the captured UID/resourceVersion, retains Helm history and disables
+hooks. The native unsuspended HelmRelease lifecycle performs the uninstall; only
+its separately bound, unreferenced generated HelmChart may be cleaned up afterward.
+
+Two separated post-operation reads require workload/source-object absence and the
+same healthy database, namespace, storage, backups and credentials. A bounded
+failure or ambiguous write stays HOLD; there is no automatic replay, finalizer
+bypass, force replacement or database cleanup. A run-scoped receipt consumes the
+attempt before the first lifecycle mutation and stores only scope/identity metadata.
+Raw release and Secret evidence remains in process memory, never logs or artifacts.
+`RETIRED_STATELESS` is not data-retirement or independent-backup acceptance:
+[#4266](https://github.com/devantler-tech/platform/issues/4266) remains open until
+those separate requirements are fulfilled.
+
+Run its offline regressions with `go test -race ./scripts/retire-backstage-stateless`.
+The native characterization requires an explicitly checksum-verified Helm 4.2.0
+binary in `PORTAL_HELM_TEST_BIN`; local default runs report that control as skipped.
+CI and the protected workflow require it rather than accepting skipped coverage.
+It builds the checksum-locked published controller SDK driver and executes its
+actual uninstall/ConfigFactory adapter against a loopback API with synthetic
+stored history, delete hooks and delayed resource disappearance. With the
+unchanged production default, the controller's [SSA poller](https://github.com/fluxcd/helm-controller/blob/v1.5.5/internal/action/wait.go)
+performs the termination wait; a different CLI legacy/watcher implementation is
+not substituted. This proves native history/hook/wait behavior, not a real garbage
+collector or production controller run. Its [unsuspended finalizer path](https://github.com/fluxcd/helm-controller/blob/v1.5.5/internal/controller/helmrelease_controller.go)
+remains protected live acceptance work. The [test-only driver](../scripts/retire-backstage-stateless/poller-native/README.md)
+explains the deliberately scoped module import prefix and exact dependency pins.
+
 Reference: [Helm status](https://helm.sh/docs/helm/helm_status/)
 reads the installed release; [Helm uninstall](https://helm.sh/docs/helm/helm_uninstall/)
 removes that last release's resources. Custom chart extensions and Pod lifecycle
