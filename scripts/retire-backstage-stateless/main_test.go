@@ -584,7 +584,7 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 		return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cnpg-controller-manager-config", "namespace": "cnpg-system", "uid": "cnpg-config-uid", "resourceVersion": "1"}}), nil
 	}
 	if strings.Contains(joined, "get deployment cloudnative-pg") {
-		return encode(f.t, map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "cloudnative-pg", "namespace": "cnpg-system", "uid": "cnpg-deployment-uid", "resourceVersion": "1", "generation": 1}, "spec": map[string]any{"replicas": 2, "template": map[string]any{"spec": map[string]any{"serviceAccountName": "cloudnative-pg", "containers": []any{map[string]any{"image": cnpgControllerImage}}}}}, "status": map[string]any{"observedGeneration": 1, "readyReplicas": 2, "updatedReplicas": 2, "availableReplicas": 2}}), nil
+		return encode(f.t, map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "cloudnative-pg", "namespace": "cnpg-system", "uid": "cnpg-deployment-uid", "resourceVersion": "1", "generation": 1}, "spec": map[string]any{"replicas": 2, "template": map[string]any{"spec": map[string]any{"serviceAccountName": "cloudnative-pg", "containers": []any{map[string]any{"image": cnpgControllerImage, "env": []any{map[string]any{"name": "MONITORING_QUERIES_CONFIGMAP", "value": "cnpg-default-monitoring"}}}}}}}, "status": map[string]any{"observedGeneration": 1, "readyReplicas": 2, "updatedReplicas": 2, "availableReplicas": 2}}), nil
 	}
 	if strings.Contains(joined, " patch ") {
 		path := ""

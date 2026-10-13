@@ -127,6 +127,10 @@ func (e engine) collectWriters(ctx context.Context, s *snapshot) error {
 			if name := text(field(object(env), "name")); name == "INHERITED_ANNOTATIONS" || name == "INHERITED_LABELS" || name == "CONFIG_MAP_NAME" {
 				return errors.New("uncharacterized metadata inheritance override")
 			}
+			o := object(env)
+			if o["name"] == "MONITORING_QUERIES_CONFIGMAP" && (o["value"] != "cnpg-default-monitoring" || o["valueFrom"] != nil) || o["name"] == "MONITORING_QUERIES_SECRET" {
+				return errors.New("uncharacterized monitoring source override")
+			}
 		}
 		if len(array(field(object(array(field(controller, "spec", "template", "spec", "containers"))[0]), "envFrom"))) != 0 {
 			return errors.New("uncharacterized metadata inheritance source")
@@ -363,6 +367,11 @@ func controllerProjection(s snapshot, r map[string]any, normalized bool) (map[st
 				delete(object(p["annotations"]), "trust.cert-manager.io/hash")
 			} else {
 				delete(object(p["annotations"]), "kubernetes.io/description")
+				// The publisher may add its description to an object with
+				// no annotations. Only that field is excluded from comparison.
+				if len(object(p["annotations"])) == 0 {
+					p["annotations"] = nil
+				}
 			}
 		}
 	case "cnpg-monitoring":

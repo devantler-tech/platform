@@ -90,7 +90,11 @@ func TestPinnedCNPGSecretProducerProfiles(t *testing.T) {
 
 func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 	for _, profile := range []string{"root-ca", "trust-bundle", "cnpg-monitoring", "cnpg-role"} {
-		for _, mode := range []string{"refresh", "extra data", "unrelated annotation", "writer replaced"} {
+		modes := []string{"refresh", "extra data", "unrelated annotation", "writer replaced"}
+		if profile == "root-ca" {
+			modes = append(modes, "missing description")
+		}
+		for _, mode := range modes {
 			t.Run(profile+"/"+mode, func(t *testing.T) {
 				retirementRunner(t)
 				f := retirementFixture(t)
@@ -104,6 +108,9 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 				newPEM, _ := base64.StdEncoding.DecodeString(newCert)
 				resource := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": metadata("kube-root-ca.crt", "public-ca-uid"), "data": map[string]any{"ca.crt": string(oldPEM)}}
 				object(resource["metadata"])["annotations"] = map[string]any{"kubernetes.io/description": rootCADescription}
+				if mode == "missing description" {
+					delete(object(resource["metadata"]), "annotations")
+				}
 				bundle := map[string]any{"apiVersion": "trust.cert-manager.io/v1alpha1", "kind": "Bundle", "metadata": map[string]any{"name": "cloudflare-origin-ca", "uid": "bundle-uid", "resourceVersion": "1"}, "spec": map[string]any{"target": map[string]any{"configMap": map[string]any{"key": "ca-certificates.crt"}}}}
 				monitoring := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cnpg-default-monitoring", "namespace": "cnpg-system", "uid": "monitoring-source-uid", "resourceVersion": "1"}, "data": map[string]any{"queries": "SELECT 1"}}
 				switch profile {
@@ -150,6 +157,9 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 						switch profile {
 						case "root-ca":
 							object(resource["data"])["ca.crt"] = string(newPEM)
+							if mode == "missing description" {
+								object(resource["metadata"])["annotations"] = map[string]any{"kubernetes.io/description": rootCADescription}
+							}
 						case "trust-bundle":
 							object(resource["data"])["ca-certificates.crt"] = string(newPEM)
 							object(field(resource, "metadata", "annotations"))["trust.cert-manager.io/hash"] = fmt.Sprintf("%x", sha256.Sum256(newPEM))
@@ -206,7 +216,7 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 				}
 				var out bytes.Buffer
 				code := run([]string{"--execute"}, &out, execute)
-				if mode == "refresh" {
+				if mode == "refresh" || mode == "missing description" {
 					if code != 0 || !changed || !f.deleted {
 						t.Fatalf("legitimate generated refresh blocked: code=%d %s", code, &out)
 					}
@@ -236,7 +246,7 @@ func TestPublicPEMRejectsNonCertificateText(t *testing.T) {
 }
 
 func TestUnsettledCredentialMetadataNeverInstallsFence(t *testing.T) {
-	for _, mode := range []string{"missing managed label", "missing version", "inherited annotation absent", "uncharacterized configuration", "malformed configuration", "inheritance override"} {
+	for _, mode := range []string{"missing managed label", "missing version", "inherited annotation absent", "uncharacterized configuration", "malformed configuration", "inheritance override", "monitoring config override", "monitoring secret override"} {
 		t.Run(mode, func(t *testing.T) {
 			retirementRunner(t)
 			f := retirementFixture(t)
@@ -259,9 +269,15 @@ func TestUnsettledCredentialMetadataNeverInstallsFence(t *testing.T) {
 					}
 					return encode(t, r), nil
 				}
-				if err == nil && strings.Contains(args, "get deployment cloudnative-pg") && mode == "inheritance override" {
+				if err == nil && strings.Contains(args, "get deployment cloudnative-pg") && (mode == "inheritance override" || mode == "monitoring config override" || mode == "monitoring secret override") {
 					r, _ := decode(b)
-					object(array(field(r, "spec", "template", "spec", "containers"))[0])["env"] = []any{map[string]any{"name": "INHERITED_ANNOTATIONS", "value": "*"}}
+					name, value := "INHERITED_ANNOTATIONS", "*"
+					if mode == "monitoring config override" {
+						name, value = "MONITORING_QUERIES_CONFIGMAP", "alternate-queries"
+					} else if mode == "monitoring secret override" {
+						name, value = "MONITORING_QUERIES_SECRET", "alternate-queries"
+					}
+					object(array(field(r, "spec", "template", "spec", "containers"))[0])["env"] = []any{map[string]any{"name": name, "value": value}}
 					return encode(t, r), nil
 				}
 				return b, err
