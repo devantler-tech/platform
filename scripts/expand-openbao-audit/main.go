@@ -283,35 +283,88 @@ func (e engine) write(ctx context.Context, value any, args ...string) (map[strin
 }
 func run(args []string, out io.Writer, execute command, cost func(context.Context) bool) int {
 	changed := false
+	stage := "input"
 	hold := func() int {
 		code := "HOLD"
 		if changed {
 			code = "HOLD_CAPACITY_MAY_HAVE_CHANGED"
 		}
-		_, _ = fmt.Fprintln(out, "OPENBAO_AUDIT_CAPACITY="+code)
+		_, _ = fmt.Fprintln(out, "OPENBAO_AUDIT_CAPACITY="+code+" stage="+stage)
 		return 2
 	}
+	snapshotHold := func(err error) int {
+		if err != nil {
+			switch err.Error() {
+			case "source unsettled":
+				stage = "root-source"
+			case "artifact unverified":
+				stage = "root-artifact"
+			case "workload unready":
+				stage = "workload"
+			case "expansion capability unverified":
+				stage = "storage-class"
+			case "claim identity unverified":
+				stage = "claim-identity"
+			case "unreviewed capacity":
+				stage = "claim-capacity"
+			case "binding unavailable", "volume identity unverified":
+				stage = "volume-binding"
+			case "unreviewed backing capacity":
+				stage = "volume-capacity"
+			case "audit mount unverified":
+				stage = "audit-mount"
+			case "service health unverified":
+				stage = "service-health"
+			default:
+				stage = "snapshot-read"
+			}
+		}
+		return hold()
+	}
 	sha, rev, id, deploy := os.Getenv("GITHUB_SHA"), os.Getenv("AUDIT_CAPACITY_REVISION"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("AUDIT_CAPACITY_DEPLOYMENT_RUN")
-	if len(args) != 1 || args[0] != "--execute" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 20GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
+	if len(args) != 1 || args[0] != "--execute" && args[0] != "--preflight" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 20GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
 		return hold()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	e := engine{execute: execute, sha: sha, revision: rev, runID: id, deploymentRun: deploy}
-	if !e.current(ctx) || !cost(ctx) || !e.accepted(ctx) {
+	stage = "source"
+	if !e.current(ctx) {
 		return hold()
 	}
+	stage = "pricing"
+	if !cost(ctx) {
+		return hold()
+	}
+	stage = "accepted-deployment"
+	if !e.accepted(ctx) {
+		return hold()
+	}
+	stage = "initial-snapshot"
 	before, err := e.collect(ctx)
 	if err != nil {
-		return hold()
+		return snapshotHold(err)
 	}
+	stage = "separated-snapshot"
 	if _, err = execute(ctx, "sleep", "5"); err != nil {
 		return hold()
 	}
 	second, err := e.collect(ctx)
 	if err != nil || !preserved(before, second) {
-		return hold()
+		return snapshotHold(err)
 	}
+	if args[0] == "--preflight" {
+		if !e.current(ctx) {
+			stage = "source"
+			return hold()
+		}
+		result := "OPENBAO_AUDIT_CAPACITY=PREFLIGHT_OK claims=3 writes=0 consumptionReceipts=0\n"
+		if n, err := io.WriteString(out, result); err != nil || n != len(result) {
+			return 2
+		}
+		return 0
+	}
+	stage = "consumption-receipt"
 	receiptName := "openbao-audit-expansion-" + id
 	b, err := execute(ctx, "kubectl", "--context=admin@prod", "--request-timeout=20s", "--namespace=flux-system", "get", "configmap", receiptName, "--ignore-not-found", "--output=json")
 	if err != nil || len(bytes.TrimSpace(b)) != 0 || !e.current(ctx) {
@@ -324,27 +377,35 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 	}
 	receiptUID := field(r, "metadata", "uid")
 	for i := 0; i < 3; i++ {
+		stage = "before-patch"
 		name := fmt.Sprintf("audit-openbao-%d", i)
 		current, err := e.collect(ctx)
 		if err != nil || !preserved(before, current) || !e.current(ctx) {
-			return hold()
+			return snapshotHold(err)
 		}
 		c := current.claims[name]
 		if field(c, "spec", "resources", "requests", "storage") == target {
 			continue
 		}
+		stage = "consumption-receipt"
 		recorded, err := e.read(ctx, "--namespace=flux-system", "get", "configmap", receiptName, "--output=json")
-		if err != nil || !valid(recorded, "v1", "ConfigMap", "flux-system", receiptName) || field(recorded, "metadata", "uid") != receiptUID || recorded["immutable"] != true || !reflect.DeepEqual(recorded["data"], receipt["data"]) || !cost(ctx) {
+		if err != nil || !valid(recorded, "v1", "ConfigMap", "flux-system", receiptName) || field(recorded, "metadata", "uid") != receiptUID || recorded["immutable"] != true || !reflect.DeepEqual(recorded["data"], receipt["data"]) {
+			return hold()
+		}
+		stage = "pricing"
+		if !cost(ctx) {
 			return hold()
 		}
 		patch := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": field(c, "metadata", "uid")}, {"op": "test", "path": "/metadata/resourceVersion", "value": field(c, "metadata", "resourceVersion")}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": target}}
 		changed = true
+		stage = "capacity-patch"
 		r, err = e.write(ctx, patch, "--namespace=openbao", "patch", "persistentvolumeclaim", name, "--type=json", "--patch-file=REQUEST", "--output=json")
 		if err != nil || !valid(r, "v1", "PersistentVolumeClaim", "openbao", name) || field(r, "metadata", "uid") != field(c, "metadata", "uid") || field(r, "spec", "resources", "requests", "storage") != target || !reflect.DeepEqual(stableResource(c, false), stableResource(r, false)) {
 			return hold()
 		}
 	}
 	for sample := 0; sample < 2; sample++ {
+		stage = "resize-readback"
 		complete := false
 		for i := 0; i < 60; i++ {
 			if _, err = execute(ctx, "sleep", "5"); err != nil {
@@ -352,7 +413,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 			}
 			after, err := e.collect(ctx)
 			if err != nil || !preserved(before, after) || !e.current(ctx) {
-				return hold()
+				return snapshotHold(err)
 			}
 			complete = true
 			for name, c := range after.claims {

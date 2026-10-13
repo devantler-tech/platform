@@ -32,8 +32,12 @@ func TestWorkflowKeepsExpansionManualProtectedAndScoped(t *testing.T) {
 		t.Fatal("unexpected execution lane")
 	}
 	j := obj(jobs["expand"])
-	if j["environment"] != "prod" || !reflect.DeepEqual(j["permissions"], map[string]any{"contents": "read", "actions": "read", "deployments": "read"}) {
+	if !reflect.DeepEqual(j["environment"], map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j["permissions"], map[string]any{"contents": "read", "actions": "read", "deployments": "read"}) {
 		t.Fatal("protection or GitHub authority changed")
+	}
+	mode := obj(field(w, "on", "workflow_dispatch", "inputs", "mode"))
+	if mode["default"] != "preflight" || mode["type"] != "choice" || mode["required"] != true || !reflect.DeepEqual(mode["options"], []any{"preflight", "expand"}) {
+		t.Fatal("read-only default or bounded mode choices changed")
 	}
 	tested, source, restored := false, false, false
 	for _, v := range array(j["steps"]) {
