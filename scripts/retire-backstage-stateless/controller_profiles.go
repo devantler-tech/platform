@@ -43,8 +43,10 @@ func controllerProfile(s snapshot, r map[string]any) (string, error) {
 		if !emptyObject(field(db, "spec", "certificates")) || !owned("Cluster", "backstage-db", text(field(db, "metadata", "uid"))) || certs["serverCASecret"] != "backstage-db-ca" || certs["clientCASecret"] != "backstage-db-ca" || certs["serverTLSSecret"] != "backstage-db-server" || certs["replicationTLSSecret"] != "backstage-db-replication" {
 			return "", errors.New("default certificate ownership unverified")
 		}
-		if !cnpgMetadataSettled(db, r, false) {
-			return "", errors.New("certificate producer metadata is not settled")
+		// PKI constructors set managed-by and ownership, not credential
+		// inheritance or operatorVersion. All existing metadata stays frozen.
+		if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" {
+			return "", errors.New("certificate producer unverified")
 		}
 		if name == "backstage-db-ca" {
 			return "ca", nil
@@ -53,7 +55,7 @@ func controllerProfile(s snapshot, r map[string]any) (string, error) {
 	}
 	if r["kind"] == "Secret" && name == "backstage-db-app" {
 		initdb := object(field(db, "spec", "bootstrap", "initdb"))
-		if !owned("Cluster", "backstage-db", text(field(db, "metadata", "uid"))) || r["type"] != "Opaque" || len(initdb) == 0 || text(initdb["database"]) == "" || text(initdb["owner"]) == "" || initdb["secret"] != nil || !cnpgMetadataSettled(db, r, true) {
+		if !owned("Cluster", "backstage-db", text(field(db, "metadata", "uid"))) || r["type"] != "kubernetes.io/basic-auth" || len(initdb) == 0 || text(initdb["database"]) == "" || text(initdb["owner"]) == "" || initdb["secret"] != nil || !cnpgMetadataSettled(db, r, true) {
 			return "", errors.New("default credential producer metadata is not settled")
 		}
 		// Existing credential values are never regenerated or normalized.

@@ -61,6 +61,33 @@ func certificateFixture(t *testing.T, key *ecdsa.PrivateKey, serial int64, ca bo
 	return base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})), base64.StdEncoding.EncodeToString(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: private}))
 }
 
+func TestPinnedCNPGSecretProducerProfiles(t *testing.T) {
+	t.Run("credential", func(t *testing.T) {
+		f := retirementFixture(t)
+		secret := item(f.inventory, 0)
+		s := snapshot{live: f.live}
+		if profile, err := controllerProfile(s, secret); err != nil || profile != "cnpg-credential" {
+			t.Fatalf("default basic-auth credential rejected: profile=%q err=%v", profile, err)
+		}
+		secret["type"] = "Opaque"
+		if _, err := controllerProfile(s, secret); err == nil {
+			t.Fatal("uncharacterized credential type accepted")
+		}
+	})
+	t.Run("certificate", func(t *testing.T) {
+		f := retirementFixture(t)
+		_, certificate := addCertificateFixture(t, f, "backstage-db-ca", "ca")
+		s := snapshot{live: f.live}
+		if profile, err := controllerProfile(s, certificate); err != nil || profile != "ca" {
+			t.Fatalf("constructor certificate metadata rejected: profile=%q err=%v", profile, err)
+		}
+		object(field(certificate, "metadata", "labels"))["app.kubernetes.io/managed-by"] = "foreign-producer"
+		if _, err := controllerProfile(s, certificate); err == nil {
+			t.Fatal("foreign certificate producer accepted")
+		}
+	})
+}
+
 func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 	for _, profile := range []string{"root-ca", "trust-bundle", "cnpg-monitoring", "cnpg-role"} {
 		for _, mode := range []string{"refresh", "extra data", "unrelated annotation", "writer replaced"} {
@@ -285,8 +312,9 @@ func addCertificateFixture(t *testing.T, f *portalFixture, name, profile string)
 		crtKey, privateKey, secretType = "ca.crt", "ca.key", "Opaque"
 	}
 	r := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": metadata(name, name+"-uid"), "type": secretType, "data": map[string]any{crtKey: cert, privateKey: private}}
-	object(r["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "cloudnative-pg", "cnpg.io/cluster": "backstage-db"}
-	object(r["metadata"])["annotations"] = map[string]any{"cnpg.io/operatorVersion": "1.30.1"}
+	// The pinned PKI constructor adds only managed-by; unlike credentials,
+	// its ownership path does not copy Cluster inheritance or operatorVersion.
+	object(r["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "cloudnative-pg"}
 	object(r["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid", "controller": true}}
 	f.inventory["items"] = append(array(f.inventory["items"]), r)
 	object(item(f.live, 2)["status"])["certificates"] = map[string]any{"serverCASecret": "backstage-db-ca", "clientCASecret": "backstage-db-ca", "serverTLSSecret": "backstage-db-server", "replicationTLSSecret": "backstage-db-replication"}

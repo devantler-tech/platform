@@ -494,7 +494,7 @@ func retirementFixture(t *testing.T) *portalFixture {
 	ns := map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": metadata("backstage", "namespace-uid")}
 	delete(object(ns["metadata"]), "namespace")
 	object(ns["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
-	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "type": "Opaque", "metadata": metadata("backstage-db-app", "credential-uid"), "data": map[string]any{"password": "DO_NOT_PRINT"}}
+	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "type": "kubernetes.io/basic-auth", "metadata": metadata("backstage-db-app", "credential-uid"), "data": map[string]any{"username": "SYNTHETIC_USERNAME", "password": "DO_NOT_PRINT"}}
 	object(secret["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid", "controller": true}}
 	object(secret["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "cloudnative-pg", "cnpg.io/cluster": "backstage-db", "cnpg.io/reload": "true", "cnpg.io/userType": "app"}
 	object(secret["metadata"])["annotations"] = map[string]any{"cnpg.io/operatorVersion": "1.30.1"}
