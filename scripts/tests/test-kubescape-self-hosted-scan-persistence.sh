@@ -80,7 +80,7 @@ fi
 # kubevuln v0.3.159 swallows an exhausted conflict retry while updating a
 # VulnerabilityManifestSummary: it logs the original AlreadyExists result and
 # returns success. kubescape/kubevuln#745 fixed both error reporting and
-# propagation, first released in v0.3.404. Chart 1.40.4 selects v0.3.430;
+# propagation, first released in v0.3.404. Chart 1.40.5 selects v0.3.430;
 # verify the rendered image below so a later chart cannot regress silently.
 readonly kubevuln_tag='v0.3.430'
 
@@ -102,7 +102,7 @@ readonly offline
 
 # The scanner's API-server persistence handler stores detailed
 # WorkloadConfigurationScan objects only when clusterData.continuousPostureScan
-# is true. Chart 1.40.4 derives that flag from this capability.
+# is true. Chart 1.40.5 derives that flag from this capability.
 continuous_scan="$(yq -er '.spec.values.capabilities.continuousScan' "${helm_release}")" ||
   fail 'capabilities.continuousScan is missing'
 readonly continuous_scan
@@ -168,14 +168,14 @@ readonly kubevuln_cpu_limit
 # instant. Both scans are high-volume writers to one SQLite-backed storage API;
 # keep their authored windows separated so detailed posture writes do not lose
 # the single-writer lock to vulnerability results. These value paths and their
-# CronJob mapping were verified against immutable chart 1.40.4; fail on a chart
+# CronJob mapping were verified against immutable chart 1.40.5; fail on a chart
 # bump so the new chart must be rendered and this contract deliberately renewed.
 chart_version="$(yq -er '
   .spec.chart.spec.version |
   select(tag == "!!str" and length > 0)
 ' "${helm_release}")" || fail 'the Kubescape chart version must be an exact string'
 readonly chart_version
-[[ "${chart_version}" == "1.40.4" ]] ||
+[[ "${chart_version}" == "1.40.5" ]] ||
   fail 'the Kubescape chart changed; revalidate both rendered scheduler CronJobs before updating this guard'
 
 posture_schedule="$(yq -er '
@@ -202,7 +202,7 @@ readonly vulnerability_schedule
 # render additionally proves that the reviewed chart maps each authored value to
 # the intended CronJob. Pin the archive bytes so a republished tag fails closed.
 readonly chart_repository='https://kubescape.github.io/helm-charts/'
-readonly chart_archive_sha256='9c9dad697b13d085ed1c6cbb166d9ade239305aa2e8b5999840d455fc91a10ea'
+readonly chart_archive_sha256='80c6d177b534936f66df7d1a10544bd5e13d48b581a562c480bd16314221aa92'
 chart_dir="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-chart.XXXXXX")" ||
   fail 'could not create a temporary directory for the Kubescape chart'
 readonly chart_dir
