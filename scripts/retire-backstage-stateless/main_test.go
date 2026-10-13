@@ -418,7 +418,7 @@ func TestRetainedDeletionProtectionCannotDisappearDuringUninstall(t *testing.T) 
 func TestControllerLatestHistoryUsesHighestVersionNotInputOrder(t *testing.T) {
 	retirementRunner(t)
 	f := retirementFixture(t)
-	object(f.hr["status"])["history"] = []any{map[string]any{"name": "backstage", "namespace": "backstage", "version": 3, "status": "superseded"}, map[string]any{"name": "backstage", "namespace": "backstage", "version": 4, "status": "deployed"}}
+	object(f.hr["status"])["history"] = []any{map[string]any{"name": "backstage", "namespace": "backstage", "version": 3, "status": "superseded"}, map[string]any{"name": "backstage", "namespace": "backstage", "version": 4, "status": "deployed", "chartName": "backstage", "chartVersion": "2.10.2"}}
 	var out bytes.Buffer
 	if run([]string{"--execute"}, &out, f.execute) != 0 {
 		t.Fatalf("valid latest controller history was not joined by highest version: %s", &out)
@@ -510,7 +510,7 @@ func retirementFixture(t *testing.T) *portalFixture {
 	object(hr["metadata"])["generation"] = 1
 	object(hr["metadata"])["finalizers"] = []any{"finalizers.fluxcd.io"}
 	object(hr["status"])["observedGeneration"] = 1
-	object(hr["status"])["history"] = []any{map[string]any{"name": "backstage", "namespace": "backstage", "version": 4, "status": "deployed"}}
+	object(hr["status"])["history"] = []any{map[string]any{"name": "backstage", "namespace": "backstage", "version": 4, "status": "deployed", "chartName": "backstage", "chartVersion": "2.10.2"}}
 	object(hr["status"])["conditions"] = []any{map[string]any{"type": "Ready", "status": "True", "observedGeneration": 1}, map[string]any{"type": "Released", "status": "True", "observedGeneration": 1}}
 	chart := map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "HelmChart", "metadata": metadata("backstage-backstage", "chart-uid"), "spec": map[string]any{"chart": "backstage", "version": "2.10.2", "sourceRef": map[string]any{"kind": "HelmRepository", "name": "backstage"}}}
 	object(chart["metadata"])["labels"] = map[string]any{"helm.toolkit.fluxcd.io/name": "backstage", "helm.toolkit.fluxcd.io/namespace": "backstage"}

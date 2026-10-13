@@ -427,7 +427,9 @@ func (e engine) eligible(s snapshot) error {
 // order. Refuse ambiguous/incomplete evidence before native uninstall starts.
 func controllerHistoryMatches(s snapshot) bool {
 	latest, ok := latestControllerHistory(s.owner)
-	return ok && latest["name"] == s.release["name"] && latest["namespace"] == s.release["namespace"] && latest["version"] == s.release["version"] && latest["status"] == field(s.release, "info", "status") && latest["status"] == "deployed"
+	chartName := text(field(s.release, "chart", "metadata", "name"))
+	chartVersion := text(field(s.release, "chart", "metadata", "version"))
+	return ok && chartName != "" && chartVersion != "" && latest["chartName"] == chartName && latest["chartVersion"] == chartVersion && latest["name"] == s.release["name"] && latest["namespace"] == s.release["namespace"] && latest["version"] == s.release["version"] && latest["status"] == field(s.release, "info", "status") && latest["status"] == "deployed"
 }
 
 func latestControllerHistory(owner map[string]any) (map[string]any, bool) {

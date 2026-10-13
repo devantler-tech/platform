@@ -95,6 +95,39 @@ func TestHistoricalSuccessCannotNameAnotherReleaseOrUseUnjoinedGenerations(t *te
 	}
 }
 
+func TestControllerChartIdentityMustJoinTheStoredRelease(t *testing.T) {
+	for _, sourceWait := range []bool{false, true} {
+		for _, mode := range []string{"different name", "different version", "missing name", "missing version"} {
+			t.Run(fmt.Sprintf("source_wait_%t/%s", sourceWait, mode), func(t *testing.T) {
+				retirementRunner(t)
+				f := retirementFixture(t)
+				if sourceWait {
+					f = sourceWaitFixture(t)
+				}
+				history := object(field(f.hr, "status", "history").([]any)[0])
+				switch mode {
+				case "different name":
+					history["chartName"] = "other"
+				case "different version":
+					history["chartVersion"] = "9.9.9"
+				case "missing name":
+					delete(history, "chartName")
+				case "missing version":
+					delete(history, "chartVersion")
+				}
+				if sourceWait {
+					cs := field(f.hr, "status", "conditions").([]any)
+					object(cs[2])["message"] = fmt.Sprintf("Helm upgrade succeeded for release backstage/backstage.v4 with chart %s@%s", text(history["chartName"]), text(history["chartVersion"]))
+				}
+				var out bytes.Buffer
+				if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.configured || f.deleted {
+					t.Fatalf("unjoined controller chart reached mutation: code=%d %s", code, &out)
+				}
+			})
+		}
+	}
+}
+
 func TestUnavailableSourceDoesNotPreventPreservingStatelessRetirement(t *testing.T) {
 	retirementRunner(t)
 	f := sourceWaitFixture(t)

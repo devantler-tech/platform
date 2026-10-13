@@ -90,7 +90,8 @@ deletion branch runs first. Accept only the exact source-wait profile, joined to
 the unavailable chart and unchanged deployed storage/history. Ready and Reconciling
 must share the observed generation or the single captured options-patch generation.
 Released may describe an older successful action only when its exact message names
-the latest deployed history revision and chart. Reject zero/future generations,
+the latest deployed history revision and chart, whose name/version must also
+match the captured stored release. Reject zero/future generations,
 unjoined success messages, duplicate, missing or active-action conditions. Recheck this profile
 after the uninstall-options patch; a changed source or release still stops owner
 deletion. No chart restoration or synthetic credential is needed for retirement.
