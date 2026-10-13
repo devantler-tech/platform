@@ -11,8 +11,8 @@ COSIGN_VERSION="3.1.3"
 COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
 SYFT_VERSION="1.54.1"
-# syft_1.54.0_checksums.txt: syft_1.54.0_linux_amd64.tar.gz
-SYFT_SHA256="54a87372498168b2d033e876fd41fa4e8035b872699e525a57046e1f2f09c860"
+# syft_1.54.1_checksums.txt: syft_1.54.1_linux_amd64.tar.gz
+SYFT_SHA256="c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47"
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo '::error::Supply-chain tool pins support Linux x86_64 runners. Add reviewed release digests before using another platform.' >&2
