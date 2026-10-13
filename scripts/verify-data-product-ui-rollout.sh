@@ -18,11 +18,36 @@ expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/a
 readonly expected_helm_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
+  local detail='' role='' reason='' extra=''
+  # A completed public failure remains useful when the shared deadline subsequently expires.
+  # Keep the deadline refusal, while retaining only the validated role and cause already observed.
+  if [[ "$1" == public_contract_incomplete || ("$1" == deadline_exceeded && -f "$scratch/public-failure") ]]; then
+    role=public_contract
+    reason=read_incomplete
+    if [[ -f "$scratch/public-failure" ]]; then
+      local saved_role='' saved_reason=''
+      read -r saved_role saved_reason extra <"$scratch/public-failure" || true
+      # Only fixed identifiers may enter a public receipt, never response data.
+      if [[ -z "$extra" ]]; then
+        case "$saved_role" in
+          sample_health | sample_observations | sample_openapi | sample_config | release_index | release_openapi | release_config | kit_health | kit_index | kit_library | kit_script | kit_style)
+            case "$saved_reason" in
+              dns_failed | tls_failed | request_timeout | transport_failed | http_status | body_invalid | security_headers | asset_invalid)
+                role=$saved_role
+                reason=$saved_reason
+                ;;
+            esac
+            ;;
+        esac
+      fi
+    fi
+    detail=$(printf ',"phase":"public_contract","role":"%s","reason":"%s"' "$role" "$reason")
+  fi
   # Once a snapshot pair has differed, every later refusal still names what moved.
   if [[ -n "$changed" ]]; then
-    printf '{"complete":false,"failure":"%s","changed":%s}\n' "$1" "$changed"
+    printf '{"complete":false,"failure":"%s"%s,"changed":%s}\n' "$1" "$detail" "$changed"
   else
-    printf '{"complete":false,"failure":"%s"}\n' "$1"
+    printf '{"complete":false,"failure":"%s"%s}\n' "$1" "$detail"
   fi
   exit "${2:-1}"
 }
@@ -509,16 +534,34 @@ check() {
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
 
+# refuse_public records only a fixed role and reason across the bounded child.
+refuse_public() { printf '%s %s\n' "$1" "$2" >"$scratch/public-failure"; }
+
 # fetch retrieves one bounded HTTPS response without browser credentials.
 fetch() {
-  local url=$1 result
+  local url=$1 role=$2 result curl_exit=0 reason=transport_failed
   remaining
-  local connect_seconds=$left
+  # Leave one second for curl's refusal to reach the parent before its watchdog fires.
+  # An exhausted budget still refuses; it never grants extra transfer time.
+  ((left > 1)) || fail deadline_exceeded
+  local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
   ((connect_seconds <= 5)) || connect_seconds=5
-  result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$left" \
+  result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
     --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
-    --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || return 1
-  [[ "$result" == 200 ]]
+    --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
+  if ((curl_exit)); then
+    case "$curl_exit" in
+      6) reason=dns_failed ;;
+      35 | 60) reason=tls_failed ;;
+      28) reason=request_timeout ;;
+    esac
+    refuse_public "$role" "$reason"
+    return 1
+  fi
+  [[ "$result" == 200 ]] || {
+    refuse_public "$role" http_status
+    return 1
+  }
 }
 # header_is requires exactly one response header with the expected value.
 header_is() {
@@ -529,46 +572,91 @@ header_is() {
 }
 # public_checks verifies the fixed public contracts, assets and response policies.
 public_checks() {
-  local sample="https://harbour-data.$domain" kit="https://product-ui.$domain" path
-  fetch "$sample/healthz" || return 1
-  fetch "$sample/api/observations" || return 1
+  local sample="https://harbour-data.$domain" kit="https://product-ui.$domain" path role
+  rm -f "$scratch/public-failure"
+  fetch "$sample/healthz" sample_health || return 1
+  fetch "$sample/api/observations" sample_observations || return 1
   jq -se 'length==1 and (.[0].items|type=="array" and length==2 and all(.[];
     (.station|type=="string" and length>0) and (.temperatureCelsius|type=="number") and
-    (.salinityPsu|type=="number") and (.observedAt|type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))))' "$scratch/body" >/dev/null || return 1
-  fetch "$sample/openapi.json" || return 1
-  jq -se 'length==1 and .[0].openapi=="3.1.0" and .[0].info.title=="Harbour observations" and .[0].paths["/api/observations"].get.responses["200"]!=null' "$scratch/body" >/dev/null || return 1
-  fetch "$sample/ui-contract-config" || return 1
+    (.salinityPsu|type=="number") and (.observedAt|type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T"))))' "$scratch/body" >/dev/null || {
+    refuse_public sample_observations body_invalid
+    return 1
+  }
+  fetch "$sample/openapi.json" sample_openapi || return 1
+  jq -se 'length==1 and .[0].openapi=="3.1.0" and .[0].info.title=="Harbour observations" and .[0].paths["/api/observations"].get.responses["200"]!=null' "$scratch/body" >/dev/null || {
+    refuse_public sample_openapi body_invalid
+    return 1
+  }
+  fetch "$sample/ui-contract-config" sample_config || return 1
   jq -se --arg registry "https://data-products.$domain" --arg kit "$kit" \
-    'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || return 1
+    'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || {
+    refuse_public sample_config body_invalid
+    return 1
+  }
   if [[ "$expected_releases" == true ]]; then
-    fetch "$sample/ksail-releases/ui" || return 1
-    header_is Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src $sample/ksail-releases/ui-contract-config https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'" || return 1
-    header_is Referrer-Policy no-referrer || return 1
-    header_is X-Content-Type-Options nosniff || return 1
-    grep -Fq '<meta name="product-kind" content="ksail-releases"' "$scratch/body" || return 1
-    fetch "$sample/ksail-releases/openapi.json" || return 1
+    fetch "$sample/ksail-releases/ui" release_index || return 1
+    if ! header_is Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src $sample/ksail-releases/ui-contract-config https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'" ||
+      ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
+      refuse_public release_index security_headers
+      return 1
+    fi
+    grep -Fq '<meta name="product-kind" content="ksail-releases"' "$scratch/body" || {
+      refuse_public release_index asset_invalid
+      return 1
+    }
+    fetch "$sample/ksail-releases/openapi.json" release_openapi || return 1
     jq -se 'length==1 and .[0].openapi=="3.1.0" and .[0].info.title=="KSail release history" and
       .[0].servers==[{url:"https://api.github.com"}] and (.[0].paths|keys)==["/repos/devantler-tech/ksail/releases"] and
-      .[0].paths["/repos/devantler-tech/ksail/releases"].get.responses["200"]!=null' "$scratch/body" >/dev/null || return 1
-    fetch "$sample/ksail-releases/ui-contract-config" || return 1
+      .[0].paths["/repos/devantler-tech/ksail/releases"].get.responses["200"]!=null' "$scratch/body" >/dev/null || {
+      refuse_public release_openapi body_invalid
+      return 1
+    }
+    fetch "$sample/ksail-releases/ui-contract-config" release_config || return 1
     jq -se --arg registry "https://data-products.$domain" --arg kit "$kit" \
-      'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || return 1
+      'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || {
+      refuse_public release_config body_invalid
+      return 1
+    }
   fi
-  fetch "$kit/healthz" || return 1
-  [[ $(cat "$scratch/body") == ok && $(wc -c <"$scratch/body") -eq 3 ]] || return 1
+  fetch "$kit/healthz" kit_health || return 1
+  [[ $(cat "$scratch/body") == ok && $(wc -c <"$scratch/body") -eq 3 ]] || {
+    refuse_public kit_health body_invalid
+    return 1
+  }
   local csp="default-src 'self'; connect-src 'none'; frame-src https:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
   for path in / /ui-contract.js /kit.js /kit.css; do
-    fetch "$kit$path" || return 1
-    header_is Content-Security-Policy "$csp" || return 1
-    header_is Referrer-Policy no-referrer || return 1
-    header_is X-Content-Type-Options nosniff || return 1
     case "$path" in
-      /) grep -Fq '<body data-appearance-enabled="true">' "$scratch/body" &&
-        grep -Fq 'id="manifest-form"' "$scratch/body" && grep -Fq 'src="ui-contract.js"' "$scratch/body" &&
-        grep -Fq 'src="kit.js"' "$scratch/body" && grep -Fq 'href="kit.css"' "$scratch/body" || return 1 ;;
-      /ui-contract.js) grep -Fq DataProductUI "$scratch/body" || return 1 ;;
-      /kit.js) grep -Fq DataProductUI.mount "$scratch/body" || return 1 ;;
-      /kit.css) grep -Fq color-scheme: "$scratch/body" || return 1 ;;
+      /) role=kit_index ;;
+      /ui-contract.js) role=kit_library ;;
+      /kit.js) role=kit_script ;;
+      /kit.css) role=kit_style ;;
+    esac
+    fetch "$kit$path" "$role" || return 1
+    if ! header_is Content-Security-Policy "$csp" || ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
+      refuse_public "$role" security_headers
+      return 1
+    fi
+    case "$path" in
+      /)
+        if ! { grep -Fq '<body data-appearance-enabled="true">' "$scratch/body" &&
+          grep -Fq 'id="manifest-form"' "$scratch/body" && grep -Fq 'src="ui-contract.js"' "$scratch/body" &&
+          grep -Fq 'src="kit.js"' "$scratch/body" && grep -Fq 'href="kit.css"' "$scratch/body"; }; then
+          refuse_public "$role" asset_invalid
+          return 1
+        fi
+        ;;
+      /ui-contract.js) grep -Fq DataProductUI "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+      /kit.js) grep -Fq DataProductUI.mount "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+      /kit.css) grep -Fq color-scheme: "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
     esac
   done
 }
@@ -616,8 +704,10 @@ while :; do
   fi
   bounded name_changes || fail read_incomplete
   changed=$(<"$scratch/changed")
+  # No moving pair validates its public result, even on the last attempt.
+  # Discard it before either retrying or reporting that the rollout never settled.
+  rm -f "$scratch/public-failure"
   if ((attempt >= 3)); then
-    ((public_ok)) || fail public_contract_incomplete
     fail rollout_changed
   fi
   remaining
