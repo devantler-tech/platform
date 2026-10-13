@@ -43,7 +43,7 @@ func TestStorageWorkflowProtectsCredentialsAndExecutesDispatchGuard(t *testing.T
 		t.Fatal("storage mutation must be separately confirmed, protected and serialized")
 	}
 	j := w.Jobs["protect"]
-	if !reflect.DeepEqual(j.Environment, map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j.Permissions, map[string]string{"contents": "read", "actions": "read", "deployments": "read"}) || len(j.Steps) < 5 || j.Steps[0].Run == "" {
+	if !reflect.DeepEqual(j.Environment, map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j.Permissions, map[string]string{"contents": "read", "actions": "read", "deployments": "read", "packages": "read"}) || len(j.Steps) < 5 || j.Steps[0].Run == "" {
 		t.Fatal("missing protected job or precredential guard")
 	}
 	credentialStep, sourceStep := -1, -1
@@ -129,7 +129,7 @@ func TestStorageNativeControlsAreRequiredInCIAndBeforeCredentials(t *testing.T) 
 	}
 }
 
-func TestRegistryProofUsesExistingProtectedCredentialOnlyAfterControls(t *testing.T) {
+func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
 	b, err := os.ReadFile("../../.github/workflows/protect-backstage-storage.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -142,19 +142,27 @@ func TestRegistryProofUsesExistingProtectedCredentialOnlyAfterControls(t *testin
 	if w.Jobs["protect"].Env["GH_TOKEN"] != "${{ github.token }}" {
 		t.Fatal("GitHub API reads must keep the job's read-only token")
 	}
+	if w.Jobs["protect"].Permissions["packages"] != "read" {
+		t.Fatal("registry proof requires only the job's package-read permission")
+	}
 	controlled, authenticated := false, false
 	for _, step := range steps {
 		if strings.Contains(step.Run, "go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage") {
 			controlled = true
 		}
-		if _, ok := step.Env["GHCR_TOKEN"]; ok {
-			if !controlled || step.Env["GHCR_TOKEN"] != "${{ secrets.GHCR_TOKEN }}" || !strings.Contains(step.Run, "docker login ghcr.io") || !strings.Contains(step.Run, "--password-stdin") {
+		for _, value := range step.Env {
+			if strings.Contains(value, "secrets.GHCR_TOKEN") {
+				t.Fatal("publication credential must not enter the proof job")
+			}
+		}
+		if _, ok := step.Env["GHCR_READER_TOKEN"]; ok {
+			if !controlled || step.Env["GHCR_READER_TOKEN"] != "${{ github.token }}" || !strings.Contains(step.Run, "docker login ghcr.io") || !strings.Contains(step.Run, "--password-stdin") {
 				t.Fatal("unbound registry credential or credentials before controls")
 			}
 			authenticated = true
 		}
 		if strings.Contains(step.Run, "go run ./scripts/protect-backstage-storage --execute") {
-			if !authenticated || step.Env["PORTAL_STORAGE_GHCR_READER_TOKEN"] != "${{ secrets.GHCR_TOKEN }}" || step.Env["GH_TOKEN"] != "" {
+			if !authenticated || step.Env["PORTAL_STORAGE_GHCR_READER_TOKEN"] != "" || step.Env["GH_TOKEN"] != "" {
 				t.Fatal("registry-only attestation proof has no established reader authentication")
 			}
 		}

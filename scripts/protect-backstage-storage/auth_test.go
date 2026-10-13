@@ -18,7 +18,7 @@ func syntheticGH(t *testing.T) {
 	t.Setenv("GH_TOKEN", "synthetic-actions-token")
 }
 
-func TestProductionExecutorScopesRegistryTokenOnlyToAttestation(t *testing.T) {
+func TestProductionExecutorKeepsReadOnlyJobIdentityForRegistryProof(t *testing.T) {
 	syntheticGH(t)
 	t.Setenv("PORTAL_STORAGE_GHCR_READER_TOKEN", "synthetic-registry-token")
 	api, err := execute(context.Background(), "gh", "api", "--hostname=github.com", "repos/devantler-tech/platform/actions/runs/456")
@@ -26,14 +26,15 @@ func TestProductionExecutorScopesRegistryTokenOnlyToAttestation(t *testing.T) {
 		t.Fatal("API child lost Actions identity or inherited registry reader")
 	}
 	proof, err := execute(context.Background(), "gh", "attestation", "verify", "oci://ghcr.io/devantler-tech/platform/manifests@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-	if err != nil || string(proof) != "synthetic-registry-token:" {
-		t.Fatal("attestation child did not receive only scoped registry authentication")
+	if err != nil || string(proof) != "synthetic-actions-token:" {
+		t.Fatal("attestation child replaced the job identity with a separate credential")
 	}
 }
 
 func TestProductionExecutorRefusesAttestationWithoutRegistryReader(t *testing.T) {
 	syntheticGH(t)
-	t.Setenv("PORTAL_STORAGE_GHCR_READER_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("PORTAL_STORAGE_GHCR_READER_TOKEN", "synthetic-rejected-fallback")
 	b, err := execute(context.Background(), "gh", "attestation", "verify", "oci://ghcr.io/devantler-tech/platform/manifests@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 	if err == nil || len(b) != 0 {
 		t.Fatal("missing registry reader executed a fallback verifier")

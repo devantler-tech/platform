@@ -17,9 +17,9 @@ SLSA provenance. Its signed certificate must name that source commit, the exact
 accepted CI/CD workflow and ref, and the accepted run and attempt. A successful
 run beside an unrelated live digest is not sufficient; user-controlled predicate
 fields cannot supply the missing identity.
-Only the attestation child process uses the workflow's existing package-reader
-credential. GitHub API reads keep the job's restricted Actions token; the reader
-is not put in command arguments or inherited by other child processes. Missing
+The registry and GitHub API readers use the short-lived Actions job token with
+read-only permissions, including `packages: read`. The OCI publication credential
+never enters this job. Tokens are not put in command arguments. Missing
 registry authentication stops verification rather than falling back to API-held
 attestations, which this publication path does not create.
 

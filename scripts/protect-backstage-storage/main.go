@@ -399,22 +399,15 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 }
 func execute(ctx context.Context, name string, args ...string) ([]byte, error) {
 	verifier := name == "gh" && len(args) >= 2 && args[0] == "attestation" && args[1] == "verify"
-	reader := ""
-	if verifier {
-		reader = os.Getenv("PORTAL_STORAGE_GHCR_READER_TOKEN")
-		if strings.TrimSpace(reader) == "" {
-			return nil, errors.New("registry reader unavailable")
-		}
+	if verifier && strings.TrimSpace(os.Getenv("GH_TOKEN")) == "" {
+		return nil, errors.New("registry reader unavailable")
 	}
-	env := make([]string, 0, len(os.Environ())+1)
+	env := make([]string, 0, len(os.Environ()))
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "PORTAL_STORAGE_GHCR_READER_TOKEN=") || verifier && strings.HasPrefix(entry, "GH_TOKEN=") {
+		if strings.HasPrefix(entry, "PORTAL_STORAGE_GHCR_READER_TOKEN=") {
 			continue
 		}
 		env = append(env, entry)
-	}
-	if verifier {
-		env = append(env, "GH_TOKEN="+reader)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
