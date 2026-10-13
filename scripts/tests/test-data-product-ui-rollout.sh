@@ -205,13 +205,13 @@ cat >"${scratch}/bin/curl" <<'SH'
 set -euo pipefail
 [[ "$1" == --disable ]] || exit 91
 shift
-headers='' body='' url='' cookie=0 authorization=0 proto=0 proxy=0
+headers='' body='' url='' cookie=0 authorization=0 proto=0 proxy=0 transfer_seconds=0
 while (($#)); do
   case "$1" in
     --silent|--show-error) shift ;;
     --proxy) [[ "$2" == '' ]] || exit 92; proxy=1; shift 2 ;;
     --connect-timeout) [[ "$2" =~ ^[1-5]$ ]] || exit 93; shift 2 ;;
-    --max-time) [[ "$2" =~ ^[1-9][0-9]*$ ]] || exit 94; shift 2 ;;
+    --max-time) [[ "$2" =~ ^[1-9][0-9]*$ ]] || exit 94; transfer_seconds=$2; shift 2 ;;
     --max-filesize) [[ "$2" == 262144 ]] || exit 95; shift 2 ;;
     --proto) [[ "$2" == '=https' ]] || exit 96; proto=1; shift 2 ;;
     --header) case "$2" in Cookie:) cookie=1 ;; Authorization:) authorization=1 ;; *) exit 97 ;; esac; shift 2 ;;
@@ -256,6 +256,7 @@ case "${MODE:-}" in
   dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
   request-timeout) printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
+  transfer-timeout) sleep "$transfer_seconds"; printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
   http-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
   missing-csp) printf 'HTTP/2 200\r\n\r\n' >"$headers" ;;
@@ -309,7 +310,7 @@ run_case() {
         public_role=sample_health
         public_reason=tls_failed
         ;;
-      request-timeout)
+      request-timeout | transfer-timeout)
         public_role=sample_health
         public_reason=request_timeout
         ;;
@@ -332,7 +333,8 @@ run_case() {
     esac
     if [[ -n "$public_role" ]]; then
       jq -e --arg role "$public_role" --arg reason "$public_reason" '
-        .failure == "public_contract_incomplete" and .phase == "public_contract" and
+        (.failure == "public_contract_incomplete" or
+          ($reason == "request_timeout" and .failure == "deadline_exceeded")) and .phase == "public_contract" and
         .role == $role and .reason == $reason' "$fixture/stdout" >/dev/null ||
         fail "$name: refusal omitted the safe public phase, role or reason"
     fi
@@ -361,7 +363,10 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
-for mode in dns-failure tls-failure request-timeout; do run_case "$mode" fail "$mode"; done
+for mode in dns-failure tls-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
+# Spend the complete transfer budget, as a connected endpoint that never responds does.
+# The refusal must retain its sanitized transport cause even at the shared deadline.
+run_case transfer-timeout fail transfer-timeout 15
 
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 mutate_case() {

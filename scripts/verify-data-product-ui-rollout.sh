@@ -19,7 +19,9 @@ readonly expected_helm_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
   local detail='' role='' reason='' extra=''
-  if [[ "$1" == public_contract_incomplete ]]; then
+  # A completed public failure remains useful when the shared deadline subsequently expires.
+  # Keep the deadline refusal, while retaining only the validated role and cause already observed.
+  if [[ "$1" == public_contract_incomplete || ( "$1" == deadline_exceeded && -f "$scratch/public-failure" ) ]]; then
     role=public_contract
     reason=read_incomplete
     if [[ -f "$scratch/public-failure" ]]; then
@@ -501,9 +503,12 @@ refuse_public() { printf '%s %s\n' "$1" "$2" >"$scratch/public-failure"; }
 fetch() {
   local url=$1 role=$2 result curl_exit=0 reason=transport_failed
   remaining
-  local connect_seconds=$left
+  # Leave one second for curl's refusal to reach the parent before its watchdog fires.
+  # An exhausted budget still refuses; it never grants extra transfer time.
+  ((left > 1)) || fail deadline_exceeded
+  local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
   ((connect_seconds <= 5)) || connect_seconds=5
-  result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$left" \
+  result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
     --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
     --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
   if ((curl_exit)); then
