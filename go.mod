@@ -8,7 +8,7 @@ require (
 	github.com/siderolabs/talos/pkg/machinery v1.14.2
 	go.yaml.in/yaml/v2 v2.4.4
 	google.golang.org/protobuf v1.36.12
-	gopkg.in/evanphx/json-patch.v4 v4.13.0
+	gopkg.in/evanphx/json-patch.v5 v5.9.11
 	gopkg.in/evanphx/json-patch.v5 v5.9.11
 	gopkg.in/yaml.v3 v3.0.1
 	mvdan.cc/sh/v3 v3.14.1
