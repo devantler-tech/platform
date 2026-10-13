@@ -16,18 +16,21 @@ cp "$root/.github/workflows/ci.yaml" "$root/.github/workflows/cd.yaml" \
 cp "$root/.github/actions/deploy-prod/action.yml" "$work/base/.github/actions/deploy-prod/"
 cp "$root/ksail.prod.yaml" "$root/ksail.yaml" "$work/base/"
 cp -R "$root/talos" "$root/talos-local" "$work/base/"
-yq -r '.jobs.validate-talos.steps[] | select(.name == "✅ Render + validate patched machine configs") | .run' "$workflow" > "$work/render.sh"
-[[ -s "$work/render.sh" ]] || { echo 'FAIL: actual CI render step absent'; exit 1; }
+yq -r '.jobs.validate-talos.steps[] | select(.name == "✅ Render + validate patched machine configs") | .run' "$workflow" >"$work/render.sh"
+[[ -s "$work/render.sh" ]] || {
+  echo 'FAIL: actual CI render step absent'
+  exit 1
+}
 go build -o "$work/fold" "$root/scripts/reconcile-talos-kernel-args"
 export FOLD_BINARY="$work/fold" REAL_TALOSCTL="$talos_bin"
-cat > "$work/bin/go" <<'SH'
+cat >"$work/bin/go" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ "$1" == run && "$2" == ./scripts/reconcile-talos-kernel-args ]] || exit 1
 shift 2
 exec "$FOLD_BINARY" "$@"
 SH
-cat > "$work/bin/talosctl" <<'SH'
+cat >"$work/bin/talosctl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$1" == validate ]]; then
@@ -47,13 +50,13 @@ export PATH="$work/bin:$PATH"
 
 # A false setting in the input must become true only on production's extension
 # path, on both roles. Local has no extensions and must preserve false + args.
-cat > "$work/base/talos/cluster/zz-fold-proof.yaml" <<'YAML'
+cat >"$work/base/talos/cluster/zz-fold-proof.yaml" <<'YAML'
 machine:
   install:
     grubUseUKICmdline: false
 YAML
 cp "$work/base/talos/cluster/zz-fold-proof.yaml" "$work/base/talos-local/cluster/zz-fold-proof.yaml"
-cat >> "$work/base/talos-local/cluster/zz-fold-proof.yaml" <<'YAML'
+cat >>"$work/base/talos-local/cluster/zz-fold-proof.yaml" <<'YAML'
     extraKernelArgs:
       - local-proof=unchanged
 YAML
@@ -61,7 +64,7 @@ YAML
 cp -R "$work/base" "$work/positive"
 mkdir "$work/positive-observed"
 export OBSERVED="$work/positive-observed"
-if ! (cd "$work/positive" && bash "$work/render.sh") > "$work/positive.log" 2>&1; then
+if ! (cd "$work/positive" && bash "$work/render.sh") >"$work/positive.log" 2>&1; then
   echo 'FAIL: actual positive render step failed; inspect the offline validation log'
   tail -n 12 "$work/positive.log"
   exit 1
@@ -69,10 +72,22 @@ fi
 for role in control-planes workers; do
   prod="$OBSERVED/cloud-$role-patched.yaml"
   local_config="$OBSERVED/container-$role-patched.yaml"
-  [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == true ]] || { echo 'FAIL: production UKI was not pinned'; exit 1; }
-  [[ $(yq 'select(.version == "v1alpha1") | .machine.install | has("extraKernelArgs")' "$prod") == false ]] || { echo 'FAIL: production arguments were not folded'; exit 1; }
-  [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$local_config") == false ]] || { echo 'FAIL: local no-extension setting changed'; exit 1; }
-  [[ $(yq 'select(.version == "v1alpha1") | .machine.install.extraKernelArgs[0]' "$local_config") == local-proof=unchanged ]] || { echo 'FAIL: local no-extension arguments changed'; exit 1; }
+  [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == true ]] || {
+    echo 'FAIL: production UKI was not pinned'
+    exit 1
+  }
+  [[ $(yq 'select(.version == "v1alpha1") | .machine.install | has("extraKernelArgs")' "$prod") == false ]] || {
+    echo 'FAIL: production arguments were not folded'
+    exit 1
+  }
+  [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$local_config") == false ]] || {
+    echo 'FAIL: local no-extension setting changed'
+    exit 1
+  }
+  [[ $(yq 'select(.version == "v1alpha1") | .machine.install.extraKernelArgs[0]' "$local_config") == local-proof=unchanged ]] || {
+    echo 'FAIL: local no-extension arguments changed'
+    exit 1
+  }
 done
 echo 'PASS: actual CI caller folds both production roles and preserves both local roles'
 
@@ -87,11 +102,11 @@ for selection in explicit blank; do
     explicit) yq -i '.spec.cluster.talos.schematicId = " explicit-proof "' "$case_dir/ksail.prod.yaml" ;;
     blank) yq -i '.spec.cluster.talos.schematicId = "   "' "$case_dir/ksail.prod.yaml" ;;
   esac
-  cat >> "$case_dir/talos/cluster/zz-fold-proof.yaml" <<'YAML'
+  cat >>"$case_dir/talos/cluster/zz-fold-proof.yaml" <<'YAML'
     extraKernelArgs:
       - schematic-proof=unchanged
 YAML
-  if ! (cd "$case_dir" && bash "$work/render.sh") > "$case_dir/result.log" 2>&1; then
+  if ! (cd "$case_dir" && bash "$work/render.sh") >"$case_dir/result.log" 2>&1; then
     echo "FAIL: actual $selection schematic render step failed"
     tail -n 12 "$case_dir/result.log"
     exit 1
@@ -99,11 +114,23 @@ YAML
   for role in control-planes workers; do
     prod="$OBSERVED/cloud-$role-patched.yaml"
     if [[ "$selection" == explicit ]]; then
-      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == false ]] || { echo 'FAIL: explicit schematic changed UKI'; exit 1; }
-      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.extraKernelArgs | contains(["schematic-proof=unchanged"])' "$prod") == true ]] || { echo 'FAIL: explicit schematic folded arguments'; exit 1; }
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == false ]] || {
+        echo 'FAIL: explicit schematic changed UKI'
+        exit 1
+      }
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.extraKernelArgs | contains(["schematic-proof=unchanged"])' "$prod") == true ]] || {
+        echo 'FAIL: explicit schematic folded arguments'
+        exit 1
+      }
     else
-      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == true ]] || { echo 'FAIL: blank schematic suppressed UKI'; exit 1; }
-      [[ $(yq 'select(.version == "v1alpha1") | .machine.install | has("extraKernelArgs")' "$prod") == false ]] || { echo 'FAIL: blank schematic suppressed argument fold'; exit 1; }
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install.grubUseUKICmdline' "$prod") == true ]] || {
+        echo 'FAIL: blank schematic suppressed UKI'
+        exit 1
+      }
+      [[ $(yq 'select(.version == "v1alpha1") | .machine.install | has("extraKernelArgs")' "$prod") == false ]] || {
+        echo 'FAIL: blank schematic suppressed argument fold'
+        exit 1
+      }
     fi
   done
   echo "PASS: actual CI caller respects $selection schematic selection for both production roles"
@@ -117,11 +144,11 @@ for overlay in talos talos-local; do
     export OBSERVED="$case_dir/observed"
     # This is unrelated to kernel arguments. The fold must never turn an
     # invalid machine type into a valid config, in either role or environment.
-    cat > "$case_dir/$overlay/$role/zz-invalid-proof.yaml" <<'YAML'
+    cat >"$case_dir/$overlay/$role/zz-invalid-proof.yaml" <<'YAML'
 machine:
   type: invalid-machine-type
 YAML
-    if (cd "$case_dir" && bash "$work/render.sh") > "$case_dir/result.log" 2>&1; then
+    if (cd "$case_dir" && bash "$work/render.sh") >"$case_dir/result.log" 2>&1; then
       echo "FAIL: invalid $overlay/$role patch passed the actual CI caller"
       exit 1
     fi
