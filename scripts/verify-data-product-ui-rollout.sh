@@ -704,13 +704,12 @@ while :; do
   fi
   bounded name_changes || fail read_incomplete
   changed=$(<"$scratch/changed")
+  # No moving pair validates its public result, even on the last attempt.
+  # Discard it before either retrying or reporting that the rollout never settled.
+  rm -f "$scratch/public-failure"
   if ((attempt >= 3)); then
-    ((public_ok)) || fail public_contract_incomplete
     fail rollout_changed
   fi
-  # The pair moved, so this attempt is abandoned: its public result judged a rollout that
-  # was never still, and must not be reported by a refusal the next attempt raises.
-  rm -f "$scratch/public-failure"
   remaining
   sleep 0.2
 done

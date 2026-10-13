@@ -210,9 +210,11 @@ count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
 # other read does, so no two snapshots in a row ever agree. An object with a
 # second change returns it from the fourth read on, so the second pair differs
 # from the first for another reason and only the third pair agrees.
-if [[ "${MODE:-}" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
+snapshot_mode=${MODE:-}
+[[ "$snapshot_mode" != flap-public-failure ]] || snapshot_mode=flap
+if [[ "$snapshot_mode" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
   response="$FIXTURE/after2/$key.json"
-elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
+elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "$snapshot_mode" == flap ]] && ((count % 2 == 0)); } || { [[ "$snapshot_mode" != flap ]] && ((count >= 2)); }; }; then
   response="$FIXTURE/after/$key.json"
 else
   response="$FIXTURE/$key.json"
@@ -291,7 +293,7 @@ case "${MODE:-}" in
   weak-release-csp) [[ "$url" != */ksail-releases/ui ]] || printf "HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n" >"$headers" ;;
   wrong-release-api) [[ "$url" != */ksail-releases/openapi.json ]] || printf '{"openapi":"3.1.0","info":{"title":"KSail release history"},"servers":[{"url":"https://other.example.com"}],"paths":{"/repos/devantler-tech/ksail/releases":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
   wrong-release-origin) [[ "$url" != */ksail-releases/ui-contract-config ]] || printf '{"hostOrigins":["https://other.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
-  http-failure) printf '503'; exit 0 ;;
+  http-failure | flap-public-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
   missing-csp) printf 'HTTP/2 200\r\n\r\n' >"$headers" ;;
   weak-csp) printf 'HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n' >"$headers" ;;
@@ -415,6 +417,16 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# A failed endpoint check is not attributable when every snapshot pair moves,
+# including the final pair. Reach all three pairs before judging the refusal.
+mkdir -p "${scratch}/final-moving-public/after"
+cp "${scratch}/healthy/"*.json "${scratch}/final-moving-public/"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/final-moving-public/after/apps.json"
+run_case final-moving-public fail flap-public-failure 20
+[[ $(cat "${scratch}/final-moving-public/apps.count") == 6 && $(wc -l <"${scratch}/final-moving-public/urls") -eq 3 ]] ||
+  fail 'final-moving-public: did not reach three moving pairs with failed public checks'
+jq -e '.failure == "rollout_changed" and .changed == ["apps.metadata.labels"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/final-moving-public/stdout" >/dev/null ||
+  fail 'final-moving-public: final moving snapshot retained an unvalidated public failure'
 for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
 # Spend the complete transfer budget, as a connected endpoint that never responds does.
 # The refusal must retain its sanitized transport cause even at the shared deadline.
