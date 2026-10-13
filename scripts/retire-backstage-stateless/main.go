@@ -677,7 +677,7 @@ func sameStoredContent(a, b map[string]any) bool {
 	x, y := normalize(a), normalize(b)
 	return x != nil && y != nil && reflect.DeepEqual(x, y)
 }
-func (e engine) write(ctx context.Context, value any, args ...string) (map[string]any, error) {
+func (e engine) write(ctx context.Context, value any, args ...string) (response map[string]any, resultErr error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, err
@@ -686,9 +686,17 @@ func (e engine) write(ctx context.Context, value any, args ...string) (map[strin
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(f.Name())
+	defer func() {
+		// An already-removed request is clean. Other cleanup failures cannot
+		// turn a completed write into permission for another lifecycle action.
+		if err := os.Remove(f.Name()); err != nil && !os.IsNotExist(err) && resultErr == nil {
+			response, resultErr = nil, errors.New("request cleanup failed")
+		}
+	}()
 	if _, err = f.Write(data); err != nil {
-		f.Close()
+		if closeErr := f.Close(); closeErr != nil {
+			return nil, errors.New("request write and close failed")
+		}
 		return nil, err
 	}
 	if err = f.Close(); err != nil {
@@ -732,7 +740,12 @@ func (e engine) remove(ctx context.Context, r map[string]any, path string) error
 }
 
 func run(args []string, out io.Writer, execute command) int {
-	hold := func(code string) int { fmt.Fprintln(out, "PORTAL-RETIREMENT="+code); return 2 }
+	hold := func(code string) int {
+		if _, err := fmt.Fprintln(out, "PORTAL-RETIREMENT="+code); err != nil {
+			return 2
+		}
+		return 2
+	}
 	if len(args) != 1 || args[0] != "--execute" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("PORTAL_RETIREMENT_CONFIRM") != "RETIRE BACKSTAGE STATELESS ONLY" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
 		return hold("HOLD_CONFIRMATION")
 	}
@@ -882,7 +895,10 @@ func run(args []string, out io.Writer, execute command) int {
 			return hold("HOLD_POSTCONDITION")
 		}
 	}
-	fmt.Fprintln(out, "PORTAL-RETIREMENT=RETIRED_STATELESS objects=3 preservationSamples=2 dataRetirement=UNASSESSED")
+	result := "PORTAL-RETIREMENT=RETIRED_STATELESS objects=3 preservationSamples=2 dataRetirement=UNASSESSED"
+	if n, err := fmt.Fprintln(out, result); err != nil || n != len(result)+1 {
+		return 2
+	}
 	return 0
 }
 func capture(ctx context.Context, program string, args ...string) ([]byte, error) {

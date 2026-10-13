@@ -5,10 +5,32 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
 )
+
+type failedResultWriter struct{ short bool }
+
+func (w failedResultWriter) Write(p []byte) (int, error) {
+	if w.short {
+		return len(p) - 1, nil
+	}
+	return 0, io.ErrClosedPipe
+}
+
+func TestFailedResultOutputNeverReportsSuccess(t *testing.T) {
+	for _, short := range []bool{false, true} {
+		t.Run(fmt.Sprintf("short_%t", short), func(t *testing.T) {
+			retirementRunner(t)
+			f := retirementFixture(t)
+			if code := run([]string{"--execute"}, failedResultWriter{short: short}, f.execute); code != 2 || !f.deleted {
+				t.Fatalf("unreported terminal result accepted: code=%d deleted=%t", code, f.deleted)
+			}
+		})
+	}
+}
 
 // This catches a retirement that drops history/credentials, skips preservation,
 // or deletes a newly-created object by name instead of the assessed identity.
@@ -612,7 +634,9 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 				f.pendingDeleteReads--
 				data := encode(f.t, f.hr)
 				var hr map[string]any
-				json.Unmarshal(data, &hr)
+				if err := json.Unmarshal(data, &hr); err != nil {
+					f.t.Fatal("invalid fixture encoding")
+				}
 				object(hr["metadata"])["deletionTimestamp"] = "2026-10-13T00:00:00Z"
 				return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{hr}}), nil
 			}
