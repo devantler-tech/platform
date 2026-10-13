@@ -89,7 +89,7 @@ def deployment($name;$container): {apiVersion:"apps/v1",kind:"Deployment",metada
   spec:{replicas:2,selector:{matchLabels:labels($name)},template:{metadata:{labels:labels($name)},spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports,env:ui_env($container)}]}}},
   status:{observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2}};
 def rs($name;$container): {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:(meta($name+"-new";"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"},ownerReferences:[owner("Deployment";$name)]}),
-  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index)}]}}},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}};
+  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index),env:ui_env($container)}]}}},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}};
 def pod($name;$container;$ordinal): {apiVersion:"v1",kind:"Pod",metadata:(meta($name+"-pod-"+($ordinal|tostring);"data-product-controller") + {labels:labels($name),ownerReferences:[owner("ReplicaSet";$name+"-new")]}),
   spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports,env:ui_env($container)}]},status:{phase:"Running",podIP:("10.0.0."+($ordinal|tostring)),podIPs:[{ip:("10.0.0."+($ordinal|tostring))}],conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
 def service($name): {apiVersion:"v1",kind:"Service",metadata:meta($name;"data-product-controller"),spec:{type:"ClusterIP",selector:labels($name),ports:[{name:"http",port:80,targetPort:"http",protocol:"TCP"}]}};
@@ -390,6 +390,9 @@ mutate_case ui-publisher-malformed pods '.items[5].spec.containers[0].env += [{n
 mutate_case ui-deployment-indirect-environment deployment-ui-kit '.spec.template.spec.containers[0].envFrom=[{configMapRef:{name:"environment-canary"}}]'
 mutate_case ui-pod-indirect-environment pods '.items[4].spec.containers[0].envFrom=[{secretRef:{name:"environment-canary"}}]'
 mutate_case ui-pod-malformed-environment pods '.items[5].spec.containers[0].envFrom={}'
+mutate_case ui-replicaset-missing-appearance replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env |= map(select(.name!="UI_APPEARANCE_ENABLED")) else . end)'
+mutate_case ui-replicaset-unplanned-publisher replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"true"}] else . end)'
+mutate_case ui-replicaset-indirect-environment replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].envFrom=[{secretRef:{name:"environment-canary"}}] else . end)'
 
 for publisher in true false; do
   name="declared-publisher-$publisher"
@@ -398,6 +401,7 @@ for publisher in true false; do
   jq --arg state "$publisher" '.[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}]' "${scratch}/healthy/expected-ui.json" >"${scratch}/$name/expected-ui.json"
   jq --arg state "$publisher" '.spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}]' "${scratch}/healthy/deployment-ui-kit.json" >"${scratch}/$name/deployment-ui-kit.json"
   jq --arg state "$publisher" '.items |= map(if .spec.containers[0].name=="ui-kit" then .spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}] else . end)' "${scratch}/healthy/pods.json" >"${scratch}/$name/pods.json"
+  jq --arg state "$publisher" '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}] else . end)' "${scratch}/healthy/replicasets.json" >"${scratch}/$name/replicasets.json"
   run_case "$name" pass
 done
 
@@ -412,6 +416,7 @@ publisher_mutation() {
 }
 publisher_mutation declared-publisher-missing-deployment deployment-ui-kit '.spec.template.spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED"))'
 publisher_mutation declared-publisher-missing-pod pods '.items[4].spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED"))'
+publisher_mutation declared-publisher-missing-replicaset replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED")) else . end)'
 publisher_mutation declared-publisher-disabled-pod pods '.items[5].spec.containers[0].env[2].value="false"'
 publisher_mutation declared-publisher-duplicate deployment-ui-kit '.spec.template.spec.containers[0].env += [.spec.template.spec.containers[0].env[2]]'
 

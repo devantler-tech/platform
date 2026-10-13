@@ -72,7 +72,7 @@ release and running image, current route generations, and healthy current Pods.
 Anonymous registry access must require SSO; the sample query and contract must work
 directly. The portable host's health endpoint, assets and sandbox policy must also
 pass. The receipt binds the portable host's contract and appearance opt-ins and its
-declared publisher state to the UI Deployment and its current serving Pods. Publisher
+declared publisher state to the UI Deployment, current ReplicaSet and serving Pods. Publisher
 withdrawal permits an absent or literal false flag; indirect, duplicate and malformed
 flag declarations are refused. Publisher browser acceptance remains separate.
 The receipt also binds KSail activation to the checked-out Helm declaration,

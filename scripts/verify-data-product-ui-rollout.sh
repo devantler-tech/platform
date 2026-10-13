@@ -274,7 +274,7 @@ def workload($deployment;$container;$tag;$sets;$pods):
     ($current[0]|identity("ReplicaSet";"apps/v1";.metadata.name;$namespace)) and
     $current[0].spec.replicas==2 and $current[0].status.observedGeneration==$current[0].metadata.generation and
     all([$current[0].status.replicas,$current[0].status.readyReplicas,$current[0].status.availableReplicas][];.==2) and
-    ($current[0]|named_image($container;$tag)) and
+    ($current[0]|named_image($container;$tag) and ui_flags_ready($container)) and
     all($owned[] | select(.metadata.uid!=$current[0].metadata.uid); .spec.replicas==0 and (.status.replicas//0)==0) and
     ([$pods[] | . as $pod | select(any($owned[]; . as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)))] as $owned_pods |
       ($owned_pods|length)==2 and all($owned_pods[];pod_ready($current[0];$container;$tag))));
