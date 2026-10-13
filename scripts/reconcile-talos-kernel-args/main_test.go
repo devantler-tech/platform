@@ -25,6 +25,7 @@ var workflowPinFixtures = []string{
 	".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml",
 	".github/workflows/validate-main.yaml", ".github/workflows/dr-rebuild.yaml",
 	".github/workflows/validate-image-verifier-liveness.yaml", ".github/workflows/prove-scoped-package-access.yaml",
+	".github/workflows/protect-backstage-storage.yaml",
 }
 
 func writeWorkflowPins(t *testing.T, version string) {
@@ -640,6 +641,46 @@ func TestResolveFoldInputsReadsTheTaggedSource(t *testing.T) {
 		if moved := changed[path] != id; moved != (path == "pkg/fsutil/configmanager") {
 			t.Fatalf("%s moved=%v after a change to the configuration manager only", path, moved)
 		}
+	}
+}
+
+func TestSourceCleanupFailureCannotProduceAcceptedFoldInputs(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission-denied cleanup requires an unprivileged process")
+	}
+	repository, _ := sourceRepository(t)
+	parent, bin := t.TempDir(), t.TempDir()
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fetch and all object reads use real git. Only the disposable checkout's
+	// cleanup is made to fail by a directory this process cannot unlink.
+	script := "#!/bin/sh\n'" + realGit + "' \"$@\"\nstatus=$?\nif [ \"$3\" = ls-tree ] && [ ! -d \"$2/cleanup-blocker\" ]; then\n mkdir \"$2/cleanup-blocker\"\n touch \"$2/cleanup-blocker/file\"\n chmod 000 \"$2/cleanup-blocker\"\nfi\nexit \"$status\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", parent)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Cleanup(func() {
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		for _, entry := range entries {
+			path := filepath.Join(parent, entry.Name())
+			if err := os.Chmod(filepath.Join(path, "cleanup-blocker"), 0700); err != nil {
+				t.Error(err)
+			}
+			if err := os.RemoveAll(path); err != nil {
+				t.Error(err)
+			}
+		}
+	})
+	ids, err := resolveFoldInputs(repository, "1.2.3")
+	if err == nil || !strings.Contains(err.Error(), "remove temporary source checkout") || len(ids) != 0 {
+		t.Fatalf("cleanup failure produced accepted inputs: %d identities, %v", len(ids), err)
 	}
 }
 

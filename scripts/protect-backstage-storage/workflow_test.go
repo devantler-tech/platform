@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -23,9 +24,9 @@ type storageWorkflow struct {
 		Permissions map[string]string `yaml:"permissions"`
 		Env         map[string]string `yaml:"env"`
 		Steps       []struct {
-			Name, Run, Uses string
-			Env             map[string]string
-			With            map[string]any
+			Name, Run, Uses, If string
+			Env                 map[string]string
+			With                map[string]any
 		}
 	} `yaml:"jobs"`
 }
@@ -43,10 +44,10 @@ func TestStorageWorkflowProtectsCredentialsAndExecutesDispatchGuard(t *testing.T
 		t.Fatal("storage mutation must be separately confirmed, protected and serialized")
 	}
 	j := w.Jobs["protect"]
-	if !reflect.DeepEqual(j.Environment, map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j.Permissions, map[string]string{"contents": "read", "actions": "read", "deployments": "read", "packages": "read"}) || len(j.Steps) < 5 || j.Steps[0].Run == "" {
+	if !reflect.DeepEqual(j.Environment, map[string]any{"name": "prod", "deployment": false}) || !reflect.DeepEqual(j.Permissions, map[string]string{"contents": "read", "actions": "read", "deployments": "read"}) || len(j.Steps) < 5 || j.Steps[0].Run == "" {
 		t.Fatal("missing protected job or precredential guard")
 	}
-	credentialStep, sourceStep := -1, -1
+	credentialStep, sourceStep, executeStep := -1, -1, -1
 	for i, step := range j.Steps {
 		if strings.Contains(step.Run, "verify-prod-recovery-source.sh") {
 			sourceStep = i
@@ -54,11 +55,14 @@ func TestStorageWorkflowProtectsCredentialsAndExecutesDispatchGuard(t *testing.T
 		if _, ok := step.Env["KUBE_CONFIG"]; ok {
 			credentialStep = i
 		}
+		if strings.Contains(step.Run, "go run ./scripts/protect-backstage-storage --execute") {
+			executeStep = i
+		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") && (step.With["ref"] != "${{ github.sha }}" || step.With["persist-credentials"] != false) {
 			t.Fatal("checkout is not pinned to the dispatch source")
 		}
 	}
-	if sourceStep <= 0 || credentialStep <= sourceStep || !strings.Contains(j.Steps[len(j.Steps)-1].Run, "go run ./scripts/protect-backstage-storage --execute") {
+	if sourceStep <= 0 || credentialStep <= sourceStep || executeStep <= credentialStep {
 		t.Fatal("credentials or mutation precede the current-main proof")
 	}
 	good := map[string]string{
@@ -129,7 +133,7 @@ func TestStorageNativeControlsAreRequiredInCIAndBeforeCredentials(t *testing.T) 
 	}
 }
 
-func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
+func TestRegistryProofUsesExistingProtectedPullCredentialOnlyAfterControls(t *testing.T) {
 	b, err := os.ReadFile("../../.github/workflows/protect-backstage-storage.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -142,8 +146,8 @@ func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
 	if w.Jobs["protect"].Env["GH_TOKEN"] != "${{ github.token }}" || w.Jobs["protect"].Env["DOCKER_CONFIG"] != "" {
 		t.Fatal("GitHub API reads must keep the job's read-only token")
 	}
-	if w.Jobs["protect"].Permissions["packages"] != "read" {
-		t.Fatal("registry proof requires only the job's package-read permission")
+	if w.Jobs["protect"].Permissions["packages"] != "" {
+		t.Fatal("registry proof must not require broader repository package access")
 	}
 	controlled, authenticated := false, false
 	for _, step := range steps {
@@ -155,11 +159,11 @@ func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
 				t.Fatal("publication credential must not enter the proof job")
 			}
 		}
-		if _, ok := step.Env["GHCR_READER_TOKEN"]; ok {
+		if _, ok := step.Env["SOPS_AGE_KEY"]; ok {
 			if step.Env["DOCKER_CONFIG"] != "${{ runner.temp }}/portal-storage-registry" {
 				t.Fatal("login must use the isolated step-scoped credential store")
 			}
-			if !controlled || step.Env["GHCR_READER_TOKEN"] != "${{ github.token }}" || !strings.Contains(step.Run, "docker login ghcr.io") || !strings.Contains(step.Run, "--password-stdin") {
+			if !controlled || step.Env["SOPS_AGE_KEY"] != "${{ secrets.SOPS_AGE_KEY }}" || !strings.Contains(step.Run, "decrypt_flux_ghcr_docker_config") {
 				t.Fatal("unbound registry credential or credentials before controls")
 			}
 			authenticated = true
@@ -175,5 +179,87 @@ func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
 	}
 	if !authenticated {
 		t.Fatal("registry-only provenance reader lacks authentication")
+	}
+}
+
+func TestProtectedRegistryStageRejectsMalformedCredentialAndCleansOnlyItsStore(t *testing.T) {
+	b, err := os.ReadFile("../../.github/workflows/protect-backstage-storage.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w storageWorkflow
+	if err := yaml.Unmarshal(b, &w); err != nil {
+		t.Fatal(err)
+	}
+	stage, cleanup := "", ""
+	for _, step := range w.Jobs["protect"].Steps {
+		if step.Env["SOPS_AGE_KEY"] != "" {
+			stage = step.Run
+		}
+		if step.If == "always()" && step.Env["DOCKER_CONFIG"] == "${{ runner.temp }}/portal-storage-registry" {
+			cleanup = step.Run
+		}
+	}
+	if stage == "" || cleanup == "" {
+		t.Fatal("missing protected credential staging or unconditional cleanup")
+	}
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, config string
+		ok           bool
+	}{
+		{"valid", `{"auths":{"ghcr.io":{"username":"reader","password":"private-test-value"}}}`, true},
+		{"empty", `{}`, false},
+		{"conflicting", `{"auths":{"ghcr.io":{"username":"reader","password":"private-test-value","auth":"b3RoZXI6dG9rZW4="}}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			bin := filepath.Join(dir, "bin")
+			if err := os.Mkdir(bin, 0700); err != nil {
+				t.Fatal(err)
+			}
+			// Keep the real shared scalar-selection helper. Substitute only its
+			// credential-decryption boundary; no live secret is accessed here.
+			fake := "#!/bin/bash\nset -euo pipefail\n[[ $# == 8 && $1 == workload && $2 == cipher && $3 == decrypt && $4 == k8s/bases/bootstrap/secret.enc.yaml && $5 == --extract && $6 == '[\"stringData\"][\"ghcr_dockerconfigjson\"]' && $7 == --output ]]\nprintf '%s' \"$READER_CONFIG_FIXTURE\" > \"$8\"\nprintf '%s' \"$READER_CONFIG_FIXTURE\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "ksail"), []byte(fake), 0700); err != nil {
+				t.Fatal(err)
+			}
+			configDir := filepath.Join(dir, "portal-storage-registry")
+			outside := filepath.Join(dir, "unrelated")
+			if err := os.WriteFile(outside, []byte("preserve"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			run := func(script string) ([]byte, error) {
+				cmd := exec.Command("bash", "-c", script)
+				cmd.Dir = root
+				cmd.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "DOCKER_CONFIG=" + configDir, "SOPS_AGE_KEY=not-a-real-key", "READER_CONFIG_FIXTURE=" + tc.config}
+				return cmd.CombinedOutput()
+			}
+			output, err := run(stage)
+			if (err == nil) != tc.ok {
+				t.Fatalf("credential stage accepted=%v, want %v; output=%s", err == nil, tc.ok, output)
+			}
+			if strings.Contains(string(output), "private-test-value") || strings.Contains(string(output), tc.config) {
+				t.Fatal("credential reached the stage log")
+			}
+			if tc.ok {
+				info, err := os.Stat(filepath.Join(configDir, "config.json"))
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatal("credential store is not private")
+				}
+			}
+			if output, err := run(cleanup); err != nil {
+				t.Fatalf("cleanup failed: %v %s", err, output)
+			}
+			if _, err := os.Stat(configDir); !os.IsNotExist(err) {
+				t.Fatal("temporary credential store survived cleanup")
+			}
+			if b, err := os.ReadFile(outside); err != nil || string(b) != "preserve" {
+				t.Fatal("cleanup touched unrelated runner data")
+			}
+		})
 	}
 }

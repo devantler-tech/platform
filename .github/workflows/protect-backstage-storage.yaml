@@ -37,7 +37,6 @@ jobs:
       contents: read
       actions: read
       deployments: read
-      packages: read
     env:
       GH_TOKEN: ${{ github.token }}
       PORTAL_STORAGE_CONFIRM: ${{ inputs.confirmation }}
@@ -77,17 +76,30 @@ jobs:
           PORTAL_STORAGE_REQUIRE_NATIVE_CONTROL: "1"
         run: go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage
 
-      - name: Authenticate the short-lived read-only registry reader
+      - name: Install the verified credential-decryption tool
         shell: bash
         env:
-          GHCR_READER_TOKEN: ${{ github.token }}
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.202.58"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: .github/scripts/setup-ksail.sh
+
+      - name: Stage the existing protected production pull credential
+        shell: bash
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
           DOCKER_CONFIG: ${{ runner.temp }}/portal-storage-registry
         run: |
           set -euo pipefail
-          test -n "$GHCR_READER_TOKEN"
+          test -n "$SOPS_AGE_KEY"
+          DOCKER_CONFIG="${DOCKER_CONFIG:?}"
+          source scripts/ghcr-auth-lib.sh
           umask 077
           mkdir -p "$DOCKER_CONFIG"
-          printf '%s' "$GHCR_READER_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+          chmod 700 "$DOCKER_CONFIG"
+          decrypt_flux_ghcr_docker_config "$DOCKER_CONFIG/config.json"
+          write_flux_ghcr_credentials "$DOCKER_CONFIG/config.json" "$DOCKER_CONFIG/validated.json"
+          rm -f -- "$DOCKER_CONFIG/validated.json"
 
       - name: Restore the established protected production kubeconfig
         shell: bash
@@ -106,10 +118,22 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
 
-      # No Secret or Helm payload is read; raw evidence remains in process memory.
+      # No Kubernetes Secret or Helm payload is read; raw evidence stays in memory.
       - name: Protect only the joined volumes and verify the retained database
-        # The job token has package-read permission only. The publication PAT
-        # never enters this job or the OCI-only provenance verifier.
+        # OCI reads use the established production pull identity; GitHub API
+        # reads keep the short-lived job token. No new package grant or writer PAT.
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/portal-storage-registry
         run: go run ./scripts/protect-backstage-storage --execute
+
+      - name: Remove only the temporary registry credential files
+        if: always()
+        shell: bash
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/portal-storage-registry
+        run: |
+          set -euo pipefail
+          if [[ -d "$DOCKER_CONFIG" ]]; then
+            rm -f -- "$DOCKER_CONFIG/config.json" "$DOCKER_CONFIG/validated.json"
+            rmdir -- "$DOCKER_CONFIG"
+          fi

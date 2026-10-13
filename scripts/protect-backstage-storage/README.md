@@ -17,11 +17,15 @@ SLSA provenance. Its signed certificate must name that source commit, the exact
 accepted CI/CD workflow and ref, and the accepted run and attempt. A successful
 run beside an unrelated live digest is not sufficient; user-controlled predicate
 fields cannot supply the missing identity.
-The registry and GitHub API readers use the short-lived Actions job token with
-read-only permissions, including `packages: read`. The OCI publication credential
-never enters this job. Tokens are not put in command arguments. Missing
-registry authentication stops verification rather than falling back to API-held
-attestations, which this publication path does not create.
+GitHub API reads use the short-lived Actions job token with read-only permissions.
+OCI reads use the established production pull credential: the shared helper
+decrypts only its Docker-config scalar from Git/SOPS after the dispatch, source
+and offline-control checks. It validates that config in a private runner-temporary
+directory and removes the credential files even when verification fails. No new
+repository package grant or publication credential is needed. Tokens are not put
+in command arguments. Missing registry authentication stops verification rather
+than falling back to API-held attestations, which this publication path does not
+create.
 
 Before changing anything, the command reads complete native Kubernetes lists and
 joins every retained claim to its volume by namespace, name, UID and storage class.
