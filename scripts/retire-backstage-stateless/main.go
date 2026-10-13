@@ -631,6 +631,9 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 			continue
 		}
 		if r["kind"] == "PersistentVolumeClaim" {
+			if field(r, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
+				return nil, errors.New("retained claim prune protection unverified")
+			}
 			claims = append(claims, r)
 		}
 		if r["kind"] == "Pod" {

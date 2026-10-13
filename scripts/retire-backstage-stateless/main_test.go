@@ -29,13 +29,19 @@ func TestRetirementRequiresPhysicalStorageRetention(t *testing.T) {
 	}
 }
 
-func TestRetainedStorageDoesNotNeedNewClaimPruneOptOut(t *testing.T) {
-	retirementRunner(t)
-	f := retirementFixture(t)
-	delete(object(item(f.live, 3)["metadata"]), "annotations")
-	var out bytes.Buffer
-	if code := run([]string{"--execute"}, &out, f.execute); code != 0 || !f.deleted {
-		t.Fatalf("physical Retain and identity fence rejected without a claim opt-out: code=%d output=%s", code, &out)
+// Physical retention supplements, rather than replaces, the current PVC prune
+// safeguard. A missing or weakened annotation must stop before any write.
+func TestRetirementRequiresExistingClaimPruneProtection(t *testing.T) {
+	for _, annotation := range []any{nil, "enabled", "false", true} {
+		t.Run(fmt.Sprint(annotation), func(t *testing.T) {
+			retirementRunner(t)
+			f := retirementFixture(t)
+			object(item(f.live, 3)["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": annotation}
+			var out bytes.Buffer
+			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
+				t.Fatalf("unprotected retained claim admitted lifecycle writes: code=%d output=%s", code, &out)
+			}
+		})
 	}
 }
 
