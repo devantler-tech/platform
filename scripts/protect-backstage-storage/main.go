@@ -161,6 +161,10 @@ func (e engine) accepted(ctx context.Context) bool {
 	if err != nil || fmt.Sprint(r["id"]) != e.deploymentRun || r["head_sha"] != e.sha || r["status"] != "completed" || r["conclusion"] != "success" || field(r, "repository", "full_name") != "devantler-tech/platform" || !ci && !cd {
 		return false
 	}
+	branch, attempt := str(r["head_branch"]), fmt.Sprint(r["run_attempt"])
+	if !regexp.MustCompile(`^[1-9][0-9]{0,5}$`).MatchString(attempt) || ci && !regexp.MustCompile(`^gh-readonly-queue/main/pr-[1-9][0-9]*-[a-f0-9]{40}$`).MatchString(branch) || cd && branch != "main" {
+		return false
+	}
 	b, err = e.api(ctx, "repos/devantler-tech/platform/deployments?sha="+e.sha+"&environment=prod&per_page=100")
 	var ds []map[string]any
 	if err != nil || yaml.Unmarshal(b, &ds) != nil || len(ds) == 0 || len(ds) >= 100 {
@@ -178,7 +182,7 @@ func (e engine) accepted(ctx context.Context) bool {
 		}
 		s := statuses[0]
 		if s["state"] == "success" && s["environment"] == "prod" && regexp.MustCompile(`^https://github\.com/devantler-tech/platform/actions/runs/`+e.deploymentRun+`/job/[1-9][0-9]*$`).MatchString(str(s["log_url"])) {
-			return true
+			return e.artifactAccepted(ctx, str(r["path"]), "refs/heads/"+branch, attempt)
 		}
 	}
 	return false
@@ -394,9 +398,28 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func execute(ctx context.Context, name string, args ...string) ([]byte, error) {
+	verifier := name == "gh" && len(args) >= 2 && args[0] == "attestation" && args[1] == "verify"
+	reader := ""
+	if verifier {
+		reader = os.Getenv("PORTAL_STORAGE_GHCR_READER_TOKEN")
+		if strings.TrimSpace(reader) == "" {
+			return nil, errors.New("registry reader unavailable")
+		}
+	}
+	env := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "PORTAL_STORAGE_GHCR_READER_TOKEN=") || verifier && strings.HasPrefix(entry, "GH_TOKEN=") {
+			continue
+		}
+		env = append(env, entry)
+	}
+	if verifier {
+		env = append(env, "GH_TOKEN="+reader)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = env
 	var out boundedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard

@@ -39,6 +39,7 @@ jobs:
       deployments: read
     env:
       GH_TOKEN: ${{ github.token }}
+      DOCKER_CONFIG: ${{ runner.temp }}/portal-storage-registry
       PORTAL_STORAGE_CONFIRM: ${{ inputs.confirmation }}
       PORTAL_STORAGE_REVISION: ${{ inputs.deployed_revision }}
       PORTAL_STORAGE_DEPLOYMENT_RUN: ${{ inputs.accepted_deployment_run }}
@@ -76,6 +77,17 @@ jobs:
           PORTAL_STORAGE_REQUIRE_NATIVE_CONTROL: "1"
         run: go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage
 
+      - name: Authenticate the existing protected registry reader
+        shell: bash
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$GHCR_TOKEN"
+          umask 077
+          mkdir -p "$DOCKER_CONFIG"
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin >/dev/null
+
       - name: Restore the established protected production kubeconfig
         shell: bash
         env:
@@ -95,4 +107,8 @@ jobs:
 
       # No Secret or Helm payload is read; raw evidence remains in process memory.
       - name: Protect only the joined volumes and verify the retained database
+        # The existing registry credential reads OCI-only provenance bundles;
+        # no new credential is created and no shared permission is changed.
+        env:
+          PORTAL_STORAGE_GHCR_READER_TOKEN: ${{ secrets.GHCR_TOKEN }}
         run: go run ./scripts/protect-backstage-storage --execute

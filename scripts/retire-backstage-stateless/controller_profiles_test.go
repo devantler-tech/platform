@@ -272,9 +272,10 @@ func TestUnsettledCredentialMetadataNeverInstallsFence(t *testing.T) {
 				if err == nil && strings.Contains(args, "get deployment cloudnative-pg") && (mode == "inheritance override" || mode == "monitoring config override" || mode == "monitoring secret override") {
 					r, _ := decode(b)
 					name, value := "INHERITED_ANNOTATIONS", "*"
-					if mode == "monitoring config override" {
+					switch mode {
+					case "monitoring config override":
 						name, value = "MONITORING_QUERIES_CONFIGMAP", "alternate-queries"
-					} else if mode == "monitoring secret override" {
+					case "monitoring secret override":
 						name, value = "MONITORING_QUERIES_SECRET", "alternate-queries"
 					}
 					object(array(field(r, "spec", "template", "spec", "containers"))[0])["env"] = []any{map[string]any{"name": name, "value": value}}

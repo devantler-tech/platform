@@ -21,6 +21,7 @@ type storageWorkflow struct {
 	Jobs map[string]struct {
 		Environment map[string]any    `yaml:"environment"`
 		Permissions map[string]string `yaml:"permissions"`
+		Env         map[string]string `yaml:"env"`
 		Steps       []struct {
 			Name, Run, Uses string
 			Env             map[string]string
@@ -125,5 +126,40 @@ func TestStorageNativeControlsAreRequiredInCIAndBeforeCredentials(t *testing.T) 
 				t.Fatal("required native patch control is absent")
 			}
 		})
+	}
+}
+
+func TestRegistryProofUsesExistingProtectedCredentialOnlyAfterControls(t *testing.T) {
+	b, err := os.ReadFile("../../.github/workflows/protect-backstage-storage.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var w storageWorkflow
+	if yaml.Unmarshal(b, &w) != nil {
+		t.Fatal("invalid workflow")
+	}
+	steps := w.Jobs["protect"].Steps
+	if w.Jobs["protect"].Env["GH_TOKEN"] != "${{ github.token }}" {
+		t.Fatal("GitHub API reads must keep the job's read-only token")
+	}
+	controlled, authenticated := false, false
+	for _, step := range steps {
+		if strings.Contains(step.Run, "go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage") {
+			controlled = true
+		}
+		if _, ok := step.Env["GHCR_TOKEN"]; ok {
+			if !controlled || step.Env["GHCR_TOKEN"] != "${{ secrets.GHCR_TOKEN }}" || !strings.Contains(step.Run, "docker login ghcr.io") || !strings.Contains(step.Run, "--password-stdin") {
+				t.Fatal("unbound registry credential or credentials before controls")
+			}
+			authenticated = true
+		}
+		if strings.Contains(step.Run, "go run ./scripts/protect-backstage-storage --execute") {
+			if !authenticated || step.Env["PORTAL_STORAGE_GHCR_READER_TOKEN"] != "${{ secrets.GHCR_TOKEN }}" || step.Env["GH_TOKEN"] != "" {
+				t.Fatal("registry-only attestation proof has no established reader authentication")
+			}
+		}
+	}
+	if !authenticated {
+		t.Fatal("registry-only provenance reader lacks authentication")
 	}
 }

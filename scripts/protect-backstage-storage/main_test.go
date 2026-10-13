@@ -16,6 +16,7 @@ import (
 
 const testSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const testRevision = "latest@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+const testProvenance = `[{"verificationResult":{"signature":{"certificate":{"issuer":"https://token.actions.githubusercontent.com","subjectAlternativeName":{"type":"URI","value":"https://github.com/devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/gh-readonly-queue/main/pr-12-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"sourceRepositoryURI":"https://github.com/devantler-tech/platform","sourceRepositoryDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sourceRepositoryRef":"refs/heads/gh-readonly-queue/main/pr-12-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","runInvocationURI":"https://github.com/devantler-tech/platform/actions/runs/456/attempts/1"}},"statement":{"predicateType":"https://slsa.dev/provenance/v1","subject":[{"name":"ghcr.io/devantler-tech/platform/manifests","digest":{"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}],"predicate":{"run":"https://github.com/devantler-tech/platform/actions/runs/456/attempts/1","source":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}}]`
 
 func testEnvironment() map[string]string {
 	return map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": testSHA, "GITHUB_RUN_ID": "123", "PORTAL_STORAGE_CONFIRM": "PROTECT BACKSTAGE STORAGE ONLY", "PORTAL_STORAGE_REVISION": testRevision, "PORTAL_STORAGE_DEPLOYMENT_RUN": "456"}
@@ -24,6 +25,10 @@ func testEnvironment() map[string]string {
 type storageAPI struct {
 	t                                            *testing.T
 	ns, db, claims, volumes, pods                map[string]any
+	acceptedRun                                  map[string]any
+	provenanceBody                               []byte
+	provenanceFailure                            bool
+	verifications                                int
 	patches, pauses, collections                 int
 	commands                                     []string
 	onRead                                       func(*storageAPI, string)
@@ -46,6 +51,7 @@ func mitem(m map[string]any, n int) map[string]any     { return m["items"].([]an
 func storageFixture(t *testing.T) *storageAPI {
 	t.Helper()
 	a := &storageAPI{t: t}
+	a.acceptedRun = unmarshal(t, `{"id":456,"run_attempt":1,"head_branch":"gh-readonly-queue/main/pr-12-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","path":".github/workflows/ci.yaml","event":"merge_group","head_sha":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","status":"completed","conclusion":"success","repository":{"full_name":"devantler-tech/platform"}}`)
 	a.ns = unmarshal(t, `{"apiVersion":"v1","kind":"Namespace","metadata":{"name":"backstage","uid":"namespace","resourceVersion":"1","annotations":{"kustomize.toolkit.fluxcd.io/prune":"disabled"}},"spec":{"finalizers":["kubernetes"]},"status":{"phase":"Active"}}`)
 	a.db = unmarshal(t, `{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","metadata":{"namespace":"backstage","name":"backstage-db","uid":"database","resourceVersion":"2","generation":1},"spec":{"instances":2,"storage":{"storageClass":"longhorn-wffc","size":"1Gi"}},"status":{"readyInstances":2,"currentPrimary":"backstage-db-4","targetPrimary":"backstage-db-4"}}`)
 	a.claims = unmarshal(t, `{"apiVersion":"v1","kind":"PersistentVolumeClaimList","metadata":{"resourceVersion":"100"},"items":[{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"name":"backstage-db-3","namespace":"backstage","uid":"claim-3","resourceVersion":"101","ownerReferences":[{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","name":"backstage-db","uid":"database","controller":true}]},"spec":{"volumeName":"pv-3","storageClassName":"longhorn-wffc","resources":{"requests":{"storage":"1Gi"}}},"status":{"phase":"Bound"}},{"apiVersion":"v1","kind":"PersistentVolumeClaim","metadata":{"name":"backstage-db-4","namespace":"backstage","uid":"claim-4","resourceVersion":"102","ownerReferences":[{"apiVersion":"postgresql.cnpg.io/v1","kind":"Cluster","name":"backstage-db","uid":"database","controller":true}]},"spec":{"volumeName":"pv-4","storageClassName":"longhorn-wffc","resources":{"requests":{"storage":"1Gi"}}},"status":{"phase":"Bound"}}]}`)
@@ -68,12 +74,31 @@ func (a *storageAPI) execute(_ context.Context, name string, args ...string) ([]
 		return []byte("PROD_RECOVERY_SOURCE=PASS\n"), nil
 	}
 	if name == "gh" {
+		if len(args) > 1 && args[0] == "attestation" && args[1] == "verify" {
+			a.verifications++
+			identity := `^https://github\.com/devantler-tech/platform/\.github/workflows/ci\.yaml@refs/heads/gh-readonly-queue/main/pr-12-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$`
+			if a.acceptedRun["path"] == ".github/workflows/cd.yaml" {
+				identity = `^https://github\.com/devantler-tech/platform/\.github/workflows/cd\.yaml@refs/heads/main$`
+			}
+			want := []string{"attestation", "verify", "oci://ghcr.io/devantler-tech/platform/manifests@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "--bundle-from-oci", "--repo", "devantler-tech/platform", "--predicate-type", "https://slsa.dev/provenance/v1", "--source-digest", testSHA, "--cert-identity-regex", identity, "--format", "json"}
+			if !reflect.DeepEqual(args, want) {
+				a.t.Fatalf("provenance verification lost exact artifact/source/workflow contract: %v", args)
+			}
+			b := a.provenanceBody
+			if b == nil {
+				b = []byte(testProvenance)
+			}
+			if a.provenanceFailure {
+				return b, errors.New("private registry verification failure")
+			}
+			return b, nil
+		}
 		if !strings.HasPrefix(s, "api --hostname=github.com repos/devantler-tech/platform/") {
 			a.t.Fatalf("unbounded API call %s", s)
 		}
 		switch args[len(args)-1] {
 		case "repos/devantler-tech/platform/actions/runs/456":
-			return marshal(map[string]any{"id": 456, "path": ".github/workflows/ci.yaml", "event": "merge_group", "head_sha": testSHA, "status": "completed", "conclusion": "success", "repository": map[string]any{"full_name": "devantler-tech/platform"}})
+			return marshal(a.acceptedRun)
 		case "repos/devantler-tech/platform/deployments?sha=" + testSHA + "&environment=prod&per_page=100":
 			if a.missingDeployment {
 				return []byte("[]"), nil

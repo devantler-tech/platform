@@ -12,6 +12,16 @@ workflow after its reviewed source has merged and deployed. The invocation must
 be the first attempt on current `main`, with the workflow's exact repository,
 event and path. The requested artifact revision must be live and accepted by a
 successful normal production CI/CD deployment on that same source commit.
+The immutable artifact is also cryptographically verified against its registry-held
+SLSA provenance. Its signed certificate must name that source commit, the exact
+accepted CI/CD workflow and ref, and the accepted run and attempt. A successful
+run beside an unrelated live digest is not sufficient; user-controlled predicate
+fields cannot supply the missing identity.
+Only the attestation child process uses the workflow's existing package-reader
+credential. GitHub API reads keep the job's restricted Actions token; the reader
+is not put in command arguments or inherited by other child processes. Missing
+registry authentication stops verification rather than falling back to API-held
+attestations, which this publication path does not create.
 
 Before changing anything, the command reads complete native Kubernetes lists and
 joins every retained claim to its volume by namespace, name, UID and storage class.

@@ -25,9 +25,10 @@ func TestFreshnessAndSubmissionBoundaries(t *testing.T) {
 					stale = true
 				}
 				if strings.Contains(args, "create -f") && strings.Contains(args, "--dry-run=server") {
-					if stage == "after admission" {
+					switch stage {
+					case "after admission":
 						stale = true
-					} else if stage == "request preparation" {
+					case "request preparation":
 						t.Setenv("TMPDIR", missingDirectory)
 					}
 				}
