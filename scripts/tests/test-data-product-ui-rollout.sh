@@ -618,6 +618,15 @@ jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/movin
 run_case still-public fail flaky-public 15
 jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
   fail 'still-public: a failed public check against an unchanged rollout was not refused as such'
+# A public failure seen against a pair that then moved belongs to that abandoned
+# attempt. When the retaken rollout never becomes acceptable, the deadline refusal
+# names the change and must not carry the discarded attempt's public role.
+mkdir -p "${scratch}/moved-then-wrong-public/after"
+cp "${scratch}/healthy/"*.json "${scratch}/moved-then-wrong-public/"
+jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/moved-then-wrong-public/after/apps.json"
+run_case moved-then-wrong-public fail flaky-public 15
+jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/moved-then-wrong-public/stdout" >/dev/null ||
+  fail 'moved-then-wrong-public: a deadline after a moved rollout carried the abandoned public failure'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
 mutate_case foreign-source-namespace apps '.spec.sourceRef.namespace="foreign"' 3
 mutate_case root-advanced root '.status.artifact.revision="latest@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' 3

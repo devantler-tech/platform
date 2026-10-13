@@ -645,6 +645,9 @@ while :; do
     ((public_ok)) || fail public_contract_incomplete
     fail rollout_changed
   fi
+  # The pair moved, so this attempt is abandoned: its public result judged a rollout that
+  # was never still, and must not be reported by a refusal the next attempt raises.
+  rm -f "$scratch/public-failure"
   remaining
   sleep 0.2
 done
