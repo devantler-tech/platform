@@ -10,7 +10,7 @@ trap 'if [[ "${PORTAL_KEEP_NATIVE_FIXTURES:-0}" != 1 ]]; then rm -rf "$scratch";
 record=$(jq -cn '{version:1,phase:"fenced",namespaceUID:"ns-1",sourceSHA:("a"*40),revision:("latest@sha256:"+("b"*64)),run:"42",latestHistoryUID:"history-uid",
   targets:[{kind:"Deployment",name:"backstage",uid:"deployment-uid"},{kind:"Service",name:"backstage",uid:"service-uid"},{kind:"ConfigMap",name:"backstage-app-config",uid:"configmap-uid"},{kind:"HelmRelease",name:"backstage",uid:"release-uid"},{kind:"HelmChart",name:"backstage-backstage",uid:"chart-uid"}],
   retiringUIDs:["deployment-uid","service-uid","configmap-uid","release-uid","chart-uid","rs-uid","pod-uid"],
-  retained:[{kind:"Secret",name:"credential",uid:"credential-uid"},{kind:"Secret",name:"sh.helm.release.v1.backstage.v4",uid:"history-uid"},{kind:"Secret",name:"sh.helm.release.v1.backstage.v3",uid:"old-history-uid"},{kind:"PersistentVolumeClaim",name:"backstage-db-3",uid:"claim-uid"},{kind:"PersistentVolume",name:"retained-volume",uid:"volume-uid"}] }')
+  retained:[{kind:"Secret",name:"credential",uid:"credential-uid"},{kind:"Secret",name:"sh.helm.release.v1.backstage.v4",uid:"history-uid"},{kind:"Secret",name:"sh.helm.release.v1.backstage.v3",uid:"old-history-uid"},{kind:"PersistentVolumeClaim",name:"backstage-db-3",uid:"claim-uid"},{kind:"PersistentVolume",name:"retained-volume",uid:"volume-uid"},{kind:"ConfigMap",name:"retained-settings",uid:"settings-uid"},{kind:"ServiceAccount",name:"database-account",uid:"account-uid"}] }')
 deployment='{apiVersion:"apps/v1",kind:"Deployment",metadata:{name:"backstage",namespace:"backstage",uid:"deployment-uid"},spec:{replicas:1}}'
 secret='{apiVersion:"v1",kind:"Secret",metadata:{name:"credential",namespace:"backstage",uid:"credential-uid"},type:"Opaque",data:{value:"SYNTHETIC"}}'
 history='{apiVersion:"v1",kind:"Secret",metadata:{name:"sh.helm.release.v1.backstage.v4",namespace:"backstage",uid:"history-uid",labels:{owner:"helm",name:"backstage",version:"4",status:"deployed"}},type:"helm.sh/release.v1",data:{release:"SYNTHETIC"}}'
@@ -60,9 +60,21 @@ run_case retained-delete preserve-retained-identities DELETE "$secret" "$secret"
 run_case retained-recreate preserve-retained-identities CREATE "$secret" '{}' fail
 run_case retained-data-change preserve-retained-identities UPDATE "$secret | .data.value=\"changed\"" "$secret" fail
 run_case retained-noop preserve-retained-identities UPDATE "$secret" "$secret" pass
+run_case retained-string-data-change preserve-retained-identities UPDATE "$secret | .stringData={value:\"changed\"}" "$secret" fail
+run_case retained-secret-immutable-change preserve-retained-identities UPDATE "$secret | .immutable=true" "$secret" fail
+config='{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"retained-settings",namespace:"backstage",uid:"settings-uid"},data:{setting:"SYNTHETIC"},binaryData:{setting:"U1lOVEhFVElD"}}'
+run_case retained-binary-data-change preserve-retained-identities UPDATE "$config | .binaryData.setting=\"Y2hhbmdlZA==\"" "$config" fail
+run_case retained-config-immutable-change preserve-retained-identities UPDATE "$config | .immutable=true" "$config" fail
+run_case retained-config-noop preserve-retained-identities UPDATE "$config" "$config" pass
+account='{apiVersion:"v1",kind:"ServiceAccount",metadata:{name:"database-account",namespace:"backstage",uid:"account-uid"},automountServiceAccountToken:false,imagePullSecrets:[{name:"registry"}],secrets:[{name:"token"}]}'
+run_case retained-token-mount-change preserve-retained-identities UPDATE "$account | .automountServiceAccountToken=true" "$account" fail
+run_case retained-pull-secret-change preserve-retained-identities UPDATE "$account | .imagePullSecrets=[{name:\"replacement\"}]" "$account" fail
+run_case retained-token-reference-change preserve-retained-identities UPDATE "$account | .secrets=[{name:\"replacement\"}]" "$account" fail
+run_case retained-account-noop preserve-retained-identities UPDATE "$account" "$account" pass
 run_case retained-owner-change preserve-retained-identities UPDATE "$secret | .metadata.ownerReferences=[{apiVersion:\"apps/v1\",kind:\"Deployment\",name:\"backstage\",uid:\"deployment-uid\"}]" "$secret" fail
 run_case old-history-change preserve-retained-identities UPDATE "$history | .metadata.name=\"sh.helm.release.v1.backstage.v3\" | .metadata.uid=\"old-history-uid\" | .data.release=\"changed\"" "$history | .metadata.name=\"sh.helm.release.v1.backstage.v3\" | .metadata.uid=\"old-history-uid\"" fail
 run_case native-history-start preserve-retained-identities UPDATE "$history | .metadata.labels.status=\"uninstalling\" | .data.release=\"native\"" "$history" pass "$record" system:serviceaccount:flux-system:helm-controller
+run_case native-history-string-data-change preserve-retained-identities UPDATE "$history | .metadata.labels.status=\"uninstalling\" | .stringData={release:\"changed\"}" "$history" fail "$record" system:serviceaccount:flux-system:helm-controller
 run_case foreign-history-writer preserve-retained-identities UPDATE "$history | .metadata.labels.status=\"uninstalling\" | .data.release=\"native\"" "$history" fail
 run_case native-history-finish preserve-retained-identities UPDATE "$history | .metadata.labels.status=\"uninstalled\" | .data.release=\"native\"" "$history | .metadata.labels.status=\"uninstalling\"" pass "$record" system:serviceaccount:flux-system:helm-controller
 run_case history-lifecycle-reversal preserve-retained-identities UPDATE "$history" "$history | .metadata.labels.status=\"uninstalled\"" fail "$record" system:serviceaccount:flux-system:helm-controller
