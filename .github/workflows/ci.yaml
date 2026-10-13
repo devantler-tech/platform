@@ -2930,7 +2930,7 @@ jobs:
       contents: read # checkout repository
     steps:
       - name: 🛡️ Harden runner
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
         with:
           egress-policy: audit
 
@@ -2941,7 +2941,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@63c59062489edbee907d2a4d5d06f01c57b7d58c # v7.9.0
+        uses: devantler-tech/.github/actions/validate-naming@9ff2ad68306cc73df6814861c7804a11a25e0788 # v7.10.3
 
       - name: Confirm naming validation completed
         env:
