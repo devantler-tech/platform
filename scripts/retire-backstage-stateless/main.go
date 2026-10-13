@@ -3,7 +3,9 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -92,16 +94,87 @@ func ready(o map[string]any) bool {
 }
 func array(v any) []any { a, _ := v.([]any); return a }
 
+// A missing list is valid Kubernetes metadata; a malformed or incomplete list
+// is not evidence that an object has no garbage-collection dependencies.
+func ownerReferences(r map[string]any) ([]map[string]any, error) {
+	v := field(r, "metadata", "ownerReferences")
+	if v == nil {
+		return nil, nil
+	}
+	a, ok := v.([]any)
+	if !ok || len(a) > 512 {
+		return nil, errors.New("malformed owner references")
+	}
+	owners := make([]map[string]any, 0, len(a))
+	seen := map[string]bool{}
+	for _, v := range a {
+		o := object(v)
+		uid := text(o["uid"])
+		if text(o["apiVersion"]) == "" || text(o["kind"]) == "" || text(o["name"]) == "" || uid == "" || seen[uid] {
+			return nil, errors.New("incomplete owner reference")
+		}
+		seen[uid] = true
+		owners = append(owners, o)
+	}
+	return owners, nil
+}
+
+func independentOfRetirement(r map[string]any, retiring map[string]string) error {
+	owners, err := ownerReferences(r)
+	if err != nil {
+		return err
+	}
+	for _, owner := range owners {
+		for _, uid := range retiring {
+			if owner["uid"] == uid {
+				return errors.New("retained object depends on a retiring identity")
+			}
+		}
+	}
+	return nil
+}
+
+// Helm storage is base64 inside Kubernetes Secret base64, normally gzip JSON.
+// Decode every retained revision under the same evidence bound, never to disk.
+func storedRelease(secret map[string]any) (map[string]any, error) {
+	data := object(secret["data"])
+	if len(data) != 1 {
+		return nil, errors.New("incomplete Helm storage")
+	}
+	b, err := base64.StdEncoding.DecodeString(text(data["release"]))
+	if err != nil || len(b) > maxResponse {
+		return nil, errors.New("invalid Secret encoding")
+	}
+	b, err = base64.StdEncoding.DecodeString(string(b))
+	if err != nil || len(b) > maxResponse {
+		return nil, errors.New("invalid Helm encoding")
+	}
+	if bytes.HasPrefix(b, []byte{0x1f, 0x8b, 0x08}) {
+		r, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return nil, errors.New("invalid Helm compression")
+		}
+		b, err = io.ReadAll(io.LimitReader(r, maxResponse+1))
+		closeErr := r.Close()
+		if err != nil || closeErr != nil || len(b) > maxResponse {
+			return nil, errors.New("incomplete bounded Helm history")
+		}
+	}
+	return decode(b)
+}
+
 type snapshot struct {
 	release, live, inventory, namespace, volumes, owner, chart, source, layers map[string]any
 	releases                                                                   []map[string]any
 	retiring                                                                   map[string]string
+	fence                                                                      string
 }
 type engine struct {
 	execute              command
 	revision, sha, runID string
 	retiring             map[string]string
 	ownerUID             string
+	fence                string
 }
 
 func (e engine) read(ctx context.Context, args ...string) (map[string]any, error) {
@@ -129,7 +202,10 @@ func (e engine) sourceCurrent(ctx context.Context) error {
 	return nil
 }
 func (e engine) collect(ctx context.Context) (snapshot, error) {
-	s := snapshot{retiring: e.retiring}
+	s := snapshot{retiring: e.retiring, fence: e.fence}
+	if e.fence != "" && e.requireFence(ctx) != nil {
+		return s, errors.New("durable admission fence unverified")
+	}
 	b, err := e.execute(ctx, "helm", "status", "backstage", "--namespace=backstage", "--kube-context=admin@prod", "--output=json")
 	if err != nil {
 		return s, errors.New("release read failed")
@@ -283,6 +359,9 @@ func (e engine) eligible(s snapshot) error {
 		return err
 	}
 	h := s.owner
+	if field(h, "spec", "waitStrategy") != nil {
+		return errors.New("native wait profile uncharacterized")
+	}
 	if !metadataValid(h) || h["apiVersion"] != "helm.toolkit.fluxcd.io/v2" || h["kind"] != "HelmRelease" || field(h, "spec", "suspend") == true || field(h, "spec", "kubeConfig") != nil || field(h, "spec", "serviceAccountName") != nil && field(h, "spec", "serviceAccountName") != "" || field(h, "status", "storageNamespace") != "backstage" {
 		return errors.New("uninstall owner unverified")
 	}
@@ -367,8 +446,13 @@ func (e engine) chartOwned(s snapshot) error {
 	if ownerUID == "" {
 		ownerUID = e.ownerUID
 	}
-	for _, v := range array(field(c, "metadata", "ownerReferences")) {
-		o := object(v)
+	owners, err := ownerReferences(c)
+	if err != nil {
+		return err
+	}
+	// Published Flux v1.5.5 associates generated charts using the labels above,
+	// not an ownerReference. References, when present, must still match exactly.
+	for _, o := range owners {
 		if o["kind"] != "HelmRelease" || o["name"] != "backstage" || o["uid"] != ownerUID || ownerUID == "" {
 			return errors.New("chart has a foreign owner")
 		}
@@ -429,6 +513,18 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		return nil, errors.New("namespace preservation unverified")
 	}
 	result[identity(s.namespace)] = projection(s.namespace)
+	if s.fence != "" {
+		if field(s.namespace, "metadata", "annotations", fenceAnnotation) != s.fence {
+			return nil, errors.New("owned retirement journal changed")
+		}
+		annotations := map[string]any{}
+		for key, value := range object(field(s.namespace, "metadata", "annotations")) {
+			if key != fenceAnnotation {
+				annotations[key] = value
+			}
+		}
+		result[identity(s.namespace)]["annotations"] = annotations
+	}
 	live, err := members(s.live)
 	if err != nil {
 		return nil, err
@@ -446,6 +542,9 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+	if err := independentOfRetirement(s.namespace, s.retiring); err != nil {
+		return nil, err
 	}
 	dbUID := ""
 	instances := 0
@@ -480,10 +579,20 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		if !metadataValid(r) {
 			return nil, errors.New("retained resource is terminating")
 		}
+		if err := independentOfRetirement(r, s.retiring); err != nil {
+			return nil, err
+		}
 		if r["kind"] == "Secret" && field(r, "metadata", "labels", "owner") == "helm" && field(r, "metadata", "labels", "name") == "backstage" {
 			version := text(field(r, "metadata", "labels", "version"))
-			if r["type"] != "helm.sh/release.v1" || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(version) || field(r, "metadata", "name") != "sh.helm.release.v1.backstage.v"+version || len(array(field(r, "metadata", "ownerReferences"))) != 0 {
+			owners, err := ownerReferences(r)
+			if err != nil || len(owners) != 0 || r["type"] != "helm.sh/release.v1" || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(version) || field(r, "metadata", "name") != "sh.helm.release.v1.backstage.v"+version || text(field(r, "data", "release")) == "" {
 				return nil, errors.New("unproven retained Helm history")
+			}
+			stored, err := storedRelease(r)
+			status := text(field(stored, "info", "status"))
+			latest := version == fmt.Sprint(s.release["version"])
+			if err != nil || stored["name"] != "backstage" || stored["namespace"] != "backstage" || fmt.Sprint(stored["version"]) != version || status == "" || status != field(r, "metadata", "labels", "status") || latest && (!sameStoredContent(stored, s.release) || status != field(s.release, "info", "status")) || !latest && status != "superseded" && status != "failed" && status != "uninstalled" {
+				return nil, errors.New("stored history identity or lifecycle unverified")
 			}
 			labels := map[string]any{}
 			for k, v := range object(field(r, "metadata", "labels")) {
@@ -492,18 +601,17 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 				}
 			}
 			result[identity(r)] = map[string]any{"uid": field(r, "metadata", "uid"), "type": r["type"], "labels": labels, "annotations": field(r, "metadata", "annotations"), "owners": field(r, "metadata", "ownerReferences"), "finalizers": field(r, "metadata", "finalizers")}
-			history = history || version == fmt.Sprint(s.release["version"])
+			if !latest {
+				// Only the latest revision participates in the native uninstall;
+				// its decoded content is checked separately by sameStoredContent.
+				result[identity(r)]["data"] = r["data"]
+			}
+			history = history || latest
 			continue
 		}
-		for _, v := range array(field(r, "metadata", "ownerReferences")) {
-			owner := object(v)
-			if owner["uid"] == field(s.owner, "metadata", "uid") || owner["uid"] == "" {
-				return nil, errors.New("data owned by retiring owner")
-			}
-		}
 		if r["kind"] == "PersistentVolumeClaim" {
-			if field(r, "status", "phase") != "Bound" || text(field(r, "spec", "volumeName")) == "" {
-				return nil, errors.New("claim is not bound")
+			if field(r, "status", "phase") != "Bound" || text(field(r, "spec", "volumeName")) == "" || field(r, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
+				return nil, errors.New("claim binding or prune protection unverified")
 			}
 			claims = append(claims, r)
 		}
@@ -535,6 +643,9 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		found := false
 		for _, v := range volumes {
 			if metadataValid(v) && field(v, "metadata", "name") == field(c, "spec", "volumeName") && field(v, "spec", "claimRef", "namespace") == "backstage" && field(v, "spec", "claimRef", "name") == field(c, "metadata", "name") && field(v, "spec", "claimRef", "uid") == field(c, "metadata", "uid") && field(v, "status", "phase") == "Bound" {
+				if err := independentOfRetirement(v, s.retiring); err != nil {
+					return nil, err
+				}
 				found = true
 				result[identity(v)] = projection(v)
 			}
@@ -562,6 +673,12 @@ func retiringIdentities(s snapshot) (map[string]string, error) {
 		return nil, err
 	}
 	result := map[string]string{}
+	for _, r := range []map[string]any{s.owner, s.chart} {
+		if !identityComplete(r) {
+			return nil, errors.New("incomplete retirement owner")
+		}
+		result[identity(r)] = text(field(r, "metadata", "uid"))
+	}
 	seen := map[string]bool{}
 	deploymentUID := text(field(owned["apps/v1/Deployment/backstage"], "metadata", "uid"))
 	resources := append(live, inv...)
@@ -671,7 +788,12 @@ func sameStoredContent(a, b map[string]any) bool {
 		if err != nil {
 			return nil
 		}
-		delete(copy, "info") // Only uninstall status, dates/description and GET resources may change.
+		info := object(copy["info"])
+		// Keep notes, deployment dates and unknown information fields. Native
+		// uninstall changes only these fields; GET-derived resources are transient.
+		for _, key := range []string{"status", "deleted", "description", "resources"} {
+			delete(info, key)
+		}
 		return copy
 	}
 	x, y := normalize(a), normalize(b)
@@ -712,7 +834,9 @@ func (e engine) write(ctx context.Context, value any, args ...string) (response 
 	}
 	b, err := e.execute(ctx, "kubectl", append([]string{"--context=admin@prod", "--request-timeout=30s"}, args...)...)
 	if err != nil {
-		return nil, errors.New("write outcome unknown")
+		// The bounded failure stays in memory solely for dry-run denial checks.
+		// Callers never print it or infer deletion permission from an error.
+		return map[string]any{"failure": string(b)}, errors.New("write outcome unknown")
 	}
 	return decode(b)
 }
@@ -726,7 +850,7 @@ func (e engine) remove(ctx context.Context, r map[string]any, path string) error
 	if err := e.sourceCurrent(ctx); err != nil {
 		return err
 	}
-	o, err := e.write(ctx, map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Orphan", "preconditions": map[string]any{"uid": field(r, "metadata", "uid"), "resourceVersion": field(r, "metadata", "resourceVersion")}}, "delete", "--raw", path, "-f", "REQUEST")
+	o, err := e.write(ctx, deleteOptions(r), "delete", "--raw", path, "-f", "REQUEST")
 	if err != nil {
 		return err
 	}
@@ -740,7 +864,11 @@ func (e engine) remove(ctx context.Context, r map[string]any, path string) error
 }
 
 func run(args []string, out io.Writer, execute command) int {
+	nativeSubmitted := false
 	hold := func(code string) int {
+		if nativeSubmitted {
+			code = "HOLD_NATIVE_LIFECYCLE_CONTINUES reason=" + code
+		}
 		if _, err := fmt.Fprintln(out, "PORTAL-RETIREMENT="+code); err != nil {
 			return 2
 		}
@@ -760,6 +888,9 @@ func run(args []string, out io.Writer, execute command) int {
 		return hold("HOLD_PRECONDITION")
 	}
 	first, err := e.collect(ctx)
+	if err == nil && field(first.namespace, "metadata", "annotations", fenceAnnotation) != nil {
+		return hold("HOLD_EXISTING_NATIVE_OPERATION")
+	}
 	if err != nil || e.eligible(first) != nil {
 		return hold("HOLD_PRECONDITION")
 	}
@@ -804,6 +935,10 @@ func run(args []string, out io.Writer, execute command) int {
 	if e.sourceCurrent(ctx) != nil {
 		return hold("HOLD_MUTATION")
 	}
+	e.fence, err = e.installFence(ctx, second, before)
+	if err != nil {
+		return hold("HOLD_ADMISSION")
+	}
 	opts := uninstallOptions()
 	patch := append(tests(second.owner), map[string]any{"op": "add", "path": "/spec/uninstall", "value": opts})
 	patched, err := e.write(ctx, patch, "--namespace=backstage", "patch", "helmrelease", "backstage", "--type=json", "--patch-file=REQUEST", "--output=json")
@@ -822,6 +957,12 @@ func run(args []string, out io.Writer, execute command) int {
 	if err != nil || !reflect.DeepEqual(before, kept) {
 		return hold("HOLD_MUTATION")
 	}
+	if e.admissionControls(ctx, current) != nil {
+		return hold("HOLD_ADMISSION")
+	}
+	// Kubernetes owns the ongoing finalizer once DELETE may have been submitted.
+	// A workflow error, timeout or process stop cannot cancel its retries.
+	nativeSubmitted = true
 	if err = e.remove(ctx, current.owner, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage"); err != nil {
 		return hold("HOLD_MUTATION")
 	}
@@ -903,11 +1044,13 @@ func run(args []string, out io.Writer, execute command) int {
 }
 func capture(ctx context.Context, program string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, program, args...)
-	cmd.Stderr = io.Discard
-	var b boundedOutput
-	cmd.Stdout = &b
+	var b, failure boundedOutput
+	cmd.Stdout, cmd.Stderr = &b, &failure
 	if cmd.Run() != nil {
-		return nil, errors.New("command unavailable")
+		if failure.Len() > 0 {
+			return failure.Bytes(), errors.New("command unavailable")
+		}
+		return b.Bytes(), errors.New("command unavailable")
 	}
 	return b.Bytes(), nil
 }

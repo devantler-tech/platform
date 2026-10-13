@@ -144,6 +144,58 @@ func nativeReleaseSecret(t *testing.T, r map[string]any) map[string]any {
 	return map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "sh.helm.release.v1.backstage.v4", "namespace": "backstage", "uid": "native-history-uid", "resourceVersion": "1", "labels": map[string]any{"owner": "helm", "name": "backstage", "status": "deployed", "version": "4"}}, "type": "helm.sh/release.v1", "data": map[string]any{"release": base64.StdEncoding.EncodeToString([]byte(stored))}}
 }
 
+func TestNativeKubectlRawDryRunPreservesServerQueryAndBoundIdentity(t *testing.T) {
+	bin, err := exec.LookPath("kubectl")
+	if err != nil {
+		if os.Getenv("PORTAL_REQUIRE_NATIVE_CONTROL") == "1" {
+			t.Fatal("required native dry-run control needs kubectl")
+		}
+		t.Skip("native dry-run control requires kubectl")
+	}
+	var mu sync.Mutex
+	requests, ordinaryDelete := 0, false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		requests++
+		w.Header().Set("Content-Type", "application/json")
+		var opts map[string]any
+		ordinaryDelete = r.Method != "DELETE" || r.URL.Path != "/apis/apps/v1/namespaces/backstage/deployments/backstage" || r.URL.Query().Get("dryRun") != "All" || json.NewDecoder(r.Body).Decode(&opts) != nil || field(opts, "preconditions", "uid") != "native-deployment-uid" || field(opts, "preconditions", "resourceVersion") != "17"
+		if ordinaryDelete {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, `{"apiVersion":"v1","kind":"Status","status":"Success"}`)
+	}))
+	defer server.Close()
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "kubeconfig")
+	body := "apiVersion: v1\nkind: Config\nclusters:\n- name: fixture\n  cluster:\n    server: " + server.URL + "\ncontexts:\n- name: admin@prod\n  context:\n    cluster: fixture\n    user: fixture\ncurrent-context: admin@prod\nusers:\n- name: fixture\n  user: {}\n"
+	if err := os.WriteFile(cfg, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", cfg)
+	e := engine{execute: func(c context.Context, p string, args ...string) ([]byte, error) {
+		if p != "kubectl" {
+			return nil, fmt.Errorf("unexpected native dry-run program")
+		}
+		return capture(c, bin, args...)
+	}}
+	resource := map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "backstage", "namespace": "backstage", "uid": "native-deployment-uid", "resourceVersion": "17"}}
+	path, err := resourcePath(resource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	response, err := e.write(ctx, deleteOptions(resource), "delete", "--raw", path+"?dryRun=All", "-f", "REQUEST")
+	mu.Lock()
+	defer mu.Unlock()
+	if err != nil || requests != 1 || ordinaryDelete || response["status"] != "Success" {
+		t.Fatalf("native raw dry-run query or identity lost: error=%t requests=%d ordinaryDelete=%t", err != nil, requests, ordinaryDelete)
+	}
+}
+
 func TestNativeKubectlSendsBoundDeleteOptionsAndRejectsReplacement(t *testing.T) {
 	bin, err := exec.LookPath("kubectl")
 	if err != nil {

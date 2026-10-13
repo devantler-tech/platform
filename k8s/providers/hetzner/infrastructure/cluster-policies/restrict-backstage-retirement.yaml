@@ -1,0 +1,238 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-backstage-retirement
+  annotations:
+    policies.kyverno.io/title: Preserve the Captured Backstage Retirement Identities
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+    pod-policies.kyverno.io/autogen-controllers: none
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: fence-native-targets
+      match:
+        any:
+          - resources:
+              kinds: [apps/v1/Deployment, v1/Service, helm.toolkit.fluxcd.io/v2/HelmRelease]
+              names: [backstage]
+              namespaces: [backstage]
+              operations: [CREATE, UPDATE, DELETE]
+          - resources:
+              kinds: [v1/ConfigMap]
+              names: [backstage-app-config]
+              namespaces: [backstage]
+              operations: [CREATE, UPDATE, DELETE]
+          - resources:
+              kinds: [source.toolkit.fluxcd.io/v1/HelmChart]
+              names: [backstage-backstage]
+              namespaces: [backstage]
+              operations: [CREATE, UPDATE, DELETE]
+      context:
+        - name: resource
+          variable:
+            jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
+        - name: retirement
+          apiCall:
+            # A complete, name-selected List also works before this retained
+            # namespace is created on a fresh rebuild. Errors still fail closed.
+            urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
+            jmesPath: >-
+              {present: (apiVersion != 'v1' || kind != 'NamespaceList' || type(items) != 'array' || (metadata.continue || '') != '' || length(items || `[]`) > `1` || (length(items || `[]`) == `1` && (items[0].metadata.name != 'backstage' || (items[0].metadata.uid || '') == ''))) || contains(keys(items[0].metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement'), namespaceUID: items[0].metadata.uid, record: parse_json(items[0].metadata.annotations."platform.devantler.tech/backstage-retirement" || '{}')}
+        - name: bound
+          variable:
+            jmesPath: >-
+              retirement.record.version == `1` && retirement.record.phase == 'fenced' && (retirement.namespaceUID || '') != '' && retirement.record.namespaceUID == retirement.namespaceUID && regex_match('^[0-9a-f]{40}$', retirement.record.sourceSHA || '') && regex_match('^latest@sha256:[0-9a-f]{64}$', retirement.record.revision || '') && regex_match('^[1-9][0-9]{0,19}$', retirement.record.run || '') && length(retirement.record.targets || `[]`) == `5` && length(retirement.record.retiringUIDs || `[]`) >= `5` && length(retirement.record.retained || `[]`) >= `1` && (retirement.record.latestHistoryUID || '') != ''
+        - name: targetUID
+          variable:
+            jmesPath: retirement.record.targets[?kind == '{{ resource.kind }}' && name == '{{ resource.metadata.name }}'].uid | [0]
+            default: ''
+        - name: nativeUninstallOptions
+          variable:
+            value:
+              keepHistory: true
+              disableHooks: true
+              disableWait: false
+              deletionPropagation: foreground
+              timeout: 5m
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: Native retirement may delete only the captured identity, never a replacement or recreated target.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ bound && targetUID != '' && ((request.operation == 'DELETE' && (request.oldObject.metadata.uid || '') == targetUID) || (request.operation == 'UPDATE' && (request.oldObject.metadata.uid || '') == targetUID && (request.object.metadata.uid || '') == targetUID && (request.object.metadata.ownerReferences || `[]`) == (request.oldObject.metadata.ownerReferences || `[]`) && (request.object.metadata.labels || `{}`) == (request.oldObject.metadata.labels || `{}`) && (request.object.metadata.annotations || `{}`) == (request.oldObject.metadata.annotations || `{}`) && (request.object.spec == request.oldObject.spec || (resource.kind == 'HelmRelease' && request.object.spec == merge(request.oldObject.spec, {uninstall: nativeUninstallOptions}))))) }}
+                operator: NotEquals
+                value: true
+    - name: preserve-retained-identities
+      match:
+        any:
+          - resources:
+              kinds: [v1/Secret, v1/PersistentVolumeClaim, v1/ServiceAccount, v1/Service, v1/ConfigMap, postgresql.cnpg.io/v1/Cluster, postgresql.cnpg.io/v1/Backup, postgresql.cnpg.io/v1/ScheduledBackup, external-secrets.io/v1/ExternalSecret, barmancloud.cnpg.io/v1/ObjectStore]
+              namespaces: [backstage]
+              operations: [CREATE, UPDATE, DELETE]
+          - resources:
+              kinds: [v1/PersistentVolume]
+              operations: [CREATE, UPDATE, DELETE]
+      context:
+        - name: resource
+          variable:
+            jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
+        - name: retirement
+          apiCall:
+            # A complete, name-selected List also works before this retained
+            # namespace is created on a fresh rebuild. Errors still fail closed.
+            urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
+            jmesPath: >-
+              {present: (apiVersion != 'v1' || kind != 'NamespaceList' || type(items) != 'array' || (metadata.continue || '') != '' || length(items || `[]`) > `1` || (length(items || `[]`) == `1` && (items[0].metadata.name != 'backstage' || (items[0].metadata.uid || '') == ''))) || contains(keys(items[0].metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement'), namespaceUID: items[0].metadata.uid, record: parse_json(items[0].metadata.annotations."platform.devantler.tech/backstage-retirement" || '{}')}
+        - name: bound
+          variable:
+            jmesPath: >-
+              retirement.record.version == `1` && retirement.record.phase == 'fenced' && (retirement.namespaceUID || '') != '' && retirement.record.namespaceUID == retirement.namespaceUID && regex_match('^[0-9a-f]{40}$', retirement.record.sourceSHA || '') && regex_match('^latest@sha256:[0-9a-f]{64}$', retirement.record.revision || '') && regex_match('^[1-9][0-9]{0,19}$', retirement.record.run || '') && length(retirement.record.targets || `[]`) == `5` && length(retirement.record.retiringUIDs || `[]`) >= `5` && length(retirement.record.retained || `[]`) >= `1` && (retirement.record.latestHistoryUID || '') != ''
+        - name: retainedUID
+          variable:
+            jmesPath: retirement.record.retained[?kind == '{{ resource.kind }}' && name == '{{ resource.metadata.name }}'].uid | [0]
+            default: ''
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+          - key: "{{ retainedUID != '' || !bound || (resource.kind == 'Secret' && resource.metadata.labels.owner == 'helm' && resource.metadata.labels.name == 'backstage') }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: Retirement preserves retained identities, content, ownership and deletion protection.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ bound && retainedUID != '' && request.operation == 'UPDATE' && (request.oldObject.metadata.uid || '') == retainedUID && (request.object.metadata.uid || '') == retainedUID && (request.object.spec || `{}`) == (request.oldObject.spec || `{}`) && (request.object.type || '') == (request.oldObject.type || '') && (request.object.metadata.ownerReferences || `[]`) == (request.oldObject.metadata.ownerReferences || `[]`) && (request.object.metadata.annotations || `{}`) == (request.oldObject.metadata.annotations || `{}`) && (request.object.metadata.finalizers || `[]`) == (request.oldObject.metadata.finalizers || `[]`) && (((request.object.data || `{}`) == (request.oldObject.data || `{}`) && (request.object.metadata.labels || `{}`) == (request.oldObject.metadata.labels || `{}`)) || (resource.kind == 'Secret' && retainedUID == retirement.record.latestHistoryUID && request.userInfo.username == 'system:serviceaccount:flux-system:helm-controller' && request.object.type == 'helm.sh/release.v1' && merge(request.object.metadata.labels || `{}`, {status: '', modifiedAt: ''}) == merge(request.oldObject.metadata.labels || `{}`, {status: '', modifiedAt: ''}) && ((request.oldObject.metadata.labels.status == 'deployed' && request.object.metadata.labels.status == 'uninstalling') || (request.oldObject.metadata.labels.status == 'uninstalling' && contains(['uninstalling', 'uninstalled'], request.object.metadata.labels.status)) || (request.oldObject.metadata.labels.status == 'uninstalled' && request.object.metadata.labels.status == 'uninstalled')))) }}
+                operator: NotEquals
+                value: true
+    - name: fence-retiring-dependencies
+      match:
+        any:
+          - resources:
+              kinds: ['*']
+              namespaces: [backstage]
+              operations: [CREATE, UPDATE]
+      context:
+        - name: resource
+          variable:
+            jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
+        - name: retirement
+          apiCall:
+            # A complete, name-selected List also works before this retained
+            # namespace is created on a fresh rebuild. Errors still fail closed.
+            urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
+            jmesPath: >-
+              {present: (apiVersion != 'v1' || kind != 'NamespaceList' || type(items) != 'array' || (metadata.continue || '') != '' || length(items || `[]`) > `1` || (length(items || `[]`) == `1` && (items[0].metadata.name != 'backstage' || (items[0].metadata.uid || '') == ''))) || contains(keys(items[0].metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement'), namespaceUID: items[0].metadata.uid, record: parse_json(items[0].metadata.annotations."platform.devantler.tech/backstage-retirement" || '{}')}
+        - name: bound
+          variable:
+            jmesPath: >-
+              retirement.record.version == `1` && retirement.record.phase == 'fenced' && (retirement.namespaceUID || '') != '' && retirement.record.namespaceUID == retirement.namespaceUID && regex_match('^[0-9a-f]{40}$', retirement.record.sourceSHA || '') && regex_match('^latest@sha256:[0-9a-f]{64}$', retirement.record.revision || '') && regex_match('^[1-9][0-9]{0,19}$', retirement.record.run || '') && length(retirement.record.targets || `[]`) == `5` && length(retirement.record.retiringUIDs || `[]`) >= `5` && length(retirement.record.retained || `[]`) >= `1` && (retirement.record.latestHistoryUID || '') != ''
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+        any:
+          - key: "{{ bound }}"
+            operator: NotEquals
+            value: true
+          - key: "{{ request.object.metadata.ownerReferences[].uid || `[]` }}"
+            operator: AnyIn
+            value: "{{ retirement.record.retiringUIDs || `[]` }}"
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: No new resource or retained data may depend on a captured retiring owner.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ bound && request.operation == 'UPDATE' && contains(retirement.record.retiringUIDs || `[]`, request.object.metadata.uid || '') && (request.object.metadata.uid || '') == (request.oldObject.metadata.uid || '') && (request.object.metadata.ownerReferences || `[]`) == (request.oldObject.metadata.ownerReferences || `[]`) }}
+                operator: NotEquals
+                value: true
+    - name: fence-chart-consumers
+      match:
+        any:
+          - resources:
+              kinds: [helm.toolkit.fluxcd.io/v2/HelmRelease]
+              operations: [CREATE, UPDATE]
+      context:
+        - name: resource
+          variable:
+            jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
+        - name: retirement
+          apiCall:
+            # A complete, name-selected List also works before this retained
+            # namespace is created on a fresh rebuild. Errors still fail closed.
+            urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
+            jmesPath: >-
+              {present: (apiVersion != 'v1' || kind != 'NamespaceList' || type(items) != 'array' || (metadata.continue || '') != '' || length(items || `[]`) > `1` || (length(items || `[]`) == `1` && (items[0].metadata.name != 'backstage' || (items[0].metadata.uid || '') == ''))) || contains(keys(items[0].metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement'), namespaceUID: items[0].metadata.uid, record: parse_json(items[0].metadata.annotations."platform.devantler.tech/backstage-retirement" || '{}')}
+        - name: bound
+          variable:
+            jmesPath: >-
+              retirement.record.version == `1` && retirement.record.phase == 'fenced' && (retirement.namespaceUID || '') != '' && retirement.record.namespaceUID == retirement.namespaceUID && regex_match('^[0-9a-f]{40}$', retirement.record.sourceSHA || '') && regex_match('^latest@sha256:[0-9a-f]{64}$', retirement.record.revision || '') && regex_match('^[1-9][0-9]{0,19}$', retirement.record.run || '') && length(retirement.record.targets || `[]`) == `5` && length(retirement.record.retiringUIDs || `[]`) >= `5` && length(retirement.record.retained || `[]`) >= `1` && (retirement.record.latestHistoryUID || '') != ''
+        - name: consumer
+          variable:
+            jmesPath: >-
+              ((resource.spec.chartRef.namespace || resource.metadata.namespace) == 'backstage' && resource.spec.chartRef.kind == 'HelmChart' && resource.spec.chartRef.name == 'backstage-backstage') || resource.status.helmChart == 'backstage/backstage-backstage'
+        - name: ownerUID
+          variable:
+            jmesPath: retirement.record.targets[?kind == 'HelmRelease' && name == 'backstage'].uid | [0]
+            default: ''
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+        any:
+          - key: "{{ bound }}"
+            operator: NotEquals
+            value: true
+          - key: "{{ consumer }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: The captured chart cannot acquire another consumer during asynchronous retirement.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ bound && ownerUID != '' && request.operation == 'UPDATE' && resource.metadata.namespace == 'backstage' && resource.metadata.name == 'backstage' && (request.object.metadata.uid || '') == ownerUID && (request.oldObject.metadata.uid || '') == ownerUID }}
+                operator: NotEquals
+                value: true
+    - name: preserve-retirement-journal
+      match:
+        any:
+          - resources:
+              kinds: [v1/Namespace]
+              names: [backstage]
+              operations: [CREATE, UPDATE, DELETE]
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: Preserve the durable retirement journal and retained namespace until separately reviewed maintenance.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ !(request.operation == 'DELETE' && contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement')) && (request.operation == 'DELETE' || contains(request.userInfo.groups || `[]`, 'system:masters') || (contains(keys(request.object.metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement') == contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/backstage-retirement') && request.object.metadata.annotations."platform.devantler.tech/backstage-retirement" == request.oldObject.metadata.annotations."platform.devantler.tech/backstage-retirement")) }}
+                operator: NotEquals
+                value: true

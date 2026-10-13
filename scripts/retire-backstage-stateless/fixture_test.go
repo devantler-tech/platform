@@ -53,6 +53,8 @@ func encode(t *testing.T, v any) []byte {
 }
 func protectedRunner(t *testing.T) {
 	t.Helper()
+	// The protected workflow invokes the entrypoint from the reviewed repo root.
+	t.Chdir("../..")
 	t.Setenv("GITHUB_ACTIONS", "true")
 	t.Setenv("GITHUB_REPOSITORY", "devantler-tech/platform")
 	t.Setenv("GITHUB_REF", "refs/heads/main")

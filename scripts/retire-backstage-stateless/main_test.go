@@ -98,6 +98,7 @@ func TestIncompleteOrUnsafeRetirementCannotWrite(t *testing.T) {
 			object(f.chart["metadata"])["ownerReferences"] = []any{map[string]any{"kind": "HelmRelease", "name": "other", "uid": "foreign-owner"}}
 		},
 		"alternate uninstall service account": func(f *portalFixture) { object(f.hr["spec"])["serviceAccountName"] = "other" },
+		"non-characterized wait strategy":     func(f *portalFixture) { object(f.hr["spec"])["waitStrategy"] = "legacy" },
 		"chart used by another release": func(f *portalFixture) {
 			other := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": metadata("other", "other-uid"), "spec": map[string]any{"chartRef": map[string]any{"kind": "HelmChart", "name": "backstage-backstage", "namespace": "backstage"}}}
 			f.otherHR = other
@@ -158,7 +159,7 @@ func TestUnknownDeleteOutcomeIsNotRetriedOrDeclaredRetired(t *testing.T) {
 	f := retirementFixture(t)
 	deletes := 0
 	execute := func(c context.Context, p string, a ...string) ([]byte, error) {
-		if p == "kubectl" && strings.Contains(strings.Join(a, " "), " delete ") {
+		if p == "kubectl" && strings.Contains(strings.Join(a, " "), " delete ") && !strings.Contains(strings.Join(a, " "), "?dryRun=All") {
 			deletes++
 			return []byte(`{"kind":"Status","status":"Success"}`), fmt.Errorf("DO_NOT_PRINT")
 		}
@@ -186,7 +187,7 @@ func TestMalformedDeleteResponseCannotAuthorizeMoreWrites(t *testing.T) {
 	f := retirementFixture(t)
 	deletes := 0
 	execute := func(c context.Context, p string, a ...string) ([]byte, error) {
-		if p == "kubectl" && strings.Contains(strings.Join(a, " "), " delete ") {
+		if p == "kubectl" && strings.Contains(strings.Join(a, " "), " delete ") && !strings.Contains(strings.Join(a, " "), "?dryRun=All") {
 			deletes++
 			return []byte(`{}`), nil
 		}
@@ -399,6 +400,9 @@ func TestRetainedDeletionProtectionCannotDisappearDuringUninstall(t *testing.T) 
 			object(retained["metadata"])["finalizers"] = []any{"test.invalid/deletion-protection"}
 			execute := func(c context.Context, p string, a ...string) ([]byte, error) {
 				if f.deleted {
+					if kind == "Namespace" {
+						retained = f.namespace
+					}
 					delete(object(retained["metadata"]), "finalizers")
 				}
 				return f.execute(c, p, a...)
@@ -456,6 +460,7 @@ type portalFixture struct {
 	receiptCreated                                                           bool
 	pendingDeleteReads                                                       int
 	chartRemaining, chartDeleted                                             bool
+	fenceInstalled                                                           bool
 }
 
 func retirementFixture(t *testing.T) *portalFixture {
@@ -476,6 +481,7 @@ func retirementFixture(t *testing.T) *portalFixture {
 	claim := item(l, 3)
 	claim["spec"] = map[string]any{"volumeName": "retained-volume"}
 	claim["status"] = map[string]any{"phase": "Bound"}
+	object(claim["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
 	object(claim["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid"}}
 	dbPod := map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": metadata("backstage-db-3", "database-pod-uid"), "spec": map[string]any{"containers": []any{map[string]any{"name": "postgres"}}}, "status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}
 	object(dbPod["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db"}
@@ -489,6 +495,7 @@ func retirementFixture(t *testing.T) *portalFixture {
 	object(ns["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
 	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": metadata("backstage-db-app", "credential-uid"), "data": map[string]any{"password": "DO_NOT_PRINT"}}
 	history := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": metadata("sh.helm.release.v1.backstage.v4", "history-uid"), "type": "helm.sh/release.v1", "data": map[string]any{"release": "SYNTHETIC_DO_NOT_PRINT"}}
+	history["data"] = nativeReleaseSecret(t, r)["data"]
 	object(history["metadata"])["labels"] = map[string]any{"owner": "helm", "name": "backstage", "version": "4", "status": "deployed"}
 	rs := map[string]any{"apiVersion": "apps/v1", "kind": "ReplicaSet", "metadata": metadata("backstage-rs", "rs-uid")}
 	object(rs["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "backstage", "uid": "deployment-uid"}}
@@ -542,12 +549,29 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 			var r map[string]any
 			_ = json.Unmarshal(encode(f.t, f.release), &r)
 			r["info"] = map[string]any{"status": status}
+			for _, raw := range array(f.inventory["items"]) {
+				h := object(raw)
+				if field(h, "metadata", "name") == "sh.helm.release.v1.backstage.v4" {
+					h["data"] = nativeReleaseSecret(f.t, r)["data"]
+					object(field(h, "metadata", "labels"))["status"] = status
+				}
+			}
 			return encode(f.t, r), nil
 		}
 		return encode(f.t, f.release), nil
 	}
 	if program != "kubectl" {
 		return nil, fmt.Errorf("unexpected program")
+	}
+	if strings.Contains(joined, "get clusterpolicy restrict-backstage-retirement") {
+		spec, err := expectedFenceSpec()
+		if err != nil {
+			return nil, err
+		}
+		return encode(f.t, map[string]any{"apiVersion": "kyverno.io/v1", "kind": "ClusterPolicy", "metadata": map[string]any{"name": "restrict-backstage-retirement", "uid": "policy-uid", "resourceVersion": "1", "generation": 1}, "spec": spec, "status": map[string]any{"conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}), nil
+	}
+	if strings.Contains(joined, "get deployment helm-controller") {
+		return encode(f.t, map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "helm-controller", "namespace": "flux-system", "uid": "controller-uid", "resourceVersion": "1", "generation": 1}, "spec": map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{"serviceAccountName": "helm-controller", "containers": []any{map[string]any{"name": "manager", "image": nativeControllerImage}}}}}, "status": map[string]any{"observedGeneration": 1, "readyReplicas": 1, "updatedReplicas": 1, "availableReplicas": 1}}), nil
 	}
 	if strings.Contains(joined, " patch ") {
 		path := ""
@@ -561,6 +585,20 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 			return nil, err
 		}
 		var ops []map[string]any
+		if strings.Contains(joined, "patch namespace backstage") {
+			if json.Unmarshal(data, &ops) != nil || len(ops) != 3 || ops[0]["path"] != "/metadata/uid" || ops[0]["value"] != "namespace-uid" || ops[1]["path"] != "/metadata/resourceVersion" || ops[1]["value"] != "12" || ops[2]["path"] != "/metadata/annotations/platform.devantler.tech~1backstage-retirement" || strings.Contains(text(ops[2]["value"]), "DO_NOT_PRINT") {
+				return nil, fmt.Errorf("fence lost namespace identity or disclosed data")
+			}
+			copy, err := decode(encode(f.t, f.namespace))
+			if err != nil {
+				return nil, err
+			}
+			f.namespace = copy
+			object(field(f.namespace, "metadata", "annotations"))[fenceAnnotation] = ops[2]["value"]
+			object(f.namespace["metadata"])["resourceVersion"] = "13"
+			f.fenceInstalled = true
+			return encode(f.t, f.namespace), nil
+		}
 		if json.Unmarshal(data, &ops) != nil || len(ops) != 3 || ops[0]["path"] != "/metadata/uid" || ops[0]["value"] != "release-uid" || ops[1]["path"] != "/metadata/resourceVersion" || ops[1]["value"] != "12" || ops[2]["path"] != "/spec/uninstall" {
 			return nil, fmt.Errorf("patch lost the assessed identity")
 		}
@@ -574,8 +612,20 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 		return encode(f.t, f.hr), nil
 	}
 	if strings.Contains(joined, " delete ") {
+		if strings.Contains(joined, "?dryRun=All") {
+			if !f.fenceInstalled {
+				return nil, fmt.Errorf("dry-run needs an installed fence")
+			}
+			rule := "preserve-retained-identities"
+			if strings.Contains(joined, "/api/v1/namespaces/backstage?dryRun=All") {
+				rule = "preserve-retirement-journal"
+			} else if strings.Contains(joined, "/deployments/") || strings.Contains(joined, "/services/") || strings.Contains(joined, "/configmaps/") || strings.Contains(joined, "/helmreleases/") || strings.Contains(joined, "/helmcharts/") {
+				return []byte(`{"apiVersion":"v1","kind":"Status","status":"Success"}`), nil
+			}
+			return []byte("admission webhook \"validate.kyverno.svc-fail\" denied the request:\nrestrict-backstage-retirement:\n  " + rule + ": retained"), fmt.Errorf("denied")
+		}
 		chart := strings.Contains(joined, "/helmcharts/backstage-backstage")
-		if !f.configured || !chart && !strings.Contains(joined, "/helmreleases/backstage") {
+		if !f.fenceInstalled || !f.configured || !chart && !strings.Contains(joined, "/helmreleases/backstage") {
 			return nil, fmt.Errorf("unexpected delete target")
 		}
 		path := args[len(args)-1]
@@ -600,6 +650,9 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 		return []byte(`{"apiVersion":"v1","kind":"Status","status":"Success"}`), nil
 	}
 	if strings.Contains(joined, " create ") {
+		if strings.Contains(joined, "--dry-run=server") {
+			return []byte("admission webhook \"validate.kyverno.svc-fail\" denied the request:\nrestrict-backstage-retirement:\n  fence-chart-consumers: exclusive"), fmt.Errorf("denied")
+		}
 		f.receiptCreated = true
 		data, err := os.ReadFile(args[len(args)-2])
 		if err != nil {
