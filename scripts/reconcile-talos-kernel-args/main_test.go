@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,208 @@ import (
 const extensions = "spec:\n  cluster:\n    talos:\n      extensions: [' siderolabs/iscsi-tools ', '', siderolabs/iscsi-tools]\n"
 const argsConfig = "version: v1alpha1\nmachine:\n  install:\n    image: example.invalid/installer:v1.13.10\n    disk: /dev/sda\n    extraKernelArgs: [' lsm=apparmor ', '', lsm=apparmor]\n    grubUseUKICmdline: false\ncluster:\n  clusterName: preserved\n"
 const plainConfig = "version: v1alpha1\nmachine:\n  install:\n    image: example.invalid/installer:v1.13.10\n    disk: /dev/sda\n    grubUseUKICmdline: false\n"
+
+// Independent caller inventory: do not derive fixtures from the producer's
+// list, which would conceal an omitted operational workflow.
+var workflowPinFixtures = []string{
+	".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml",
+	".github/workflows/validate-main.yaml", ".github/workflows/dr-rebuild.yaml",
+	".github/workflows/validate-image-verifier-liveness.yaml", ".github/workflows/prove-scoped-package-access.yaml",
+}
+
+func writeWorkflowPins(t *testing.T, version string) {
+	t.Helper()
+	for _, path := range workflowPinFixtures {
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, pin(version), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// A new installation workflow must enter the independently exercised caller
+// inventory; otherwise every existing fixture could pass while it was omitted.
+// Discovery only asks whether an explicit pin key occurs. Unrelated workflow
+// aliases are valid; strict ambiguity checks still apply to actual pin callers.
+func hasWorkflowPin(data []byte) (bool, error) {
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	var walk func(*yaml.Node) bool
+	walk = func(node *yaml.Node) bool {
+		if node.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				if node.Content[i].Value == "KSAIL_VERSION" {
+					return true
+				}
+			}
+		}
+		// Content represents the written document, not an alias target. Never
+		// follow Alias pointers, which could be cyclic.
+		for _, child := range node.Content {
+			if walk(child) {
+				return true
+			}
+		}
+		return false
+	}
+	found := false
+	for {
+		var document yaml.Node
+		if err := decoder.Decode(&document); err != nil {
+			if errors.Is(err, io.EOF) {
+				return found, nil
+			}
+			return false, err
+		}
+		found = walk(&document) || found
+	}
+}
+
+func discoverWorkflowPins(root string) (map[string]bool, error) {
+	seen := map[string]bool{}
+	for _, directory := range []string{".github/workflows", ".github/actions"} {
+		err := filepath.WalkDir(filepath.Join(root, directory), func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || filepath.Ext(path) != ".yaml" && filepath.Ext(path) != ".yml" {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			caller, err := hasWorkflowPin(data)
+			if err != nil {
+				return fmt.Errorf("unreadable workflow inventory: %w", err)
+			}
+			if !caller {
+				return nil
+			}
+			if _, err := verifyPins(data); err != nil {
+				return fmt.Errorf("unreadable workflow pin inventory: %w", err)
+			}
+			relative, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			seen[filepath.ToSlash(relative)] = true
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return seen, nil
+}
+
+func TestInventoryAllowsUnrelatedAnchoredWorkflow(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, ".github", "workflows")
+	for _, path := range []string{directory, filepath.Join(root, ".github", "actions")} {
+		if err := os.MkdirAll(path, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for name, data := range map[string][]byte{
+		"caller.yaml":    pin("7.195.0"),
+		"unrelated.yaml": []byte("env: &shared\n  EXAMPLE: safe\njobs:\n  first:\n    env: *shared\n"),
+	} {
+		if err := os.WriteFile(filepath.Join(directory, name), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen, err := discoverWorkflowPins(root)
+	if err != nil || len(seen) != 1 || !seen[".github/workflows/caller.yaml"] {
+		t.Fatalf("unrelated valid YAML blocked caller discovery: %v, %v", seen, err)
+	}
+}
+
+func TestWorkflowDiscoveryReadsEveryDocument(t *testing.T) {
+	for _, test := range []struct {
+		name, data      string
+		caller, invalid bool
+	}{
+		{"no caller", "env: &shared {EXAMPLE: safe}\njobs: {first: {env: *shared}}\n", false, false},
+		{"later caller", "name: harmless\n---\nenv: {KSAIL_VERSION: '7.195.0'}\n", true, false},
+		{"text is not a key", "name: KSAIL_VERSION\n", false, false},
+		{"malformed unrelated suffix", "name: harmless\n---\n[", false, true},
+		{"malformed caller suffix", "env: {KSAIL_VERSION: '7.195.0'}\n---\n[", false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			caller, err := hasWorkflowPin([]byte(test.data))
+			if (err != nil) != test.invalid || caller != test.caller {
+				t.Fatalf("caller = %t, error = %v", caller, err)
+			}
+		})
+	}
+}
+
+func TestPinCallerStillRejectsAliases(t *testing.T) {
+	data := []byte("env: &shared {KSAIL_VERSION: '7.195.0'}\njobs: {first: {env: *shared}}\n")
+	caller, err := hasWorkflowPin(data)
+	if err != nil || !caller {
+		t.Fatalf("pin caller not discovered: %v", err)
+	}
+	if _, err := verifyPins(data); err == nil || !strings.Contains(err.Error(), "aliases are unsupported") {
+		t.Fatalf("real pin caller ambiguity passed: %v", err)
+	}
+}
+
+func TestCurrentWorkflowPinInventoryIsComplete(t *testing.T) {
+	root := filepath.Join("..", "..")
+	seen, err := discoverWorkflowPins(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This non-Talos, disposable Cilium proof has a separately audited CLI /
+	// image pairing. It is accounted for, not adopted by the deployment fold.
+	const ciliumProof = ".github/workflows/prove-cilium-default-deny.yaml"
+	data, err := os.ReadFile(filepath.Join(root, ciliumProof))
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, err := verifyPins(data)
+	if err != nil || version != "7.193.8" || !seen[ciliumProof] {
+		t.Fatalf("independent Cilium proof profile changed: %s, %v", version, err)
+	}
+	delete(seen, ciliumProof)
+	if len(seen) != len(workflowPinFixtures) {
+		t.Fatalf("actual caller inventory differs from exercised fixtures: %v", seen)
+	}
+	for _, path := range workflowPinFixtures {
+		if !seen[path] {
+			t.Fatalf("unexercised or missing operational workflow %s", path)
+		}
+	}
+}
+
+func TestOperationalWorkflowDriftStopsTheActualFoldBeforeWrites(t *testing.T) {
+	for _, path := range workflowPinFixtures {
+		t.Run(path, func(t *testing.T) {
+			t.Chdir(t.TempDir())
+			writeWorkflowPins(t, "7.195.0")
+			if err := os.WriteFile(path, pin("7.194.10"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for path, data := range map[string]string{"cluster.yaml": extensions, "cp.yaml": argsConfig, "worker.yaml": plainConfig} {
+				if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := run([]string{"cluster.yaml", "cp.yaml", "worker.yaml"}); err == nil || !strings.Contains(err.Error(), "divergent KSail deployment pins") {
+				t.Fatalf("operational workflow drift reached fold: %v", err)
+			}
+			for path, want := range map[string]string{"cp.yaml": argsConfig, "worker.yaml": plainConfig} {
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != want {
+					t.Fatalf("divergent caller changed role %s", path)
+				}
+			}
+		})
+	}
+}
 
 func assertFolded(t *testing.T, data []byte) {
 	t.Helper()
@@ -217,7 +421,8 @@ func TestEveryAuditedSetIsCompleteAndDistinct(t *testing.T) {
 }
 
 func TestReleasedImageRecoveryFoldInputsAreAccepted(t *testing.T) {
-	// Read independently from the v7.202.3 tag. Rejecting this audited source
+	// Read independently from the v7.202.3 tag (f9172ab810fdcb94b47351d04d70708f6878e10a).
+	// Rejecting this audited source
 	// prevents adoption of the released same-version boot-image recovery.
 	inputs := map[string]string{
 		"pkg/fsutil/configmanager":   "ac334b6ba5b7e474bfa88e13486a1ab0d1d6feea",
@@ -230,6 +435,12 @@ func TestReleasedImageRecoveryFoldInputsAreAccepted(t *testing.T) {
 	_, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return inputs, nil })
 	if err != nil {
 		t.Fatalf("released image recovery source was rejected: %v", err)
+	}
+	// A near match is not the reviewed source. Do not let this audit accept the
+	// newer config manager with a dependency blob from a different release.
+	inputs["go.mod"] = "e7265f2eee822033c9047eb50e7720872756aa03"
+	if _, err := verifyFoldInputs("7.202.3", func(string) (map[string]string, error) { return inputs, nil }); err == nil {
+		t.Fatal("unaudited mix of releases accepted")
 	}
 }
 
@@ -247,6 +458,26 @@ func TestReleasedOwnershipRecoveryFoldInputsAreAccepted(t *testing.T) {
 	_, err := verifyFoldInputs("7.202.28", func(string) (map[string]string, error) { return inputs, nil })
 	if err != nil {
 		t.Fatalf("released ownership recovery source was rejected: %v", err)
+	}
+}
+
+func TestReleasedFactoryRetryFoldInputsAreAccepted(t *testing.T) {
+	// Independently read from v7.202.56 (5e387655892643dcf322a03d2ceb6d9ca6030979).
+	// This source must pass before production can adopt its bounded Factory retry.
+	inputs := map[string]string{
+		"pkg/fsutil/configmanager":   "88779a5a93cc49f116d4f5eda8389becc14d1cd8",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "83982b42d9ec0b34d159783969c39ff8832e6714",
+		"charts":                     "4351b93273821f333e9f0641e323ba99387844bb",
+		"go.mod":                     "b1d9e18582954ce6a9851a64bdd1c7344d36067a",
+		"go.sum":                     "b11643f42c4e3950f2513b6370c4ede1a99f3a0e",
+	}
+	if _, err := verifyFoldInputs("7.202.56", func(string) (map[string]string, error) { return inputs, nil }); err != nil {
+		t.Fatalf("released Factory retry source was rejected: %v", err)
+	}
+	inputs["go.mod"] = "aa4556d3ce50ca3a2f7397a5f0125d302bb9431f"
+	if _, err := verifyFoldInputs("7.202.56", func(string) (map[string]string, error) { return inputs, nil }); err == nil {
+		t.Fatal("new release mixed with an older dependency input was accepted")
 	}
 }
 
@@ -476,14 +707,7 @@ func checkPinsAt(t *testing.T, version, repository string) error {
 	ksailRepository = repository
 	t.Cleanup(func() { ksailRepository = original })
 	t.Chdir(t.TempDir())
-	for _, path := range []string{".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml"} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, pin(version), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeWorkflowPins(t, version)
 	return run([]string{"--check-pins"})
 }
 
@@ -560,14 +784,7 @@ func TestFetchIsRetriedBeforeItFails(t *testing.T) {
 func TestCommandDoesNotWriteEitherRoleAfterInvalidInput(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
-	for _, path := range []string{".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml"} {
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("env:\n  KSAIL_VERSION: '7.193.6'\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	writeWorkflowPins(t, "7.193.6")
 	for path, data := range map[string]string{"cluster.yaml": extensions, "cp.yaml": argsConfig, "worker.yaml": "version: v1alpha1\nmachine: ["} {
 		if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 			t.Fatal(err)
