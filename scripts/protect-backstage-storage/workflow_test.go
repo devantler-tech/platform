@@ -139,7 +139,7 @@ func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
 		t.Fatal("invalid workflow")
 	}
 	steps := w.Jobs["protect"].Steps
-	if w.Jobs["protect"].Env["GH_TOKEN"] != "${{ github.token }}" {
+	if w.Jobs["protect"].Env["GH_TOKEN"] != "${{ github.token }}" || w.Jobs["protect"].Env["DOCKER_CONFIG"] != "" {
 		t.Fatal("GitHub API reads must keep the job's read-only token")
 	}
 	if w.Jobs["protect"].Permissions["packages"] != "read" {
@@ -156,12 +156,18 @@ func TestRegistryProofUsesReadOnlyJobCredentialOnlyAfterControls(t *testing.T) {
 			}
 		}
 		if _, ok := step.Env["GHCR_READER_TOKEN"]; ok {
+			if step.Env["DOCKER_CONFIG"] != "${{ runner.temp }}/portal-storage-registry" {
+				t.Fatal("login must use the isolated step-scoped credential store")
+			}
 			if !controlled || step.Env["GHCR_READER_TOKEN"] != "${{ github.token }}" || !strings.Contains(step.Run, "docker login ghcr.io") || !strings.Contains(step.Run, "--password-stdin") {
 				t.Fatal("unbound registry credential or credentials before controls")
 			}
 			authenticated = true
 		}
 		if strings.Contains(step.Run, "go run ./scripts/protect-backstage-storage --execute") {
+			if step.Env["DOCKER_CONFIG"] != "${{ runner.temp }}/portal-storage-registry" {
+				t.Fatal("OCI verification must read the same isolated credential store")
+			}
 			if !authenticated || step.Env["PORTAL_STORAGE_GHCR_READER_TOKEN"] != "" || step.Env["GH_TOKEN"] != "" {
 				t.Fatal("registry-only attestation proof has no established reader authentication")
 			}
