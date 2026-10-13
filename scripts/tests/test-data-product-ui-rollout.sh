@@ -54,8 +54,12 @@ chmod +x "${scratch}/bin/jq"
 cat >"${scratch}/bin/yq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $# == 3 && "$1" == -o=json && "$2" == '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]' && "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
-cat "$FIXTURE/expected-flags.json"
+[[ $# == 3 && "$1" == -o=json && "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
+case "$2" in
+  '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]') cat "$FIXTURE/expected-flags.json" ;;
+  '.spec.values.demoProduct.ksailReleases.enabled // false') cat "$FIXTURE/expected-ksail.json" ;;
+  *) exit 91 ;;
+esac
 SH
 chmod +x "${scratch}/bin/yq"
 
@@ -124,6 +128,7 @@ jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps 
   --arg repo 'ghcr.io/devantler-tech/data-product-controller' -f "${scratch}/fixtures.jq" >"${scratch}/all.json"
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
 printf '[false,false,false]\n' >"${scratch}/healthy/expected-flags.json"
+printf 'false\n' >"${scratch}/healthy/expected-ksail.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
@@ -141,6 +146,7 @@ case "$namespace:$resource:$name" in
   data-product-controller:ocirepositories.source.toolkit.fluxcd.io:data-product-controller) key=chart ;;
   data-product-controller:helmreleases.helm.toolkit.fluxcd.io:data-product-controller) key=helm ;;
   data-product-controller:dataproducts.data.devantler.tech:harbour-observations) key=product ;;
+  data-product-controller:dataproducts.data.devantler.tech:ksail-releases) key=release-product ;;
   data-product-controller:services:data-product-controller-harbour) key=service-harbour ;;
   data-product-controller:services:data-product-controller-ui-kit) key=service-ui-kit ;;
   data-product-controller:endpointslices.discovery.k8s.io:-o) key=endpoints ;;
@@ -163,7 +169,11 @@ esac
 if [[ "$key" == pods || "$key" == replicasets || "$key" == endpoints ]]; then
   [[ "$*" == "$resource -o json" ]] || exit 94
 else
-  [[ "$*" == "$resource $name -o json" ]] || exit 95
+  if [[ "$key" == release-product && "$(cat "$FIXTURE/expected-ksail.json")" == false ]]; then
+    [[ "$*" == "$resource $name --ignore-not-found -o json" ]] || exit 95
+  else
+    [[ "$*" == "$resource $name -o json" ]] || exit 95
+  fi
 fi
 printf '%s\n' "$key" >>"$FIXTURE/reads"
 if [[ "$key" == apps && "${MODE:-}" == hang ]]; then
@@ -185,6 +195,14 @@ fi
 if [[ "$key" == observer-role && "${MODE:-}" == partial-observer ]]; then
   cat "$FIXTURE/observer-role.json"; exit 1
 fi
+if [[ "$key" == release-product ]]; then
+  case "${MODE:-}" in
+    release-forbidden) printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    release-partial-forbidden) cat "$FIXTURE/product.json"; printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    release-null) printf 'null\n'; exit 0 ;;
+    release-malformed) printf '{\n'; exit 0 ;;
+  esac
+fi
 count=0
 [[ ! -f "$FIXTURE/$key.count" ]] || count=$(cat "$FIXTURE/$key.count")
 count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
@@ -193,12 +211,17 @@ count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
 # second change returns it from the fourth read on, so the second pair differs
 # from the first for another reason and only the third pair agrees.
 if [[ "${MODE:-}" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
-  cat "$FIXTURE/after2/$key.json"
+  response="$FIXTURE/after2/$key.json"
 elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
-  cat "$FIXTURE/after/$key.json"
+  response="$FIXTURE/after/$key.json"
 else
-  cat "$FIXTURE/$key.json"
+  response="$FIXTURE/$key.json"
 fi
+if [[ "$key" == release-product ]] && { [[ ! -f "$response" ]] || jq -e '.==null' "$response" >/dev/null; }; then
+  [[ "$*" == "$resource $name --ignore-not-found -o json" ]] || { printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1; }
+  exit 0
+fi
+cat "$response"
 SH
 cat >"${scratch}/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -240,6 +263,12 @@ case "$url" in
   https://harbour-data.example.com/api/observations) printf '{"items":[{"station":"Nordhavn","temperatureCelsius":12.4,"salinityPsu":7.8,"observedAt":"2026-01-01T00:00:00Z"},{"station":"Sydhavnen","temperatureCelsius":13.1,"salinityPsu":7.2,"observedAt":"2026-01-01T00:00:00Z"}]}\n' >"$body" ;;
   https://harbour-data.example.com/openapi.json) printf '{"openapi":"3.1.0","info":{"title":"Harbour observations"},"paths":{"/api/observations":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
   https://harbour-data.example.com/ui-contract-config) printf '{"hostOrigins":["https://data-products.example.com","https://product-ui.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
+  https://harbour-data.example.com/ksail-releases/ui)
+    printf '<meta name="product-kind" content="ksail-releases" />\n' >"$body"
+    csp="default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://harbour-data.example.com/ksail-releases/ui-contract-config https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'"
+    printf 'HTTP/2 200\r\nContent-Security-Policy: %s\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n\r\n' "$csp" >"$headers" ;;
+  https://harbour-data.example.com/ksail-releases/openapi.json) printf '{"openapi":"3.1.0","info":{"title":"KSail release history"},"servers":[{"url":"https://api.github.com"}],"paths":{"/repos/devantler-tech/ksail/releases":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
+  https://harbour-data.example.com/ksail-releases/ui-contract-config) printf '{"hostOrigins":["https://data-products.example.com","https://product-ui.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
   https://product-ui.example.com/healthz) printf 'ok\n' >"$body" ;;
   https://product-ui.example.com/) printf '<body data-appearance-enabled="true"><form id="manifest-form"></form><script src="ui-contract.js"></script><script src="kit.js"></script><link href="kit.css">\n' >"$body" ;;
   https://product-ui.example.com/ui-contract.js) printf 'window.DataProductUI = {};\n' >"$body" ;;
@@ -257,6 +286,10 @@ case "${MODE:-}" in
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
   request-timeout) printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
   transfer-timeout) sleep "$transfer_seconds"; printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
+  wrong-release-ui) [[ "$url" != */ksail-releases/ui ]] || printf '<title>Harbour</title>\n' >"$body" ;;
+  weak-release-csp) [[ "$url" != */ksail-releases/ui ]] || printf "HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n" >"$headers" ;;
+  wrong-release-api) [[ "$url" != */ksail-releases/openapi.json ]] || printf '{"openapi":"3.1.0","info":{"title":"KSail release history"},"servers":[{"url":"https://other.example.com"}],"paths":{"/repos/devantler-tech/ksail/releases":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
+  wrong-release-origin) [[ "$url" != */ksail-releases/ui-contract-config ]] || printf '{"hostOrigins":["https://other.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
   http-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
   missing-csp) printf 'HTTP/2 200\r\n\r\n' >"$headers" ;;
@@ -285,10 +318,12 @@ run_case() {
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
-    local expected_state expected_pods
+    local expected_state expected_pods public_count ksail
     expected_state=$(jq -r 'if .==[true,true,false] then "active" else "dormant" end' "$fixture/expected-flags.json")
     if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
-    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == 9 and .readinessState == $state' "$fixture/stdout" >/dev/null; then
+    ksail=$(cat "$fixture/expected-ksail.json")
+    if [[ "$ksail" == true ]]; then public_count=12; else public_count=9; fi
+    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" --argjson public_count "$public_count" --argjson ksail "$ksail" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == $public_count and .ksailReleasesEnabled == $ksail and .readinessState == $state' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
       case "$reason" in
@@ -329,6 +364,22 @@ run_case() {
       wrong-asset)
         public_role=kit_library
         public_reason=asset_invalid
+        ;;
+      wrong-release-ui)
+        public_role=release_index
+        public_reason=asset_invalid
+        ;;
+      weak-release-csp)
+        public_role=release_index
+        public_reason=security_headers
+        ;;
+      wrong-release-api)
+        public_role=release_openapi
+        public_reason=body_invalid
+        ;;
+      wrong-release-origin)
+        public_role=release_config
+        public_reason=body_invalid
         ;;
     esac
     if [[ -n "$public_role" ]]; then
@@ -378,6 +429,26 @@ mutate_case() {
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 
+mutate_case unexpected-live-ksail-activation helm '.spec.values.demoProduct.ksailReleases.enabled=true'
+
+mkdir "${scratch}/withdrawn-release-still-registered"
+cp "${scratch}/healthy/"*.json "${scratch}/withdrawn-release-still-registered/"
+jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawn-release-still-registered/release-product.json"
+run_case withdrawn-release-still-registered fail '' 3
+[[ -s "${scratch}/withdrawn-release-still-registered/rejections" ]] || fail 'withdrawn product did not reach snapshot rejection'
+for mode in release-forbidden release-partial-forbidden release-null release-malformed; do
+  run_case "$mode" fail "$mode" 3
+done
+mkdir -p "${scratch}/withdrawal-settles/after" "${scratch}/withdrawal-settles/after2"
+cp "${scratch}/healthy/"*.json "${scratch}/withdrawal-settles/"
+jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawal-settles/after/release-product.json"
+printf 'null\n' >"${scratch}/withdrawal-settles/after2/release-product.json"
+expected_urls=18
+run_case withdrawal-settles pass
+expected_urls=9
+jq -e '.retaken==1 and (.settled|index("release-product")!=null)' "${scratch}/withdrawal-settles/stdout" >/dev/null ||
+  fail 'withdrawal changed during public checks without a retaken snapshot'
+
 mkdir "${scratch}/declared-activation-but-live-dormant"
 cp "${scratch}/healthy/"*.json "${scratch}/declared-activation-but-live-dormant/"
 printf '[true,true,false]\n' >"${scratch}/declared-activation-but-live-dormant/expected-flags.json"
@@ -418,7 +489,52 @@ jq --arg child "$child" '
 ' "${scratch}/all.json" >"${scratch}/active.json"
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json" >"${scratch}/active/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/active.json")
 printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
+printf 'false\n' >"${scratch}/active/expected-ksail.json"
 run_case active pass
+# A declared public product must exist at its exact current generation and
+# actual workload setting; source data is never fetched by this cluster receipt.
+mkdir "${scratch}/ksail"
+cp "${scratch}/active/"*.json "${scratch}/ksail/"
+printf 'true\n' >"${scratch}/ksail/expected-ksail.json"
+jq '.spec.values.demoProduct.ksailReleases.enabled=true' "${scratch}/active/helm.json" >"${scratch}/ksail/helm.json"
+jq '.spec.template.spec.containers[0].env=[{name:"KSAIL_RELEASES_ENABLED",value:"true"}]' "${scratch}/active/deployment-harbour.json" >"${scratch}/ksail/deployment-harbour.json"
+jq '.items |= map(if .metadata.labels["app.kubernetes.io/component"]=="harbour-product" then .spec.containers[0].env=[{name:"KSAIL_RELEASES_ENABLED",value:"true"}] else . end)' "${scratch}/active/pods.json" >"${scratch}/ksail/pods.json"
+jq '.metadata.name="ksail-releases" | .metadata.uid="release-product-uid" |
+  .spec={id:"https://github.com/devantler-tech/ksail/releases",name:"KSail releases",version:"v1.0.0",owner:{name:"devantler-tech",url:"https://github.com/devantler-tech/ksail"},
+    outputs:[{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",contractUrl:"https://harbour-data.example.com/ksail-releases/openapi.json",mediaType:"application/json"}],
+    ui:{url:"https://harbour-data.example.com/ksail-releases/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}}
+' "${scratch}/active/product.json" >"${scratch}/ksail/release-product.json"
+expected_urls=12
+run_case ksail pass
+# ksail_mutation requires a real snapshot-predicate rejection for each control.
+ksail_mutation() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/ksail/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/ksail/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' 3
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+}
+ksail_mutation ksail-disabled-live helm '.spec.values.demoProduct.ksailReleases.enabled=false'
+ksail_mutation ksail-stale-product release-product '.status.observedGeneration=2'
+ksail_mutation ksail-failed-product release-product '.status.conditions[0].status="False"'
+ksail_mutation ksail-wrong-source release-product '.spec.outputs[0].url="https://other.example.com/releases"'
+ksail_mutation ksail-wrong-contract release-product '.spec.outputs[0].contractUrl="https://other.example.com/openapi.json"'
+ksail_mutation ksail-unsupported-ui release-product '.spec.ui.contract.apiVersion="data-product-ui/v1"'
+ksail_mutation ksail-disabled-workload deployment-harbour '.spec.template.spec.containers[0].env[0].value="false"'
+ksail_mutation ksail-disabled-pod pods '.items[2].spec.containers[0].env[0].value="false"'
+mkdir "${scratch}/ksail-missing-product"
+cp "${scratch}/ksail/"*.json "${scratch}/ksail-missing-product/"
+printf 'null\n' >"${scratch}/ksail-missing-product/release-product.json"
+run_case ksail-missing-product fail '' 3
+jq -e '.failure=="read_incomplete"' "${scratch}/ksail-missing-product/stdout" >/dev/null || fail 'enabled missing product was accepted as absence'
+for mode in wrong-release-ui weak-release-csp wrong-release-api wrong-release-origin; do
+  mkdir "${scratch}/$mode"
+  cp "${scratch}/ksail/"*.json "${scratch}/$mode/"
+  run_case "$mode" fail "$mode" 15
+  jq -e '.failure=="public_contract_incomplete"' "${scratch}/$mode/stdout" >/dev/null || fail "$mode: public source profile was not refused"
+done
+expected_urls=9
 mkdir -p "${scratch}/active-settled-label/after"
 cp "${scratch}/active/"*.json "${scratch}/active-settled-label/"
 jq '.metadata.labels.settled="yes"' "${scratch}/active/apps.json" >"${scratch}/active-settled-label/after/apps.json"
