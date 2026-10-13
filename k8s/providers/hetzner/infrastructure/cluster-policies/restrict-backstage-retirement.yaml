@@ -242,10 +242,12 @@ spec:
             default: ''
       preconditions:
         all:
-          - key: "{{ retirement.present }}"
+          # Establish the lookup-independent scope first. Actual consumers
+          # still require the retirement evidence; an API error remains closed.
+          - key: "{{ consumer }}"
             operator: Equals
             value: true
-          - key: "{{ consumer }}"
+          - key: "{{ retirement.present }}"
             operator: Equals
             value: true
       validate:

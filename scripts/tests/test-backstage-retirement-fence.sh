@@ -135,6 +135,9 @@ consumer='{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:{n
 run_case new-chart-consumer fence-chart-consumers CREATE "$consumer" '{}' fail
 run_case foreign-namespace-consumer fence-chart-consumers CREATE "$consumer | .metadata.namespace=\"other\"" '{}' fail
 run_case neighboring-chart-consumer fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' skip
+run_case real-consumer-failed-lookup fence-chart-consumers CREATE "$consumer" '{}' error 500
+run_case real-consumer-denied-lookup fence-chart-consumers CREATE "$consumer" '{}' error 403
+run_case neighboring-chart-failed-lookup fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' error 500
 run_case unbound-neighboring-chart fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' skip "$(jq -c '.version=2' <<<"$record")"
 run_case unbound-neighboring-namespace fence-chart-consumers CREATE "$consumer | .metadata.namespace=\"other\" | .spec.chartRef.name=\"other\"" '{}' skip "$(jq -c '.version=2' <<<"$record")"
 run_case unbound-real-chart-consumer fence-chart-consumers CREATE "$consumer" '{}' fail "$(jq -c '.version=2' <<<"$record")"
