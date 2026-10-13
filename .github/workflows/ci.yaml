@@ -38,6 +38,9 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test ./...
 
+      - name: 🧪 Validate native retirement result classification
+        run: go -C scripts/retire-backstage-stateless/poller-native test -race -mod=readonly -count=1 ./...
+
       - name: 💾 Validate storage audit regressions
         run: |
           go test ./scripts/audit-storage-retention
@@ -814,6 +817,7 @@ jobs:
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-backstage-retirement.sh'
+              - 'scripts/tests/test-backstage-retirement-fence.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'

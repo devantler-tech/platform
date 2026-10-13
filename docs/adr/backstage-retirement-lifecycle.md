@@ -51,3 +51,27 @@ profile, joined to the unavailable chart and unchanged deployed storage/history.
 Reject stale, duplicate, missing or active-action conditions. Recheck this profile
 after the uninstall-options patch; a changed source or release still stops owner
 deletion. No chart restoration or synthetic credential is needed for retirement.
+
+## Native-driver security exception
+
+The test-only native driver deliberately locks the published helm-controller
+1.5.5, Helm 4.2.0 and SSA dependency graph. Updating its indirect dependencies
+would test a different implementation, not the one production runs. This is not
+a claim that vulnerable symbols are unreachable: `govulncheck` identifies
+`GO-2026-5026` through `action.Uninstall` to `idna.ToASCII` in `x/net` 0.53.0.
+The advisory is fixed in `x/net` 0.55.0, outside this published graph.
+
+Accept this narrowly scoped exception only for the offline proof: the driver
+requires a literal loopback IP and constructs anonymous API clients. The controlled
+proof supplies synthetic resources and a temporary anonymous configuration, with
+no production credential or remote API. An ASCII/Punycode hostname cannot pass
+the driver's IP guard. The complete scan also
+reports other reachable HTTP/HTTP2/standard-library advisories; this is not a
+vulnerability-free dependency claim or an exception for production binaries.
+Do not suppress the scan or upgrade a lock independently. Re-audit and remove
+the exception when the producer advances to a fixed published graph, or stop
+using the driver if its loopback-only, anonymous-fixture boundary changes.
+
+Native waiter result markers distinguish success from a deadline-only failure.
+A storage/API error, including one joined with a deadline, is not a successful
+negative timeout control.

@@ -101,14 +101,14 @@ func execute() error {
 	if pollerCalls.Load() != 1 {
 		return fmt.Errorf("production-equivalent native poller was not called")
 	}
-	fmt.Println("NATIVE_FLUX_POLLER=WAITED")
-	phase = "WAITED"
+	phase = resultMarker(err)
+	fmt.Println("NATIVE_FLUX_POLLER=" + phase)
 	return err
 }
 
 func main() {
 	if execute() != nil {
-		if phase != "WAITED" {
+		if phase != "WAITED_TIMEOUT" && phase != "HOLD_UNINSTALL" {
 			fmt.Println("NATIVE_FLUX_POLLER=HOLD_" + phase)
 		}
 		os.Exit(1)

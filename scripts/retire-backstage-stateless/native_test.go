@@ -39,7 +39,7 @@ func TestNativeHelmHistoryHooksAndAsynchronousUninstall(t *testing.T) {
 	}
 	// Bind normal Go test-cache reuse to the nested driver source/locks too.
 	// Required hosted runs additionally use -count=1.
-	for _, path := range []string{"poller-native/main.go", "poller-native/go.mod", "poller-native/go.sum"} {
+	for _, path := range []string{"poller-native/main.go", "poller-native/result.go", "poller-native/go.mod", "poller-native/go.sum"} {
 		if _, err := os.ReadFile(path); err != nil {
 			t.Fatal("native driver source/checksum lock unavailable")
 		}
@@ -99,7 +99,11 @@ func TestNativeHelmHistoryHooksAndAsynchronousUninstall(t *testing.T) {
 			var waiterOutput bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &waiterOutput, io.Discard
 			err = cmd.Run()
-			if strings.TrimSpace(waiterOutput.String()) != "NATIVE_FLUX_POLLER=WAITED" {
+			marker := "NATIVE_FLUX_POLLER=WAITED"
+			if neverAbsent {
+				marker = "NATIVE_FLUX_POLLER=WAITED_TIMEOUT"
+			}
+			if strings.TrimSpace(waiterOutput.String()) != marker {
 				api.mu.Lock()
 				defer api.mu.Unlock()
 				t.Fatalf("native control did not execute the production-equivalent Flux poller: result=%q requests=%v", waiterOutput.String(), api.requests)
