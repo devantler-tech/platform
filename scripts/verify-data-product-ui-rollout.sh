@@ -16,6 +16,8 @@ readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
 expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/apps/data-product-controller/helm-release.yaml"
 readonly expected_helm_file
+expected_ui_file="$(dirname "$expected_helm_file")/deployment-ui-kit.yaml"
+readonly expected_ui_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
   # Once a snapshot pair has differed, every later refusal still names what moved.
@@ -109,6 +111,23 @@ read_expected_releases() {
 }
 bounded read_expected_releases || fail invalid_expected_state 2
 expected_releases=$(<"$scratch/release-state")
+# read_expected_ui binds literal host opt-ins to this checkout, never to live flags.
+read_expected_ui() {
+  yq -o=json '.spec.template.spec.containers' "$expected_ui_file" 2>/dev/null |
+    jq -ers '
+      if length!=1 or (.[0]|type)!="array" then error("invalid UI declaration") else .[0] end |
+      [.[] | select(.name=="ui-kit")] |
+      if length!=1 or (.[0].env|type)!="array" or (.[0].envFrom!=null and .[0].envFrom!=[]) then error("invalid UI declaration") else .[0].env end |
+      [.[] | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="PUBLISHER_PREFLIGHT_ENABLED")] as $flags |
+      if ($flags|all(.[];.valueFrom==null and (.value|type)=="string")) and
+        ([$flags[]|select(.name=="UI_CONTRACT_ENABLED")]|map(.value))==["true"] and
+        ([$flags[]|select(.name=="UI_APPEARANCE_ENABLED")]|map(.value))==["true"] then
+        [$flags[]|select(.name=="PUBLISHER_PREFLIGHT_ENABLED")|.value] |
+        if .==[] or .==["false"] then false elif .==["true"] then true else error("invalid publisher declaration") end
+      else error("invalid UI declaration") end | tostring' >"$scratch/publisher-state" 2>/dev/null
+}
+bounded read_expected_ui || fail invalid_expected_state 2
+expected_publisher=$(<"$scratch/publisher-state")
 # read_verify_policy validates and copies the single public artifact identity policy.
 read_verify_policy() {
   [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
@@ -129,7 +148,9 @@ def conditions: [.[]? | {type,status,observedGeneration,reason}];
 def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,protocol:(.protocol//"TCP")}],
   command,args,envCount:(.env//[]|length),envFromCount:(.envFrom//[]|length),volumeMountCount:(.volumeMounts//[]|length),
   env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") |
-    {name,value,indirect:(.valueFrom!=null)}],readinessProbe,livenessProbe,securityContext}];
+    {name,value,indirect:(.valueFrom!=null)}],
+  uiFlags:[.env[]? | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="PUBLISHER_PREFLIGHT_ENABLED") |
+    {name,value,indirect:(.valueFrom!=null)}],uiEnvironmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,containers:(.spec.template.spec.containers|containers),
     serviceAccountName:.spec.template.spec.serviceAccountName,automountServiceAccountToken:.spec.template.spec.automountServiceAccountToken,
@@ -216,6 +237,16 @@ def owned($kind;$name;$uid): [.metadata.owners[]? | select(.controller==true)] a
 def image($tag): .==($repository+"@"+$image_digest) or .==($repository+":"+$tag+"@"+$image_digest);
 def named_image($container;$tag): [.spec.containers[]? | select(.name==$container)] as $containers |
   ($containers|length)==1 and ($containers[0].image|image($tag));
+def ui_flags_ready($container):
+  if $container!="ui-kit" then true else
+    [.spec.containers[]? | select(.name==$container)] as $containers |
+    ($containers|length)==1 and $containers[0].uiEnvironmentLiteral==true and ($containers[0].uiFlags as $flags |
+      ([$flags[]|select(.name=="PUBLISHER_PREFLIGHT_ENABLED")]|map(.value)) as $publisher |
+      ($flags|type=="array" and all(.[];.indirect==false and (.value|type)=="string")) and
+      ([$flags[]|select(.name=="UI_CONTRACT_ENABLED")]|map(.value))==["true"] and
+      ([$flags[]|select(.name=="UI_APPEARANCE_ENABLED")]|map(.value))==["true"] and
+      (if $publisher_enabled then $publisher==["true"] else $publisher==[] or $publisher==["false"] end))
+  end;
 def runtime: . as $id | any($runtime_digests[]; . as $digest |
   $id==$digest or $id==("containerd://"+$digest) or $id==("docker://"+$digest) or
   $id==("cri-o://"+$digest) or $id==($repository+"@"+$digest) or $id==("docker-pullable://"+$repository+"@"+$digest));
@@ -227,7 +258,7 @@ def inventory($kind;$version): (.items|type=="array" and length<=4096) and
 def pod_ready($rs;$container;$tag):
   owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid) and .metadata.deletionTimestamp==null and
   .status.phase=="Running" and ([.status.conditions[]? | select(.type=="Ready")]|length)==1 and
-  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and
+  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and ui_flags_ready($container) and
   ([.status.containers[]? | select(.name==$container)] as $containers | ($containers|length)==1 and
     $containers[0].ready==true and $containers[0].running==true and $containers[0].waiting==false and
     $containers[0].terminated==false and ($containers[0].imageID|runtime));
@@ -236,7 +267,7 @@ def workload($deployment;$container;$tag;$sets;$pods):
   ($deployment.metadata.revision|type=="string" and test("^[1-9][0-9]*$")) and
   $deployment.spec.replicas==2 and $deployment.status.observedGeneration==$deployment.metadata.generation and
   all([$deployment.status.replicas,$deployment.status.updatedReplicas,$deployment.status.readyReplicas,$deployment.status.availableReplicas][];.==2) and
-  ($deployment|named_image($container;$tag)) and
+  ($deployment|named_image($container;$tag) and ui_flags_ready($container)) and
   ([$sets[] | select(owned("Deployment";$deployment.metadata.name;$deployment.metadata.uid))] as $owned |
     [$owned[] | select(.metadata.revision==$deployment.metadata.revision)] as $current |
     ($current|length)==1 and
@@ -504,7 +535,7 @@ bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
-  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" \
+  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
@@ -629,8 +660,8 @@ if [[ "$expected_releases" == true ]]; then public_count=12; else public_count=9
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"retaken":%d,"settled":%s}\n' \
-    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$((attempt - 1))" "$(<"$scratch/settled")"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s}\n' \
+    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")"
 else
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher"
 fi
