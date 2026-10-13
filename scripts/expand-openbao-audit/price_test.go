@@ -14,6 +14,9 @@ func TestPriceGuardEnforcesConservativeGrossEuroBudget(t *testing.T) {
 		allowed         bool
 	}{
 		{"EUR", "0.05236", true}, {"EUR", "0.0523600000", true}, {"EUR", "0.075", true}, {"EUR", "0.076", false},
+		{"EUR", "0.0530740000000000", true}, {"EUR", "0.05000000000000000000000000000000", true},
+		{"EUR", "0.07575757575757575", true}, {"EUR", "0.07575757575757576", false},
+		{"EUR", "0.050000000000000000000000000000000", false}, {"EUR", "5e-2", false},
 		{"USD", "0.044", false}, {"EUR", "0", false}, {"EUR", "-0.044", false}, {"EUR", "NaN", false}, {"EUR", "", false},
 	} {
 		b := []byte(`{"pricing":{"currency":"` + tc.currency + `","volume":{"price_per_gb_month":{"gross":"` + tc.price + `"}}}}`)
@@ -36,8 +39,12 @@ func TestPricingDiagnosticsExposeOnlyBoundedCodes(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"0.05"}}}}`, "WITHIN_BUDGET"},
 		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"1"}}}}`, "OVER_BUDGET"},
-		{`{"pricing":{"currency":"USD","volume":{"price_per_gb_month":{"gross":"0.05"}}}}`, "INVALID_RESPONSE"},
-		{`{broken`, "INVALID_RESPONSE"},
+		{`{"pricing":{"currency":"USD","volume":{"price_per_gb_month":{"gross":"0.05"}}}}`, "UNSUPPORTED_CURRENCY"},
+		{`{broken`, "MALFORMED_RESPONSE"},
+		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"0.0530740000000000"}}}}`, "WITHIN_BUDGET"},
+		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"0.07575757575757576"}}}}`, "OVER_BUDGET"},
+		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"PRIVATE"}}}}`, "UNSUPPORTED_DECIMAL"},
+		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"0"}}}}`, "NONPOSITIVE_PRICE"},
 	} {
 		if got := priceCode([]byte(tc.body)); got != tc.want {
 			t.Fatalf("price code=%s want=%s", got, tc.want)
