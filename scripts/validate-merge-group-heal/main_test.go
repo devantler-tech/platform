@@ -105,6 +105,38 @@ func TestValidateWorkflowContractAcceptsFailClosedHealJob(t *testing.T) {
 	}
 }
 
+func TestRecoveryDependenciesAcceptEquivalentYAMLLists(t *testing.T) {
+	for _, dependency := range []struct{ flow, block string }{
+		{"needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]", "needs:\n      - merge-group-queue-membership\n      - validate-publication-contract\n      - deploy-prod\n      - changes"},
+		{"needs: [changes, deploy-prod]", "needs:\n      - deploy-prod\n      - changes"},
+	} {
+		workflow := strings.Replace(validWorkflow, dependency.flow, dependency.block, 1)
+		if workflow == validWorkflow {
+			t.Fatal("control changed nothing")
+		}
+		if err := validateWorkflowContract(workflow); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRecoveryDependenciesRejectChangedSetInBlockForm(t *testing.T) {
+	const original = "needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
+	for _, bad := range []string{
+		"needs:\n      - changes\n      - deploy-prod\n      - merge-group-queue-membership",
+		"needs:\n      - changes\n      - deploy-prod\n      - validate-publication-contract\n      - validate-publication-contract",
+		"needs:\n      - changes\n      - deploy-prod\n      - validate-publication-contract\n      - merge-group-queue-membership\n      - unrelated",
+	} {
+		workflow := strings.Replace(validWorkflow, original, bad, 1)
+		if workflow == validWorkflow {
+			t.Fatal("control changed nothing")
+		}
+		if err := validateWorkflowContract(workflow); err == nil || !strings.Contains(err.Error(), "deploy dependencies") {
+			t.Fatalf("changed dependency set accepted: %v", err)
+		}
+	}
+}
+
 // TestRecoveryBaselineContract rejects missing, aliased and unproduced residue inputs.
 func TestRecoveryBaselineContract(t *testing.T) {
 	t.Parallel()
