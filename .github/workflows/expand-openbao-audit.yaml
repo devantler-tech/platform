@@ -1,0 +1,93 @@
+name: Expand OpenBao Audit Capacity
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type EXPAND OPENBAO AUDIT ONLY TO 20GI; records remain and capacity cannot shrink
+        required: true
+        type: string
+      deployed_revision:
+        description: Exact accepted latest@sha256 revision, verified through production readback
+        required: true
+        type: string
+      accepted_deployment_run:
+        description: Successful CI or CD run that deployed the current main commit to prod
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  expand:
+    name: Preserve audit evidence while adding bounded headroom
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: prod
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      AUDIT_CAPACITY_CONFIRM: ${{ inputs.confirmation }}
+      AUDIT_CAPACITY_REVISION: ${{ inputs.deployed_revision }}
+      AUDIT_CAPACITY_DEPLOYMENT_RUN: ${{ inputs.accepted_deployment_run }}
+    steps:
+      - name: Require confirmed first main dispatch before credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_RUN_ATTEMPT" == 1 ]]
+          [[ "$AUDIT_CAPACITY_CONFIRM" == 'EXPAND OPENBAO AUDIT ONLY TO 20GI' ]]
+          [[ "$AUDIT_CAPACITY_REVISION" =~ ^latest@sha256:[0-9a-f]{64}$ ]]
+          [[ "$AUDIT_CAPACITY_DEPLOYMENT_RUN" =~ ^[1-9][0-9]{0,19}$ ]]
+
+      - name: Checkout the exact reviewed dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require the validated checkout to remain current main
+        run: ./scripts/verify-prod-recovery-source.sh "$GITHUB_SHA"
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Require offline preservation and real patch transport controls
+        env:
+          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
+        run: go test -race -count=1 ./scripts/expand-openbao-audit
+
+      - name: Restore the established protected production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "$KUBE_CONFIG"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "$KUBE_CONFIG" > ~/.kube/config
+
+      - name: Select the stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      # This reads pricing and health, and patches only the three fixed audit
+      # claims. No audit contents, token, storage handle or raw response is logged.
+      - name: Enforce the approved cost cap and preserve all storage identities
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: go run ./scripts/expand-openbao-audit --execute
