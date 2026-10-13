@@ -13,6 +13,10 @@ A failed or timed-out workflow does not cancel a Kubernetes finalizer. After an
 owner DELETE may have reached the API server, HOLD means the native lifecycle may
 continue. Keep the fence and consumed attempt, inspect the existing operation,
 and do not start another retirement. The fence is not automatically cleared.
+Record possible submission at the prepared transport invocation, not before its
+source check or request preparation. Those earlier failures cannot claim an
+ongoing native lifecycle. Recheck current main immediately before journal and
+uninstall-options writes; this bounds staleness but is not a cross-system lock.
 
 ## Rationale and bounds
 
@@ -25,7 +29,8 @@ deletion, not merely detect damage afterward.
 Read and decode every stored Helm revision under a bounded in-memory limit.
 Require old revisions already non-deployed and preserve their exact bytes. Only
 the latest release may change native uninstall information. Its Secret update
-exception is confined to the captured UID and published controller's identity;
+exception is confined to the captured Secret UID and actual controller
+ServiceAccount UID, so a same-name replacement writer is not trusted;
 Kyverno does not decode gzip. Normalized decoded content is independently checked
 during readback, not represented as a payload-validation admission guarantee.
 
@@ -72,6 +77,9 @@ the profile or claim that a submitted native finalizer has been cancelled.
 Use the pinned admission engine with positive and adversarial identity fixtures,
 the published native Flux/Helm adapter, and server-side dry-run controls before
 protected production execution. Policy presence alone is not enforcement proof.
+Probe every retained non-Pod resource through its fixed, versioned API path,
+including the database Cluster and retained CRDs. Unsupported API targets hold;
+core-kind denials do not prove custom-resource webhook coverage.
 The workflow must fail closed on incomplete evidence, ineffective admission,
 changed retained content, or a foreign operation. Offline controls prove their
 bounded behavior, not production controller or garbage-collector completion.

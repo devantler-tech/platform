@@ -142,7 +142,7 @@ func (e engine) fenceRecord(s snapshot, kept map[string]map[string]any) (string,
 		return "", errors.New("latest history identity unavailable")
 	}
 	record := map[string]any{"version": 1, "phase": "fenced", "namespaceUID": field(s.namespace, "metadata", "uid"), "sourceSHA": e.sha, "revision": e.revision, "run": e.runID, "targets": targets, "retiringUIDs": uids, "retained": retained, "latestHistoryUID": latest["uid"]}
-	for _, writer := range []struct{ key, recordKey string }{{"cnpg", "cnpgWriterUID"}, {"rootCA", "rootCAWriterUID"}, {"trust", "trustWriterUID"}} {
+	for _, writer := range []struct{ key, recordKey string }{{"helm", "helmWriterUID"}, {"cnpg", "cnpgWriterUID"}, {"rootCA", "rootCAWriterUID"}, {"trust", "trustWriterUID"}} {
 		if s.writers[writer.key] != nil {
 			record[writer.recordKey] = field(s.writers[writer.key], "metadata", "uid")
 		}
@@ -167,6 +167,9 @@ func (e engine) installFence(ctx context.Context, s snapshot, kept map[string]ma
 		return "", err
 	}
 	patch := append(tests(s.namespace), map[string]any{"op": "add", "path": "/metadata/annotations/platform.devantler.tech~1backstage-retirement", "value": record})
+	if e.sourceCurrent(ctx) != nil {
+		return "", errors.New("current source unverified before fencing")
+	}
 	p, err := e.write(ctx, patch, "patch", "namespace", "backstage", "--type=json", "--patch-file=REQUEST", "--output=json")
 	if err != nil || !metadataValid(p) || field(p, "metadata", "uid") != field(s.namespace, "metadata", "uid") || field(p, "metadata", "annotations", fenceAnnotation) != record {
 		return "", errors.New("durable retirement fence unconfirmed")
@@ -217,7 +220,23 @@ func resourcePath(r map[string]any) (string, error) {
 		return "", errors.New("invalid resource name")
 	}
 	key := text(r["apiVersion"]) + "/" + text(r["kind"])
-	paths := map[string]string{"apps/v1/Deployment": "/apis/apps/v1/namespaces/backstage/deployments/", "v1/Service": "/api/v1/namespaces/backstage/services/", "v1/ConfigMap": "/api/v1/namespaces/backstage/configmaps/", "helm.toolkit.fluxcd.io/v2/HelmRelease": "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/", "source.toolkit.fluxcd.io/v1/HelmChart": "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/", "v1/Secret": "/api/v1/namespaces/backstage/secrets/", "v1/PersistentVolumeClaim": "/api/v1/namespaces/backstage/persistentvolumeclaims/", "v1/PersistentVolume": "/api/v1/persistentvolumes/", "v1/Namespace": "/api/v1/namespaces/"}
+	paths := map[string]string{
+		"apps/v1/Deployment":                    "/apis/apps/v1/namespaces/backstage/deployments/",
+		"v1/Service":                            "/api/v1/namespaces/backstage/services/",
+		"v1/ConfigMap":                          "/api/v1/namespaces/backstage/configmaps/",
+		"v1/ServiceAccount":                     "/api/v1/namespaces/backstage/serviceaccounts/",
+		"helm.toolkit.fluxcd.io/v2/HelmRelease": "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/",
+		"source.toolkit.fluxcd.io/v1/HelmChart": "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/",
+		"v1/Secret":                             "/api/v1/namespaces/backstage/secrets/",
+		"v1/PersistentVolumeClaim":              "/api/v1/namespaces/backstage/persistentvolumeclaims/",
+		"v1/PersistentVolume":                   "/api/v1/persistentvolumes/",
+		"v1/Namespace":                          "/api/v1/namespaces/",
+		"postgresql.cnpg.io/v1/Cluster":         "/apis/postgresql.cnpg.io/v1/namespaces/backstage/clusters/",
+		"postgresql.cnpg.io/v1/Backup":          "/apis/postgresql.cnpg.io/v1/namespaces/backstage/backups/",
+		"postgresql.cnpg.io/v1/ScheduledBackup": "/apis/postgresql.cnpg.io/v1/namespaces/backstage/scheduledbackups/",
+		"external-secrets.io/v1/ExternalSecret": "/apis/external-secrets.io/v1/namespaces/backstage/externalsecrets/",
+		"barmancloud.cnpg.io/v1/ObjectStore":    "/apis/barmancloud.cnpg.io/v1/namespaces/backstage/objectstores/",
+	}
 	path := paths[key]
 	if path == "" || r["kind"] != "PersistentVolume" && r["kind"] != "Namespace" && field(r, "metadata", "namespace") != "backstage" {
 		return "", errors.New("unreviewed API target")
@@ -250,7 +269,7 @@ func (e engine) admissionControls(ctx context.Context, s snapshot) error {
 			return err
 		}
 		for _, r := range rs {
-			if kept[identity(r)] != nil && (r["kind"] == "Secret" || r["kind"] == "PersistentVolumeClaim" || r["kind"] == "PersistentVolume") {
+			if kept[identity(r)] != nil && r["kind"] != "Pod" {
 				controls = append(controls, r)
 			}
 		}

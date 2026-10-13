@@ -94,7 +94,7 @@ func (e engine) collectWriters(ctx context.Context, s *snapshot) error {
 		return err
 	}
 	resources = append(resources, arrayObjects(s.live)...)
-	needed := map[string]bool{}
+	needed := map[string]bool{"helm": true}
 	for _, r := range resources {
 		name := field(r, "metadata", "name")
 		if r["kind"] == "Secret" && (name == "backstage-db-ca" || name == "backstage-db-server" || name == "backstage-db-replication") || r["kind"] == "PersistentVolumeClaim" && field(r, "metadata", "labels", "cnpg.io/cluster") == "backstage-db" || r["kind"] == "ConfigMap" && name == "cnpg-default-monitoring" {
@@ -107,7 +107,7 @@ func (e engine) collectWriters(ctx context.Context, s *snapshot) error {
 			needed["trust"] = true
 		}
 	}
-	for _, writer := range []struct{ key, namespace, account string }{{"cnpg", "cnpg-system", "cloudnative-pg"}, {"rootCA", "kube-system", "root-ca-cert-publisher"}, {"trust", "cert-manager", "trust-manager"}} {
+	for _, writer := range []struct{ key, namespace, account string }{{"helm", "flux-system", "helm-controller"}, {"cnpg", "cnpg-system", "cloudnative-pg"}, {"rootCA", "kube-system", "root-ca-cert-publisher"}, {"trust", "cert-manager", "trust-manager"}} {
 		if !needed[writer.key] {
 			continue
 		}
@@ -117,6 +117,11 @@ func (e engine) collectWriters(ctx context.Context, s *snapshot) error {
 		}
 		s.writers[writer.key] = account
 	}
+	controller, err := e.read(ctx, "--namespace=flux-system", "get", "deployment", "helm-controller", "--output=json")
+	if err != nil || !nativeControllerSupported(controller) {
+		return errors.New("native history controller unverified")
+	}
+	s.writers["helmDeployment"] = controller
 	if needed["cnpg"] {
 		controller, err := e.read(ctx, "--namespace=cnpg-system", "get", "deployment", "cloudnative-pg", "--output=json")
 		if err != nil || !retainedControllerSupported(controller, "cnpg-system", "cloudnative-pg", cnpgControllerImage) {

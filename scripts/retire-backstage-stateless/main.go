@@ -823,13 +823,20 @@ func sameStoredContent(a, b map[string]any) bool {
 	return x != nil && y != nil && reflect.DeepEqual(x, y)
 }
 func (e engine) write(ctx context.Context, value any, args ...string) (response map[string]any, resultErr error) {
+	response, _, resultErr = e.writeObserved(ctx, value, args...)
+	return response, resultErr
+}
+
+// submitted records the transport invocation, not server acceptance. Preparation
+// failures are known not submitted; command failures may have reached the server.
+func (e engine) writeObserved(ctx context.Context, value any, args ...string) (response map[string]any, submitted bool, resultErr error) {
 	data, err := json.Marshal(value)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	f, err := os.CreateTemp("", "portal-retirement-request-*.json")
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer func() {
 		// An already-removed request is clean. Other cleanup failures cannot
@@ -840,12 +847,12 @@ func (e engine) write(ctx context.Context, value any, args ...string) (response 
 	}()
 	if _, err = f.Write(data); err != nil {
 		if closeErr := f.Close(); closeErr != nil {
-			return nil, errors.New("request write and close failed")
+			return nil, false, errors.New("request write and close failed")
 		}
-		return nil, err
+		return nil, false, err
 	}
 	if err = f.Close(); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for i, a := range args {
 		if a == "REQUEST" {
@@ -855,13 +862,15 @@ func (e engine) write(ctx context.Context, value any, args ...string) (response 
 			args[i] = "--patch-file=" + f.Name()
 		}
 	}
+	submitted = true
 	b, err := e.execute(ctx, "kubectl", append([]string{"--context=admin@prod", "--request-timeout=30s"}, args...)...)
 	if err != nil {
 		// The bounded failure stays in memory solely for dry-run denial checks.
 		// Callers never print it or infer deletion permission from an error.
-		return map[string]any{"failure": string(b)}, errors.New("write outcome unknown")
+		return map[string]any{"failure": string(b)}, submitted, errors.New("write outcome unknown")
 	}
-	return decode(b)
+	response, resultErr = decode(b)
+	return response, submitted, resultErr
 }
 func tests(o map[string]any) []map[string]any {
 	return []map[string]any{{"op": "test", "path": "/metadata/uid", "value": field(o, "metadata", "uid")}, {"op": "test", "path": "/metadata/resourceVersion", "value": field(o, "metadata", "resourceVersion")}}
@@ -869,21 +878,21 @@ func tests(o map[string]any) []map[string]any {
 func uninstallOptions() map[string]any {
 	return map[string]any{"keepHistory": true, "disableHooks": true, "disableWait": false, "deletionPropagation": "foreground", "timeout": "5m"}
 }
-func (e engine) remove(ctx context.Context, r map[string]any, path string) error {
+func (e engine) remove(ctx context.Context, r map[string]any, path string) (bool, error) {
 	if err := e.sourceCurrent(ctx); err != nil {
-		return err
+		return false, err
 	}
-	o, err := e.write(ctx, deleteOptions(r), "delete", "--raw", path, "-f", "REQUEST")
+	o, submitted, err := e.writeObserved(ctx, deleteOptions(r), "delete", "--raw", path, "-f", "REQUEST")
 	if err != nil {
-		return err
+		return submitted, err
 	}
 	if o["apiVersion"] == "v1" && o["kind"] == "Status" && o["status"] == "Success" {
-		return nil
+		return submitted, nil
 	}
 	if identityComplete(o) && identity(o) == identity(r) && field(o, "metadata", "uid") == field(r, "metadata", "uid") && field(o, "metadata", "deletionTimestamp") != nil {
-		return nil
+		return submitted, nil
 	}
-	return errors.New("delete response is incomplete")
+	return submitted, errors.New("delete response is incomplete")
 }
 
 func run(args []string, out io.Writer, execute command) int {
@@ -969,6 +978,9 @@ func run(args []string, out io.Writer, execute command) int {
 		return hold("HOLD_ADMISSION")
 	}
 	opts := uninstallOptions()
+	if e.sourceCurrent(ctx) != nil {
+		return hold("HOLD_MUTATION")
+	}
 	patch := append(tests(second.owner), map[string]any{"op": "add", "path": "/spec/uninstall", "value": opts})
 	patched, err := e.write(ctx, patch, "--namespace=backstage", "patch", "helmrelease", "backstage", "--type=json", "--patch-file=REQUEST", "--output=json")
 	if err != nil || field(patched, "metadata", "uid") != field(second.owner, "metadata", "uid") || !reflect.DeepEqual(field(patched, "spec", "uninstall"), opts) || field(patched, "spec", "suspend") == true {
@@ -991,8 +1003,7 @@ func run(args []string, out io.Writer, execute command) int {
 	}
 	// Kubernetes owns the ongoing finalizer once DELETE may have been submitted.
 	// A workflow error, timeout or process stop cannot cancel its retries.
-	nativeSubmitted = true
-	if err = e.remove(ctx, current.owner, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage"); err != nil {
+	if nativeSubmitted, err = e.remove(ctx, current.owner, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage"); err != nil {
 		return hold("HOLD_MUTATION")
 	}
 	var after snapshot
@@ -1022,7 +1033,7 @@ func run(args []string, out io.Writer, execute command) int {
 			return hold("HOLD_POSTCONDITION")
 		}
 		if field(after.chart, "metadata", "deletionTimestamp") == nil {
-			if err = e.remove(ctx, after.chart, "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/backstage-backstage"); err != nil {
+			if _, err = e.remove(ctx, after.chart, "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/backstage-backstage"); err != nil {
 				return hold("HOLD_MUTATION")
 			}
 		}

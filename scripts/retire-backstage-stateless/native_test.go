@@ -258,10 +258,11 @@ func TestNativeKubectlSendsBoundDeleteOptionsAndRejectsReplacement(t *testing.T)
 			r := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": map[string]any{"name": "backstage", "namespace": "backstage", "uid": "native-release-uid", "resourceVersion": "17"}}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			err = e.remove(ctx, r, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage")
+			var submitted bool
+			submitted, err = e.remove(ctx, r, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage")
 			stateMu.Lock()
 			defer stateMu.Unlock()
-			if (err != nil) != replaced || deletes != 1 || !bound {
+			if (err != nil) != replaced || !submitted || deletes != 1 || !bound {
 				t.Fatalf("native API transport lost CAS/failed-result semantics: error=%t deletes=%d bound=%t", err != nil, deletes, bound)
 			}
 		})

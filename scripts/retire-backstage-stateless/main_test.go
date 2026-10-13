@@ -580,6 +580,9 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 	if strings.Contains(joined, "get serviceaccount cloudnative-pg") {
 		return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "cloudnative-pg", "namespace": "cnpg-system", "uid": "cnpg-controller-uid", "resourceVersion": "1"}}), nil
 	}
+	if strings.Contains(joined, "get serviceaccount helm-controller") {
+		return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "helm-controller", "namespace": "flux-system", "uid": "helm-writer-uid", "resourceVersion": "1"}}), nil
+	}
 	if strings.Contains(joined, "get configmap cnpg-controller-manager-config") {
 		return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cnpg-controller-manager-config", "namespace": "cnpg-system", "uid": "cnpg-config-uid", "resourceVersion": "1"}}), nil
 	}
@@ -632,7 +635,7 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 			rule := "preserve-retained-identities"
 			if strings.Contains(joined, "/api/v1/namespaces/backstage?dryRun=All") {
 				rule = "preserve-retirement-journal"
-			} else if strings.Contains(joined, "/deployments/") || strings.Contains(joined, "/services/") || strings.Contains(joined, "/configmaps/") || strings.Contains(joined, "/helmreleases/") || strings.Contains(joined, "/helmcharts/") {
+			} else if strings.Contains(joined, "/deployments/backstage?dryRun=All") || strings.Contains(joined, "/services/backstage?dryRun=All") || strings.Contains(joined, "/configmaps/backstage-app-config?dryRun=All") || strings.Contains(joined, "/helmreleases/backstage?dryRun=All") || strings.Contains(joined, "/helmcharts/backstage-backstage?dryRun=All") {
 				return []byte(`{"apiVersion":"v1","kind":"Status","status":"Success"}`), nil
 			}
 			return []byte("admission webhook \"validate.kyverno.svc-fail\" denied the request:\nrestrict-backstage-retirement:\n  " + rule + ": retained"), fmt.Errorf("denied")
