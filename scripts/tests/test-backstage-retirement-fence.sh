@@ -135,6 +135,9 @@ consumer='{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:{n
 run_case new-chart-consumer fence-chart-consumers CREATE "$consumer" '{}' fail
 run_case foreign-namespace-consumer fence-chart-consumers CREATE "$consumer | .metadata.namespace=\"other\"" '{}' fail
 run_case neighboring-chart-consumer fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' skip
+run_case unbound-neighboring-chart fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' skip "$(jq -c '.version=2' <<<"$record")"
+run_case unbound-neighboring-namespace fence-chart-consumers CREATE "$consumer | .metadata.namespace=\"other\" | .spec.chartRef.name=\"other\"" '{}' skip "$(jq -c '.version=2' <<<"$record")"
+run_case unbound-real-chart-consumer fence-chart-consumers CREATE "$consumer" '{}' fail "$(jq -c '.version=2' <<<"$record")"
 run_case captured-chart-consumer fence-chart-consumers UPDATE "$consumer | .metadata.name=\"backstage\" | .metadata.uid=\"release-uid\"" "$consumer | .metadata.name=\"backstage\" | .metadata.uid=\"release-uid\"" pass
 pv='{apiVersion:"v1",kind:"PersistentVolume",metadata:{name:"retained-volume",uid:"volume-uid"},spec:{persistentVolumeReclaimPolicy:"Retain"}}'
 run_case retained-volume-delete preserve-retained-identities DELETE "$pv" "$pv" fail

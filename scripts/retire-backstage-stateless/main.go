@@ -387,7 +387,8 @@ func (e engine) eligible(s snapshot) error {
 	if integer(field(h, "metadata", "generation")) < 1 || integer(field(h, "status", "observedGeneration")) != integer(field(h, "metadata", "generation")) {
 		return errors.New("unobserved release generation")
 	}
-	if !waitingForUnavailableSource(h, s.chart) {
+	sourceWait := waitingForUnavailableSource(h, s.chart)
+	if !sourceWait {
 		for _, v := range array(field(h, "status", "conditions")) {
 			o := object(v)
 			if o["type"] == "Reconciling" && o["status"] != "False" {
@@ -403,7 +404,7 @@ func (e engine) eligible(s snapshot) error {
 		c := object(v)
 		released = released || c["type"] == "Released" && c["status"] == "True" && c["observedGeneration"] == field(h, "metadata", "generation")
 	}
-	if !released {
+	if !released && !sourceWait {
 		return errors.New("unreleased uninstall owner")
 	}
 	if !controllerHistoryMatches(s) {
@@ -425,9 +426,14 @@ func (e engine) eligible(s snapshot) error {
 // Published v1.5.5 Snapshots.Latest sorts descending by Version, not input
 // order. Refuse ambiguous/incomplete evidence before native uninstall starts.
 func controllerHistoryMatches(s snapshot) bool {
-	history, ok := field(s.owner, "status", "history").([]any)
+	latest, ok := latestControllerHistory(s.owner)
+	return ok && latest["name"] == s.release["name"] && latest["namespace"] == s.release["namespace"] && latest["version"] == s.release["version"] && latest["status"] == field(s.release, "info", "status") && latest["status"] == "deployed"
+}
+
+func latestControllerHistory(owner map[string]any) (map[string]any, bool) {
+	history, ok := field(owner, "status", "history").([]any)
 	if !ok || len(history) == 0 || len(history) > 512 {
-		return false
+		return nil, false
 	}
 	var latest map[string]any
 	versions := map[int]bool{}
@@ -435,14 +441,14 @@ func controllerHistoryMatches(s snapshot) bool {
 		h := object(v)
 		version := integer(h["version"])
 		if version < 1 || versions[version] || text(h["name"]) == "" || text(h["namespace"]) == "" || text(h["status"]) == "" {
-			return false
+			return nil, false
 		}
 		versions[version] = true
 		if latest == nil || version > integer(latest["version"]) {
 			latest = h
 		}
 	}
-	return latest["name"] == s.release["name"] && latest["namespace"] == s.release["namespace"] && latest["version"] == s.release["version"] && latest["status"] == field(s.release, "info", "status") && latest["status"] == "deployed"
+	return latest, true
 }
 func (e engine) chartOwned(s snapshot) error {
 	c := s.chart

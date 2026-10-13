@@ -86,11 +86,19 @@ bounded behavior, not production controller or garbage-collector completion.
 
 An unavailable retired chart is not an active Helm action. The pinned controller
 marks prerequisite waiting as reconciling before checking the source, while its
-deletion branch runs first. Accept only the exact current-generation source-wait
-profile, joined to the unavailable chart and unchanged deployed storage/history.
-Reject stale, duplicate, missing or active-action conditions. Recheck this profile
+deletion branch runs first. Accept only the exact source-wait profile, joined to
+the unavailable chart and unchanged deployed storage/history. Ready and Reconciling
+must share the observed generation or the single captured options-patch generation.
+Released may describe an older successful action only when its exact message names
+the latest deployed history revision and chart. Reject zero/future generations,
+unjoined success messages, duplicate, missing or active-action conditions. Recheck this profile
 after the uninstall-options patch; a changed source or release still stops owner
 deletion. No chart restoration or synthetic credential is needed for retirement.
+
+The chart-consumer fence applies only to actual consumers, even if a present
+journal is unbound. API-context failures still fail closed; cluster-wide PV
+admission therefore depends on the healthy webhook and its namespace-list
+permission. Journal shape changes require a matching reviewed policy change.
 
 ## Native-driver security exception
 

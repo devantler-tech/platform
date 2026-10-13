@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -13,13 +14,85 @@ func sourceWaitFixture(t *testing.T) *portalFixture {
 	object(f.hr["status"])["conditions"] = []any{
 		map[string]any{"type": "Ready", "status": "False", "reason": "SourceNotReady", "observedGeneration": 1},
 		map[string]any{"type": "Reconciling", "status": "True", "reason": "Progressing", "message": "Fulfilling prerequisites", "observedGeneration": 1},
-		map[string]any{"type": "Released", "status": "True", "reason": "UpgradeSucceeded", "observedGeneration": 1},
+		map[string]any{"type": "Released", "status": "True", "reason": "UpgradeSucceeded", "observedGeneration": 1, "message": "Helm upgrade succeeded for release backstage/backstage.v4 with chart backstage@2.10.2"},
 	}
+	history := object(field(f.hr, "status", "history").([]any)[0])
+	history["chartName"], history["chartVersion"] = "backstage", "2.10.2"
 	object(f.chart["metadata"])["generation"] = 4
 	f.chart["status"] = map[string]any{"observedGeneration": 4, "conditions": []any{
 		map[string]any{"type": "Ready", "status": "False", "reason": "SourceUnavailable", "observedGeneration": 4},
 	}}
 	return f
+}
+
+func TestSourceWaitPreservesHistoricalReleaseSuccessAndRefreshedPrerequisites(t *testing.T) {
+	for _, action := range []string{"install", "upgrade"} {
+		for _, refresh := range []string{"unobserved patch", "refreshed conditions", "observed patch"} {
+			t.Run(action+"/"+refresh, func(t *testing.T) {
+				retirementRunner(t)
+				f := sourceWaitFixture(t)
+				object(f.hr["metadata"])["generation"] = 2
+				object(f.hr["status"])["observedGeneration"] = 2
+				cs := field(f.hr, "status", "conditions").([]any)
+				object(cs[0])["observedGeneration"], object(cs[1])["observedGeneration"] = 2, 2
+				if action == "install" {
+					object(cs[2])["reason"] = "InstallSucceeded"
+				}
+				object(cs[2])["message"] = fmt.Sprintf("Helm %s succeeded for release backstage/backstage.v4 with chart backstage@2.10.2", action)
+				execute := func(c context.Context, p string, a ...string) ([]byte, error) {
+					b, err := f.execute(c, p, a...)
+					if p == "kubectl" && strings.Contains(strings.Join(a, " "), "patch helmrelease backstage") && err == nil {
+						object(f.hr["metadata"])["generation"] = 3
+						if refresh != "unobserved patch" {
+							object(cs[0])["observedGeneration"], object(cs[1])["observedGeneration"] = 3, 3
+						}
+						if refresh == "observed patch" {
+							object(f.hr["status"])["observedGeneration"] = 3
+						}
+						return encode(t, f.hr), nil
+					}
+					return b, err
+				}
+				var out bytes.Buffer
+				if code := run([]string{"--execute"}, &out, execute); code != 0 || !f.deleted || f.historyStatus != "uninstalled" {
+					t.Fatalf("pinned Flux source-wait transition rejected: code=%d %s", code, &out)
+				}
+			})
+		}
+	}
+}
+
+func TestHistoricalSuccessCannotNameAnotherReleaseOrUseUnjoinedGenerations(t *testing.T) {
+	for _, mode := range []string{"future success", "future ready", "mixed prerequisites", "different revision", "different chart", "wrong action", "missing chart name", "missing chart version"} {
+		t.Run(mode, func(t *testing.T) {
+			retirementRunner(t)
+			f := sourceWaitFixture(t)
+			cs := field(f.hr, "status", "conditions").([]any)
+			switch mode {
+			case "future success":
+				object(cs[2])["observedGeneration"] = 2
+			case "future ready":
+				object(cs[0])["observedGeneration"] = 2
+			case "mixed prerequisites":
+				object(f.hr["metadata"])["generation"] = 2
+				object(cs[0])["observedGeneration"] = 2
+			case "different revision":
+				object(cs[2])["message"] = "Helm upgrade succeeded for release backstage/backstage.v3 with chart backstage@2.10.2"
+			case "different chart":
+				object(cs[2])["message"] = "Helm upgrade succeeded for release backstage/backstage.v4 with chart backstage@2.10.1"
+			case "wrong action":
+				object(cs[2])["reason"] = "InstallSucceeded"
+			case "missing chart name":
+				delete(object(field(f.hr, "status", "history").([]any)[0]), "chartName")
+			case "missing chart version":
+				delete(object(field(f.hr, "status", "history").([]any)[0]), "chartVersion")
+			}
+			var out bytes.Buffer
+			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.configured || f.deleted {
+				t.Fatalf("unjoined source-wait evidence mutated resources: code=%d %s", code, &out)
+			}
+		})
+	}
 }
 
 func TestUnavailableSourceDoesNotPreventPreservingStatelessRetirement(t *testing.T) {

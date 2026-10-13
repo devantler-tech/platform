@@ -41,6 +41,35 @@ func TestMissingOrIneffectiveAdmissionCannotAuthorizeOwnerDeletion(t *testing.T)
 	}
 }
 
+func TestAPIDefaultedFenceMustMatchTheReviewedGetMethod(t *testing.T) {
+	for _, method := range []string{"GET", "POST"} {
+		t.Run(method, func(t *testing.T) {
+			retirementRunner(t)
+			f := retirementFixture(t)
+			execute := func(c context.Context, p string, a ...string) ([]byte, error) {
+				b, err := f.execute(c, p, a...)
+				if err == nil && strings.Contains(strings.Join(a, " "), "get clusterpolicy restrict-backstage-retirement") {
+					policy, _ := decode(b)
+					for _, rule := range array(field(policy, "spec", "rules")) {
+						for _, context := range array(field(object(rule), "context")) {
+							if api := object(field(object(context), "apiCall")); api != nil {
+								api["method"] = method
+							}
+						}
+					}
+					return encode(t, policy), nil
+				}
+				return b, err
+			}
+			var out bytes.Buffer
+			code := run([]string{"--execute"}, &out, execute)
+			if method == "GET" && (code != 0 || !f.deleted) || method != "GET" && (code != 2 || f.fenceInstalled || f.deleted) {
+				t.Fatalf("live API method was misclassified: code=%d %s", code, &out)
+			}
+		})
+	}
+}
+
 func TestExistingDurableOperationCannotBeAdoptedOrReplayed(t *testing.T) {
 	retirementRunner(t)
 	f := retirementFixture(t)

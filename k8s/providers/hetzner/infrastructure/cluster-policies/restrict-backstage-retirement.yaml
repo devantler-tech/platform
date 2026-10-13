@@ -36,6 +36,7 @@ spec:
             jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
         - name: retirement
           apiCall:
+            method: GET
             # A complete, name-selected List also works before this retained
             # namespace is created on a fresh rebuild. Errors still fail closed.
             urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
@@ -89,6 +90,7 @@ spec:
             jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
         - name: retirement
           apiCall:
+            method: GET
             # A complete, name-selected List also works before this retained
             # namespace is created on a fresh rebuild. Errors still fail closed.
             urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
@@ -175,6 +177,7 @@ spec:
             jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
         - name: retirement
           apiCall:
+            method: GET
             # A complete, name-selected List also works before this retained
             # namespace is created on a fresh rebuild. Errors still fail closed.
             urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
@@ -219,6 +222,7 @@ spec:
             jmesPath: (request.operation == 'DELETE' && request.oldObject) || request.object
         - name: retirement
           apiCall:
+            method: GET
             # A complete, name-selected List also works before this retained
             # namespace is created on a fresh rebuild. Errors still fail closed.
             urlPath: /api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage
@@ -240,10 +244,6 @@ spec:
         all:
           - key: "{{ retirement.present }}"
             operator: Equals
-            value: true
-        any:
-          - key: "{{ bound }}"
-            operator: NotEquals
             value: true
           - key: "{{ consumer }}"
             operator: Equals
