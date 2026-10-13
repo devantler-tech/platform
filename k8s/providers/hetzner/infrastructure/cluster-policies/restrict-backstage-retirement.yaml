@@ -102,6 +102,43 @@ spec:
           variable:
             jmesPath: retirement.record.retained[?kind == '{{ resource.kind }}' && name == '{{ resource.metadata.name }}'].uid | [0]
             default: ''
+        - name: retained
+          variable:
+            jmesPath: retirement.record.retained[?kind == '{{ resource.kind }}' && name == '{{ resource.metadata.name }}'] | [0]
+            default: {}
+        - name: cnpgWriter
+          variable:
+            jmesPath: >-
+              (retirement.record.cnpgWriterUID || '') != '' && request.userInfo.username == 'system:serviceaccount:cnpg-system:cloudnative-pg' && request.userInfo.uid == retirement.record.cnpgWriterUID
+        - name: rootCAWriter
+          variable:
+            jmesPath: >-
+              (retirement.record.rootCAWriterUID || '') != '' && request.userInfo.username == 'system:serviceaccount:kube-system:root-ca-cert-publisher' && request.userInfo.uid == retirement.record.rootCAWriterUID
+        - name: trustWriter
+          variable:
+            jmesPath: >-
+              (retirement.record.trustWriterUID || '') != '' && request.userInfo.username == 'system:serviceaccount:cert-manager:trust-manager' && request.userInfo.uid == retirement.record.trustWriterUID
+        - name: certificateUpdate
+          variable:
+            # The default CNPG renewal writes the public certificate only.
+            # Private keys, types, complete key sets and metadata remain fixed.
+            jmesPath: >-
+              cnpgWriter && resource.kind == 'Secret' && length(keys(request.object.data || `{}`)) == `2` && length(keys(request.oldObject.data || `{}`)) == `2` && sort(keys(request.object.data || `{}`)) == sort(keys(request.oldObject.data || `{}`)) && ((retained.renewCertificate == 'ca' && resource.metadata.name == 'backstage-db-ca' && resource.type == 'Opaque' && (request.object.data."ca.crt" || '') != '' && (request.object.data."ca.key" || '') != '' && request.object.data."ca.key" == request.oldObject.data."ca.key") || (retained.renewCertificate == 'leaf' && contains(['backstage-db-server', 'backstage-db-replication'], resource.metadata.name) && resource.type == 'kubernetes.io/tls' && (request.object.data."tls.crt" || '') != '' && (request.object.data."tls.key" || '') != '' && request.object.data."tls.key" == request.oldObject.data."tls.key"))
+        - name: publicDataUpdate
+          variable:
+            jmesPath: >-
+              resource.kind == 'ConfigMap' && length(keys(request.object.data || `{}`)) == `1` && length(keys(request.oldObject.data || `{}`)) == `1` && sort(keys(request.object.data || `{}`)) == sort(keys(request.oldObject.data || `{}`)) && ((rootCAWriter && retained.controllerProfile == 'root-ca' && resource.metadata.name == 'kube-root-ca.crt' && (request.object.data."ca.crt" || '') != '') || (trustWriter && retained.controllerProfile == 'trust-bundle' && resource.metadata.name == 'cloudflare-origin-ca' && (request.object.data."ca-certificates.crt" || '') != '' && request.object.metadata.annotations."trust.cert-manager.io/hash" == sha256(request.object.data."ca-certificates.crt" || '')) || (cnpgWriter && retained.controllerProfile == 'cnpg-monitoring' && resource.metadata.name == 'cnpg-default-monitoring' && (request.object.data.queries || '') != ''))
+        - name: dataStable
+          variable:
+            jmesPath: (request.object.data || `{}`) == (request.oldObject.data || `{}`) || certificateUpdate || publicDataUpdate
+        - name: labelsStable
+          variable:
+            jmesPath: >-
+              (request.object.metadata.labels || `{}`) == (request.oldObject.metadata.labels || `{}`) || (cnpgWriter && resource.kind == 'PersistentVolumeClaim' && retained.controllerProfile == 'cnpg-role' && contains(['primary', 'replica'], request.object.metadata.labels.role) && request.object.metadata.labels.role == request.object.metadata.labels."cnpg.io/instanceRole" && merge(request.object.metadata.labels || `{}`, {role: '', "cnpg.io/instanceRole": ''}) == merge(request.oldObject.metadata.labels || `{}`, {role: '', "cnpg.io/instanceRole": ''}))
+        - name: annotationsStable
+          variable:
+            jmesPath: >-
+              (request.object.metadata.annotations || `{}`) == (request.oldObject.metadata.annotations || `{}`) || (trustWriter && resource.kind == 'ConfigMap' && retained.controllerProfile == 'trust-bundle' && request.object.metadata.annotations."trust.cert-manager.io/hash" == sha256(request.object.data."ca-certificates.crt" || '') && merge(request.object.metadata.annotations || `{}`, {"trust.cert-manager.io/hash": ''}) == merge(request.oldObject.metadata.annotations || `{}`, {"trust.cert-manager.io/hash": ''})) || (rootCAWriter && resource.kind == 'ConfigMap' && retained.controllerProfile == 'root-ca' && request.object.metadata.annotations."kubernetes.io/description" == 'Contains a CA bundle that can be used to verify the kube-apiserver when using internal endpoints such as the internal service IP or kubernetes.default.svc. No other usage is guaranteed across distributions of Kubernetes clusters.' && merge(request.object.metadata.annotations || `{}`, {"kubernetes.io/description": ''}) == merge(request.oldObject.metadata.annotations || `{}`, {"kubernetes.io/description": ''}))
       preconditions:
         all:
           - key: "{{ retirement.present }}"
@@ -118,7 +155,7 @@ spec:
           conditions:
             all:
               - key: >-
-                  {{ bound && retainedUID != '' && request.operation == 'UPDATE' && (request.oldObject.metadata.uid || '') == retainedUID && (request.object.metadata.uid || '') == retainedUID && (request.object.spec || `{}`) == (request.oldObject.spec || `{}`) && (request.object.stringData || `{}`) == `{}` && (request.object.binaryData || `{}`) == (request.oldObject.binaryData || `{}`) && request.object.immutable == request.oldObject.immutable && request.object.automountServiceAccountToken == request.oldObject.automountServiceAccountToken && (request.object.imagePullSecrets || `[]`) == (request.oldObject.imagePullSecrets || `[]`) && (request.object.secrets || `[]`) == (request.oldObject.secrets || `[]`) && (request.object.type || '') == (request.oldObject.type || '') && (request.object.metadata.ownerReferences || `[]`) == (request.oldObject.metadata.ownerReferences || `[]`) && (request.object.metadata.annotations || `{}`) == (request.oldObject.metadata.annotations || `{}`) && (request.object.metadata.finalizers || `[]`) == (request.oldObject.metadata.finalizers || `[]`) && (((request.object.data || `{}`) == (request.oldObject.data || `{}`) && (request.object.metadata.labels || `{}`) == (request.oldObject.metadata.labels || `{}`)) || (resource.kind == 'Secret' && retainedUID == retirement.record.latestHistoryUID && request.userInfo.username == 'system:serviceaccount:flux-system:helm-controller' && request.object.type == 'helm.sh/release.v1' && merge(request.object.metadata.labels || `{}`, {status: '', modifiedAt: ''}) == merge(request.oldObject.metadata.labels || `{}`, {status: '', modifiedAt: ''}) && ((request.oldObject.metadata.labels.status == 'deployed' && request.object.metadata.labels.status == 'uninstalling') || (request.oldObject.metadata.labels.status == 'uninstalling' && contains(['uninstalling', 'uninstalled'], request.object.metadata.labels.status)) || (request.oldObject.metadata.labels.status == 'uninstalled' && request.object.metadata.labels.status == 'uninstalled')))) }}
+                  {{ bound && retainedUID != '' && request.operation == 'UPDATE' && (request.oldObject.metadata.uid || '') == retainedUID && (request.object.metadata.uid || '') == retainedUID && (request.object.spec || `{}`) == (request.oldObject.spec || `{}`) && (request.object.stringData || `{}`) == `{}` && (request.object.binaryData || `{}`) == (request.oldObject.binaryData || `{}`) && request.object.immutable == request.oldObject.immutable && request.object.automountServiceAccountToken == request.oldObject.automountServiceAccountToken && (request.object.imagePullSecrets || `[]`) == (request.oldObject.imagePullSecrets || `[]`) && (request.object.secrets || `[]`) == (request.oldObject.secrets || `[]`) && (request.object.type || '') == (request.oldObject.type || '') && (request.object.metadata.ownerReferences || `[]`) == (request.oldObject.metadata.ownerReferences || `[]`) && annotationsStable && (request.object.metadata.finalizers || `[]`) == (request.oldObject.metadata.finalizers || `[]`) && ((dataStable && labelsStable) || (resource.kind == 'Secret' && retainedUID == retirement.record.latestHistoryUID && request.userInfo.username == 'system:serviceaccount:flux-system:helm-controller' && request.object.type == 'helm.sh/release.v1' && merge(request.object.metadata.labels || `{}`, {status: '', modifiedAt: ''}) == merge(request.oldObject.metadata.labels || `{}`, {status: '', modifiedAt: ''}) && ((request.oldObject.metadata.labels.status == 'deployed' && request.object.metadata.labels.status == 'uninstalling') || (request.oldObject.metadata.labels.status == 'uninstalling' && contains(['uninstalling', 'uninstalled'], request.object.metadata.labels.status)) || (request.oldObject.metadata.labels.status == 'uninstalled' && request.object.metadata.labels.status == 'uninstalled')))) }}
                 operator: NotEquals
                 value: true
     - name: fence-retiring-dependencies

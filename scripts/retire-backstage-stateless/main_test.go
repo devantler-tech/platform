@@ -476,16 +476,17 @@ func retirementFixture(t *testing.T) *portalFixture {
 		}
 	}
 	db := item(l, 2)
-	db["spec"] = map[string]any{"instances": 1}
+	db["spec"] = map[string]any{"instances": 1, "bootstrap": map[string]any{"initdb": map[string]any{"database": "app", "owner": "app"}}}
 	db["status"] = map[string]any{"readyInstances": 1, "currentPrimary": "backstage-db-3", "targetPrimary": "backstage-db-3"}
 	claim := item(l, 3)
 	claim["spec"] = map[string]any{"volumeName": "retained-volume"}
 	claim["status"] = map[string]any{"phase": "Bound"}
 	object(claim["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
-	object(claim["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid"}}
+	object(claim["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid", "controller": true}}
+	object(claim["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db", "role": "primary", "cnpg.io/instanceRole": "primary"}
 	dbPod := map[string]any{"apiVersion": "v1", "kind": "Pod", "metadata": metadata("backstage-db-3", "database-pod-uid"), "spec": map[string]any{"containers": []any{map[string]any{"name": "postgres"}}}, "status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}}}
-	object(dbPod["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db"}
-	object(dbPod["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid"}}
+	object(dbPod["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db", "role": "primary", "cnpg.io/instanceRole": "primary"}
+	object(dbPod["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid", "controller": true}}
 	l["items"] = append(l["items"].([]any), dbPod)
 	list := func(values ...any) map[string]any {
 		return map[string]any{"apiVersion": "v1", "kind": "List", "items": values}
@@ -493,7 +494,10 @@ func retirementFixture(t *testing.T) *portalFixture {
 	ns := map[string]any{"apiVersion": "v1", "kind": "Namespace", "metadata": metadata("backstage", "namespace-uid")}
 	delete(object(ns["metadata"]), "namespace")
 	object(ns["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
-	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": metadata("backstage-db-app", "credential-uid"), "data": map[string]any{"password": "DO_NOT_PRINT"}}
+	secret := map[string]any{"apiVersion": "v1", "kind": "Secret", "type": "Opaque", "metadata": metadata("backstage-db-app", "credential-uid"), "data": map[string]any{"password": "DO_NOT_PRINT"}}
+	object(secret["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid", "controller": true}}
+	object(secret["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "cloudnative-pg", "cnpg.io/cluster": "backstage-db", "cnpg.io/reload": "true", "cnpg.io/userType": "app"}
+	object(secret["metadata"])["annotations"] = map[string]any{"cnpg.io/operatorVersion": "1.30.1"}
 	history := map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": metadata("sh.helm.release.v1.backstage.v4", "history-uid"), "type": "helm.sh/release.v1", "data": map[string]any{"release": "SYNTHETIC_DO_NOT_PRINT"}}
 	history["data"] = nativeReleaseSecret(t, r)["data"]
 	object(history["metadata"])["labels"] = map[string]any{"owner": "helm", "name": "backstage", "version": "4", "status": "deployed"}
@@ -572,6 +576,15 @@ func (f *portalFixture) execute(_ context.Context, program string, args ...strin
 	}
 	if strings.Contains(joined, "get deployment helm-controller") {
 		return encode(f.t, map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "helm-controller", "namespace": "flux-system", "uid": "controller-uid", "resourceVersion": "1", "generation": 1}, "spec": map[string]any{"replicas": 1, "template": map[string]any{"spec": map[string]any{"serviceAccountName": "helm-controller", "containers": []any{map[string]any{"name": "manager", "image": nativeControllerImage}}}}}, "status": map[string]any{"observedGeneration": 1, "readyReplicas": 1, "updatedReplicas": 1, "availableReplicas": 1}}), nil
+	}
+	if strings.Contains(joined, "get serviceaccount cloudnative-pg") {
+		return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "ServiceAccount", "metadata": map[string]any{"name": "cloudnative-pg", "namespace": "cnpg-system", "uid": "cnpg-controller-uid", "resourceVersion": "1"}}), nil
+	}
+	if strings.Contains(joined, "get configmap cnpg-controller-manager-config") {
+		return encode(f.t, map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "cnpg-controller-manager-config", "namespace": "cnpg-system", "uid": "cnpg-config-uid", "resourceVersion": "1"}}), nil
+	}
+	if strings.Contains(joined, "get deployment cloudnative-pg") {
+		return encode(f.t, map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "metadata": map[string]any{"name": "cloudnative-pg", "namespace": "cnpg-system", "uid": "cnpg-deployment-uid", "resourceVersion": "1", "generation": 1}, "spec": map[string]any{"replicas": 2, "template": map[string]any{"spec": map[string]any{"serviceAccountName": "cloudnative-pg", "containers": []any{map[string]any{"image": cnpgControllerImage}}}}}, "status": map[string]any{"observedGeneration": 1, "readyReplicas": 2, "updatedReplicas": 2, "availableReplicas": 2}}), nil
 	}
 	if strings.Contains(joined, " patch ") {
 		path := ""

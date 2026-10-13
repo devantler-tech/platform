@@ -92,6 +92,9 @@ func (e engine) fenceRecord(s snapshot, kept map[string]map[string]any) (string,
 	sort.Slice(targets, func(i, j int) bool { return text(targets[i]["kind"]) < text(targets[j]["kind"]) })
 	retained := []map[string]any{}
 	for key, projection := range kept {
+		if strings.HasPrefix(key, "controller/") {
+			continue
+		}
 		parts := strings.Split(key, "/")
 		if len(parts) < 4 {
 			return "", errors.New("retained identity incomplete")
@@ -100,7 +103,23 @@ func (e engine) fenceRecord(s snapshot, kept map[string]map[string]any) (string,
 		// Namespace is separately fenced. Database Pod deletion must remain
 		// possible for healthy native replacement; readback still checks them.
 		if kind != "Namespace" && kind != "Pod" {
-			retained = append(retained, map[string]any{"kind": kind, "name": name, "uid": projection["uid"]})
+			row := map[string]any{"kind": kind, "name": name, "uid": projection["uid"]}
+			for _, list := range []map[string]any{s.live, s.inventory} {
+				for _, candidate := range arrayObjects(list) {
+					if identity(candidate) == key {
+						profile, err := controllerProfile(s, candidate)
+						if err != nil {
+							return "", err
+						}
+						if profile == "ca" || profile == "leaf" {
+							row["renewCertificate"] = profile
+						} else if profile != "" {
+							row["controllerProfile"] = profile
+						}
+					}
+				}
+			}
+			retained = append(retained, row)
 		}
 	}
 	sort.Slice(retained, func(i, j int) bool {
@@ -122,7 +141,13 @@ func (e engine) fenceRecord(s snapshot, kept map[string]map[string]any) (string,
 	if text(latest["uid"]) == "" {
 		return "", errors.New("latest history identity unavailable")
 	}
-	b, err := json.Marshal(map[string]any{"version": 1, "phase": "fenced", "namespaceUID": field(s.namespace, "metadata", "uid"), "sourceSHA": e.sha, "revision": e.revision, "run": e.runID, "targets": targets, "retiringUIDs": uids, "retained": retained, "latestHistoryUID": latest["uid"]})
+	record := map[string]any{"version": 1, "phase": "fenced", "namespaceUID": field(s.namespace, "metadata", "uid"), "sourceSHA": e.sha, "revision": e.revision, "run": e.runID, "targets": targets, "retiringUIDs": uids, "retained": retained, "latestHistoryUID": latest["uid"]}
+	for _, writer := range []struct{ key, recordKey string }{{"cnpg", "cnpgWriterUID"}, {"rootCA", "rootCAWriterUID"}, {"trust", "trustWriterUID"}} {
+		if s.writers[writer.key] != nil {
+			record[writer.recordKey] = field(s.writers[writer.key], "metadata", "uid")
+		}
+	}
+	b, err := json.Marshal(record)
 	if err != nil || len(b) > 32<<10 {
 		return "", errors.New("retirement journal exceeds bound")
 	}

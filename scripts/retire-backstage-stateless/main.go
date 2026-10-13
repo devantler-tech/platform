@@ -168,6 +168,8 @@ type snapshot struct {
 	releases                                                                   []map[string]any
 	retiring                                                                   map[string]string
 	fence                                                                      string
+	writers                                                                    map[string]map[string]any
+	bundle, monitoring                                                         map[string]any
 }
 type engine struct {
 	execute              command
@@ -258,6 +260,9 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 		if err != nil {
 			return s, err
 		}
+	}
+	if err := e.collectWriters(ctx, &s); err != nil {
+		return s, err
 	}
 	return s, nil
 }
@@ -511,6 +516,12 @@ func (e engine) deployed(s snapshot) error {
 // remain in process memory and are compared, never logged or journaled.
 func preserved(s snapshot) (map[string]map[string]any, error) {
 	result := map[string]map[string]any{}
+	for name, writer := range s.writers {
+		result["controller/Identity//"+name] = map[string]any{"uid": field(writer, "metadata", "uid"), "spec": writer["spec"]}
+	}
+	if s.bundle != nil {
+		result["controller/Identity//bundle"] = projection(s.bundle)
+	}
 	if !metadataValid(s.namespace) || s.namespace["kind"] != "Namespace" || field(s.namespace, "metadata", "name") != "backstage" || field(s.namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
 		return nil, errors.New("namespace preservation unverified")
 	}
@@ -549,6 +560,8 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		return nil, err
 	}
 	dbUID := ""
+	dbPrimary := ""
+	primaryObserved := false
 	instances := 0
 	dbPods := 0
 	claims := []map[string]any{}
@@ -556,6 +569,7 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 	for _, r := range live {
 		if r["kind"] == "Cluster" && field(r, "metadata", "name") == "backstage-db" {
 			dbUID = text(field(r, "metadata", "uid"))
+			dbPrimary = text(field(r, "status", "currentPrimary"))
 			instances = integer(field(r, "spec", "instances"))
 			if instances < 1 || integer(field(r, "status", "readyInstances")) != instances || text(field(r, "status", "currentPrimary")) == "" || field(r, "status", "currentPrimary") != field(r, "status", "targetPrimary") {
 				return nil, errors.New("database is not fully healthy")
@@ -635,10 +649,14 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 				return nil, errors.New("database pod unhealthy")
 			}
 			dbPods++
+			primaryObserved = primaryObserved || field(r, "metadata", "name") == dbPrimary
 		}
-		result[identity(r)] = projection(r)
+		result[identity(r)], err = controllerProjection(s, r, s.fence != "")
+		if err != nil {
+			return nil, err
+		}
 	}
-	if dbPods != instances || len(claims) == 0 || !history {
+	if dbPods != instances || !primaryObserved || len(claims) == 0 || !history {
 		return nil, errors.New("database coverage incomplete")
 	}
 	for _, c := range claims {
@@ -765,7 +783,7 @@ func targetResource(r map[string]any) bool {
 	return kind == "Pod" && field(r, "metadata", "labels", "app.kubernetes.io/name") == "backstage" && field(r, "metadata", "labels", "app.kubernetes.io/instance") == "backstage" && field(r, "metadata", "labels", "app.kubernetes.io/component") == "backstage"
 }
 func projection(r map[string]any) map[string]any {
-	return map[string]any{"uid": field(r, "metadata", "uid"), "spec": r["spec"], "data": r["data"], "type": r["type"], "owners": field(r, "metadata", "ownerReferences"), "annotations": field(r, "metadata", "annotations"), "labels": field(r, "metadata", "labels"), "finalizers": field(r, "metadata", "finalizers")}
+	return map[string]any{"uid": field(r, "metadata", "uid"), "spec": r["spec"], "data": r["data"], "stringData": r["stringData"], "binaryData": r["binaryData"], "immutable": r["immutable"], "type": r["type"], "owners": field(r, "metadata", "ownerReferences"), "annotations": field(r, "metadata", "annotations"), "labels": field(r, "metadata", "labels"), "finalizers": field(r, "metadata", "finalizers")}
 }
 func sameRelease(a, b map[string]any) bool {
 	normalize := func(r map[string]any) map[string]any {
@@ -941,6 +959,12 @@ func run(args []string, out io.Writer, execute command) int {
 		return hold("HOLD_MUTATION")
 	}
 	e.fence, err = e.installFence(ctx, second, before)
+	if err != nil {
+		return hold("HOLD_ADMISSION")
+	}
+	// The initial separated samples compare full content. Only after installing
+	// our exact journal do both sides use the field-scoped controller projection.
+	before, err = normalizePreserved(normalizedNamespace(second, e.fence))
 	if err != nil {
 		return hold("HOLD_ADMISSION")
 	}

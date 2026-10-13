@@ -35,6 +35,36 @@ writes. Do not freeze all database Pod deletion: CloudNativePG must remain able
 to replace a failed instance. No guarantee depends on Kyverno's filtered
 ReplicaSet kinds. New retained data retirement is a separate reviewed operation.
 
+Do not turn the durable retained-data fence into a controller freeze. The
+protected capture binds generated-resource profiles to the actual producer
+ServiceAccount UIDs and verifies the published CNPG and trust-manager versions.
+Allow only CNPG's public CA/leaf certificate field to renew; private-key bytes,
+Secret types, key sets, ownership and unrelated metadata remain unchanged.
+Readback verifies key matching, issuer signatures and stable subject, issuer,
+public key and extensions, rather than silently ignoring certificate data.
+
+For captured CNPG claims, permit only the paired primary/replica role labels.
+Readback derives both claim and Pod role labels from the healthy, settled
+Cluster primary; Pod UID, spec and other metadata remain checked. Public root-CA
+and trust-bundle profiles permit only their single certificate-bundle key and
+the producer's specific bookkeeping annotation. Trust-bundle hashing assumes
+the captured target has no additional formats or metadata template. Monitoring
+refresh must retain its one-key shape and match the operator's observed source.
+No profile permits credential-data changes, storage rebinding, owner changes,
+deletion, recreation, or arbitrary annotations.
+
+Before fencing, prove the default credential and certificate metadata already
+matches the published constructor plus the frozen Cluster's inherited metadata.
+The existing credential constructor then performs a metadata no-op and never
+replaces its password. Reject unsettled entries and uncharacterized inheritance
+overrides before writing a journal, leaving the operator free to reconcile them.
+
+Initial separated samples still compare full content. Profile normalization
+starts only after the exact owned journal has been installed and read back.
+An unsupported producer version, changed account identity, source/template
+shape, unhealthy failover or replacement Pod is HOLD, not permission to broaden
+the profile or claim that a submitted native finalizer has been cancelled.
+
 ## Validation
 
 Use the pinned admission engine with positive and adversarial identity fixtures,
