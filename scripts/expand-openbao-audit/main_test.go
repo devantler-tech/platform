@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -22,6 +23,8 @@ type fixture struct {
 func setup(t *testing.T) *fixture {
 	t.Helper()
 	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main")
 	t.Setenv("GITHUB_REPOSITORY", "devantler-tech/platform")
 	t.Setenv("GITHUB_REF", "refs/heads/main")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
@@ -273,6 +276,57 @@ func TestExpandOnlyAuditClaimsPreservingData(t *testing.T) {
 	}
 	if out.String() != "OPENBAO_AUDIT_CAPACITY=EXPANDED claims=3 target=20Gi preservationSamples=2\n" {
 		t.Fatalf("invalid receipt: %s", &out)
+	}
+}
+
+func TestReadOnlyPreflightNeverConsumesOrPatches(t *testing.T) {
+	f := setup(t)
+	var out bytes.Buffer
+	if code := run([]string{"--preflight"}, &out, f.execute, func(context.Context) bool { return true }); code != 0 || f.receipt || len(f.patched) > 0 || !strings.Contains(out.String(), "OPENBAO_AUDIT_CAPACITY=PREFLIGHT_OK") {
+		t.Fatalf("read-only preflight missing or mutated state: %d receipt=%t patches=%v %s", code, f.receipt, f.patched, &out)
+	}
+}
+
+func TestHoldReportsSafeFailureStage(t *testing.T) {
+	for _, mode := range []string{"pricing", "source", "service health", "foreign workflow"} {
+		t.Run(mode, func(t *testing.T) {
+			f := setup(t)
+			if mode == "foreign workflow" {
+				t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/other.yaml@refs/heads/main")
+			}
+			if mode == "service health" {
+				f.mode = "sealed"
+			}
+			wrapped := func(ctx context.Context, p string, a ...string) ([]byte, error) {
+				if mode == "source" && p == "bash" {
+					return []byte("PROD_RECOVERY_SOURCE=UNKNOWN"), nil
+				}
+				return f.execute(ctx, p, a...)
+			}
+			want := map[string]string{"pricing": "pricing", "source": "source", "service health": "service-health", "foreign workflow": "input"}[mode]
+			var out bytes.Buffer
+			if run([]string{"--preflight"}, &out, wrapped, func(context.Context) bool { return mode != "pricing" }) != 2 || f.receipt || len(f.patched) > 0 || !strings.Contains(out.String(), "stage="+want) || strings.Contains(out.String(), "PRIVATE") {
+				t.Fatalf("missing safe stage or state changed: %s", &out)
+			}
+		})
+	}
+}
+
+func TestSnapshotFailureStageSurvivesWrappingAndNeverPrintsMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{sourceUnsettled, "root-source"}, {artifactUnverified, "root-artifact"},
+		{workloadUnready, "workload"}, {expansionUnverified, "storage-class"},
+		{claimUnverified, "claim-identity"}, {claimCapacityUnreviewed, "claim-capacity"},
+		{bindingUnverified, "volume-binding"}, {volumeCapacityUnreviewed, "volume-capacity"},
+		{mountUnverified, "audit-mount"}, {healthUnverified, "service-health"},
+		{errors.New("PRIVATE upstream response"), "snapshot-read"},
+	} {
+		if got := failureStage(fmt.Errorf("PRIVATE wrapper: %w", tc.err)); got != tc.want {
+			t.Fatalf("stage=%s want=%s", got, tc.want)
+		}
 	}
 }
 

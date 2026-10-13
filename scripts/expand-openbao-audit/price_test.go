@@ -32,6 +32,19 @@ func TestPriceGuardEnforcesConservativeGrossEuroBudget(t *testing.T) {
 	}
 }
 
+func TestPricingDiagnosticsExposeOnlyBoundedCodes(t *testing.T) {
+	for _, tc := range []struct{ body, want string }{
+		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"0.05"}}}}`, "WITHIN_BUDGET"},
+		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"1"}}}}`, "OVER_BUDGET"},
+		{`{"pricing":{"currency":"USD","volume":{"price_per_gb_month":{"gross":"0.05"}}}}`, "INVALID_RESPONSE"},
+		{`{broken`, "INVALID_RESPONSE"},
+	} {
+		if got := priceCode([]byte(tc.body)); got != tc.want {
+			t.Fatalf("price code=%s want=%s", got, tc.want)
+		}
+	}
+}
+
 type transport func(*http.Request) (*http.Response, error)
 
 func (f transport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

@@ -3,6 +3,12 @@ name: Expand OpenBao Audit Capacity
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Inspect without writes, or perform the approved bounded expansion
+        required: true
+        type: choice
+        default: preflight
+        options: [preflight, expand]
       confirmation:
         description: Type EXPAND OPENBAO AUDIT ONLY TO 20GI; records remain and capacity cannot shrink
         required: true
@@ -28,13 +34,20 @@ jobs:
     name: Preserve audit evidence while adding bounded headroom
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: prod
+    # Keep prod secrets, reviewers, wait timers and branch policy, but do not
+    # replace the accepted artifact-deployment record with a preflight/resize.
+    # If a custom deployment-app rule is added, GitHub fails closed: never
+    # disable it to make this non-deployment operation run.
+    environment:
+      name: prod
+      deployment: false
     permissions:
-      contents: read
-      actions: read
-      deployments: read
+      contents: read # checkout reviewed main and verify its current commit
+      actions: read # verify the accepted normal deployment run
+      deployments: read # join successful prod deployment evidence to that run
     env:
       GH_TOKEN: ${{ github.token }}
+      AUDIT_CAPACITY_MODE: ${{ inputs.mode }}
       AUDIT_CAPACITY_CONFIRM: ${{ inputs.confirmation }}
       AUDIT_CAPACITY_REVISION: ${{ inputs.deployed_revision }}
       AUDIT_CAPACITY_DEPLOYMENT_RUN: ${{ inputs.accepted_deployment_run }}
@@ -44,6 +57,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_RUN_ATTEMPT" == 1 ]]
+          [[ "$AUDIT_CAPACITY_MODE" == preflight || "$AUDIT_CAPACITY_MODE" == expand ]]
           [[ "$AUDIT_CAPACITY_CONFIRM" == 'EXPAND OPENBAO AUDIT ONLY TO 20GI' ]]
           [[ "$AUDIT_CAPACITY_REVISION" =~ ^latest@sha256:[0-9a-f]{64}$ ]]
           [[ "$AUDIT_CAPACITY_DEPLOYMENT_RUN" =~ ^[1-9][0-9]{0,19}$ ]]
@@ -90,4 +104,11 @@ jobs:
       - name: Enforce the approved cost cap and preserve all storage identities
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
-        run: go run ./scripts/expand-openbao-audit --execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$AUDIT_CAPACITY_MODE" in
+            preflight) go run ./scripts/expand-openbao-audit --preflight ;;
+            expand) go run ./scripts/expand-openbao-audit --execute ;;
+            *) exit 2 ;;
+          esac

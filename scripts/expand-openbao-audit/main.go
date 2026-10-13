@@ -22,6 +22,52 @@ type command func(context.Context, string, ...string) ([]byte, error)
 const target = "20Gi"
 const responseLimit = 4 << 20
 
+type snapshotFailure uint8
+
+const (
+	sourceUnsettled snapshotFailure = iota + 1
+	artifactUnverified
+	workloadUnready
+	expansionUnverified
+	claimUnverified
+	claimCapacityUnreviewed
+	bindingUnverified
+	volumeCapacityUnreviewed
+	mountUnverified
+	healthUnverified
+)
+
+func (snapshotFailure) Error() string { return "snapshot verification failed" }
+
+func failureStage(err error) string {
+	var failure snapshotFailure
+	if errors.As(err, &failure) {
+		switch failure {
+		case sourceUnsettled:
+			return "root-source"
+		case artifactUnverified:
+			return "root-artifact"
+		case workloadUnready:
+			return "workload"
+		case expansionUnverified:
+			return "storage-class"
+		case claimUnverified:
+			return "claim-identity"
+		case claimCapacityUnreviewed:
+			return "claim-capacity"
+		case bindingUnverified:
+			return "volume-binding"
+		case volumeCapacityUnreviewed:
+			return "volume-capacity"
+		case mountUnverified:
+			return "audit-mount"
+		case healthUnverified:
+			return "service-health"
+		}
+	}
+	return "snapshot-read"
+}
+
 func obj(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func str(v any) string         { s, _ := v.(string); return s }
 func number(v any) int         { n, _ := v.(int); return n }
@@ -135,52 +181,52 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	for _, name := range []string{"flux-system", "infrastructure-controllers", "infrastructure", "apps"} {
 		k, err := e.read(ctx, "--namespace=flux-system", "get", "kustomization", name, "--output=json")
 		if err != nil || !valid(k, "kustomize.toolkit.fluxcd.io/v1", "Kustomization", "flux-system", name) || !ready(k) || field(k, "status", "lastAppliedRevision") != e.revision {
-			return s, errors.New("source unsettled")
+			return s, sourceUnsettled
 		}
 	}
 	r, err := e.read(ctx, "--namespace=flux-system", "get", "ocirepository", "flux-system", "--output=json")
 	if err != nil || !valid(r, "source.toolkit.fluxcd.io/v1", "OCIRepository", "flux-system", "flux-system") || !ready(r) || field(r, "status", "artifact", "revision") != e.revision {
-		return s, errors.New("artifact unverified")
+		return s, artifactUnverified
 	}
 	s.workload, err = e.read(ctx, "--namespace=openbao", "get", "statefulset", "openbao", "--output=json")
 	if err != nil || !valid(s.workload, "apps/v1", "StatefulSet", "openbao", "openbao") || number(field(s.workload, "spec", "replicas")) != 3 || number(field(s.workload, "metadata", "generation")) < 1 || field(s.workload, "status", "observedGeneration") != field(s.workload, "metadata", "generation") || number(field(s.workload, "status", "readyReplicas")) != 3 {
-		return s, errors.New("workload unready")
+		return s, workloadUnready
 	}
 	s.class, err = e.read(ctx, "get", "storageclass", "hcloud", "--output=json")
 	if err != nil || !valid(s.class, "storage.k8s.io/v1", "StorageClass", "", "hcloud") || !validIdentity(s.class, "hcloud") || s.class["provisioner"] != "csi.hetzner.cloud" || s.class["allowVolumeExpansion"] != true {
-		return s, errors.New("expansion capability unverified")
+		return s, expansionUnverified
 	}
 	for i := 0; i < 3; i++ {
 		podName := fmt.Sprintf("openbao-%d", i)
 		name := "audit-" + podName
 		c, err := e.read(ctx, "--namespace=openbao", "get", "persistentvolumeclaim", name, "--output=json")
 		if err != nil || !valid(c, "v1", "PersistentVolumeClaim", "openbao", name) || field(c, "status", "phase") != "Bound" || field(c, "spec", "storageClassName") != "hcloud" || field(c, "metadata", "labels", "app.kubernetes.io/name") != "openbao" {
-			return s, errors.New("claim identity unverified")
+			return s, claimUnverified
 		}
 		req, cap := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
 		_, typedConditions := field(c, "status", "conditions").([]any)
 		if req != "1Gi" && req != "10Gi" && req != target || cap != "10Gi" && cap != target || field(c, "status", "conditions") != nil && !typedConditions {
-			return s, errors.New("unreviewed capacity")
+			return s, claimCapacityUnreviewed
 		}
 		pvName := str(field(c, "spec", "volumeName"))
 		if !regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`).MatchString(pvName) {
-			return s, errors.New("binding unavailable")
+			return s, bindingUnverified
 		}
 		v, err := e.read(ctx, "get", "persistentvolume", pvName, "--output=json")
 		if err != nil || !valid(v, "v1", "PersistentVolume", "", pvName) || !validIdentity(v, pvName) || field(v, "status", "phase") != "Bound" || field(v, "spec", "storageClassName") != "hcloud" || field(v, "spec", "csi", "driver") != "csi.hetzner.cloud" || str(field(v, "spec", "csi", "volumeHandle")) == "" || field(v, "spec", "claimRef", "namespace") != "openbao" || field(v, "spec", "claimRef", "name") != name || field(v, "spec", "claimRef", "uid") != field(c, "metadata", "uid") {
-			return s, errors.New("volume identity unverified")
+			return s, bindingUnverified
 		}
 		pvCapacity := field(v, "spec", "capacity", "storage")
 		if pvCapacity != "10Gi" && pvCapacity != target {
-			return s, errors.New("unreviewed backing capacity")
+			return s, volumeCapacityUnreviewed
 		}
 		pod, err := e.read(ctx, "--namespace=openbao", "get", "pod", podName, "--output=json")
 		if err != nil || !auditPod(pod, podName, name, str(field(s.workload, "metadata", "uid"))) {
-			return s, errors.New("audit mount unverified")
+			return s, mountUnverified
 		}
 		status, err := e.read(ctx, "--namespace=openbao", "exec", podName, "--container=openbao", "--", "bao", "status", "-format=json")
 		if err != nil || status["initialized"] != true || status["sealed"] != false || status["ha_enabled"] != true {
-			return s, errors.New("service health unverified")
+			return s, healthUnverified
 		}
 		s.claims[name], s.volumes[name], s.pods[name] = c, v, pod
 	}
@@ -283,35 +329,65 @@ func (e engine) write(ctx context.Context, value any, args ...string) (map[strin
 }
 func run(args []string, out io.Writer, execute command, cost func(context.Context) bool) int {
 	changed := false
+	stage := "input"
 	hold := func() int {
 		code := "HOLD"
 		if changed {
 			code = "HOLD_CAPACITY_MAY_HAVE_CHANGED"
 		}
-		_, _ = fmt.Fprintln(out, "OPENBAO_AUDIT_CAPACITY="+code)
+		_, _ = fmt.Fprintln(out, "OPENBAO_AUDIT_CAPACITY="+code+" stage="+stage)
 		return 2
 	}
+	snapshotHold := func(err error) int {
+		if err != nil {
+			stage = failureStage(err)
+		}
+		return hold()
+	}
 	sha, rev, id, deploy := os.Getenv("GITHUB_SHA"), os.Getenv("AUDIT_CAPACITY_REVISION"), os.Getenv("GITHUB_RUN_ID"), os.Getenv("AUDIT_CAPACITY_DEPLOYMENT_RUN")
-	if len(args) != 1 || args[0] != "--execute" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 20GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
+	if len(args) != 1 || args[0] != "--execute" && args[0] != "--preflight" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/expand-openbao-audit.yaml@refs/heads/main" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("AUDIT_CAPACITY_CONFIRM") != "EXPAND OPENBAO AUDIT ONLY TO 20GI" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(sha) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(rev) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(deploy) {
 		return hold()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	e := engine{execute: execute, sha: sha, revision: rev, runID: id, deploymentRun: deploy}
-	if !e.current(ctx) || !cost(ctx) || !e.accepted(ctx) {
+	stage = "source"
+	if !e.current(ctx) {
 		return hold()
 	}
+	stage = "pricing"
+	if !cost(ctx) {
+		return hold()
+	}
+	stage = "accepted-deployment"
+	if !e.accepted(ctx) {
+		return hold()
+	}
+	stage = "initial-snapshot"
 	before, err := e.collect(ctx)
 	if err != nil {
-		return hold()
+		return snapshotHold(err)
 	}
+	stage = "separated-snapshot"
 	if _, err = execute(ctx, "sleep", "5"); err != nil {
 		return hold()
 	}
 	second, err := e.collect(ctx)
 	if err != nil || !preserved(before, second) {
-		return hold()
+		return snapshotHold(err)
 	}
+	if args[0] == "--preflight" {
+		if !e.current(ctx) {
+			stage = "source"
+			return hold()
+		}
+		result := "OPENBAO_AUDIT_CAPACITY=PREFLIGHT_OK claims=3 writes=0 consumptionReceipts=0\n"
+		if n, err := io.WriteString(out, result); err != nil || n != len(result) {
+			return 2
+		}
+		return 0
+	}
+	stage = "consumption-receipt"
 	receiptName := "openbao-audit-expansion-" + id
 	b, err := execute(ctx, "kubectl", "--context=admin@prod", "--request-timeout=20s", "--namespace=flux-system", "get", "configmap", receiptName, "--ignore-not-found", "--output=json")
 	if err != nil || len(bytes.TrimSpace(b)) != 0 || !e.current(ctx) {
@@ -324,27 +400,35 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 	}
 	receiptUID := field(r, "metadata", "uid")
 	for i := 0; i < 3; i++ {
+		stage = "before-patch"
 		name := fmt.Sprintf("audit-openbao-%d", i)
 		current, err := e.collect(ctx)
 		if err != nil || !preserved(before, current) || !e.current(ctx) {
-			return hold()
+			return snapshotHold(err)
 		}
 		c := current.claims[name]
 		if field(c, "spec", "resources", "requests", "storage") == target {
 			continue
 		}
+		stage = "consumption-receipt"
 		recorded, err := e.read(ctx, "--namespace=flux-system", "get", "configmap", receiptName, "--output=json")
-		if err != nil || !valid(recorded, "v1", "ConfigMap", "flux-system", receiptName) || field(recorded, "metadata", "uid") != receiptUID || recorded["immutable"] != true || !reflect.DeepEqual(recorded["data"], receipt["data"]) || !cost(ctx) {
+		if err != nil || !valid(recorded, "v1", "ConfigMap", "flux-system", receiptName) || field(recorded, "metadata", "uid") != receiptUID || recorded["immutable"] != true || !reflect.DeepEqual(recorded["data"], receipt["data"]) {
+			return hold()
+		}
+		stage = "pricing"
+		if !cost(ctx) {
 			return hold()
 		}
 		patch := []map[string]any{{"op": "test", "path": "/metadata/uid", "value": field(c, "metadata", "uid")}, {"op": "test", "path": "/metadata/resourceVersion", "value": field(c, "metadata", "resourceVersion")}, {"op": "replace", "path": "/spec/resources/requests/storage", "value": target}}
 		changed = true
+		stage = "capacity-patch"
 		r, err = e.write(ctx, patch, "--namespace=openbao", "patch", "persistentvolumeclaim", name, "--type=json", "--patch-file=REQUEST", "--output=json")
 		if err != nil || !valid(r, "v1", "PersistentVolumeClaim", "openbao", name) || field(r, "metadata", "uid") != field(c, "metadata", "uid") || field(r, "spec", "resources", "requests", "storage") != target || !reflect.DeepEqual(stableResource(c, false), stableResource(r, false)) {
 			return hold()
 		}
 	}
 	for sample := 0; sample < 2; sample++ {
+		stage = "resize-readback"
 		complete := false
 		for i := 0; i < 60; i++ {
 			if _, err = execute(ctx, "sleep", "5"); err != nil {
@@ -352,7 +436,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 			}
 			after, err := e.collect(ctx)
 			if err != nil || !preserved(before, after) || !e.current(ctx) {
-				return hold()
+				return snapshotHold(err)
 			}
 			complete = true
 			for name, c := range after.claims {
