@@ -5,12 +5,12 @@ ksail_bin=${KSAIL_BIN:-ksail}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 cp "$root/k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml" "$scratch/cluster-policy.yaml"
-cat > "$scratch/kustomization.yaml" << 'YAML'
+cat >"$scratch/kustomization.yaml" <<'YAML'
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources: [cluster-policy.yaml, helm-release.yaml]
 YAML
-cat > "$scratch/helm-release.yaml" << 'YAML'
+cat >"$scratch/helm-release.yaml" <<'YAML'
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -33,7 +33,7 @@ if output=$("$ksail_bin" --config "$root/ksail.prod.yaml" workload validate "$sc
   printf 'FAIL: actual consumer passed without retirement lookup evidence\n' >&2
   exit 1
 fi
-if ! grep -q 'rule "fence-chart-consumers" errored' <<< "$output"; then
+if ! grep -q 'rule "fence-chart-consumers" errored' <<<"$output"; then
   printf 'FAIL: actual consumer was not stopped by retirement evidence\n%s\n' "$output" >&2
   exit 1
 fi
@@ -43,7 +43,7 @@ if output=$("$ksail_bin" --config "$root/ksail.prod.yaml" workload validate "$sc
   printf 'FAIL: observed legacy consumer passed without retirement lookup evidence\n' >&2
   exit 1
 fi
-if ! grep -q 'rule "fence-chart-consumers" errored' <<< "$output"; then
+if ! grep -q 'rule "fence-chart-consumers" errored' <<<"$output"; then
   printf 'FAIL: legacy consumer was not stopped by retirement evidence\n%s\n' "$output" >&2
   exit 1
 fi
