@@ -210,9 +210,11 @@ count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
 # other read does, so no two snapshots in a row ever agree. An object with a
 # second change returns it from the fourth read on, so the second pair differs
 # from the first for another reason and only the third pair agrees.
-if [[ "${MODE:-}" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
+snapshot_mode=${MODE:-}
+[[ "$snapshot_mode" != flap-public-failure ]] || snapshot_mode=flap
+if [[ "$snapshot_mode" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
   response="$FIXTURE/after2/$key.json"
-elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
+elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "$snapshot_mode" == flap ]] && ((count % 2 == 0)); } || { [[ "$snapshot_mode" != flap ]] && ((count >= 2)); }; }; then
   response="$FIXTURE/after/$key.json"
 else
   response="$FIXTURE/$key.json"
@@ -228,13 +230,13 @@ cat >"${scratch}/bin/curl" <<'SH'
 set -euo pipefail
 [[ "$1" == --disable ]] || exit 91
 shift
-headers='' body='' url='' cookie=0 authorization=0 proto=0 proxy=0
+headers='' body='' url='' cookie=0 authorization=0 proto=0 proxy=0 transfer_seconds=0
 while (($#)); do
   case "$1" in
     --silent|--show-error) shift ;;
     --proxy) [[ "$2" == '' ]] || exit 92; proxy=1; shift 2 ;;
     --connect-timeout) [[ "$2" =~ ^[1-5]$ ]] || exit 93; shift 2 ;;
-    --max-time) [[ "$2" =~ ^[1-9][0-9]*$ ]] || exit 94; shift 2 ;;
+    --max-time) [[ "$2" =~ ^[1-9][0-9]*$ ]] || exit 94; transfer_seconds=$2; shift 2 ;;
     --max-filesize) [[ "$2" == 262144 ]] || exit 95; shift 2 ;;
     --proto) [[ "$2" == '=https' ]] || exit 96; proto=1; shift 2 ;;
     --header) case "$2" in Cookie:) cookie=1 ;; Authorization:) authorization=1 ;; *) exit 97 ;; esac; shift 2 ;;
@@ -282,11 +284,16 @@ if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
   exit 0
 fi
 case "${MODE:-}" in
+  dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
+  tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
+  tls-handshake-failure) printf 'PRIVATE-ERROR-CANARY: private handshake\n' >&2; exit 35 ;;
+  request-timeout) printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
+  transfer-timeout) sleep "$transfer_seconds"; printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
   wrong-release-ui) [[ "$url" != */ksail-releases/ui ]] || printf '<title>Harbour</title>\n' >"$body" ;;
   weak-release-csp) [[ "$url" != */ksail-releases/ui ]] || printf "HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n" >"$headers" ;;
   wrong-release-api) [[ "$url" != */ksail-releases/openapi.json ]] || printf '{"openapi":"3.1.0","info":{"title":"KSail release history"},"servers":[{"url":"https://other.example.com"}],"paths":{"/repos/devantler-tech/ksail/releases":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
   wrong-release-origin) [[ "$url" != */ksail-releases/ui-contract-config ]] || printf '{"hostOrigins":["https://other.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
-  http-failure) printf '503'; exit 0 ;;
+  http-failure | flap-public-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
   missing-csp) printf 'HTTP/2 200\r\n\r\n' >"$headers" ;;
   weak-csp) printf 'HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n' >"$headers" ;;
@@ -331,6 +338,60 @@ run_case() {
     [[ $(wc -l <"$fixture/urls") -eq "$expected_urls" ]] || fail "$name: public checks were incomplete"
   else
     if [[ "$result" == 0 ]] || ! jq -e '.complete == false and (.failure | type == "string")' "$fixture/stdout" >/dev/null; then fail "$name: incomplete or unsafe rollout was accepted"; fi
+    local public_role='' public_reason=''
+    case "$mode" in
+      dns-failure)
+        public_role=sample_health
+        public_reason=dns_failed
+        ;;
+      tls-failure | tls-handshake-failure)
+        public_role=sample_health
+        public_reason=tls_failed
+        ;;
+      request-timeout | transfer-timeout)
+        public_role=sample_health
+        public_reason=request_timeout
+        ;;
+      http-failure | redirect)
+        public_role=sample_health
+        public_reason=http_status
+        ;;
+      missing-csp | weak-csp | duplicate-csp)
+        public_role=kit_index
+        public_reason=security_headers
+        ;;
+      wrong-body)
+        public_role=sample_observations
+        public_reason=body_invalid
+        ;;
+      wrong-asset)
+        public_role=kit_library
+        public_reason=asset_invalid
+        ;;
+      wrong-release-ui)
+        public_role=release_index
+        public_reason=asset_invalid
+        ;;
+      weak-release-csp)
+        public_role=release_index
+        public_reason=security_headers
+        ;;
+      wrong-release-api)
+        public_role=release_openapi
+        public_reason=body_invalid
+        ;;
+      wrong-release-origin)
+        public_role=release_config
+        public_reason=body_invalid
+        ;;
+    esac
+    if [[ -n "$public_role" ]]; then
+      jq -e --arg role "$public_role" --arg reason "$public_reason" '
+        (.failure == "public_contract_incomplete" or
+          ($reason == "request_timeout" and .failure == "deadline_exceeded")) and .phase == "public_contract" and
+        .role == $role and .reason == $reason' "$fixture/stdout" >/dev/null ||
+        fail "$name: refusal omitted the safe public phase, role or reason"
+    fi
     if [[ "$mode" == unsafe-storage ]]; then
       jq -e '.failure == "public_contract_incomplete"' "$fixture/stdout" >/dev/null || fail "$name: unsafe permissions were not refused during public checks"
     fi
@@ -356,6 +417,21 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# A failed endpoint check is not attributable when every snapshot pair moves,
+# including the final pair. Reach all three pairs before judging the refusal.
+mkdir -p "${scratch}/final-moving-public/after"
+cp "${scratch}/healthy/"*.json "${scratch}/final-moving-public/"
+jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/final-moving-public/after/apps.json"
+run_case final-moving-public fail flap-public-failure 20
+[[ $(cat "${scratch}/final-moving-public/apps.count") == 6 && $(wc -l <"${scratch}/final-moving-public/urls") -eq 3 ]] ||
+  fail 'final-moving-public: did not reach three moving pairs with failed public checks'
+jq -e '.failure == "rollout_changed" and .changed == ["apps.metadata.labels"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/final-moving-public/stdout" >/dev/null ||
+  fail 'final-moving-public: final moving snapshot retained an unvalidated public failure'
+for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
+# Spend the complete transfer budget, as a connected endpoint that never responds does.
+# The refusal must retain its sanitized transport cause even at the shared deadline.
+run_case transfer-timeout fail transfer-timeout 15
+
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 mutate_case() {
   local name=$1 key=$2 mutation=$3
@@ -671,6 +747,15 @@ jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/movin
 run_case still-public fail flaky-public 15
 jq -e '.failure == "public_contract_incomplete" and has("changed") == false' "${scratch}/still-public/stdout" >/dev/null ||
   fail 'still-public: a failed public check against an unchanged rollout was not refused as such'
+# A public failure seen against a pair that then moved belongs to that abandoned
+# attempt. When the retaken rollout never becomes acceptable, the deadline refusal
+# names the change and must not carry the discarded attempt's public role.
+mkdir -p "${scratch}/moved-then-wrong-public/after"
+cp "${scratch}/healthy/"*.json "${scratch}/moved-then-wrong-public/"
+jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/moved-then-wrong-public/after/apps.json"
+run_case moved-then-wrong-public fail flaky-public 15
+jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/moved-then-wrong-public/stdout" >/dev/null ||
+  fail 'moved-then-wrong-public: a deadline after a moved rollout carried the abandoned public failure'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
 mutate_case foreign-source-namespace apps '.spec.sourceRef.namespace="foreign"' 3
 mutate_case root-advanced root '.status.artifact.revision="latest@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"' 3
