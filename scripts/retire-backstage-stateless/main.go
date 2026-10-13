@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/devantler-tech/platform/internal/portalstorage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -554,10 +555,6 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	volumes, err := members(s.volumes)
-	if err != nil {
-		return nil, err
-	}
 	if s.retiring == nil {
 		s.retiring, err = retiringIdentities(s)
 		if err != nil {
@@ -634,9 +631,6 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 			continue
 		}
 		if r["kind"] == "PersistentVolumeClaim" {
-			if field(r, "status", "phase") != "Bound" || text(field(r, "spec", "volumeName")) == "" || field(r, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
-				return nil, errors.New("claim binding or prune protection unverified")
-			}
 			claims = append(claims, r)
 		}
 		if r["kind"] == "Pod" {
@@ -667,20 +661,19 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 	if dbPods != instances || !primaryObserved || len(claims) == 0 || !history {
 		return nil, errors.New("database coverage incomplete")
 	}
+	claimItems := make([]any, 0, len(claims))
 	for _, c := range claims {
-		found := false
-		for _, v := range volumes {
-			if metadataValid(v) && field(v, "metadata", "name") == field(c, "spec", "volumeName") && field(v, "spec", "claimRef", "namespace") == "backstage" && field(v, "spec", "claimRef", "name") == field(c, "metadata", "name") && field(v, "spec", "claimRef", "uid") == field(c, "metadata", "uid") && field(v, "status", "phase") == "Bound" {
-				if err := independentOfRetirement(v, s.retiring); err != nil {
-					return nil, err
-				}
-				found = true
-				result[identity(v)] = projection(v)
-			}
+		claimItems = append(claimItems, c)
+	}
+	bindings, err := portalstorage.ValidateBindings(dbUID, map[string]any{"apiVersion": "v1", "kind": "List", "items": claimItems}, s.volumes, true)
+	if err != nil {
+		return nil, errors.New("physical retention or reciprocal binding unverified")
+	}
+	for _, binding := range bindings {
+		if err := independentOfRetirement(binding.Volume, s.retiring); err != nil {
+			return nil, err
 		}
-		if !found {
-			return nil, errors.New("claim volume identity mismatch")
-		}
+		result[identity(binding.Volume)] = projection(binding.Volume)
 	}
 	return result, nil
 }

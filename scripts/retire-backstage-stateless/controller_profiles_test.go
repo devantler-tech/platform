@@ -142,7 +142,7 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 					object(claim["spec"])["volumeName"] = "second-retained-volume"
 					object(volume["metadata"])["name"] = "second-retained-volume"
 					object(volume["metadata"])["uid"] = "second-volume-uid"
-					object(volume["spec"])["claimRef"] = map[string]any{"name": "backstage-db-4", "namespace": "backstage", "uid": field(claim, "metadata", "uid")}
+					object(volume["spec"])["claimRef"] = map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "name": "backstage-db-4", "namespace": "backstage", "uid": field(claim, "metadata", "uid")}
 					f.live["items"] = append(array(f.live["items"]), pod, claim)
 					f.volumes["items"] = append(array(f.volumes["items"]), volume)
 				}
