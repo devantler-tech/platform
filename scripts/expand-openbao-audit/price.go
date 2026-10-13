@@ -18,15 +18,26 @@ func priceWithinBudget(b []byte) bool {
 	return priceCode(b) == "WITHIN_BUDGET"
 }
 
+// priceCode classifies bounded provider amounts without rounding prices or
+// disclosing response values; the full gross-EUR target must still fit the cap.
 func priceCode(b []byte) string {
 	response, err := decode(b)
 	gross := str(field(response, "pricing", "volume", "price_per_gb_month", "gross"))
-	if err != nil || field(response, "pricing", "currency") != "EUR" || !regexp.MustCompile(`^[0-9]{1,8}(\.[0-9]{1,12})?$`).MatchString(gross) {
-		return "INVALID_RESPONSE"
+	if err != nil {
+		return "MALFORMED_RESPONSE"
+	}
+	if field(response, "pricing", "currency") != "EUR" {
+		return "UNSUPPORTED_CURRENCY"
+	}
+	// The provider represents money as decimal strings, not fixed-scale floats.
+	// Bound parsing work while retaining precision; never round a price down
+	// to make the same gross-EUR budget pass.
+	if !regexp.MustCompile(`^[0-9]{1,8}(\.[0-9]{1,32})?$`).MatchString(gross) {
+		return "UNSUPPORTED_DECIMAL"
 	}
 	price, ok := new(big.Rat).SetString(gross)
 	if !ok || price.Sign() <= 0 {
-		return "INVALID_RESPONSE"
+		return "NONPOSITIVE_PRICE"
 	}
 	if new(big.Rat).Mul(price, big.NewRat(66, 1)).Cmp(big.NewRat(5, 1)) > 0 {
 		return "OVER_BUDGET"
