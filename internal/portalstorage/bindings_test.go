@@ -87,3 +87,28 @@ func TestValidateBindingsRefusesUnsafeOrIncompleteEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestReleasedRetainedVolumeWithRemovedClaimStillHolds(t *testing.T) {
+	c, v := bindingFixture(t)
+	v["items"] = append(v["items"].([]any), map[string]any{
+		"apiVersion": "v1", "kind": "PersistentVolume",
+		"metadata": map[string]any{"name": "previous-volume", "uid": "previous-volume-uid", "resourceVersion": "999"},
+		"spec": map[string]any{
+			"persistentVolumeReclaimPolicy": "Retain", "storageClassName": "longhorn-wffc",
+			"claimRef": map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "namespace": "backstage", "name": "backstage-db-2", "uid": "removed-claim-uid"},
+			"csi":      map[string]any{"driver": "driver.longhorn.io", "volumeHandle": "preserved-data"},
+		},
+		"status": map[string]any{"phase": "Released"},
+	})
+	before, err := json.Marshal([]any{c, v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateBindings("database", c, v, false); err == nil || err.Error() != "volume reverse census differs" {
+		t.Fatalf("released retained data must stop the reverse census, got %v", err)
+	}
+	after, err := json.Marshal([]any{c, v})
+	if err != nil || !reflect.DeepEqual(before, after) {
+		t.Fatal("refusal changed retained evidence")
+	}
+}

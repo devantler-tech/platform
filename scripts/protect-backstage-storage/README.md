@@ -49,6 +49,41 @@ All reads and patch responses remain bounded in process memory. The command read
 no Secrets and emits only a compact count receipt; it never uploads cluster
 snapshots, raw patch failures or storage identities.
 
+## A released volume stops the census
+
+Replacing a database instance can leave its old `Retain` volume in `Released`
+with a reference to a claim UID that no longer exists. This is still retained
+data, not an empty volume. Both commands deliberately stop on that reverse-census
+mismatch; do not skip the volume, remove protection, clear its claim reference,
+or retry the consumed operation to make the check pass.
+
+1. Use read-only Kubernetes and Longhorn views to identify the exact old volume,
+   its claim UID, backing-volume identity, retention policy and attachments. Keep
+   this inventory private. Prove the old claim UID is absent from a complete claim
+   census; a replacement with the same name is a different identity.
+2. Verify the remaining database instances, replication and backups are healthy.
+   Prove no running workload or attachment still uses the old backing volume.
+   If any evidence is incomplete or the volume is attached, remain on HOLD.
+3. Prepare a separate, reviewed recovery operation to preserve the orphan's own
+   data: take and verify a recoverable Longhorn backup, or recover it through a
+   dedicated recovery claim and verify its backup. A backup of the current
+   primary alone is not proof that this old volume is recoverable.
+4. Record the retention decision and obtain the operation-specific approval.
+   A protected maintenance workflow may then rehome the preserved volume to the
+   reviewed recovery claim, or retire only its Kubernetes PV identity while
+   explicitly preserving the Longhorn backing volume and verified backup.
+   Deleting backing data is a different destructive operation, never implied by
+   clearing this hold. The general retention migration remains tracked in #4441.
+5. If a retirement journal already exists, keep it and inspect that operation;
+   do not clear it or bypass its full-specification fence. Any needed journal or
+   volume maintenance requires a separately reviewed, authorized recovery.
+6. Read back the retained backing data, recovery/backup evidence and complete
+   claim/volume census. Continue only with a new approved protected attempt whose
+   source and deployment are current; never rerun a consumed attempt.
+
+This workflow intentionally implements none of that orphan recovery or deletion.
+Until the separate operation is delivered and verified, HOLD is the safe result.
+
 ## Offline checks
 
 ```sh
