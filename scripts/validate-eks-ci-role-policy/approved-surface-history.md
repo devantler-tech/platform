@@ -3509,3 +3509,25 @@ The production-authorization job on the checksum-verified renderer (run
 No issuer, artifact, identity count, RBAC binding, IAM policy, credential or
 permission grant changes. The consumer moves its pin only after this change is
 deployed.
+
+## 2026-10-13 — The retired v7.9.0 canonical publisher commit is withdrawn
+
+platform#4837 removes the older of the two reviewed commits of the canonical
+manifest publishing workflow for the github-config artifact. The subject now
+accepts `devantler-tech/.github` at
+`9ff2ad68306cc73df6814861c7804a11a25e0788` (v7.10.3) only. The commit
+withdrawn, `63c59062489edbee907d2a4d5d06f01c57b7d58c` (v7.9.0), no longer
+publishes anything: the publishing repository pins the v7.10.3 commit, and
+production runs v7.10.4, signed at it. The legacy revisions in the same subject
+and the aws artifact's subject are unchanged.
+
+The authorization test on the checksum-verified renderer (run 38436803032, job
+115432800231) measured exactly one changed entry at source `8d7aee5b`, and
+nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `060684daa0c5e8c3ead5eb3a1c8bfef73abe43e3cd33536af956713f6e5c4c54` to
+  `a77541ed2764a691cedefe869069f8cc7cc9bf798a63be755bb4a7596f477df4`.
+
+No issuer, artifact, RBAC binding, IAM policy, credential or permission grant
+changes. The set of accepted identities shrinks by one.
