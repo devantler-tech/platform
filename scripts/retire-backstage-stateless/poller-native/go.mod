@@ -6,7 +6,7 @@ go 1.26.6
 
 require (
 	github.com/fluxcd/helm-controller v1.5.5
-	github.com/fluxcd/helm-controller/api v1.5.5
+	github.com/fluxcd/helm-controller/api v1.6.5
 	github.com/fluxcd/pkg/ssa v0.67.6
 	k8s.io/apimachinery v0.37.1
 	k8s.io/cli-runtime v0.37.1
@@ -41,8 +41,8 @@ require (
 	github.com/extism/go-sdk v1.7.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
 	github.com/fluxcd/cli-utils v1.2.1 // indirect
-	github.com/fluxcd/pkg/apis/kustomize v1.15.1 // indirect
-	github.com/fluxcd/pkg/apis/meta v1.25.1 // indirect
+	github.com/fluxcd/pkg/apis/kustomize v1.19.2 // indirect
+	github.com/fluxcd/pkg/apis/meta v1.30.2 // indirect
 	github.com/fluxcd/pkg/auth v0.38.4 // indirect
 	github.com/fluxcd/pkg/cache v0.13.0 // indirect
 	github.com/fluxcd/pkg/chartutil v1.22.1 // indirect
