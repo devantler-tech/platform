@@ -1042,6 +1042,7 @@ jobs:
               - 'scripts/verify-kubelet-config-readback.sh'
               - 'scripts/tests/test-kubelet-config-readback.sh'
               - 'scripts/tests/test-talos-apparmor-lsm.sh'
+              - 'scripts/tests/test-talos-apparmor-lsm-regressions.sh'
               - 'ksail.prod.yaml'
               - 'ksail.yaml'
               - '.github/scripts/setup-talosctl.sh'
@@ -1355,7 +1356,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.202.28"
+          KSAIL_VERSION: "7.202.58"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2521,7 +2522,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.202.28"
+          KSAIL_VERSION: "7.202.58"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -2968,8 +2969,8 @@ jobs:
 
       - name: 🛡️ Validate the Talos AppArmor LSM contract
         run: |
-          shellcheck scripts/tests/test-talos-apparmor-lsm.sh
-          bash scripts/tests/test-talos-apparmor-lsm.sh
+          shellcheck scripts/tests/test-talos-apparmor-lsm.sh scripts/tests/test-talos-apparmor-lsm-regressions.sh
+          bash scripts/tests/test-talos-apparmor-lsm-regressions.sh
 
       - name: ⏱️ Validate the Talos drain budget
         run: |
@@ -3603,7 +3604,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.202.28"
+          KSAIL_VERSION: "7.202.58"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

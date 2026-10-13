@@ -24,8 +24,12 @@ fold inputs are:
 | `charts/` | Carries the generated `Cluster` schema published from those types; earlier audits compared it, so it stays part of the set. |
 | `go.mod`, `go.sum` | Pin the Talos machinery that encodes the machine configuration. |
 
-`--check-pins` reads all explicit KSail pins in CI, CD and the production
-deployment action. They must be explicit release versions and must all agree.
+`--check-pins` reads all explicit KSail pins in CI, CD, the production
+deployment action, direct-main validation, disaster recovery and the two
+operational proof workflows. They must be explicit release versions and must all agree.
+The disposable, non-Talos Cilium default-deny proof keeps its separately audited
+KSail 7.193.8 / Cilium image pairing. The caller inventory accounts for that
+independent profile without treating it as a deployment renderer.
 It then fetches that release's tag from the public KSail repository, reads the
 git object ID of each input, and passes only when all six equal one set
 recorded in [`audited_inputs.go`](audited_inputs.go). A git tree ID covers every
@@ -229,6 +233,22 @@ local configurations with the pinned Talos client. The ownership repair changes
 how cluster updates cooperate with existing Helm owners; this adoption preserves
 the intended production schematic and strict node-image readback.
 
+**7.202.56**, commit `5e387655892643dcf322a03d2ceb6d9ca6030979`, is audited
+against 7.202.28 for bounded Image Factory registration retries. The Talos
+generator and cluster API trees are byte-identical. The configuration manager
+reapplies a selected cluster name after inherited patches during regeneration;
+its kernel-argument fold and distribution caller are unchanged. Extension
+activation, the union and reconciliation of both roles' arguments, and explicit
+schematic-ID precedence therefore remain unchanged. The chart changes normalize
+its label and quote a README example; the extension and schematic-ID fields,
+types and defaults are unchanged. Go and unrelated dependencies move, with
+qualified source-authentication and Kubernetes compatibility replacements;
+Talos machinery, Image Factory, YAML and protobuf versions and checksums are
+unchanged. The offline render regression exercises both production and local
+roles with the pinned Talos client. This adoption retains the intended production
+schematic and strict node-image readback; retries share the original deadline
+and do not accept permanent registration failures.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
@@ -244,3 +264,21 @@ The same actual caller preserves both roles' arguments and UKI values with an
 explicit schematic ID, while a whitespace-only ID still permits folding.
 `TALOSCTL_BIN` may point at a locally verified client of the pinned version.
 No local cluster is started.
+
+**7.202.3**, commit `f9172ab810fdcb94b47351d04d70708f6878e10a`, is audited as
+the range 7.197.1 → 7.202.3. The Talos generator is byte-identical. The changed
+configuration manager adds pod/service network patches for the nested Kubernetes
+provider; that path is a no-op for this platform's Hetzner provider. The fold's
+trigger, argument normalization, both-role output, installer-image selection and
+explicit schematic-ID boundary are unchanged. The API and chart changes add
+network defaults and clarify existing settings; the extensions and schematic-ID
+fields retain their names, types and defaults. Dependency updates do not change
+Talos machinery or its YAML encoder. The offline render test still exercises both
+roles and rejects invalid patches.
+
+This release also contains [KSail #7300](https://github.com/devantler-tech/ksail/pull/7300):
+same-version boot-image changes now trigger a node rollout instead of being
+silently skipped. Its [final-head provider trial](https://github.com/devantler-tech/ksail/actions/runs/37591901167)
+verified a same-version image update, readiness, a second no-change plan and
+cleanup on a temporary single-node cluster. That trial does not cover autoscaled
+nodes or an interrupted rollout; the release's regression tests cover those paths.
