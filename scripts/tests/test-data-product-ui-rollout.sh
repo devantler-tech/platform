@@ -284,6 +284,7 @@ fi
 case "${MODE:-}" in
   dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
+  tls-handshake-failure) printf 'PRIVATE-ERROR-CANARY: private handshake\n' >&2; exit 35 ;;
   request-timeout) printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
   transfer-timeout) sleep "$transfer_seconds"; printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
   wrong-release-ui) [[ "$url" != */ksail-releases/ui ]] || printf '<title>Harbour</title>\n' >"$body" ;;
@@ -341,7 +342,7 @@ run_case() {
         public_role=sample_health
         public_reason=dns_failed
         ;;
-      tls-failure)
+      tls-failure | tls-handshake-failure)
         public_role=sample_health
         public_reason=tls_failed
         ;;
@@ -414,7 +415,7 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
-for mode in dns-failure tls-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
+for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
 # Spend the complete transfer budget, as a connected endpoint that never responds does.
 # The refusal must retain its sanitized transport cause even at the shared deadline.
 run_case transfer-timeout fail transfer-timeout 15

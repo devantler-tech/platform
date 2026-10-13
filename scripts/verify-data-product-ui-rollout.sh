@@ -21,7 +21,7 @@ fail() {
   local detail='' role='' reason='' extra=''
   # A completed public failure remains useful when the shared deadline subsequently expires.
   # Keep the deadline refusal, while retaining only the validated role and cause already observed.
-  if [[ "$1" == public_contract_incomplete || ( "$1" == deadline_exceeded && -f "$scratch/public-failure" ) ]]; then
+  if [[ "$1" == public_contract_incomplete || ("$1" == deadline_exceeded && -f "$scratch/public-failure") ]]; then
     role=public_contract
     reason=read_incomplete
     if [[ -f "$scratch/public-failure" ]]; then
@@ -552,7 +552,7 @@ fetch() {
   if ((curl_exit)); then
     case "$curl_exit" in
       6) reason=dns_failed ;;
-      60) reason=tls_failed ;;
+      35 | 60) reason=tls_failed ;;
       28) reason=request_timeout ;;
     esac
     refuse_public "$role" "$reason"
