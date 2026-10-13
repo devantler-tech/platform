@@ -10,46 +10,25 @@ import (
 
 func fixedNativeUpdatePolicy(b []byte) bool {
 	var config struct {
-		PackageRules []map[string]json.RawMessage `json:"packageRules"`
+		IgnorePaths         []string `json:"ignorePaths"`
+		VulnerabilityAlerts struct {
+			Enabled bool `json:"enabled"`
+		} `json:"vulnerabilityAlerts"`
 	}
-	if json.Unmarshal(b, &config) != nil {
+	if json.Unmarshal(b, &config) != nil || !config.VulnerabilityAlerts.Enabled {
 		return false
 	}
 	const target = "scripts/retire-backstage-stateless/poller-native/go.mod"
-	protected := false
-	for _, rule := range config.PackageRules {
-		var files, managers []string
-		if protected && string(rule["enabled"]) == "true" {
-			managerApplies := rule["matchManagers"] == nil
-			if json.Unmarshal(rule["matchManagers"], &managers) == nil {
-				for _, manager := range managers {
-					managerApplies = managerApplies || manager == "gomod"
-				}
-			}
-			fileApplies := rule["matchFileNames"] == nil
-			if json.Unmarshal(rule["matchFileNames"], &files) == nil {
-				for _, file := range files {
-					fileApplies = fileApplies || file == target || strings.ContainsAny(file, "*?!") || strings.HasPrefix(file, "/")
-				}
-			}
-			if managerApplies && fileApplies {
-				return false
-			}
-		}
-		if json.Unmarshal(rule["matchFileNames"], &files) != nil || len(files) != 1 || files[0] != target {
-			continue
-		}
-		if protected || json.Unmarshal(rule["matchManagers"], &managers) != nil || len(managers) != 1 || managers[0] != "gomod" || string(rule["enabled"]) != "false" {
+	count := 0
+	for _, path := range config.IgnorePaths {
+		if strings.ContainsAny(path, "*?![]{}") || strings.HasPrefix(path, "/") {
 			return false
 		}
-		for _, key := range []string{"matchPackageNames", "matchUpdateTypes", "matchDepTypes", "matchCurrentVersion"} {
-			if rule[key] != nil {
-				return false
-			}
+		if path == target {
+			count++
 		}
-		protected = true
 	}
-	return protected
+	return count == 1
 }
 
 func TestNativeGraphUpdaterPolicyIsNarrowAndComplete(t *testing.T) {
@@ -60,16 +39,15 @@ func TestNativeGraphUpdaterPolicyIsNarrowAndComplete(t *testing.T) {
 	if !fixedNativeUpdatePolicy(b) {
 		t.Fatal("independent updates can change the fixed native conformance graph")
 	}
-	const good = `{"packageRules":[{"matchManagers":["gomod"],"matchFileNames":["scripts/retire-backstage-stateless/poller-native/go.mod"],"enabled":false}]}`
+	const good = `{"vulnerabilityAlerts":{"enabled":true},"ignorePaths":["scripts/retire-backstage-stateless/poller-native/go.mod"]}`
 	if !fixedNativeUpdatePolicy([]byte(good)) {
 		t.Fatal("correct scoped policy rejected")
 	}
 	for _, bad := range []string{
-		strings.Replace(good, `"enabled":false`, `"enabled":true`, 1),
-		strings.Replace(good, `"enabled":false`, `"enabled":false,"matchUpdateTypes":["patch"]`, 1),
+		strings.Replace(good, `"enabled":true`, `"enabled":false`, 1),
 		strings.Replace(good, `scripts/retire-backstage-stateless/poller-native/go.mod`, `**/go.mod`, 1),
-		strings.Replace(good, `"gomod"`, `"regex"`, 1),
-		strings.Replace(good, `false}]}`, `false},{"matchManagers":["gomod"],"enabled":true}]}`, 1),
+		strings.Replace(good, `scripts/retire-backstage-stateless/poller-native/go.mod`, `scripts/render-helm-chart/go.mod`, 1),
+		`{"vulnerabilityAlerts":{"enabled":true},"packageRules":[{"matchManagers":["gomod"],"matchFileNames":["scripts/retire-backstage-stateless/poller-native/go.mod"],"enabled":false}]}`,
 	} {
 		if fixedNativeUpdatePolicy([]byte(bad)) {
 			t.Fatal("ineffective or overly broad policy accepted")

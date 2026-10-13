@@ -108,8 +108,11 @@ The test-only native driver deliberately locks the published helm-controller
 would test a different implementation, not the one production runs. The native
 executable authenticates the complete
 module and checksum locks, then checks every linked dependency and the producer's
-intentional replacements against them. The updater excludes only this fixed
-fixture; its graph moves with a reviewed producer change and renewed proof (#4840).
+intentional replacements against them. Renovate excludes this manifest before
+extraction, because forced security updates override package-level disables.
+Dependabot's all-version ignore is confined to the exact fixture directory;
+version-only exclusions do not stop security updates. Alerts and scans remain
+visible. The graph moves with a reviewed producer change and renewed proof (#4840).
 This is not a claim that vulnerable symbols are unreachable: `govulncheck` identifies
 `GO-2026-5026` through `action.Uninstall` to `idna.ToASCII` in `x/net` 0.53.0.
 The advisory is fixed in `x/net` 0.55.0, outside this published graph.
