@@ -53,10 +53,12 @@ refresh must retain its one-key shape and match the operator's observed source.
 No profile permits credential-data changes, storage rebinding, owner changes,
 deletion, recreation, or arbitrary annotations.
 
-Before fencing, prove the default credential and certificate metadata already
-matches the published constructor plus the frozen Cluster's inherited metadata.
-The existing credential constructor then performs a metadata no-op and never
-replaces its password. Reject unsettled entries and uncharacterized inheritance
+Before fencing, prove the default basic-auth credential metadata already matches
+its published constructor plus the frozen Cluster's inherited metadata. The
+existing credential constructor then performs a metadata no-op and never replaces
+its password. Certificate constructors instead set managed-by and ownership;
+they do not copy credential inheritance or operator-version annotations. Reject
+unsettled credentials and uncharacterized inheritance or monitoring-source
 overrides before writing a journal, leaving the operator free to reconcile them.
 
 Initial separated samples still compare full content. Profile normalization
