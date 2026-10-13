@@ -11,7 +11,8 @@ mkdir -p "$work/bin" "$work/base/.github/workflows" "$work/base/.github/actions/
 cp "$root/.github/workflows/ci.yaml" "$root/.github/workflows/cd.yaml" \
   "$root/.github/workflows/validate-main.yaml" "$root/.github/workflows/dr-rebuild.yaml" \
   "$root/.github/workflows/validate-image-verifier-liveness.yaml" \
-  "$root/.github/workflows/prove-scoped-package-access.yaml" "$work/base/.github/workflows/"
+  "$root/.github/workflows/prove-scoped-package-access.yaml" \
+  "$root/.github/workflows/protect-backstage-storage.yaml" "$work/base/.github/workflows/"
 cp "$root/.github/actions/deploy-prod/action.yml" "$work/base/.github/actions/deploy-prod/"
 cp "$root/ksail.prod.yaml" "$root/ksail.yaml" "$work/base/"
 cp -R "$root/talos" "$root/talos-local" "$work/base/"
