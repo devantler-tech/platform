@@ -382,14 +382,16 @@ func (e engine) eligible(s snapshot) error {
 	if integer(field(h, "metadata", "generation")) < 1 || integer(field(h, "status", "observedGeneration")) != integer(field(h, "metadata", "generation")) {
 		return errors.New("unobserved release generation")
 	}
-	for _, v := range array(field(h, "status", "conditions")) {
-		o := object(v)
-		if o["type"] == "Reconciling" && o["status"] != "False" {
-			return errors.New("active Helm action")
+	if !waitingForUnavailableSource(h, s.chart) {
+		for _, v := range array(field(h, "status", "conditions")) {
+			o := object(v)
+			if o["type"] == "Reconciling" && o["status"] != "False" {
+				return errors.New("active Helm action")
+			}
 		}
-	}
-	if !ready(h) {
-		return errors.New("unready uninstall owner")
+		if !ready(h) {
+			return errors.New("unready uninstall owner")
+		}
 	}
 	released := false
 	for _, v := range array(field(h, "status", "conditions")) {
@@ -736,9 +738,12 @@ func absent(s snapshot) bool {
 	}
 	return true
 }
-func unchangedOwner(a, b map[string]any) bool {
+func unchangedOwner(a, b, chart map[string]any) bool {
 	if !metadataValid(b) || !reflect.DeepEqual(projection(a), projection(b)) || !reflect.DeepEqual(field(a, "metadata", "finalizers"), field(b, "metadata", "finalizers")) || field(a, "metadata", "generation") != field(b, "metadata", "generation") {
 		return false
+	}
+	if waitingForUnavailableSource(b, chart) {
+		return true
 	}
 	for _, v := range array(field(b, "status", "conditions")) {
 		c := object(v)
@@ -946,7 +951,7 @@ func run(args []string, out io.Writer, execute command) int {
 		return hold("HOLD_MUTATION")
 	}
 	current, err := e.collect(ctx)
-	if err != nil || !sameRelease(second.release, current.release) || !unchangedOwner(patched, current.owner) || !controllerHistoryMatches(current) || !reflect.DeepEqual(current.chart, second.chart) || e.deployed(current) != nil {
+	if err != nil || !sameRelease(second.release, current.release) || !unchangedOwner(patched, current.owner, current.chart) || !controllerHistoryMatches(current) || !reflect.DeepEqual(current.chart, second.chart) || e.deployed(current) != nil {
 		return hold("HOLD_MUTATION")
 	}
 	currentTargets, err := retiringIdentities(current)

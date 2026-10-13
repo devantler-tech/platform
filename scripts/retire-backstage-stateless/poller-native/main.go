@@ -82,6 +82,15 @@ func execute() error {
 		return fmt.Errorf("unexpected native legacy defaults")
 	}
 	hr := &v2.HelmRelease{ObjectMeta: metav1.ObjectMeta{Name: "backstage", Namespace: namespace}, Spec: v2.HelmReleaseSpec{Uninstall: &opts}}
+	// Source prerequisite waiting does not gate the native deletion adapter.
+	// The published controller dispatches deletion before source reconciliation.
+	hr.Generation = 1
+	hr.Status.ObservedGeneration = 1
+	hr.Status.Conditions = []metav1.Condition{
+		{Type: "Ready", Status: metav1.ConditionFalse, Reason: "SourceNotReady", ObservedGeneration: 1},
+		{Type: "Reconciling", Status: metav1.ConditionTrue, Reason: "Progressing", Message: "Fulfilling prerequisites", ObservedGeneration: 1},
+		{Type: "Released", Status: metav1.ConditionTrue, Reason: "UpgradeSucceeded", ObservedGeneration: 1},
+	}
 	if hr.Spec.WaitStrategy != nil || hr.GetWaitStrategy() != "" {
 		return fmt.Errorf("fixture changed native wait default")
 	}

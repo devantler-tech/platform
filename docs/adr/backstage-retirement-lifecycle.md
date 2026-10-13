@@ -43,3 +43,11 @@ protected production execution. Policy presence alone is not enforcement proof.
 The workflow must fail closed on incomplete evidence, ineffective admission,
 changed retained content, or a foreign operation. Offline controls prove their
 bounded behavior, not production controller or garbage-collector completion.
+
+An unavailable retired chart is not an active Helm action. The pinned controller
+marks prerequisite waiting as reconciling before checking the source, while its
+deletion branch runs first. Accept only the exact current-generation source-wait
+profile, joined to the unavailable chart and unchanged deployed storage/history.
+Reject stale, duplicate, missing or active-action conditions. Recheck this profile
+after the uninstall-options patch; a changed source or release still stops owner
+deletion. No chart restoration or synthetic credential is needed for retirement.
