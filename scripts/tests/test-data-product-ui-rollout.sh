@@ -169,7 +169,11 @@ esac
 if [[ "$key" == pods || "$key" == replicasets || "$key" == endpoints ]]; then
   [[ "$*" == "$resource -o json" ]] || exit 94
 else
-  [[ "$*" == "$resource $name -o json" ]] || exit 95
+  if [[ "$key" == release-product && "$(cat "$FIXTURE/expected-ksail.json")" == false ]]; then
+    [[ "$*" == "$resource $name --ignore-not-found -o json" ]] || exit 95
+  else
+    [[ "$*" == "$resource $name -o json" ]] || exit 95
+  fi
 fi
 printf '%s\n' "$key" >>"$FIXTURE/reads"
 if [[ "$key" == apps && "${MODE:-}" == hang ]]; then
@@ -191,6 +195,14 @@ fi
 if [[ "$key" == observer-role && "${MODE:-}" == partial-observer ]]; then
   cat "$FIXTURE/observer-role.json"; exit 1
 fi
+if [[ "$key" == release-product ]]; then
+  case "${MODE:-}" in
+    release-forbidden) printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    release-partial-forbidden) cat "$FIXTURE/product.json"; printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    release-null) printf 'null\n'; exit 0 ;;
+    release-malformed) printf '{\n'; exit 0 ;;
+  esac
+fi
 count=0
 [[ ! -f "$FIXTURE/$key.count" ]] || count=$(cat "$FIXTURE/$key.count")
 count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
@@ -199,12 +211,17 @@ count=$((count + 1)); printf '%s\n' "$count" >"$FIXTURE/$key.count"
 # second change returns it from the fourth read on, so the second pair differs
 # from the first for another reason and only the third pair agrees.
 if [[ "${MODE:-}" != flap && -f "$FIXTURE/after2/$key.json" ]] && ((count >= 4)); then
-  cat "$FIXTURE/after2/$key.json"
+  response="$FIXTURE/after2/$key.json"
 elif [[ -f "$FIXTURE/after/$key.json" ]] && { { [[ "${MODE:-}" == flap ]] && ((count % 2 == 0)); } || { [[ "${MODE:-}" != flap ]] && ((count >= 2)); }; }; then
-  cat "$FIXTURE/after/$key.json"
+  response="$FIXTURE/after/$key.json"
 else
-  cat "$FIXTURE/$key.json"
+  response="$FIXTURE/$key.json"
 fi
+if [[ "$key" == release-product ]] && { [[ ! -f "$response" ]] || jq -e '.==null' "$response" >/dev/null; }; then
+  [[ "$*" == "$resource $name --ignore-not-found -o json" ]] || { printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1; }
+  exit 0
+fi
+cat "$response"
 SH
 cat >"${scratch}/bin/curl" <<'SH'
 #!/usr/bin/env bash
@@ -351,6 +368,24 @@ mutate_case() {
 
 mutate_case unexpected-live-ksail-activation helm '.spec.values.demoProduct.ksailReleases.enabled=true'
 
+mkdir "${scratch}/withdrawn-release-still-registered"
+cp "${scratch}/healthy/"*.json "${scratch}/withdrawn-release-still-registered/"
+jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawn-release-still-registered/release-product.json"
+run_case withdrawn-release-still-registered fail '' 3
+[[ -s "${scratch}/withdrawn-release-still-registered/rejections" ]] || fail 'withdrawn product did not reach snapshot rejection'
+for mode in release-forbidden release-partial-forbidden release-null release-malformed; do
+  run_case "$mode" fail "$mode" 3
+done
+mkdir -p "${scratch}/withdrawal-settles/after" "${scratch}/withdrawal-settles/after2"
+cp "${scratch}/healthy/"*.json "${scratch}/withdrawal-settles/"
+jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawal-settles/after/release-product.json"
+printf 'null\n' >"${scratch}/withdrawal-settles/after2/release-product.json"
+expected_urls=18
+run_case withdrawal-settles pass
+expected_urls=9
+jq -e '.retaken==1 and (.settled|index("release-product")!=null)' "${scratch}/withdrawal-settles/stdout" >/dev/null ||
+  fail 'withdrawal changed during public checks without a retaken snapshot'
+
 mkdir "${scratch}/declared-activation-but-live-dormant"
 cp "${scratch}/healthy/"*.json "${scratch}/declared-activation-but-live-dormant/"
 printf '[true,true,false]\n' >"${scratch}/declared-activation-but-live-dormant/expected-flags.json"
@@ -425,6 +460,11 @@ ksail_mutation ksail-wrong-contract release-product '.spec.outputs[0].contractUr
 ksail_mutation ksail-unsupported-ui release-product '.spec.ui.contract.apiVersion="data-product-ui/v1"'
 ksail_mutation ksail-disabled-workload deployment-harbour '.spec.template.spec.containers[0].env[0].value="false"'
 ksail_mutation ksail-disabled-pod pods '.items[2].spec.containers[0].env[0].value="false"'
+mkdir "${scratch}/ksail-missing-product"
+cp "${scratch}/ksail/"*.json "${scratch}/ksail-missing-product/"
+printf 'null\n' >"${scratch}/ksail-missing-product/release-product.json"
+run_case ksail-missing-product fail '' 3
+jq -e '.failure=="read_incomplete"' "${scratch}/ksail-missing-product/stdout" >/dev/null || fail 'enabled missing product was accepted as absence'
 for mode in wrong-release-ui weak-release-csp wrong-release-api wrong-release-origin; do
   mkdir "${scratch}/$mode"
   cp "${scratch}/ksail/"*.json "${scratch}/$mode/"

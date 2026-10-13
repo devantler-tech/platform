@@ -74,6 +74,8 @@ directly. The portable host's health endpoint, assets and sandbox policy must al
 pass. The receipt also binds KSail activation to the checked-out Helm declaration,
 the live Helm value and serving Pod environments, current product registration,
 exact source/contract URLs, approved host origins and the public UI's restricted
-connection policy. It performs no GitHub source read; that check belongs to the
+connection policy. When KSail releases are disabled, it requires the descriptor
+to be absent; an unreadable resource is a refusal, not proof of withdrawal.
+It performs no GitHub source read; that check belongs to the
 consumer browser. Finish with an authenticated registry-to-sandbox query and a separately
 connected portable-host query in the browser, including Light and Dark appearance.

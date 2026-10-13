@@ -141,7 +141,8 @@ def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.
   status:{phase:.status.phase,podIP:.status.podIP,podIPs:[.status.podIPs[]? | .ip],conditions:(.status.conditions|conditions),
     containers:[.status.containerStatuses[]? | {name,ready,imageID,
       running:(.state.running|type=="object"),waiting:(.state.waiting!=null),terminated:(.state.terminated!=null)}]}};
-if length != 1 then error("incomplete response") else .[0] end |
+if $allow_absent and length == 0 then {key:$role,value:null} else
+if length != 1 or (.[0]|type)!="object" then error("incomplete response") else .[0] end |
 {key:$role,value:(
 if $role == "pods" or $role == "replicasets" or $role == "endpoints" then
   (if $role == "pods" then "Pod" elif $role == "endpoints" then "EndpointSlice" else "ReplicaSet" end) as $kind |
@@ -195,6 +196,7 @@ elif $role == "observer-role" then {apiVersion,kind,metadata:(.metadata|metadata
 elif $role == "observer-binding" then {apiVersion,kind,metadata:(.metadata|metadata),roleRef,subjects}
 elif $role == "probe-policy" then {apiVersion,kind,metadata:(.metadata|metadata),spec,specs}
 else error("unknown response") end)}
+end
 JQ
 cat >"$scratch/check.jq" <<'JQ'
 def positive: type=="number" and .==floor and .>0;
@@ -401,7 +403,7 @@ def route($name;$host;$backend;$public):
     .spec.ui.url==("https://harbour-data."+$domain+"/ksail-releases/ui") and .spec.ui.contract.apiVersion=="data-product-ui/v2" and
     (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
     (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"])
-  else true end) and
+  else ."release-product"==null end) and
 ([."deployment-harbour"] + [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
   all(.[]; [.spec.containers[]? | select(.name=="product") | .env[]? | select(.name=="KSAIL_RELEASES_ENABLED")] as $flags |
     if $ksail_enabled then $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"true",indirect:false}]
@@ -431,20 +433,26 @@ JQ
 
 # project_read stores only the reviewed fields from one resource response.
 project_read() {
-  local role=$1 destination=$2
-  shift 2
-  kubectl "$@" 2>/dev/null | jq -se --arg role "$role" --arg namespace "$namespace" -f "$scratch/project.jq" >"$destination" 2>/dev/null
+  local role=$1 destination=$2 allow_absent=$3
+  shift 3
+  kubectl "$@" 2>/dev/null | jq -se --arg role "$role" --arg namespace "$namespace" --argjson allow_absent "$allow_absent" -f "$scratch/project.jq" >"$destination" 2>/dev/null
 }
 # read_resource fetches and projects one fixed target within the shared deadline.
 read_resource() {
-  local directory=$1 role=$2 ns=$3 resource=$4 name=${5:-} request_seconds
+  local directory=$1 role=$2 ns=$3 resource=$4 name=${5:-} request_seconds allow_absent=false
   remaining
   request_seconds=$left
   ((request_seconds <= 5)) || request_seconds=5
   local args=(--kubeconfig "$KUBECONFIG" --context "$context" --namespace "$ns" --request-timeout "${request_seconds}s" get "$resource")
   [[ -z "$name" ]] || args+=("$name")
+  # Only a disabled release product may be absent. kubectl still fails on
+  # Forbidden, partial responses and transport errors; pipefail preserves that.
+  if [[ "$role" == release-product && "$expected_releases" == false ]]; then
+    allow_absent=true
+    args+=(--ignore-not-found)
+  fi
   args+=(-o json)
-  bounded project_read "$role" "$directory/$role.json" "${args[@]}" || fail read_incomplete
+  bounded project_read "$role" "$directory/$role.json" "$allow_absent" "${args[@]}" || fail read_incomplete
 }
 # collect gathers every resource needed to judge a complete rollout snapshot.
 collect() {
@@ -455,9 +463,7 @@ collect() {
   read_resource "$directory" chart "$namespace" ocirepositories.source.toolkit.fluxcd.io data-product-controller
   read_resource "$directory" helm "$namespace" helmreleases.helm.toolkit.fluxcd.io data-product-controller
   read_resource "$directory" product "$namespace" dataproducts.data.devantler.tech harbour-observations
-  if [[ "$expected_releases" == true ]]; then
-    read_resource "$directory" release-product "$namespace" dataproducts.data.devantler.tech ksail-releases
-  fi
+  read_resource "$directory" release-product "$namespace" dataproducts.data.devantler.tech ksail-releases
   read_resource "$directory" service-harbour "$namespace" services data-product-controller-harbour
   read_resource "$directory" service-ui-kit "$namespace" services data-product-controller-ui-kit
   read_resource "$directory" endpoints "$namespace" endpointslices.discovery.k8s.io
