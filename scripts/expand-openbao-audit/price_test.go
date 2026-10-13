@@ -8,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestPriceGuardEnforcesConservativeGrossEuroBudget pins supported precision
+// and the strict budget boundary, including values that float rounding hides.
 func TestPriceGuardEnforcesConservativeGrossEuroBudget(t *testing.T) {
 	for _, tc := range []struct {
 		currency, price string
@@ -35,6 +37,8 @@ func TestPriceGuardEnforcesConservativeGrossEuroBudget(t *testing.T) {
 	}
 }
 
+// TestPricingDiagnosticsExposeOnlyBoundedCodes keeps invalid provider values
+// out of diagnostics while distinguishing actionable rejection categories.
 func TestPricingDiagnosticsExposeOnlyBoundedCodes(t *testing.T) {
 	for _, tc := range []struct{ body, want string }{
 		{`{"pricing":{"currency":"EUR","volume":{"price_per_gb_month":{"gross":"0.05"}}}}`, "WITHIN_BUDGET"},

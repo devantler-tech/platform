@@ -18,6 +18,8 @@ func priceWithinBudget(b []byte) bool {
 	return priceCode(b) == "WITHIN_BUDGET"
 }
 
+// priceCode classifies bounded provider amounts without rounding prices or
+// disclosing response values; the full gross-EUR target must still fit the cap.
 func priceCode(b []byte) string {
 	response, err := decode(b)
 	gross := str(field(response, "pricing", "volume", "price_per_gb_month", "gross"))
