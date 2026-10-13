@@ -105,8 +105,12 @@ permission. Journal shape changes require a matching reviewed policy change.
 
 The test-only native driver deliberately locks the published helm-controller
 1.5.5, Helm 4.2.0 and SSA dependency graph. Updating its indirect dependencies
-would test a different implementation, not the one production runs. This is not
-a claim that vulnerable symbols are unreachable: `govulncheck` identifies
+would test a different implementation, not the one production runs. The native
+executable authenticates the complete
+module and checksum locks, then checks every linked dependency and the producer's
+intentional replacements against them. The updater excludes only this fixed
+fixture; its graph moves with a reviewed producer change and renewed proof (#4840).
+This is not a claim that vulnerable symbols are unreachable: `govulncheck` identifies
 `GO-2026-5026` through `action.Uninstall` to `idna.ToASCII` in `x/net` 0.53.0.
 The advisory is fixed in `x/net` 0.55.0, outside this published graph.
 

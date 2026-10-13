@@ -39,7 +39,7 @@ func TestNativeHelmHistoryHooksAndAsynchronousUninstall(t *testing.T) {
 	}
 	// Bind normal Go test-cache reuse to the nested driver source/locks too.
 	// Required hosted runs additionally use -count=1.
-	for _, path := range []string{"poller-native/main.go", "poller-native/result.go", "poller-native/go.mod", "poller-native/go.sum"} {
+	for _, path := range []string{"poller-native/main.go", "poller-native/result.go", "poller-native/graph.go", "poller-native/go.mod", "poller-native/go.sum"} {
 		if _, err := os.ReadFile(path); err != nil {
 			t.Fatal("native driver source/checksum lock unavailable")
 		}
