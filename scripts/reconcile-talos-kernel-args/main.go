@@ -26,7 +26,11 @@ func run(args []string) error {
 		return fmt.Errorf("usage: reconcile-talos-kernel-args --check-pins | <ksail-config> <control-plane-config> <worker-config>")
 	}
 	var pins [][]byte
-	for _, path := range []string{".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml"} {
+	for _, path := range []string{
+		".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml",
+		".github/workflows/validate-main.yaml", ".github/workflows/dr-rebuild.yaml",
+		".github/workflows/validate-image-verifier-liveness.yaml", ".github/workflows/prove-scoped-package-access.yaml",
+	} {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return fmt.Errorf("read deployment pin %s: %w", path, err)
@@ -280,8 +284,8 @@ func fold(config, cp, worker []byte) ([]byte, []byte, error) {
 	return outputs[0], outputs[1], nil
 }
 
-// verifyPins returns the one KSail release that CI, CD and the production
-// deployment action all pin. It reads no KSail source: whether the mirrored
+// verifyPins returns the one KSail release that validation, deployment,
+// recovery and operational proofs all pin. It reads no KSail source: whether the mirrored
 // fold is valid for that release is decided by verifyFoldInputs.
 func verifyPins(inputs ...[]byte) (string, error) {
 	if len(inputs) == 0 {
