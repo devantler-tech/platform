@@ -253,6 +253,9 @@ if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
   exit 0
 fi
 case "${MODE:-}" in
+  dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
+  tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
+  request-timeout) printf 'PRIVATE-ERROR-CANARY: private endpoint\n' >&2; exit 28 ;;
   http-failure) printf '503'; exit 0 ;;
   redirect) printf '302'; exit 0 ;;
   missing-csp) printf 'HTTP/2 200\r\n\r\n' >"$headers" ;;
@@ -296,6 +299,43 @@ run_case() {
     [[ $(wc -l <"$fixture/urls") -eq "$expected_urls" ]] || fail "$name: public checks were incomplete"
   else
     if [[ "$result" == 0 ]] || ! jq -e '.complete == false and (.failure | type == "string")' "$fixture/stdout" >/dev/null; then fail "$name: incomplete or unsafe rollout was accepted"; fi
+    local public_role='' public_reason=''
+    case "$mode" in
+      dns-failure)
+        public_role=sample_health
+        public_reason=dns_failed
+        ;;
+      tls-failure)
+        public_role=sample_health
+        public_reason=tls_failed
+        ;;
+      request-timeout)
+        public_role=sample_health
+        public_reason=request_timeout
+        ;;
+      http-failure | redirect)
+        public_role=sample_health
+        public_reason=http_status
+        ;;
+      missing-csp | weak-csp | duplicate-csp)
+        public_role=kit_index
+        public_reason=security_headers
+        ;;
+      wrong-body)
+        public_role=sample_observations
+        public_reason=body_invalid
+        ;;
+      wrong-asset)
+        public_role=kit_library
+        public_reason=asset_invalid
+        ;;
+    esac
+    if [[ -n "$public_role" ]]; then
+      jq -e --arg role "$public_role" --arg reason "$public_reason" '
+        .failure == "public_contract_incomplete" and .phase == "public_contract" and
+        .role == $role and .reason == $reason' "$fixture/stdout" >/dev/null ||
+        fail "$name: refusal omitted the safe public phase, role or reason"
+    fi
     if [[ "$mode" == unsafe-storage ]]; then
       jq -e '.failure == "public_contract_incomplete"' "$fixture/stdout" >/dev/null || fail "$name: unsafe permissions were not refused during public checks"
     fi
@@ -321,6 +361,8 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+for mode in dns-failure tls-failure request-timeout; do run_case "$mode" fail "$mode"; done
+
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
 mutate_case() {
   local name=$1 key=$2 mutation=$3
