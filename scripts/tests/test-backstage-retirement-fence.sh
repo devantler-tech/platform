@@ -6,7 +6,10 @@ cd "$repo_root"
 policy=k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
 scratch=$(mktemp -d)
 trap 'if [[ "${PORTAL_KEEP_NATIVE_FIXTURES:-0}" != 1 ]]; then rm -rf "$scratch"; fi' EXIT
-[[ -f "$policy" ]] || { printf 'Backstage retirement admission: missing policy\n' >&2; exit 1; }
+[[ -f "$policy" ]] || {
+  printf 'Backstage retirement admission: missing policy\n' >&2
+  exit 1
+}
 record=$(jq -cn '{version:1,phase:"fenced",namespaceUID:"ns-1",sourceSHA:("a"*40),revision:("latest@sha256:"+("b"*64)),run:"42",latestHistoryUID:"history-uid",cnpgWriterUID:"cnpg-controller-uid",helmWriterUID:"helm-writer-uid",
   targets:[{kind:"Deployment",name:"backstage",uid:"deployment-uid"},{kind:"Service",name:"backstage",uid:"service-uid"},{kind:"ConfigMap",name:"backstage-app-config",uid:"configmap-uid"},{kind:"HelmRelease",name:"backstage",uid:"release-uid"},{kind:"HelmChart",name:"backstage-backstage",uid:"chart-uid"}],
   retiringUIDs:["deployment-uid","service-uid","configmap-uid","release-uid","chart-uid","rs-uid","pod-uid"],
@@ -36,12 +39,12 @@ run_case() {
     old_evidence($new[0])' "$dir/old.json" >"$dir/effective-old.json"
   jq -n --arg op "$operation" --slurpfile old "$dir/effective-old.json" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"Values",metadata:{name:"retirement"},globalValues:{"request.operation":$op,"request.oldObject":$old[0]}}' >"$dir/values.json"
   jq -n --arg user "$user" --arg uid "$writer_uid" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"UserInfo",metadata:{name:"retirement"},userInfo:{username:$user,uid:$uid,groups:(if $user=="admin" then ["system:masters"] else ["system:serviceaccounts:flux-system"] end)}}' >"$dir/userinfo.json"
-  case "$journal" in 403|404|500) code=$journal ;; esac
+  case "$journal" in 403 | 404 | 500) code=$journal ;; esac
   jq -n --arg journal "$journal" '{apiVersion:"v1",kind:"NamespaceList",metadata:{},items:(if $journal=="absent" then [] else [{apiVersion:"v1",kind:"Namespace",metadata:{name:"backstage",uid:"ns-1",annotations:(if $journal=="unfenced" then {} else {"platform.devantler.tech/backstage-retirement":$journal} end)}}] end)}' >"$dir/namespace.json"
   jq -n --slurpfile resource "$dir/resource.json" --slurpfile ns "$dir/namespace.json" --arg rule "$rule" --arg op "$operation" --arg expected "$expected" --argjson code "$code" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"Test",metadata:{name:"retirement"},policies:["policy.yaml"],resources:["resource.json"],variables:"values.json",userinfo:"userinfo.json",
     apiCallResponses:[{urlPath:"/api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage",method:"GET",response:{statusCode:$code,body:$ns[0]}}],
     results:[{kind:$resource[0].kind,policy:"restrict-backstage-retirement",rule:$rule,resources:[(($resource[0].metadata.namespace // "")+"/"+$resource[0].metadata.name|ltrimstr("/"))],operation:$op,result:$expected}]}' >"$dir/kyverno-test.yaml"
-  cases=$((cases+1))
+  cases=$((cases + 1))
 }
 run_case captured-delete fence-native-targets DELETE "$deployment" "$deployment" pass
 run_case replacement-delete fence-native-targets DELETE "$deployment | .metadata.uid=\"replacement\"" "$deployment | .metadata.uid=\"replacement\"" fail
