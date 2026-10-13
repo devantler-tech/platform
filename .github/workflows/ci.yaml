@@ -823,6 +823,7 @@ jobs:
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-backstage-retirement.sh'
               - 'scripts/tests/test-backstage-retirement-fence.sh'
+              - 'scripts/tests/test-backstage-consumer-offline.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
@@ -2557,6 +2558,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
+
+      - name: 🔎 Validate offline retirement consumer scope
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-backstage-consumer-offline.sh
+          bash scripts/tests/test-backstage-consumer-offline.sh
 
       - name: 🔐 Validate ARC listener public-content disposition
         if: needs.changes.outputs.k8s == 'true'
