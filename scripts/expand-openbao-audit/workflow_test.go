@@ -3,6 +3,7 @@ package main
 import (
 	"gopkg.in/yaml.v3"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -76,4 +77,41 @@ func TestCIRequiresRealTransportControl(t *testing.T) {
 		}
 	}
 	t.Fatal("CI can skip the real kubectl patch control")
+}
+
+func TestActualDispatchModeMappingRejectsSwappedOrUnknownModes(t *testing.T) {
+	w := workflow(t, "expand-openbao-audit.yaml")
+	var body string
+	for _, value := range array(field(w, "jobs", "expand", "steps")) {
+		candidate := str(field(obj(value), "run"))
+		if strings.Contains(candidate, "go run ./scripts/expand-openbao-audit --execute") {
+			body = candidate
+		}
+	}
+	if body == "" {
+		t.Fatal("missing dispatch step")
+	}
+	validMapping := func(script string) bool {
+		for _, tc := range []struct{ mode, want string }{
+			{"preflight", "run ./scripts/expand-openbao-audit --preflight\n"},
+			{"expand", "run ./scripts/expand-openbao-audit --execute\n"},
+			{"unknown", ""},
+		} {
+			cmd := exec.Command("bash", "-c", "go() { printf '%s\\n' \"$*\"; }\n"+script)
+			cmd.Env = []string{"AUDIT_CAPACITY_MODE=" + tc.mode}
+			out, err := cmd.Output()
+			if string(out) != tc.want || (err != nil) != (tc.mode == "unknown") {
+				return false
+			}
+		}
+		return true
+	}
+	if !validMapping(body) {
+		t.Fatal("actual workflow does not bind modes to safe commands")
+	}
+	swapped := strings.ReplaceAll(strings.ReplaceAll(strings.ReplaceAll(body, "--preflight", "--SWAP"), "--execute", "--preflight"), "--SWAP", "--execute")
+	unknownExpands := strings.ReplaceAll(body, "*) exit 2", "*) go run ./scripts/expand-openbao-audit --execute")
+	if validMapping(swapped) || validMapping(unknownExpands) {
+		t.Fatal("adversarial workflow mapping accepted")
+	}
 }

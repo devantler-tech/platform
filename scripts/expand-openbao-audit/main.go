@@ -22,6 +22,52 @@ type command func(context.Context, string, ...string) ([]byte, error)
 const target = "20Gi"
 const responseLimit = 4 << 20
 
+type snapshotFailure uint8
+
+const (
+	sourceUnsettled snapshotFailure = iota + 1
+	artifactUnverified
+	workloadUnready
+	expansionUnverified
+	claimUnverified
+	claimCapacityUnreviewed
+	bindingUnverified
+	volumeCapacityUnreviewed
+	mountUnverified
+	healthUnverified
+)
+
+func (snapshotFailure) Error() string { return "snapshot verification failed" }
+
+func failureStage(err error) string {
+	var failure snapshotFailure
+	if errors.As(err, &failure) {
+		switch failure {
+		case sourceUnsettled:
+			return "root-source"
+		case artifactUnverified:
+			return "root-artifact"
+		case workloadUnready:
+			return "workload"
+		case expansionUnverified:
+			return "storage-class"
+		case claimUnverified:
+			return "claim-identity"
+		case claimCapacityUnreviewed:
+			return "claim-capacity"
+		case bindingUnverified:
+			return "volume-binding"
+		case volumeCapacityUnreviewed:
+			return "volume-capacity"
+		case mountUnverified:
+			return "audit-mount"
+		case healthUnverified:
+			return "service-health"
+		}
+	}
+	return "snapshot-read"
+}
+
 func obj(v any) map[string]any { m, _ := v.(map[string]any); return m }
 func str(v any) string         { s, _ := v.(string); return s }
 func number(v any) int         { n, _ := v.(int); return n }
@@ -135,52 +181,52 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	for _, name := range []string{"flux-system", "infrastructure-controllers", "infrastructure", "apps"} {
 		k, err := e.read(ctx, "--namespace=flux-system", "get", "kustomization", name, "--output=json")
 		if err != nil || !valid(k, "kustomize.toolkit.fluxcd.io/v1", "Kustomization", "flux-system", name) || !ready(k) || field(k, "status", "lastAppliedRevision") != e.revision {
-			return s, errors.New("source unsettled")
+			return s, sourceUnsettled
 		}
 	}
 	r, err := e.read(ctx, "--namespace=flux-system", "get", "ocirepository", "flux-system", "--output=json")
 	if err != nil || !valid(r, "source.toolkit.fluxcd.io/v1", "OCIRepository", "flux-system", "flux-system") || !ready(r) || field(r, "status", "artifact", "revision") != e.revision {
-		return s, errors.New("artifact unverified")
+		return s, artifactUnverified
 	}
 	s.workload, err = e.read(ctx, "--namespace=openbao", "get", "statefulset", "openbao", "--output=json")
 	if err != nil || !valid(s.workload, "apps/v1", "StatefulSet", "openbao", "openbao") || number(field(s.workload, "spec", "replicas")) != 3 || number(field(s.workload, "metadata", "generation")) < 1 || field(s.workload, "status", "observedGeneration") != field(s.workload, "metadata", "generation") || number(field(s.workload, "status", "readyReplicas")) != 3 {
-		return s, errors.New("workload unready")
+		return s, workloadUnready
 	}
 	s.class, err = e.read(ctx, "get", "storageclass", "hcloud", "--output=json")
 	if err != nil || !valid(s.class, "storage.k8s.io/v1", "StorageClass", "", "hcloud") || !validIdentity(s.class, "hcloud") || s.class["provisioner"] != "csi.hetzner.cloud" || s.class["allowVolumeExpansion"] != true {
-		return s, errors.New("expansion capability unverified")
+		return s, expansionUnverified
 	}
 	for i := 0; i < 3; i++ {
 		podName := fmt.Sprintf("openbao-%d", i)
 		name := "audit-" + podName
 		c, err := e.read(ctx, "--namespace=openbao", "get", "persistentvolumeclaim", name, "--output=json")
 		if err != nil || !valid(c, "v1", "PersistentVolumeClaim", "openbao", name) || field(c, "status", "phase") != "Bound" || field(c, "spec", "storageClassName") != "hcloud" || field(c, "metadata", "labels", "app.kubernetes.io/name") != "openbao" {
-			return s, errors.New("claim identity unverified")
+			return s, claimUnverified
 		}
 		req, cap := str(field(c, "spec", "resources", "requests", "storage")), str(field(c, "status", "capacity", "storage"))
 		_, typedConditions := field(c, "status", "conditions").([]any)
 		if req != "1Gi" && req != "10Gi" && req != target || cap != "10Gi" && cap != target || field(c, "status", "conditions") != nil && !typedConditions {
-			return s, errors.New("unreviewed capacity")
+			return s, claimCapacityUnreviewed
 		}
 		pvName := str(field(c, "spec", "volumeName"))
 		if !regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`).MatchString(pvName) {
-			return s, errors.New("binding unavailable")
+			return s, bindingUnverified
 		}
 		v, err := e.read(ctx, "get", "persistentvolume", pvName, "--output=json")
 		if err != nil || !valid(v, "v1", "PersistentVolume", "", pvName) || !validIdentity(v, pvName) || field(v, "status", "phase") != "Bound" || field(v, "spec", "storageClassName") != "hcloud" || field(v, "spec", "csi", "driver") != "csi.hetzner.cloud" || str(field(v, "spec", "csi", "volumeHandle")) == "" || field(v, "spec", "claimRef", "namespace") != "openbao" || field(v, "spec", "claimRef", "name") != name || field(v, "spec", "claimRef", "uid") != field(c, "metadata", "uid") {
-			return s, errors.New("volume identity unverified")
+			return s, bindingUnverified
 		}
 		pvCapacity := field(v, "spec", "capacity", "storage")
 		if pvCapacity != "10Gi" && pvCapacity != target {
-			return s, errors.New("unreviewed backing capacity")
+			return s, volumeCapacityUnreviewed
 		}
 		pod, err := e.read(ctx, "--namespace=openbao", "get", "pod", podName, "--output=json")
 		if err != nil || !auditPod(pod, podName, name, str(field(s.workload, "metadata", "uid"))) {
-			return s, errors.New("audit mount unverified")
+			return s, mountUnverified
 		}
 		status, err := e.read(ctx, "--namespace=openbao", "exec", podName, "--container=openbao", "--", "bao", "status", "-format=json")
 		if err != nil || status["initialized"] != true || status["sealed"] != false || status["ha_enabled"] != true {
-			return s, errors.New("service health unverified")
+			return s, healthUnverified
 		}
 		s.claims[name], s.volumes[name], s.pods[name] = c, v, pod
 	}
@@ -294,30 +340,7 @@ func run(args []string, out io.Writer, execute command, cost func(context.Contex
 	}
 	snapshotHold := func(err error) int {
 		if err != nil {
-			switch err.Error() {
-			case "source unsettled":
-				stage = "root-source"
-			case "artifact unverified":
-				stage = "root-artifact"
-			case "workload unready":
-				stage = "workload"
-			case "expansion capability unverified":
-				stage = "storage-class"
-			case "claim identity unverified":
-				stage = "claim-identity"
-			case "unreviewed capacity":
-				stage = "claim-capacity"
-			case "binding unavailable", "volume identity unverified":
-				stage = "volume-binding"
-			case "unreviewed backing capacity":
-				stage = "volume-capacity"
-			case "audit mount unverified":
-				stage = "audit-mount"
-			case "service health unverified":
-				stage = "service-health"
-			default:
-				stage = "snapshot-read"
-			}
+			stage = failureStage(err)
 		}
 		return hold()
 	}

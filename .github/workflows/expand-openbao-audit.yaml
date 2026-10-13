@@ -42,9 +42,9 @@ jobs:
       name: prod
       deployment: false
     permissions:
-      contents: read
-      actions: read
-      deployments: read
+      contents: read # checkout reviewed main and verify its current commit
+      actions: read # verify the accepted normal deployment run
+      deployments: read # join successful prod deployment evidence to that run
     env:
       GH_TOKEN: ${{ github.token }}
       AUDIT_CAPACITY_MODE: ${{ inputs.mode }}

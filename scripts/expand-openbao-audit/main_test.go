@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -308,6 +309,24 @@ func TestHoldReportsSafeFailureStage(t *testing.T) {
 				t.Fatalf("missing safe stage or state changed: %s", &out)
 			}
 		})
+	}
+}
+
+func TestSnapshotFailureStageSurvivesWrappingAndNeverPrintsMessages(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want string
+	}{
+		{sourceUnsettled, "root-source"}, {artifactUnverified, "root-artifact"},
+		{workloadUnready, "workload"}, {expansionUnverified, "storage-class"},
+		{claimUnverified, "claim-identity"}, {claimCapacityUnreviewed, "claim-capacity"},
+		{bindingUnverified, "volume-binding"}, {volumeCapacityUnreviewed, "volume-capacity"},
+		{mountUnverified, "audit-mount"}, {healthUnverified, "service-health"},
+		{errors.New("PRIVATE upstream response"), "snapshot-read"},
+	} {
+		if got := failureStage(fmt.Errorf("PRIVATE wrapper: %w", tc.err)); got != tc.want {
+			t.Fatalf("stage=%s want=%s", got, tc.want)
+		}
 	}
 }
 
