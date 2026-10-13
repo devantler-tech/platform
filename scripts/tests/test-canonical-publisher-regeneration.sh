@@ -5,7 +5,11 @@ test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_work="$(mktemp -d)"
 trap 'rm -rf "$test_work"' EXIT
 export CANONICAL_TEST_ROOT="$test_root" CANONICAL_TEST_WORK="$test_work"
-export CANONICAL_TEST_SHA=2fa404276b0ce5c0527683b080e39045045c4e42
+# The signer the fixtures observe is the first commit the record approves for this consumer, so
+# withdrawing a retired commit from the record does not strand the test on it.
+CANONICAL_TEST_SHA="$(awk -F'\t' '$1==".github" && $2=="publish-manifests" {print $4; exit}' "$test_root/scripts/publish-workflow-canonical-approvals.tsv")"
+[[ "$CANONICAL_TEST_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'The record approves no canonical commit for .github' >&2; exit 1; }
+export CANONICAL_TEST_SHA
 mkdir -p "$test_work/bin"
 cp "$test_root/scripts/publish-workflow-approved-revisions.tsv" "$test_work/seed.tsv"
 cat >"$test_work/bin/gh" <<'STUB'
