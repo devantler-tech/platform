@@ -191,6 +191,11 @@ jobs:
       - name: 🔎 Validate read-only portal retirement assessment
         run: go test -race ./scripts/assess-backstage-retirement
 
+      - name: 💾 Validate retained portal storage protection
+        env:
+          PORTAL_STORAGE_REQUIRE_NATIVE_CONTROL: '1'
+        run: go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage
+
       - name: 🛡️ Validate stateless portal retirement preservation
         shell: bash
         env:
