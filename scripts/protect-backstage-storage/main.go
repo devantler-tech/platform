@@ -33,9 +33,11 @@ type snapshot struct {
 	preserved map[string]map[string]any
 }
 
-// run verifies the protected invocation and separated snapshots, applies only guarded retention changes, and emits a complete terminal receipt.
+// run checks the protected invocation and separated snapshots; only execute mode can submit guarded retention changes.
 func run(ctx context.Context, args []string, env func(string) string, execute command, wait pause, out io.Writer) error {
-	if !reflect.DeepEqual(args, []string{"--execute"}) || env("GITHUB_ACTIONS") != "true" || env("GITHUB_REPOSITORY") != "devantler-tech/platform" || env("GITHUB_EVENT_NAME") != "workflow_dispatch" || env("GITHUB_REF") != "refs/heads/main" || env("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main" || env("GITHUB_RUN_ATTEMPT") != "1" || env("PORTAL_STORAGE_CONFIRM") != "PROTECT BACKSTAGE STORAGE ONLY" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(env("GITHUB_SHA")) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(env("PORTAL_STORAGE_REVISION")) {
+	check := reflect.DeepEqual(args, []string{"--check"}) && env("PORTAL_STORAGE_OPERATION") == "check" && env("PORTAL_STORAGE_CONFIRM") == "CHECK BACKSTAGE STORAGE ONLY"
+	protect := reflect.DeepEqual(args, []string{"--execute"}) && env("PORTAL_STORAGE_OPERATION") == "protect" && env("PORTAL_STORAGE_CONFIRM") == "PROTECT BACKSTAGE STORAGE ONLY"
+	if !check && !protect || env("GITHUB_ACTIONS") != "true" || env("GITHUB_REPOSITORY") != "devantler-tech/platform" || env("GITHUB_EVENT_NAME") != "workflow_dispatch" || env("GITHUB_REF") != "refs/heads/main" || env("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main" || env("GITHUB_RUN_ATTEMPT") != "1" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(env("GITHUB_SHA")) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(env("PORTAL_STORAGE_REVISION")) {
 		return errors.New("protected main invocation unverified")
 	}
 	for _, key := range []string{"GITHUB_RUN_ID", "PORTAL_STORAGE_DEPLOYMENT_RUN"} {
@@ -56,8 +58,20 @@ func run(ctx context.Context, args []string, env func(string) string, execute co
 		return errors.New("sample separation failed")
 	}
 	second, err := e.collect(ctx, false)
-	if err != nil || !unchanged(baseline, second, policies) {
+	if err != nil {
+		return err
+	}
+	if !unchanged(baseline, second, policies) {
 		return errors.New("initial separated samples differ")
+	}
+	if check {
+		wouldChange := 0
+		for _, policy := range policies {
+			if policy == "Delete" {
+				wouldChange++
+			}
+		}
+		return writeReceipt(out, map[string]any{"result": "CHECKED", "claims": len(second.bindings), "changed": 0, "wouldChange": wouldChange, "alreadyRetained": len(second.bindings) - wouldChange, "separatedSamples": true, "retirement": "NOT_EXECUTED"})
 	}
 	changed := 0
 	for _, binding := range baseline.bindings {
@@ -99,7 +113,12 @@ func run(ctx context.Context, args []string, env func(string) string, execute co
 	if err != nil || !unchanged(baseline, last, policies) {
 		return errors.New("final separated samples differ")
 	}
-	receipt, err := json.Marshal(map[string]any{"result": "PROTECTED", "claims": len(last.bindings), "changed": changed, "alreadyRetained": len(last.bindings) - changed, "separatedSamples": true, "retirement": "NOT_EXECUTED"})
+	return writeReceipt(out, map[string]any{"result": "PROTECTED", "claims": len(last.bindings), "changed": changed, "alreadyRetained": len(last.bindings) - changed, "separatedSamples": true, "retirement": "NOT_EXECUTED"})
+}
+
+// writeReceipt requires a complete compact receipt, never private evidence.
+func writeReceipt(out io.Writer, result map[string]any) error {
+	receipt, err := json.Marshal(result)
 	if err != nil {
 		return errors.New("result encoding failed")
 	}
@@ -171,42 +190,42 @@ func (e engine) api(ctx context.Context, path string) ([]byte, error) {
 }
 
 // accepted joins the exact successful normal publisher, production deployment status and signed artifact witness.
-func (e engine) accepted(ctx context.Context) bool {
+func (e engine) accepted(ctx context.Context) error {
 	b, err := e.api(ctx, "repos/devantler-tech/platform/actions/runs/"+e.deploymentRun)
 	if err != nil {
-		return false
+		return errors.New("deployment run unavailable")
 	}
 	r, err := decode(b)
 	ci := r["path"] == ".github/workflows/ci.yaml" && r["event"] == "merge_group"
 	cd := r["path"] == ".github/workflows/cd.yaml" && r["event"] == "workflow_dispatch"
 	if err != nil || fmt.Sprint(r["id"]) != e.deploymentRun || r["head_sha"] != e.sha || r["status"] != "completed" || r["conclusion"] != "success" || field(r, "repository", "full_name") != "devantler-tech/platform" || !ci && !cd {
-		return false
+		return errors.New("deployment run identity unverified")
 	}
 	branch, attempt := str(r["head_branch"]), fmt.Sprint(r["run_attempt"])
 	if !regexp.MustCompile(`^[1-9][0-9]{0,5}$`).MatchString(attempt) || ci && !regexp.MustCompile(`^gh-readonly-queue/main/pr-[1-9][0-9]*-[a-f0-9]{40}$`).MatchString(branch) || cd && branch != "main" {
-		return false
+		return errors.New("deployment run identity unverified")
 	}
 	b, err = e.api(ctx, "repos/devantler-tech/platform/deployments?sha="+e.sha+"&environment=prod&per_page=100")
 	var ds []map[string]any
 	if err != nil || yaml.Unmarshal(b, &ds) != nil || len(ds) == 0 || len(ds) >= 100 {
-		return false
+		return errors.New("deployment census unavailable")
 	}
 	for _, d := range ds {
 		id := fmt.Sprint(d["id"])
 		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || d["sha"] != e.sha || d["environment"] != "prod" {
-			return false
+			return errors.New("deployment identity unverified")
 		}
 		b, err = e.api(ctx, "repos/devantler-tech/platform/deployments/"+id+"/statuses?per_page=100")
 		var statuses []map[string]any
 		if err != nil || yaml.Unmarshal(b, &statuses) != nil || len(statuses) == 0 || len(statuses) >= 100 {
-			return false
+			return errors.New("deployment status unavailable")
 		}
 		s := statuses[0]
 		if s["state"] == "success" && s["environment"] == "prod" && regexp.MustCompile(`^https://github\.com/devantler-tech/platform/actions/runs/`+e.deploymentRun+`/job/[1-9][0-9]*$`).MatchString(str(s["log_url"])) {
 			return e.artifactAccepted(ctx, str(r["path"]), "refs/heads/"+branch, attempt)
 		}
 	}
-	return false
+	return errors.New("deployment acceptance unverified")
 }
 
 // ready requires settled current-generation Flux readiness, not an older successful condition.
@@ -234,8 +253,11 @@ func ready(r map[string]any) bool {
 // collect validates the accepted revision, fixed database, complete reciprocal storage census and healthy claim consumers.
 func (e engine) collect(ctx context.Context, requireRetain bool) (snapshot, error) {
 	s := snapshot{preserved: map[string]map[string]any{}}
-	if !e.current(ctx) || !e.accepted(ctx) {
-		return s, errors.New("accepted current deployment unverified")
+	if !e.current(ctx) {
+		return s, errors.New("current main unverified")
+	}
+	if err := e.accepted(ctx); err != nil {
+		return s, err
 	}
 	for _, name := range []string{"flux-system", "bootstrap", "infrastructure-controllers", "infrastructure", "apps"} {
 		r, err := e.read(ctx, "--namespace=flux-system", "get", "kustomization", name, "--output=json")
@@ -296,8 +318,11 @@ func (e engine) collect(ctx context.Context, requireRetain bool) (snapshot, erro
 	if err := validatePods(pods, str(field(db, "metadata", "uid")), primary, instances, claimNames, s.preserved); err != nil {
 		return s, err
 	}
-	if !e.current(ctx) || !e.accepted(ctx) {
-		return s, errors.New("accepted source changed during read")
+	if !e.current(ctx) {
+		return s, errors.New("current main changed during read")
+	}
+	if err := e.accepted(ctx); err != nil {
+		return s, err
 	}
 	return s, nil
 }
@@ -473,6 +498,7 @@ func main() {
 	defer cancel()
 	if err := run(ctx, os.Args[1:], os.Getenv, execute, wait, os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "PORTAL_STORAGE_PROTECTION=HOLD")
+		fmt.Fprintln(os.Stderr, "PORTAL_STORAGE_REASON="+holdReason(err))
 		os.Exit(1)
 	}
 }

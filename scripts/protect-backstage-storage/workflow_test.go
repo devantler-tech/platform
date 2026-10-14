@@ -72,6 +72,7 @@ func TestStorageWorkflowProtectsCredentialsAndExecutesDispatchGuard(t *testing.T
 		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main",
 		"GITHUB_RUN_ATTEMPT":  "1", "GITHUB_RUN_ID": "42", "GITHUB_SHA": strings.Repeat("a", 40),
 		"PORTAL_STORAGE_CONFIRM":        "PROTECT BACKSTAGE STORAGE ONLY",
+		"PORTAL_STORAGE_OPERATION":      "protect",
 		"PORTAL_STORAGE_REVISION":       "latest@sha256:" + strings.Repeat("b", 64),
 		"PORTAL_STORAGE_DEPLOYMENT_RUN": "100",
 	}
@@ -81,6 +82,7 @@ func TestStorageWorkflowProtectsCredentialsAndExecutesDispatchGuard(t *testing.T
 		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/retire-backstage-stateless.yaml@refs/heads/main",
 		"GITHUB_RUN_ATTEMPT":  "2", "GITHUB_RUN_ID": "", "GITHUB_SHA": "not-a-commit",
 		"PORTAL_STORAGE_CONFIRM": "RETIRE BACKSTAGE STATELESS ONLY", "PORTAL_STORAGE_REVISION": "latest",
+		"PORTAL_STORAGE_OPERATION":      "unknown",
 		"PORTAL_STORAGE_DEPLOYMENT_RUN": "not-a-run",
 	} {
 		t.Run(name, func(t *testing.T) {

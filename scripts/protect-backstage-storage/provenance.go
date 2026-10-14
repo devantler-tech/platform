@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"regexp"
 	"strings"
 )
@@ -36,19 +37,22 @@ type verifiedAttestation struct {
 
 // artifactAccepted binds the immutable live artifact to the accepted run using
 // signed certificate facts. Predicate-provided source and run IDs are ignored.
-func (e engine) artifactAccepted(ctx context.Context, workflow, ref, attempt string) bool {
+func (e engine) artifactAccepted(ctx context.Context, workflow, ref, attempt string) error {
 	digest := strings.TrimPrefix(e.revision, "latest@")
 	identity := repositoryURI + "/" + workflow + "@" + ref
 	b, err := e.execute(ctx, "gh", "attestation", "verify", "oci://"+artifactSubject+"@"+digest,
 		"--bundle-from-oci", "--repo", "devantler-tech/platform",
 		"--predicate-type", provenancePredicate, "--source-digest", e.sha,
 		"--cert-identity-regex", "^"+regexp.QuoteMeta(identity)+"$", "--format", "json")
-	if err != nil || len(b) > responseLimit || !json.Valid(b) {
-		return false
+	if err != nil {
+		return errors.New("artifact verifier unavailable")
+	}
+	if len(b) > responseLimit || !json.Valid(b) {
+		return errors.New("artifact response unverified")
 	}
 	var entries []verifiedAttestation
 	if json.Unmarshal(b, &entries) != nil || len(entries) == 0 || len(entries) > 30 {
-		return false
+		return errors.New("artifact response unverified")
 	}
 	wantRun := repositoryURI + "/actions/runs/" + e.deploymentRun + "/attempts/" + attempt
 	wantHex := strings.TrimPrefix(digest, "sha256:")
@@ -61,13 +65,16 @@ func (e engine) artifactAccepted(ctx context.Context, workflow, ref, attempt str
 			predicate = statement.LegacyPredicateType
 		}
 		if cert.Issuer != "https://token.actions.githubusercontent.com" || cert.SourceRepositoryURI != repositoryURI || cert.SourceRepositoryDigest != e.sha || cert.SourceRepositoryRef != ref || cert.SubjectAlternativeName != identity || predicate != provenancePredicate || len(statement.Subject) != 1 {
-			return false
+			return errors.New("artifact identity unverified")
 		}
 		subject := statement.Subject[0]
 		if subject.Name != artifactSubject || len(subject.Digest) != 1 || subject.Digest["sha256"] != wantHex || !regexp.MustCompile(`^https://github\.com/devantler-tech/platform/actions/runs/[1-9][0-9]{0,19}/attempts/[1-9][0-9]{0,5}$`).MatchString(cert.RunInvocationURI) {
-			return false
+			return errors.New("artifact identity unverified")
 		}
 		matched = matched || cert.RunInvocationURI == wantRun
 	}
-	return matched
+	if !matched {
+		return errors.New("artifact identity unverified")
+	}
+	return nil
 }
