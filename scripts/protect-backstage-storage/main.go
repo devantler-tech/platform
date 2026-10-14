@@ -171,7 +171,34 @@ func (e engine) read(ctx context.Context, args ...string) (map[string]any, error
 	if err != nil {
 		return nil, errors.New("read unavailable")
 	}
-	return decode(b)
+	r, err := decode(b)
+	if err != nil {
+		return nil, err
+	}
+	// Kubernetes' native typed lists omit TypeMeta on individual items. Bind
+	// only absent fields to these exact core API list envelopes, never to a
+	// generic List, a foreign API, or an explicitly conflicting item identity.
+	if r["apiVersion"] == "v1" {
+		kind := map[string]string{"PersistentVolumeClaimList": "PersistentVolumeClaim", "PersistentVolumeList": "PersistentVolume", "PodList": "Pod"}[str(r["kind"])]
+		if kind != "" {
+			for _, raw := range array(r["items"]) {
+				item := obj(raw)
+				if item == nil {
+					return nil, errors.New("typed list item identity unverified")
+				}
+				for key, expected := range map[string]string{"apiVersion": "v1", "kind": kind} {
+					if value, present := item[key]; present {
+						if value != expected {
+							return nil, errors.New("typed list item identity unverified")
+						}
+					} else {
+						item[key] = expected
+					}
+				}
+			}
+		}
+	}
+	return r, nil
 }
 
 // current requires the reviewed source guard's complete current-main proof.
