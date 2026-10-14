@@ -22,6 +22,7 @@ jobs:
       bridge_validation: ${{ steps.filter.outputs.bridge_validation }}
       talos: ${{ steps.filter.outputs.talos }}
       crossview: ${{ steps.filter.outputs.crossview }}
+      queue_receipt: ${{ steps.queue-receipt.outputs.receipt }}
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -34,6 +35,13 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: 🧾 Pin the active merge-group queue entry
+        id: queue-receipt
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./scripts/verify-merge-group-queued capture
 
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test ./...
@@ -1028,6 +1036,8 @@ jobs:
               - 'scripts/validate-alert-coverage.sh'
               - 'scripts/tests/validate-alert-coverage/**'
               - 'scripts/refresh-flux-ghcr-auth.sh'
+              - 'scripts/verify-merge-group-queued/**'
+              - 'scripts/validate-merge-group-heal/**'
               - 'scripts/refresh-flux-ghcr-auth-safety.sh'
               - 'scripts/ghcr-auth-lib.sh'
               - 'scripts/run-ksail-prod-with-pull-auth.sh'
@@ -3464,12 +3474,26 @@ jobs:
       id-token: write # mint OIDC token for cosign keyless signing (Fulcio + Rekor)
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
       actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
+      pull-requests: read # verify the same queue entry before production access
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧾 Refuse an evicted or replaced merge group
+        id: queue-preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}
+        run: go run ./scripts/verify-merge-group-queued check
 
       - name: 🚀 Deploy to Production
         # Shared with cd.yaml's manual deploy via this composite action so the
