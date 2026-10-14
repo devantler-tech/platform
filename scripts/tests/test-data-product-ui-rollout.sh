@@ -18,7 +18,8 @@ chart="sha256:$(printf 'c%.0s' {1..64})"
 apps="sha256:$(printf 'd%.0s' {1..64})"
 readonly index child chart apps
 real_jq="$(command -v jq)"
-readonly real_jq
+real_yq="$(command -v yq)" || fail 'yq v4 is required for declaration parsing'
+readonly real_jq real_yq
 
 # Exercise setup consuming the total deadline separately from cleanup of a
 # plugin that really started. A one-second whole-script budget can expire in
@@ -49,23 +50,35 @@ exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
 
-# Production derives the expected state from the checked-out Helm declaration,
-# never from the live object being judged. Keep that read explicit in fixtures.
+# Redirect only the checked-out declarations to controlled documents. Run the
+# real YAML parser so unsupported expressions cannot pass through a fake result.
 cat >"${scratch}/bin/yq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $# == 3 && "$1" == -o=json ]] || exit 91
-if [[ "$3" == "$EXPECTED_UI_FILE" ]]; then
-  [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
-  cat "$FIXTURE/expected-ui.json"
-  exit 0
-fi
-[[ "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
-case "$2" in
-  '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]') cat "$FIXTURE/expected-flags.json" ;;
-  '.spec.values.demoProduct.ksailReleases.enabled // false') cat "$FIXTURE/expected-ksail.json" ;;
+case "$3" in
+  "$EXPECTED_UI_FILE")
+    "$REAL_JQ" -n --slurpfile containers "$FIXTURE/expected-ui.json" \
+      'if ($containers|length)!=1 then error("ambiguous fixture declaration")
+        else {spec:{template:{spec:{containers:$containers[0]}}}} end' >"$FIXTURE/expected-declaration.json"
+    ;;
+  "$EXPECTED_CHART_FILE")
+    "$REAL_JQ" -n --slurpfile chart "$FIXTURE/expected-chart.json" \
+      'if ($chart|length)!=1 then error("ambiguous fixture declaration")
+        else {spec:{url:$chart[0].url,ref:{digest:$chart[0].digest}}} end' >"$FIXTURE/expected-declaration.json"
+    ;;
+  "$EXPECTED_HELM_FILE")
+    "$REAL_JQ" -n --slurpfile image "$FIXTURE/expected-image.json" \
+      --slurpfile flags "$FIXTURE/expected-flags.json" --slurpfile releases "$FIXTURE/expected-ksail.json" \
+      'if ($image|length)!=1 or ($flags|length)!=1 or ($releases|length)!=1
+        then error("ambiguous fixture declaration") else
+        {spec:{values:{image:$image[0],connectorReadiness:{enabled:$flags[0][0]},
+        contractReadiness:{enabled:$flags[0][1]},contractProbe:{enabled:$flags[0][2]},
+        demoProduct:{ksailReleases:{enabled:$releases[0]}}}}} end' >"$FIXTURE/expected-declaration.json"
+    ;;
   *) exit 91 ;;
 esac
+exec "$REAL_YQ" -o=json "$2" "$FIXTURE/expected-declaration.json"
 SH
 chmod +x "${scratch}/bin/yq"
 
@@ -136,6 +149,8 @@ jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps 
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
 printf '[false,false,false]\n' >"${scratch}/healthy/expected-flags.json"
 printf 'false\n' >"${scratch}/healthy/expected-ksail.json"
+jq '.helm.spec.values.image' "${scratch}/all.json" >"${scratch}/healthy/expected-image.json"
+jq '.chart.spec | {url, digest: .ref.digest}' "${scratch}/all.json" >"${scratch}/healthy/expected-chart.json"
 jq '[."deployment-ui-kit".spec.template.spec.containers[] | select(.name=="ui-kit")]' "${scratch}/all.json" >"${scratch}/healthy/expected-ui.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
@@ -356,11 +371,18 @@ run_case() {
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
-  PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+  local requested_image=$index requested_chart=$chart retired=false
+  if [[ -f "$fixture/requested-artifacts.json" ]]; then
+    requested_image=$(jq -r '.image' "$fixture/requested-artifacts.json")
+    requested_chart=$(jq -r '.chart' "$fixture/requested-artifacts.json")
+  fi
+  if [[ -f "$fixture/expected-retired.json" ]]; then retired=$(cat "$fixture/expected-retired.json"); fi
+  PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" REAL_YQ="$real_yq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     EXPECTED_UI_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-ui-kit.yaml" \
-    bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
-    --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
+    EXPECTED_CHART_FILE="${root_dir}/k8s/bases/apps/data-product-controller/oci-repository.yaml" \
+    bash "$script" --context synthetic-ci --domain example.com --image-digest "$requested_image" \
+    --runtime-digest "$child" --chart-digest "$requested_chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
     local expected_state expected_pods public_count ksail publisher
@@ -368,8 +390,8 @@ run_case() {
     if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
     ksail=$(cat "$fixture/expected-ksail.json")
     publisher=$(jq -r 'any(.[0].env[]; .name=="PUBLISHER_PREFLIGHT_ENABLED" and .value=="true")' "$fixture/expected-ui.json")
-    if [[ "$ksail" == true ]]; then public_count=17; else public_count=14; fi
-    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" --argjson public_count "$public_count" --argjson ksail "$ksail" --argjson publisher "$publisher" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == $public_count and .ksailReleasesEnabled == $ksail and .publisherReviewEnabled == $publisher and .readinessState == $state' "$fixture/stdout" >/dev/null; then
+    if [[ "$ksail" == true || "$retired" == true ]]; then public_count=17; else public_count=14; fi
+    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" --argjson public_count "$public_count" --argjson ksail "$ksail" --argjson retired "$retired" --argjson publisher "$publisher" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == $public_count and .ksailReleasesEnabled == $ksail and .ksailReleaseGateRetired == $retired and .publisherReviewEnabled == $publisher and .readinessState == $state' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
       case "$reason" in
@@ -488,6 +510,108 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# The signed retirement release serves direct routes even when unlisted. Keep
+# declarations and requested identities independent from the live snapshot.
+retired_image='sha256:581c8ca202aab83bbb6bd9fea6612dff8237204ab88b6a586cf741a3fe94a566'
+retired_chart='sha256:0e397295a07aa3619f25371005412a3fac7de632e234b115e0fa93348fa3a96d'
+mkdir "${scratch}/retired-unlisted"
+cp "${scratch}/healthy/"*.json "${scratch}/retired-unlisted/"
+jq --arg image "$retired_image" --arg chart "$retired_chart" '
+  walk(if type=="object" and has("image") and (.image|type)=="string" then
+    .image="ghcr.io/devantler-tech/data-product-controller@"+$image else . end) |
+  .helm.spec.values.image.digest=$image | .helm.spec.values.image.tag="3.0.0" |
+  .helm.status.lastAttemptedRevision="3.0.0+"+$chart[7:19] |
+  .helm.status.lastAttemptedRevisionDigest=$chart |
+  .helm.status.history[0].chartVersion=.helm.status.lastAttemptedRevision |
+  .helm.status.history[0].ociDigest=$chart |
+  .chart.spec.ref.digest=$chart | .chart.status.artifact.revision=$chart
+' "${scratch}/all.json" >"${scratch}/retired.json"
+while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/retired.json" >"${scratch}/retired-unlisted/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/retired.json")
+jq -n --arg digest "$retired_image" '{repository:"ghcr.io/devantler-tech/data-product-controller",tag:"3.0.0",digest:$digest}' >"${scratch}/retired-unlisted/expected-image.json"
+jq -n --arg digest "$retired_chart" '{url:"oci://ghcr.io/devantler-tech/charts/data-product-controller",digest:$digest}' >"${scratch}/retired-unlisted/expected-chart.json"
+jq -n --arg image "$retired_image" --arg chart "$retired_chart" '{image:$image,chart:$chart}' >"${scratch}/retired-unlisted/requested-artifacts.json"
+printf 'true\n' >"${scratch}/retired-unlisted/expected-retired.json"
+expected_urls=17
+run_case retired-unlisted pass
+mkdir "${scratch}/retired-listed"
+cp "${scratch}/retired-unlisted/"*.json "${scratch}/retired-listed/"
+printf 'true\n' >"${scratch}/retired-listed/expected-ksail.json"
+jq '.spec.values.demoProduct.ksailReleases.enabled=true' "${scratch}/retired-unlisted/helm.json" >"${scratch}/retired-listed/helm.json"
+jq '.metadata.name="ksail-releases" | .metadata.uid="release-product-uid" |
+  .spec={id:"https://github.com/devantler-tech/ksail/releases",name:"KSail releases",version:"v1.0.0",owner:{name:"devantler-tech",url:"https://github.com/devantler-tech/ksail"},
+    outputs:[{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",contractUrl:"https://harbour-data.example.com/ksail-releases/openapi.json",mediaType:"application/json"}],
+    ui:{url:"https://harbour-data.example.com/ksail-releases/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}}
+' "${scratch}/retired-unlisted/product.json" >"${scratch}/retired-listed/release-product.json"
+run_case retired-listed pass
+# Retired controls must reach either declaration refusal or snapshot validation;
+# merely exhausting the test deadline never proves a rejection.
+retired_mutation() {
+  local name=$1 key=$2 mutation=$3 base=${4:-retired-unlisted}
+  mkdir "${scratch}/$name"
+  cp "${scratch}/$base/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/$base/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' 3
+  if [[ "$key" == expected-* || "$key" == requested-artifacts ]]; then
+    jq -e '.failure=="invalid_expected_state"' "${scratch}/$name/stdout" >/dev/null || fail "$name: declaration was not refused"
+  else
+    [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+  fi
+}
+retired_mutation retired-unknown-tag expected-image '.tag="3.0.1"'
+retired_mutation retired-wrong-declared-image expected-image '.digest="sha256:"+([range(64)|"a"]|join(""))'
+retired_mutation retired-wrong-declared-repository expected-image '.repository="ghcr.io/other/product"'
+retired_mutation retired-wrong-declared-chart expected-chart '.digest="sha256:"+([range(64)|"c"]|join(""))'
+retired_mutation retired-wrong-chart-repository expected-chart '.url="oci://ghcr.io/other/charts/product"'
+retired_mutation retired-wrong-requested-image requested-artifacts '.image="sha256:"+([range(64)|"a"]|join(""))'
+retired_mutation retired-wrong-requested-chart requested-artifacts '.chart="sha256:"+([range(64)|"c"]|join(""))'
+retired_mutation retired-wrong-live-tag helm '.spec.values.image.tag="2.9.1" | .status.lastAttemptedRevision="2.9.1+"+.status.lastAttemptedRevisionDigest[7:19] | .status.history[0].chartVersion=.status.lastAttemptedRevision'
+mkdir "${scratch}/retired-stale-unlisted-product"
+cp "${scratch}/retired-listed/"*.json "${scratch}/retired-stale-unlisted-product/"
+# The withdrawal has an absent descriptor, not the listed fixture's descriptor.
+printf 'false\n' >"${scratch}/retired-stale-unlisted-product/expected-ksail.json"
+jq '.spec.values.demoProduct.ksailReleases.enabled=false' "${scratch}/retired-listed/helm.json" >"${scratch}/retired-stale-unlisted-product/helm.json"
+run_case retired-stale-unlisted-product fail '' 3
+[[ -s "${scratch}/retired-stale-unlisted-product/rejections" ]] || fail 'retired-stale-unlisted-product: stale registration was not judged'
+for scope in deployment replicasets pods; do
+  case "$scope" in
+    deployment)
+      key=deployment-harbour
+      prefix='.spec.template.spec.containers[0]'
+      ;;
+    replicasets)
+      key=replicasets
+      prefix='(.items[] | select(.metadata.name=="data-product-controller-harbour-new") | .spec.template.spec.containers[0])'
+      ;;
+    pods)
+      key=pods
+      prefix='(.items[] | select(.metadata.name=="data-product-controller-harbour-pod-1") | .spec.containers[0])'
+      ;;
+  esac
+  for value in true false; do
+    retired_mutation "retired-$scope-$value-flag" "$key" "$prefix.env += [{name:\"KSAIL_RELEASES_ENABLED\",value:\"$value\"}]"
+  done
+  retired_mutation "retired-$scope-duplicate-flag" "$key" "$prefix.env += [{name:\"KSAIL_RELEASES_ENABLED\",value:\"true\"},{name:\"KSAIL_RELEASES_ENABLED\",value:\"false\"}]"
+  retired_mutation "retired-$scope-indirect-flag" "$key" "$prefix.env += [{name:\"KSAIL_RELEASES_ENABLED\",valueFrom:{configMapKeyRef:{name:\"public-config\",key:\"gate\"}}}]"
+  retired_mutation "retired-$scope-malformed-flag" "$key" "$prefix.env += [{name:\"KSAIL_RELEASES_ENABLED\",value:0}]"
+  retired_mutation "retired-$scope-env-from" "$key" "$prefix.envFrom=[{configMapRef:{name:\"public-config\"}}]"
+done
+mkdir "${scratch}/retired-history"
+cp "${scratch}/retired-unlisted/"*.json "${scratch}/retired-history/"
+jq '.items += [.items[1] | .metadata.name="harbour-old" | .metadata.uid="harbour-old-uid" |
+  .metadata.annotations["deployment.kubernetes.io/revision"]="6" | .spec.replicas=0 |
+  .status.replicas=0 | .status.readyReplicas=0 | .status.availableReplicas=0 |
+  .spec.template.spec.containers[0].image="ghcr.io/devantler-tech/data-product-controller:2.9.1" |
+  .spec.template.spec.containers[0].env=[{name:"KSAIL_RELEASES_ENABLED",value:"true"}]]' \
+  "${scratch}/retired-unlisted/replicasets.json" >"${scratch}/retired-history/replicasets.json"
+run_case retired-history pass
+retired_mutation retired-history-serving replicasets '.items[-1].spec.replicas=1 | .items[-1].status.replicas=1' retired-history
+retired_mutation retired-history-pod pods '.items[2].metadata.ownerReferences[0].name="harbour-old" | .items[2].metadata.ownerReferences[0].uid="harbour-old-uid"' retired-history
+for mode in wrong-release-ui weak-release-csp wrong-release-api wrong-release-origin; do
+  mkdir "${scratch}/retired-$mode"
+  cp "${scratch}/retired-unlisted/"*.json "${scratch}/retired-$mode/"
+  run_case "retired-$mode" fail "$mode" 15
+done
+expected_urls=14
 # A failed endpoint check is not attributable when every snapshot pair moves,
 # including the final pair. Reach all three pairs before judging the refusal.
 mkdir -p "${scratch}/final-moving-public/after"
@@ -639,6 +763,7 @@ while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json
 printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
 printf 'false\n' >"${scratch}/active/expected-ksail.json"
 cp "${scratch}/healthy/expected-ui.json" "${scratch}/active/expected-ui.json"
+cp "${scratch}/healthy/expected-image.json" "${scratch}/healthy/expected-chart.json" "${scratch}/active/"
 run_case active pass
 # A declared public product must exist at its exact current generation and
 # actual workload setting; source data is never fetched by this cluster receipt.
@@ -648,6 +773,7 @@ printf 'true\n' >"${scratch}/ksail/expected-ksail.json"
 jq '.spec.values.demoProduct.ksailReleases.enabled=true' "${scratch}/active/helm.json" >"${scratch}/ksail/helm.json"
 jq '.spec.template.spec.containers[0].env=[{name:"KSAIL_RELEASES_ENABLED",value:"true"}]' "${scratch}/active/deployment-harbour.json" >"${scratch}/ksail/deployment-harbour.json"
 jq '.items |= map(if .metadata.labels["app.kubernetes.io/component"]=="harbour-product" then .spec.containers[0].env=[{name:"KSAIL_RELEASES_ENABLED",value:"true"}] else . end)' "${scratch}/active/pods.json" >"${scratch}/ksail/pods.json"
+jq '.items |= map(if .metadata.name=="data-product-controller-harbour-new" then .spec.template.spec.containers[0].env=[{name:"KSAIL_RELEASES_ENABLED",value:"true"}] else . end)' "${scratch}/active/replicasets.json" >"${scratch}/ksail/replicasets.json"
 jq '.metadata.name="ksail-releases" | .metadata.uid="release-product-uid" |
   .spec={id:"https://github.com/devantler-tech/ksail/releases",name:"KSail releases",version:"v1.0.0",owner:{name:"devantler-tech",url:"https://github.com/devantler-tech/ksail"},
     outputs:[{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",contractUrl:"https://harbour-data.example.com/ksail-releases/openapi.json",mediaType:"application/json"}],
@@ -672,6 +798,7 @@ ksail_mutation ksail-wrong-contract release-product '.spec.outputs[0].contractUr
 ksail_mutation ksail-unsupported-ui release-product '.spec.ui.contract.apiVersion="data-product-ui/v1"'
 ksail_mutation ksail-disabled-workload deployment-harbour '.spec.template.spec.containers[0].env[0].value="false"'
 ksail_mutation ksail-disabled-pod pods '.items[2].spec.containers[0].env[0].value="false"'
+ksail_mutation ksail-disabled-replicaset replicasets '.items[1].spec.template.spec.containers[0].env[0].value="false"'
 mkdir "${scratch}/ksail-missing-product"
 cp "${scratch}/ksail/"*.json "${scratch}/ksail-missing-product/"
 printf 'null\n' >"${scratch}/ksail-missing-product/release-product.json"

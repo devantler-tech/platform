@@ -43,7 +43,7 @@ spec:
               app.kubernetes.io/component: ui-kit
       containers:
         - name: ui-kit
-          image: ghcr.io/devantler-tech/data-product-controller:2.9.1@sha256:d82b984165bc71844c323f752f474f80a7a7f7a78972a5e1171d9f814cb9bb34
+          image: ghcr.io/devantler-tech/data-product-controller:3.0.0@sha256:581c8ca202aab83bbb6bd9fea6612dff8237204ab88b6a586cf741a3fe94a566
           imagePullPolicy: IfNotPresent
           command:
             - /ui-kit

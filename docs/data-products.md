@@ -52,11 +52,16 @@ and DCAT publication remain disabled. The trial
 has no database or persistent data volume. New capabilities and releases go through
 reviewed GitOps changes before activation.
 
-`demoProduct.ksailReleases.enabled` activates the release view and its descriptor
-on the existing two-replica reference workload. It adds no workload, service-account
-grant or cluster egress. Disable that value in a reviewed GitOps change to withdraw
-the product; source availability and independent publisher acceptance remain
-separate adoption decisions.
+On v3.0.0, `demoProduct.ksailReleases.enabled` controls the registry descriptor.
+Disabling it removes the listing while the direct release UI, contract and
+configuration routes remain available on the existing reference workload.
+The retired `KSAIL_RELEASES_ENABLED` environment variable has no runtime effect and
+must be absent from the Deployment, current ReplicaSet and serving Pods. Withdrawing
+the interface itself requires restoring a previously verified legacy image/chart
+pair and disabling its gate through a reviewed GitOps change. See the
+[retirement decision](adr/ksail-release-gate-retirement.md) for the artifact profiles
+and recovery procedure. Source availability and independent publisher acceptance
+remain separate adoption decisions.
 
 Harbour readiness observes its serving Deployment and a separate two-replica
 contract probe. The probe uses a token-free service account and an exact-host
@@ -92,11 +97,17 @@ enabled workspaces, the offline publisher page, its scripts and stylesheet, and
 their no-store and no-network policies. Withdrawal requires the publisher routes
 to return 404. Local report interaction and navigation cleanup are additionally
 verified in a browser.
-The receipt also binds KSail activation to the checked-out Helm declaration,
-the live Helm value and serving Pod environments, current product registration,
-exact source/contract URLs, approved host origins and the public UI's restricted
-connection policy. When KSail releases are disabled, it requires the descriptor
-to be absent; an unreadable resource is a refusal, not proof of withdrawal.
+The receipt binds the checked-out image tag/digest and chart digest to the supplied
+identities and installed release. The retired profile accepts only the verified
+v3.0.0 pair, requires the obsolete environment variable and `envFrom` to be absent
+from the product Deployment, current ReplicaSet and serving Pods, and always checks
+the three direct release routes. Older releases retain the literal gate checks.
+Scaled-down historical ReplicaSets may keep their old image and flag; they cannot
+serve Pods. The listing value still binds the checkout to the live Helm value,
+current registration, exact source/contract URLs and approved host origins.
+When unlisted, the descriptor must be absent; an unreadable resource is a refusal,
+not proof of withdrawal. `ksailReleasesEnabled` in the receipt reports listing state;
+`ksailReleaseGateRetired` reports the accepted artifact profile.
 It performs no GitHub source read; that check belongs to the
 consumer browser. Finish with an authenticated registry-to-sandbox query and a separately
 connected portable-host query in the browser, including Light and Dark appearance.
