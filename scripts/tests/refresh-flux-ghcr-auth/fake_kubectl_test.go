@@ -716,12 +716,36 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 			incrementDecimal(currentResourceVersion),
 		)
 	}
+	parent := fakeFluxPolicyParentObject()
+	child := fakeFluxPolicyChildObject()
+	if state := os.Getenv("FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE"); state != "" &&
+		markerExists("flux-controller-restart-token") {
+		reads := parseInt(markerContent("flux-policy-post-restart-reads"), 0) + 1
+		setMarkerContent("flux-policy-post-restart-reads", strconv.Itoa(reads))
+		// The restart first proves both fences. Change only subsequent quiet-window
+		// observations, leaving the real acquisition and cleanup paths exercised.
+		if reads > 1 {
+			switch state {
+			case "unreadable":
+				return commandFailure(92, "injected quiet-window fence read failure")
+			case "child-not-owned":
+				setMarkerContent("flux-policy-handoff-owner", "fixture-private-owner")
+				child["metadata"].(map[string]any)["annotations"].(map[string]any)["platform.devantler.tech/ghcr-policy-handoff-owner"] = "fixture-private-owner"
+			case "parent-unstable":
+				parent["status"].(map[string]any)["conditions"] = []any{
+					map[string]any{"type": "Reconciling", "status": "True", "message": "fixture-private-controller-message"},
+				}
+			default:
+				return commandFailure(91, "unknown quiet-window observation state %q", state)
+			}
+		}
+	}
 	fmt.Println(encodeJSON(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "List",
 		"items": []any{
-			fakeFluxPolicyParentObject(),
-			fakeFluxPolicyChildObject(),
+			parent,
+			child,
 		},
 	}))
 	return 0
