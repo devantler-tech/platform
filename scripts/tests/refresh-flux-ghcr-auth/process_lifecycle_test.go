@@ -127,14 +127,92 @@ observe:
 		t.Error("Go reached its hard package timeout before the fixture stopped")
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for syscall.Kill(pids[1], 0) == nil && time.Now().Before(deadline) {
+	stopped, stopErr := fixtureDescendantStopped(pids[1])
+	for !stopped && stopErr == nil && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
+		stopped, stopErr = fixtureDescendantStopped(pids[1])
 	}
-	if err := syscall.Kill(pids[1], 0); !errors.Is(err, syscall.ESRCH) {
-		t.Errorf("test-owned descendant survived helper completion: %v", err)
+	if stopErr != nil || !stopped {
+		t.Errorf("test-owned descendant survived helper completion: %v", stopErr)
 	}
 	if err := sentinel.Process.Signal(syscall.Signal(0)); err != nil {
 		t.Errorf("cancelling the fixture affected a separate owned process group: %v", err)
+	}
+}
+
+func fixtureDescendantStopped(pid int) (bool, error) {
+	err := syscall.Kill(pid, 0)
+	if errors.Is(err, syscall.ESRCH) {
+		return true, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(pid), "-o", "stat=").Output()
+	if err != nil {
+		// The child can disappear between the signal and process observation.
+		if errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+			return true, nil
+		}
+		return false, fmt.Errorf("observe owned descendant: %w", err)
+	}
+	states := strings.Fields(string(data))
+	if len(states) != 1 {
+		return false, errors.New("incomplete owned descendant observation")
+	}
+	return strings.HasPrefix(states[0], "Z"), nil
+}
+
+// Keep the exited child unreaped so this does not depend on PID 1's behavior.
+// Treating kill(pid, 0) success as liveness would incorrectly reject it.
+func TestFixtureDescendantObservationAcceptsUnreapedChild(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, "/bin/bash", "-c", "exit 0")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = child.Wait() }()
+	for {
+		data, err := exec.CommandContext(ctx, "/bin/ps", "-p", strconv.Itoa(child.Process.Pid), "-o", "stat=").Output()
+		if err != nil {
+			t.Fatalf("observe unreaped child: %v", err)
+		}
+		if strings.HasPrefix(strings.TrimSpace(string(data)), "Z") {
+			break
+		}
+		if ctx.Err() != nil {
+			t.Fatal("child did not reach the unreaped state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(child.Process.Pid, 0); err != nil {
+		t.Fatalf("regression setup requires an existing zombie PID: %v", err)
+	}
+	if stopped, err := fixtureDescendantStopped(child.Process.Pid); err != nil || !stopped {
+		t.Fatalf("an exited, unreaped child was treated as running: stopped=%v err=%v", stopped, err)
+	}
+}
+
+func TestFixtureDescendantObservationRejectsRunningChild(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	child := exec.CommandContext(ctx, "sleep", "60")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	}()
+	if stopped, err := fixtureDescendantStopped(child.Process.Pid); err != nil || stopped {
+		t.Fatalf("a running child was treated as stopped: stopped=%v err=%v", stopped, err)
+	}
+	if err := child.Process.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	_ = child.Wait()
+	if stopped, err := fixtureDescendantStopped(child.Process.Pid); err != nil || !stopped {
+		t.Fatalf("a reaped child was treated as running: stopped=%v err=%v", stopped, err)
 	}
 }
 
