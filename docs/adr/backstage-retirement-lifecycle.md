@@ -35,8 +35,13 @@ Kyverno does not decode gzip. Normalized decoded content is independently checke
 during readback, not represented as a payload-validation admission guarantee.
 
 Retained owner-reference checks cover all captured owners and descendants,
-including volumes. Retained claims require prune protection before lifecycle
-writes. Do not freeze all database Pod deletion: CloudNativePG must remain able
+including volumes. Retained claims require prune protection and every joined
+backing volume requires an explicit `Retain` reclaim policy before lifecycle
+writes. A missing, destructive or unrecognized policy is HOLD before the receipt
+or journal is created. The same requirement applies to subsequent preservation
+samples. Physical protection is a separate reviewed operation (#4819); this
+retirement command never changes reclaim policies. Do not freeze all database Pod
+deletion: CloudNativePG must remain able
 to replace a failed instance. No guarantee depends on Kyverno's filtered
 ReplicaSet kinds. New retained data retirement is a separate reviewed operation.
 

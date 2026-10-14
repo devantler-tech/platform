@@ -671,6 +671,9 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		found := false
 		for _, v := range volumes {
 			if metadataValid(v) && field(v, "metadata", "name") == field(c, "spec", "volumeName") && field(v, "spec", "claimRef", "namespace") == "backstage" && field(v, "spec", "claimRef", "name") == field(c, "metadata", "name") && field(v, "spec", "claimRef", "uid") == field(c, "metadata", "uid") && field(v, "status", "phase") == "Bound" {
+				if field(v, "spec", "persistentVolumeReclaimPolicy") != "Retain" {
+					return nil, errors.New("physical storage retention unverified")
+				}
 				if err := independentOfRetirement(v, s.retiring); err != nil {
 					return nil, err
 				}
