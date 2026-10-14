@@ -312,6 +312,7 @@ if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
   exit 0
 fi
 case "${MODE:-}" in
+  slow-public) sleep 0.55 ;;
   dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
   tls-handshake-failure) printf 'PRIVATE-ERROR-CANARY: private handshake\n' >&2; exit 35 ;;
@@ -346,6 +347,9 @@ expected_urls=14
 # run_case exercises one fixture and checks its verdict, cleanup and sanitized output.
 run_case() {
   local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-15}
+  # Healthy fixtures include the expanded sequential public probes and full
+  # snapshots. Keep rejection/cleanup deadline controls separately bounded.
+  if [[ $# -lt 4 && "$expected" == pass ]]; then timeout_seconds=30; fi
   local fixture="${scratch}/${name}"
   [[ -d "$fixture" ]] || {
     mkdir "$fixture"
@@ -588,7 +592,7 @@ cp "${scratch}/healthy/"*.json "${scratch}/withdrawal-settles/"
 jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawal-settles/after/release-product.json"
 printf 'null\n' >"${scratch}/withdrawal-settles/after2/release-product.json"
 expected_urls=28
-run_case withdrawal-settles pass
+run_case withdrawal-settles pass slow-public 45
 expected_urls=14
 jq -e '.retaken==1 and (.settled|index("release-product")!=null)' "${scratch}/withdrawal-settles/stdout" >/dev/null ||
   fail 'withdrawal changed during public checks without a retaken snapshot'
@@ -826,7 +830,7 @@ for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods root prod
   jq 'if .kind == "PodList" then .items[5].metadata.uid="recreated-uid" else .metadata.uid="recreated-uid" end' \
     "${scratch}/healthy/$key.json" >"${scratch}/$name/after/$key.json"
   expected_urls=42
-  run_case "$name" fail flap 20
+  run_case "$name" fail flap 60
   expected_urls=14
 done
 # A change that happens once and then holds is an ordinary reconcile, not a
@@ -848,7 +852,7 @@ cp "${scratch}/healthy/"*.json "${scratch}/settled-twice/"
 jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/settled-twice/after/apps.json"
 jq '.metadata.labels.settled="yes"' "${scratch}/healthy/product.json" >"${scratch}/settled-twice/after2/product.json"
 expected_urls=42
-run_case settled-twice pass '' 20
+run_case settled-twice pass '' 60
 expected_urls=14
 jq -e '.retaken == 2 and .settled == ["apps.metadata.labels","product.metadata.labels"]' "${scratch}/settled-twice/stdout" >/dev/null ||
   fail 'settled-twice: the accepted report did not name every change that settled'
