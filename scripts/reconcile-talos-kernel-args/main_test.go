@@ -643,6 +643,63 @@ func TestResolveFoldInputsReadsTheTaggedSource(t *testing.T) {
 	}
 }
 
+// TestResolveFoldInputsRejectsCleanupFailure proves cleanup cannot leave an accepted source result.
+func TestResolveFoldInputsRejectsCleanupFailure(t *testing.T) {
+	repository, git := sourceRepository(t)
+	if err := os.Remove(filepath.Join(repository, "go.sum")); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "--quiet", "--all", "-m", "missing source input")
+	git("tag", "v1.2.4")
+	cleanupErr := errors.New("injected source cleanup failure")
+	for _, tc := range []struct {
+		name, version, sourceError string
+	}{
+		{"valid source", "1.2.3", ""},
+		{"unread source", "1.2.4", "has no go.sum"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ids, err := resolveFoldInputsWithCleanup(repository, tc.version, func(dir string) error {
+				t.Cleanup(func() {
+					if cleanup := os.RemoveAll(dir); cleanup != nil {
+						t.Error(cleanup)
+					}
+				})
+				return cleanupErr
+			})
+			if ids != nil || !errors.Is(err, cleanupErr) || !strings.Contains(err.Error(), tc.sourceError) {
+				t.Fatalf("cleanup failure produced accepted source identities or lost an error: %d identities, %v", len(ids), err)
+			}
+		})
+	}
+}
+
+// TestResolveFoldInputsRemovesItsCheckout checks real removal on successful and failed reads.
+func TestResolveFoldInputsRemovesItsCheckout(t *testing.T) {
+	repository, git := sourceRepository(t)
+	parent := t.TempDir()
+	t.Setenv("TMPDIR", parent)
+	want := git("rev-parse", "v1.2.3:go.mod")
+	if err := os.Remove(filepath.Join(repository, "go.sum")); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "--quiet", "--all", "-m", "missing source input")
+	git("tag", "v1.2.4")
+	for _, version := range []string{"1.2.3", "1.2.4"} {
+		ids, err := resolveFoldInputs(repository, version)
+		if version == "1.2.3" && (err != nil || ids["go.mod"] != want || len(ids) != 6) {
+			t.Fatalf("valid source lost accepted identities: %v, %v", ids, err)
+		}
+		if version == "1.2.4" && (err == nil || ids != nil) {
+			t.Fatalf("unread source was accepted: %v, %v", ids, err)
+		}
+		entries, readErr := os.ReadDir(parent)
+		if readErr != nil || len(entries) != 0 {
+			t.Fatalf("temporary source checkout remains after reading %s: %d entries, %v", version, len(entries), readErr)
+		}
+	}
+}
+
 func TestResolveFoldInputsIgnoresInheritedGitEnvironment(t *testing.T) {
 	dir, git := sourceRepository(t)
 	want := git("rev-parse", "v1.2.3:go.mod")
