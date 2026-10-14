@@ -3,7 +3,7 @@
 - **Status:** Accepted; Harbour observation is enabled.
 - **Tracks:** [Platform #4590](https://github.com/devantler-tech/platform/issues/4590),
   [Platform #4584](https://github.com/devantler-tech/platform/issues/4584)
-  and [Data Product Controller #4](https://github.com/devantler-tech/data-product-controller/issues/4).
+  and [KHoist #4](https://github.com/devantler-tech/khoist/issues/4).
 
 The registry's Harbour sample publishes its contract through a public route. A
 healthy controller does not establish that this independently served workload or
