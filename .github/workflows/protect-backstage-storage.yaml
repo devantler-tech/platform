@@ -3,8 +3,16 @@ name: Protect Retained Backstage Storage
 on:
   workflow_dispatch:
     inputs:
+      operation:
+        description: protect changes bound Delete policies to Retain; check reads only
+        required: true
+        type: choice
+        default: protect
+        options:
+          - protect
+          - check
       confirmation:
-        description: Type PROTECT BACKSTAGE STORAGE ONLY; only bound volume Delete policies become Retain
+        description: Type PROTECT BACKSTAGE STORAGE ONLY or CHECK BACKSTAGE STORAGE ONLY for the selected operation
         required: true
         type: string
       deployed_revision:
@@ -38,6 +46,7 @@ jobs:
       deployments: read
     env:
       GH_TOKEN: ${{ github.token }}
+      PORTAL_STORAGE_OPERATION: ${{ inputs.operation }}
       PORTAL_STORAGE_CONFIRM: ${{ inputs.confirmation }}
       PORTAL_STORAGE_REVISION: ${{ inputs.deployed_revision }}
       PORTAL_STORAGE_DEPLOYMENT_RUN: ${{ inputs.accepted_deployment_run }}
@@ -51,7 +60,11 @@ jobs:
           [[ "$GITHUB_WORKFLOW_REF" == devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main ]]
           [[ "$GITHUB_RUN_ATTEMPT" == 1 && "$GITHUB_RUN_ID" =~ ^[1-9][0-9]{0,19}$ ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$PORTAL_STORAGE_CONFIRM" == 'PROTECT BACKSTAGE STORAGE ONLY' ]]
+          case "$PORTAL_STORAGE_OPERATION" in
+            protect) [[ "$PORTAL_STORAGE_CONFIRM" == 'PROTECT BACKSTAGE STORAGE ONLY' ]] ;;
+            check) [[ "$PORTAL_STORAGE_CONFIRM" == 'CHECK BACKSTAGE STORAGE ONLY' ]] ;;
+            *) exit 1 ;;
+          esac
           [[ "$PORTAL_STORAGE_REVISION" =~ ^latest@sha256:[0-9a-f]{64}$ ]]
           [[ "$PORTAL_STORAGE_DEPLOYMENT_RUN" =~ ^[1-9][0-9]{0,19}$ ]]
 
@@ -123,7 +136,14 @@ jobs:
         # reads keep the short-lived job token. No new package grant or writer PAT.
         env:
           DOCKER_CONFIG: ${{ runner.temp }}/portal-storage-registry
-        run: go run ./scripts/protect-backstage-storage --execute
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$PORTAL_STORAGE_OPERATION" in
+            protect) go run ./scripts/protect-backstage-storage --execute ;;
+            check) go run ./scripts/protect-backstage-storage --check ;;
+            *) exit 1 ;;
+          esac
 
       - name: Remove only the temporary registry credential files
         if: always()

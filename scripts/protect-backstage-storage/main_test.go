@@ -20,7 +20,7 @@ const testProvenance = `[{"verificationResult":{"signature":{"certificate":{"iss
 
 // testEnvironment supplies only synthetic first-attempt protected invocation facts.
 func testEnvironment() map[string]string {
-	return map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": testSHA, "GITHUB_RUN_ID": "123", "PORTAL_STORAGE_CONFIRM": "PROTECT BACKSTAGE STORAGE ONLY", "PORTAL_STORAGE_REVISION": testRevision, "PORTAL_STORAGE_DEPLOYMENT_RUN": "456"}
+	return map[string]string{"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/protect-backstage-storage.yaml@refs/heads/main", "GITHUB_RUN_ATTEMPT": "1", "GITHUB_SHA": testSHA, "GITHUB_RUN_ID": "123", "PORTAL_STORAGE_OPERATION": "protect", "PORTAL_STORAGE_CONFIRM": "PROTECT BACKSTAGE STORAGE ONLY", "PORTAL_STORAGE_REVISION": testRevision, "PORTAL_STORAGE_DEPLOYMENT_RUN": "456"}
 }
 
 type storageAPI struct {

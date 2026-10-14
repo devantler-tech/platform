@@ -49,6 +49,22 @@ All reads and patch responses remain bounded in process memory. The command read
 no Secrets and emits only a compact count receipt; it never uploads cluster
 snapshots, raw patch failures or storage identities.
 
+## Diagnose a hold without changing storage
+
+After merge and normal deployment, select the workflow's explicit `check`
+operation and confirm `CHECK BACKSTAGE STORAGE ONLY`. The normal `protect`
+operation still requires `PROTECT BACKSTAGE STORAGE ONLY`; the two confirmations
+cannot be exchanged. Both modes retain the same protected main-only invocation,
+accepted deployment, signed provenance, complete storage census and separated
+sample checks.
+
+Check mode submits no patch. A successful `CHECKED` receipt reports only counts,
+including how many bound volumes still have `Delete` policy; it is not a
+`PROTECTED` result, a write authorization or permission to retry a consumed run.
+Failure emits `HOLD` with a fixed `PORTAL_STORAGE_REASON` guard category, never a
+raw transport error. Diagnose that guard and independently read back existing
+storage before preparing a new approved write-capable attempt.
+
 ## A released volume stops the census
 
 Replacing a database instance can leave its old `Retain` volume in `Released`
