@@ -36,7 +36,7 @@ jobs:
           [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == verify-arc-runner-group-capability && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           printf 'KUBECONFIG=%s/arc-group-kubeconfig\n' "${RUNNER_TEMP}" >> "${GITHUB_ENV}"
       - name: Harden runner
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
       - name: Checkout immutable source
