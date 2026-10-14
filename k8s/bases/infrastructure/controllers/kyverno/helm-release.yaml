@@ -107,6 +107,12 @@ spec:
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
       replicas: ${kyverno_admission_replicas:=2}
+      # Structured severity keeps colored trace flag values containing "error"
+      # from becoming error events in Coroot, without reducing verbosity.
+      featuresOverride:
+        logging:
+          format: json
+          verbosity: 2
       # Explicit resources = the COLD-START FLOOR. Kyverno's global resourceFilters
       # exclude ns/kyverno from auto-vpa, so the admission controller was long left
       # on the chart-default limits.memory: 384Mi, which OOMKilled (exit 137) under
