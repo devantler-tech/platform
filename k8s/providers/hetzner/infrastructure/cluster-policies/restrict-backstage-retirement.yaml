@@ -78,7 +78,7 @@ spec:
       match:
         any:
           - resources:
-              kinds: [v1/Secret, v1/PersistentVolumeClaim, v1/ServiceAccount, v1/Service, v1/ConfigMap, postgresql.cnpg.io/v1/Cluster, postgresql.cnpg.io/v1/Backup, postgresql.cnpg.io/v1/ScheduledBackup, external-secrets.io/v1/ExternalSecret, barmancloud.cnpg.io/v1/ObjectStore]
+              kinds: [v1/Secret, v1/PersistentVolumeClaim, v1/ServiceAccount, v1/Service, v1/ConfigMap, postgresql.cnpg.io/v1/Cluster, postgresql.cnpg.io/v1/Backup, postgresql.cnpg.io/v1/ScheduledBackup, external-secrets.io/v1/ExternalSecret, generators.external-secrets.io/v1alpha1/Password, barmancloud.cnpg.io/v1/ObjectStore]
               namespaces: [backstage]
               operations: [CREATE, UPDATE, DELETE]
           - resources:

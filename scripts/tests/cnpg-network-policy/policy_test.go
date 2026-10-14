@@ -260,6 +260,28 @@ func TestRetainedBackstageDatabaseControlPaths(t *testing.T) {
 	}
 	database := identity("backstage", "postgres", "database")
 	database["cnpg.io/cluster"] = "backstage-db"
+	for _, namespace := range []string{"observability", "backstage", "untrusted-namespace"} {
+		for _, component := range []string{"coroot-cluster-agent", "cluster-agent", "another-agent"} {
+			for _, manager := range []string{"coroot-operator", "another-operator"} {
+				for _, part := range []string{"coroot", "another-app"} {
+					agent := map[string]string{namespaceKey: namespace, "app.kubernetes.io/component": component,
+						"app.kubernetes.io/managed-by": manager, "app.kubernetes.io/part-of": part}
+					for _, port := range []string{"5432", "8000", "7007"} {
+						want := namespace == "observability" && component == "coroot-cluster-agent" && manager == "coroot-operator" && part == "coroot" && port == "5432"
+						if got := allows(t, policies, true, database, agent, "", port, "TCP"); got != want {
+							t.Errorf("monitor ingress namespace=%s component=%s manager=%s part=%s port=%s: got=%t want=%t", namespace, component, manager, part, port, got, want)
+						}
+						if allows(t, policies, false, database, agent, "", port, "TCP") {
+							t.Error("monitoring must not grant database-initiated agent access")
+						}
+					}
+					if allows(t, policies, true, database, agent, "", "5432", "UDP") {
+						t.Error("monitoring must not permit UDP")
+					}
+				}
+			}
+		}
+	}
 	for _, port := range []string{"443", "6443"} {
 		if !allows(t, policies, false, database, nil, "kube-apiserver", port, "TCP") {
 			t.Errorf("retained database cannot coordinate through the Kubernetes API on %s", port)

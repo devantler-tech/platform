@@ -34,7 +34,7 @@ func field(o map[string]any, keys ...string) any {
 func integer(v any) int { n, _ := v.(int); return n }
 
 const maxResponse = 4 << 20
-const inventoryKinds = "service,configmap,secret,serviceaccount,replicaset,externalsecrets.external-secrets.io,backups.postgresql.cnpg.io,scheduledbackups.postgresql.cnpg.io,objectstores.barmancloud.cnpg.io"
+const inventoryKinds = "service,configmap,secret,serviceaccount,replicaset,externalsecrets.external-secrets.io,passwords.generators.external-secrets.io,backups.postgresql.cnpg.io,scheduledbackups.postgresql.cnpg.io,objectstores.barmancloud.cnpg.io"
 
 func decode(b []byte) (map[string]any, error) {
 	var o map[string]any

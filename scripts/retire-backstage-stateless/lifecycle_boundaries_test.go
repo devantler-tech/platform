@@ -25,9 +25,10 @@ func TestFreshnessAndSubmissionBoundaries(t *testing.T) {
 					stale = true
 				}
 				if strings.Contains(args, "create -f") && strings.Contains(args, "--dry-run=server") {
-					if stage == "after admission" {
+					switch stage {
+					case "after admission":
 						stale = true
-					} else if stage == "request preparation" {
+					case "request preparation":
 						t.Setenv("TMPDIR", missingDirectory)
 					}
 				}
@@ -49,6 +50,7 @@ func TestEveryRetainedNonPodKindNeedsLiveDenial(t *testing.T) {
 		{"v1", "Service", "services"},
 		{"v1", "ServiceAccount", "serviceaccounts"},
 		{"external-secrets.io/v1", "ExternalSecret", "externalsecrets"},
+		{"generators.external-secrets.io/v1alpha1", "Password", "passwords"},
 		{"postgresql.cnpg.io/v1", "Backup", "backups"},
 		{"postgresql.cnpg.io/v1", "ScheduledBackup", "scheduledbackups"},
 		{"barmancloud.cnpg.io/v1", "ObjectStore", "objectstores"},
@@ -64,6 +66,13 @@ func TestEveryRetainedNonPodKindNeedsLiveDenial(t *testing.T) {
 			}
 			probed := false
 			execute := func(c context.Context, p string, a ...string) ([]byte, error) {
+				if target.kind == "Password" && p == "kubectl" {
+					for i, argument := range a {
+						if argument == "get" && i+1 < len(a) && strings.Contains(a[i+1], "externalsecrets.external-secrets.io") && !strings.Contains(a[i+1], "passwords.generators.external-secrets.io") {
+							t.Error("retained generator omitted from the live inventory request")
+						}
+					}
+				}
 				if p == "kubectl" && strings.Contains(strings.Join(a, " "), "/"+target.plural+"/"+name+"?dryRun=All") {
 					probed = true
 					return []byte(`{"apiVersion":"v1","kind":"Status","status":"Success"}`), nil

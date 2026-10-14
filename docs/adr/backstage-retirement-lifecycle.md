@@ -40,6 +40,15 @@ writes. Do not freeze all database Pod deletion: CloudNativePG must remain able
 to replace a failed instance. No guarantee depends on Kyverno's filtered
 ReplicaSet kinds. New retained data retirement is a separate reviewed operation.
 
+Retaining the database also retains its dedicated monitoring dependency and the
+scrape-only network path, not the retired portal's access. External Secrets
+creates the monitoring credential with `CreatedOnce`; the existing CNPG managed
+role and Coroot both consume that same Secret. This prevents periodic generation,
+not rotation after deleting and recreating the ExternalSecret. Restore and verify
+this dependency before installing a retirement journal; the fixed credential
+profile does not permit a later password change. Capture the Password generator
+alongside the ExternalSecret and require its own versioned admission denial.
+
 Do not turn the durable retained-data fence into a controller freeze. The
 protected capture binds generated-resource profiles to the actual producer
 ServiceAccount UIDs and verifies the published CNPG and trust-manager versions.

@@ -221,21 +221,22 @@ func resourcePath(r map[string]any) (string, error) {
 	}
 	key := text(r["apiVersion"]) + "/" + text(r["kind"])
 	paths := map[string]string{
-		"apps/v1/Deployment":                    "/apis/apps/v1/namespaces/backstage/deployments/",
-		"v1/Service":                            "/api/v1/namespaces/backstage/services/",
-		"v1/ConfigMap":                          "/api/v1/namespaces/backstage/configmaps/",
-		"v1/ServiceAccount":                     "/api/v1/namespaces/backstage/serviceaccounts/",
-		"helm.toolkit.fluxcd.io/v2/HelmRelease": "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/",
-		"source.toolkit.fluxcd.io/v1/HelmChart": "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/",
-		"v1/Secret":                             "/api/v1/namespaces/backstage/secrets/",
-		"v1/PersistentVolumeClaim":              "/api/v1/namespaces/backstage/persistentvolumeclaims/",
-		"v1/PersistentVolume":                   "/api/v1/persistentvolumes/",
-		"v1/Namespace":                          "/api/v1/namespaces/",
-		"postgresql.cnpg.io/v1/Cluster":         "/apis/postgresql.cnpg.io/v1/namespaces/backstage/clusters/",
-		"postgresql.cnpg.io/v1/Backup":          "/apis/postgresql.cnpg.io/v1/namespaces/backstage/backups/",
-		"postgresql.cnpg.io/v1/ScheduledBackup": "/apis/postgresql.cnpg.io/v1/namespaces/backstage/scheduledbackups/",
-		"external-secrets.io/v1/ExternalSecret": "/apis/external-secrets.io/v1/namespaces/backstage/externalsecrets/",
-		"barmancloud.cnpg.io/v1/ObjectStore":    "/apis/barmancloud.cnpg.io/v1/namespaces/backstage/objectstores/",
+		"apps/v1/Deployment":                               "/apis/apps/v1/namespaces/backstage/deployments/",
+		"v1/Service":                                       "/api/v1/namespaces/backstage/services/",
+		"v1/ConfigMap":                                     "/api/v1/namespaces/backstage/configmaps/",
+		"v1/ServiceAccount":                                "/api/v1/namespaces/backstage/serviceaccounts/",
+		"helm.toolkit.fluxcd.io/v2/HelmRelease":            "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/",
+		"source.toolkit.fluxcd.io/v1/HelmChart":            "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/",
+		"v1/Secret":                                        "/api/v1/namespaces/backstage/secrets/",
+		"v1/PersistentVolumeClaim":                         "/api/v1/namespaces/backstage/persistentvolumeclaims/",
+		"v1/PersistentVolume":                              "/api/v1/persistentvolumes/",
+		"v1/Namespace":                                     "/api/v1/namespaces/",
+		"postgresql.cnpg.io/v1/Cluster":                    "/apis/postgresql.cnpg.io/v1/namespaces/backstage/clusters/",
+		"postgresql.cnpg.io/v1/Backup":                     "/apis/postgresql.cnpg.io/v1/namespaces/backstage/backups/",
+		"postgresql.cnpg.io/v1/ScheduledBackup":            "/apis/postgresql.cnpg.io/v1/namespaces/backstage/scheduledbackups/",
+		"external-secrets.io/v1/ExternalSecret":            "/apis/external-secrets.io/v1/namespaces/backstage/externalsecrets/",
+		"generators.external-secrets.io/v1alpha1/Password": "/apis/generators.external-secrets.io/v1alpha1/namespaces/backstage/passwords/",
+		"barmancloud.cnpg.io/v1/ObjectStore":               "/apis/barmancloud.cnpg.io/v1/namespaces/backstage/objectstores/",
 	}
 	path := paths[key]
 	if path == "" || r["kind"] != "PersistentVolume" && r["kind"] != "Namespace" && field(r, "metadata", "namespace") != "backstage" {

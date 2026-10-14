@@ -65,6 +65,17 @@ run_case retained-data-change preserve-retained-identities UPDATE "$secret | .da
 run_case retained-noop preserve-retained-identities UPDATE "$secret" "$secret" pass
 run_case retained-string-data-change preserve-retained-identities UPDATE "$secret | .stringData={value:\"changed\"}" "$secret" fail
 run_case retained-secret-immutable-change preserve-retained-identities UPDATE "$secret | .immutable=true" "$secret" fail
+record=$(jq -c '.retained += [{kind:"Password",name:"monitor-generator",uid:"generator-uid"},{kind:"ExternalSecret",name:"monitor-dependency",uid:"dependency-uid"}]' <<<"$record")
+generator='{apiVersion:"generators.external-secrets.io/v1alpha1",kind:"Password",metadata:{name:"monitor-generator",namespace:"backstage",uid:"generator-uid"},spec:{length:32}}'
+dependency='{apiVersion:"external-secrets.io/v1",kind:"ExternalSecret",metadata:{name:"monitor-dependency",namespace:"backstage",uid:"dependency-uid"},spec:{refreshPolicy:"CreatedOnce"}}'
+run_case monitor-generator-delete preserve-retained-identities DELETE "$generator" "$generator" fail
+run_case monitor-generator-recreate preserve-retained-identities CREATE "$generator" '{}' fail
+run_case monitor-generator-change preserve-retained-identities UPDATE "$generator | .spec.length=8" "$generator" fail
+run_case monitor-generator-noop preserve-retained-identities UPDATE "$generator" "$generator" pass
+run_case monitor-dependency-delete preserve-retained-identities DELETE "$dependency" "$dependency" fail
+run_case monitor-dependency-recreate preserve-retained-identities CREATE "$dependency" '{}' fail
+run_case monitor-dependency-change preserve-retained-identities UPDATE "$dependency | .spec.refreshPolicy=\"Periodic\"" "$dependency" fail
+run_case monitor-dependency-noop preserve-retained-identities UPDATE "$dependency" "$dependency" pass
 config='{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"retained-settings",namespace:"backstage",uid:"settings-uid"},data:{setting:"SYNTHETIC"},binaryData:{setting:"U1lOVEhFVElD"}}'
 run_case retained-binary-data-change preserve-retained-identities UPDATE "$config | .binaryData.setting=\"Y2hhbmdlZA==\"" "$config" fail
 run_case retained-config-immutable-change preserve-retained-identities UPDATE "$config | .immutable=true" "$config" fail
