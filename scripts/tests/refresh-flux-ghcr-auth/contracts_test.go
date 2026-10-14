@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -516,11 +515,16 @@ func TestManualBridgePrerequisitesYAMLToolPreflightRejectsMissingOrIncompatibleY
 			}
 
 			library := filepath.Join(repositoryRoot(t), "scripts", "ghcr-auth-lib.sh")
-			command := exec.Command("/bin/bash", "-c", `source "$1"; require_flux_ghcr_yaml_tool`, "bash", library)
+			ctx, cancel := fixtureCommandContext(t)
+			defer cancel()
+			command := fixtureCommand(ctx, "/bin/bash", "-c", `source "$1"; require_flux_ghcr_yaml_tool`, "bash", library)
 			command.Env = environmentWithPath(os.Environ(), binDirectory)
 			var stderr bytes.Buffer
 			command.Stderr = &stderr
 			err := command.Run()
+			if ctx.Err() != nil {
+				t.Fatalf("YAML preflight exceeded its test budget: %v", ctx.Err())
+			}
 			if err == nil {
 				t.Error("YAML tool preflight succeeded, want non-zero exit")
 			}
