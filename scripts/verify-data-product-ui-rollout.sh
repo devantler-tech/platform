@@ -142,8 +142,8 @@ expected_releases=$(<"$scratch/release-state")
 # the verified v3.0.0 image/chart pair uses the retired profile. Unknown releases
 # need a reviewed adoption before this receipt can assert their behavior.
 read_expected_release_profile() {
-  yq -o=json '.spec.values.image | {repository, tag, digest}' "$expected_helm_file" >"$scratch/expected-image.json" 2>/dev/null || return 1
-  yq -o=json '.spec | {url, digest: .ref.digest}' "$expected_chart_file" >"$scratch/expected-chart.json" 2>/dev/null || return 1
+  yq -o=json '.spec.values.image | {"repository": .repository, "tag": .tag, "digest": .digest}' "$expected_helm_file" >"$scratch/expected-image.json" 2>/dev/null || return 1
+  yq -o=json '.spec | {"url": .url, "digest": .ref.digest}' "$expected_chart_file" >"$scratch/expected-chart.json" 2>/dev/null || return 1
   jq -ne --arg repository "$repository" --arg image_digest "$image_digest" --arg chart_digest "$chart_digest" \
     --slurpfile image "$scratch/expected-image.json" --slurpfile chart "$scratch/expected-chart.json" '
     "sha256:581c8ca202aab83bbb6bd9fea6612dff8237204ab88b6a586cf741a3fe94a566" as $retired_image |

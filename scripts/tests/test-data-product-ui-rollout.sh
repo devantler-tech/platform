@@ -18,7 +18,8 @@ chart="sha256:$(printf 'c%.0s' {1..64})"
 apps="sha256:$(printf 'd%.0s' {1..64})"
 readonly index child chart apps
 real_jq="$(command -v jq)"
-readonly real_jq
+real_yq="$(command -v yq)" || fail 'yq v4 is required for declaration parsing'
+readonly real_jq real_yq
 
 # Exercise setup consuming the total deadline separately from cleanup of a
 # plugin that really started. A one-second whole-script budget can expire in
@@ -49,29 +50,35 @@ exec "$REAL_JQ" "$@"
 SH
 chmod +x "${scratch}/bin/jq"
 
-# Production derives the expected state from the checked-out Helm declaration,
-# never from the live object being judged. Keep that read explicit in fixtures.
+# Redirect only the checked-out declarations to controlled documents. Run the
+# real YAML parser so unsupported expressions cannot pass through a fake result.
 cat >"${scratch}/bin/yq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $# == 3 && "$1" == -o=json ]] || exit 91
-if [[ "$3" == "$EXPECTED_UI_FILE" ]]; then
-  [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
-  cat "$FIXTURE/expected-ui.json"
-  exit 0
-fi
-if [[ "$3" == "$EXPECTED_CHART_FILE" ]]; then
-  [[ "$2" == '.spec | {url, digest: .ref.digest}' ]] || exit 91
-  cat "$FIXTURE/expected-chart.json"
-  exit 0
-fi
-[[ "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
-case "$2" in
-  '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]') cat "$FIXTURE/expected-flags.json" ;;
-  '.spec.values.demoProduct.ksailReleases.enabled // false') cat "$FIXTURE/expected-ksail.json" ;;
-  '.spec.values.image | {repository, tag, digest}') cat "$FIXTURE/expected-image.json" ;;
+case "$3" in
+  "$EXPECTED_UI_FILE")
+    "$REAL_JQ" -n --slurpfile containers "$FIXTURE/expected-ui.json" \
+      'if ($containers|length)!=1 then error("ambiguous fixture declaration")
+        else {spec:{template:{spec:{containers:$containers[0]}}}} end' >"$FIXTURE/expected-declaration.json"
+    ;;
+  "$EXPECTED_CHART_FILE")
+    "$REAL_JQ" -n --slurpfile chart "$FIXTURE/expected-chart.json" \
+      'if ($chart|length)!=1 then error("ambiguous fixture declaration")
+        else {spec:{url:$chart[0].url,ref:{digest:$chart[0].digest}}} end' >"$FIXTURE/expected-declaration.json"
+    ;;
+  "$EXPECTED_HELM_FILE")
+    "$REAL_JQ" -n --slurpfile image "$FIXTURE/expected-image.json" \
+      --slurpfile flags "$FIXTURE/expected-flags.json" --slurpfile releases "$FIXTURE/expected-ksail.json" \
+      'if ($image|length)!=1 or ($flags|length)!=1 or ($releases|length)!=1
+        then error("ambiguous fixture declaration") else
+        {spec:{values:{image:$image[0],connectorReadiness:{enabled:$flags[0][0]},
+        contractReadiness:{enabled:$flags[0][1]},contractProbe:{enabled:$flags[0][2]},
+        demoProduct:{ksailReleases:{enabled:$releases[0]}}}}} end' >"$FIXTURE/expected-declaration.json"
+    ;;
   *) exit 91 ;;
 esac
+exec "$REAL_YQ" -o=json "$2" "$FIXTURE/expected-declaration.json"
 SH
 chmod +x "${scratch}/bin/yq"
 
@@ -370,7 +377,7 @@ run_case() {
     requested_chart=$(jq -r '.chart' "$fixture/requested-artifacts.json")
   fi
   if [[ -f "$fixture/expected-retired.json" ]]; then retired=$(cat "$fixture/expected-retired.json"); fi
-  PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
+  PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" REAL_YQ="$real_yq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     EXPECTED_UI_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-ui-kit.yaml" \
     EXPECTED_CHART_FILE="${root_dir}/k8s/bases/apps/data-product-controller/oci-repository.yaml" \
