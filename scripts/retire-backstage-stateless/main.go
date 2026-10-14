@@ -169,6 +169,7 @@ type snapshot struct {
 	retiring                                                                   map[string]string
 	fence                                                                      string
 	writers                                                                    map[string]map[string]any
+	layerSources                                                               map[string]map[string]any
 	bundle, monitoring                                                         map[string]any
 }
 type engine struct {
@@ -232,6 +233,9 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 		if err != nil {
 			return s, err
 		}
+	}
+	if err := e.collectLayerSources(ctx, &s); err != nil {
+		return s, err
 	}
 	list, err := e.read(ctx, "get", "helmreleases.helm.toolkit.fluxcd.io", "--all-namespaces", "--output=json")
 	if err != nil {
@@ -497,7 +501,7 @@ func (e engine) deployed(s snapshot) error {
 	}
 	apps := false
 	for _, k := range layers {
-		if !ready(k) {
+		if !ready(k) || !currentLayerInventory(s, k) {
 			return errors.New("unsettled inventory")
 		}
 		entries, ok := field(k, "status", "inventory", "entries").([]any)
@@ -524,6 +528,9 @@ func (e engine) deployed(s snapshot) error {
 // remain in process memory and are compared, never logged or journaled.
 func preserved(s snapshot) (map[string]map[string]any, error) {
 	result := map[string]map[string]any{}
+	for key, source := range s.layerSources {
+		result["inventorySource/"+key] = map[string]any{"object": projection(source), "revision": field(source, "status", "artifact", "revision")}
+	}
 	for name, writer := range s.writers {
 		result["controller/Identity//"+name] = map[string]any{"uid": field(writer, "metadata", "uid"), "spec": writer["spec"]}
 	}

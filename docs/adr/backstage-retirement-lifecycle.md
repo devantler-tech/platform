@@ -40,6 +40,10 @@ CloudNativePG Cluster through its supported controller reference, and absent
 from every complete, settled Flux inventory across all namespaces. A prune
 opt-out annotation neither proves that ownership nor exempts an inventory-owned
 claim. The Flux-owned namespace still requires prune protection.
+Each inventory must have applied its own current, Ready OCI or Git source
+artifact. Independent tenant sources need not share the platform root's revision;
+their exact source identities, specifications and revisions remain stable across
+the separated preservation samples. An unreadable or replaced source is HOLD.
 Existing claim prune metadata must be valid and non-conflicting; an absent key
 is not a request to add one. Claim metadata remains captured without normalization.
 Every joined backing volume requires an explicit `Retain` reclaim policy before lifecycle

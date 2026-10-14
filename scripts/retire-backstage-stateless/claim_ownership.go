@@ -37,7 +37,7 @@ func retainedClaimOwnership(s snapshot, claim map[string]any) error {
 	claimID := "backstage_" + text(field(claim, "metadata", "name")) + "__PersistentVolumeClaim"
 	for _, layer := range layers {
 		entries, ok := field(layer, "status", "inventory", "entries").([]any)
-		if layer["apiVersion"] != "kustomize.toolkit.fluxcd.io/v1" || layer["kind"] != "Kustomization" || !ready(layer) || !ok || len(entries) == 0 {
+		if layer["apiVersion"] != "kustomize.toolkit.fluxcd.io/v1" || layer["kind"] != "Kustomization" || !ready(layer) || !currentLayerInventory(s, layer) || !ok || len(entries) == 0 {
 			return errors.New("retained claim inventory unsettled")
 		}
 		for _, entry := range entries {
