@@ -12,6 +12,7 @@ umask 077
 # checks. This helper reads no Secrets or authenticated URLs.
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
+phase=''
 readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
 expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/apps/data-product-controller/helm-release.yaml"
@@ -44,6 +45,30 @@ fail() {
       fi
     fi
     detail=$(printf ',"phase":"public_contract","role":"%s","reason":"%s"' "$role" "$reason")
+  elif [[ ("$1" == deadline_exceeded || "$1" == read_incomplete) &&
+    ("$phase" == initial_readiness || "$phase" == rollout_stability) ]]; then
+    role=snapshot
+    reason=$1
+    local failure_file="$scratch/snapshot-failure"
+    if [[ "$1" == read_incomplete || ! -f "$failure_file" ]]; then failure_file="$scratch/read-failure"; fi
+    if [[ -f "$failure_file" ]]; then
+      local saved_role='' saved_reason=''
+      read -r saved_role saved_reason extra <"$failure_file" || true
+      if [[ -z "$extra" ]]; then
+        case "$saved_role" in
+          apps | root | chart | helm | product | release-product | release-flags | replicasets | pods | endpoints | readiness | controller-flags | workloads | backends | routes | gateway | service-harbour | service-ui-kit | deployment-controller | deployment-harbour | deployment-ui-kit | deployment-probe | probe-account | observer-role | observer-binding | probe-policy | route-registry | route-harbour | route-ui-kit | snapshot)
+            case "$saved_reason" in
+              read_incomplete | predicate_not_ready | observation_invalid)
+                role=$saved_role
+                reason=$saved_reason
+                if [[ "$1" == deadline_exceeded && "$failure_file" == "$scratch/read-failure" ]]; then reason=deadline_exceeded; fi
+                ;;
+            esac
+            ;;
+        esac
+      fi
+    fi
+    detail=$(printf ',"phase":"%s","role":"%s","reason":"%s"' "$phase" "$role" "$reason")
   fi
   # Once a snapshot pair has differed, every later refusal still names what moved.
   if [[ -n "$changed" ]]; then
@@ -413,20 +438,22 @@ def route($name;$host;$backend;$public):
       ($conditions|length)==1 and $conditions[0].status=="True" and $conditions[0].observedGeneration==$resource_generation));
 . as $snapshot |
 .helm.spec.values.image.tag as $tag |
-(.apps|identity("Kustomization";"kustomize.toolkit.fluxcd.io/v1";"apps";"flux-system") and
+def demand($role): if . then true else error({role:$role,reason:"predicate_not_ready"}) end;
+try (
+((.apps|identity("Kustomization";"kustomize.toolkit.fluxcd.io/v1";"apps";"flux-system") and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
   .spec.sourceRef.kind=="OCIRepository" and .spec.sourceRef.name=="flux-system" and (.spec.sourceRef.namespace//"flux-system")=="flux-system" and
-  (.status.lastAppliedRevision|revision($apps_digest))) and
-(.root|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"flux-system";"flux-system") and
+  (.status.lastAppliedRevision|revision($apps_digest))) | demand("apps")) and
+((.root|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"flux-system";"flux-system") and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready","SourceVerified"]) and
-  .spec.verify==$apps_verify and (.status.artifact.revision|revision($apps_digest)) and (.status.artifact.digest|digest)) and
-(.chart|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"data-product-controller";$namespace) and
+  .spec.verify==$apps_verify and (.status.artifact.revision|revision($apps_digest)) and (.status.artifact.digest|digest)) | demand("root")) and
+((.chart|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"data-product-controller";$namespace) and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready","SourceVerified"]) and
   .spec.url=="oci://ghcr.io/devantler-tech/charts/data-product-controller" and .spec.ref.digest==$chart_digest and
   .spec.verify=={provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/data-product-controller/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]} and
   # The cached file digest differs from the upstream OCI manifest revision.
-  (.status.artifact.revision|revision($chart_digest)) and (.status.artifact.digest|digest)) and
-(.helm|identity("HelmRelease";"helm.toolkit.fluxcd.io/v2";"data-product-controller";$namespace) and
+  (.status.artifact.revision|revision($chart_digest)) and (.status.artifact.digest|digest)) | demand("chart")) and
+((.helm|identity("HelmRelease";"helm.toolkit.fluxcd.io/v2";"data-product-controller";$namespace) and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
   .spec.chartRef.kind=="OCIRepository" and .spec.chartRef.name=="data-product-controller" and (.spec.chartRef.namespace//$namespace)==$namespace and
   .spec.values.image.repository==$repository and .spec.values.image.digest==$image_digest and
@@ -440,15 +467,15 @@ def route($name;$host;$backend;$public):
   .status.lastAttemptedRevisionDigest==$chart_digest and .status.lastAttemptedRevision==($tag+"+"+$chart_digest[7:19]) and
   (.status.lastAttemptedConfigDigest|digest) and .status.history[0].status=="deployed" and (.status.history[0].version|positive) and
   .status.history[0].name=="data-product-controller" and .status.history[0].namespace==$namespace and .status.history[0].chartName=="data-product-controller" and
-  .status.history[0].chartVersion==.status.lastAttemptedRevision and .status.history[0].ociDigest==$chart_digest and .status.history[0].configDigest==.status.lastAttemptedConfigDigest) and
-(.product|identity("DataProduct";"data.devantler.tech/v1alpha1";"harbour-observations";$namespace) and
+  .status.history[0].chartVersion==.status.lastAttemptedRevision and .status.history[0].ociDigest==$chart_digest and .status.history[0].configDigest==.status.lastAttemptedConfigDigest) | demand("helm")) and
+((.product|identity("DataProduct";"data.devantler.tech/v1alpha1";"harbour-observations";$namespace) and
   .status.observedGeneration==.metadata.generation and ready(["Ready"]) and .spec.ui.url==("https://harbour-data."+$domain+"/ui") and
   .spec.outputs==[{name:"observations",url:("https://harbour-data."+$domain+"/api/observations"),contractUrl:("https://harbour-data."+$domain+"/openapi.json")}] and
   product_observation and
   .spec.ui.contract.apiVersion=="data-product-ui/v2" and
   (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
-  (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"]) and
-(if $ksail_enabled then
+  (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"]) | demand("product")) and
+((if $ksail_enabled then
   (."release-product"|identity("DataProduct";"data.devantler.tech/v1alpha1";"ksail-releases";$namespace) and
     .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
     .spec.id=="https://github.com/devantler-tech/ksail/releases" and .spec.name=="KSail releases" and .spec.version=="v1.0.0" and
@@ -459,32 +486,38 @@ def route($name;$host;$backend;$public):
     .spec.ui.url==("https://harbour-data."+$domain+"/ksail-releases/ui") and .spec.ui.contract.apiVersion=="data-product-ui/v2" and
     (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
     (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"])
-  else ."release-product"==null end) and
-([."deployment-harbour"] + [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
+  else ."release-product"==null end) | demand("release-product")) and
+(([."deployment-harbour"] + [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
   all(.[]; [.spec.containers[]? | select(.name=="product") | .env[]? | select(.name=="KSAIL_RELEASES_ENABLED")] as $flags |
     if $ksail_enabled then $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"true",indirect:false}]
-    else $flags==[] or $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"false",indirect:false}] end)) and
-(.replicasets|inventory("ReplicaSet";"apps/v1")) and (.pods|inventory("Pod";"v1")) and
-(.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) and
-readiness_observation($snapshot;$tag) and
-([."deployment-controller".spec.containers[] | select(.name=="controller") | .env[]] | sort_by(.name))==
+    else $flags==[] or $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"false",indirect:false}] end)) | demand("release-flags")) and
+((.replicasets|inventory("ReplicaSet";"apps/v1")) | demand("replicasets")) and
+((.pods|inventory("Pod";"v1")) | demand("pods")) and
+((.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) | demand("endpoints")) and
+(readiness_observation($snapshot;$tag) | demand("readiness")) and
+(([."deployment-controller".spec.containers[] | select(.name=="controller") | .env[]] | sort_by(.name))==
   [{name:"CONNECTOR_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false},
-    {name:"CONTRACT_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false}] and
-all([["deployment-controller","data-product-controller","controller"],["deployment-harbour","data-product-controller-harbour","product"],["deployment-ui-kit","data-product-controller-ui-kit","ui-kit"]][];
+    {name:"CONTRACT_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false}] | demand("controller-flags")) and
+(all([["deployment-controller","data-product-controller","controller"],["deployment-harbour","data-product-controller-harbour","product"],["deployment-ui-kit","data-product-controller-ui-kit","ui-kit"]][];
   . as $id | $snapshot[$id[0]] as $deployment |
-  $deployment.metadata.name==$id[1] and workload($deployment;$id[2];$tag;$snapshot.replicasets.items;$snapshot.pods.items)) and
-all([["harbour","product"],["ui-kit","ui-kit"]][];. as $id |
-  backend($snapshot["service-"+$id[0]];$snapshot["deployment-"+$id[0]];$id[1];$snapshot.replicasets.items;$snapshot.pods.items;$snapshot.endpoints.items)) and
-all([["route-registry","data-product-controller-registry","data-products",{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80},false],
+  $deployment.metadata.name==$id[1] and workload($deployment;$id[2];$tag;$snapshot.replicasets.items;$snapshot.pods.items)) | demand("workloads")) and
+(all([["harbour","product"],["ui-kit","ui-kit"]][];. as $id |
+  backend($snapshot["service-"+$id[0]];$snapshot["deployment-"+$id[0]];$id[1];$snapshot.replicasets.items;$snapshot.pods.items;$snapshot.endpoints.items)) | demand("backends")) and
+(all([["route-registry","data-product-controller-registry","data-products",{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80},false],
      ["route-harbour","data-product-controller-harbour","harbour-data",{name:"data-product-controller-harbour",namespace:$namespace,port:80},true],
      ["route-ui-kit","data-product-controller-ui-kit","product-ui",{name:"data-product-controller-ui-kit",namespace:$namespace,port:80},true]][];
-  . as $id | $snapshot[$id[0]] | route($id[1];$id[2];$id[3];$id[4])) and
-(.gateway|identity("Gateway";"gateway.networking.k8s.io/v1";"platform";"kube-system") and .spec.gatewayClassName=="cilium" and
+  . as $id | $snapshot[$id[0]] | route($id[1];$id[2];$id[3];$id[4])) | demand("routes")) and
+((.gateway|identity("Gateway";"gateway.networking.k8s.io/v1";"platform";"kube-system") and .spec.gatewayClassName=="cilium" and
   ready(["Accepted","Programmed"]) and
   ([.spec.listeners[] | select(.name=="https")]|map({name,protocol,port,tls}))==[{name:"https",protocol:"HTTPS",port:443,tls:{mode:"Terminate"}}] and
   (.metadata.generation as $generation | [.status.listeners[]? | select(.name=="https")] as $listeners | ($listeners|length)==1 and
     all(["Accepted","ResolvedRefs","Programmed"][]; . as $type | [$listeners[0].conditions[]? | select(.type==$type)] as $conditions |
-      ($conditions|length)==1 and $conditions[0].status=="True" and $conditions[0].observedGeneration==$generation)))
+      ($conditions|length)==1 and $conditions[0].status=="True" and $conditions[0].observedGeneration==$generation))) | demand("gateway"))
+) catch (
+  if type=="object" and (.role|type)=="string" and .reason=="predicate_not_ready" then
+    {role:.role,reason:.reason}
+  else {role:"snapshot",reason:"observation_invalid"} end | ., false
+)
 JQ
 
 # project_read stores only the reviewed fields from one resource response.
@@ -508,6 +541,7 @@ read_resource() {
     args+=(--ignore-not-found)
   fi
   args+=(-o json)
+  printf '%s read_incomplete\n' "$role" >"$scratch/read-failure"
   bounded project_read "$role" "$directory/$role.json" "$allow_absent" "${args[@]}" || fail read_incomplete
 }
 # collect gathers every resource needed to judge a complete rollout snapshot.
@@ -537,6 +571,7 @@ collect() {
   read_resource "$directory" route-harbour "$namespace" httproutes.gateway.networking.k8s.io data-product-controller-harbour
   read_resource "$directory" route-ui-kit "$namespace" httproutes.gateway.networking.k8s.io data-product-controller-ui-kit
   read_resource "$directory" gateway kube-system gateways.gateway.networking.k8s.io platform
+  printf 'snapshot observation_invalid\n' >"$scratch/read-failure"
   bounded aggregate "$directory" || fail read_incomplete
 }
 # aggregate keeps only owned rollout descendants and relevant endpoint slices.
@@ -560,9 +595,26 @@ bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
-  jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
+  local result=0
+  jq -ce --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
-    -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
+    -f "$scratch/check.jq" "$1/snapshot" >"$scratch/check-result" 2>/dev/null || result=$?
+  if ((result == 0)); then
+    rm -f "$scratch/snapshot-failure"
+    return 0
+  fi
+  # Only the structured refusal emitted by our fixed predicates is retained.
+  # Native jq errors and incomplete output cannot become diagnostic values.
+  if jq -ers 'if length==2 and .[1]==false and (.[0]|type)=="object" and
+    (.[0]|keys)==["reason","role"] and (.[0].role|type)=="string" and
+    (.[0].reason=="predicate_not_ready" or .[0].reason=="observation_invalid")
+    then .[0].role+" "+.[0].reason else error("incomplete diagnostic") end' \
+    "$scratch/check-result" >"$scratch/snapshot-failure.next" 2>/dev/null; then
+    mv "$scratch/snapshot-failure.next" "$scratch/snapshot-failure"
+  else
+    printf 'snapshot observation_invalid\n' >"$scratch/snapshot-failure"
+  fi
+  return "$result"
 }
 
 # refuse_public records only a fixed role and reason across the bounded child.
@@ -784,6 +836,7 @@ printf '[]\n' >"$scratch/settled"
 attempt=0
 while :; do
   attempt=$((attempt + 1))
+  if ((attempt == 1)); then phase=initial_readiness; else phase=rollout_stability; fi
   while :; do
     collect "$scratch/before"
     if bounded check "$scratch/before"; then break; fi
@@ -791,8 +844,10 @@ while :; do
     sleep 0.2
   done
   public_ok=1
+  phase=public_contract
   bounded quiet_public_checks || public_ok=0
   ((public_ok || deadline - SECONDS > 0)) || fail public_contract_incomplete
+  phase=rollout_stability
   collect "$scratch/after"
   if bounded check "$scratch/after" && bounded cmp -s "$scratch/before/snapshot" "$scratch/after/snapshot"; then
     ((public_ok)) || fail public_contract_incomplete
