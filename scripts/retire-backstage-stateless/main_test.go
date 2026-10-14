@@ -13,6 +13,58 @@ import (
 
 type failedResultWriter struct{ short bool }
 
+// Missing, unknown and destructive reclaim policies must stop before the
+// retirement receipt, admission journal or native Helm lifecycle can be written.
+func TestRetirementRequiresPhysicalStorageRetention(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy any
+	}{
+		{name: "delete", policy: "Delete"},
+		{name: "recycle", policy: "Recycle"},
+		{name: "missing"},
+		{name: "null", policy: nil},
+		{name: "empty", policy: ""},
+		{name: "unknown", policy: "Keep"},
+		{name: "wrong case", policy: "retain"},
+		{name: "wrong type", policy: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retirementRunner(t)
+			f := retirementFixture(t)
+			object(item(f.volumes, 0)["spec"])["persistentVolumeReclaimPolicy"] = tc.policy
+			if tc.name == "missing" {
+				delete(object(item(f.volumes, 0)["spec"]), "persistentVolumeReclaimPolicy")
+			}
+			var out bytes.Buffer
+			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
+				t.Fatalf("unretained backing data admitted lifecycle writes: code=%d output=%s", code, &out)
+			}
+		})
+	}
+}
+
+// Both opening samples must independently prove Retain; a change between
+// reads cannot inherit the first sample's permission to start retirement.
+func TestRetirementRejectsRetentionChangeBetweenOpeningSamples(t *testing.T) {
+	retirementRunner(t)
+	f := retirementFixture(t)
+	reads := 0
+	execute := func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "kubectl" && strings.Contains(strings.Join(args, " "), "get persistentvolumes") {
+			reads++
+			if reads == 2 {
+				object(item(f.volumes, 0)["spec"])["persistentVolumeReclaimPolicy"] = "Delete"
+			}
+		}
+		return f.execute(ctx, name, args...)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, execute); code != 2 || reads != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
+		t.Fatalf("changed retention admitted lifecycle writes: code=%d reads=%d output=%s", code, reads, &out)
+	}
+}
+
 func (w failedResultWriter) Write(p []byte) (int, error) {
 	if w.short {
 		return len(p) - 1, nil
