@@ -31,17 +31,8 @@ func execute() error {
 	if !ok {
 		return fmt.Errorf("native dependency identities unavailable")
 	}
-	pins := map[string]string{"github.com/fluxcd/helm-controller": "v1.5.5", "github.com/fluxcd/helm-controller/api": "v1.5.5", "github.com/fluxcd/pkg/ssa": "v0.67.6", "helm.sh/helm/v4": "v4.2.0"}
-	for _, dep := range info.Deps {
-		if v, required := pins[dep.Path]; required {
-			if dep.Version != v || dep.Replace != nil {
-				return fmt.Errorf("native dependency drift")
-			}
-			delete(pins, dep.Path)
-		}
-	}
-	if len(pins) != 0 {
-		return fmt.Errorf("missing native dependency identity")
+	if err := validateNativeGraph(info, nativeMod, nativeSum); err != nil {
+		return err
 	}
 	phase = "ARGUMENTS"
 	if len(os.Args) != 3 {

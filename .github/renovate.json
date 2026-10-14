@@ -45,9 +45,7 @@
       "managerFilePatterns": [
         "/^k8s/bases/infrastructure/controllers/flux-operator/oci-repository\\.ya?ml$/"
       ],
-      "matchStrings": [
-        "tag:\\s*(?<currentValue>\\S+)"
-      ],
+      "matchStrings": ["tag:\\s*(?<currentValue>\\S+)"],
       "datasourceTemplate": "docker",
       "depNameTemplate": "ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
       "versioningTemplate": "semver"
@@ -58,9 +56,7 @@
       "managerFilePatterns": [
         "/^k8s/bases/infrastructure/controllers/ksail-operator/oci-repository\\.ya?ml$/"
       ],
-      "matchStrings": [
-        "tag:\\s*(?<currentValue>\\S+)"
-      ],
+      "matchStrings": ["tag:\\s*(?<currentValue>\\S+)"],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "devantler-tech/ksail",
       "versioningTemplate": "semver",
@@ -79,9 +75,7 @@
     {
       "customType": "regex",
       "description": "Track the kubelet-serving-cert-approver release in the vendored-resource updater. A version-only bump fails CI's image-version binding until the immutable source commit, SHA-256 and complete vendored resources are refreshed together. Re-check the resource-scoped Checkov dispositions on every bump; CI checks that the standalone PDB still selects the upstream pod labels.",
-      "managerFilePatterns": [
-        "/^scripts/update-vendored-operators\\.sh$/"
-      ],
+      "managerFilePatterns": ["/^scripts/update-vendored-operators\\.sh$/"],
       "matchStrings": [
         "readonly cert_approver_version='(?<currentValue>[0-9.]+)'"
       ],
@@ -93,9 +87,7 @@
     {
       "customType": "regex",
       "description": "Track the upstream commit the vendored origin-ca-issuer CRDs are fetched at, as a digest of the trunk branch — the ref the CRDs were rendered from before they were vendored. The flux manager's chart bumps never touch these vendored files. The datasource is github-digest, NOT git-refs: both resolve the branch head, but git-refs reports no release timestamp, and Renovate withholds an undated update whenever a release-age cooldown applies to it. The matching packageRule below turns that cooldown off for this source and says why. A commit-only bump fails CI until scripts/update-vendored-operators.sh --render-remotes has re-fetched both CRDs at the new commit.",
-      "managerFilePatterns": [
-        "/^scripts/update-vendored-operators\\.sh$/"
-      ],
+      "managerFilePatterns": ["/^scripts/update-vendored-operators\\.sh$/"],
       "matchStrings": [
         "readonly origin_ca_issuer_commit='(?<currentDigest>[0-9a-f]{40})'"
       ],
@@ -253,7 +245,10 @@
     },
     {
       "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). The Go module github.com/siderolabs/talos/pkg/machinery is grouped into the same PR because its version tracks the Talos release line exactly and the repository's Kubernetes/Talos compatibility check reads it, so a Talos bump that arrives without it fails that check. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the talos.version pin in ksail.prod.yaml (KSail derives the installer image from it plus the extensions list), but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, and also sets TALOSCTL_SHA256 in .github/scripts/setup-talosctl.sh: Renovate moves TALOS_VERSION there but cannot compute an asset checksum, so the CI setup step fails closed and, when the served bytes match the release's published sha256sum.txt, prints the exact value to set. prBodyNotes repeats this checklist on every Talos PR. Then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above. separateMinorPatch gives patch releases their own branch (renovate/patch-talos) beside the minor one (renovate/talos): without it Renovate proposes only the newest non-major release, so while a minor upgrade waits on a migration — v1.14 sat parked for weeks — no patch for the running release line is ever offered (#3388).",
-      "matchPackageNames": ["siderolabs/talos", "github.com/siderolabs/talos/pkg/machinery"],
+      "matchPackageNames": [
+        "siderolabs/talos",
+        "github.com/siderolabs/talos/pkg/machinery"
+      ],
       "groupName": "talos",
       "separateMinorPatch": true,
       "automerge": false,
@@ -289,7 +284,10 @@
     },
     {
       "description": "kubelet-serving-cert-approver is vendored as a complete upstream manifest. Keep Renovate visibility through the updater version, but require a reviewed whole-bundle refresh with matching source commit, digest and image. The ghcr.io name covers the kustomization images: pin (tag + digest): a tag or digest update there fails CI's image-pin guard until the updater's version and cert_approver_image_digest move with it. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
-      "matchPackageNames": ["alex1989hu/kubelet-serving-cert-approver", "ghcr.io/alex1989hu/kubelet-serving-cert-approver"],
+      "matchPackageNames": [
+        "alex1989hu/kubelet-serving-cert-approver",
+        "ghcr.io/alex1989hu/kubelet-serving-cert-approver"
+      ],
       "automerge": false,
       "addLabels": ["security/review-required"]
     },
@@ -326,6 +324,7 @@
     }
   ],
   "ignorePaths": [
-    "k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/deployment.yaml"
+    "k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/deployment.yaml",
+    "scripts/retire-backstage-stateless/poller-native/go.mod"
   ]
 }
