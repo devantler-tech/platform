@@ -488,6 +488,28 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# Initial snapshot refusals must identify a fixed role without exposing values.
+mkdir "${scratch}/initial-unready"
+cp "${scratch}/healthy/"*.json "${scratch}/initial-unready/"
+jq '.status.observedGeneration=2 | .metadata.labels.private="PRIVATE-ERROR-CANARY"' \
+  "${scratch}/healthy/apps.json" >"${scratch}/initial-unready/apps.json"
+run_case initial-unready fail '' 10
+[[ -s "${scratch}/initial-unready/rejections" ]] || fail 'initial-unready: predicate was not exercised'
+jq -e '.failure=="deadline_exceeded" and .phase=="initial_readiness" and .role=="apps" and .reason=="predicate_not_ready"' \
+  "${scratch}/initial-unready/stdout" >/dev/null || fail 'initial-unready: snapshot refusal has no safe diagnostic'
+
+run_case initial-unreadable fail forbidden 10
+jq -e '.failure=="read_incomplete" and .phase=="initial_readiness" and .role=="chart" and .reason=="read_incomplete"' \
+  "${scratch}/initial-unreadable/stdout" >/dev/null || fail 'initial-unreadable: failed read has no safe diagnostic'
+
+mkdir "${scratch}/initial-malformed"
+cp "${scratch}/healthy/"*.json "${scratch}/initial-malformed/"
+jq '.spec.ui.contract.hostOrigins="PRIVATE-ERROR-CANARY"' \
+  "${scratch}/healthy/product.json" >"${scratch}/initial-malformed/product.json"
+run_case initial-malformed fail '' 10
+jq -e '.failure=="deadline_exceeded" and .phase=="initial_readiness" and .role=="snapshot" and .reason=="observation_invalid"' \
+  "${scratch}/initial-malformed/stdout" >/dev/null || fail 'initial-malformed: invalid observation was not classified safely'
+
 # A failed endpoint check is not attributable when every snapshot pair moves,
 # including the final pair. Reach all three pairs before judging the refusal.
 mkdir -p "${scratch}/final-moving-public/after"
@@ -890,7 +912,7 @@ mkdir -p "${scratch}/moved-then-wrong-public/after"
 cp "${scratch}/healthy/"*.json "${scratch}/moved-then-wrong-public/"
 jq '.status.conditions[0].status="False"' "${scratch}/healthy/apps.json" >"${scratch}/moved-then-wrong-public/after/apps.json"
 run_case moved-then-wrong-public fail flaky-public 15
-jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/moved-then-wrong-public/stdout" >/dev/null ||
+jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"] and .phase=="rollout_stability" and .role=="apps" and .reason=="predicate_not_ready"' "${scratch}/moved-then-wrong-public/stdout" >/dev/null ||
   fail 'moved-then-wrong-public: a deadline after a moved rollout carried the abandoned public failure'
 mutate_case foreign-source-ref apps '.spec.sourceRef.name="foreign"' 3
 mutate_case foreign-source-namespace apps '.spec.sourceRef.namespace="foreign"' 3
