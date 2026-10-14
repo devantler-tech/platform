@@ -1,10 +1,19 @@
-# Data product trial
+# KHoist deployment trial
 
-The **Data Products** tile on Homepage opens the registry behind the platform's
+The **KHoist** tile on Homepage opens the registry behind the platform's
 maintainer-team SSO. Select **KSail releases** for live version and publication
 dates, or **Harbour observations** for the synthetic reference. Each product opens
 its independently served UI in the registry's opaque sandbox. The registry discovers
 the product descriptor; it does not compile or copy the product's UI.
+
+[KHoist](https://github.com/devantler-tech/khoist) is the product's canonical name.
+The installed release retains its verified historical controller and chart artifact
+names. Adoption of the renamed signed artifacts is tracked in
+[#4895](https://github.com/devantler-tech/platform/issues/4895); existing namespaces,
+release names, workload selectors and the public address remain stable. The
+API-only registry migration is tracked separately in
+[#4890](https://github.com/devantler-tech/platform/issues/4890). The embedded product
+views described here belong to the installed compatibility release.
 
 The registry is served at `https://data-products.${domain}`. The fixed Harbour
 sample is public at `https://harbour-data.${domain}/ui`; its query API is

@@ -5,8 +5,8 @@ metadata:
   namespace: data-product-controller
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/name: Data Products
-    gethomepage.dev/description: Discover and explore composable data products.
+    gethomepage.dev/name: KHoist
+    gethomepage.dev/description: Reusable data products and their APIs.
     gethomepage.dev/group: Analytics
     gethomepage.dev/icon: mdi-database-search
     gethomepage.dev/href: https://data-products.${domain}
