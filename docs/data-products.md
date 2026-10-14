@@ -71,7 +71,11 @@ Every deployment checks the exact published Apps revision, signed chart, install
 release and running image, current route generations, and healthy current Pods.
 Anonymous registry access must require SSO; the sample query and contract must work
 directly. The portable host's health endpoint, assets and sandbox policy must also
-pass. The receipt also binds KSail activation to the checked-out Helm declaration,
+pass. The receipt binds the portable host's contract and appearance opt-ins and its
+declared publisher state to the UI Deployment, current ReplicaSet and serving Pods. Publisher
+withdrawal permits an absent or literal false flag; indirect, duplicate and malformed
+flag declarations are refused. Publisher browser acceptance remains separate.
+The receipt also binds KSail activation to the checked-out Helm declaration,
 the live Helm value and serving Pod environments, current product registration,
 exact source/contract URLs, approved host origins and the public UI's restricted
 connection policy. When KSail releases are disabled, it requires the descriptor

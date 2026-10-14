@@ -54,7 +54,13 @@ chmod +x "${scratch}/bin/jq"
 cat >"${scratch}/bin/yq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ $# == 3 && "$1" == -o=json && "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
+[[ $# == 3 && "$1" == -o=json ]] || exit 91
+if [[ "$3" == "$EXPECTED_UI_FILE" ]]; then
+  [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
+  cat "$FIXTURE/expected-ui.json"
+  exit 0
+fi
+[[ "$3" == "$EXPECTED_HELM_FILE" ]] || exit 91
 case "$2" in
   '.spec.values | [.connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]') cat "$FIXTURE/expected-flags.json" ;;
   '.spec.values.demoProduct.ksailReleases.enabled // false') cat "$FIXTURE/expected-ksail.json" ;;
@@ -67,6 +73,7 @@ cat >"${scratch}/fixtures.jq" <<'JQ'
 def meta($name;$ns): {name:$name,namespace:$ns,uid:($name+"-uid"),generation:3};
 def labels($name): {"app.kubernetes.io/name":"data-product-controller","app.kubernetes.io/instance":"data-product-controller","app.kubernetes.io/component":(if $name|endswith("-harbour") then "harbour-product" elif $name|endswith("-ui-kit") then "ui-kit" else "controller" end)};
 def ports: [{name:"http",containerPort:8080,protocol:"TCP"}];
+def ui_env($container): if $container=="ui-kit" then [{name:"UI_CONTRACT_ENABLED",value:"true"},{name:"UI_APPEARANCE_ENABLED",value:"true"}] else [] end;
 def chart_verify: {provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/data-product-controller/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]};
 def root_verify: {provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/platform/approved-synthetic-publication$"}]};
 def condition($type): {type:$type,status:"True",observedGeneration:3};
@@ -79,12 +86,12 @@ def probe_container: {name:"contract-probe",image:($repo+"@"+$index),command:["/
   securityContext:{runAsNonRoot:true,readOnlyRootFilesystem:true,allowPrivilegeEscalation:false,capabilities:{drop:["ALL"]}}};
 def owner($kind;$name): {apiVersion:"apps/v1",kind:$kind,name:$name,uid:($name+"-uid"),controller:true};
 def deployment($name;$container): {apiVersion:"apps/v1",kind:"Deployment",metadata:(meta($name;"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"}}),
-  spec:{replicas:2,selector:{matchLabels:labels($name)},template:{metadata:{labels:labels($name)},spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports}]}}},
+  spec:{replicas:2,selector:{matchLabels:labels($name)},template:{metadata:{labels:labels($name)},spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports,env:ui_env($container)}]}}},
   status:{observedGeneration:3,replicas:2,updatedReplicas:2,readyReplicas:2,availableReplicas:2}};
 def rs($name;$container): {apiVersion:"apps/v1",kind:"ReplicaSet",metadata:(meta($name+"-new";"data-product-controller") + {annotations:{"deployment.kubernetes.io/revision":"7"},ownerReferences:[owner("Deployment";$name)]}),
-  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index)}]}}},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}};
+  spec:{replicas:2,template:{spec:{containers:[{name:$container,image:($repo+"@"+$index),env:ui_env($container)}]}}},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}};
 def pod($name;$container;$ordinal): {apiVersion:"v1",kind:"Pod",metadata:(meta($name+"-pod-"+($ordinal|tostring);"data-product-controller") + {labels:labels($name),ownerReferences:[owner("ReplicaSet";$name+"-new")]}),
-  spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports}]},status:{phase:"Running",podIP:("10.0.0."+($ordinal|tostring)),podIPs:[{ip:("10.0.0."+($ordinal|tostring))}],conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
+  spec:{containers:[{name:$container,image:($repo+"@"+$index),ports:ports,env:ui_env($container)}]},status:{phase:"Running",podIP:("10.0.0."+($ordinal|tostring)),podIPs:[{ip:("10.0.0."+($ordinal|tostring))}],conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:$container,ready:true,imageID:($repo+"@"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}};
 def service($name): {apiVersion:"v1",kind:"Service",metadata:meta($name;"data-product-controller"),spec:{type:"ClusterIP",selector:labels($name),ports:[{name:"http",port:80,targetPort:"http",protocol:"TCP"}]}};
 def slice($name): {apiVersion:"discovery.k8s.io/v1",kind:"EndpointSlice",metadata:(meta($name+"-slice";"data-product-controller") + {labels:{"kubernetes.io/service-name":$name},ownerReferences:[{apiVersion:"v1",kind:"Service",name:$name,uid:($name+"-uid"),controller:true}]}),addressType:"IPv4",ports:[{name:"http",port:8080,protocol:"TCP"}],endpoints:[range(1;3) as $ordinal | {addresses:[("10.0.0."+($ordinal|tostring))],conditions:{ready:true,serving:true,terminating:false},targetRef:{kind:"Pod",namespace:"data-product-controller",name:($name+"-pod-"+($ordinal|tostring)),uid:($name+"-pod-"+($ordinal|tostring)+"-uid")}}]};
 def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",kind:"HTTPRoute",metadata:meta("data-product-controller-"+$suffix;"data-product-controller"),
@@ -129,6 +136,7 @@ jq -n --arg index "$index" --arg child "$child" --arg chart "$chart" --arg apps 
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >"${scratch}/healthy/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/all.json")
 printf '[false,false,false]\n' >"${scratch}/healthy/expected-flags.json"
 printf 'false\n' >"${scratch}/healthy/expected-ksail.json"
+jq '[."deployment-ui-kit".spec.template.spec.containers[] | select(.name=="ui-kit")]' "${scratch}/all.json" >"${scratch}/healthy/expected-ui.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
@@ -317,16 +325,18 @@ run_case() {
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
+    EXPECTED_UI_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-ui-kit.yaml" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
     --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
-    local expected_state expected_pods public_count ksail
+    local expected_state expected_pods public_count ksail publisher
     expected_state=$(jq -r 'if .==[true,true,false] then "active" else "dormant" end' "$fixture/expected-flags.json")
     if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
     ksail=$(cat "$fixture/expected-ksail.json")
+    publisher=$(jq -r 'any(.[0].env[]; .name=="PUBLISHER_PREFLIGHT_ENABLED" and .value=="true")' "$fixture/expected-ui.json")
     if [[ "$ksail" == true ]]; then public_count=12; else public_count=9; fi
-    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" --argjson public_count "$public_count" --argjson ksail "$ksail" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == $public_count and .ksailReleasesEnabled == $ksail and .readinessState == $state' "$fixture/stdout" >/dev/null; then
+    if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" --argjson public_count "$public_count" --argjson ksail "$ksail" --argjson publisher "$publisher" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == $public_count and .ksailReleasesEnabled == $ksail and .publisherReviewEnabled == $publisher and .readinessState == $state' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
       case "$reason" in
@@ -442,6 +452,62 @@ mutate_case() {
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 
+mutate_case ui-deployment-missing-contract deployment-ui-kit '.spec.template.spec.containers[0].env |= map(select(.name!="UI_CONTRACT_ENABLED"))'
+mutate_case ui-deployment-disabled-appearance deployment-ui-kit '.spec.template.spec.containers[0].env[1].value="false"'
+mutate_case ui-pod-disabled-contract pods '.items[4].spec.containers[0].env[0].value="false"'
+mutate_case ui-pod-missing-appearance pods '.items[5].spec.containers[0].env |= map(select(.name!="UI_APPEARANCE_ENABLED"))'
+mutate_case ui-pod-indirect-appearance pods '.items[4].spec.containers[0].env[1].valueFrom={secretKeyRef:{name:"environment-canary",key:"flag"}}'
+mutate_case ui-deployment-duplicate-contract deployment-ui-kit '.spec.template.spec.containers[0].env += [.spec.template.spec.containers[0].env[0]]'
+mutate_case ui-unplanned-publisher deployment-ui-kit '.spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"true"}]'
+mutate_case ui-pod-unplanned-publisher pods '.items[5].spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"true"}]'
+mutate_case ui-pod-duplicate-appearance pods '.items[4].spec.containers[0].env += [.items[4].spec.containers[0].env[1]]'
+mutate_case ui-publisher-indirect deployment-ui-kit '.spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"false",valueFrom:{configMapKeyRef:{name:"environment-canary",key:"flag"}}}]'
+mutate_case ui-publisher-malformed pods '.items[5].spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"FALSE"}]'
+mutate_case ui-deployment-indirect-environment deployment-ui-kit '.spec.template.spec.containers[0].envFrom=[{configMapRef:{name:"environment-canary"}}]'
+mutate_case ui-pod-indirect-environment pods '.items[4].spec.containers[0].envFrom=[{secretRef:{name:"environment-canary"}}]'
+mutate_case ui-pod-malformed-environment pods '.items[5].spec.containers[0].envFrom={}'
+mutate_case ui-replicaset-missing-appearance replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env |= map(select(.name!="UI_APPEARANCE_ENABLED")) else . end)'
+mutate_case ui-replicaset-unplanned-publisher replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"true"}] else . end)'
+mutate_case ui-replicaset-indirect-environment replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].envFrom=[{secretRef:{name:"environment-canary"}}] else . end)'
+
+for publisher in true false; do
+  name="declared-publisher-$publisher"
+  mkdir "${scratch}/$name"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  jq --arg state "$publisher" '.[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}]' "${scratch}/healthy/expected-ui.json" >"${scratch}/$name/expected-ui.json"
+  jq --arg state "$publisher" '.spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}]' "${scratch}/healthy/deployment-ui-kit.json" >"${scratch}/$name/deployment-ui-kit.json"
+  jq --arg state "$publisher" '.items |= map(if .spec.containers[0].name=="ui-kit" then .spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}] else . end)' "${scratch}/healthy/pods.json" >"${scratch}/$name/pods.json"
+  jq --arg state "$publisher" '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:$state}] else . end)' "${scratch}/healthy/replicasets.json" >"${scratch}/$name/replicasets.json"
+  run_case "$name" pass
+done
+
+# publisher_mutation starts from the separately declared enabled profile.
+publisher_mutation() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/declared-publisher-true/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/declared-publisher-true/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' 3
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+}
+publisher_mutation declared-publisher-missing-deployment deployment-ui-kit '.spec.template.spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED"))'
+publisher_mutation declared-publisher-missing-pod pods '.items[4].spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED"))'
+publisher_mutation declared-publisher-missing-replicaset replicasets '.items |= map(if .spec.template.spec.containers[0].name=="ui-kit" then .spec.template.spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED")) else . end)'
+publisher_mutation declared-publisher-disabled-pod pods '.items[5].spec.containers[0].env[2].value="false"'
+publisher_mutation declared-publisher-duplicate deployment-ui-kit '.spec.template.spec.containers[0].env += [.spec.template.spec.containers[0].env[2]]'
+
+invalid_case=0
+for mutation in '.[0].env[0].value="false"' '.[0].env[1].value=true' '.[0].env += [.[0].env[0]]' '.[0].env[0].valueFrom={secretKeyRef:{name:"environment-canary",key:"flag"}}' '. += [.[0]]' '.[0].env += [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"TRUE"}]' '.[0].envFrom=[{configMapRef:{name:"environment-canary"}}]'; do
+  ((invalid_case += 1))
+  name="invalid-ui-declaration-$invalid_case"
+  mkdir "${scratch}/$name"
+  cp "${scratch}/healthy/"*.json "${scratch}/$name/"
+  jq "$mutation" "${scratch}/healthy/expected-ui.json" >"${scratch}/$name/expected-ui.json"
+  run_case "$name" fail
+  jq -e '.failure=="invalid_expected_state"' "${scratch}/$name/stdout" >/dev/null || fail 'invalid declaration was not refused in preflight'
+  [[ ! -e "${scratch}/$name/reads" ]] || fail 'invalid UI declaration reached the cluster'
+done
+
 mutate_case unexpected-live-ksail-activation helm '.spec.values.demoProduct.ksailReleases.enabled=true'
 
 mkdir "${scratch}/withdrawn-release-still-registered"
@@ -503,6 +569,7 @@ jq --arg child "$child" '
 while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json" >"${scratch}/active/${key}.json"; done < <(jq -r 'keys[]' "${scratch}/active.json")
 printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
 printf 'false\n' >"${scratch}/active/expected-ksail.json"
+cp "${scratch}/healthy/expected-ui.json" "${scratch}/active/expected-ui.json"
 run_case active pass
 # A declared public product must exist at its exact current generation and
 # actual workload setting; source data is never fetched by this cluster receipt.
