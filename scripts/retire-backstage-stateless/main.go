@@ -634,8 +634,8 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 			continue
 		}
 		if r["kind"] == "PersistentVolumeClaim" {
-			if field(r, "status", "phase") != "Bound" || text(field(r, "spec", "volumeName")) == "" || field(r, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
-				return nil, errors.New("claim binding or prune protection unverified")
+			if err := retainedClaimOwnership(s, r); err != nil {
+				return nil, err
 			}
 			claims = append(claims, r)
 		}

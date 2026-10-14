@@ -116,6 +116,10 @@ for certificate in server replication; do
 done
 record=$(jq -c '.rootCAWriterUID="root-ca-writer-uid" | .trustWriterUID="trust-writer-uid" | .retained += [{kind:"ConfigMap",name:"kube-root-ca.crt",uid:"root-ca-uid",controllerProfile:"root-ca"},{kind:"ConfigMap",name:"cloudflare-origin-ca",uid:"trust-bundle-uid",controllerProfile:"trust-bundle"}] | (.retained[] | select(.kind=="PersistentVolumeClaim" and .name=="backstage-db-3")).controllerProfile="cnpg-role"' <<<"$record")
 claim='{apiVersion:"v1",kind:"PersistentVolumeClaim",metadata:{name:"backstage-db-3",namespace:"backstage",uid:"claim-uid",labels:{role:"replica","cnpg.io/instanceRole":"replica","cnpg.io/cluster":"backstage-db"}},spec:{volumeName:"retained-volume"}}'
+run_case controller-claim-without-opt-out-noop preserve-retained-identities UPDATE "$claim" "$claim" pass
+run_case controller-claim-without-opt-out-delete preserve-retained-identities DELETE "$claim" "$claim" fail "$record" "$cnpg_writer" cnpg-controller-uid
+run_case controller-claim-without-opt-out-recreate preserve-retained-identities CREATE "$claim | .metadata.uid=\"replacement\"" '{}' fail "$record" "$cnpg_writer" cnpg-controller-uid
+run_case controller-claim-add-prune-opt-out preserve-retained-identities UPDATE "$claim | .metadata.annotations={\"kustomize.toolkit.fluxcd.io/prune\":\"disabled\"}" "$claim" fail "$record" "$cnpg_writer" cnpg-controller-uid
 run_case cnpg-role-change preserve-retained-identities UPDATE "$claim | .metadata.labels.role=\"primary\" | .metadata.labels[\"cnpg.io/instanceRole\"]=\"primary\"" "$claim" pass "$record" "$cnpg_writer" cnpg-controller-uid
 run_case cnpg-role-foreign-writer preserve-retained-identities UPDATE "$claim | .metadata.labels.role=\"primary\" | .metadata.labels[\"cnpg.io/instanceRole\"]=\"primary\"" "$claim" fail
 run_case cnpg-role-unrelated-label preserve-retained-identities UPDATE "$claim | .metadata.labels.role=\"primary\" | .metadata.labels[\"cnpg.io/instanceRole\"]=\"primary\" | .metadata.labels[\"cnpg.io/cluster\"]=\"other\"" "$claim" fail "$record" "$cnpg_writer" cnpg-controller-uid
