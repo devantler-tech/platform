@@ -45,6 +45,18 @@ deletion: CloudNativePG must remain able
 to replace a failed instance. No guarantee depends on Kyverno's filtered
 ReplicaSet kinds. New retained data retirement is a separate reviewed operation.
 
+The separately confirmed storage workflow changes only reciprocally bound
+database volumes from `Delete` to `Retain`. It checks current reviewed source,
+the accepted production deployment and the live artifact's signed provenance;
+requires complete claim/volume and healthy database-pod censuses in separated
+samples; and tests volume UID, resource version and complete specification in
+each native patch. An existing retirement journal prevents protection writes,
+because the journal already freezes the captured specification. A partial or
+ambiguous result is HOLD with no retry or rollback of established protection.
+Protection does not execute retirement, establish backups, retire orphaned
+storage or complete the general storage migration. The explicit workflow is
+inactive until dispatched after its review and deployment gates hold.
+
 Retaining the database also retains its dedicated monitoring dependency and the
 scrape-only network path, not the retired portal's access. External Secrets
 creates the monitoring credential with `CreatedOnce`; the existing CNPG managed
