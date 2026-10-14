@@ -56,7 +56,7 @@ func TestMalformedOwnershipCannotAuthorizeRetirement(t *testing.T) {
 	}
 }
 
-func TestEveryRetainedClaimRequiresPruneProtection(t *testing.T) {
+func TestRetainedClaimRejectsConflictingPruneMetadata(t *testing.T) {
 	for _, annotation := range []any{nil, "enabled", "false", true} {
 		t.Run(fmt.Sprint(annotation), func(t *testing.T) {
 			retirementRunner(t)
@@ -64,7 +64,7 @@ func TestEveryRetainedClaimRequiresPruneProtection(t *testing.T) {
 			object(item(f.live, 3)["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": annotation}
 			var out bytes.Buffer
 			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.configured || f.deleted || !strings.Contains(out.String(), "HOLD_PRECONDITION") {
-				t.Fatalf("unprotected retained claim reached mutation: code=%d %s", code, &out)
+				t.Fatalf("conflicting claim prune metadata reached mutation: code=%d %s", code, &out)
 			}
 		})
 	}

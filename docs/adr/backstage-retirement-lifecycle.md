@@ -35,8 +35,18 @@ Kyverno does not decode gzip. Normalized decoded content is independently checke
 during readback, not represented as a payload-validation admission guarantee.
 
 Retained owner-reference checks cover all captured owners and descendants,
-including volumes. Retained claims require prune protection and every joined
-backing volume requires an explicit `Retain` reclaim policy before lifecycle
+including volumes. Retained claims must be Bound, owned by the exact retained
+CloudNativePG Cluster through its supported controller reference, and absent
+from every complete, settled Flux inventory across all namespaces. A prune
+opt-out annotation neither proves that ownership nor exempts an inventory-owned
+claim. The Flux-owned namespace still requires prune protection.
+Each inventory must have applied its own current, Ready OCI or Git source
+artifact. Independent tenant sources need not share the platform root's revision;
+their exact source identities, specifications and revisions remain stable across
+the separated preservation samples. An unreadable or replaced source is HOLD.
+Existing claim prune metadata must be valid and non-conflicting; an absent key
+is not a request to add one. Claim metadata remains captured without normalization.
+Every joined backing volume requires an explicit `Retain` reclaim policy before lifecycle
 writes. A missing, destructive or unrecognized policy is HOLD before the receipt
 or journal is created. The same requirement applies to subsequent preservation
 samples. Physical protection is a separate reviewed operation (#4819); this

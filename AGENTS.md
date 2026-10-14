@@ -584,6 +584,16 @@ rejects an unprotected current or base resource, and compares a deploy candidate
 live Flux-owned objects before the mutable production artifact moves. Do not collapse the two
 revisions or use Flux force replacement for a PVC migration.
 
+**Retained controller-created claims are not Flux manifest retirement.** The
+stateless Backstage cleanup never deletes, replaces, annotates or adopts its
+retained database claims. A claim without a prune annotation is accepted only
+after exact CloudNativePG controller ownership and absence from every complete,
+settled Flux inventory are proven. Its reciprocally bound volume must already
+have `Retain` policy; namespace prune protection and the captured-identity
+admission fence remain mandatory. Storage protection is a separately reviewed,
+merged and deployed operation and must finish before cleanup. No required
+opt-out is removed from a managed manifest or an existing protected object.
+
 This is the rule in force today, and it is being replaced.
 [`docs/adr/storage-retention.md`](docs/adr/storage-retention.md) records the decision
 to keep data at the storage layer (`Retain` on every StorageClass and PersistentVolume) and to
