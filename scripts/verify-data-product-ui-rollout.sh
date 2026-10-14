@@ -18,6 +18,8 @@ expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/a
 readonly expected_helm_file
 expected_ui_file="$(dirname "$expected_helm_file")/deployment-ui-kit.yaml"
 readonly expected_ui_file
+expected_chart_file="$(dirname "$expected_helm_file")/oci-repository.yaml"
+readonly expected_chart_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
   local detail='' role='' reason='' extra=''
@@ -136,6 +138,28 @@ read_expected_releases() {
 }
 bounded read_expected_releases || fail invalid_expected_state 2
 expected_releases=$(<"$scratch/release-state")
+# Retirement is an artifact property, not a missing environment variable. Only
+# the verified v3.0.0 image/chart pair uses the retired profile. Unknown releases
+# need a reviewed adoption before this receipt can assert their behavior.
+read_expected_release_profile() {
+  yq -o=json '.spec.values.image | {repository, tag, digest}' "$expected_helm_file" >"$scratch/expected-image.json" 2>/dev/null || return 1
+  yq -o=json '.spec | {url, digest: .ref.digest}' "$expected_chart_file" >"$scratch/expected-chart.json" 2>/dev/null || return 1
+  jq -ne --arg repository "$repository" --arg image_digest "$image_digest" --arg chart_digest "$chart_digest" \
+    --slurpfile image "$scratch/expected-image.json" --slurpfile chart "$scratch/expected-chart.json" '
+    "sha256:581c8ca202aab83bbb6bd9fea6612dff8237204ab88b6a586cf741a3fe94a566" as $retired_image |
+    "sha256:0e397295a07aa3619f25371005412a3fac7de632e234b115e0fa93348fa3a96d" as $retired_chart |
+    $image[0] as $i | $chart[0] as $c |
+    if ($image|length)!=1 or ($chart|length)!=1 or ($i|type)!="object" or ($c|type)!="object" or
+      $i.repository!=$repository or $i.digest!=$image_digest or
+      $c.url!="oci://ghcr.io/devantler-tech/charts/data-product-controller" or $c.digest!=$chart_digest or
+      ($i.tag|type)!="string" or ($i.tag|test("^[0-9]+\\.[0-9]+\\.[0-9]+$")|not) then error("unbound release declaration")
+    elif $i.tag=="3.0.0" and $i.digest==$retired_image and $c.digest==$retired_chart then {tag:$i.tag,retired:true}
+    elif ($i.tag|split(".")[0]|tonumber)<3 and $i.digest!=$retired_image and $c.digest!=$retired_chart then {tag:$i.tag,retired:false}
+    else error("unsupported release profile") end' >"$scratch/release-profile.json" 2>/dev/null
+}
+bounded read_expected_release_profile || fail invalid_expected_state 2
+expected_tag=$(jq -r '.tag' "$scratch/release-profile.json")
+expected_retired=$(jq -r '.retired' "$scratch/release-profile.json")
 # read_expected_ui binds literal host opt-ins to this checkout, never to live flags.
 read_expected_ui() {
   yq -o=json '.spec.template.spec.containers' "$expected_ui_file" 2>/dev/null |
@@ -262,6 +286,15 @@ def owned($kind;$name;$uid): [.metadata.owners[]? | select(.controller==true)] a
 def image($tag): .==($repository+"@"+$image_digest) or .==($repository+":"+$tag+"@"+$image_digest);
 def named_image($container;$tag): [.spec.containers[]? | select(.name==$container)] as $containers |
   ($containers|length)==1 and ($containers[0].image|image($tag));
+def release_flags_ready($container):
+  if $container!="product" then true else
+    [.spec.containers[]? | select(.name==$container)] as $containers |
+    ($containers|length)==1 and ($containers[0] as $product |
+      [$product.env[]? | select(.name=="KSAIL_RELEASES_ENABLED")] as $flags |
+      if $release_gate_retired then $flags==[] and $product.envFromCount==0
+      elif $ksail_enabled then $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"true",indirect:false}]
+      else $flags==[] or $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"false",indirect:false}] end)
+  end;
 def ui_flags_ready($container):
   if $container!="ui-kit" then true else
     [.spec.containers[]? | select(.name==$container)] as $containers |
@@ -283,7 +316,7 @@ def inventory($kind;$version): (.items|type=="array" and length<=4096) and
 def pod_ready($rs;$container;$tag):
   owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid) and .metadata.deletionTimestamp==null and
   .status.phase=="Running" and ([.status.conditions[]? | select(.type=="Ready")]|length)==1 and
-  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and ui_flags_ready($container) and
+  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and ui_flags_ready($container) and release_flags_ready($container) and
   ([.status.containers[]? | select(.name==$container)] as $containers | ($containers|length)==1 and
     $containers[0].ready==true and $containers[0].running==true and $containers[0].waiting==false and
     $containers[0].terminated==false and ($containers[0].imageID|runtime));
@@ -292,14 +325,14 @@ def workload($deployment;$container;$tag;$sets;$pods):
   ($deployment.metadata.revision|type=="string" and test("^[1-9][0-9]*$")) and
   $deployment.spec.replicas==2 and $deployment.status.observedGeneration==$deployment.metadata.generation and
   all([$deployment.status.replicas,$deployment.status.updatedReplicas,$deployment.status.readyReplicas,$deployment.status.availableReplicas][];.==2) and
-  ($deployment|named_image($container;$tag) and ui_flags_ready($container)) and
+  ($deployment|named_image($container;$tag) and ui_flags_ready($container) and release_flags_ready($container)) and
   ([$sets[] | select(owned("Deployment";$deployment.metadata.name;$deployment.metadata.uid))] as $owned |
     [$owned[] | select(.metadata.revision==$deployment.metadata.revision)] as $current |
     ($current|length)==1 and
     ($current[0]|identity("ReplicaSet";"apps/v1";.metadata.name;$namespace)) and
     $current[0].spec.replicas==2 and $current[0].status.observedGeneration==$current[0].metadata.generation and
     all([$current[0].status.replicas,$current[0].status.readyReplicas,$current[0].status.availableReplicas][];.==2) and
-    ($current[0]|named_image($container;$tag) and ui_flags_ready($container)) and
+    ($current[0]|named_image($container;$tag) and ui_flags_ready($container) and release_flags_ready($container)) and
     all($owned[] | select(.metadata.uid!=$current[0].metadata.uid); .spec.replicas==0 and (.status.replicas//0)==0) and
     ([$pods[] | . as $pod | select(any($owned[]; . as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)))] as $owned_pods |
       ($owned_pods|length)==2 and all($owned_pods[];pod_ready($current[0];$container;$tag))));
@@ -430,7 +463,7 @@ def route($name;$host;$backend;$public):
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
   .spec.chartRef.kind=="OCIRepository" and .spec.chartRef.name=="data-product-controller" and (.spec.chartRef.namespace//$namespace)==$namespace and
   .spec.values.image.repository==$repository and .spec.values.image.digest==$image_digest and
-  ($tag|type=="string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
+  $tag==$expected_tag and
   .spec.values.uiContract.enabled==true and .spec.values.uiContract.additionalHostOrigins==["https://product-ui."+$domain] and
   .spec.values.uiAppearance.enabled==true and .spec.values.controller.replicas==2 and .spec.values.demoProduct.enabled==true and
   .spec.values.observationFlags==[$readiness_state=="active",$readiness_state=="active",false] and
@@ -460,10 +493,6 @@ def route($name;$host;$backend;$public):
     (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
     (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"])
   else ."release-product"==null end) and
-([."deployment-harbour"] + [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
-  all(.[]; [.spec.containers[]? | select(.name=="product") | .env[]? | select(.name=="KSAIL_RELEASES_ENABLED")] as $flags |
-    if $ksail_enabled then $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"true",indirect:false}]
-    else $flags==[] or $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"false",indirect:false}] end)) and
 (.replicasets|inventory("ReplicaSet";"apps/v1")) and (.pods|inventory("Pod";"v1")) and
 (.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) and
 readiness_observation($snapshot;$tag) and
@@ -561,6 +590,7 @@ runtime_json=$(<"$scratch/runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
   jq -e --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
+    --arg expected_tag "$expected_tag" --argjson release_gate_retired "$expected_retired" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >/dev/null 2>&1
 }
@@ -624,7 +654,7 @@ public_checks() {
     refuse_public sample_config body_invalid
     return 1
   }
-  if [[ "$expected_releases" == true ]]; then
+  if [[ "$expected_releases" == true || "$expected_retired" == true ]]; then
     fetch "$sample/ksail-releases/ui" release_index || return 1
     if ! header_is Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src $sample/ksail-releases/ui-contract-config https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'" ||
       ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
@@ -811,12 +841,12 @@ while :; do
 done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
-if [[ "$expected_releases" == true ]]; then public_count=17; else public_count=14; fi
+if [[ "$expected_releases" == true || "$expected_retired" == true ]]; then public_count=17; else public_count=14; fi
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s}\n' \
-    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"ksailReleaseGateRetired":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s}\n' \
+    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_retired" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")"
 else
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"ksailReleaseGateRetired":%s,"publisherReviewEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_retired" "$expected_publisher"
 fi

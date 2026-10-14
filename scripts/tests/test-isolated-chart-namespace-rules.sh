@@ -738,11 +738,20 @@ image_digest="$(yq -r '.spec.values.image.digest' "${release}")"
   printf 'FAIL: trial image must carry an immutable sha256 digest\n' >&2
   exit 1
 }
+release_tag="$(yq -r '.spec.values.image.tag' "${release}")"
+release_gate_retired=false
+if [[ "$release_tag" == 3.0.0 && "$image_digest" == sha256:581c8ca202aab83bbb6bd9fea6612dff8237204ab88b6a586cf741a3fe94a566 && "$digest" == sha256:0e397295a07aa3619f25371005412a3fac7de632e234b115e0fa93348fa3a96d ]]; then
+  release_gate_retired=true
+elif [[ ! "$release_tag" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ || "${release_tag%%.*}" -ge 3 ]]; then
+  printf 'FAIL: release gate profile needs an approved image/chart pair\n' >&2
+  exit 1
+fi
 # trial_contract_matches checks the standard registry listener and complete
 # rendered presentation contract, publication endpoints, host, admission rule
 # and the exact controller-local leader-election Event grant.
 trial_contract_matches() {
   jq -e --arg image "ghcr.io/devantler-tech/data-product-controller@${image_digest}" \
+    --argjson release_gate_retired "$release_gate_retired" \
     --arg harbour "${harbour_origin}" \
     --arg registry "${registry_origin}" --arg kit "${kit_origin}" \
     --arg cel_rule "self.apiVersion != 'data-product-ui/v1' || !self.capabilities.exists(c, c == 'appearance')" '
@@ -773,11 +782,13 @@ trial_contract_matches() {
       [.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
         [.spec.template.spec.containers[0].ports[] | select(.name == "registry") | .containerPort]] == [[8082]] and
       [.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller-harbour") |
-        .spec.template.spec.containers[0].env |
-        ([.[] | select(.name == "PUBLIC_BASE_URL") | .value] == [$harbour] and
-         [.[] | select(.name == "UI_HOST_ORIGINS") |
+        .spec.template.spec.containers[0] |
+        ((.envFrom//[])==[] and
+         [.env[] | select(.name == "PUBLIC_BASE_URL") | .value] == [$harbour] and
+         [.env[] | select(.name == "UI_HOST_ORIGINS") |
            (.value | split(",") | sort) == $host_origins] == [true] and
-         [.[] | select(.name == "KSAIL_RELEASES_ENABLED") | .value] == ["true"])] == [true] and
+         ([.env[] | select(.name == "KSAIL_RELEASES_ENABLED")] |
+           if $release_gate_retired then .==[] else .==[{name:"KSAIL_RELEASES_ENABLED",value:"true"}] end))] == [true] and
       [.[] | select(.kind == "DataProduct" and .metadata.name == "ksail-releases") |
         (.metadata.namespace == "data-product-controller" and
          .spec.id == "https://github.com/devantler-tech/ksail/releases" and
@@ -810,10 +821,13 @@ trial_contract_matches "${render_dir}/resources.json" || {
 # lost listener, retired flag, lost gate, publication mismatch, inappropriate host
 # or disabled admission rule fails this assertion. Event writes must also retain
 # their required verbs and single, namespace-local controller recipient.
-for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole release-activation release-source release-ui release-contract; do
+for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole release-activation release-env-from release-source release-ui release-contract; do
   case "${broken}" in
     release-activation) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
-      (.spec.template.spec.containers[0].env[] | select(.name == "KSAIL_RELEASES_ENABLED") | .value) = "false"
+      .spec.template.spec.containers[0].env |= (map(select(.name!="KSAIL_RELEASES_ENABLED")) + [{name:"KSAIL_RELEASES_ENABLED",value:"false"}])
+      else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
+    release-env-from) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
+      .spec.template.spec.containers[0].envFrom=[{configMapRef:{name:"unreviewed-config"}}]
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
     release-source) jq 'map(if .kind == "DataProduct" and .metadata.name == "ksail-releases" then
       .spec.outputs[0].url = "https://other.example.invalid/releases" else . end)' \
