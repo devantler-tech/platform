@@ -32,7 +32,7 @@ fail() {
       # Only fixed identifiers may enter a public receipt, never response data.
       if [[ -z "$extra" ]]; then
         case "$saved_role" in
-          sample_health | sample_observations | sample_openapi | sample_config | release_index | release_openapi | release_config | kit_health | kit_index | kit_library | kit_script | kit_style)
+          sample_health | sample_observations | sample_openapi | sample_config | release_index | release_openapi | release_config | kit_health | kit_index | kit_library | kit_script | kit_style | publisher_index | publisher_script | publisher_style | publisher_library | descriptor_library)
             case "$saved_reason" in
               dns_failed | tls_failed | request_timeout | transport_failed | http_status | body_invalid | security_headers | asset_invalid)
                 role=$saved_role
@@ -589,7 +589,7 @@ fetch() {
     refuse_public "$role" "$reason"
     return 1
   fi
-  [[ "$result" == 200 ]] || {
+  [[ "$result" == "${3:-200}" ]] || {
     refuse_public "$role" http_status
     return 1
   }
@@ -675,6 +675,17 @@ public_checks() {
           refuse_public "$role" asset_invalid
           return 1
         fi
+        if [[ "$expected_publisher" == true ]]; then
+          if ! { grep -Fq 'id="workspace-navigation"' "$scratch/body" &&
+            grep -Fq '<a href="/" aria-current="page">' "$scratch/body" &&
+            grep -Fq '<a href="/publisher-review">' "$scratch/body"; }; then
+            refuse_public "$role" asset_invalid
+            return 1
+          fi
+        elif grep -Fq 'href="/publisher-review"' "$scratch/body"; then
+          refuse_public "$role" asset_invalid
+          return 1
+        fi
         ;;
       /ui-contract.js) grep -Fq DataProductUI "$scratch/body" || {
         refuse_public "$role" asset_invalid
@@ -685,6 +696,60 @@ public_checks() {
         return 1
       } ;;
       /kit.css) grep -Fq color-scheme: "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+    esac
+  done
+  fetch "$kit/descriptor.js" descriptor_library || return 1
+  if ! header_is Content-Security-Policy "$csp" || ! header_is Cache-Control no-store ||
+    ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
+    refuse_public descriptor_library security_headers
+    return 1
+  fi
+  grep -Fq DataProductDescriptor "$scratch/body" || {
+    refuse_public descriptor_library asset_invalid
+    return 1
+  }
+  csp="default-src 'self'; connect-src 'none'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
+  for path in /publisher-review /publisher.js /publisher.css /preflight-report.js; do
+    case "$path" in
+      /publisher-review) role=publisher_index ;;
+      /publisher.js) role=publisher_script ;;
+      /publisher.css) role=publisher_style ;;
+      /preflight-report.js) role=publisher_library ;;
+    esac
+    if [[ "$expected_publisher" != true ]]; then
+      fetch "$kit$path" "$role" 404 || return 1
+      continue
+    fi
+    fetch "$kit$path" "$role" || return 1
+    if ! header_is Content-Security-Policy "$csp" || ! header_is Cache-Control no-store ||
+      ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
+      refuse_public "$role" security_headers
+      return 1
+    fi
+    case "$path" in
+      /publisher-review)
+        if ! { grep -Fq 'id="report-form"' "$scratch/body" && grep -Fq 'id="report-file"' "$scratch/body" &&
+          grep -Fq 'id="report-text"' "$scratch/body" && grep -Fq 'id="report-status"' "$scratch/body" &&
+          grep -Fq 'src="/descriptor.js"' "$scratch/body" && grep -Fq 'src="/preflight-report.js"' "$scratch/body" &&
+          grep -Fq 'src="/publisher.js"' "$scratch/body" && grep -Fq 'href="publisher.css"' "$scratch/body" &&
+          grep -Fq 'id="workspace-navigation"' "$scratch/body" && grep -Fq '<a href="/">' "$scratch/body" &&
+          grep -Fq '<a href="/publisher-review" aria-current="page">' "$scratch/body"; }; then
+          refuse_public "$role" asset_invalid
+          return 1
+        fi
+        ;;
+      /publisher.js) grep -Fq DataProductPreflightReport.parse "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+      /publisher.css) grep -Fq color-scheme: "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+      /preflight-report.js) grep -Fq DataProductPreflightReport "$scratch/body" || {
         refuse_public "$role" asset_invalid
         return 1
       } ;;
@@ -746,7 +811,7 @@ while :; do
 done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
-if [[ "$expected_releases" == true ]]; then public_count=12; else public_count=9; fi
+if [[ "$expected_releases" == true ]]; then public_count=17; else public_count=14; fi
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then

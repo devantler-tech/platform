@@ -30,6 +30,19 @@ the product's data or reuse registry credentials. The Harbour sample approves bo
 the registry and this host. Status, resize and appearance permissions are explicit;
 changing the connected product starts a new session.
 
+Select **Publisher review** on that host to inspect a saved `product-check` v2 JSON
+report. Open a local file or paste the report; the browser reads it locally without
+uploading it, fetching sources or applying resources. Review findings, public
+descriptor previews, declared feature requirements and the dependency plan. The
+selected System, Light or Dark theme follows navigation between the two workspaces.
+Leaving publisher review clears the report; browser Back returns to an empty review.
+
+Publisher review is enabled only on the independent UI host through
+`PUBLISHER_PREFLIGHT_ENABLED`. Withdraw it with an absent or literal `false` value
+in a reviewed GitOps change. This removes its navigation and publisher routes while
+retaining the product UI workspace. Availability on the platform does not establish
+independent-author adoption or authorize retiring the publisher release gate.
+
 The release pins both the signed chart and controller image by immutable digest.
 The registry workspace is standard behavior and both product views are enabled. Portable UI
 status, resize and appearance grants are active for the publisher-approved registry
@@ -74,7 +87,11 @@ directly. The portable host's health endpoint, assets and sandbox policy must al
 pass. The receipt binds the portable host's contract and appearance opt-ins and its
 declared publisher state to the UI Deployment, current ReplicaSet and serving Pods. Publisher
 withdrawal permits an absent or literal false flag; indirect, duplicate and malformed
-flag declarations are refused. Publisher browser acceptance remains separate.
+flag declarations are refused. The public checks require navigation between both
+enabled workspaces, the offline publisher page, its scripts and stylesheet, and
+their no-store and no-network policies. Withdrawal requires the publisher routes
+to return 404. Local report interaction and navigation cleanup are additionally
+verified in a browser.
 The receipt also binds KSail activation to the checked-out Helm declaration,
 the live Helm value and serving Pod environments, current product registration,
 exact source/contract URLs, approved host origins and the public UI's restricted

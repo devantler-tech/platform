@@ -34,7 +34,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: contract-probe
-          image: ghcr.io/devantler-tech/data-product-controller:2.7.0@sha256:518b8798bf9629265fa8703c198d8c6e3f4d67c90d311e6a52d08b46a56f8175
+          image: ghcr.io/devantler-tech/data-product-controller:2.9.1@sha256:d82b984165bc71844c323f752f474f80a7a7f7a78972a5e1171d9f814cb9bb34
           imagePullPolicy: IfNotPresent
           command:
             - /contract-probe

@@ -62,7 +62,7 @@ $pod.containers[0] as $container |
   ($container.name == "ui-kit"),
   ($container.image | test("^ghcr\\.io/devantler-tech/data-product-controller(:[0-9]+\\.[0-9]+\\.[0-9]+)?@sha256:[a-f0-9]{64}$")),
   ($container.command == ["/ui-kit"] and $container.args == ["--http-behind-gateway","--listen-address","0.0.0.0:8080"]),
-  ($container.env | sort_by(.name) == [{name:"UI_APPEARANCE_ENABLED",value:"true"},{name:"UI_CONTRACT_ENABLED",value:"true"}]),
+  ($container.env | sort_by(.name) == [{name:"PUBLISHER_PREFLIGHT_ENABLED",value:"true"},{name:"UI_APPEARANCE_ENABLED",value:"true"},{name:"UI_CONTRACT_ENABLED",value:"true"}]),
   (($container.envFrom // []) == [] and ($container.volumeMounts // []) == []),
   ($container.ports == [{name:"http",containerPort:8080,protocol:"TCP"}]),
   ($container.securityContext | restricted),
@@ -131,6 +131,9 @@ assert_rejected 'added capability' 'map(if .kind == "Deployment" then .spec.temp
 assert_rejected 'credential environment' 'map(if .kind == "Deployment" then .spec.template.spec.containers[0].envFrom = [{secretRef:{name:"synthetic-credential"}}] else . end)'
 assert_rejected 'credential volume' 'map(if .kind == "Deployment" then .spec.template.spec.volumes = [{name:"credential",secret:{secretName:"synthetic-credential"}}] else . end)'
 assert_rejected 'mutable image' 'map(if .kind == "Deployment" then .spec.template.spec.containers[0].image = "ghcr.io/devantler-tech/data-product-controller:latest" else . end)'
+assert_rejected 'publisher disabled' 'map(if .kind == "Deployment" then .spec.template.spec.containers[0].env |= map(if .name=="PUBLISHER_PREFLIGHT_ENABLED" then .value="false" else . end) else . end)'
+assert_rejected 'publisher missing' 'map(if .kind == "Deployment" then .spec.template.spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED")) else . end)'
+assert_rejected 'publisher indirect' 'map(if .kind == "Deployment" then .spec.template.spec.containers[0].env |= map(if .name=="PUBLISHER_PREFLIGHT_ENABLED" then del(.value) | .valueFrom={configMapKeyRef:{name:"flags",key:"publisher"}} else . end) else . end)'
 assert_rejected 'TLS opt-in missing' 'map(if .kind == "Deployment" then .spec.template.spec.containers[0].args = ["--listen-address","0.0.0.0:8080"] else . end)'
 assert_rejected 'missing health probe' 'map(if .kind == "Deployment" then del(.spec.template.spec.containers[0].readinessProbe) else . end)'
 assert_rejected 'controller Service selector' 'map(if .kind == "Service" then .spec.selector["app.kubernetes.io/component"] = "controller" else . end)'
@@ -149,4 +152,4 @@ assert_rejected 'forwarded credentials' 'map(if .metadata.name == "data-product-
 assert_rejected 'registry SSO bypass' 'map(if .metadata.name == "data-product-controller-registry" then .spec.rules[0].backendRefs = [{name:"data-product-controller",port:8082}] else . end)'
 assert_rejected 'host RBAC grant' '. + [{apiVersion:"rbac.authorization.k8s.io/v1",kind:"RoleBinding",metadata:{name:"host-grant",namespace:"data-product-controller"},subjects:[{kind:"ServiceAccount",name:"data-product-controller-ui-kit"}],roleRef:{apiGroup:"rbac.authorization.k8s.io",kind:"ClusterRole",name:"edit"}}]'
 
-printf 'PASS: rendered portable UI host and 26 unsafe/incomplete controls\n'
+printf 'PASS: rendered portable UI host and 29 unsafe/incomplete controls\n'

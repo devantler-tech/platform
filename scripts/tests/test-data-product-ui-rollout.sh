@@ -267,6 +267,8 @@ else
 fi
 [[ "$permission" == 700 ]] || exit 101
 csp="default-src 'self'; connect-src 'none'; frame-src https:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
+publisher=$(jq -r 'any(.[0].env[]; .name=="PUBLISHER_PREFLIGHT_ENABLED" and .value=="true")' "$FIXTURE/expected-ui.json")
+code=200
 printf 'HTTP/2 200\r\nContent-Security-Policy: %s\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n\r\n' "$csp" >"$headers"
 case "$url" in
   https://harbour-data.example.com/healthz) printf '' >"$body" ;;
@@ -280,18 +282,37 @@ case "$url" in
   https://harbour-data.example.com/ksail-releases/openapi.json) printf '{"openapi":"3.1.0","info":{"title":"KSail release history"},"servers":[{"url":"https://api.github.com"}],"paths":{"/repos/devantler-tech/ksail/releases":{"get":{"responses":{"200":{}}}}}}\n' >"$body" ;;
   https://harbour-data.example.com/ksail-releases/ui-contract-config) printf '{"hostOrigins":["https://data-products.example.com","https://product-ui.example.com"],"appearanceEnabled":true}\n' >"$body" ;;
   https://product-ui.example.com/healthz) printf 'ok\n' >"$body" ;;
-  https://product-ui.example.com/) printf '<body data-appearance-enabled="true"><form id="manifest-form"></form><script src="ui-contract.js"></script><script src="kit.js"></script><link href="kit.css">\n' >"$body" ;;
+  https://product-ui.example.com/)
+    printf '<body data-appearance-enabled="true"><form id="manifest-form"></form><script src="ui-contract.js"></script><script src="kit.js"></script><link href="kit.css">\n' >"$body"
+    if [[ "$publisher" == true ]]; then printf '<nav id="workspace-navigation"><a href="/" aria-current="page">Product UI workspace</a><a href="/publisher-review">Publisher review</a></nav>\n' >>"$body"; fi ;;
   https://product-ui.example.com/ui-contract.js) printf 'window.DataProductUI = {};\n' >"$body" ;;
   https://product-ui.example.com/kit.js) printf 'DataProductUI.mount({});\n' >"$body" ;;
   https://product-ui.example.com/kit.css) printf ':root { color-scheme: light; }\n' >"$body" ;;
+  https://product-ui.example.com/descriptor.js) printf 'window.DataProductDescriptor = {};\n' >"$body" ;;
+  https://product-ui.example.com/publisher-review)
+    printf '<form id="report-form"><input id="report-file"><textarea id="report-text"></textarea></form><p id="report-status"></p><script src="/descriptor.js"></script><script src="/preflight-report.js"></script><script src="/publisher.js"></script><link href="publisher.css"><nav id="workspace-navigation"><a href="/">Product UI workspace</a><a href="/publisher-review" aria-current="page">Publisher review</a></nav>\n' >"$body" ;;
+  https://product-ui.example.com/publisher.js) printf 'DataProductPreflightReport.parse({});\n' >"$body" ;;
+  https://product-ui.example.com/preflight-report.js) printf 'window.DataProductPreflightReport = {};\n' >"$body" ;;
+  https://product-ui.example.com/publisher.css) printf ':root { color-scheme: light dark; }\n' >"$body" ;;
   *) exit 102 ;;
 esac
+case "$url" in
+  */publisher-review | */publisher.js | */publisher.css | */preflight-report.js)
+    if [[ "$publisher" == true ]]; then
+      csp="default-src 'self'; connect-src 'none'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
+      printf 'HTTP/2 200\r\nContent-Security-Policy: %s\r\nCache-Control: no-store\r\nReferrer-Policy: no-referrer\r\nX-Content-Type-Options: nosniff\r\n\r\n' "$csp" >"$headers"
+    else code=404; fi ;;
+esac
+if [[ "$url" == https://product-ui.example.com/descriptor.js ]]; then
+  printf 'Cache-Control: no-store\r\n' >>"$headers"
+fi
 if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
   : >"$FIXTURE/public-failed-once"
   printf '503'
   exit 0
 fi
 case "${MODE:-}" in
+  slow-public) sleep 0.55 ;;
   dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
   tls-handshake-failure) printf 'PRIVATE-ERROR-CANARY: private handshake\n' >&2; exit 35 ;;
@@ -308,15 +329,27 @@ case "${MODE:-}" in
   duplicate-csp) printf 'Content-Security-Policy: %s\r\n' "$csp" >>"$headers" ;;
   wrong-body) printf '{"items":[]}\n' >"$body" ;;
   wrong-asset) [[ "$url" != */ui-contract.js ]] || printf 'not a protocol library\n' >"$body" ;;
+  publisher-unavailable) [[ "$url" != */publisher-review ]] || code=503 ;;
+  publisher-missing-style) [[ "$url" != */publisher.css ]] || code=404 ;;
+  publisher-wrong-script) [[ "$url" != */publisher.js ]] || printf 'wrong script\n' >"$body" ;;
+  publisher-wrong-report-library) [[ "$url" != */preflight-report.js ]] || printf 'wrong library\n' >"$body" ;;
+  publisher-wrong-page) [[ "$url" != */publisher-review ]] || printf '<title>Other workspace</title>\n' >"$body" ;;
+  publisher-weak-csp) [[ "$url" != */publisher-review ]] || printf 'HTTP/2 200\r\nContent-Security-Policy: default-src *\r\n\r\n' >"$headers" ;;
+  publisher-cacheable) [[ "$url" != */publisher-review ]] || sed -i.bak 's/no-store/public/' "$headers" ;;
+  publisher-missing-navigation) [[ "$url" != https://product-ui.example.com/ ]] || sed -i.bak '/workspace-navigation/d' "$body" ;;
+  publisher-unplanned-route) [[ "$url" != */publisher-review ]] || code=200 ;;
 esac
-printf '200'
+printf '%s' "$code"
 SH
 chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
 
-expected_urls=9
+expected_urls=14
 # run_case exercises one fixture and checks its verdict, cleanup and sanitized output.
 run_case() {
   local name=$1 expected=$2 mode=${3:-} result=0 timeout_seconds=${4:-15}
+  # Healthy fixtures include the expanded sequential public probes and full
+  # snapshots. Keep rejection/cleanup deadline controls separately bounded.
+  if [[ $# -lt 4 && "$expected" == pass ]]; then timeout_seconds=30; fi
   local fixture="${scratch}/${name}"
   [[ -d "$fixture" ]] || {
     mkdir "$fixture"
@@ -335,7 +368,7 @@ run_case() {
     if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
     ksail=$(cat "$fixture/expected-ksail.json")
     publisher=$(jq -r 'any(.[0].env[]; .name=="PUBLISHER_PREFLIGHT_ENABLED" and .value=="true")' "$fixture/expected-ui.json")
-    if [[ "$ksail" == true ]]; then public_count=12; else public_count=9; fi
+    if [[ "$ksail" == true ]]; then public_count=17; else public_count=14; fi
     if [[ "$result" != 0 ]] || ! jq -e --arg state "$expected_state" --argjson pods "$expected_pods" --argjson public_count "$public_count" --argjson ksail "$ksail" --argjson publisher "$publisher" '.complete == true and .deployments == 4 and .pods == $pods and .routes == 3 and .publicChecks == $public_count and .ksailReleasesEnabled == $ksail and .publisherReviewEnabled == $publisher and .readinessState == $state' "$fixture/stdout" >/dev/null; then
       local reason
       reason=$(jq -r '.failure // "invalid_report"' "$fixture/stdout" 2>/dev/null) || reason=invalid_report
@@ -393,6 +426,34 @@ run_case() {
       wrong-release-origin)
         public_role=release_config
         public_reason=body_invalid
+        ;;
+      publisher-unavailable | publisher-unplanned-route)
+        public_role=publisher_index
+        public_reason=http_status
+        ;;
+      publisher-missing-style)
+        public_role=publisher_style
+        public_reason=http_status
+        ;;
+      publisher-wrong-script)
+        public_role=publisher_script
+        public_reason=asset_invalid
+        ;;
+      publisher-wrong-report-library)
+        public_role=publisher_library
+        public_reason=asset_invalid
+        ;;
+      publisher-wrong-page)
+        public_role=publisher_index
+        public_reason=asset_invalid
+        ;;
+      publisher-weak-csp | publisher-cacheable)
+        public_role=publisher_index
+        public_reason=security_headers
+        ;;
+      publisher-missing-navigation)
+        public_role=kit_index
+        public_reason=asset_invalid
         ;;
     esac
     if [[ -n "$public_role" ]]; then
@@ -481,6 +542,14 @@ for publisher in true false; do
   run_case "$name" pass
 done
 
+# Published routes and assets must match the separately declared host opt-in.
+for mode in publisher-unavailable publisher-missing-style publisher-wrong-script publisher-wrong-report-library publisher-wrong-page publisher-weak-csp publisher-cacheable publisher-missing-navigation; do
+  mkdir "${scratch}/$mode"
+  cp "${scratch}/declared-publisher-true/"*.json "${scratch}/$mode/"
+  run_case "$mode" fail "$mode" 15
+done
+run_case publisher-unplanned-route fail publisher-unplanned-route 15
+
 # publisher_mutation starts from the separately declared enabled profile.
 publisher_mutation() {
   local name=$1 key=$2 mutation=$3
@@ -522,9 +591,9 @@ mkdir -p "${scratch}/withdrawal-settles/after" "${scratch}/withdrawal-settles/af
 cp "${scratch}/healthy/"*.json "${scratch}/withdrawal-settles/"
 jq '.metadata.name="ksail-releases"' "${scratch}/healthy/product.json" >"${scratch}/withdrawal-settles/after/release-product.json"
 printf 'null\n' >"${scratch}/withdrawal-settles/after2/release-product.json"
-expected_urls=18
-run_case withdrawal-settles pass
-expected_urls=9
+expected_urls=28
+run_case withdrawal-settles pass slow-public 45
+expected_urls=14
 jq -e '.retaken==1 and (.settled|index("release-product")!=null)' "${scratch}/withdrawal-settles/stdout" >/dev/null ||
   fail 'withdrawal changed during public checks without a retaken snapshot'
 
@@ -584,7 +653,7 @@ jq '.metadata.name="ksail-releases" | .metadata.uid="release-product-uid" |
     outputs:[{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",contractUrl:"https://harbour-data.example.com/ksail-releases/openapi.json",mediaType:"application/json"}],
     ui:{url:"https://harbour-data.example.com/ksail-releases/ui",contract:{apiVersion:"data-product-ui/v2",hostOrigins:["https://data-products.example.com","https://product-ui.example.com"],capabilities:["status","resize","appearance"]}}}
 ' "${scratch}/active/product.json" >"${scratch}/ksail/release-product.json"
-expected_urls=12
+expected_urls=17
 run_case ksail pass
 # ksail_mutation requires a real snapshot-predicate rejection for each control.
 ksail_mutation() {
@@ -614,13 +683,13 @@ for mode in wrong-release-ui weak-release-csp wrong-release-api wrong-release-or
   run_case "$mode" fail "$mode" 15
   jq -e '.failure=="public_contract_incomplete"' "${scratch}/$mode/stdout" >/dev/null || fail "$mode: public source profile was not refused"
 done
-expected_urls=9
+expected_urls=14
 mkdir -p "${scratch}/active-settled-label/after"
 cp "${scratch}/active/"*.json "${scratch}/active-settled-label/"
 jq '.metadata.labels.settled="yes"' "${scratch}/active/apps.json" >"${scratch}/active-settled-label/after/apps.json"
-expected_urls=18
+expected_urls=28
 run_case active-settled-label pass
-expected_urls=9
+expected_urls=14
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/active-settled-label/stdout" >/dev/null ||
   fail 'active-settled-label: the active report did not name the change that settled'
 # active_mutation verifies that an active-profile mutation reaches snapshot rejection.
@@ -760,18 +829,18 @@ for key in apps chart helm deployment-ui-kit route-ui-kit gateway pods root prod
   cp "${scratch}/healthy/"*.json "${scratch}/$name/"
   jq 'if .kind == "PodList" then .items[5].metadata.uid="recreated-uid" else .metadata.uid="recreated-uid" end' \
     "${scratch}/healthy/$key.json" >"${scratch}/$name/after/$key.json"
-  expected_urls=27
-  run_case "$name" fail flap 20
-  expected_urls=9
+  expected_urls=42
+  run_case "$name" fail flap 60
+  expected_urls=14
 done
 # A change that happens once and then holds is an ordinary reconcile, not a
 # moving rollout: the pair is retaken, public checks included, and accepted.
 mkdir -p "${scratch}/settled-label/after"
 cp "${scratch}/healthy/"*.json "${scratch}/settled-label/"
 jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/settled-label/after/apps.json"
-expected_urls=18
+expected_urls=28
 run_case settled-label pass
-expected_urls=9
+expected_urls=14
 # The accepted report says a pair was retaken and names what had moved, so the
 # cause of a settled difference can be read from a deploy that passed (#4545).
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/settled-label/stdout" >/dev/null ||
@@ -782,9 +851,9 @@ mkdir -p "${scratch}/settled-twice/after" "${scratch}/settled-twice/after2"
 cp "${scratch}/healthy/"*.json "${scratch}/settled-twice/"
 jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/settled-twice/after/apps.json"
 jq '.metadata.labels.settled="yes"' "${scratch}/healthy/product.json" >"${scratch}/settled-twice/after2/product.json"
-expected_urls=27
-run_case settled-twice pass '' 20
-expected_urls=9
+expected_urls=42
+run_case settled-twice pass '' 60
+expected_urls=14
 jq -e '.retaken == 2 and .settled == ["apps.metadata.labels","product.metadata.labels"]' "${scratch}/settled-twice/stdout" >/dev/null ||
   fail 'settled-twice: the accepted report did not name every change that settled'
 # A rollout that never moved reports neither field: their presence is the signal.
@@ -804,9 +873,9 @@ jq -e '.failure == "deadline_exceeded" and .changed == ["apps.status.conditions"
 mkdir -p "${scratch}/moving-public/after"
 cp "${scratch}/healthy/"*.json "${scratch}/moving-public/"
 jq '.metadata.labels.settled="yes"' "${scratch}/healthy/apps.json" >"${scratch}/moving-public/after/apps.json"
-expected_urls=10
+expected_urls=15
 run_case moving-public pass flaky-public
-expected_urls=9
+expected_urls=14
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/moving-public/stdout" >/dev/null ||
   fail 'moving-public: the accepted report did not name the change that settled'
 # Against a rollout that holds still, one failed public check refuses the deploy.
