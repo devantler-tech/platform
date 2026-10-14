@@ -211,6 +211,14 @@ jobs:
           tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
           export PORTAL_HELM_TEST_BIN="$native_dir/linux-amd64/helm"
           go test -race -count=1 ./scripts/retire-backstage-stateless
+          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$PORTAL_HELM_TEST_BIN" >> "$GITHUB_ENV"
+
+      - name: 📝 Validate Kyverno structured log severity
+        # Use the checksum-verified native Helm above, on PRs and merge groups.
+        # The consumer regression must never skip when Helm is unavailable.
+        env:
+          KYVERNO_LOG_REQUIRE_NATIVE: '1'
+        run: go test -race -count=1 ./scripts/tests/kyverno-logs
 
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
