@@ -33,6 +33,12 @@ The configured database instances must all have owned, Ready pods mounting their
 own claims. An existing namespace retirement journal, incomplete census, changed
 source, unsettled Flux layer or ambiguous identity stops the operation.
 
+Native core API typed lists may omit `apiVersion` and `kind` on their individual
+items. The reader supplies only those absent fields from the exact `v1` claim,
+volume or pod list envelope. It never infers types from a generic list, overwrites
+explicit fields, or substitutes an identity, owner, binding or retention policy.
+The complete census and preservation guards still validate every resulting item.
+
 Two separated samples precede writes. Each write takes another complete fresh
 sample and uses a JSON Patch that tests the volume's UID, resource version and
 entire existing specification before replacing only its reclaim policy. A stale
