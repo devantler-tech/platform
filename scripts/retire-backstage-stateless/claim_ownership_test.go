@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -19,6 +20,28 @@ func TestRetirementPreservesControllerClaimWithoutFluxPruneOptOut(t *testing.T) 
 	}
 	if !bytes.Equal(before, encode(t, claim)) || field(item(f.volumes, 0), "spec", "persistentVolumeReclaimPolicy") != "Retain" {
 		t.Fatal("retirement changed the retained claim or physical retention")
+	}
+}
+
+// A controller claim outside Flux inventory is still unsafe until its exact
+// bound volume has physical retention. This must stop before even the journal.
+func TestControllerClaimWithoutPruneOptOutRequiresPhysicalRetention(t *testing.T) {
+	for _, policy := range []any{"Delete", "Recycle", "", nil} {
+		t.Run(fmt.Sprint(policy), func(t *testing.T) {
+			retirementRunner(t)
+			f := retirementFixture(t)
+			claim := item(f.live, 3)
+			delete(object(claim["metadata"]), "annotations")
+			object(item(f.volumes, 0)["spec"])["persistentVolumeReclaimPolicy"] = policy
+			before := encode(t, claim)
+			var out bytes.Buffer
+			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
+				t.Fatalf("unretained controller claim admitted lifecycle writes: policy=%v code=%d output=%s", policy, code, &out)
+			}
+			if !bytes.Equal(before, encode(t, claim)) {
+				t.Fatal("failed retention precondition changed claim metadata")
+			}
+		})
 	}
 }
 
