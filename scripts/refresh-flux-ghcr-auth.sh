@@ -2501,7 +2501,7 @@ restore_node_schedulability_if_needed() {
     '(.metadata.annotations // {}) | has($annotation)' \
     "${cordon_state_file}")"
   case "${current_phase}" in
-    ''|claimed|mutating) ;;
+    '' | claimed | mutating) ;;
     *)
       echo "::error::Drain phase changed or was malformed for Talos node ${node_name}; refusing to release it."
       return 1
@@ -5652,7 +5652,7 @@ pause_flux_policy_parent() {
       # non-empty line.
       if [[ ! -s "${reread_error_file}" ]] ||
         ! cat "${reread_error_file}" \
-        >"${flux_policy_parent_result_file}" 2>/dev/null; then
+          >"${flux_policy_parent_result_file}" 2>/dev/null; then
         echo "parent re-read failed; its diagnostic could not be read" \
           >"${flux_policy_parent_result_file}"
       fi
@@ -6427,6 +6427,8 @@ wait_for_flux_policy_handoff_claimable() {
 pause_flux_policy_handoff() {
   local resource_version annotations_present attempt
   local stable_resource_version="" current_resource_version
+  local unreadable_observations=0 child_not_owned_observations=0
+  local parent_unstable_observations=0 resource_version_changes=0
   local claim_attempt reread_resource_version inspected_uid=""
   local max_claim_attempts="${FLUX_POLICY_HANDOFF_CLAIM_MAX_ATTEMPTS:-5}"
   # Separate stderr sink for the re-read, so a successful re-read cannot truncate
@@ -6504,7 +6506,7 @@ pause_flux_policy_handoff() {
       2>"${reread_error_file}"; then
       if [[ ! -s "${reread_error_file}" ]] ||
         ! cat "${reread_error_file}" \
-        >"${flux_policy_handoff_result_file}" 2>/dev/null; then
+          >"${flux_policy_handoff_result_file}" 2>/dev/null; then
         echo "policy owner re-read failed; its diagnostic could not be read" \
           >"${flux_policy_handoff_result_file}"
       fi
@@ -6570,24 +6572,34 @@ pause_flux_policy_handoff() {
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     sleep "${SYNC_INTERVAL}"
     if ! read_flux_policy_fences; then
+      unreadable_observations=$((unreadable_observations + 1))
       stable_resource_version=""
       continue
     fi
-    if flux_policy_handoff_is_owned &&
-      flux_policy_parent_is_stable; then
+    if ! flux_policy_handoff_is_owned; then
+      child_not_owned_observations=$((child_not_owned_observations + 1))
+      stable_resource_version=""
+    elif ! flux_policy_parent_is_stable; then
+      parent_unstable_observations=$((parent_unstable_observations + 1))
+      stable_resource_version=""
+    else
       current_resource_version="$(jq -er '.metadata.resourceVersion' \
         "${flux_policy_handoff_state_file}")"
       if [[ -n "${stable_resource_version}" &&
         "${current_resource_version}" == "${stable_resource_version}" ]]; then
         return 0
       fi
+      if [[ -n "${stable_resource_version}" ]]; then
+        resource_version_changes=$((resource_version_changes + 1))
+      fi
       stable_resource_version="${current_resource_version}"
-    else
-      stable_resource_version=""
     fi
   done
 
-  echo "::error::Flux did not acknowledge a stable pause of the image-verification policy owner."
+  # Report only fixed predicate names and counts from the observations already
+  # taken. Snapshots, owner identities, versions and controller messages can
+  # carry private data; a diagnostic must neither expose them nor change proof.
+  echo "::error::Flux did not acknowledge a stable pause of the image-verification policy owner (observations=${SYNC_ATTEMPTS} unreadable=${unreadable_observations} child_not_owned=${child_not_owned_observations} parent_unstable=${parent_unstable_observations} version_changes=${resource_version_changes})."
   return 1
 }
 
