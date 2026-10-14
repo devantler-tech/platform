@@ -19,6 +19,7 @@ const headRef = "refs/heads/gh-readonly-queue/main/pr-4891-" + baseSHA
 const validEvent = `{"action":"checks_requested","repository":{"full_name":"devantler-tech/platform"},"merge_group":{"base_ref":"refs/heads/main","base_sha":"` + baseSHA + `","head_ref":"` + headRef + `","head_sha":"` + groupSHA + `","head_commit":{"id":"` + groupSHA + `","timestamp":"2026-10-14T16:44:00+00:00"}}}`
 const validResponse = `{"data":{"repository":{"nameWithOwner":"devantler-tech/platform","ref":{"target":{"oid":"` + groupSHA + `"}},"mergeQueue":{"id":"MQ_actual_queue"},"pullRequest":{"number":4891,"state":"OPEN","baseRefName":"main","headRefOid":"` + sourceSHA + `","isInMergeQueue":true,"mergeQueueEntry":{"id":"MQE_original_entry","enqueuedAt":"2026-10-14T16:43:58Z","headCommit":{"oid":"` + groupSHA + `"},"baseCommit":{"oid":"` + baseSHA + `"},"mergeQueue":{"id":"MQ_actual_queue"},"pullRequest":{"number":4891,"headRefOid":"` + sourceSHA + `"}}}}}}`
 
+// TestSquashQueueWitness accepts the real queue shape without a source parent.
 func TestSquashQueueWitness(t *testing.T) {
 	e, n, err := parseEvent([]byte(validEvent), repository, groupSHA, "merge_group")
 	if err != nil {
@@ -38,6 +39,7 @@ func TestSquashQueueWitness(t *testing.T) {
 	}
 }
 
+// TestEventRefusalsBeforeNetwork rejects unrelated or malformed event identities.
 func TestEventRefusalsBeforeNetwork(t *testing.T) {
 	for _, tc := range []struct{ name, from, to string }{
 		{"eviction action", "checks_requested", "destroyed"},
@@ -49,7 +51,6 @@ func TestEventRefusalsBeforeNetwork(t *testing.T) {
 		{"zero PR", "pr-4891-", "pr-0-"},
 		{"PR overflow", "pr-4891-", "pr-999999999999999999999999999999-"},
 		{"bad date", "2026-10-14T16:44:00+00:00", "2026-02-30T16:44:00Z"},
-		{"non UTC", "+00:00", "+02:00"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := strings.ReplaceAll(validEvent, tc.from, tc.to)
@@ -73,6 +74,26 @@ func TestEventRefusalsBeforeNetwork(t *testing.T) {
 	}
 }
 
+// TestOffsetTimestamps compares instants, not the spelling of UTC offsets.
+func TestOffsetTimestamps(t *testing.T) {
+	data := strings.ReplaceAll(validEvent, "2026-10-14T16:44:00+00:00", "2026-10-14T18:44:00+02:00")
+	e, number, err := parseEvent([]byte(data), repository, groupSHA, "merge_group")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, enqueued := range []string{"2026-10-14T18:43:58+02:00", "2026-10-14T14:43:58-02:00"} {
+		reply := strings.ReplaceAll(validResponse, "2026-10-14T16:43:58Z", enqueued)
+		if _, err := evaluate([]byte(reply), e, number); err != nil {
+			t.Fatal(err)
+		}
+	}
+	reply := strings.ReplaceAll(validResponse, "2026-10-14T16:43:58Z", "2026-10-14T18:45:00+02:00")
+	if _, err := evaluate([]byte(reply), e, number); err == nil {
+		t.Fatal("accepted a later replacement entry")
+	}
+}
+
+// TestQueueRefusals rejects absent, stale and mutually inconsistent API witnesses.
 func TestQueueRefusals(t *testing.T) {
 	e, number, err := parseEvent([]byte(validEvent), repository, groupSHA, "merge_group")
 	if err != nil {
@@ -86,6 +107,8 @@ func TestQueueRefusals(t *testing.T) {
 		{"wrong PR", `"number":4891`, `"number":4892`},
 		{"wrong base ref", `"baseRefName":"main"`, `"baseRefName":"other"`},
 		{"wrong group", groupSHA, sourceSHA},
+		{"wrong ref only", `"ref":{"target":{"oid":"` + groupSHA + `"}}`, `"ref":{"target":{"oid":"` + sourceSHA + `"}}`},
+		{"wrong entry head only", `"headCommit":{"oid":"` + groupSHA + `"}`, `"headCommit":{"oid":"` + sourceSHA + `"}`},
 		{"wrong base", baseSHA, sourceSHA},
 		{"missing source", sourceSHA, ""},
 		{"missing entry", "MQE_original_entry", ""},
@@ -146,7 +169,7 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 	write(eventPath, strings.ReplaceAll(validEvent, groupSHA, head))
 	write(responsePath, strings.ReplaceAll(validResponse, groupSHA, head))
 	write(output, "")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$QUEUE_TEST_LOG\"\n[ \"$QUEUE_TEST_FAIL\" != 1 ] || exit 1\ncat \"$QUEUE_TEST_RESPONSE\"\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$QUEUE_TEST_LOG\"\n[ \"$QUEUE_TEST_FAIL\" != 1 ] || exit 1\nif [ -n \"$QUEUE_TEST_FAIL_ONCE\" ] && [ ! -f \"$QUEUE_TEST_FAIL_ONCE\" ]; then printf 'failed\\n' > \"$QUEUE_TEST_FAIL_ONCE\"; exit 1; fi\ncat \"$QUEUE_TEST_RESPONSE\"\n"
 	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -161,6 +184,7 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 	t.Setenv("GITHUB_WORKSPACE", workspace)
 	t.Setenv("GH_TOKEN", "offline-queue-fixture-not-a-credential")
 	t.Setenv("QUEUE_TEST_FAIL", "")
+	t.Setenv("QUEUE_TEST_FAIL_ONCE", "")
 	var stdout bytes.Buffer
 	if err := verify("capture", &stdout); err != nil {
 		t.Fatal(err)
@@ -186,15 +210,35 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			write(responsePath, strings.ReplaceAll(strings.ReplaceAll(validResponse, groupSHA, head), tc.from, tc.to))
+			before, _ := os.ReadFile(logPath)
 			if err := verify("check", &stdout); err == nil {
 				t.Fatal("accepted changed receipt")
+			}
+			after, _ := os.ReadFile(logPath)
+			if bytes.Count(after, []byte("\n"))-bytes.Count(before, []byte("\n")) != 1 {
+				t.Fatal("evaluation refusal was retried")
 			}
 		})
 	}
 	write(responsePath, strings.ReplaceAll(validResponse, groupSHA, head))
+	t.Setenv("QUEUE_TEST_FAIL_ONCE", filepath.Join(dir, "one-transport-failure"))
+	beforeRetry, _ := os.ReadFile(logPath)
+	if err := verify("check", &stdout); err != nil {
+		t.Fatalf("transient read did not recover: %v", err)
+	}
+	afterRetry, _ := os.ReadFile(logPath)
+	if bytes.Count(afterRetry, []byte("\n"))-bytes.Count(beforeRetry, []byte("\n")) != 2 {
+		t.Fatal("transient control did not make exactly two reads")
+	}
+	t.Setenv("QUEUE_TEST_FAIL_ONCE", "")
 	t.Setenv("QUEUE_TEST_FAIL", "1")
+	beforeFailure, _ := os.ReadFile(logPath)
 	if err := verify("check", &stdout); err == nil {
 		t.Fatal("accepted failed API read")
+	}
+	afterFailure, _ := os.ReadFile(logPath)
+	if bytes.Count(afterFailure, []byte("\n"))-bytes.Count(beforeFailure, []byte("\n")) != 3 {
+		t.Fatal("persistent failure escaped the three-read bound")
 	}
 	t.Setenv("QUEUE_TEST_FAIL", "")
 	t.Setenv("QUEUE_RECEIPT", "")
@@ -223,6 +267,7 @@ func TestNativeCaptureAndPreflight(t *testing.T) {
 	}
 }
 
+// TestNativeReadTimeout proves a real child cannot outlive the read deadline.
 func TestNativeReadTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
@@ -235,6 +280,7 @@ func TestNativeReadTimeout(t *testing.T) {
 	}
 }
 
+// TestReceiptJSON keeps the cross-job receipt lossless and structurally comparable.
 func TestReceiptJSON(t *testing.T) {
 	e, number, err := parseEvent([]byte(validEvent), repository, groupSHA, "merge_group")
 	if err != nil {

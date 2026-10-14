@@ -69,19 +69,17 @@ type response struct {
 	}
 }
 
-// UTC-only parsing avoids comparing timestamp strings with different offsets.
+// utc validates RFC 3339 and normalizes offsets before queue times are compared.
 func utc(value string) (time.Time, error) {
 	t, err := time.Parse(time.RFC3339, value)
 	if err != nil {
 		return time.Time{}, errors.New("invalid queue timestamp")
 	}
-	_, offset := t.Zone()
-	if offset != 0 {
-		return time.Time{}, errors.New("queue timestamp is not UTC")
-	}
-	return t, nil
+	return t.UTC(), nil
 }
 
+// parseEvent validates the trusted Actions identity before any network read.
+// Only the PR number is extracted from the ref; its SHA suffix is not a source head.
 func parseEvent(data []byte, repo, sha, name string) (event, int, error) {
 	var e event
 	if err := json.Unmarshal(data, &e); err != nil {
@@ -104,6 +102,8 @@ func parseEvent(data []byte, repo, sha, name string) (event, int, error) {
 	return e, number, nil
 }
 
+// evaluate requires a complete, error-free association between the current PR,
+// its queue entry, the base commit and the exact synthetic Git ref.
 func evaluate(data []byte, e event, number int) (receipt, error) {
 	var r response
 	if err := json.Unmarshal(data, &r); err != nil {
@@ -159,6 +159,32 @@ func command(ctx context.Context, workspace, name string, args ...string) ([]byt
 // The same query ties the PR entry to its queue and the actual synthetic ref.
 const query = `query($number:Int!,$ref:String!){repository(owner:"devantler-tech",name:"platform"){nameWithOwner ref(qualifiedName:$ref){target{oid}} mergeQueue(branch:"main"){id} pullRequest(number:$number){number state baseRefName headRefOid isInMergeQueue mergeQueueEntry{id enqueuedAt headCommit{oid} baseCommit{oid} mergeQueue{id} pullRequest{number headRefOid}}}}}`
 
+// readQueue retries failed transport at most three times within the existing
+// deadline. A returned witness is evaluated once; refusals are never retried.
+func readQueue(ctx context.Context, workspace string, number int, ref string) ([]byte, error) {
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		var data []byte
+		data, err = command(ctx, workspace, "gh", "api", "--hostname", "github.com", "graphql", "-f", "query="+query, "-F", "number="+strconv.Itoa(number), "-f", "ref="+ref)
+		if err == nil {
+			return data, nil
+		}
+		if attempt == 2 || ctx.Err() != nil {
+			break
+		}
+		timer := time.NewTimer(time.Duration(attempt+1) * 200 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, errors.New("queue read deadline expired")
+		case <-timer.C:
+		}
+	}
+	return nil, err
+}
+
+// verify captures the run's initial source identity or rechecks that receipt.
+// It does not infer a historical source head from the event or commit ancestry.
 func verify(mode string, stdout io.Writer) error {
 	if mode != "capture" && mode != "check" {
 		return errors.New("usage: verify-merge-group-queued <capture|check>")
@@ -196,7 +222,7 @@ func verify(mode string, stdout io.Writer) error {
 	if mode == "check" && os.Getenv("QUEUE_RECEIPT") == "" {
 		return errors.New("initial queue receipt is missing")
 	}
-	data, err = command(ctx, workspace, "gh", "api", "--hostname", "github.com", "graphql", "-f", "query="+query, "-F", "number="+strconv.Itoa(number), "-f", "ref="+e.Group.HeadRef)
+	data, err = readQueue(ctx, workspace, number, e.Group.HeadRef)
 	if err != nil {
 		return err
 	}
@@ -228,6 +254,7 @@ func verify(mode string, stdout io.Writer) error {
 	return err
 }
 
+// main preserves refusal as a failing step so production access cannot follow it.
 func main() {
 	if len(os.Args) != 2 {
 		fmt.Fprintln(os.Stderr, "usage: verify-merge-group-queued <capture|check>")

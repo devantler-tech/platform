@@ -107,6 +107,7 @@ func validateQueuePreflight(data []byte) error {
 	return nil
 }
 
+// TestQueuePreflightWiringMutations prevents skipped, suppressed or reordered gates.
 func TestQueuePreflightWiringMutations(t *testing.T) {
 	data, err := os.ReadFile("../../.github/workflows/ci.yaml")
 	if err != nil {
@@ -139,4 +140,5 @@ func TestQueuePreflightWiringMutations(t *testing.T) {
 
 type errQueueContract string
 
+// Error returns the rejected workflow invariant without raw provider data.
 func (e errQueueContract) Error() string { return string(e) }
