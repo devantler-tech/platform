@@ -164,7 +164,14 @@ func verifyFoldInputs(version string, resolve func(version string) (map[string]s
 
 // resolveFoldInputs reads the object ID of every fold input at the release tag
 // of version from repository. It fetches the tagged commit's trees only.
-func resolveFoldInputs(repository, version string) (ids map[string]string, resultErr error) {
+func resolveFoldInputs(repository, version string) (map[string]string, error) {
+	return resolveFoldInputsWithCleanup(repository, version, os.RemoveAll)
+}
+
+// resolveFoldInputsWithCleanup binds source acceptance to removing its disposable
+// checkout. The filesystem operation is supplied separately so removal failures
+// can be exercised without depending on the process's filesystem privileges.
+func resolveFoldInputsWithCleanup(repository, version string, remove func(string) error) (ids map[string]string, resultErr error) {
 	if !releaseVersion.MatchString(version) {
 		return nil, fmt.Errorf("%q is not a release version", version)
 	}
@@ -173,7 +180,7 @@ func resolveFoldInputs(repository, version string) (ids map[string]string, resul
 		return nil, err
 	}
 	defer func() {
-		if err := os.RemoveAll(dir); err != nil {
+		if err := remove(dir); err != nil {
 			ids = nil
 			resultErr = errors.Join(resultErr, fmt.Errorf("remove temporary source checkout: %w", err))
 		}

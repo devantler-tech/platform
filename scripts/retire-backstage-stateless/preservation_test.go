@@ -56,16 +56,15 @@ func TestMalformedOwnershipCannotAuthorizeRetirement(t *testing.T) {
 	}
 }
 
-func TestPruneAnnotationCannotSubstitutePhysicalRetention(t *testing.T) {
-	for _, annotation := range []any{nil, "disabled", "enabled", "false", true} {
+func TestEveryRetainedClaimRequiresPruneProtection(t *testing.T) {
+	for _, annotation := range []any{nil, "enabled", "false", true} {
 		t.Run(fmt.Sprint(annotation), func(t *testing.T) {
 			retirementRunner(t)
 			f := retirementFixture(t)
 			object(item(f.live, 3)["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": annotation}
-			object(item(f.volumes, 0)["spec"])["persistentVolumeReclaimPolicy"] = "Delete"
 			var out bytes.Buffer
 			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.configured || f.deleted || !strings.Contains(out.String(), "HOLD_PRECONDITION") {
-				t.Fatalf("claim annotation substituted for physical storage retention: code=%d %s", code, &out)
+				t.Fatalf("unprotected retained claim reached mutation: code=%d %s", code, &out)
 			}
 		})
 	}

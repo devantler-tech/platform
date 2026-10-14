@@ -25,7 +25,6 @@ var workflowPinFixtures = []string{
 	".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml",
 	".github/workflows/validate-main.yaml", ".github/workflows/dr-rebuild.yaml",
 	".github/workflows/validate-image-verifier-liveness.yaml", ".github/workflows/prove-scoped-package-access.yaml",
-	".github/workflows/protect-backstage-storage.yaml",
 }
 
 func writeWorkflowPins(t *testing.T, version string) {
@@ -644,43 +643,60 @@ func TestResolveFoldInputsReadsTheTaggedSource(t *testing.T) {
 	}
 }
 
-func TestSourceCleanupFailureCannotProduceAcceptedFoldInputs(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("permission-denied cleanup requires an unprivileged process")
-	}
-	repository, _ := sourceRepository(t)
-	parent, bin := t.TempDir(), t.TempDir()
-	realGit, err := exec.LookPath("git")
-	if err != nil {
+// TestResolveFoldInputsRejectsCleanupFailure proves cleanup cannot leave an accepted source result.
+func TestResolveFoldInputsRejectsCleanupFailure(t *testing.T) {
+	repository, git := sourceRepository(t)
+	if err := os.Remove(filepath.Join(repository, "go.sum")); err != nil {
 		t.Fatal(err)
 	}
-	// Fetch and all object reads use real git. Only the disposable checkout's
-	// cleanup is made to fail by a directory this process cannot unlink.
-	script := "#!/bin/sh\n'" + realGit + "' \"$@\"\nstatus=$?\nif [ \"$3\" = ls-tree ] && [ ! -d \"$2/cleanup-blocker\" ]; then\n mkdir \"$2/cleanup-blocker\"\n touch \"$2/cleanup-blocker/file\"\n chmod 000 \"$2/cleanup-blocker\"\nfi\nexit \"$status\"\n"
-	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0700); err != nil {
-		t.Fatal(err)
+	git("commit", "--quiet", "--all", "-m", "missing source input")
+	git("tag", "v1.2.4")
+	cleanupErr := errors.New("injected source cleanup failure")
+	for _, tc := range []struct {
+		name, version, sourceError string
+	}{
+		{"valid source", "1.2.3", ""},
+		{"unread source", "1.2.4", "has no go.sum"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ids, err := resolveFoldInputsWithCleanup(repository, tc.version, func(dir string) error {
+				t.Cleanup(func() {
+					if cleanup := os.RemoveAll(dir); cleanup != nil {
+						t.Error(cleanup)
+					}
+				})
+				return cleanupErr
+			})
+			if ids != nil || !errors.Is(err, cleanupErr) || !strings.Contains(err.Error(), tc.sourceError) {
+				t.Fatalf("cleanup failure produced accepted source identities or lost an error: %d identities, %v", len(ids), err)
+			}
+		})
 	}
+}
+
+// TestResolveFoldInputsRemovesItsCheckout checks real removal on successful and failed reads.
+func TestResolveFoldInputsRemovesItsCheckout(t *testing.T) {
+	repository, git := sourceRepository(t)
+	parent := t.TempDir()
 	t.Setenv("TMPDIR", parent)
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	t.Cleanup(func() {
-		entries, err := os.ReadDir(parent)
-		if err != nil {
-			t.Error(err)
-			return
+	want := git("rev-parse", "v1.2.3:go.mod")
+	if err := os.Remove(filepath.Join(repository, "go.sum")); err != nil {
+		t.Fatal(err)
+	}
+	git("commit", "--quiet", "--all", "-m", "missing source input")
+	git("tag", "v1.2.4")
+	for _, version := range []string{"1.2.3", "1.2.4"} {
+		ids, err := resolveFoldInputs(repository, version)
+		if version == "1.2.3" && (err != nil || ids["go.mod"] != want || len(ids) != 6) {
+			t.Fatalf("valid source lost accepted identities: %v, %v", ids, err)
 		}
-		for _, entry := range entries {
-			path := filepath.Join(parent, entry.Name())
-			if err := os.Chmod(filepath.Join(path, "cleanup-blocker"), 0700); err != nil {
-				t.Error(err)
-			}
-			if err := os.RemoveAll(path); err != nil {
-				t.Error(err)
-			}
+		if version == "1.2.4" && (err == nil || ids != nil) {
+			t.Fatalf("unread source was accepted: %v, %v", ids, err)
 		}
-	})
-	ids, err := resolveFoldInputs(repository, "1.2.3")
-	if err == nil || !strings.Contains(err.Error(), "remove temporary source checkout") || len(ids) != 0 {
-		t.Fatalf("cleanup failure produced accepted inputs: %d identities, %v", len(ids), err)
+		entries, readErr := os.ReadDir(parent)
+		if readErr != nil || len(entries) != 0 {
+			t.Fatalf("temporary source checkout remains after reading %s: %d entries, %v", version, len(entries), readErr)
+		}
 	}
 }
 

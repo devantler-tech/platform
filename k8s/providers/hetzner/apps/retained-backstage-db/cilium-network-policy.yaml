@@ -1,7 +1,7 @@
 # Retirement removes public access, but persistence protection retains the CNPG
 # Cluster until #4266 completes its separately reviewed data-retention cleanup.
-# Keep only the retained database's control and replication paths operable in
-# that interval. Remove this policy when the retained Cluster is retired.
+# Keep only database control, replication and monitoring operable in that
+# interval. Remove this policy when the retained Cluster is retired.
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
@@ -16,6 +16,16 @@ spec:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: backstage
             cnpg.io/cluster: backstage-db
+      toPorts:
+        - ports:
+            - port: "5432"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: observability
+            app.kubernetes.io/managed-by: coroot-operator
+            app.kubernetes.io/part-of: coroot
+            app.kubernetes.io/component: coroot-cluster-agent
       toPorts:
         - ports:
             - port: "5432"

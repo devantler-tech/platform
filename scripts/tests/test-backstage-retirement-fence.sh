@@ -6,7 +6,10 @@ cd "$repo_root"
 policy=k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
 scratch=$(mktemp -d)
 trap 'if [[ "${PORTAL_KEEP_NATIVE_FIXTURES:-0}" != 1 ]]; then rm -rf "$scratch"; fi' EXIT
-[[ -f "$policy" ]] || { printf 'Backstage retirement admission: missing policy\n' >&2; exit 1; }
+[[ -f "$policy" ]] || {
+  printf 'Backstage retirement admission: missing policy\n' >&2
+  exit 1
+}
 record=$(jq -cn '{version:1,phase:"fenced",namespaceUID:"ns-1",sourceSHA:("a"*40),revision:("latest@sha256:"+("b"*64)),run:"42",latestHistoryUID:"history-uid",cnpgWriterUID:"cnpg-controller-uid",helmWriterUID:"helm-writer-uid",
   targets:[{kind:"Deployment",name:"backstage",uid:"deployment-uid"},{kind:"Service",name:"backstage",uid:"service-uid"},{kind:"ConfigMap",name:"backstage-app-config",uid:"configmap-uid"},{kind:"HelmRelease",name:"backstage",uid:"release-uid"},{kind:"HelmChart",name:"backstage-backstage",uid:"chart-uid"}],
   retiringUIDs:["deployment-uid","service-uid","configmap-uid","release-uid","chart-uid","rs-uid","pod-uid"],
@@ -36,12 +39,12 @@ run_case() {
     old_evidence($new[0])' "$dir/old.json" >"$dir/effective-old.json"
   jq -n --arg op "$operation" --slurpfile old "$dir/effective-old.json" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"Values",metadata:{name:"retirement"},globalValues:{"request.operation":$op,"request.oldObject":$old[0]}}' >"$dir/values.json"
   jq -n --arg user "$user" --arg uid "$writer_uid" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"UserInfo",metadata:{name:"retirement"},userInfo:{username:$user,uid:$uid,groups:(if $user=="admin" then ["system:masters"] else ["system:serviceaccounts:flux-system"] end)}}' >"$dir/userinfo.json"
-  case "$journal" in 403|404|500) code=$journal ;; esac
+  case "$journal" in 403 | 404 | 500) code=$journal ;; esac
   jq -n --arg journal "$journal" '{apiVersion:"v1",kind:"NamespaceList",metadata:{},items:(if $journal=="absent" then [] else [{apiVersion:"v1",kind:"Namespace",metadata:{name:"backstage",uid:"ns-1",annotations:(if $journal=="unfenced" then {} else {"platform.devantler.tech/backstage-retirement":$journal} end)}}] end)}' >"$dir/namespace.json"
   jq -n --slurpfile resource "$dir/resource.json" --slurpfile ns "$dir/namespace.json" --arg rule "$rule" --arg op "$operation" --arg expected "$expected" --argjson code "$code" '{apiVersion:"cli.kyverno.io/v1alpha1",kind:"Test",metadata:{name:"retirement"},policies:["policy.yaml"],resources:["resource.json"],variables:"values.json",userinfo:"userinfo.json",
     apiCallResponses:[{urlPath:"/api/v1/namespaces?fieldSelector=metadata.name%3Dbackstage",method:"GET",response:{statusCode:$code,body:$ns[0]}}],
     results:[{kind:$resource[0].kind,policy:"restrict-backstage-retirement",rule:$rule,resources:[(($resource[0].metadata.namespace // "")+"/"+$resource[0].metadata.name|ltrimstr("/"))],operation:$op,result:$expected}]}' >"$dir/kyverno-test.yaml"
-  cases=$((cases+1))
+  cases=$((cases + 1))
 }
 run_case captured-delete fence-native-targets DELETE "$deployment" "$deployment" pass
 run_case replacement-delete fence-native-targets DELETE "$deployment | .metadata.uid=\"replacement\"" "$deployment | .metadata.uid=\"replacement\"" fail
@@ -62,6 +65,17 @@ run_case retained-data-change preserve-retained-identities UPDATE "$secret | .da
 run_case retained-noop preserve-retained-identities UPDATE "$secret" "$secret" pass
 run_case retained-string-data-change preserve-retained-identities UPDATE "$secret | .stringData={value:\"changed\"}" "$secret" fail
 run_case retained-secret-immutable-change preserve-retained-identities UPDATE "$secret | .immutable=true" "$secret" fail
+record=$(jq -c '.retained += [{kind:"Password",name:"monitor-generator",uid:"generator-uid"},{kind:"ExternalSecret",name:"monitor-dependency",uid:"dependency-uid"}]' <<<"$record")
+generator='{apiVersion:"generators.external-secrets.io/v1alpha1",kind:"Password",metadata:{name:"monitor-generator",namespace:"backstage",uid:"generator-uid"},spec:{length:32}}'
+dependency='{apiVersion:"external-secrets.io/v1",kind:"ExternalSecret",metadata:{name:"monitor-dependency",namespace:"backstage",uid:"dependency-uid"},spec:{refreshPolicy:"CreatedOnce"}}'
+run_case monitor-generator-delete preserve-retained-identities DELETE "$generator" "$generator" fail
+run_case monitor-generator-recreate preserve-retained-identities CREATE "$generator" '{}' fail
+run_case monitor-generator-change preserve-retained-identities UPDATE "$generator | .spec.length=8" "$generator" fail
+run_case monitor-generator-noop preserve-retained-identities UPDATE "$generator" "$generator" pass
+run_case monitor-dependency-delete preserve-retained-identities DELETE "$dependency" "$dependency" fail
+run_case monitor-dependency-recreate preserve-retained-identities CREATE "$dependency" '{}' fail
+run_case monitor-dependency-change preserve-retained-identities UPDATE "$dependency | .spec.refreshPolicy=\"Periodic\"" "$dependency" fail
+run_case monitor-dependency-noop preserve-retained-identities UPDATE "$dependency" "$dependency" pass
 config='{apiVersion:"v1",kind:"ConfigMap",metadata:{name:"retained-settings",namespace:"backstage",uid:"settings-uid"},data:{setting:"SYNTHETIC"},binaryData:{setting:"U1lOVEhFVElD"}}'
 run_case retained-binary-data-change preserve-retained-identities UPDATE "$config | .binaryData.setting=\"Y2hhbmdlZA==\"" "$config" fail
 run_case retained-config-immutable-change preserve-retained-identities UPDATE "$config | .immutable=true" "$config" fail
@@ -135,6 +149,9 @@ consumer='{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:{n
 run_case new-chart-consumer fence-chart-consumers CREATE "$consumer" '{}' fail
 run_case foreign-namespace-consumer fence-chart-consumers CREATE "$consumer | .metadata.namespace=\"other\"" '{}' fail
 run_case neighboring-chart-consumer fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' skip
+run_case real-consumer-failed-lookup fence-chart-consumers CREATE "$consumer" '{}' error 500
+run_case real-consumer-denied-lookup fence-chart-consumers CREATE "$consumer" '{}' error 403
+run_case neighboring-chart-failed-lookup fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' error 500
 run_case unbound-neighboring-chart fence-chart-consumers CREATE "$consumer | .spec.chartRef.name=\"other\"" '{}' skip "$(jq -c '.version=2' <<<"$record")"
 run_case unbound-neighboring-namespace fence-chart-consumers CREATE "$consumer | .metadata.namespace=\"other\" | .spec.chartRef.name=\"other\"" '{}' skip "$(jq -c '.version=2' <<<"$record")"
 run_case unbound-real-chart-consumer fence-chart-consumers CREATE "$consumer" '{}' fail "$(jq -c '.version=2' <<<"$record")"

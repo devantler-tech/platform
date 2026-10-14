@@ -47,6 +47,11 @@ The check fails, and names what it could not accept, when:
   object expected. A failed or partial read never passes;
 - the pins are missing, malformed, not explicit versions, or disagree.
 
+The tagged-source read also fails if its disposable checkout cannot be removed.
+That failure clears all accepted source identities and preserves any earlier
+source-read error. Regression controls keep the real Git reader and inject only
+the removal failure, so this refusal is exercised under any process privileges.
+
 The check runs in the unconditional changes job and needs network access to
 `github.com`; each fetch has a
 one-minute limit and a failed one is retried twice before the check fails. The fold command itself (three arguments) stays offline: it

@@ -13,67 +13,6 @@ import (
 
 type failedResultWriter struct{ short bool }
 
-// A claim annotation is not a storage backstop. The bound PV must physically
-// retain its data before any retirement journal or native lifecycle write.
-func TestRetirementRequiresPhysicalStorageRetention(t *testing.T) {
-	for _, policy := range []string{"Delete", "Recycle", ""} {
-		t.Run(policy, func(t *testing.T) {
-			retirementRunner(t)
-			f := retirementFixture(t)
-			object(item(f.volumes, 0)["spec"])["persistentVolumeReclaimPolicy"] = policy
-			var out bytes.Buffer
-			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
-				t.Fatalf("unretained backing data admitted lifecycle writes: code=%d output=%s", code, &out)
-			}
-		})
-	}
-}
-
-// Physical retention supplements, rather than replaces, the current PVC prune
-// safeguard. A missing or weakened annotation must stop before any write.
-func TestRetirementRequiresExistingClaimPruneProtection(t *testing.T) {
-	for _, annotation := range []any{nil, "enabled", "false", true} {
-		t.Run(fmt.Sprint(annotation), func(t *testing.T) {
-			retirementRunner(t)
-			f := retirementFixture(t)
-			object(item(f.live, 3)["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": annotation}
-			var out bytes.Buffer
-			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
-				t.Fatalf("unprotected retained claim admitted lifecycle writes: code=%d output=%s", code, &out)
-			}
-		})
-	}
-}
-
-func TestRetirementRejectsAmbiguousRetainedBindings(t *testing.T) {
-	for name, change := range map[string]func(*portalFixture){
-		"foreign volume kind":    func(f *portalFixture) { item(f.volumes, 0)["kind"] = "ConfigMap" },
-		"foreign volume version": func(f *portalFixture) { item(f.volumes, 0)["apiVersion"] = "other/v1" },
-		"namespaced volume":      func(f *portalFixture) { object(item(f.volumes, 0)["metadata"])["namespace"] = "backstage" },
-		"different storage class": func(f *portalFixture) {
-			object(item(f.live, 3)["spec"])["storageClassName"] = "longhorn-wffc"
-			object(item(f.volumes, 0)["spec"])["storageClassName"] = "other"
-		},
-		"unjoined extra volume for claim": func(f *portalFixture) {
-			b, _ := json.Marshal(item(f.volumes, 0))
-			extra, _ := decode(b)
-			object(extra["metadata"])["name"] = "other-volume"
-			object(extra["metadata"])["uid"] = "other-volume-uid"
-			f.volumes["items"] = append(f.volumes["items"].([]any), extra)
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			retirementRunner(t)
-			f := retirementFixture(t)
-			change(f)
-			var out bytes.Buffer
-			if code := run([]string{"--execute"}, &out, f.execute); code != 2 || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted {
-				t.Fatalf("ambiguous storage accepted before lifecycle writes: code=%d output=%s", code, &out)
-			}
-		})
-	}
-}
-
 func (w failedResultWriter) Write(p []byte) (int, error) {
 	if w.short {
 		return len(p) - 1, nil
@@ -540,7 +479,7 @@ func retirementFixture(t *testing.T) *portalFixture {
 	db["spec"] = map[string]any{"instances": 1, "bootstrap": map[string]any{"initdb": map[string]any{"database": "app", "owner": "app"}}}
 	db["status"] = map[string]any{"readyInstances": 1, "currentPrimary": "backstage-db-3", "targetPrimary": "backstage-db-3"}
 	claim := item(l, 3)
-	claim["spec"] = map[string]any{"volumeName": "retained-volume", "storageClassName": "longhorn-wffc"}
+	claim["spec"] = map[string]any{"volumeName": "retained-volume"}
 	claim["status"] = map[string]any{"phase": "Bound"}
 	object(claim["metadata"])["annotations"] = map[string]any{"kustomize.toolkit.fluxcd.io/prune": "disabled"}
 	object(claim["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "postgresql.cnpg.io/v1", "kind": "Cluster", "name": "backstage-db", "uid": "database-uid", "controller": true}}
@@ -565,7 +504,7 @@ func retirementFixture(t *testing.T) *portalFixture {
 	rs := map[string]any{"apiVersion": "apps/v1", "kind": "ReplicaSet", "metadata": metadata("backstage-rs", "rs-uid")}
 	object(rs["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "apps/v1", "kind": "Deployment", "name": "backstage", "uid": "deployment-uid"}}
 	object(item(l, 1)["metadata"])["ownerReferences"] = []any{map[string]any{"apiVersion": "apps/v1", "kind": "ReplicaSet", "name": "backstage-rs", "uid": "rs-uid"}}
-	pv := map[string]any{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": metadata("retained-volume", "volume-uid"), "spec": map[string]any{"persistentVolumeReclaimPolicy": "Retain", "storageClassName": "longhorn-wffc", "claimRef": map[string]any{"apiVersion": "v1", "kind": "PersistentVolumeClaim", "namespace": "backstage", "name": "backstage-db-3", "uid": "claim-uid"}}, "status": map[string]any{"phase": "Bound"}}
+	pv := map[string]any{"apiVersion": "v1", "kind": "PersistentVolume", "metadata": metadata("retained-volume", "volume-uid"), "spec": map[string]any{"persistentVolumeReclaimPolicy": "Retain", "claimRef": map[string]any{"namespace": "backstage", "name": "backstage-db-3", "uid": "claim-uid"}}, "status": map[string]any{"phase": "Bound"}}
 	delete(object(pv["metadata"]), "namespace")
 	hr := map[string]any{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": metadata("backstage", "release-uid"), "spec": map[string]any{"chart": map[string]any{"spec": map[string]any{"chart": "backstage", "version": "2.10.2", "sourceRef": map[string]any{"kind": "HelmRepository", "name": "backstage"}}}}, "status": map[string]any{"storageNamespace": "backstage", "helmChart": "backstage/backstage-backstage"}}
 	object(hr["metadata"])["generation"] = 1

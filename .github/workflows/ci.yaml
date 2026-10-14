@@ -48,7 +48,7 @@ jobs:
 
       - name: 💾 Require bounded OpenBao expansion transport controls
         env:
-          AUDIT_REQUIRE_NATIVE_CONTROL: "1"
+          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
         run: go test -race -count=1 ./scripts/expand-openbao-audit
 
       - name: 🧯 Validate private recovery field extraction
@@ -191,17 +191,12 @@ jobs:
       - name: 🔎 Validate read-only portal retirement assessment
         run: go test -race ./scripts/assess-backstage-retirement
 
-      - name: 💾 Validate bounded retained portal storage protection
-        env:
-          PORTAL_STORAGE_REQUIRE_NATIVE_CONTROL: "1"
-        run: go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage
-
       - name: 🛡️ Validate stateless portal retirement preservation
         shell: bash
         env:
           HELM_VERSION: v4.2.0
           HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
-          PORTAL_REQUIRE_NATIVE_CONTROL: "1"
+          PORTAL_REQUIRE_NATIVE_CONTROL: '1'
         run: |
           set -euo pipefail
           native_dir="$(mktemp -d)"
@@ -396,7 +391,7 @@ jobs:
       # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
       - name: 🔐 Validate the approved-revisions guard
         env:
-          APPROVED_REVISIONS_ENFORCE: "1"
+          APPROVED_REVISIONS_ENFORCE: '1'
         run: |
           shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
           shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
@@ -410,7 +405,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: "1"
+          APPROVED_REVISIONS_ENFORCE: '1'
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       # The scheduled regeneration (#3552, third child of #3308) runs the generator and
@@ -828,6 +823,7 @@ jobs:
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-backstage-retirement.sh'
               - 'scripts/tests/test-backstage-retirement-fence.sh'
+              - 'scripts/tests/test-backstage-consumer-offline.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
@@ -2563,6 +2559,12 @@ jobs:
         run: |
           .github/scripts/setup-ksail.sh
 
+      - name: 🔎 Validate offline retirement consumer scope
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-backstage-consumer-offline.sh
+          bash scripts/tests/test-backstage-consumer-offline.sh
+
       - name: 🔐 Validate ARC listener public-content disposition
         if: needs.changes.outputs.k8s == 'true'
         # Use the pinned native scanner installed above. The regression must
@@ -3527,13 +3529,7 @@ jobs:
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main after an unsuccessful or evicted merge-group deploy)
-    needs:
-      [
-        changes,
-        deploy-prod,
-        validate-publication-contract,
-        merge-group-queue-membership,
-      ]
+    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected

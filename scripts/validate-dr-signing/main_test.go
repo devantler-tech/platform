@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 func repoFile(t *testing.T, rel string) string {
@@ -1625,6 +1623,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`
+		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
 	)
 
 	for name, arm := range map[string]struct {
@@ -1702,7 +1701,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		},
 		"heal-prod-on-failure no longer requires the gate job": {
 			func(s string) string {
-				return removeTestJobDependency(s, "heal-prod-on-failure", "validate-publication-contract")
+				return strings.Replace(s, healNeeds, "    needs: [changes, deploy-prod, merge-group-queue-membership]", 1)
 			},
 			"does not require validate-publication-contract",
 		},
@@ -1762,45 +1761,6 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 			}
 		})
 	}
-}
-
-// Edit the actual dependency, not a formatting-specific line. The causal
-// changed-nothing assertion above still rejects a missing or ambiguous target.
-func removeTestJobDependency(source, jobName, dependency string) string {
-	var document map[string]any
-	if yaml.Unmarshal([]byte(source), &document) != nil {
-		return source
-	}
-	jobs, ok := document["jobs"].(map[string]any)
-	if !ok {
-		return source
-	}
-	job, ok := jobs[jobName].(map[string]any)
-	if !ok {
-		return source
-	}
-	needs, ok := job["needs"].([]any)
-	if !ok {
-		return source
-	}
-	remaining := make([]any, 0, len(needs))
-	removed := 0
-	for _, need := range needs {
-		if need == dependency {
-			removed++
-			continue
-		}
-		remaining = append(remaining, need)
-	}
-	if removed != 1 {
-		return source
-	}
-	job["needs"] = remaining
-	b, err := yaml.Marshal(document)
-	if err != nil {
-		return source
-	}
-	return string(b)
 }
 
 // TestPublicationActionIgnoresNonExecutableText pins the half of the contract

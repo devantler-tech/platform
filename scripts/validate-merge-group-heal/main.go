@@ -79,14 +79,20 @@ func validateWorkflowContract(workflow string) error {
 	if !ok {
 		return errors.New("missing heal-prod-on-failure job")
 	}
-	if !exactJobNeeds(workflow, "heal-prod-on-failure", []string{"changes", "deploy-prod", "validate-publication-contract", "merge-group-queue-membership"}) {
-		return errors.New("heal job is missing deploy dependencies")
-	}
 
 	requirements := []struct {
 		line        string
 		description string
 	}{
+		// validate-publication-contract is required by the DR signing contract:
+		// every ci.yaml job that reaches production must WAIT for the publication
+		// gate, and this job re-deploys main's artifact. Pinned as an exact line
+		// here so the two contracts cannot drift into asserting different
+		// dependency sets over the same job.
+		{
+			line:        "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]",
+			description: "deploy dependencies",
+		},
 		{line: "      group: prod-deploy", description: "shared production lock"},
 		{line: "      cancel-in-progress: false", description: "non-preempting production lock"},
 		{line: "          ref: main", description: "current-main checkout"},
@@ -133,36 +139,6 @@ func validateWorkflowContract(workflow string) error {
 	}
 
 	return validateOrphanCheck(healJob)
-}
-
-// Dependency sets are YAML data: equivalent flow/block formatting and ordering
-// must not break the recovery gate. Missing, duplicate or extra entries still fail.
-func exactJobNeeds(workflow, key string, required []string) bool {
-	var parsed struct {
-		Jobs map[string]yaml.Node `yaml:"jobs"`
-	}
-	if yaml.Unmarshal([]byte(workflow), &parsed) != nil {
-		return false
-	}
-	node, ok := parsed.Jobs[key]
-	var job struct {
-		Needs []string `yaml:"needs"`
-	}
-	// Decode only the protected job. Other jobs may legally use scalar needs.
-	if !ok || node.Decode(&job) != nil || len(job.Needs) != len(required) {
-		return false
-	}
-	wanted := map[string]bool{}
-	for _, name := range required {
-		wanted[name] = true
-	}
-	for _, name := range job.Needs {
-		if !wanted[name] {
-			return false
-		}
-		delete(wanted, name)
-	}
-	return len(wanted) == 0
 }
 
 // validateOrphanCheck pins the step that fails the heal when an object the
@@ -245,13 +221,14 @@ func validateMembershipJob(workflow string) error {
 	if !ok {
 		return errors.New("missing merge-group-queue-membership job")
 	}
-	if !exactJobNeeds(workflow, "merge-group-queue-membership", []string{"changes", "deploy-prod"}) {
-		return errors.New("queue-membership job is missing deploy dependency")
-	}
 	jobRequirements := []struct {
 		line        string
 		description string
 	}{
+		{
+			line:        "    needs: [changes, deploy-prod]",
+			description: "deploy dependency",
+		},
 		{
 			line: "    if: github.event_name == 'merge_group' && " +
 				"needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'",

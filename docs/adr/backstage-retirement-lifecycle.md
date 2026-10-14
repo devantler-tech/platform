@@ -35,31 +35,19 @@ Kyverno does not decode gzip. Normalized decoded content is independently checke
 during readback, not represented as a payload-validation admission guarantee.
 
 Retained owner-reference checks cover all captured owners and descendants,
-including volumes. Before lifecycle writes, every retained claim must join its
-actual Bound volume reciprocally by name, namespace, UID and storage class, and
-that volume must physically have `Retain`. Claim annotations are not evidence
-of this storage backstop. Reject incomplete or duplicate censuses and extra
-volumes referring to the retained namespace. Do not freeze all database Pod deletion: CloudNativePG must remain able
+including volumes. Retained claims require prune protection before lifecycle
+writes. Do not freeze all database Pod deletion: CloudNativePG must remain able
 to replace a failed instance. No guarantee depends on Kyverno's filtered
 ReplicaSet kinds. New retained data retirement is a separate reviewed operation.
 
-The separate `protect-backstage-storage.yaml` workflow establishes this bounded
-prerequisite under #4819. It runs only as a confirmed, first-attempt protected
-main dispatch, joined to a successful normal deployment of that source and the
-live accepted artifact revision. It changes only `Delete` to `Retain` on the
-reciprocally bound portal database volumes. Each write tests the exact volume
-UID, resourceVersion and full specification. Claims, storage handles, database
-configuration and running instances are preserved; existing Retain is a no-op.
-Separated observations precede and follow execution, with fresh source and
-complete identity checks before each patch. A stale or ambiguous patch stops
-without retry or reversal: protection may already have increased.
-
-Storage protection must precede installation of the retirement journal, whose
-full-specification volume fence correctly denies even a retention-policy edit.
-The storage workflow refuses any existing journal; it never clears or adopts
-one. Successful storage protection does not retire the portal, complete the
-general storage migration in #4441, or remove global prune protection. Native
-stateless cleanup remains a separate confirmed operation after readback.
+Retaining the database also retains its dedicated monitoring dependency and the
+scrape-only network path, not the retired portal's access. External Secrets
+creates the monitoring credential with `CreatedOnce`; the existing CNPG managed
+role and Coroot both consume that same Secret. This prevents periodic generation,
+not rotation after deleting and recreating the ExternalSecret. Restore and verify
+this dependency before installing a retirement journal; the fixed credential
+profile does not permit a later password change. Capture the Password generator
+alongside the ExternalSecret and require its own versioned admission denial.
 
 Do not turn the durable retained-data fence into a controller freeze. The
 protected capture binds generated-resource profiles to the actual producer
