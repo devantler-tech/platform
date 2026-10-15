@@ -97,9 +97,9 @@ data:
       Network:
         icon: si-cloudflare
       # Devices in the home: heating and other IoT. Network gear stays under
-      # Network, because a UniFi site is not tied to one physical location. The
-      # house is in the group's name, so it takes no icon of its own.
-      Home 🏡: {}
+      # Network, because a UniFi site is not tied to one physical location.
+      Home:
+        icon: mdi-home-automation
       Finance:
         icon: mdi-finance
       Analytics:
@@ -178,7 +178,7 @@ data:
     # Devices in the home. The link carries no installation number on purpose:
     # this repository is public, and StokerCloud shows a boiler's data to anyone
     # who knows its number. Log in there instead.
-    - Home 🏡:
+    - Home:
         - StokerCloud:
             icon: mdi-water-boiler
             href: https://stokercloud.dk/v3/

@@ -90,7 +90,7 @@ spec:
           gethomepage.dev/group to a service group declared in the Homepage
           layout (k8s/bases/apps/homepage/config-map.yaml): Internal Developer
           Platform, Kubernetes, Observability, Security, Diagnostics, Device
-          Management, Infrastructure as Code, Cloud, Network, Home 🏡, Finance,
+          Management, Infrastructure as Code, Cloud, Network, Home, Finance,
           Analytics, Business, Clients, or Personal.
           An undeclared group still renders,
           but sorts below every declared group with a generic icon. Bookmark
@@ -111,7 +111,7 @@ spec:
                   - Infrastructure as Code
                   - Cloud
                   - Network
-                  - Home 🏡
+                  - Home
                   - Finance
                   - Analytics
                   - Business
