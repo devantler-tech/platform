@@ -315,6 +315,15 @@
       "automerge": false
     },
     {
+      "description": "This test-only parser witnesses the verified Coroot node-agent source, not the latest library. Keep proposals visible, but require the consumer regression and a verified deployed-source refresh before adopting a different parser (platform#4934).",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/coroot/logparser"],
+      "automerge": false,
+      "prBodyNotes": [
+        "This is a test-witness update, not a production parser upgrade. Reverify the deployed node-agent source and refresh the consumer binding in the same reviewed change; the CRI severity tests reject an independently updated parser."
+      ]
+    },
+    {
       "description": "The feature-flag validator (scripts/validate-feature-flags) stays on the v2 YAML parser: v2 resolves plain on/off/yes/no as booleans exactly as Kubernetes does, while v3 reads them as strings and accepts a definition the cluster would decode differently (platform#4496). v2 and v3 are separately maintained module paths, and sigs.k8s.io/yaml itself depends on v2, so the major proposal is not an upgrade. Patch and minor updates of the v2 line stay enabled.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["go.yaml.in/yaml/v2"],
