@@ -47,12 +47,13 @@ func TestDeclaredRaftConfigHasNoUnsupportedFields(t *testing.T) {
 		t.Fatal("declared Raft configuration is missing")
 	}
 	for _, tc := range []struct {
-		name    string
-		extra   string
-		warning bool
+		name         string
+		extra        string
+		warningField string
 	}{
 		{name: "declared configuration"},
-		{name: "unknown field is still reported", extra: "\nsynthetic_unsupported_option = true\n", warning: true},
+		{name: "obsolete memory lock option is reported", extra: "\ndisable_mlock = true\n", warningField: "disable_mlock"},
+		{name: "unknown field is still reported", extra: "\nsynthetic_unsupported_option = true\n", warningField: "synthetic_unsupported_option"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -80,11 +81,11 @@ func TestDeclaredRaftConfigHasNoUnsupportedFields(t *testing.T) {
 				t.Fatalf("native configuration validation failed: %v\n%s", err, output)
 			}
 			warning := "unknown or unsupported field"
-			if tc.warning {
-				warning += " synthetic_unsupported_option"
+			if tc.warningField != "" {
+				warning += " " + tc.warningField
 			}
-			if got := strings.Contains(string(output), warning); got != tc.warning {
-				t.Errorf("unsupported-field warning = %t, want %t\n%s", got, tc.warning, output)
+			if got, want := strings.Contains(string(output), warning), tc.warningField != ""; got != want {
+				t.Errorf("unsupported-field warning = %t, want %t\n%s", got, want, output)
 			}
 		})
 	}
