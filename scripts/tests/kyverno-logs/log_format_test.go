@@ -114,6 +114,7 @@ type consumedLog struct {
 // consume exercises the deployed CRI decoder and parser callback, preserving fields.
 func consume(t *testing.T, body string) consumedLog {
 	t.Helper()
+	requireVerifiedConsumer(t)
 	entries := make(chan logparser.LogEntry, 1)
 	results := make(chan consumedLog, 1)
 	parser := logparser.NewParser(entries, logparser.CriDecoder{}, func(timestamp time.Time, level logparser.Level, _, message string, attributes map[string]string) {
