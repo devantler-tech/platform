@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -59,7 +60,7 @@ func TestCollectedNativeStatusBindsStoredChart(t *testing.T) {
 		if program != "helm" {
 			return f.execute(ctx, program, args...)
 		}
-		cmd := exec.CommandContext(ctx, bin, append(args, "--kubeconfig="+cfg)...)
+		cmd := exec.CommandContext(ctx, bin, append(args, "--kubeconfig", cfg)...)
 		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "KUBECONFIG=" + cfg, "HELM_DRIVER=secret", "HELM_CACHE_HOME=" + dir, "HELM_CONFIG_HOME=" + dir, "HELM_DATA_HOME=" + dir}
 		b, err := cmd.Output()
 		status, decodeErr := decode(b)
@@ -67,7 +68,8 @@ func TestCollectedNativeStatusBindsStoredChart(t *testing.T) {
 			api.mu.Lock()
 			defer api.mu.Unlock()
 			var stderr []byte
-			if exit, ok := err.(*exec.ExitError); ok {
+			var exit *exec.ExitError
+			if errors.As(err, &exit) {
 				stderr = exit.Stderr
 			}
 			t.Fatalf("synthetic native status unavailable: error=%v decodeError=%v chartPresent=%t stderr=%q requests=%v", err, decodeErr, status["chart"] != nil, stderr, api.requests)
@@ -93,6 +95,8 @@ func TestCollectedNativeStatusBindsStoredChart(t *testing.T) {
 	}
 }
 
+// A native-shaped status response must complete both opening samples without
+// creating a receipt, installing a fence or invoking any lifecycle write.
 func TestReadOnlyCheckAcceptsBoundChartFreeStatus(t *testing.T) {
 	checkRunner(t)
 	f := retirementFixture(t)
@@ -115,6 +119,8 @@ func TestReadOnlyCheckAcceptsBoundChartFreeStatus(t *testing.T) {
 	}
 }
 
+// Neither mode may borrow chart data from foreign or changed storage, including
+// when the first sample matched and the second observation loses its binding.
 func TestChartFreeStatusCannotBorrowUnboundOrChangedHistory(t *testing.T) {
 	for _, mode := range []string{"--check", "--execute"} {
 		for _, sample := range []int{1, 2} {
