@@ -211,10 +211,7 @@ check() {
   # the substitution early — measured, it captured the loop's source as data.
   # The validated approval reader includes a first publication before its
   # ordinary observed row exists, without granting unregistered consumers.
-  consumers="$(bash -c 'source "$1"; printf "%s" "$approved" | cut -f1 | sort -u' _ \
-    "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" || {
-    printf 'VIOLATION A10: approved consumer inventory is unresolved\n'; return 1;
-  }
+  consumers="$approved_consumer_inventory"
   missing=''
   leaked=''
   while IFS= read -r consumer; do
@@ -341,6 +338,10 @@ discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
 actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
+approved_consumer_inventory="$(bash -c 'source "$1"; printf "%s" "$approved" | cut -f1 | sort -u' _ \
+  "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" ||
+  fail 'approved consumer inventory is unresolved'
+readonly approved_consumer_inventory
 
 out="$(check "${workflow}")" || fail "the committed workflow violates its own contract: ${out}"
 [ "${out}" = 'ok' ] || fail "unexpected check output on the committed workflow: ${out}"
