@@ -931,51 +931,60 @@ func run(args []string, out io.Writer, execute command) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	if e.sourceCurrent(ctx) != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=source-opening")
 	}
 	b, err := execute(ctx, "go", "run", "./scripts/assess-backstage-retirement", "--live")
 	if err != nil || strings.TrimSpace(string(b)) != "PORTAL-FOOTPRINT=ASSESSED_STATELESS objects=3 dataRetirement=UNASSESSED mutation=NONE" {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=assessment")
 	}
 	first, err := e.collect(ctx)
 	if err == nil && field(first.namespace, "metadata", "annotations", fenceAnnotation) != nil {
 		return hold("HOLD_EXISTING_NATIVE_OPERATION")
 	}
-	if err != nil || e.eligible(first) != nil {
-		return hold("HOLD_PRECONDITION")
+	if err != nil {
+		return hold("HOLD_PRECONDITION stage=evidence-first")
+	}
+	if e.eligible(first) != nil {
+		return hold("HOLD_PRECONDITION stage=eligibility-first")
 	}
 	e.retiring, err = retiringIdentities(first)
 	if err != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=targets-first")
 	}
 	first.retiring = e.retiring
 	e.ownerUID = text(field(first.owner, "metadata", "uid"))
 	if _, err = execute(ctx, "sleep", "5"); err != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=sample-separation")
 	}
 	second, err := e.collect(ctx)
-	if err != nil || e.eligible(second) != nil || !sameRelease(first.release, second.release) || !reflect.DeepEqual(first.owner, second.owner) || !reflect.DeepEqual(first.chart, second.chart) {
-		return hold("HOLD_PRECONDITION")
+	if err != nil {
+		return hold("HOLD_PRECONDITION stage=evidence-second")
+	}
+	if e.eligible(second) != nil {
+		return hold("HOLD_PRECONDITION stage=eligibility-second")
+	}
+	if !sameRelease(first.release, second.release) || !reflect.DeepEqual(first.owner, second.owner) || !reflect.DeepEqual(first.chart, second.chart) {
+		return hold("HOLD_PRECONDITION stage=snapshot-second")
 	}
 	secondTargets, err := retiringIdentities(second)
 	if err != nil || !reflect.DeepEqual(e.retiring, secondTargets) {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=targets-second")
 	}
 	before, err := preserved(first)
 	if err != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=preservation-first")
 	}
 	again, err := preserved(second)
 	if err != nil || !reflect.DeepEqual(before, again) {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=preservation-second")
 	}
 	name := "backstage-retirement-" + e.runID
 	used, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", name, "--ignore-not-found", "--output=json")
 	if err != nil || used != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=journal-unused")
 	}
 	if e.sourceCurrent(ctx) != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=source-before-journal")
 	}
 	receipt := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": name, "namespace": "flux-system"}, "data": map[string]any{"source": e.sha, "revision": e.revision, "run": e.runID, "attempt": "1", "scope": "stateless-only", "releaseUID": field(second.owner, "metadata", "uid"), "chartUID": field(second.chart, "metadata", "uid"), "dataRetirement": "UNASSESSED"}}
 	created, err := e.write(ctx, receipt, "create", "-f", "REQUEST", "--output=json")
