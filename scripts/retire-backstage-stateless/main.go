@@ -964,7 +964,7 @@ func run(args []string, out io.Writer, execute command) int {
 		if errors.Is(err, errPreservation) {
 			return hold("HOLD_PRECONDITION stage=preservation-first")
 		}
-		return hold("HOLD_PRECONDITION stage=eligibility-first")
+		return hold("HOLD_PRECONDITION stage=eligibility-first category=" + eligibilityCategory(err))
 	}
 	e.retiring, err = retiringIdentities(first)
 	if err != nil {
@@ -983,7 +983,7 @@ func run(args []string, out io.Writer, execute command) int {
 		if errors.Is(err, errPreservation) {
 			return hold("HOLD_PRECONDITION stage=preservation-second")
 		}
-		return hold("HOLD_PRECONDITION stage=eligibility-second")
+		return hold("HOLD_PRECONDITION stage=eligibility-second category=" + eligibilityCategory(err))
 	}
 	if !sameRelease(first.release, second.release) || !reflect.DeepEqual(first.owner, second.owner) || !reflect.DeepEqual(first.chart, second.chart) {
 		return hold("HOLD_PRECONDITION stage=snapshot-second")
