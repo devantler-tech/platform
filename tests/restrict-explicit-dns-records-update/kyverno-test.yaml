@@ -13,7 +13,13 @@ results:
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/approved
+      - external-dns/misplaced-platform-record
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - data-product-controller/approved
     kind: DNSEndpoint
     result: pass
   - policy: restrict-explicit-dns-records
@@ -25,85 +31,85 @@ results:
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/other-host
+      - data-product-controller/other-host
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/wildcard-host
+      - data-product-controller/wildcard-host
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/other-target
+      - data-product-controller/other-target
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/wildcard-target
+      - data-product-controller/wildcard-target
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/address-record
+      - data-product-controller/address-record
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/extra-endpoint
+      - data-product-controller/extra-endpoint
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/extra-target
+      - data-product-controller/extra-target
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/missing-proxy
+      - data-product-controller/missing-proxy
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/proxied
+      - data-product-controller/proxied
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/extra-property
+      - data-product-controller/extra-property
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/different-ttl
+      - data-product-controller/different-ttl
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/empty-endpoints
+      - data-product-controller/empty-endpoints
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/missing-endpoints
+      - data-product-controller/missing-endpoints
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
     rule: approved-platform-records
     resources:
-      - external-dns/weighted-record
+      - data-product-controller/weighted-record
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records

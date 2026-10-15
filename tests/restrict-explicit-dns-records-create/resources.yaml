@@ -4,6 +4,22 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: approved
+  namespace: data-product-controller
+spec:
+  endpoints:
+    - dnsName: khoist.devantler.tech
+      recordTTL: 300
+      recordType: CNAME
+      targets:
+        - devantler-tech.github.io
+      providerSpecific:
+        - name: cloudflare/proxied
+          value: "false"
+---
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: misplaced-platform-record
   namespace: external-dns
 spec:
   endpoints:
@@ -36,7 +52,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: other-host
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: other.devantler.tech
@@ -52,7 +68,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: wildcard-host
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: '*.devantler.tech'
@@ -68,7 +84,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: other-target
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -84,7 +100,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: wildcard-target
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -100,7 +116,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: address-record
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -116,7 +132,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: extra-endpoint
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -140,7 +156,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: extra-target
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -157,7 +173,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: missing-proxy
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -170,7 +186,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: proxied
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -186,7 +202,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: extra-property
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -204,7 +220,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: different-ttl
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech
@@ -220,7 +236,7 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: empty-endpoints
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints: []
 ---
@@ -228,14 +244,14 @@ apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: missing-endpoints
-  namespace: external-dns
+  namespace: data-product-controller
 spec: {}
 ---
 apiVersion: externaldns.k8s.io/v1alpha1
 kind: DNSEndpoint
 metadata:
   name: weighted-record
-  namespace: external-dns
+  namespace: data-product-controller
 spec:
   endpoints:
     - dnsName: khoist.devantler.tech

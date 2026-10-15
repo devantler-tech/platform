@@ -2,7 +2,7 @@
 # The CRD source is watched cluster-wide by the existing ExternalDNS writer.
 # Tenant edit permissions must not become a second way to claim hostnames.
 # Keep this allow-list independent of labels and applying identity: only records
-# in the platform-owned namespace with the complete approved shape may pass.
+# in the owning product's tenant namespace with the approved shape may pass.
 # Deploy and verify this boundary BEFORE enabling the CRD source.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
@@ -15,7 +15,7 @@ metadata:
     policies.kyverno.io/subject: DNSEndpoint
     policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
-      Limits explicit ExternalDNS records to the platform-owned namespace and
+      Limits explicit ExternalDNS records to the owning product's namespace and
       the approved DNS-only documentation CNAME. Tenant labels do not grant DNS
       ownership. New records require a reviewed allow-list change.
 spec:
@@ -58,7 +58,7 @@ spec:
               # fields or provider settings cannot slip through.
               - key: "{{ request.object.metadata.namespace }}"
                 operator: NotEquals
-                value: external-dns
+                value: data-product-controller
               - key: "{{ request.object.spec.endpoints == approvedEndpoints }}"
                 operator: Equals
                 value: false
