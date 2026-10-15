@@ -36,16 +36,33 @@ accounts back onto the existing Actual accounts. Expect to repeat this about
 every 90 days.
 
 The sync server answers every bank-sync failure with HTTP 200, so the access
-log does not show why a sync failed. The `DEBUG` variable set in
-[`helm-release.yaml`](helm-release.yaml) makes the server log the Enable Banking
-API's error status and message. Read them with:
+log does not show why a sync failed. First check the reason Actual shows when
+you select the red dot. If that is not enough, the server can log the Enable
+Banking API's error status and message. That output is bank data, which Actual's
+[troubleshooting guide](https://actualbudget.org/docs/troubleshooting/server/)
+treats as sensitive, and the cluster's log collector keeps container output for
+seven days. So it stays off, and is turned on only for one reproduction:
 
-```sh
-kubectl -n actual-budget logs deploy/actual-budget-actualbudget -c actualbudget | grep enable-banking
-```
+1. In a pull request, add this post-renderer patch to
+   [`helm-release.yaml`](helm-release.yaml), after the existing `env` patches:
 
-An expired consent shows as a 401 or 403, or as a closed or expired session.
-Any other error points at the platform or at Enable Banking instead.
+   ```yaml
+   - op: add
+     path: /spec/template/spec/containers/0/env/-
+     value:
+       name: DEBUG
+       value: "actual:enable-banking:errors"
+   ```
+
+2. After it deploys, sync once, then read the result:
+
+   ```sh
+   kubectl -n actual-budget logs deploy/actual-budget-actualbudget -c actualbudget | grep enable-banking
+   ```
+
+   An expired consent shows as a 401 or 403, or as a closed or expired session.
+   Any other error points at the platform or at Enable Banking instead.
+3. Remove the patch again in a follow-up pull request.
 
 ## End-to-end encryption (manual, by design)
 
