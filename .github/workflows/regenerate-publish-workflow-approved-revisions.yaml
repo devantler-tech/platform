@@ -159,6 +159,7 @@ jobs:
           paths=(
             scripts/publish-workflow-approved-revisions.tsv
             scripts/publish-workflow-approved-revisions.identities.tsv
+            scripts/publish-workflow-bootstrap-publications.json
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -211,6 +212,7 @@ jobs:
           add-paths: |
             scripts/publish-workflow-approved-revisions.tsv
             scripts/publish-workflow-approved-revisions.identities.tsv
+            scripts/publish-workflow-bootstrap-publications.json
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml

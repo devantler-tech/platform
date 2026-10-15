@@ -410,6 +410,9 @@ jobs:
           shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
+          bash scripts/tests/test-tenant-publication-binding.sh
+          bash scripts/tests/test-bootstrap-tenant-source.sh
           shellcheck scripts/tests/test-canonical-publisher-regeneration.sh
           bash scripts/tests/test-canonical-publisher-regeneration.sh
 
@@ -945,6 +948,11 @@ jobs:
               # inside the k8s-gated validation matrix alongside the manifests it judges.
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
               - 'scripts/publish-workflow-approved-revisions.lib.sh'
+              - 'scripts/tenant-publication-binding.lib.sh'
+              - 'scripts/bootstrap-tenant-source.sh'
+              - 'scripts/publish-workflow-bootstrap-publications.json'
+              - 'scripts/tests/test-tenant-publication-binding.sh'
+              - 'scripts/tests/test-bootstrap-tenant-source.sh'
               - 'scripts/write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'

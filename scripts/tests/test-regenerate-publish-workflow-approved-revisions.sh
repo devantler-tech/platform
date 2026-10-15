@@ -31,6 +31,7 @@ readonly data_file='scripts/publish-workflow-approved-revisions.tsv'
 readonly identities_file='scripts/publish-workflow-approved-revisions.identities.tsv'
 readonly generated_paths='scripts/publish-workflow-approved-revisions.tsv
 scripts/publish-workflow-approved-revisions.identities.tsv
+scripts/publish-workflow-bootstrap-publications.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -332,7 +333,7 @@ check() {
 # A relocated consumer must update the automation boundary in the same change.
 discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")"
-actual_paths="$(printf '%s\n%s\n%s\n' "${data_file}" "${identities_file}" "${discovered_paths}" | sort)"
+actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
 

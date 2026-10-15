@@ -525,6 +525,28 @@ else
   cat "$WORK/signer-empty.err" >&2
 fi
 
+# The ordinary observer retires bootstrap approval. Discovery and all writers
+# remain real; only the existing provider observation seam supplies the fixture.
+binding_tree="$WORK/binding-tree"
+mkdir -p "$binding_tree"
+cp -R "$REPO_ROOT/k8s" "$REPO_ROOT/talos" "$binding_tree/"
+binding_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2=="publish-app" {print $1; exit}')"
+binding_path="k8s/bases/apps/$binding_consumer/oci-repository.yaml"
+yq -i '.metadata.namespace="product" | .metadata.name="product-manifests" | .spec.ref={"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' "$binding_tree/$binding_path"
+binding_file="$WORK/bootstrap.json"
+jq -n --arg consumer "$binding_consumer" --arg path "$binding_path" --arg signer "$SHA_A" --arg pin "$SHA_B" --arg candidate "$SHA_R" --arg digest "$DIGEST_A" '{schemaVersion:1,publications:[{
+ kind:"published-bootstrap",consumer:$consumer,workflow:"publish-app",sourcePath:$path,
+ namespace:"product",name:"product-manifests",artifactURL:("oci://ghcr.io/devantler-tech/"+$consumer+"/manifests"),
+ gitTag:"v1.2.3",sourceSHA:$signer,digest:$digest,signerSHA:$signer,mainPinSHA:$pin,candidateSHA:$candidate,verifiedOn:"2026-10-15"}]}' >"$binding_file"
+if PUBLISH_CONSUMER_ROOT="$binding_tree" PUBLISH_BOOTSTRAP_FILE="$binding_file" run_gen "$observer_full" "$pin_ok" "$WORK/binding.tsv" 2026-10-15 "$WORK/binding.log" &&
+  jq -e '.publications[0].kind=="published-binding"' "$binding_file" >/dev/null &&
+  awk -F'\t' -v consumer="$binding_consumer" -v digest="$DIGEST_A" '$1==consumer && $4==digest {found=1} END {exit !found}' "$WORK/binding.tsv"; then
+  pass 'ordinary observation retires bootstrap approval and records an observed row'
+else
+  fail 'publication was not promoted through ordinary observation'
+  cat "$WORK/binding.log" >&2
+fi
+
 if [ "$failures" -gt 0 ]; then
   printf '\n%d failure(s)\n' "$failures" >&2
   exit 1
