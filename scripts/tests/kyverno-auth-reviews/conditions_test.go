@@ -2,11 +2,49 @@ package authreviews_test
 
 import (
 	"os"
+	"reflect"
 	"testing"
 
 	"cel.dev/cel-go/cel"
 	"gopkg.in/yaml.v3"
 )
+
+// The existing live prune proof intentionally refuses config drift. Catch that
+// drift locally too, before paying to create its disposable CI cluster.
+func TestStaleReportProofKeepsProductionAdmissionConfig(t *testing.T) {
+	type values struct {
+		Config   map[string]any
+		Features struct {
+			BackgroundScan struct {
+				SkipResourceFilters *bool `yaml:"skipResourceFilters"`
+			} `yaml:"backgroundScan"`
+		}
+	}
+	var production struct{ Spec struct{ Values values } }
+	var proof values
+	for _, input := range []struct {
+		path   string
+		target any
+	}{
+		{"../../../k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml", &production},
+		{"../../../tests/kyverno-stale-report-prune/values.yaml", &proof},
+	} {
+		data, err := os.ReadFile(input.path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := yaml.Unmarshal(data, input.target); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(production.Spec.Values.Config) == 0 || !reflect.DeepEqual(production.Spec.Values.Config, proof.Config) {
+		t.Fatal("stale-report proof config differs from production")
+	}
+	want, got := production.Spec.Values.Features.BackgroundScan.SkipResourceFilters, proof.Features.BackgroundScan.SkipResourceFilters
+	if want == nil || got == nil || *want != *got {
+		t.Fatal("stale-report proof resource-filter behavior differs from production")
+	}
+}
 
 // Evaluate the authored expression, not a second implementation of its predicate.
 func TestOnlyAlreadyFilteredStandardReviewsSkipAdmission(t *testing.T) {
