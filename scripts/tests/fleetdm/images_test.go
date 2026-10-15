@@ -100,6 +100,24 @@ func TestPreparationUsesServerImage(t *testing.T) {
 			patches = append(patches, map[string]any{"target": patch.Target, "patch": patch.Patch})
 		}
 	}
+	b, err = os.ReadFile(filepath.Join(root, "pod-disruption-budget.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var budget struct {
+		Spec struct {
+			Selector struct {
+				MatchLabels      map[string]string `yaml:"matchLabels"`
+				MatchExpressions []any             `yaml:"matchExpressions"`
+			}
+		}
+	}
+	if err := yaml.Unmarshal(b, &budget); err != nil {
+		t.Fatal(err)
+	}
+	if len(budget.Spec.Selector.MatchLabels) == 0 || len(budget.Spec.Selector.MatchExpressions) != 0 {
+		t.Fatal("Fleet budget requires a nonempty matchLabels selector; expressions need explicit coverage")
+	}
 	for _, mode := range []string{"install", "upgrade"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -179,7 +197,8 @@ func TestPreparationUsesServerImage(t *testing.T) {
 			var result struct {
 				Spec struct {
 					Template struct {
-						Spec struct {
+						Metadata struct{ Labels map[string]string }
+						Spec     struct {
 							Containers     []struct{ Name, Image string }
 							InitContainers []struct {
 								Name, Image string
@@ -191,6 +210,12 @@ func TestPreparationUsesServerImage(t *testing.T) {
 			}
 			if err := yaml.Unmarshal(deployment, &result); err != nil {
 				t.Fatal(err)
+			}
+			for key, value := range budget.Spec.Selector.MatchLabels {
+				actual, exists := result.Spec.Template.Metadata.Labels[key]
+				if !exists || actual != value {
+					t.Fatalf("Fleet budget does not select the rendered server: label %q", key)
+				}
 			}
 			var server, preparation string
 			for _, container := range result.Spec.Template.Spec.Containers {
