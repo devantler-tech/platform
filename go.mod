@@ -5,7 +5,7 @@ go 1.26.6
 require (
 	cel.dev/cel-go v0.32.0
 	// Test-only consumer: match the deployed node-agent source ee62018e73b9.
-	github.com/coroot/logparser v1.4.0
+	github.com/coroot/logparser v1.4.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/siderolabs/talos/pkg/machinery v1.14.2
 	go.yaml.in/yaml/v2 v2.4.4
