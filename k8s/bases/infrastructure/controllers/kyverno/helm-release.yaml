@@ -53,6 +53,17 @@ spec:
         # namespaces) are scanned.
         skipResourceFilters: false
     config:
+      # These three virtual review APIs are already in the chart's resourceFilters.
+      # Skip their no-op webhook round trip before Kyverno handles the request:
+      # discovery of aggregated APIs can itself need delegated authorization.
+      # Keep other review types and same-named resources in other groups in scope.
+      matchConditions:
+        - name: exclude-already-filtered-auth-reviews
+          expression: >-
+            !((request.resource.group == "authentication.k8s.io" &&
+            request.resource.resource == "tokenreviews") ||
+            (request.resource.group == "authorization.k8s.io" &&
+            request.resource.resource in ["subjectaccessreviews", "selfsubjectaccessreviews"]))
       # Additive (chart `concat`s this onto its ~80-entry default resourceFilters
       # -- nothing default is lost, and it stays correct across chart upgrades).
       # Exclude high-churn kinds that have ZERO matching policy in this repo, so
