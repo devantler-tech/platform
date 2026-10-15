@@ -26,6 +26,27 @@ and reconciled into the table by the `enablebanking-seed` sidecar (see
 Banking API (`api.enablebanking.com`) egress-allowed by
 [`cilium-network-policy.yaml`](cilium-network-policy.yaml).
 
+A bank connection is a consent that Actual requests for at most 90 days (less
+when the bank allows less). When it expires, every account on that connection
+fails to sync with `Failed syncing account "<name>."`, and Actual marks the
+accounts with a red dot. Re-authorising needs the account holder's bank login,
+so it cannot be automated. In Actual, open one of the failing accounts, choose
+to link it again through Enable Banking, log in to the bank, and map the bank's
+accounts back onto the existing Actual accounts. Expect to repeat this about
+every 90 days.
+
+The sync server answers every bank-sync failure with HTTP 200, so the access
+log does not show why a sync failed. The `DEBUG` variable set in
+[`helm-release.yaml`](helm-release.yaml) makes the server log the Enable Banking
+API's error status and message. Read them with:
+
+```sh
+kubectl -n actual-budget logs deploy/actual-budget-actualbudget -c actualbudget | grep enable-banking
+```
+
+An expired consent shows as a 401 or 403, or as a closed or expired session.
+Any other error points at the platform or at Enable Banking instead.
+
 ## End-to-end encryption (manual, by design)
 
 Actual's end-to-end encryption **cannot be enabled declaratively**, and by
