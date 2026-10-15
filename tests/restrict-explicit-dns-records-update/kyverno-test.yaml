@@ -1,0 +1,114 @@
+---
+
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-explicit-dns-records-update
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-explicit-dns-records.yaml
+resources:
+  - ../restrict-explicit-dns-records-create/resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/approved
+    kind: DNSEndpoint
+    result: pass
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - wedding-app/tenant-namespace
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/other-host
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/wildcard-host
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/other-target
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/wildcard-target
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/address-record
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/extra-endpoint
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/extra-target
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/missing-proxy
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/proxied
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/extra-property
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/different-ttl
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/empty-endpoints
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/missing-endpoints
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/weighted-record
+    kind: DNSEndpoint
+    result: fail
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - wedding-app/forged-label
+    kind: DNSEndpoint
+    result: fail

@@ -17,6 +17,7 @@ resources:
   - best-practices/restrict-github-team-management.yaml
   - best-practices/restrict-arc-openbao-listener.yaml
   - best-practices/restrict-arc-retirement.yaml
+  - best-practices/restrict-explicit-dns-records.yaml
   - best-practices/restrict-homepage-service-groups.yaml
   - best-practices/restrict-tenant-issuer-refs.yaml
   - best-practices/restrict-tenant-network-policies.yaml
