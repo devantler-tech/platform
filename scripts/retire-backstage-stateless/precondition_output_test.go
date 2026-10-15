@@ -98,3 +98,62 @@ func TestPreconditionOutputSeparatesUnsafeAndChangedSamples(t *testing.T) {
 		})
 	}
 }
+
+// Preservation already runs inside eligibility. Its early refusal must retain
+// the preservation stage, without proceeding to a later sample or any write.
+func TestPreconditionOutputClassifiesEarlyPreservationFailures(t *testing.T) {
+	for _, mode := range []string{"--execute", "--check"} {
+		for _, tc := range []struct {
+			name   string
+			stage  string
+			sample int
+			change func(*portalFixture)
+		}{
+			{name: "opening claim ownership", stage: "preservation-first", sample: 1, change: func(f *portalFixture) {
+				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
+			}},
+			{name: "second claim ownership", stage: "preservation-second", sample: 2, change: func(f *portalFixture) {
+				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
+			}},
+			{name: "opening volume ownership", stage: "preservation-first", sample: 1, change: func(f *portalFixture) {
+				object(item(f.volumes, 0)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
+			}},
+			{name: "second volume ownership", stage: "preservation-second", sample: 2, change: func(f *portalFixture) {
+				object(item(f.volumes, 0)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
+			}},
+			{name: "opening owner refusal precedes preservation", stage: "eligibility-first", sample: 1, change: func(f *portalFixture) {
+				object(f.hr["spec"])["suspend"] = true
+				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
+			}},
+			{name: "second owner refusal precedes preservation", stage: "eligibility-second", sample: 2, change: func(f *portalFixture) {
+				object(f.hr["spec"])["suspend"] = true
+				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
+			}},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				if mode == "--check" {
+					checkRunner(t)
+				} else {
+					retirementRunner(t)
+				}
+				f := retirementFixture(t)
+				samples := 0
+				execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+					if program == "helm" {
+						samples++
+						if samples == tc.sample {
+							tc.change(f)
+						}
+					}
+					return f.execute(ctx, program, args...)
+				}
+				var out bytes.Buffer
+				code := run([]string{mode}, &out, execute)
+				want := "PORTAL-RETIREMENT=HOLD_PRECONDITION stage=" + tc.stage + "\n"
+				if code != 2 || out.String() != want || samples != tc.sample || f.receiptCreated || f.fenceInstalled || f.configured || f.deleted || f.chartDeleted {
+					t.Fatalf("preservation refusal lost its stage or early no-write boundary: code=%d samples=%d output=%q want=%q", code, samples, out.String(), want)
+				}
+			})
+		}
+	}
+}

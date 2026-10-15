@@ -22,6 +22,8 @@ import (
 
 type command func(context.Context, string, ...string) ([]byte, error)
 
+var errPreservation = errors.New("retained-object preservation failed")
+
 func object(v any) map[string]any { o, _ := v.(map[string]any); return o }
 func text(v any) string           { s, _ := v.(string); return s }
 func field(o map[string]any, keys ...string) any {
@@ -424,8 +426,10 @@ func (e engine) eligible(s snapshot) error {
 	if err := e.deployed(s); err != nil {
 		return err
 	}
-	_, err := preserved(s)
-	return err
+	if _, err := preserved(s); err != nil {
+		return errors.Join(errPreservation, err)
+	}
+	return nil
 }
 
 // Published v1.5.5 Snapshots.Latest sorts descending by Version, not input
@@ -956,7 +960,10 @@ func run(args []string, out io.Writer, execute command) int {
 	if err != nil {
 		return hold("HOLD_PRECONDITION stage=evidence-first")
 	}
-	if e.eligible(first) != nil {
+	if err := e.eligible(first); err != nil {
+		if errors.Is(err, errPreservation) {
+			return hold("HOLD_PRECONDITION stage=preservation-first")
+		}
 		return hold("HOLD_PRECONDITION stage=eligibility-first")
 	}
 	e.retiring, err = retiringIdentities(first)
@@ -972,7 +979,10 @@ func run(args []string, out io.Writer, execute command) int {
 	if err != nil {
 		return hold("HOLD_PRECONDITION stage=evidence-second")
 	}
-	if e.eligible(second) != nil {
+	if err := e.eligible(second); err != nil {
+		if errors.Is(err, errPreservation) {
+			return hold("HOLD_PRECONDITION stage=preservation-second")
+		}
 		return hold("HOLD_PRECONDITION stage=eligibility-second")
 	}
 	if !sameRelease(first.release, second.release) || !reflect.DeepEqual(first.owner, second.owner) || !reflect.DeepEqual(first.chart, second.chart) {
