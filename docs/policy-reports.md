@@ -90,6 +90,26 @@ What operators should expect:
   above) so the scan rewrites it as a current `skip`.
 - Cluster-scoped `ClusterPolicyReport` objects are not covered.
 
+## Authorization review dispatch
+
+Kyverno's pinned chart already filters the standard TokenReview,
+SubjectAccessReview and SelfSubjectAccessReview kinds internally. Its
+`config.matchConditions` also excludes exactly those resources in their standard
+authentication/authorization API groups before webhook dispatch. This removes a
+no-op dependency from aggregated API discovery, which can itself require a
+delegated authorization review. Kubernetes still performs the actual token or
+permission review; this does not grant the caller any access.
+
+LocalSubjectAccessReview, SelfSubjectRulesReview, same-named resources in other
+API groups, workloads, Secrets and RBAC requests remain in webhook scope. The
+existing resource filters, namespace selectors and fail-closed policy behavior
+are unchanged. `scripts/tests/test-kyverno-auth-reviews.sh` renders the chart's
+ConfigMap and exercises its conditions against an isolated Kubernetes API server,
+including an unfiltered positive control and rejecting-webhook controls. Live
+verification must additionally observe the generated webhook configuration and
+separated discovery cycles; a single successful metrics request does not clear
+an intermittent failure.
+
 ## System namespaces
 
 Background scans honour Kyverno's resource filters (`skipResourceFilters: false`),
