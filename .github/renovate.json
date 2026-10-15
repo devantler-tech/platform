@@ -303,6 +303,12 @@
       ]
     },
     {
+      "description": "Keep Fleet's chart/server and database-preparation image together. Independent publication timing can still produce a one-sided group; the native Fleet Deployment image check must pass before merge.",
+      "matchPackageNames": ["fleet", "fleetdm/fleet"],
+      "groupName": "fleet",
+      "automerge": false
+    },
+    {
       "description": "Review the Kyverno chart and CI policy engine together. Grouping can produce a one-sided update because their releases are independent; require the chart appVersion to match the shared CLI pin before merging. automerge:false follows the broad controller and major-update rules so they cannot bypass this comparison.",
       "matchPackageNames": ["kyverno", "kyverno/kyverno"],
       "groupName": "kyverno",
