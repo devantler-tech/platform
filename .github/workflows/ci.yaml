@@ -228,6 +228,14 @@ jobs:
           KYVERNO_LOG_REQUIRE_NATIVE: '1'
         run: go test -race -count=1 ./scripts/tests/kyverno-logs
 
+      - name: 🗃️ Validate Fleet preparation and server images
+        env:
+          FLEETDM_REQUIRE_NATIVE: '1'
+        run: |
+          FLEETDM_HELM_BIN="$KYVERNO_LOG_HELM_BIN"
+          export FLEETDM_HELM_BIN
+          go test -race -count=1 ./scripts/tests/fleetdm
+
       # Shared Wedding backup access is retired on this proof's word, so it must
       # pass only on an AccessDenied for every access, after a positive control
       # and against an object the shared credential showed exists. These cases
