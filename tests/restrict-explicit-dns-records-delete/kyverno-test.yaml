@@ -1,0 +1,19 @@
+---
+
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-explicit-dns-records-delete
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-explicit-dns-records.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-explicit-dns-records
+    rule: approved-platform-records
+    resources:
+      - external-dns/retired-record
+      - wedding-app/retired-tenant-record
+    kind: DNSEndpoint
+    result: skip

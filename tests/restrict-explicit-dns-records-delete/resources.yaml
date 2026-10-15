@@ -1,0 +1,25 @@
+---
+
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: retired-record
+  namespace: external-dns
+spec:
+  endpoints:
+    - dnsName: old.example.invalid
+      recordType: CNAME
+      targets:
+        - retired.example.invalid
+---
+apiVersion: externaldns.k8s.io/v1alpha1
+kind: DNSEndpoint
+metadata:
+  name: retired-tenant-record
+  namespace: wedding-app
+spec:
+  endpoints:
+    - dnsName: old.example.invalid
+      recordType: CNAME
+      targets:
+        - retired.example.invalid
