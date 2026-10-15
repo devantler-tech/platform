@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -53,6 +52,7 @@ func renderArguments(t *testing.T, baseline bool) map[string][]string {
 		values[name].(map[string]any)["replicas"] = replicas
 	}
 	if baseline {
+		delete(values["features"].(map[string]any), "logging")
 		if overrides, ok := values["admissionController"].(map[string]any)["featuresOverride"].(map[string]any); ok {
 			delete(overrides, "logging")
 		}
@@ -106,13 +106,18 @@ func renderArguments(t *testing.T, baseline bool) map[string][]string {
 	return result
 }
 
+type consumedLog struct {
+	logparser.LogEntry
+	attributes map[string]string
+}
+
 // consume exercises the deployed CRI decoder and parser callback, preserving fields.
-func consume(t *testing.T, body string) logparser.LogEntry {
+func consume(t *testing.T, body string) consumedLog {
 	t.Helper()
 	entries := make(chan logparser.LogEntry, 1)
-	results := make(chan logparser.LogEntry, 1)
-	parser := logparser.NewParser(entries, logparser.CriDecoder{}, func(timestamp time.Time, level logparser.Level, _, _ string, attributes map[string]string) {
-		results <- logparser.LogEntry{Timestamp: timestamp, Level: level, Content: attributes["allowedResults"]}
+	results := make(chan consumedLog, 1)
+	parser := logparser.NewParser(entries, logparser.CriDecoder{}, func(timestamp time.Time, level logparser.Level, _, message string, attributes map[string]string) {
+		results <- consumedLog{LogEntry: logparser.LogEntry{Timestamp: timestamp, Level: level, Content: message}, attributes: attributes}
 	}, 5*time.Millisecond, 256, true, nil)
 	defer parser.Stop()
 	entries <- logparser.LogEntry{Timestamp: time.Unix(100, 0), Content: "2000-01-01T05:03:39Z stderr F " + body, Level: logparser.LevelUnknown}
@@ -121,28 +126,27 @@ func consume(t *testing.T, body string) logparser.LogEntry {
 		return result
 	case <-time.After(time.Second):
 		t.Fatal("native CRI consumer timed out")
-		return logparser.LogEntry{}
+		return consumedLog{}
 	}
 }
 
-// TestAdmissionProducerArguments checks only the admission formatter changes.
-func TestAdmissionProducerArguments(t *testing.T) {
+// TestControllerProducerArguments rejects colored text from any controller,
+// while retaining the original admission regression and every other argument.
+func TestControllerProducerArguments(t *testing.T) {
 	current, baseline := renderArguments(t, false), renderArguments(t, true)
-	admission := "kyverno-admission-controller"
-	want := append([]string(nil), baseline[admission]...)
-	replacements := 0
-	for i, arg := range want {
-		if arg == "--loggingFormat=text" {
-			want[i], replacements = "--loggingFormat=json", replacements+1
-		}
-	}
-	if replacements != 1 || !reflect.DeepEqual(current[admission], want) {
-		t.Fatal("admission must change only text to JSON; verbosity and other arguments must remain identical")
-	}
-	for name, args := range baseline {
-		if name != admission && !reflect.DeepEqual(current[name], args) {
-			t.Fatalf("unrelated controller %s arguments changed", name)
-		}
+	for _, name := range []string{"kyverno-admission-controller", "kyverno-background-controller", "kyverno-reports-controller", "kyverno-cleanup-controller"} {
+		t.Run(name, func(t *testing.T) {
+			want := append([]string(nil), baseline[name]...)
+			replacements := 0
+			for i, arg := range want {
+				if arg == "--loggingFormat=text" {
+					want[i], replacements = "--loggingFormat=json", replacements+1
+				}
+			}
+			if replacements != 1 || !reflect.DeepEqual(current[name], want) {
+				t.Fatal("controller must change only text to JSON; verbosity and other arguments must remain identical")
+			}
+		})
 	}
 }
 
@@ -155,7 +159,7 @@ func TestCRISeverity(t *testing.T) {
 		level string
 		want  logparser.Level
 	}{
-		{"trace", logparser.LevelDebug}, {"debug", logparser.LevelDebug}, {"info", logparser.LevelInfo}, {"warn", logparser.LevelWarning}, {"error", logparser.LevelError},
+		{"trace", logparser.LevelDebug}, {"debug", logparser.LevelDebug}, {"info", logparser.LevelInfo}, {"warn", logparser.LevelWarning}, {"error", logparser.LevelError}, {"fatal", logparser.LevelCritical},
 	} {
 		t.Run(tc.level, func(t *testing.T) {
 			body, err := json.Marshal(map[string]any{"level": tc.level, "time": "2000-01-01T05:03:39Z", "message": "configuration includes error and warn", "allowedResults": "pass,fail,error,warn,skip", "logger": "setup/flag", "v": 2})
@@ -163,9 +167,27 @@ func TestCRISeverity(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := consume(t, string(body))
-			if got.Level != tc.want || !strings.Contains(got.Content, "pass,fail,error,warn,skip") {
+			if got.Level != tc.want || got.Content != "configuration includes error and warn" || got.attributes["allowedResults"] != "pass,fail,error,warn,skip" {
 				t.Fatalf("structured severity or original flag value changed: %s %q", got.Level, got.Content)
 			}
 		})
+	}
+}
+
+// A resource kind called Alert must not promote a deprecation notice to fatal.
+// Characterize the observed colored-text defect and exercise its JSON replacement.
+func TestCRIDeprecationSeverity(t *testing.T) {
+	const message = "Warning: v1beta2 Alert is deprecated, upgrade to v1beta3"
+	colored := "\x1b[90m2000-01-01T05:03:39Z\x1b[0m \x1b[32mINF\x1b[0m \x1b[1mk8s.io/client-go@v0.36.3/rest/warnings.go:107\x1b[0m\x1b[36m >\x1b[0m \x1b[1m" + message + "\x1b[0m \x1b[36mlogger=\x1b[0mklog \x1b[36mv=\x1b[0m0"
+	if got := consume(t, colored); got.Level != logparser.LevelCritical {
+		t.Fatalf("observed colored deprecation defect changed: level=%s", got.Level)
+	}
+	body, err := json.Marshal(map[string]any{"level": "info", "time": "2000-01-01T05:03:39Z", "message": message, "logger": "klog", "v": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := consume(t, string(body))
+	if got.Level != logparser.LevelInfo || got.Content != message || got.attributes["logger"] != "klog" {
+		t.Fatalf("deprecation severity or content changed: level=%s message=%q", got.Level, got.Content)
 	}
 }
