@@ -209,7 +209,12 @@ check() {
   # loop in a subshell where the accumulated result is lost. A `case` inside a
   # command substitution is not an option either: the pattern's own `)` closes
   # the substitution early — measured, it captured the loop's source as data.
-  consumers="$(awk 'NR > 1 { print $1 }' "${root_dir}/${data_file}" | sort -u)"
+  # The validated approval reader includes a first publication before its
+  # ordinary observed row exists, without granting unregistered consumers.
+  consumers="$(bash -c 'source "$1"; printf "%s" "$approved" | cut -f1 | sort -u' _ \
+    "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" || {
+    printf 'VIOLATION A10: approved consumer inventory is unresolved\n'; return 1;
+  }
   missing=''
   leaked=''
   while IFS= read -r consumer; do
