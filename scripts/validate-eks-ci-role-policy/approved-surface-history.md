@@ -3531,3 +3531,21 @@ nothing added or removed:
 
 No issuer, artifact, RBAC binding, IAM policy, credential or permission grant
 changes. The set of accepted identities shrinks by one.
+
+## 2026-10-15 — Preserve severity across Kyverno controller logs
+
+platform#4919 extends structured logging to the remaining controllers. Against
+main `c25cb3c45e8d5afe87659c5e228168f2e77a0c8f`, the pinned kubectl v1.36.2 /
+Kustomize v5.8.1 renderer reports exactly one changed authorization entry and
+nothing added or removed: HelmRelease kyverno/kyverno moves from
+`5083866cbaa1a7133755230e0d4c6d0d534277df9b99f9d2c7e3ac0d488a7c86` to
+`9d5bf8b9ff67800bfc3ad3e11ba48d9ba9f0237b2a0126c5de34f34056d3d98a`.
+
+The only manifest change selects the shared JSON formatter. The actual pinned
+chart regression compares every argument of all four controllers with the
+text baseline: only the formatter differs, and verbosity remains unchanged.
+The admission controller was already using JSON. CRI regressions against the
+deployed node-agent's log parser preserve informational deprecation notices,
+message contents and attributes, and real warning, error and critical levels.
+No chart version, RBAC, service account, admission scope, failure action,
+resource filter, AWS identity, credential or permission grant changes.
