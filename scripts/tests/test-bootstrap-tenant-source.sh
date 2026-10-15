@@ -7,6 +7,26 @@ mkdir -p "$test_work/bin" "$test_work/k8s/source"
 export BOOT_TEST_WORK="$test_work" PUBLISH_KUBE_CONTEXT=fixture-only
 export PATH="$test_work/bin:$PATH"
 export APPROVED_REVISIONS_FILE="$test_work/applied.tsv"
+BOOT_REAL_LINK="$(command -v link)"
+BOOT_REAL_LN="$(command -v ln)"
+export BOOT_REAL_LINK BOOT_REAL_LN
+cat >"$test_work/bin/link-operation" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$BOOT_CASE" in
+  output-directory-race) mkdir -p "$2" ;;
+  output-symlink-race)
+    mkdir -p "$BOOT_TEST_WORK/redirect"
+    "$BOOT_REAL_LN" -s "$BOOT_TEST_WORK/redirect" "$2" ;;
+esac
+case "${0##*/}" in
+  link) exec "$BOOT_REAL_LINK" "$@" ;;
+  ln) exec "$BOOT_REAL_LN" "$@" ;;
+esac
+EOF
+cp "$test_work/bin/link-operation" "$test_work/bin/link"
+cp "$test_work/bin/link-operation" "$test_work/bin/ln"
+chmod +x "$test_work/bin/link" "$test_work/bin/ln"
 printf 'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_signer_sha\tmain_pin_sha\trelease_candidate_sha\tobserved_on\n' >"$APPROVED_REVISIONS_FILE"
 cat >"$test_work/k8s/source/oci-repository.yaml" <<'EOF'
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -99,6 +119,22 @@ fi
 export BOOT_CASE=valid
 run_bootstrap
 cmp "$test_work/result.json" "$test_work/expected.json"
+rm "$test_work/result.json"
+export BOOT_CASE=output-directory-race
+if run_bootstrap >/dev/null 2>&1; then
+  echo 'bootstrap reported success after the output became a directory' >&2
+  exit 1
+fi
+test -d "$test_work/result.json"
+test -z "$(find "$test_work/result.json" -mindepth 1 -maxdepth 1 -print)"
+rmdir "$test_work/result.json"
+export BOOT_CASE=output-symlink-race
+if run_bootstrap >/dev/null 2>&1; then
+  echo 'bootstrap reported success after the output became a symlink' >&2
+  exit 1
+fi
+test -L "$test_work/result.json"
+test -z "$(find "$test_work/redirect" -mindepth 1 -maxdepth 1 -print)"
 rm "$test_work/result.json"
 for BOOT_CASE in cluster-error malformed-list trailing-list partial-list fetched wrong-source multiple verify-error wrong-digest unpublished wrong-publisher moved-tag; do
   export BOOT_CASE

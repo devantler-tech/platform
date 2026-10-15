@@ -189,8 +189,9 @@ bootstrap_tenant_source() (
     return 1
   }
   chmod 0644 "$staged"
-  # An atomic create refuses an output another writer created after our read.
-  ln "$staged" "$output" || {
+  # POSIX link creates this exact destination atomically. Unlike ln, it cannot
+  # interpret a concurrently created directory (or directory symlink) as a target.
+  link "$staged" "$output" || {
     rm -f "$staged"
     return 1
   }
