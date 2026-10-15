@@ -46,6 +46,13 @@ or failed patch is never retried. Two separated final samples verify physical
 retention and preserved identities/specifications. Completed protections are never
 reversed when a later step fails.
 
+After this command changes a captured `Delete` policy to `Retain`, the CSI
+provisioner normally removes its own deletion finalizer. Verification permits
+only that one-way removal and remembers it across later samples. All remaining
+finalizers, metadata, identities and specification fields must stay unchanged;
+the command never patches a finalizer. A similar change before the write, on an
+already-retained volume, or a later reappearance still stops verification.
+
 The native API offers no transaction across the database, namespace, claims and
 volumes. These checks bound the operation; they do not claim an atomic cross-object
 snapshot. Stateless retirement remains a separate workflow and still requires

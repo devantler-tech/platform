@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"reflect"
@@ -61,7 +62,7 @@ func run(ctx context.Context, args []string, env func(string) string, execute co
 	if err != nil {
 		return err
 	}
-	if !unchanged(baseline, second, policies) {
+	if !acceptSnapshot(&baseline, second, policies) {
 		return errors.New("initial separated samples differ")
 	}
 	if check {
@@ -80,7 +81,7 @@ func run(ctx context.Context, args []string, env func(string) string, execute co
 			continue
 		}
 		fresh, err := e.collect(ctx, false)
-		if err != nil || !unchanged(baseline, fresh, policies) {
+		if err != nil || !acceptSnapshot(&baseline, fresh, policies) {
 			return errors.New("pre-write state changed")
 		}
 		var volume map[string]any
@@ -98,19 +99,19 @@ func run(ctx context.Context, args []string, env func(string) string, execute co
 		policies[name] = "Retain"
 		changed++
 		post, err := e.collect(ctx, false)
-		if err != nil || !unchanged(baseline, post, policies) {
+		if err != nil || !acceptSnapshot(&baseline, post, policies) {
 			return errors.New("post-write state unverified; protections retained")
 		}
 	}
 	first, err := e.collect(ctx, true)
-	if err != nil || !unchanged(baseline, first, policies) {
+	if err != nil || !acceptSnapshot(&baseline, first, policies) {
 		return errors.New("physical retention readback unverified")
 	}
 	if err := wait(ctx, 5*time.Second); err != nil {
 		return errors.New("sample separation failed")
 	}
 	last, err := e.collect(ctx, true)
-	if err != nil || !unchanged(baseline, last, policies) {
+	if err != nil || !acceptSnapshot(&baseline, last, policies) {
 		return errors.New("final separated samples differ")
 	}
 	return writeReceipt(out, map[string]any{"result": "PROTECTED", "claims": len(last.bindings), "changed": changed, "alreadyRetained": len(last.bindings) - changed, "separatedSamples": true, "retirement": "NOT_EXECUTED"})
@@ -433,9 +434,11 @@ func projection(r map[string]any, ignorePolicy bool) map[string]any {
 	return map[string]any{"apiVersion": r["apiVersion"], "kind": r["kind"], "metadata": metadata, "spec": spec}
 }
 
-// unchanged checks the complete preserved census and each expected reclaim policy.
-func unchanged(baseline, current snapshot, policies map[string]string) bool {
-	if !reflect.DeepEqual(baseline.preserved, current.preserved) || len(current.bindings) != len(policies) {
+// acceptSnapshot preserves the captured census and expected policies. Only after
+// our Delete-to-Retain write may CSI remove its deletion finalizer. Remember that
+// one-way change so a later reappearance is not accepted against the old baseline.
+func acceptSnapshot(baseline *snapshot, current snapshot, policies map[string]string) bool {
+	if len(current.bindings) != len(policies) {
 		return false
 	}
 	for _, b := range current.bindings {
@@ -443,7 +446,52 @@ func unchanged(baseline, current snapshot, policies map[string]string) bool {
 			return false
 		}
 	}
+	expected := maps.Clone(baseline.preserved)
+	for _, b := range baseline.bindings {
+		name := str(field(b.Volume, "metadata", "name"))
+		if field(b.Volume, "spec", "persistentVolumeReclaimPolicy") == "Delete" && policies[name] == "Retain" {
+			key := "volume/" + name
+			reconciled := withoutDeletionFinalizer(expected[key])
+			if reflect.DeepEqual(reconciled, current.preserved[key]) {
+				expected[key] = reconciled
+			}
+		}
+	}
+	if !reflect.DeepEqual(expected, current.preserved) {
+		return false
+	}
+	baseline.preserved = current.preserved
 	return true
+}
+
+// withoutDeletionFinalizer models only the provisioner's Retain reconciliation;
+// it never mutates an API object or drops a protection/attachment finalizer.
+func withoutDeletionFinalizer(r map[string]any) map[string]any {
+	result := maps.Clone(r)
+	metadata := maps.Clone(obj(r["metadata"]))
+	finalizers, ok := metadata["finalizers"].([]any)
+	if !ok {
+		return result
+	}
+	kept := make([]any, 0, len(finalizers))
+	removed := 0
+	for _, finalizer := range finalizers {
+		if finalizer != "external-provisioner.volume.kubernetes.io/finalizer" {
+			kept = append(kept, finalizer)
+		} else {
+			removed++
+		}
+	}
+	if removed != 1 {
+		return result
+	}
+	if len(kept) == 0 {
+		delete(metadata, "finalizers")
+	} else {
+		metadata["finalizers"] = kept
+	}
+	result["metadata"] = metadata
+	return result
 }
 
 // retentionPatch tests exact volume identity and the full specification before changing only Delete to Retain.
