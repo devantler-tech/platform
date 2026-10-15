@@ -17,8 +17,11 @@ tenant, its identity is `data-product-controller/khoist-documentation`, its URL 
 `oci://ghcr.io/devantler-tech/data-product-controller/manifests`, and its ref contains
 only the release's `sha256:` manifest digest. Do not activate a Flux Kustomization yet.
 
+Replace the context and release placeholders with the approved target and published
+release being onboarded.
+
 ```sh
-PUBLISH_KUBE_CONTEXT=<approved-context> bash scripts/bootstrap-tenant-source.sh \
+PUBLISH_KUBE_CONTEXT='<approved-context>' bash scripts/bootstrap-tenant-source.sh \
   --source-file k8s/bases/apps/data-product-controller/documentation-source.yaml \
   --tag vX.Y.Z
 ```
