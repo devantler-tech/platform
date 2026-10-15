@@ -74,7 +74,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager 4ee4b8a2fc512253c45
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape fc4feb22be5f61469646c02fd66490b8a9e11626dc99bf13280cd075c2972cc1
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 5083866cbaa1a7133755230e0d4c6d0d534277df9b99f9d2c7e3ac0d488a7c86
+helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 9d5bf8b9ff67800bfc3ad3e11ba48d9ba9f0237b2a0126c5de34f34056d3d98a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn c0f77790ab49bd8c26359b00eb32f6341ed1690cc9f3f92c974f3c415d429b8f
 

@@ -43,6 +43,10 @@ spec:
     # given an explicit limit below (see the admissionController.container.resources block
     # and the OOM incident it documents); the chart default proved too low.
     features:
+      # Preserve producer severity for every controller; colored text lets a
+      # resource kind such as "Alert" promote an informational notice to fatal.
+      logging:
+        format: json
       backgroundScan:
         # Honor config.resourceFilters during background scans (chart default is
         # true = filters skipped = report-per-resource for everything). With this
