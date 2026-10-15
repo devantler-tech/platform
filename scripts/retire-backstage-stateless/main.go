@@ -178,6 +178,7 @@ type engine struct {
 	retiring             map[string]string
 	ownerUID             string
 	fence                string
+	readOnly             bool
 }
 
 func (e engine) read(ctx context.Context, args ...string) (map[string]any, error) {
@@ -848,6 +849,9 @@ func (e engine) write(ctx context.Context, value any, args ...string) (response 
 // submitted records the transport invocation, not server acceptance. Preparation
 // failures are known not submitted; command failures may have reached the server.
 func (e engine) writeObserved(ctx context.Context, value any, args ...string) (response map[string]any, submitted bool, resultErr error) {
+	if e.readOnly {
+		return nil, false, errors.New("read-only preflight forbids mutation")
+	}
 	data, err := json.Marshal(value)
 	if err != nil {
 		return nil, false, err
@@ -924,10 +928,18 @@ func run(args []string, out io.Writer, execute command) int {
 		}
 		return 2
 	}
-	if len(args) != 1 || args[0] != "--execute" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("PORTAL_RETIREMENT_CONFIRM") != "RETIRE BACKSTAGE STATELESS ONLY" || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
+	readOnly := len(args) == 1 && args[0] == "--check"
+	confirmation := "RETIRE BACKSTAGE STATELESS ONLY"
+	if readOnly {
+		confirmation = "CHECK BACKSTAGE RETIREMENT ONLY"
+		if os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_WORKFLOW_REF") != "devantler-tech/platform/.github/workflows/check-backstage-retirement.yaml@refs/heads/main" {
+			return hold("HOLD_CONFIRMATION")
+		}
+	}
+	if len(args) != 1 || !readOnly && args[0] != "--execute" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("PORTAL_RETIREMENT_CONFIRM") != confirmation || !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[0-9a-f]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
 		return hold("HOLD_CONFIRMATION")
 	}
-	e := engine{execute: execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), runID: os.Getenv("GITHUB_RUN_ID")}
+	e := engine{execute: execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), runID: os.Getenv("GITHUB_RUN_ID"), readOnly: readOnly}
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	if e.sourceCurrent(ctx) != nil {
@@ -985,6 +997,13 @@ func run(args []string, out io.Writer, execute command) int {
 	}
 	if e.sourceCurrent(ctx) != nil {
 		return hold("HOLD_PRECONDITION stage=source-before-journal")
+	}
+	if readOnly {
+		const result = "PORTAL-RETIREMENT=CHECKED preservationSamples=2 mutation=NONE retirement=NOT_EXECUTED dataRetirement=UNASSESSED\n"
+		if n, err := io.WriteString(out, result); err != nil || n != len(result) {
+			return 2
+		}
+		return 0
 	}
 	receipt := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": name, "namespace": "flux-system"}, "data": map[string]any{"source": e.sha, "revision": e.revision, "run": e.runID, "attempt": "1", "scope": "stateless-only", "releaseUID": field(second.owner, "metadata", "uid"), "chartUID": field(second.chart, "metadata", "uid"), "dataRetirement": "UNASSESSED"}}
 	created, err := e.write(ctx, receipt, "create", "-f", "REQUEST", "--output=json")
