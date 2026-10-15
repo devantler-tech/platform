@@ -17,7 +17,6 @@ results:
       - crossview/infrastructure-as-code-group
       - client-site/clients-group
       - personal-site/personal-group
-      - whoami/home-group
     kind: HTTPRoute
     result: pass
 
