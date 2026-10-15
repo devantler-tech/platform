@@ -42,7 +42,6 @@ server:
       setNodeId: true                  # BAO_RAFT_NODE_ID = pod name (openbao-0/1/2)
       config: |
         ui = true
-        disable_mlock = true           # keep — matches the PSS-baseline constraint
 
         listener "tcp" {
           tls_disable     = 1

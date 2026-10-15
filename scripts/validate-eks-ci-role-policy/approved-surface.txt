@@ -86,7 +86,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|observability|coroot-operator a6c5d6dfdec7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|open-feature-operator-system|open-feature-operator da38c30c19aea0c3e099bb86cda46d89ab6301ff5898b4fad8f020812f8ad800
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao c0392359b17c7e56b14ca80929ad85644922a658a1d9cb85bf6b64138684262c
+helm.toolkit.fluxcd.io/v2|HelmRelease|openbao|openbao 5cb61affdd00b9c3a7b903f0af2abb9afee5ecacceb2ff9d9c90b90916d4bb1a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|policy-reporter|policy-reporter f92d67d39b5638fa931d19f4015ee490d6c98043e00a01319f4ef1a5fc64bc29
 
