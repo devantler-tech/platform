@@ -583,6 +583,8 @@ jobs:
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
               - 'scripts/tests/openbao-transport-runtime/**'
+              - 'scripts/tests/test-kyverno-auth-reviews.sh'
+              - 'scripts/tests/kyverno-auth-reviews/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
@@ -2623,6 +2625,15 @@ jobs:
         # reviewed FQDN set must remain narrow while provider traffic stays on
         # the direct L3/L4 path that completes upstream TLS handshakes.
         run: bash scripts/tests/test-crossplane-egress-policy.sh
+
+      - name: 🔐 Validate Kyverno review admission boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the pinned chart and exercise its match conditions against an
+        # isolated real API server. Ordinary policy requests must still fail
+        # closed; only the three already-filtered virtual reviews skip dispatch.
+        run: |
+          shellcheck scripts/tests/test-kyverno-auth-reviews.sh
+          bash scripts/tests/test-kyverno-auth-reviews.sh
 
       - name: 🧠 Validate Kyverno admission VPA safety
         if: needs.changes.outputs.k8s == 'true'
