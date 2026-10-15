@@ -22,7 +22,10 @@ Both execution and the read-only `--check` mode use these stages. Preservation
 failures found inside eligibility retain the preservation stage and still stop
 at that early check; an earlier owner-eligibility failure takes precedence.
 
-A stage narrows the investigation; it does not identify an inner validation
-predicate or prove the cause of a historical refusal. Output contains no raw
-command errors, resource payloads or credentials. All existing checks and
-post-submission lifecycle results remain in force.
+Eligibility refusals also carry a fixed category, such as `category=owner-profile`
+or `category=deployment-source`. Only exact, locally authored errors are mapped;
+unknown or private errors remain `category=unclassified`, with a nonzero exit.
+This identifies the current refusing boundary, not the cause of a historical
+attempt, and does not authorize a retry. Output contains no raw command errors,
+resource payloads or credentials. All existing checks and post-submission
+lifecycle results remain in force.

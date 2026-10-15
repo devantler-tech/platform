@@ -63,10 +63,10 @@ func TestPreconditionOutputSeparatesUnsafeAndChangedSamples(t *testing.T) {
 		sample int
 		change func(*portalFixture)
 	}{
-		{name: "unsafe opening sample", stage: "eligibility-first", sample: 1, change: func(f *portalFixture) {
+		{name: "unsafe opening sample", stage: "eligibility-first category=owner-profile", sample: 1, change: func(f *portalFixture) {
 			object(f.hr["spec"])["suspend"] = true
 		}},
-		{name: "unsafe second sample", stage: "eligibility-second", sample: 2, change: func(f *portalFixture) {
+		{name: "unsafe second sample", stage: "eligibility-second category=owner-profile", sample: 2, change: func(f *portalFixture) {
 			object(f.hr["spec"])["suspend"] = true
 		}},
 		{name: "changed owner", stage: "snapshot-second", sample: 2, change: func(f *portalFixture) {
@@ -121,11 +121,11 @@ func TestPreconditionOutputClassifiesEarlyPreservationFailures(t *testing.T) {
 			{name: "second volume ownership", stage: "preservation-second", sample: 2, change: func(f *portalFixture) {
 				object(item(f.volumes, 0)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
-			{name: "opening owner refusal precedes preservation", stage: "eligibility-first", sample: 1, change: func(f *portalFixture) {
+			{name: "opening owner refusal precedes preservation", stage: "eligibility-first category=owner-profile", sample: 1, change: func(f *portalFixture) {
 				object(f.hr["spec"])["suspend"] = true
 				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
-			{name: "second owner refusal precedes preservation", stage: "eligibility-second", sample: 2, change: func(f *portalFixture) {
+			{name: "second owner refusal precedes preservation", stage: "eligibility-second category=owner-profile", sample: 2, change: func(f *portalFixture) {
 				object(f.hr["spec"])["suspend"] = true
 				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
