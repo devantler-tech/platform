@@ -22,6 +22,8 @@ import (
 
 type command func(context.Context, string, ...string) ([]byte, error)
 
+var errPreservation = errors.New("retained-object preservation failed")
+
 func object(v any) map[string]any { o, _ := v.(map[string]any); return o }
 func text(v any) string           { s, _ := v.(string); return s }
 func field(o map[string]any, keys ...string) any {
@@ -424,8 +426,10 @@ func (e engine) eligible(s snapshot) error {
 	if err := e.deployed(s); err != nil {
 		return err
 	}
-	_, err := preserved(s)
-	return err
+	if _, err := preserved(s); err != nil {
+		return errors.Join(errPreservation, err)
+	}
+	return nil
 }
 
 // Published v1.5.5 Snapshots.Latest sorts descending by Version, not input
@@ -943,51 +947,66 @@ func run(args []string, out io.Writer, execute command) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer cancel()
 	if e.sourceCurrent(ctx) != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=source-opening")
 	}
 	b, err := execute(ctx, "go", "run", "./scripts/assess-backstage-retirement", "--live")
 	if err != nil || strings.TrimSpace(string(b)) != "PORTAL-FOOTPRINT=ASSESSED_STATELESS objects=3 dataRetirement=UNASSESSED mutation=NONE" {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=assessment")
 	}
 	first, err := e.collect(ctx)
 	if err == nil && field(first.namespace, "metadata", "annotations", fenceAnnotation) != nil {
 		return hold("HOLD_EXISTING_NATIVE_OPERATION")
 	}
-	if err != nil || e.eligible(first) != nil {
-		return hold("HOLD_PRECONDITION")
+	if err != nil {
+		return hold("HOLD_PRECONDITION stage=evidence-first")
+	}
+	if err := e.eligible(first); err != nil {
+		if errors.Is(err, errPreservation) {
+			return hold("HOLD_PRECONDITION stage=preservation-first")
+		}
+		return hold("HOLD_PRECONDITION stage=eligibility-first")
 	}
 	e.retiring, err = retiringIdentities(first)
 	if err != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=targets-first")
 	}
 	first.retiring = e.retiring
 	e.ownerUID = text(field(first.owner, "metadata", "uid"))
 	if _, err = execute(ctx, "sleep", "5"); err != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=sample-separation")
 	}
 	second, err := e.collect(ctx)
-	if err != nil || e.eligible(second) != nil || !sameRelease(first.release, second.release) || !reflect.DeepEqual(first.owner, second.owner) || !reflect.DeepEqual(first.chart, second.chart) {
-		return hold("HOLD_PRECONDITION")
+	if err != nil {
+		return hold("HOLD_PRECONDITION stage=evidence-second")
+	}
+	if err := e.eligible(second); err != nil {
+		if errors.Is(err, errPreservation) {
+			return hold("HOLD_PRECONDITION stage=preservation-second")
+		}
+		return hold("HOLD_PRECONDITION stage=eligibility-second")
+	}
+	if !sameRelease(first.release, second.release) || !reflect.DeepEqual(first.owner, second.owner) || !reflect.DeepEqual(first.chart, second.chart) {
+		return hold("HOLD_PRECONDITION stage=snapshot-second")
 	}
 	secondTargets, err := retiringIdentities(second)
 	if err != nil || !reflect.DeepEqual(e.retiring, secondTargets) {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=targets-second")
 	}
 	before, err := preserved(first)
 	if err != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=preservation-first")
 	}
 	again, err := preserved(second)
 	if err != nil || !reflect.DeepEqual(before, again) {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=preservation-second")
 	}
 	name := "backstage-retirement-" + e.runID
 	used, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", name, "--ignore-not-found", "--output=json")
 	if err != nil || used != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=journal-unused")
 	}
 	if e.sourceCurrent(ctx) != nil {
-		return hold("HOLD_PRECONDITION")
+		return hold("HOLD_PRECONDITION stage=source-before-journal")
 	}
 	if readOnly {
 		const result = "PORTAL-RETIREMENT=CHECKED preservationSamples=2 mutation=NONE retirement=NOT_EXECUTED dataRetirement=UNASSESSED\n"
