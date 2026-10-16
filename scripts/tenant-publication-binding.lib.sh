@@ -77,5 +77,6 @@ verify_bound_publication() (
   jq -es --arg digest "$digest" --arg artifact "$artifact" '
     length == 1 and (.[0] | type == "array" and length > 0 and
       all(.[]; .critical.image["docker-manifest-digest"] == $digest and
-        .critical.identity["docker-reference"] == ($artifact + "@" + $digest)))' "$verification_dir/result" >/dev/null
+        (.critical.identity["docker-reference"] == $artifact or
+         .critical.identity["docker-reference"] == ($artifact + "@" + $digest))))' "$verification_dir/result" >/dev/null
 )
