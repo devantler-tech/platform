@@ -244,6 +244,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|aws|aws-managed-resources 876e05322100f
 
 rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|data-product-readiness-observer 00bcf69a4402d05bf5af23e273f9d3c5d7e7ebeed8c1778017a9f702d261360e
 
+rbac.authorization.k8s.io/v1|RoleBinding|data-product-controller|khoist-documentation 2690828917afd76647b314b9009a0401578780b33809e8d3a1f04a1b16244565
+
 rbac.authorization.k8s.io/v1|RoleBinding|default|events:kubelet-serving-cert-approver 420a3e2f5bb524138bf1a7ee8f953d738a70d03c6f5567541ec03fd093a042f4
 
 rbac.authorization.k8s.io/v1|RoleBinding|github-config|github-config-managed-resources 149f5d805afc668821f5d25d1d5e9b05f5ef79d3e69929a8999faddb1078d417
@@ -289,6 +291,8 @@ rbac.authorization.k8s.io/v1|RoleBinding|world-at-ruin|world-at-ruin-zone-trial-
 rbac.authorization.k8s.io/v1|Role|aws|aws-managed-resources bcbd97adfa055719ff19364d7341e4952fcb0566f1c1ba16d073b6f1ae4108b0
 
 rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness-observer 10df039485be13b0344199a50eacc4fbd942f2bb9b831a84b11c024918a3422a
+
+rbac.authorization.k8s.io/v1|Role|data-product-controller|khoist-documentation 35e63ab8f23f3de55976023d5c6144ac5a3cd7ed5c0947f1c451d74cf4167bef
 
 rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources acb7434cc52dd53923f047d301c10d0e85ebfe5bb8c3ef8de67de24817e3e6b0
 
@@ -399,6 +403,8 @@ source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner e7
 source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
+
+source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation d60759446a135d504c1f5378845f509b179183b3cbf661037ccbe173e197033a
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 

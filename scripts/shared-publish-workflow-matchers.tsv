@@ -9,4 +9,5 @@
 1	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
 1	k8s/providers/hetzner/apps/aws/oci-repository.yaml
+1	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml
 1	talos/cluster/verify-first-party-images.yaml

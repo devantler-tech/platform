@@ -19,6 +19,7 @@ discover_consumers() {
     $'.github\tpublish-manifests\t1.0.0\tgithub-config/manifests' \
     $'ascoachingogvaner\tpublish-app\t1.0.0\tascoachingogvaner/manifests' \
     $'aws\tpublish-manifests\t1.0.0\taws/manifests' \
+    $'data-product-controller\tpublish-app\t1.0.0\tdata-product-controller/manifests' \
     $'wedding-app\tpublish-app\t1.0.0\twedding-app/manifests'
 }
 
@@ -29,7 +30,7 @@ gh_retry() {
   if [[ "$args" == *'--jq .default_branch' ]]; then printf 'main\n'; return; fi
   [[ "$args" == *'contents/.github/workflows/cd.yaml'* ]] || return 1
   case "$args" in
-    *ascoachingogvaner*|*wedding-app*) workflow=publish-app ;;
+    *ascoachingogvaner*|*data-product-controller*|*wedding-app*) workflow=publish-app ;;
     *'devantler-tech/.github/'*)
       case "$fixture_case" in
         canonical-signed) [[ "$args" != *ref=main* ]] && family=.github ;;

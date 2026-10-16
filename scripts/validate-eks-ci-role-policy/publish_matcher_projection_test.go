@@ -49,6 +49,7 @@ spec:
 		{"github-config", "publish-manifests"},
 		{"ascoachingogvaner", "publish-app"},
 		{"aws", "publish-manifests"},
+		{"data-product-controller", "publish-app"},
 		{"wedding-app", "publish-app"},
 	}
 	for _, consumer := range consumers {
