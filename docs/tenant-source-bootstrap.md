@@ -26,7 +26,7 @@ release being onboarded.
 
 ```sh
 PUBLISH_KUBE_CONTEXT='<approved-context>' bash scripts/bootstrap-tenant-source.sh \
-  --source-file k8s/bases/apps/data-product-controller/documentation-source.yaml \
+  --source-file k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml \
   --tag vX.Y.Z
 ```
 
