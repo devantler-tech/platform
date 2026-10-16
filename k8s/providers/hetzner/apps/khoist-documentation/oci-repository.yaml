@@ -6,13 +6,10 @@ metadata:
   labels:
     app.kubernetes.io/managed-by: ksail
 spec:
-  # Preparation only: replace with a verified documentation-bearing publication
-  # and derive its bootstrap approval before enabling this source.
-  suspend: true
   interval: 1m
   url: oci://ghcr.io/devantler-tech/data-product-controller/manifests
   ref:
-    digest: sha256:c6a078b30a9ab100aa5ce5d5be6f262aa04cb43bd9d3e8184415c089cc7cbd83
+    digest: sha256:b9b5ff9e0cedf1305528e058708e9729eed9aa39a5dcdd967b7e74197264fe65
   secretRef:
     name: ghcr-auth
   verify:

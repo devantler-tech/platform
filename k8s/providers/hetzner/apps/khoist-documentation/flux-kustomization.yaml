@@ -8,7 +8,8 @@ metadata:
   annotations:
     ksail.devantler.tech/reconcile-exclude: "true"
 spec:
-  # Activation requires a verified publication containing ./documentation.
+  # Activate only after this source is observed Ready and SourceVerified and
+  # ordinary approval regeneration records that observation.
   suspend: true
   interval: 1m
   timeout: 5m
