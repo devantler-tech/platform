@@ -152,19 +152,24 @@ Because the signatures are separate, a release can pass one layer and fail anoth
 manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
 refuses the pull (`ImagePullBackOff`).
 
-The approved Flux list applies to the production tenants registered by hand (§5). It lives in
-`scripts/publish-workflow-approved-revisions.tsv`, and `scripts/write-publish-workflow-matchers.sh`
-writes it into each of those tenants' `OCIRepository`. The `Tenant` archetype pilot (below) still
+The approved Flux list covers the production consumers already registered with the approval
+generator. It lives in `scripts/publish-workflow-approved-revisions.tsv`, and
+`scripts/write-publish-workflow-matchers.sh` writes it into each of those consumers'
+`OCIRepository`. The generator's consumer list is fixed in code
+(`scripts/report-publish-workflow-signing-revisions.sh` and the
+`Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
+covered until a reviewed platform change adds it there. The `Tenant` archetype pilot (below) still
 generates an `OCIRepository` that accepts any 40-hex `publish-app.yaml` commit, the same shape as
 admission.
 
-**What this means for a tenant:** to move `cd.yaml` to a `publish-app.yaml` commit that is not yet
-approved, change the pin on the default branch first and do not tag a release yet. The daily
-`Regenerate Approved Publish Revisions` workflow in this repository (06:20 UTC, or run it by hand)
-reads the new pin and opens a pull request that adds it to the approved list. Once that pull request
-is merged and deployed, Flux accepts releases signed at the new commit; before that it refuses
-them, while the release already running keeps verifying. Releases on an approved revision need no
-platform change.
+**What this means for a registered tenant:** to move `cd.yaml` to a `publish-app.yaml` commit that
+is not yet approved, merge the pin change with a commit type that does not release, such as
+`chore(ci): …`. A `fix` or `feat` merge makes semantic-release tag and publish at once (see the note
+below), before Flux can accept the new commit. The daily `Regenerate Approved Publish Revisions`
+workflow in this repository (06:20 UTC, or run it by hand) reads the new pin and opens a pull
+request that adds it to the approved list. Once that pull request is merged and deployed, Flux
+accepts releases signed at the new commit; before that it refuses them, while the release already
+running keeps verifying. Releases on an approved revision need no platform change.
 
 The admission policy and the node pull rule do not prove that a commit belongs to the actions
 repository's reviewed history; that remaining risk is accepted in
