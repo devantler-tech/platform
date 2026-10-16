@@ -125,6 +125,40 @@ func TestRealConfigMapFromAnotherDirectory(t *testing.T) {
 	}
 }
 
+func TestStripeDashboardBookmark(t *testing.T) {
+	d := fixture(t, repository(t))
+	matches := 0
+	for _, group := range d.bookmarks {
+		for groupName, entries := range group.(map[string]any) {
+			for _, entry := range entries.([]any) {
+				fields, ok := entry.(map[string]any)["Stripe"]
+				if !ok {
+					continue
+				}
+				matches++
+				if groupName != "Banking" {
+					t.Errorf("Stripe must appear in Banking, got %q", groupName)
+				}
+				bookmark := map[string]any{}
+				for _, field := range fields.([]any) {
+					for key, value := range field.(map[string]any) {
+						bookmark[key] = value
+					}
+				}
+				if bookmark["href"] != "https://dashboard.stripe.com" {
+					t.Errorf("Stripe must open its dashboard, got %v", bookmark["href"])
+				}
+				if icon, ok := bookmark["icon"].(string); !ok || icon == "" {
+					t.Error("Stripe must have an icon")
+				}
+			}
+		}
+	}
+	if matches != 1 {
+		t.Errorf("want exactly one Stripe dashboard bookmark, got %d", matches)
+	}
+}
+
 func TestBookmarkContracts(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
