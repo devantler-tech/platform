@@ -273,7 +273,7 @@ data:
               href: https://www.nuget.org
     - Learning & Reference:
         - KHoist Docs:
-            - icon: https://khoist.devantler.tech/brand/khoist-mark.svg
+            - icon: mdi-crane
               href: https://khoist.devantler.tech/
         - KodeKloud:
             - icon: mdi-school-outline
