@@ -272,6 +272,9 @@ data:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
     - Learning & Reference:
+        - KHoist Docs:
+            - icon: mdi-crane
+              href: https://khoist.devantler.tech/
         - KodeKloud:
             - icon: mdi-school-outline
               href: https://kodekloud.com
