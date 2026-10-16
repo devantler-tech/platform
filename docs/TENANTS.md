@@ -151,8 +151,8 @@ The approved list lives in `scripts/publish-workflow-approved-revisions.tsv` (wi
 reviewed approvals in `scripts/publish-workflow-canonical-approvals.tsv`), and
 `scripts/write-publish-workflow-matchers.sh` writes it into each tenant's `OCIRepository`.
 
-**What this means for a tenant:** moving `cd.yaml` to a new `publish-app.yaml` commit needs a
-platform change first. Until the new commit is approved and the matchers are regenerated and
+**What this means for a tenant:** moving `cd.yaml` to a `publish-app.yaml` commit that is not yet
+approved needs a platform change first. Until that commit is approved and the matchers are regenerated and
 deployed, Flux refuses the tenant's next release, while the release already running keeps
 verifying. The steps are in [validation.md](validation.md). Releases on an approved revision need
 no platform change.
