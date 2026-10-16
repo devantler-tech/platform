@@ -4,6 +4,8 @@ set -euo pipefail
 test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_work="$(mktemp -d)"
 trap 'rm -rf "$test_work"' EXIT
+export PUBLISH_BOOTSTRAP_FILE="$test_work/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 export CANONICAL_TEST_ROOT="$test_root" CANONICAL_TEST_WORK="$test_work"
 # The signer the fixtures observe is the first commit the record approves for this consumer, so
 # withdrawing a retired commit from the record does not strand the test on it.
@@ -12,6 +14,28 @@ CANONICAL_TEST_SHA="$(awk -F'\t' '$1==".github" && $2=="publish-manifests" {prin
 export CANONICAL_TEST_SHA
 mkdir -p "$test_work/bin"
 cp "$test_root/scripts/publish-workflow-approved-revisions.tsv" "$test_work/seed.tsv"
+# A first-publication consumer has no production observed row yet. Supply an
+# independent synthetic observation for this unit fixture, never a deployment claim.
+while IFS=$'\t' read -r consumer workflow _rest; do
+  if ! awk -F'\t' -v consumer="$consumer" '$1==consumer {found=1} END {exit !found}' "$test_work/seed.tsv"; then
+    template=$(awk -F'\t' -v consumer="$consumer" -v workflow="$workflow" 'BEGIN {OFS="\t"}
+      NR>1 && $2==workflow {$1=consumer; print; exit}' "$test_work/seed.tsv")
+    [[ -n "$template" ]] || { echo 'No observed-row fixture for the registered workflow' >&2; exit 1; }
+    printf '%s\n' "$template" >>"$test_work/seed.tsv"
+  fi
+done < <("$test_root/scripts/report-publish-workflow-signing-revisions.sh" --list-consumers)
+{
+  head -n 1 "$test_work/seed.tsv"
+  tail -n +2 "$test_work/seed.tsv" | LC_ALL=C sort
+} >"$test_work/seed.sorted"
+mv "$test_work/seed.sorted" "$test_work/seed.tsv"
+# The approval guard must see the same simulated sources as this fixture's rows.
+# Do not rewrite production matchers or infer applied evidence from its receipt.
+mkdir -p "$test_work/consumers"
+cp -R "$test_root/k8s" "$test_root/talos" "$test_work/consumers/"
+export PUBLISH_CONSUMER_ROOT="$test_work/consumers"
+APPROVED_REVISIONS_FILE="$test_work/seed.tsv" \
+  bash "$test_root/scripts/write-publish-workflow-matchers.sh" >"$test_work/seed-matchers.log"
 cat >"$test_work/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail

@@ -11,7 +11,7 @@
 # THE SEAMS
 # The guard reads the approved set from APPROVED_REVISIONS_FILE and scans PUBLISH_CONSUMER_ROOT;
 # both are pointed at a synthetic tree built here. Discovery, attribution and the registered
-# consumer list are REAL (sourced from the report), so the fixture carries exactly the four
+# consumer list are REAL (sourced from the report), so the fixture carries exactly the
 # registered consumers plus the three generic subject files the guard excludes by name.
 
 set -euo pipefail
@@ -43,6 +43,9 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# These synthetic source trees have their own evidence; production receipts do not belong here.
+export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 # The canonical-publisher approvals are a separate record with its own suite; this one runs
 # against a record that approves nothing, so a real approval cannot move these cases.
 readonly CANONICAL_NONE="$WORK/canonical-none.tsv"

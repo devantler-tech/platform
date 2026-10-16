@@ -37,6 +37,9 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# Synthetic observations must not consume a real deployment's publication receipt.
+export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 
 consumers="$("$REPORT" --list-consumers 2>/dev/null || true)"
 if [ -z "$consumers" ]; then

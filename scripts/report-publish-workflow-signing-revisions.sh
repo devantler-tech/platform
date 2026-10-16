@@ -62,6 +62,7 @@ readonly EXPECTED_CONSUMERS=(
   '.github'
   'ascoachingogvaner'
   'aws'
+  'data-product-controller'
   'wedding-app'
 )
 
@@ -72,6 +73,7 @@ readonly EXPECTED_CONSUMERS=(
 readonly EXPECTED_ARTIFACTS=(
   'ascoachingogvaner/manifests'
   'aws/manifests'
+  'data-product-controller/manifests'
   'github-config/manifests'
   'wedding-app/manifests'
 )

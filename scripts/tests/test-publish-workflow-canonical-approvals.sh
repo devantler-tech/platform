@@ -46,6 +46,9 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# Keep canonical fixture approvals independent of production bootstrap evidence.
+export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 
 consumers="$("$REPORT" --list-consumers 2>/dev/null | cut -f1,2 || true)"
 [ -n "$consumers" ] || { fail '--list-consumers produced nothing; every case below would pass vacuously'; exit 1; }

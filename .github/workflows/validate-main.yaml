@@ -143,6 +143,9 @@ jobs:
       - name: 🔐 Validate shared publish workflows are pinned
         run: ./scripts/guard-shared-publish-workflow-pin.sh
 
+      - name: 🔏 Install cosign for bound publication verification
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       # Which revision SIGNED what is deployed, against what each consumer pins now
       # (#3048). Reported on main rather than gated on a PR: it reads five other
       # repositories over the network, so a transient API failure here must never block

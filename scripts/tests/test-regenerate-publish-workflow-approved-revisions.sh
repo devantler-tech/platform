@@ -35,7 +35,8 @@ scripts/publish-workflow-bootstrap-publications.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
-k8s/bases/apps/wedding-app/oci-repository.yaml'
+k8s/bases/apps/wedding-app/oci-repository.yaml
+k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml'
 readonly endpoint_script='scripts/use-prod-stable-api-endpoint.sh'
 
 work_dir="$(mktemp -d)"
