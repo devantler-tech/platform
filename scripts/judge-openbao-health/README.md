@@ -20,9 +20,10 @@ go run ./scripts/judge-openbao-health \
 |---|---|---|
 | 0 | `PROVEN` | Every expected server is healthy and the cluster has exactly one active server. |
 | 1 | `HOLD` | A definite finding: a sealed or uninitialized server, the wrong release, split cluster identities, or no active server or more than one. |
-| 2 | `UNKNOWN` | The evidence cannot decide: a server is missing, duplicated or unexpected, the capture is stale, from the future or has no start or completion time, or a body is malformed, partial, oversized or ambiguous. Invalid arguments also exit 2. |
+| 2 | `UNKNOWN` | The evidence cannot decide: a server is missing, duplicated or unexpected, the capture is stale, from the future or has no start or completion time, a body was not produced during the capture, or a body is malformed, partial, oversized or ambiguous. Invalid arguments also exit 2, including `-h`, an unknown flag and any flag given twice. |
 
-`UNKNOWN` outranks `HOLD`, so incomplete evidence never reads as a narrower finding. The command
+`UNKNOWN` outranks `HOLD`, across servers and within one server's evidence, so incomplete evidence
+never reads as a narrower finding. The command
 prints one JSON line naming each failed server and reason. It never prints a health body, a pod
 identity or a cluster identity.
 
@@ -40,7 +41,9 @@ the body has to parse strictly and agree with it.
 The capture is one JSON document. Each server's `health` is the unmodified body of
 `GET /v1/sys/health?standbyok=true` read from that server, and `healthStatus` is its HTTP status.
 `startedAt` is written before the first read and `capturedAt` when the last one completes. Freshness
-is measured from `startedAt`, so even the oldest read in the capture is within `--max-age`.
+is measured from `startedAt`, so even the oldest read in the capture is within `--max-age`. Each
+body's own `server_time_utc` must also fall inside that window, give or take one minute of clock
+skew, so a fresh envelope cannot carry an old body.
 
 ```json
 {
@@ -51,7 +54,7 @@ is measured from `startedAt`, so even the oldest read in the capture is within `
       "name": "openbao-0",
       "podUID": "<the pod's UID>",
       "healthStatus": 200,
-      "health": { "initialized": true, "sealed": false, "standby": false, "version": "2.6.3", "cluster_id": "<id>" }
+      "health": { "initialized": true, "sealed": false, "standby": false, "server_time_utc": 1792180675, "version": "2.6.3", "cluster_id": "<id>" }
     }
   ]
 }

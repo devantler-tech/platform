@@ -12,7 +12,14 @@ import (
 	"time"
 )
 
-var now = time.Date(2026, 10, 16, 20, 0, 0, 0, time.UTC)
+var (
+	now = time.Date(2026, 10, 16, 20, 0, 0, 0, time.UTC)
+	// served is inside the window fresh() captures in.
+	served = time.Date(2026, 10, 16, 19, 57, 55, 0, time.UTC)
+	// backslash builds escaped JSON keys without the source text being
+	// unescaped by any tool that writes this file.
+	backslash = string(rune(92))
+)
 
 func want() expectation {
 	return expectation{servers: []string{"openbao-0", "openbao-1", "openbao-2"}, version: "2.6.3", maxAge: 5 * time.Minute}
@@ -22,12 +29,16 @@ func want() expectation {
 // cluster name and identity are omitted while a server is sealed or
 // uninitialized.
 func body(initialized, sealed, standby bool, version, cluster string) string {
+	return bodyAt(served, initialized, sealed, standby, version, cluster)
+}
+
+func bodyAt(at time.Time, initialized, sealed, standby bool, version, cluster string) string {
 	clusterFields := fmt.Sprintf(`,"cluster_name":"synthetic","cluster_id":%q`, cluster)
 	if !initialized || sealed {
 		clusterFields = ""
 	}
-	return fmt.Sprintf(`{"initialized":%t,"sealed":%t,"standby":%t,"performance_standby":false,"replication_performance_mode":"disabled","replication_dr_mode":"disabled","server_time_utc":1792180800,"version":%q%s}`,
-		initialized, sealed, standby, version, clusterFields)
+	return fmt.Sprintf(`{"initialized":%t,"sealed":%t,"standby":%t,"performance_standby":false,"replication_performance_mode":"disabled","replication_dr_mode":"disabled","server_time_utc":%d,"version":%q%s}`,
+		initialized, sealed, standby, at.Unix(), version, clusterFields)
 }
 
 func server(name, uid string, status int, health string) string {
@@ -47,11 +58,13 @@ func documentBetween(startedAt, capturedAt string, servers ...string) string {
 	return fmt.Sprintf(`{"startedAt":%q,"capturedAt":%q,"servers":[%s]}`, startedAt, capturedAt, strings.Join(servers, ","))
 }
 
-func healthyServers() []string {
+func healthyServers() []string { return healthyServersAt(served) }
+
+func healthyServersAt(at time.Time) []string {
 	return []string{
-		server("openbao-0", "uid-0", 200, body(true, false, false, "2.6.3", "cluster-a")),
-		server("openbao-1", "uid-1", 200, body(true, false, true, "2.6.3", "cluster-a")),
-		server("openbao-2", "uid-2", 200, body(true, false, true, "2.6.3", "cluster-a")),
+		server("openbao-0", "uid-0", 200, bodyAt(at, true, false, false, "2.6.3", "cluster-a")),
+		server("openbao-1", "uid-1", 200, bodyAt(at, true, false, true, "2.6.3", "cluster-a")),
+		server("openbao-2", "uid-2", 200, bodyAt(at, true, false, true, "2.6.3", "cluster-a")),
 	}
 }
 
@@ -115,7 +128,15 @@ func TestIncompleteOrAmbiguousEvidenceIsUnknown(t *testing.T) {
 		{"null health body", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, "null"))...), "no health evidence"},
 		{"partial health body", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is incomplete"},
 		{"health body without seal state", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is incomplete"},
-		{"unsealed body without cluster identity", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":false,"standby":true,"version":"2.6.3"}`))...), "health response is incomplete"},
+		{"unsealed body without cluster identity", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, fmt.Sprintf(`{"initialized":true,"sealed":false,"standby":true,"server_time_utc":%d,"version":"2.6.3"}`, served.Unix())))...), "health response is incomplete"},
+		{"health body without server time", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is incomplete"},
+		{"health body older than the capture", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, bodyAt(served.Add(-3*time.Minute), true, false, true, "2.6.3", "cluster-a")))...), "health response was not produced during the capture"},
+		{"health body newer than the capture", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, bodyAt(served.Add(3*time.Minute), true, false, true, "2.6.3", "cluster-a")))...), "health response was not produced during the capture"},
+		{"old sealed body is not a current finding", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 503, bodyAt(served.Add(-3*time.Minute), true, true, true, "2.6.3", "")))...), "health response was not produced during the capture"},
+		{"missing status outranks a wrong release", fresh(replace(healthy, 1, `{"name":"openbao-1","podUID":"uid-1","health":`+body(true, false, true, "2.6.2", "")+`}`)...), "health response has no HTTP status"},
+		{"missing status outranks a sealed body", fresh(replace(healthy, 1, `{"name":"openbao-1","podUID":"uid-1","health":`+body(true, true, true, "2.6.3", "")+`}`)...), "health response has no HTTP status"},
+		{"empty cluster identity outranks a wrong release", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, body(true, false, true, "2.6.2", "")))...), "health response names no cluster"},
+		{"failing status outranks a wrong release", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 429, body(true, false, true, "2.6.2", "cluster-a")))...), "health HTTP status disagrees with its body"},
 		{"health body of the wrong type", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":"true","sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is not an object of the expected shape"},
 		{"healthy body with a failing status", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 429, h))...), "health HTTP status disagrees with its body"},
 		{"no HTTP status", fresh(replace(healthy, 1, `{"name":"openbao-1","podUID":"uid-1","health":`+h+`}`)...), "health response has no HTTP status"},
@@ -132,7 +153,8 @@ func TestIncompleteOrAmbiguousEvidenceIsUnknown(t *testing.T) {
 		{"trailing document", fresh(healthy...) + ` {}`, "capture is ambiguous or malformed: trailing evidence"},
 		{"truncated document", strings.TrimSuffix(fresh(healthy...), "]}"), "capture is ambiguous or malformed: incomplete evidence"},
 		{"duplicate sealed member", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":true,"sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "capture is ambiguous or malformed: ambiguous evidence fields"},
-		{"escaped duplicate sealed member", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":true,"sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "capture is ambiguous or malformed: ambiguous evidence fields"},
+		{"escaped duplicate sealed member", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":true,"`+backslash+`u0073ealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "capture is ambiguous or malformed: ambiguous evidence fields"},
+		{"escaped case alias of sealed", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":true,"`+backslash+`u0053ealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "capture is ambiguous or malformed: case-aliased evidence field"},
 		{"case-aliased sealed member", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"Sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "capture is ambiguous or malformed: case-aliased evidence field"},
 		{"duplicate server name member", fresh(replace(healthy, 1, `{"name":"openbao-9","name":"openbao-1","podUID":"uid-1","healthStatus":200,"health":`+h+`}`)...), "capture is ambiguous or malformed: ambiguous evidence fields"},
 		{"oversized capture", `{"startedAt":"2026-10-16T19:57:50Z","capturedAt":"2026-10-16T19:58:00Z","servers":[],"pad":"` + strings.Repeat("x", maxCaptureBytes) + `"}`, "capture exceeds its size bound"},
@@ -157,7 +179,7 @@ func TestUnknownOutranksHold(t *testing.T) {
 
 func TestUnrelatedNativeHealthFieldsKeepTheirSpelling(t *testing.T) {
 	healthy := healthyServers()
-	native := `{"initialized":true,"sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a","replication_dr_mode":"disabled","Extra":{"Label":"one","label":"two"}}`
+	native := fmt.Sprintf(`{"initialized":true,"sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a","server_time_utc":%d,"replication_dr_mode":"disabled","Extra":{"Label":"one","label":"two"}}`, served.Unix())
 	got := judge(strings.NewReader(fresh(replace(healthy, 2, server("openbao-2", "uid-2", 200, native))...)), want(), now)
 	if got.Verdict != verdictProven {
 		t.Fatalf("fields the judge does not read must not change the verdict: %+v", got)
@@ -193,9 +215,14 @@ func TestCommandExitCodesAndPrivateOutput(t *testing.T) {
 	if out, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
-	recent := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
-	healthy := healthyServers()
-	sealed := replace(healthy, 1, server("openbao-1", "uid-1", 200, body(true, true, true, "2.6.3", "private-cluster-canary")))
+	readAt := time.Now().UTC().Add(-time.Minute)
+	recent := readAt.Format(time.RFC3339)
+	healthy := healthyServersAt(readAt)
+	for i := range healthy {
+		healthy[i] = strings.ReplaceAll(healthy[i], "cluster-a", "private-cluster-canary")
+	}
+	sealed := replace(healthy, 1, server("openbao-1", "uid-1", 503, bodyAt(readAt, true, true, true, "2.6.3", "")))
+	all := []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.6.3"}
 	for _, test := range []struct {
 		name     string
 		document string
@@ -203,17 +230,23 @@ func TestCommandExitCodesAndPrivateOutput(t *testing.T) {
 		code     int
 		verdict  string
 	}{
-		{"proven", document(recent, healthy...), nil, 0, verdictProven},
-		{"hold", document(recent, sealed...), nil, 1, verdictHold},
-		{"unknown", document(recent, healthy[0]), nil, 2, verdictUnknown},
-		{"invalid arguments", document(recent, healthy...), []string{"--expect-version", ""}, 2, ""},
+		{"proven", document(recent, healthy...), all, 0, verdictProven},
+		{"hold", document(recent, sealed...), all, 1, verdictHold},
+		{"unknown", document(recent, healthy[0]), all, 2, verdictUnknown},
+		{"empty release", document(recent, healthy...), []string{"--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", ""}, 2, ""},
+		{"short help flag", document(recent, healthy...), append(append([]string(nil), all...), "-h"), 2, ""},
+		{"long help flag", document(recent, healthy...), append(append([]string(nil), all...), "--help"), 2, ""},
+		{"unknown flag", document(recent, healthy...), append(append([]string(nil), all...), "--assume-healthy"), 2, ""},
+		{"repeated flag cannot narrow the servers", document(recent, healthy[0]), append(append([]string(nil), all...), "--expect-servers", "openbao-0"), 2, ""},
+		{"repeated flag cannot swap the release", document(recent, healthy...), append(append([]string(nil), all...), "--expect-version=2.6.2"), 2, ""},
+		{"positional argument", document(recent, healthy...), append(append([]string(nil), all...), "extra"), 2, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "capture.json")
 			if err := os.WriteFile(path, []byte(test.document), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			args := append([]string{"--input", path, "--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.6.3"}, test.args...)
+			args := append([]string{"--input", path}, test.args...)
 			cmd := exec.Command(binary, args...)
 			var stdout, stderr bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &stdout, &stderr

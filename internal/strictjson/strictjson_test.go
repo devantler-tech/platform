@@ -5,6 +5,10 @@ import (
 	"testing"
 )
 
+// backslash builds escaped JSON keys without the source text being unescaped
+// by any tool that writes this file.
+var backslash = string(rune(92))
+
 func TestValidate(t *testing.T) {
 	canonical := map[string][]string{
 		"":          {"items", "sealed"},
@@ -18,7 +22,8 @@ func TestValidate(t *testing.T) {
 		{"unrelated members keep their spelling", `{"sealed":false,"native":{"Label":"one","label":"two"}}`, ""},
 		{"scalar document", `true`, ""},
 		{"duplicate member", `{"sealed":true,"sealed":false}`, "ambiguous evidence fields"},
-		{"escaped duplicate member", `{"sealed":true,"sealed":false}`, "ambiguous evidence fields"},
+		{"escaped duplicate member", `{"sealed":true,"` + backslash + `u0073ealed":false}`, "ambiguous evidence fields"},
+		{"escaped case alias", `{"` + backslash + `u0053ealed":false}`, "case-aliased evidence field"},
 		{"case alias at the root", `{"Sealed":false}`, "case-aliased evidence field"},
 		{"case alias inside an array element", `{"items":[{"Name":"a"}]}`, "case-aliased evidence field"},
 		{"case alias in a nested object", `{"items":[{"x":{"VALUE":1}}]}`, "case-aliased evidence field"},

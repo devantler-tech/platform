@@ -51,7 +51,7 @@ const (
 var canonicalFields = map[string][]string{
 	"":                 {"startedAt", "capturedAt", "servers"},
 	"servers[]":        {"name", "podUID", "healthStatus", "health"},
-	"servers[].health": {"initialized", "sealed", "standby", "version", "cluster_id"},
+	"servers[].health": {"initialized", "sealed", "standby", "version", "cluster_id", "server_time_utc"},
 }
 
 type expectation struct {
@@ -87,12 +87,20 @@ type serverCapture struct {
 }
 
 type health struct {
-	Initialized *bool   `json:"initialized"`
-	Sealed      *bool   `json:"sealed"`
-	Standby     *bool   `json:"standby"`
-	Version     *string `json:"version"`
-	ClusterID   *string `json:"cluster_id"`
+	Initialized   *bool   `json:"initialized"`
+	Sealed        *bool   `json:"sealed"`
+	Standby       *bool   `json:"standby"`
+	Version       *string `json:"version"`
+	ClusterID     *string `json:"cluster_id"`
+	ServerTimeUTC *int64  `json:"server_time_utc"`
 }
+
+// clockSkew is how far a server's own clock may differ from the capture's
+// window and still count as read during it.
+const clockSkew = time.Minute
+
+// window is the interval in which every health body must have been produced.
+type window struct{ start, end time.Time }
 
 func unknown(server, reason string) finding { return finding{Server: server, Reason: reason} }
 func hold(server, reason string) finding    { return finding{Server: server, Reason: reason, hold: true} }
@@ -181,7 +189,7 @@ func judge(input io.Reader, want expectation, now time.Time) report {
 			result.Findings = append(result.Findings, unknown(name, "server was not observed"))
 			continue
 		}
-		if f, ok := judgeServer(name, server, want.version); !ok {
+		if f, ok := judgeServer(name, server, want.version, window{startedAt, capturedAt}); !ok {
 			result.Findings = append(result.Findings, f)
 			continue
 		}
@@ -224,20 +232,30 @@ func judge(input io.Reader, want expectation, now time.Time) report {
 
 // judgeServer checks one server's own evidence. It returns ok only when the
 // server is proven initialized, unsealed and on the expected release with a
-// complete, successful health response.
-func judgeServer(name string, server serverCapture, version string) (finding, bool) {
+// complete, successful health response read inside the capture window.
+//
+// Every check that can make the evidence UNKNOWN runs before the check it
+// guards, so incomplete evidence is never reported as a narrower HOLD.
+func judgeServer(name string, server serverCapture, version string, captured window) (finding, bool) {
 	trimmed := bytes.TrimSpace(server.Health)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return unknown(name, "no health evidence"), false
+	}
+	if server.HealthStatus == nil {
+		return unknown(name, "health response has no HTTP status"), false
 	}
 	var body health
 	if err := json.Unmarshal(trimmed, &body); err != nil {
 		return unknown(name, "health response is not an object of the expected shape"), false
 	}
-	// OpenBao always reports these two, so a sealed or uninitialized server is
-	// a definite finding even though its body omits the cluster identity.
-	if body.Initialized == nil || body.Sealed == nil {
+	// OpenBao always reports these, so a sealed or uninitialized server is a
+	// definite finding even though its body omits the cluster identity.
+	if body.Initialized == nil || body.Sealed == nil || body.ServerTimeUTC == nil {
 		return unknown(name, "health response is incomplete"), false
+	}
+	served := time.Unix(*body.ServerTimeUTC, 0).UTC()
+	if served.Before(captured.start.Add(-clockSkew)) || served.After(captured.end.Add(clockSkew)) {
+		return unknown(name, "health response was not produced during the capture"), false
 	}
 	switch {
 	case !*body.Initialized:
@@ -248,17 +266,14 @@ func judgeServer(name string, server serverCapture, version string) (finding, bo
 	if body.Standby == nil || body.Version == nil || body.ClusterID == nil {
 		return unknown(name, "health response is incomplete"), false
 	}
-	switch {
-	case *body.Version != version:
-		return hold(name, "server is not on the expected release"), false
-	case *body.ClusterID == "":
+	if *body.ClusterID == "" {
 		return unknown(name, "health response names no cluster"), false
-	}
-	if server.HealthStatus == nil {
-		return unknown(name, "health response has no HTTP status"), false
 	}
 	if *server.HealthStatus != 200 {
 		return unknown(name, "health HTTP status disagrees with its body"), false
+	}
+	if *body.Version != version {
+		return hold(name, "server is not on the expected release"), false
 	}
 	return finding{}, true
 }
@@ -282,13 +297,47 @@ func parseExpectation(servers, version string, maxAge time.Duration) (expectatio
 	return want, nil
 }
 
+// parseArgs parses args without ever exiting 0 on its own: -h and every parse
+// error become errors, and a flag given twice is refused, so a trailing
+// duplicate cannot quietly narrow the expected servers or swap the release.
+func parseArgs(set *flag.FlagSet, args []string) error {
+	set.Init(set.Name(), flag.ContinueOnError)
+	set.SetOutput(io.Discard)
+	if err := set.Parse(args); err != nil {
+		return fmt.Errorf("invalid arguments: %w", err)
+	}
+	seen := map[string]int{}
+	for _, arg := range args {
+		if arg == "--" {
+			break
+		}
+		if !strings.HasPrefix(arg, "-") {
+			continue
+		}
+		name := strings.TrimLeft(arg, "-")
+		if before, _, found := strings.Cut(name, "="); found {
+			name = before
+		}
+		if set.Lookup(name) != nil {
+			seen[name]++
+			if seen[name] > 1 {
+				return fmt.Errorf("--%s was given more than once", name)
+			}
+		}
+	}
+	return nil
+}
+
 func main() {
 	input := flag.String("input", "", "captured observation document, or - for stdin")
 	servers := flag.String("expect-servers", "", "comma-separated server names the reviewed render declares")
 	version := flag.String("expect-version", "", "OpenBao release every server must run")
 	maxAge := flag.Duration("max-age", 5*time.Minute, "oldest acceptable capture")
-	flag.Parse()
-	want, err := parseExpectation(*servers, *version, *maxAge)
+	err := parseArgs(flag.CommandLine, os.Args[1:])
+	var want expectation
+	if err == nil {
+		want, err = parseExpectation(*servers, *version, *maxAge)
+	}
 	if err == nil && (*input == "" || flag.NArg() != 0) {
 		err = errors.New("--input is required and no positional arguments are accepted")
 	}
