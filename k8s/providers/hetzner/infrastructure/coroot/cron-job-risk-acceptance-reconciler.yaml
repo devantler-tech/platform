@@ -10,7 +10,7 @@
 # generated Coroot cluster id and match the remaining namespace/kind/name tuple
 # exactly, preserving the declaration across a project rebuild.
 # The generated-name exceptions are anchored to Longhorn InstanceManagers and
-# GitHub provider revisions, whose reviewed singleton identities can rotate.
+# Crossplane provider revisions, whose reviewed singleton identities can rotate.
 #
 # The in-cluster service is intentionally credentialless because the Coroot CR
 # sets authAnonymousRole=Admin; the external UI remains behind oauth2-proxy.
@@ -92,8 +92,12 @@ spec:
 
                   LONGHORN_INSTANCE_MANAGER_PATTERN='^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\z'
                   GITHUB_PROVIDER_PATTERN='^crossplane-system:Deployment:provider-upjet-github-[0-9a-f]{12}\z'
+                  AWS_IAM_PROVIDER_PATTERN='^crossplane-system:Deployment:provider-aws-iam-[0-9a-f]{12}\z'
+                  AWS_FAMILY_PROVIDER_PATTERN='^crossplane-system:Deployment:upbound-provider-family-aws-[0-9a-f]{12}\z'
                   jq -e --arg instance_manager_pattern "$LONGHORN_INSTANCE_MANAGER_PATTERN" \
-                    --arg github_provider_pattern "$GITHUB_PROVIDER_PATTERN" '
+                    --arg github_provider_pattern "$GITHUB_PROVIDER_PATTERN" \
+                    --arg aws_iam_provider_pattern "$AWS_IAM_PROVIDER_PATTERN" \
+                    --arg aws_family_provider_pattern "$AWS_FAMILY_PROVIDER_PATTERN" '
                     type == "array" and
                     all(.[];
                       ((has("application") and (has("application_pattern") | not) and
@@ -104,13 +108,17 @@ spec:
                         ((.application_pattern == $instance_manager_pattern and
                           (.reason | startswith("platform#4117: "))) or
                          (.application_pattern == $github_provider_pattern and
-                          (.reason | startswith("platform#4145: ")))))) and
+                          (.reason | startswith("platform#4145: "))) or
+                         (.application_pattern == $aws_iam_provider_pattern and
+                          (.reason | startswith("platform#3812: "))) or
+                         (.application_pattern == $aws_family_provider_pattern and
+                          (.reason | startswith("platform#3812: ")))))) and
                       .category == "Availability" and
                       (.type as $type |
                         ["single-instance-app", "single-node-app", "single-az-app", "spot-only-app", "unreplicated-database"] |
                         index($type) != null)
                     ) and
-                    ([.[] | select(has("application_pattern"))] | length <= 2) and
+                    ([.[] | select(has("application_pattern"))] | length <= 4) and
                     ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
                       ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
                   ' "$ACCEPTANCES_FILE" >/dev/null || {
