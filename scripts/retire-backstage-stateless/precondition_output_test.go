@@ -72,7 +72,7 @@ func TestPreconditionOutputSeparatesUnsafeAndChangedSamples(t *testing.T) {
 		{name: "changed owner", stage: "snapshot-second", sample: 2, change: func(f *portalFixture) {
 			object(f.hr["metadata"])["resourceVersion"] = "99"
 		}},
-		{name: "changed retained credentials", stage: "preservation-second", sample: 2, change: func(f *portalFixture) {
+		{name: "changed retained credentials", stage: "preservation-second category=sample-change", sample: 2, change: func(f *portalFixture) {
 			item(f.inventory, 0)["data"] = map[string]any{"password": "DO_NOT_PRINT changed"}
 		}},
 	} {
@@ -109,16 +109,16 @@ func TestPreconditionOutputClassifiesEarlyPreservationFailures(t *testing.T) {
 			sample int
 			change func(*portalFixture)
 		}{
-			{name: "opening claim ownership", stage: "preservation-first", sample: 1, change: func(f *portalFixture) {
+			{name: "opening claim ownership", stage: "preservation-first category=claim-ownership", sample: 1, change: func(f *portalFixture) {
 				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
-			{name: "second claim ownership", stage: "preservation-second", sample: 2, change: func(f *portalFixture) {
+			{name: "second claim ownership", stage: "preservation-second category=claim-ownership", sample: 2, change: func(f *portalFixture) {
 				object(item(f.live, 3)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
-			{name: "opening volume ownership", stage: "preservation-first", sample: 1, change: func(f *portalFixture) {
+			{name: "opening volume ownership", stage: "preservation-first category=storage-retention", sample: 1, change: func(f *portalFixture) {
 				object(item(f.volumes, 0)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
-			{name: "second volume ownership", stage: "preservation-second", sample: 2, change: func(f *portalFixture) {
+			{name: "second volume ownership", stage: "preservation-second category=storage-retention", sample: 2, change: func(f *portalFixture) {
 				object(item(f.volumes, 0)["metadata"])["ownerReferences"] = "DO_NOT_PRINT"
 			}},
 			{name: "opening owner refusal precedes preservation", stage: "eligibility-first category=owner-profile", sample: 1, change: func(f *portalFixture) {
@@ -154,6 +154,40 @@ func TestPreconditionOutputClassifiesEarlyPreservationFailures(t *testing.T) {
 					t.Fatalf("preservation refusal lost its stage or early no-write boundary: code=%d samples=%d output=%q want=%q", code, samples, out.String(), want)
 				}
 			})
+		}
+	}
+}
+
+func TestPreservationCategoryDoesNotEchoUnknownOrPrivateErrors(t *testing.T) {
+	for _, err := range []error{
+		nil,
+		errors.New("DO_NOT_PRINT credential"),
+		errors.New("retained claim owner API unverified: DO_NOT_PRINT"),
+		classifiedPreservationFailure("DO_NOT_PRINT", errors.New("private evidence")),
+	} {
+		if got := preservationCategory(err); got != "unknown" {
+			t.Fatalf("unknown or private error acquired a public classification: %q", got)
+		}
+	}
+}
+
+func TestPreservationCategoryAllowsOnlyReviewedFailureFamilies(t *testing.T) {
+	for _, category := range []string{
+		"namespace",
+		"evidence-shape",
+		"retirement-targets",
+		"retirement-dependency",
+		"database-health",
+		"retained-identity",
+		"release-history",
+		"claim-ownership",
+		"controller-evidence",
+		"database-coverage",
+		"storage-retention",
+	} {
+		err := classifiedPreservationFailure(category, errors.New("DO_NOT_PRINT private evidence"))
+		if got := preservationCategory(err); got != category || strings.Contains(got, "DO_NOT_PRINT") {
+			t.Fatalf("reviewed preservation family was not bounded: got=%q want=%q", got, category)
 		}
 	}
 }
