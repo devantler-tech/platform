@@ -234,7 +234,9 @@ func judgeServer(name string, server serverCapture, version string) (finding, bo
 	if err := json.Unmarshal(trimmed, &body); err != nil {
 		return unknown(name, "health response is not an object of the expected shape"), false
 	}
-	if body.Initialized == nil || body.Sealed == nil || body.Standby == nil || body.Version == nil || body.ClusterID == nil {
+	// OpenBao always reports these two, so a sealed or uninitialized server is
+	// a definite finding even though its body omits the cluster identity.
+	if body.Initialized == nil || body.Sealed == nil {
 		return unknown(name, "health response is incomplete"), false
 	}
 	switch {
@@ -242,6 +244,11 @@ func judgeServer(name string, server serverCapture, version string) (finding, bo
 		return hold(name, "server is not initialized"), false
 	case *body.Sealed:
 		return hold(name, "server is sealed"), false
+	}
+	if body.Standby == nil || body.Version == nil || body.ClusterID == nil {
+		return unknown(name, "health response is incomplete"), false
+	}
+	switch {
 	case *body.Version != version:
 		return hold(name, "server is not on the expected release"), false
 	case *body.ClusterID == "":

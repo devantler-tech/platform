@@ -18,9 +18,16 @@ func want() expectation {
 	return expectation{servers: []string{"openbao-0", "openbao-1", "openbao-2"}, version: "2.6.3", maxAge: 5 * time.Minute}
 }
 
+// body mirrors OpenBao's sys/health response (api/v2 HealthResponse): the
+// cluster name and identity are omitted while a server is sealed or
+// uninitialized.
 func body(initialized, sealed, standby bool, version, cluster string) string {
-	return fmt.Sprintf(`{"initialized":%t,"sealed":%t,"standby":%t,"performance_standby":false,"version":%q,"cluster_name":"synthetic","cluster_id":%q,"server_time_utc":1792180800}`,
-		initialized, sealed, standby, version, cluster)
+	clusterFields := fmt.Sprintf(`,"cluster_name":"synthetic","cluster_id":%q`, cluster)
+	if !initialized || sealed {
+		clusterFields = ""
+	}
+	return fmt.Sprintf(`{"initialized":%t,"sealed":%t,"standby":%t,"performance_standby":false,"replication_performance_mode":"disabled","replication_dr_mode":"disabled","server_time_utc":1792180800,"version":%q%s}`,
+		initialized, sealed, standby, version, clusterFields)
 }
 
 func server(name, uid string, status int, health string) string {
@@ -107,6 +114,8 @@ func TestIncompleteOrAmbiguousEvidenceIsUnknown(t *testing.T) {
 		{"HTTP success without a health body", fresh(replace(healthy, 1, `{"name":"openbao-1","podUID":"uid-1","healthStatus":200}`)...), "no health evidence"},
 		{"null health body", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, "null"))...), "no health evidence"},
 		{"partial health body", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is incomplete"},
+		{"health body without seal state", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is incomplete"},
+		{"unsealed body without cluster identity", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":true,"sealed":false,"standby":true,"version":"2.6.3"}`))...), "health response is incomplete"},
 		{"health body of the wrong type", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 200, `{"initialized":"true","sealed":false,"standby":true,"version":"2.6.3","cluster_id":"cluster-a"}`))...), "health response is not an object of the expected shape"},
 		{"healthy body with a failing status", fresh(replace(healthy, 1, server("openbao-1", "uid-1", 429, h))...), "health HTTP status disagrees with its body"},
 		{"no HTTP status", fresh(replace(healthy, 1, `{"name":"openbao-1","podUID":"uid-1","health":`+h+`}`)...), "health response has no HTTP status"},
