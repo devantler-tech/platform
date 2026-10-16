@@ -140,13 +140,13 @@ pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-github 7494260
 
 pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-upjet-unifi 29887f0decdc69b37f1263887b53d8fb85e244278d8362476f6a44b50c9c1a9d
 
-pkg.crossplane.io/v1|Provider||provider-aws-iam 712c5d441eb5d53258686e6e2a2f0fa57727840118263b11717bcfdc6b352f6b
+pkg.crossplane.io/v1|Provider||provider-aws-iam 4d46cd8dd698528258e074ad138bbecbb3e54dfc13647ea3166efc89f4cf6561
 
 pkg.crossplane.io/v1|Provider||provider-upjet-github 4f11a8519c6713e95c23cefaa758af3a4a949436477a482b6684f838c1372555
 
 pkg.crossplane.io/v1|Provider||provider-upjet-unifi f39da6b187adef1363983088fe465bf3c441396bfb560bc2375dba73e1ae45b2
 
-pkg.crossplane.io/v1|Provider||upbound-provider-family-aws 0cecfe0b3232b1b04e0eaaf5eb8a0a98cd55f9b25de79f3cbc67617cb1035fee
+pkg.crossplane.io/v1|Provider||upbound-provider-family-aws 64c7d602bf7460b7a38657a49539f5fa945ef8216be5e4296dddd04f69a944f8
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 2aac6fc040557b155131fdc2ad9261f6ad2b337835915d7dcb50a3704e032478
 
