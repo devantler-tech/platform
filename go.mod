@@ -4,6 +4,7 @@ go 1.26.6
 
 require (
 	cel.dev/cel-go v0.32.0
+	github.com/blang/semver/v4 v4.0.0
 	// Test-only consumer: match the deployed node-agent source ee62018e73b9.
 	github.com/coroot/logparser v1.4.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
@@ -20,7 +21,6 @@ require (
 require (
 	cel.dev/expr v0.25.2 // indirect
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
-	github.com/blang/semver/v4 v4.0.0 // indirect
 	github.com/containerd/go-cni v1.1.13 // indirect
 	github.com/containernetworking/cni v1.3.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
