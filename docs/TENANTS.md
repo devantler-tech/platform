@@ -162,14 +162,15 @@ covered until a reviewed platform change adds it there. The `Tenant` archetype p
 generates an `OCIRepository` that accepts any 40-hex `publish-app.yaml` commit, the same shape as
 admission.
 
-**What this means for a registered tenant:** to move `cd.yaml` to a `publish-app.yaml` commit that
-is not yet approved, merge the pin change with a commit type that does not release, such as
-`chore(ci): …`. A `fix` or `feat` merge makes semantic-release tag and publish at once (see the note
-below), before Flux can accept the new commit. The daily `Regenerate Approved Publish Revisions`
-workflow in this repository (06:20 UTC, or run it by hand) reads the new pin and opens a pull
-request that adds it to the approved list. Once that pull request is merged and deployed, Flux
-accepts releases signed at the new commit; before that it refuses them, while the release already
-running keeps verifying. Releases on an approved revision need no platform change.
+**What this means for a registered tenant:** the platform must approve a `publish-app.yaml` commit
+before `cd.yaml` can move to it. Each registered application tenant runs a required check that
+refuses a pin the platform's committed approved list does not contain, so a pin change made too
+early waits instead of merging. The daily `Regenerate Approved Publish Revisions` workflow in this
+repository (06:20 UTC, or run it by hand) adds the latest released `devantler-tech/actions`
+revision to the list in a pull request. Once that pull request is merged and deployed, re-run the
+tenant's check; the pin change can then merge, and Flux accepts the releases it makes. The
+generator never adds a commit that is not the latest release, so pinning one needs a reviewed
+platform change to the approved list. Releases on an approved revision need no platform change.
 
 The admission policy and the node pull rule do not prove that a commit belongs to the actions
 repository's reviewed history; that remaining risk is accepted in
