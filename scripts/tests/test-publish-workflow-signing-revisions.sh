@@ -14,8 +14,8 @@
 # Resolving a revision needs the network. A test that depended on it would prove nothing
 # repeatable: red when an unrelated repository cut a release, green when the network was
 # simply unavailable. The script takes its resolver from PUBLISH_REVISION_RESOLVER and
-# these fixtures supply a stub. Discovery stays REAL, against this repository's own
-# manifests, because that is the half a stub could hide a regression in.
+# these fixtures supply a stub. Discovery is checked against the repository first;
+# resolver cases use independent sources so a live digest binding cannot bypass the stub.
 
 set -euo pipefail
 
@@ -209,6 +209,45 @@ write_table() { # <path> <special-repo|""> <special-signing> <special-current>
 
 first_repo="$(printf '%s\n' "$consumers" | head -1 | cut -f1)"
 
+write_real_consumers() { # <root> <first-consumer-artifact-leaf>
+  local root="$1" leaf="$2" repo workflow _version _artifact oci n=0
+  mkdir -p "$root"
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
+    [ -n "$repo" ] || continue
+    n=$((n + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    if [ "$repo" = "$first_repo" ]; then
+      oci="$oci/$leaf"
+    else
+      oci="$oci/manifests"
+    fi
+    write_consumer "$root/real-$n.yaml" "r$n" "$oci" "$workflow"
+  done <<<"$consumers"
+}
+write_consumer() { # <file> <name> <artifact> <workflow>
+  cat >"$1" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: $2
+spec:
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/$3
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$4\\.yaml@[0-9a-f]{40}\$'
+YAML
+}
+
+# Resolver fixtures must not inherit live digest bindings or use network tools.
+resolver_root="$WORK/resolver-consumers"
+write_real_consumers "$resolver_root" manifests
+export PUBLISH_CONSUMER_ROOT="$resolver_root"
+
 # ---------------------------------------------------------------------------
 # 1. AGREEING: identical revisions must NOT be reported as diverged, and must be
 #    positively reported — a silent no-op would otherwise look the same.
@@ -380,44 +419,9 @@ fi
 #    shape of a `gh api` error body — made signing == current and reported IN-SYNC for
 #    every consumer with exit 0. That is the worst failure this script can have.
 # ---------------------------------------------------------------------------
-write_real_consumers() { # <root> <first-consumer-artifact-leaf>
-  local root="$1" leaf="$2" repo workflow _version _artifact oci n=0
-  mkdir -p "$root"
-  while IFS=$'\t' read -r repo workflow _version _artifact; do
-    [ -n "$repo" ] || continue
-    n=$((n + 1))
-    oci="$repo"
-    [ "$repo" = '.github' ] && oci='github-config'
-    if [ "$repo" = "$first_repo" ]; then
-      oci="$oci/$leaf"
-    else
-      oci="$oci/manifests"
-    fi
-    write_consumer "$root/real-$n.yaml" "r$n" "$oci" "$workflow"
-  done <<<"$consumers"
-}
-write_consumer() { # <file> <name> <artifact> <workflow>
-  cat >"$1" <<YAML
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata:
-  name: $2
-spec:
-  ref:
-    semver: ">=1.0.0"
-  url: oci://ghcr.io/devantler-tech/$3
-  verify:
-    provider: cosign
-    matchOIDCIdentity:
-      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
-        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$4\\.yaml@[0-9a-f]{40}\$'
-YAML
-}
 
-# Parser controls use independent semver fixtures: a real digest binding may
-# resolve without calling the injected resolver, so it is not parser evidence.
-malformed_resolver_root="$WORK/malformed-resolver-consumers"
-write_real_consumers "$malformed_resolver_root" manifests
+# Parser controls use the independent resolver fixtures as well.
+malformed_resolver_root="$resolver_root"
 junk_resolver="$WORK/resolver-junk.sh"
 cat >"$junk_resolver" <<'JUNK'
 #!/usr/bin/env bash

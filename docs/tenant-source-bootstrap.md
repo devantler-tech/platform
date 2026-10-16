@@ -15,7 +15,9 @@ row to `publish-workflow-approved-revisions.tsv` or loosen the signature matcher
 Prepare an immutable `OCIRepository` in the platform checkout. For the documentation
 tenant, its identity is `data-product-controller/khoist-documentation`, its URL is
 `oci://ghcr.io/devantler-tech/data-product-controller/manifests`, and its ref contains
-only the release's `sha256:` manifest digest. Do not activate a Flux Kustomization yet.
+only the release's `sha256:` manifest digest. Do not register the child Flux
+Kustomization yet: the waiting apps layer also health-checks suspended children,
+whose unobserved generation would stall that layer.
 Include the normal Cosign issuer and shared `publish-app` identity block so the
 existing matcher writer can discover it. That writer replaces its revision set
 with the derived approval before registration; bootstrap is no exemption from

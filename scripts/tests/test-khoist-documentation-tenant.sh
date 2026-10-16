@@ -8,8 +8,8 @@ kubectl kustomize "$repo_root/k8s/providers/hetzner/apps/khoist-documentation" >
 yq -o=json -I=0 '.' "$work/resources.yaml" | jq -s '.' >"$work/resources.json"
 validate() {
   jq -e '
-    length==5 and all(.[]; .metadata.name=="khoist-documentation" and .metadata.namespace=="data-product-controller") and
-    ([.[].kind]|sort)==["Kustomization","OCIRepository","Role","RoleBinding","ServiceAccount"] and
+    length==4 and all(.[]; .metadata.name=="khoist-documentation" and .metadata.namespace=="data-product-controller") and
+    ([.[].kind]|sort)==["OCIRepository","Role","RoleBinding","ServiceAccount"] and
     (map(select(.kind=="ServiceAccount"))[0] | .automountServiceAccountToken==false) and
     (map(select(.kind=="Role"))[0] | .rules==[{apiGroups:["externaldns.k8s.io"],resources:["dnsendpoints"],verbs:["get","list","watch","create","update","patch","delete"]}]) and
     (map(select(.kind=="RoleBinding"))[0] |
@@ -19,13 +19,7 @@ validate() {
       .spec.url=="oci://ghcr.io/devantler-tech/data-product-controller/manifests" and
       (.spec.ref|keys)==["digest"] and (.spec.ref.digest|test("^sha256:[0-9a-f]{64}$")) and
       (.spec|has("secretRef")|not) and .spec.verify.provider=="cosign" and
-      (.spec.verify.matchOIDCIdentity|length)==1) and
-    (map(select(.kind=="Kustomization"))[0] |
-      .spec.path=="./documentation" and .spec.targetNamespace=="data-product-controller" and
-      .spec.serviceAccountName=="khoist-documentation" and
-      .spec.sourceRef=={kind:"OCIRepository",name:"khoist-documentation"} and
-      .spec.dependsOn==[{name:"infrastructure",namespace:"flux-system"}] and
-      .spec.prune==true and .spec.wait==true and .spec.force==false)
+      (.spec.verify.matchOIDCIdentity|length)==1)
   ' "$1" >/dev/null
 }
 validate "$work/resources.json"
@@ -41,7 +35,7 @@ for mutation in \
   'map(if .kind=="OCIRepository" then .spec.secretRef={name:"unneeded-registry-credential"} else . end)' \
   'map(if .kind=="Role" then .rules[0].resources=["secrets"] else . end)' \
   'map(if .kind=="RoleBinding" then .roleRef.kind="ClusterRole" else . end)' \
-  'map(if .kind=="Kustomization" then .spec.path="." else . end)' \
+  '. + [{kind:"Kustomization",metadata:{name:"khoist-documentation",namespace:"data-product-controller"},spec:{suspend:true}}]' \
   'map(if .kind=="ServiceAccount" then .metadata.namespace="another-tenant" else . end)'; do
   jq "$mutation" "$work/resources.json" >"$work/widened.json"
   if validate "$work/widened.json"; then
@@ -49,4 +43,4 @@ for mutation in \
     exit 1
   fi
 done
-echo 'documentation tenant uses only its DNS role and product documentation subdirectory'
+echo 'documentation source has DNS-only access and no child reconciliation before verification'
