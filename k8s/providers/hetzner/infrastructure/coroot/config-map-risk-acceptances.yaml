@@ -226,6 +226,12 @@ data:
         "reason": "platform#3812: provider reconciler is off the serving path; a singleton prevents duplicate UniFi writes"
       },
       {
+        "application_pattern": "^crossplane-system:Deployment:provider-upjet-unifi-[0-9a-f]{12}\\z",
+        "category": "Availability",
+        "type": "single-instance-app",
+        "reason": "platform#3812: provider revision names rotate; a singleton remains off the serving path and prevents duplicate UniFi writes"
+      },
+      {
         "application": "flux-system:Deployment:source-controller",
         "category": "Availability",
         "type": "single-instance-app",

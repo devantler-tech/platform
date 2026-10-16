@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Contract for declarative Coroot risk acceptance. The allowlist is reviewed as
-# GitOps data; the reconciler may dismiss only declared exact pairs or the two
+# GitOps data; the reconciler may dismiss only declared exact pairs or the
 # anchored generated-name patterns, reactivate every undeclared dismissal,
 # and correct a declared pair whose reason drifted. Other new risks stay active.
 
@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 40 and
+  type == "array" and length == 41 and
   all(.[] | select(has("application"));
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -47,13 +47,16 @@ jq -e '
     (.type | IN("single-instance-app", "unreplicated-database")) and
     (.reason | startswith("platform#3812: "))
   ) and
-  ([.[] | select(has("application_pattern"))] | length == 4) and
+  ([.[] | select(has("application_pattern"))] | length == 5) and
   any(.[]; .application_pattern? == "^longhorn-system:InstanceManager:instance-manager-[0-9a-f]{32}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#4117: "))) and
   any(.[]; .application_pattern? == "^crossplane-system:Deployment:provider-upjet-github-[0-9a-f]{12}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#4145: "))) and
+  any(.[]; .application_pattern? == "^crossplane-system:Deployment:provider-upjet-unifi-[0-9a-f]{12}\\z" and
+    .category == "Availability" and .type == "single-instance-app" and
+    (.reason | startswith("platform#3812: "))) and
   any(.[]; .application_pattern? == "^crossplane-system:Deployment:provider-aws-iam-[0-9a-f]{12}\\z" and
     .category == "Availability" and .type == "single-instance-app" and
     (.reason | startswith("platform#3812: "))) and
@@ -63,7 +66,7 @@ jq -e '
   ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | length) ==
     ([.[] | [(.application // .application_pattern), .category, .type] | @tsv] | unique | length)
 ' "${acceptances_file}" >/dev/null ||
-  fail 'the availability acceptance allowlist must contain exact entries and two narrow generated-name patterns'
+  fail 'the availability acceptance allowlist must contain exact entries and five narrow generated-name patterns'
 
 expected_applications=(
   'actual-budget:Deployment:actual-budget-actualbudget'
@@ -161,6 +164,7 @@ printf '%s\n' "${script_body}" | shellcheck -s sh -
 # pattern can accept it. A pinned one would be answered by its exact entry first.
 readonly rotated_github_revision='7c1e04b9d3a6'
 readonly rotated_aws_revision='9f4e73a2c1b0'
+readonly rotated_unifi_revision='5a8c14f07d2e'
 if jq -e --arg app "crossplane-system:Deployment:provider-upjet-github-${rotated_github_revision}" \
   'any(.[]; .application == $app and .category == "Availability" and .type == "single-instance-app")' "${acceptances_file}" >/dev/null; then
   fail 'the rotated GitHub provider fixture must name a revision no exact acceptance pins'
@@ -173,6 +177,10 @@ for app in \
     fail 'the rotated AWS provider fixture must name revisions no exact acceptance pins'
   fi
 done
+if jq -e --arg app "crossplane-system:Deployment:provider-upjet-unifi-${rotated_unifi_revision}" \
+  'any(.[]; .application == $app and .category == "Availability" and .type == "single-instance-app")' "${acceptances_file}" >/dev/null; then
+  fail 'the rotated UniFi provider fixture must name a revision no exact acceptance pins'
+fi
 
 setup_scenario() {
   local name="$1" mode="$2" dir
@@ -209,7 +217,7 @@ setup_scenario() {
       {application_id:"95rsc5yp:other:Deployment:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:crossplane-system:StatefulSet:provider-upjet-github-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-not-a-revision",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-extra-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-github-\($rev)",key:{category:"Security",type:"single-instance-app"}}
     ]}}' >"${dir}/risks.json"
   elif [ "${mode}" = 'aws-providers' ]; then
@@ -221,6 +229,16 @@ setup_scenario() {
       {application_id:"95rsc5yp:crossplane-system:Deployment:provider-aws-iam-not-a-revision",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:crossplane-system:Deployment:provider-aws-s3-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:crossplane-system:Deployment:provider-aws-iam-\($rev)",key:{category:"Security",type:"single-instance-app"}}
+    ]}}' >"${dir}/risks.json"
+  elif [ "${mode}" = 'unifi-provider' ]; then
+    jq -n --arg rev "${rotated_unifi_revision}" '{data:{risks:[
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:other:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:StatefulSet:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-not-a-revision",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-extra-\($rev)",key:{category:"Availability",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Security",type:"single-instance-app"}},
+      {application_id:"95rsc5yp:crossplane-system:Deployment:provider-upjet-unifi-\($rev)",key:{category:"Availability",type:"single-node-app"}}
     ]}}' >"${dir}/risks.json"
   elif [ "${mode}" = 'retired-pattern' ]; then
     jq -n '{data:{risks:[
@@ -322,6 +340,17 @@ jq -s -e --arg rev "${rotated_aws_revision}" '
   )
 ' "${aws_providers_dir}/posts.jsonl" >/dev/null ||
   fail 'rotated AWS provider revisions must be accepted without matching lookalikes'
+
+unifi_provider_dir="$(setup_scenario unifi-provider unifi-provider)"
+run_scenario "${unifi_provider_dir}" >/dev/null
+jq -s -e --arg rev "${rotated_unifi_revision}" '
+  length == 1 and
+  .[0].payload.action == "dismiss" and
+  .[0].payload.key == {category:"Availability",type:"single-instance-app"} and
+  (.[0].payload.reason | startswith("platform#3812: ")) and
+  (.[0].url | contains("crossplane-system%3ADeployment%3Aprovider-upjet-unifi-\($rev)"))
+' "${unifi_provider_dir}/posts.jsonl" >/dev/null ||
+  fail 'a rotated UniFi provider revision must be accepted without matching lookalikes'
 
 broad_file="${work_root}/broad-risks.json"
 jq 'map(if has("application_pattern") then .application_pattern = ".*" else . end)' \
