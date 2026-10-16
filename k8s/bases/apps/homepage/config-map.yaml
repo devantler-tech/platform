@@ -298,6 +298,9 @@ data:
             - icon: si-reddit-#FF4500
               href: https://reddit.com
     - Banking:
+        - Stripe:
+            - icon: si-stripe-#635BFF
+              href: https://dashboard.stripe.com
         - Enable Banking:
             - icon: mdi-bank-outline
               href: https://enablebanking.com
