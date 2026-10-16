@@ -36,7 +36,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|crossview|crossview af2a47b174fe83715da88c
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex f319dbf385897af1985ef0b4c91925e69ee06c892b316abfa881792935118e4c
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns fa298f48bf949ef686f4203506d8219b3d139e75acab6cef31f5ff17943a89d5
+helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 31c51b3b18a4d7dfbbe2fec098d6aad40f292dd29c6e91f0422217969ce24e45
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-secrets|external-secrets 8f35691cdbe76b4011798a5adba69e8fc77415acf56aa0187e460015d8608087
 
@@ -109,6 +109,8 @@ kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 1ee1880dfe992996a7480cc
 kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner ac00ca29c04de8d2c30a045d583570536a97fc305a1b06c4300da018ecdfb864
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|aws|aws 88fe1a404c036bfe73b4eda38a33ac31f4546573c9daaebebaae173c23844cba
+
+kustomize.toolkit.fluxcd.io/v1|Kustomization|data-product-controller|khoist-documentation b3952d56aa05acfe28c6d04c63287709d20ca44b069c95cf96da7ce3125ec9b9
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|apps 239f6440d5f3057898b6e791f953392bb7219f8a066471f7109d4cd73ddc5fcc
 
@@ -408,7 +410,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documen
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config a77541ed2764a691cedefe869069f8cc7cc9bf798a63be755bb4a7596f477df4
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config bf3464bff0f9831481f64d03dbea9c4aa7093a6293c4e8aec6291310e44c42b9
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
 

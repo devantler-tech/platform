@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "publications": [
     {
-      "kind": "published-bootstrap",
+      "kind": "published-binding",
       "consumer": "data-product-controller",
       "workflow": "publish-app",
       "sourcePath": "k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml",

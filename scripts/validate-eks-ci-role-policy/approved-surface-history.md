@@ -3549,3 +3549,30 @@ deployed node-agent's log parser preserve informational deprecation notices,
 message contents and attributes, and real warning, error and critical levels.
 No chart version, RBAC, service account, admission scope, failure action,
 resource filter, AWS identity, credential or permission grant changes.
+
+## 2026-10-16 — Activate the product-owned KHoist documentation record
+
+For #4939, the approved kubectl v1.36.2 / Kustomize v5.8.1 renderer measures
+two changed entries and one added entry against `409c6cdc`:
+
+- HelmRelease external-dns/external-dns changes from
+  `fa298f48bf949ef686f4203506d8219b3d139e75acab6cef31f5ff17943a89d5` to
+  `31c51b3b18a4d7dfbbe2fec098d6aad40f292dd29c6e91f0422217969ce24e45`.
+  It adds the CRD source to the existing writer, preserving Gateway API discovery,
+  its TXT registry and owner, single-writer strategy, zone filter and credential.
+- Kustomization data-product-controller/khoist-documentation is added as
+  `b3952d56aa05acfe28c6d04c63287709d20ca44b069c95cf96da7ce3125ec9b9`.
+  It reconciles only `./documentation` from the previously registered, verified,
+  digest-pinned product artifact, using the existing DNS-only tenant role.
+- OCIRepository github-config/github-config changes from
+  `a77541ed2764a691cedefe869069f8cc7cc9bf798a63be755bb4a7596f477df4` to
+  `bf3464bff0f9831481f64d03dbea9c4aa7093a6293c4e8aec6291310e44c42b9`.
+  The normal publication generator requires explicit approval of its current
+  canonical pin, `e1681322e671f8e277c5e230a57fe66cdf1a612d` (v7.12.0).
+  Review against the retained `9ff2ad68306cc73df6814861c7804a11a25e0788`
+  publisher finds only the pinned harden-runner v2.21.1 to v2.22.1 update.
+  Both exact canonical revisions remain accepted during the transition.
+
+The generator records the real Ready/SourceVerified product observation and
+retires its publication bootstrap into an immutable binding. No observation
+is synthesized. Existing tenant RBAC and admission limits are unchanged.

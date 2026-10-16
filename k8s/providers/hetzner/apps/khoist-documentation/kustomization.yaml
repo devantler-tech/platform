@@ -5,6 +5,7 @@ resources:
   - role.yaml
   - role-binding.yaml
   - oci-repository.yaml
+  - flux-kustomization.yaml
 labels:
   - pairs:
       app.kubernetes.io/part-of: khoist
