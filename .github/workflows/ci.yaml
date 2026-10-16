@@ -382,7 +382,7 @@ jobs:
       # is stubbed, so nothing here depends on another repository's release cadence.
       - name: 🔐 Validate the publish-revision report
         run: |
-          shellcheck scripts/report-publish-workflow-signing-revisions.sh
+          shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
           shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
           shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
@@ -410,6 +410,9 @@ jobs:
           shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
+          bash scripts/tests/test-tenant-publication-binding.sh
+          bash scripts/tests/test-bootstrap-tenant-source.sh
           shellcheck scripts/tests/test-canonical-publisher-regeneration.sh
           bash scripts/tests/test-canonical-publisher-regeneration.sh
 
@@ -945,6 +948,11 @@ jobs:
               # inside the k8s-gated validation matrix alongside the manifests it judges.
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
               - 'scripts/publish-workflow-approved-revisions.lib.sh'
+              - 'scripts/tenant-publication-binding.lib.sh'
+              - 'scripts/bootstrap-tenant-source.sh'
+              - 'scripts/publish-workflow-bootstrap-publications.json'
+              - 'scripts/tests/test-tenant-publication-binding.sh'
+              - 'scripts/tests/test-bootstrap-tenant-source.sh'
               - 'scripts/write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-write-publish-workflow-matchers.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions-guard.sh'
@@ -3006,7 +3014,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@8ed2071ebe18864b8b86efe0f6b1df8d73d2a6ab # v7.10.4
+        uses: devantler-tech/.github/actions/validate-naming@e1681322e671f8e277c5e230a57fe66cdf1a612d # v7.12.0
 
       - name: Confirm naming validation completed
         env:
