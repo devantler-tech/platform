@@ -14,8 +14,8 @@
 # Resolving a revision needs the network. A test that depended on it would prove nothing
 # repeatable: red when an unrelated repository cut a release, green when the network was
 # simply unavailable. The script takes its resolver from PUBLISH_REVISION_RESOLVER and
-# these fixtures supply a stub. Discovery stays REAL, against this repository's own
-# manifests, because that is the half a stub could hide a regression in.
+# these fixtures supply a stub. Discovery is checked against the repository first;
+# resolver cases use independent sources so a live digest binding cannot bypass the stub.
 
 set -euo pipefail
 
@@ -209,6 +209,45 @@ write_table() { # <path> <special-repo|""> <special-signing> <special-current>
 
 first_repo="$(printf '%s\n' "$consumers" | head -1 | cut -f1)"
 
+write_real_consumers() { # <root> <first-consumer-artifact-leaf>
+  local root="$1" leaf="$2" repo workflow _version _artifact oci n=0
+  mkdir -p "$root"
+  while IFS=$'\t' read -r repo workflow _version _artifact; do
+    [ -n "$repo" ] || continue
+    n=$((n + 1))
+    oci="$repo"
+    [ "$repo" = '.github' ] && oci='github-config'
+    if [ "$repo" = "$first_repo" ]; then
+      oci="$oci/$leaf"
+    else
+      oci="$oci/manifests"
+    fi
+    write_consumer "$root/real-$n.yaml" "r$n" "$oci" "$workflow"
+  done <<<"$consumers"
+}
+write_consumer() { # <file> <name> <artifact> <workflow>
+  cat >"$1" <<YAML
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: $2
+spec:
+  ref:
+    semver: ">=1.0.0"
+  url: oci://ghcr.io/devantler-tech/$3
+  verify:
+    provider: cosign
+    matchOIDCIdentity:
+      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
+        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$4\\.yaml@[0-9a-f]{40}\$'
+YAML
+}
+
+# Resolver fixtures must not inherit live digest bindings or use network tools.
+resolver_root="$WORK/resolver-consumers"
+write_real_consumers "$resolver_root" manifests
+export PUBLISH_CONSUMER_ROOT="$resolver_root"
+
 # ---------------------------------------------------------------------------
 # 1. AGREEING: identical revisions must NOT be reported as diverged, and must be
 #    positively reported — a silent no-op would otherwise look the same.
@@ -380,6 +419,9 @@ fi
 #    shape of a `gh api` error body — made signing == current and reported IN-SYNC for
 #    every consumer with exit 0. That is the worst failure this script can have.
 # ---------------------------------------------------------------------------
+
+# Parser controls use the independent resolver fixtures as well.
+malformed_resolver_root="$resolver_root"
 junk_resolver="$WORK/resolver-junk.sh"
 cat >"$junk_resolver" <<'JUNK'
 #!/usr/bin/env bash
@@ -391,7 +433,7 @@ exit 0
 JUNK
 chmod +x "$junk_resolver"
 junk_out="$WORK/junk.out"
-if PUBLISH_REVISION_RESOLVER="$junk_resolver" "$SCRIPT" >"$junk_out" 2>&1; then
+if PUBLISH_CONSUMER_ROOT="$malformed_resolver_root" PUBLISH_REVISION_RESOLVER="$junk_resolver" "$SCRIPT" >"$junk_out" 2>&1; then
   fail 'a resolver emitting a tab-free error body exited 0 — every consumer read as IN-SYNC'
 else
   grep -q 'IN-SYNC' "$junk_out" &&
@@ -505,39 +547,6 @@ fi
 #    loss of either left the name present. The fixtures derive each artifact from the
 #    repository, not from the list's artifact field, so they run against either shape.
 # ---------------------------------------------------------------------------
-write_real_consumers() { # <root> <first-consumer-artifact-leaf>
-  local root="$1" leaf="$2" repo workflow _version _artifact oci n=0
-  mkdir -p "$root"
-  while IFS=$'\t' read -r repo workflow _version _artifact; do
-    [ -n "$repo" ] || continue
-    n=$((n + 1))
-    oci="$repo"
-    [ "$repo" = '.github' ] && oci='github-config'
-    if [ "$repo" = "$first_repo" ]; then
-      oci="$oci/$leaf"
-    else
-      oci="$oci/manifests"
-    fi
-    write_consumer "$root/real-$n.yaml" "r$n" "$oci" "$workflow"
-  done <<<"$consumers"
-}
-write_consumer() { # <file> <name> <artifact> <workflow>
-  cat >"$1" <<YAML
-apiVersion: source.toolkit.fluxcd.io/v1
-kind: OCIRepository
-metadata:
-  name: $2
-spec:
-  ref:
-    semver: ">=1.0.0"
-  url: oci://ghcr.io/devantler-tech/$3
-  verify:
-    provider: cosign
-    matchOIDCIdentity:
-      - issuer: '^https://token\\.actions\\.githubusercontent\\.com\$'
-        subject: '^https://github\\.com/devantler-tech/actions/\\.github/workflows/$4\\.yaml@[0-9a-f]{40}\$'
-YAML
-}
 first_oci="$first_repo"
 [ "$first_repo" = '.github' ] && first_oci='github-config'
 first_repo_workflow="$(printf '%s\n' "$consumers" | head -1 | cut -f2)"
@@ -730,7 +739,7 @@ exit 0
 COLLAPSE
 chmod +x "$collapse_resolver"
 collapse_out="$WORK/collapse.out"
-if PUBLISH_REVISION_RESOLVER="$collapse_resolver" "$SCRIPT" >"$collapse_out" 2>&1; then
+if PUBLISH_CONSUMER_ROOT="$malformed_resolver_root" PUBLISH_REVISION_RESOLVER="$collapse_resolver" "$SCRIPT" >"$collapse_out" 2>&1; then
   fail 'an answer with an EMPTY MIDDLE FIELD exited 0 — the collapsed field was compared as the current revision'
 else
   grep -q 'IN-SYNC' "$collapse_out" &&
@@ -753,7 +762,7 @@ exit 0
 EXTRA
 chmod +x "$extra_resolver"
 extra_out="$WORK/extra.out"
-if PUBLISH_REVISION_RESOLVER="$extra_resolver" "$SCRIPT" >"$extra_out" 2>&1; then
+if PUBLISH_CONSUMER_ROOT="$malformed_resolver_root" PUBLISH_REVISION_RESOLVER="$extra_resolver" "$SCRIPT" >"$extra_out" 2>&1; then
   fail 'a multi-line resolver answer exited 0 — only its first line was ever examined'
 else
   grep -q 'IN-SYNC' "$extra_out" &&
@@ -1702,6 +1711,30 @@ if [ "$registry_permission" = 'read' ]; then
 else
   fail "validate-main gives the live report packages: ${registry_permission:-none}; GHCR metadata will return 403"
 fi
+
+# Digest-bound publication evidence executes cosign, including on a hosted runner
+# with no local installation. The installer must be pinned and precede the report.
+report_has_verifier() {
+  jq -e '
+    [.steps | to_entries[] | select((.value.run // "") | contains("./scripts/report-publish-workflow-signing-revisions.sh")) | .key] as $reports |
+    [.steps | to_entries[] | select((.value.uses // "") | test("^sigstore/cosign-installer@[0-9a-f]{40}$")) | .key] as $installers |
+    ($reports|length)==1 and ($installers|length)==1 and $installers[0] < $reports[0]
+  ' "$1" >/dev/null
+}
+yq -o=json '.jobs.validate-shared-publish-pin' "$REPO_ROOT/.github/workflows/validate-main.yaml" >"$WORK/main-report-job.json"
+if ! report_has_verifier "$WORK/main-report-job.json"; then
+  fail 'the live report lacks a pinned cosign installer before verification'
+fi
+for mutation in \
+  '.steps |= map(select((.uses // "") | startswith("sigstore/cosign-installer@") | not))' \
+  '.steps |= reverse' \
+  '.steps |= map(if (.uses // "") | startswith("sigstore/cosign-installer@") then .uses="sigstore/cosign-installer@main" else . end)'; do
+  jq "$mutation" "$WORK/main-report-job.json" >"$WORK/main-report-job-mutated.json"
+  if report_has_verifier "$WORK/main-report-job-mutated.json"; then
+    fail 'the report dependency guard accepted a missing, late or unpinned installer'
+  fi
+done
+pass 'the live report installs a pinned verifier before resolving bound publications'
 
 # ---------------------------------------------------------------------------
 # 25. REGISTRY-ONLY HIGHER VERSIONS MUST NOT BE SILENTLY OUTRANKED. (#3331 review)

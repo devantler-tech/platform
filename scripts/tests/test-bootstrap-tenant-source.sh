@@ -78,7 +78,13 @@ set -euo pipefail
 [[ "${!#}" == 'ghcr.io/devantler-tech/data-product-controller/manifests@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]
 digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 [ "$BOOT_CASE" != wrong-digest ] || digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-jq -n --arg digest "$digest" '[{critical:{image:{"docker-manifest-digest":$digest},identity:{"docker-reference":("ghcr.io/devantler-tech/data-product-controller/manifests@"+$digest)}}}]'
+reference="ghcr.io/devantler-tech/data-product-controller/manifests@$digest"
+case "$BOOT_CASE" in
+  repository-reference) reference=ghcr.io/devantler-tech/data-product-controller/manifests ;;
+  foreign-reference) reference=ghcr.io/untrusted/manifests ;;
+  wrong-reference-digest) reference=ghcr.io/devantler-tech/data-product-controller/manifests@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb ;;
+esac
+jq -n --arg digest "$digest" --arg reference "$reference" '[{critical:{image:{"docker-manifest-digest":$digest},identity:{"docker-reference":$reference}}}]'
 [ "$BOOT_CASE" != verify-error ] || exit 42
 EOF
 chmod +x "$test_work/bin/kubectl" "$test_work/bin/cosign"
@@ -111,6 +117,18 @@ run_bootstrap
 jq -e '.publications[0].kind=="published-bootstrap" and .publications[0].sourceSHA=="1111111111111111111111111111111111111111"' "$test_work/result.json" >/dev/null
 cp "$test_work/result.json" "$test_work/expected.json"
 verify_bound_publication "$(jq -c '.publications[0]' "$test_work/result.json")"
+export BOOT_CASE=repository-reference
+if ! verify_bound_publication "$(jq -c '.publications[0]' "$test_work/result.json")"; then
+  echo 'shared verifier refused the valid repository-only reference' >&2
+  exit 1
+fi
+for BOOT_CASE in foreign-reference wrong-reference-digest; do
+  export BOOT_CASE
+  if verify_bound_publication "$(jq -c '.publications[0]' "$test_work/result.json")"; then
+    echo "shared verifier accepted $BOOT_CASE" >&2
+    exit 1
+  fi
+done
 export BOOT_CASE=verify-error
 if verify_bound_publication "$(jq -c '.publications[0]' "$test_work/result.json")"; then
   echo 'shared verifier accepted a failed command' >&2

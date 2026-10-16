@@ -7,6 +7,9 @@ WRITER="$ROOT/scripts/write-publish-workflow-matchers.sh"
 GUARD="$ROOT/scripts/guard-publish-workflow-approved-revisions.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# The fixture's observed rows are independent of the real first-publication record.
+export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 TREE="$WORK/consumer tree"
 SET="$TREE/scripts/approved.tsv"
 # A record that approves no canonical publisher; that family has its own suite.
@@ -54,6 +57,7 @@ EOF
 .github publish-manifests github-config $A $B
 ascoachingogvaner publish-app ascoachingogvaner $C $B
 aws publish-manifests aws $A $A
+data-product-controller publish-app data-product-controller $A $B
 wedding-app publish-app wedding-app $A $B
 EOF
   for file in "${GENERIC_FILES[@]}"; do
