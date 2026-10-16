@@ -21,6 +21,10 @@ collections (`evidence-first`, `evidence-second`), eligibility checks
 Both execution and the read-only `--check` mode use these stages. Preservation
 failures found inside eligibility retain the preservation stage and still stop
 at that early check; an earlier owner-eligibility failure takes precedence.
+Preservation refusals carry one allow-listed coarse category, such as
+`category=claim-ownership` or `category=storage-retention`; a changed retained
+projection between samples reports `category=sample-change`. Unrecognized
+errors report `category=unknown` rather than exposing their text.
 
 Eligibility refusals also carry a fixed category, such as `category=owner-profile`
 or `category=deployment-source`. Only exact, locally authored errors are mapped;

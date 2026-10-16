@@ -546,12 +546,12 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		result["controller/Identity//bundle"] = projection(s.bundle)
 	}
 	if !metadataValid(s.namespace) || s.namespace["kind"] != "Namespace" || field(s.namespace, "metadata", "name") != "backstage" || field(s.namespace, "metadata", "annotations", "kustomize.toolkit.fluxcd.io/prune") != "disabled" {
-		return nil, errors.New("namespace preservation unverified")
+		return nil, classifiedPreservationFailure("namespace", errors.New("namespace preservation unverified"))
 	}
 	result[identity(s.namespace)] = projection(s.namespace)
 	if s.fence != "" {
 		if field(s.namespace, "metadata", "annotations", fenceAnnotation) != s.fence {
-			return nil, errors.New("owned retirement journal changed")
+			return nil, classifiedPreservationFailure("namespace", errors.New("owned retirement journal changed"))
 		}
 		annotations := map[string]any{}
 		for key, value := range object(field(s.namespace, "metadata", "annotations")) {
@@ -563,24 +563,24 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 	}
 	live, err := members(s.live)
 	if err != nil {
-		return nil, err
+		return nil, classifiedPreservationFailure("evidence-shape", err)
 	}
 	inv, err := members(s.inventory)
 	if err != nil {
-		return nil, err
+		return nil, classifiedPreservationFailure("evidence-shape", err)
 	}
 	volumes, err := members(s.volumes)
 	if err != nil {
-		return nil, err
+		return nil, classifiedPreservationFailure("evidence-shape", err)
 	}
 	if s.retiring == nil {
 		s.retiring, err = retiringIdentities(s)
 		if err != nil {
-			return nil, err
+			return nil, classifiedPreservationFailure("retirement-targets", err)
 		}
 	}
 	if err := independentOfRetirement(s.namespace, s.retiring); err != nil {
-		return nil, err
+		return nil, classifiedPreservationFailure("retirement-dependency", err)
 	}
 	dbUID := ""
 	dbPrimary := ""
@@ -595,43 +595,49 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 			dbPrimary = text(field(r, "status", "currentPrimary"))
 			instances = integer(field(r, "spec", "instances"))
 			if instances < 1 || integer(field(r, "status", "readyInstances")) != instances || text(field(r, "status", "currentPrimary")) == "" || field(r, "status", "currentPrimary") != field(r, "status", "targetPrimary") {
-				return nil, errors.New("database is not fully healthy")
+				return nil, classifiedPreservationFailure("database-health", errors.New("database is not fully healthy"))
 			}
 		}
 	}
 	if dbUID == "" {
-		return nil, errors.New("database missing")
+		return nil, classifiedPreservationFailure("database-health", errors.New("database missing"))
 	}
 	for _, r := range append(live, inv...) {
 		if field(r, "metadata", "namespace") != "backstage" {
-			return nil, errors.New("foreign preservation object")
+			return nil, classifiedPreservationFailure("retained-identity", errors.New("foreign preservation object"))
 		}
 		if uid, ok := s.retiring[identity(r)]; ok {
 			if field(r, "metadata", "uid") != uid {
-				return nil, errors.New("retiring identity replaced")
+				return nil, classifiedPreservationFailure("retained-identity", errors.New("retiring identity replaced"))
 			}
 			continue
 		}
 		if targetResource(r) {
-			return nil, errors.New("unbound retiring identity")
+			return nil, classifiedPreservationFailure("retained-identity", errors.New("unbound retiring identity"))
 		}
 		if !metadataValid(r) {
-			return nil, errors.New("retained resource is terminating")
+			return nil, classifiedPreservationFailure("retained-identity", errors.New("retained resource is terminating"))
 		}
 		if err := independentOfRetirement(r, s.retiring); err != nil {
-			return nil, err
+			category := "retirement-dependency"
+			if r["kind"] == "PersistentVolumeClaim" {
+				category = "claim-ownership"
+			} else if r["kind"] == "Pod" {
+				category = "database-health"
+			}
+			return nil, classifiedPreservationFailure(category, err)
 		}
 		if r["kind"] == "Secret" && field(r, "metadata", "labels", "owner") == "helm" && field(r, "metadata", "labels", "name") == "backstage" {
 			version := text(field(r, "metadata", "labels", "version"))
 			owners, err := ownerReferences(r)
 			if err != nil || len(owners) != 0 || r["type"] != "helm.sh/release.v1" || !regexp.MustCompile(`^[1-9][0-9]*$`).MatchString(version) || field(r, "metadata", "name") != "sh.helm.release.v1.backstage.v"+version || text(field(r, "data", "release")) == "" {
-				return nil, errors.New("unproven retained Helm history")
+				return nil, classifiedPreservationFailure("release-history", errors.New("unproven retained Helm history"))
 			}
 			stored, err := storedRelease(r)
 			status := text(field(stored, "info", "status"))
 			latest := version == fmt.Sprint(s.release["version"])
 			if err != nil || stored["name"] != "backstage" || stored["namespace"] != "backstage" || fmt.Sprint(stored["version"]) != version || status == "" || status != field(r, "metadata", "labels", "status") || latest && (!sameStoredContent(stored, s.release) || status != field(s.release, "info", "status")) || !latest && status != "superseded" && status != "failed" && status != "uninstalled" {
-				return nil, errors.New("stored history identity or lifecycle unverified")
+				return nil, classifiedPreservationFailure("release-history", errors.New("stored history identity or lifecycle unverified"))
 			}
 			labels := map[string]any{}
 			for k, v := range object(field(r, "metadata", "labels")) {
@@ -650,13 +656,13 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 		}
 		if r["kind"] == "PersistentVolumeClaim" {
 			if err := retainedClaimOwnership(s, r); err != nil {
-				return nil, err
+				return nil, classifiedPreservationFailure("claim-ownership", err)
 			}
 			claims = append(claims, r)
 		}
 		if r["kind"] == "Pod" {
 			if field(r, "metadata", "labels", "cnpg.io/cluster") != "backstage-db" {
-				return nil, errors.New("unreviewed workload")
+				return nil, classifiedPreservationFailure("database-health", errors.New("unreviewed workload"))
 			}
 			healthy := false
 			for _, v := range array(field(r, "status", "conditions")) {
@@ -669,35 +675,39 @@ func preserved(s snapshot) (map[string]map[string]any, error) {
 				owned = owned || o["uid"] == dbUID && o["kind"] == "Cluster"
 			}
 			if !healthy || !owned || field(r, "status", "phase") != "Running" {
-				return nil, errors.New("database pod unhealthy")
+				return nil, classifiedPreservationFailure("database-health", errors.New("database pod unhealthy"))
 			}
 			dbPods++
 			primaryObserved = primaryObserved || field(r, "metadata", "name") == dbPrimary
 		}
 		result[identity(r)], err = controllerProjection(s, r, s.fence != "")
 		if err != nil {
-			return nil, err
+			category := "controller-evidence"
+			if r["kind"] == "PersistentVolumeClaim" {
+				category = "claim-ownership"
+			}
+			return nil, classifiedPreservationFailure(category, err)
 		}
 	}
 	if dbPods != instances || !primaryObserved || len(claims) == 0 || !history {
-		return nil, errors.New("database coverage incomplete")
+		return nil, classifiedPreservationFailure("database-coverage", errors.New("database coverage incomplete"))
 	}
 	for _, c := range claims {
 		found := false
 		for _, v := range volumes {
 			if metadataValid(v) && field(v, "metadata", "name") == field(c, "spec", "volumeName") && field(v, "spec", "claimRef", "namespace") == "backstage" && field(v, "spec", "claimRef", "name") == field(c, "metadata", "name") && field(v, "spec", "claimRef", "uid") == field(c, "metadata", "uid") && field(v, "status", "phase") == "Bound" {
 				if field(v, "spec", "persistentVolumeReclaimPolicy") != "Retain" {
-					return nil, errors.New("physical storage retention unverified")
+					return nil, classifiedPreservationFailure("storage-retention", errors.New("physical storage retention unverified"))
 				}
 				if err := independentOfRetirement(v, s.retiring); err != nil {
-					return nil, err
+					return nil, classifiedPreservationFailure("storage-retention", err)
 				}
 				found = true
 				result[identity(v)] = projection(v)
 			}
 		}
 		if !found {
-			return nil, errors.New("claim volume identity mismatch")
+			return nil, classifiedPreservationFailure("storage-retention", errors.New("claim volume identity mismatch"))
 		}
 	}
 	return result, nil
@@ -965,7 +975,7 @@ func run(args []string, out io.Writer, execute command) int {
 	}
 	if err := e.eligible(first); err != nil {
 		if errors.Is(err, errPreservation) {
-			return hold("HOLD_PRECONDITION stage=preservation-first")
+			return hold("HOLD_PRECONDITION stage=preservation-first category=" + preservationCategory(err))
 		}
 		return hold("HOLD_PRECONDITION stage=eligibility-first category=" + eligibilityCategory(err))
 	}
@@ -984,7 +994,7 @@ func run(args []string, out io.Writer, execute command) int {
 	}
 	if err := e.eligible(second); err != nil {
 		if errors.Is(err, errPreservation) {
-			return hold("HOLD_PRECONDITION stage=preservation-second")
+			return hold("HOLD_PRECONDITION stage=preservation-second category=" + preservationCategory(err))
 		}
 		return hold("HOLD_PRECONDITION stage=eligibility-second category=" + eligibilityCategory(err))
 	}
@@ -997,11 +1007,14 @@ func run(args []string, out io.Writer, execute command) int {
 	}
 	before, err := preserved(first)
 	if err != nil {
-		return hold("HOLD_PRECONDITION stage=preservation-first")
+		return hold("HOLD_PRECONDITION stage=preservation-first category=" + preservationCategory(err))
 	}
 	again, err := preserved(second)
-	if err != nil || !reflect.DeepEqual(before, again) {
-		return hold("HOLD_PRECONDITION stage=preservation-second")
+	if err != nil {
+		return hold("HOLD_PRECONDITION stage=preservation-second category=" + preservationCategory(err))
+	}
+	if !reflect.DeepEqual(before, again) {
+		return hold("HOLD_PRECONDITION stage=preservation-second category=sample-change")
 	}
 	name := "backstage-retirement-" + e.runID
 	used, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", name, "--ignore-not-found", "--output=json")
