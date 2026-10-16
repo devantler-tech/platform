@@ -57,6 +57,8 @@ jobs:
             -o "$kubectl_path"
           printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
           sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
           kubectl version --client
 
       - name: 🧪 Validate the complete Go helper regression suite

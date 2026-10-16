@@ -38,7 +38,8 @@ func nativeKubectlDependency(steps, authorization []nativeCIStep) error {
 		}
 		verify, install := strings.Index(step.Run, "sha256sum --check"), strings.Index(step.Run, "sudo install")
 		startup := strings.Index(step.Run, "kubectl version --client")
-		if strings.Contains(step.Run, "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl") && verify >= 0 && install > verify && startup > install {
+		path := strings.Index(step.Run, `echo /usr/local/bin >> "$GITHUB_PATH"`)
+		if strings.Contains(step.Run, "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl") && verify >= 0 && install > verify && path > install && startup > path && strings.Contains(step.Run, `export PATH="/usr/local/bin:$PATH"`) {
 			installed = index
 		}
 	}
@@ -64,7 +65,7 @@ func TestNativeSuiteInstallsTheApprovedKubectlFirst(t *testing.T) {
 	if err := nativeKubectlDependency(steps, authorization); err != nil {
 		t.Fatal(err)
 	}
-	for _, mutation := range []string{"remove", "late", "checksum", "no startup"} {
+	for _, mutation := range []string{"remove", "late", "checksum", "no startup", "no path"} {
 		t.Run(mutation, func(t *testing.T) {
 			changed := append([]nativeCIStep(nil), steps...)
 			for index, step := range changed {
@@ -80,6 +81,8 @@ func TestNativeSuiteInstallsTheApprovedKubectlFirst(t *testing.T) {
 					changed[index].Env = map[string]string{"KUBECTL_VERSION": step.Env["KUBECTL_VERSION"], "KUBECTL_SHA256": "unapproved"}
 				case "no startup":
 					changed[index].Run = strings.ReplaceAll(step.Run, "kubectl version --client", "echo untested")
+				case "no path":
+					changed[index].Run = strings.ReplaceAll(step.Run, `"$GITHUB_PATH"`, `"/dev/null"`)
 				}
 				break
 			}
