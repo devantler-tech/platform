@@ -139,17 +139,29 @@ reusable workflow, which builds and pushes the image, pins its digest into
 **cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
 (§5) **verifies** that signature against the `publish-app.yaml` identity.
 
-That verification establishes the GitHub OIDC issuer and that the signer ran the
-`publish-app.yaml` workflow path at a 40-hex commit — the **commit shape**, not a reviewed
-revision. The verifiers in use (Flux, the `verify-app-images` admission policy, and the Talos
-pull rule) match only the certificate's issuer and subject, so a commit reference under that
-path does not prove the commit belongs to the actions repository's reviewed history.
-Application tenants may advance that workflow at any 40-hex commit without a platform-side
-revision update. Package write access, namespace, RBAC, network policy, and admission policy
-bound what a release can do; the remaining risk is accepted in
-[#3746](https://github.com/devantler-tech/platform/issues/3746). A tenant that needs authority
-outside those bounds requires a reviewed platform change; an ordinary release inside them does
-not.
+Three verifiers check that signature, and they do not check the same thing:
+
+| Verifier | What it accepts |
+|---|---|
+| **Flux** — the tenant's `OCIRepository` | Only the approved `publish-app.yaml` revisions listed for this tenant: the revision that signed the artifact running now, the tenant's current pin, and the latest release candidate of the shared workflow. Any other commit is refused. |
+| **Admission** — the `verify-app-images` Kyverno policy | Any 40-hex commit of `publish-app.yaml` in the actions repository, from the GitHub OIDC issuer — the **commit shape**, not a reviewed revision. |
+| **Node pull** — the Talos image-verification rule | The same commit shape as the admission policy. |
+
+The approved list lives in `scripts/publish-workflow-approved-revisions.tsv` (with the
+reviewed approvals in `scripts/publish-workflow-canonical-approvals.tsv`), and
+`scripts/write-publish-workflow-matchers.sh` writes it into each tenant's `OCIRepository`.
+
+**What this means for a tenant:** moving `cd.yaml` to a new `publish-app.yaml` commit needs a
+platform change first. Until the new commit is approved and the matchers are regenerated and
+deployed, Flux refuses the tenant's next release, while the release already running keeps
+verifying. The steps are in [validation.md](validation.md). Releases on an approved revision need
+no platform change.
+
+The admission policy and the node pull rule do not prove that a commit belongs to the actions
+repository's reviewed history; that remaining risk is accepted in
+[#3746](https://github.com/devantler-tech/platform/issues/3746). Package write access,
+namespace, RBAC, network policy and admission policy bound what a release can do. A tenant that
+needs authority outside those bounds requires a reviewed platform change.
 
 > Tags come from `release.yaml` → semantic-release: merge Conventional-Commit
 > PRs to `main` and a `vX.Y.Z` tag (and thus a publish) follows automatically.
