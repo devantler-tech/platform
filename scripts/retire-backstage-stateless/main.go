@@ -237,6 +237,9 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 			return s, err
 		}
 	}
+	if err := bindStatusChart(&s); err != nil {
+		return s, err
+	}
 	if err := e.collectLayerSources(ctx, &s); err != nil {
 		return s, err
 	}
