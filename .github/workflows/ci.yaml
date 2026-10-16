@@ -306,6 +306,11 @@ jobs:
           bash scripts/guard-test-script-exec-bit.sh .
           bash scripts/tests/test-guard-test-script-exec-bit.sh
 
+      - name: 🔐 Validate the documentation tenant scope
+        run: |
+          shellcheck scripts/tests/test-khoist-documentation-tenant.sh
+          bash scripts/tests/test-khoist-documentation-tenant.sh
+
       # The DR contract runs in its own dedicated job (below). This checks that
       # the verify block is in effect at all: it ran at spec.cluster.verify for
       # ~3 weeks, where KSail discards it, and every text-based check passed
