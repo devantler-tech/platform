@@ -526,6 +526,32 @@ rm -f "$root/$(first_path "$first_consumer")"
 expect_refusal 'a registered consumer with no OCIRepository in the tree is refused' \
   "$root" 0 "$first_consumer" 'no OCIRepository under'
 
+# First publication is distinct from an ordinary observed row. Exercise the
+# real consumer discovery and matcher guard rather than a second parser model.
+root="$(build_tree bootstrap-binding pair)"
+binding_path="$(first_path "$app_consumer")"
+yq -i '.metadata.namespace="product" | .metadata.name="product-manifests" | del(.spec.ref.semver) | .spec.ref.digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$root/$binding_path"
+bootstrap_file="$root/scripts/bootstrap.json"
+jq -n --arg consumer "$app_consumer" --arg path "$binding_path" --arg signer "$(signer_for "$app_consumer")" --arg pin "$SHA_B" --arg candidate "$SHA_E" --arg digest "$DIGEST" '{schemaVersion:1,publications:[{
+ kind:"published-bootstrap",consumer:$consumer,workflow:"publish-app",sourcePath:$path,
+ namespace:"product",name:"product-manifests",artifactURL:("oci://ghcr.io/devantler-tech/"+$consumer+"/manifests"),
+ gitTag:"v1.0.0",sourceSHA:$signer,digest:$digest,signerSHA:$signer,mainPinSHA:$pin,candidateSHA:$candidate,verifiedOn:"2026-10-15"}]}' >"$bootstrap_file"
+export PUBLISH_BOOTSTRAP_FILE="$bootstrap_file"
+write_set "$root/scripts/approved.tsv" "$app_consumer"
+expect_pass 'a complete first publication supplies only its approved revisions' "$root" 1
+jq '.publications[0].kind="published-binding"' "$bootstrap_file" >"$bootstrap_file.tmp"
+mv "$bootstrap_file.tmp" "$bootstrap_file"
+expect_refusal 'a retired bootstrap cannot replace a disappeared observed row' "$root" 1 'cannot regress to bootstrap'
+write_set "$root/scripts/approved.tsv"
+expect_pass 'an ordinary row takes over from bootstrap approval' "$root" 1
+jq --arg old "$SHA_D" '.publications[0].signerSHA=$old' "$bootstrap_file" >"$bootstrap_file.tmp"
+mv "$bootstrap_file.tmp" "$bootstrap_file"
+expect_pass 'retained publication identity never adds revisions beside an ordinary row' "$root" 1
+write_consumer "$root" "$app_consumer" publish-app "($(signer_for "$app_consumer")|$SHA_B|$SHA_E|$SHA_D)"
+yq -i '.metadata.namespace="product" | .metadata.name="product-manifests" | del(.spec.ref.semver) | .spec.ref.digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$root/$binding_path"
+expect_refusal 'a historical binding cannot widen the ordinary matcher' "$root" 1 'not the generated set'
+unset PUBLISH_BOOTSTRAP_FILE
+
 # ── wiring: CI reaches the guard and this test ──────────────────────────────────────────────
 ci="$REPO_ROOT/.github/workflows/ci.yaml"
 grep -Fq 'scripts/guard-publish-workflow-approved-revisions.sh' "$ci" ||

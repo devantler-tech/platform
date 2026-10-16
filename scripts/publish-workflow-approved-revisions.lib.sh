@@ -158,6 +158,25 @@ while IFS= read -r row; do
   approved="${approved}${consumer}"$'\t'"${workflow}"$'\t'"${signer}"$'\t'"${pin}"$'\t'"${candidate}"$'\n'
 done <"$APPROVED_SET"
 
+# A first signed publication has no applied row yet. Once observation creates
+# an ordinary row, only that row grants revisions; the binding is attribution.
+# shellcheck source=scripts/tenant-publication-binding.lib.sh
+source "$GUARD_DIR/tenant-publication-binding.lib.sh"
+bootstrap_file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}"
+if [ -e "$bootstrap_file" ] || [ -n "${PUBLISH_BOOTSTRAP_FILE:-}" ]; then
+  bootstrap_document="$(read_bound_publications "$SCAN_ROOT" "$bootstrap_file")" || refuse 'invalid publication binding; no approval inferred'
+  while IFS= read -r entry; do
+    consumer="$(printf '%s\n' "$entry" | jq -r .consumer)"
+    if [ -n "$(lookup "$approved" "$consumer")" ]; then
+      [ "$(printf '%s\n' "$entry" | jq -r .kind)" = published-binding ] || refuse "$consumer: observed row must retire bootstrap approval"
+      continue
+    fi
+    [ "$(printf '%s\n' "$entry" | jq -r .kind)" = published-bootstrap ] || refuse "$consumer: observed approval disappeared; cannot regress to bootstrap"
+    bootstrap_row="$(printf '%s\n' "$entry" | jq -r '[.consumer,.workflow,.signerSHA,.mainPinSHA,.candidateSHA] | @tsv')"
+    approved="${approved}${bootstrap_row}"$'\n'
+  done < <(printf '%s\n' "$bootstrap_document" | jq -c '.publications[]')
+fi
+
 # Exactly the registered consumers, both directions: a missing row is a consumer nobody
 # narrowed, an extra row is a set nothing consumes.
 for expected in "${EXPECTED_CONSUMERS[@]}"; do
