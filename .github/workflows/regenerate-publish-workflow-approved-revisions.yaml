@@ -79,6 +79,7 @@ jobs:
             .github
             ascoachingogvaner
             aws
+            data-product-controller
             wedding-app
           permission-contents: read
           permission-actions: read
@@ -163,6 +164,7 @@ jobs:
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
             k8s/bases/apps/wedding-app/oci-repository.yaml
+            k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml
           )
           other=''
           while IFS= read -r change; do
@@ -215,6 +217,7 @@ jobs:
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
             k8s/bases/apps/wedding-app/oci-repository.yaml
+            k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml
           commit-message: "chore(security): regenerate the approved publish-workflow revisions"
           title: "chore(security): regenerate the approved publish-workflow revisions"
           # The body follows the repository's pull-request template (A16), so a run
