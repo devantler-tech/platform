@@ -94,6 +94,9 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 		if profile == "root-ca" {
 			modes = append(modes, "missing description")
 		}
+		if profile == "cnpg-monitoring" {
+			modes = append(modes, "older operator annotation", "missing managed label", "missing reload label", "missing operator annotation", "malformed operator annotation")
+		}
 		for _, mode := range modes {
 			t.Run(profile+"/"+mode, func(t *testing.T) {
 				retirementRunner(t)
@@ -122,7 +125,20 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 					resource["data"] = map[string]any{"ca-certificates.crt": string(oldPEM)}
 				case "cnpg-monitoring":
 					object(resource["metadata"])["name"] = "cnpg-default-monitoring"
+					object(resource["metadata"])["labels"] = map[string]any{"app.kubernetes.io/managed-by": "cloudnative-pg", "cnpg.io/reload": "true"}
 					object(resource["metadata"])["annotations"] = map[string]any{"cnpg.io/operatorVersion": "1.30.1"}
+					switch mode {
+					case "older operator annotation":
+						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "1.29.1"
+					case "missing managed label":
+						delete(object(field(resource, "metadata", "labels")), "app.kubernetes.io/managed-by")
+					case "missing reload label":
+						delete(object(field(resource, "metadata", "labels")), "cnpg.io/reload")
+					case "missing operator annotation":
+						delete(object(field(resource, "metadata", "annotations")), "cnpg.io/operatorVersion")
+					case "malformed operator annotation":
+						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "PRIVATE_INVALID"
+					}
 					resource["data"] = map[string]any{"queries": "SELECT 1"}
 				case "cnpg-role":
 					resource = item(f.live, 3)
@@ -166,6 +182,7 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 						case "cnpg-monitoring":
 							resource["data"] = map[string]any{"queries": "SELECT 2"}
 							monitoring["data"] = map[string]any{"queries": "SELECT 2"}
+							object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "1.30.1"
 						case "cnpg-role":
 							object(item(f.live, 2)["status"])["currentPrimary"] = "backstage-db-4"
 							object(item(f.live, 2)["status"])["targetPrimary"] = "backstage-db-4"
@@ -216,7 +233,7 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 				}
 				var out bytes.Buffer
 				code := run([]string{"--execute"}, &out, execute)
-				if mode == "refresh" || mode == "missing description" {
+				if mode == "refresh" || mode == "missing description" || mode == "older operator annotation" {
 					if code != 0 || !changed || !f.deleted {
 						t.Fatalf("legitimate generated refresh blocked: code=%d %s", code, &out)
 					}

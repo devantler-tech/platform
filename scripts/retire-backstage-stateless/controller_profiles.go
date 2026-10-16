@@ -81,6 +81,10 @@ func controllerProfile(s snapshot, r map[string]any) (string, error) {
 			}
 			return "trust-bundle", nil
 		case "cnpg-default-monitoring":
+			operatorVersion := text(field(r, "metadata", "annotations", "cnpg.io/operatorVersion"))
+			if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" || field(r, "metadata", "labels", "cnpg.io/reload") != "true" || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`).MatchString(operatorVersion) {
+				return "", errors.New("monitoring producer metadata unverified")
+			}
 			return "cnpg-monitoring", nil
 		}
 	}
@@ -381,11 +385,15 @@ func controllerProjection(s snapshot, r map[string]any, normalized bool) (map[st
 		}
 	case "cnpg-monitoring":
 		data := object(r["data"])
-		if len(data) != 1 || text(data["queries"]) == "" || len(object(r["binaryData"])) != 0 || len(object(s.monitoring["binaryData"])) != 0 || !reflect.DeepEqual(data, object(s.monitoring["data"])) || field(r, "metadata", "annotations", "cnpg.io/operatorVersion") != "1.30.1" {
+		if len(data) != 1 || text(data["queries"]) == "" || len(object(r["binaryData"])) != 0 || len(object(s.monitoring["binaryData"])) != 0 || !reflect.DeepEqual(data, object(s.monitoring["data"])) {
 			return nil, errors.New("generated monitoring data unverified")
 		}
 		if normalized {
 			p["data"] = map[string]any{"queries": "controller-managed-monitoring"}
+			// CloudNativePG updates this last-writer annotation only when it
+			// patches changed query data, so an operator-only upgrade leaves the
+			// prior valid version in place.
+			object(p["annotations"])["cnpg.io/operatorVersion"] = "controller-managed-version"
 		}
 	}
 	return p, nil
