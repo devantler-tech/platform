@@ -84,14 +84,23 @@ func controllerProfile(s snapshot, r map[string]any) (string, error) {
 			return "trust-bundle", nil
 		case "cnpg-default-monitoring":
 			operatorVersion := text(field(r, "metadata", "annotations", "cnpg.io/operatorVersion"))
-			_, versionErr := semver.Parse(operatorVersion)
-			if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" || field(r, "metadata", "labels", "cnpg.io/reload") != "true" || versionErr != nil {
+			if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" || field(r, "metadata", "labels", "cnpg.io/reload") != "true" || !auditedCNPGMonitoringWriter(operatorVersion) {
 				return "", errors.New("monitoring producer metadata unverified")
 			}
 			return "cnpg-monitoring", nil
 		}
 	}
 	return "", nil
+}
+
+// auditedCNPGMonitoringWriter admits only controller versions whose copy
+// behavior is covered by this retirement proof. A later operator upgrade must
+// fail closed until its constructor and reconciliation behavior are reviewed.
+func auditedCNPGMonitoringWriter(version string) bool {
+	if _, err := semver.Parse(version); err != nil {
+		return false
+	}
+	return version == "1.29.1" || version == "1.30.1"
 }
 
 func (e engine) collectWriters(ctx context.Context, s *snapshot) error {

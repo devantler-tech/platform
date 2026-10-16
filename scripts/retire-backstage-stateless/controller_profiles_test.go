@@ -95,7 +95,7 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 			modes = append(modes, "missing description")
 		}
 		if profile == "cnpg-monitoring" {
-			modes = append(modes, "older operator annotation", "missing managed label", "missing reload label", "missing operator annotation", "malformed operator annotation", "leading-zero operator annotation", "empty prerelease operator annotation")
+			modes = append(modes, "older operator annotation", "missing managed label", "missing reload label", "missing operator annotation", "malformed operator annotation", "leading-zero operator annotation", "empty prerelease operator annotation", "unsupported prior operator annotation", "future operator annotation", "prerelease operator annotation")
 		}
 		for _, mode := range modes {
 			t.Run(profile+"/"+mode, func(t *testing.T) {
@@ -142,6 +142,12 @@ func TestRetirementPublicControllerRefreshAndRoleCatchup(t *testing.T) {
 						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "01.29.1"
 					case "empty prerelease operator annotation":
 						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "1.29.1-alpha..1"
+					case "unsupported prior operator annotation":
+						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "1.28.0"
+					case "future operator annotation":
+						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "1.31.0"
+					case "prerelease operator annotation":
+						object(field(resource, "metadata", "annotations"))["cnpg.io/operatorVersion"] = "1.30.1-rc.1"
 					}
 					resource["data"] = map[string]any{"queries": "SELECT 1"}
 				case "cnpg-role":
