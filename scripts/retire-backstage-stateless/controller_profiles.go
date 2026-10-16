@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/blang/semver/v4"
 )
 
 const cnpgControllerImage = "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1"
@@ -82,7 +84,8 @@ func controllerProfile(s snapshot, r map[string]any) (string, error) {
 			return "trust-bundle", nil
 		case "cnpg-default-monitoring":
 			operatorVersion := text(field(r, "metadata", "annotations", "cnpg.io/operatorVersion"))
-			if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" || field(r, "metadata", "labels", "cnpg.io/reload") != "true" || !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$`).MatchString(operatorVersion) {
+			_, versionErr := semver.Parse(operatorVersion)
+			if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" || field(r, "metadata", "labels", "cnpg.io/reload") != "true" || versionErr != nil {
 				return "", errors.New("monitoring producer metadata unverified")
 			}
 			return "cnpg-monitoring", nil
