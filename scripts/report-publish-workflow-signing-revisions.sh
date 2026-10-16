@@ -35,6 +35,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source=scripts/tenant-publication-binding.lib.sh
+source "$REPO_ROOT/scripts/tenant-publication-binding.lib.sh"
 
 # Matches the subject spelling `guard-shared-publish-workflow-pin.sh` validates. Kept
 # textually parallel to that guard: if one moves, the other should be looked at.
@@ -1138,6 +1140,22 @@ default_resolver() {
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
 }
 
+# Digest pins need an exact, reviewed publication binding, reverified against the
+# immutable registry artifact. This is never evidence of a Flux apply.
+bound_publication_resolver() {
+  local repo="$1" workflow="$2" digest="$3" root="$4" file binding branch current tag source
+  file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}"
+  binding="$(publication_binding "$root" "$file" "$repo" "$workflow" "$digest")" || return 1
+  verify_bound_publication "$binding" || return 1
+  branch="$(gh_retry api "repos/devantler-tech/$repo" --jq .default_branch)" || return 1
+  plausible_ref "$branch" || return 1
+  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  tag="$(printf '%s\n' "$binding" | jq -r .gitTag)"
+  source="$(printf '%s\n' "$binding" | jq -r .sourceSHA)"
+  [ "$(tag_commit "$repo" "$tag")" = "$source" ] || return 1
+  printf '%s\t%s\tpublished-binding\n' "$(printf '%s\n' "$binding" | jq -r .signerSHA)" "$current"
+}
+
 # identity_floor <noun> <registry> <found> <expected>...: exits unless the discovered identities
 # are exactly the registered ones.
 #
@@ -1211,6 +1229,12 @@ main() {
   while IFS=$'\t' read -r repo workflow version _artifact; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
+    local bound_answer=''
+    case "$version" in
+      digest:*)
+        bound_answer="$(bound_publication_resolver "$repo" "$workflow" "${version#digest:}" "$root")" || bound_answer=''
+        ;;
+    esac
     # Classify from the manifest first: a bounded range is refused before any resolver is
     # consulted, because the constraint is written down rather than discovered remotely.
     #
@@ -1220,7 +1244,7 @@ main() {
     # "bounded semver constraint" for all of them told a reader of the step summary the
     # wrong thing for four of the five, and the summary is stdout-only (see the note at the
     # tally below), so the real cause was not merely elsewhere -- it was absent.
-    if ! version="$(effective_version "$version" 2>"$why_file")"; then
+    if [ -z "$bound_answer" ] && ! version="$(effective_version "$version" 2>"$why_file")"; then
       unresolved=$((unresolved + 1))
       # One row per consumer: fold the diagnostic to a single line, and fall back to the
       # generic wording only if the refusal was silent.
@@ -1229,7 +1253,9 @@ main() {
       printf 'UNRESOLVED %-22s %-18s %s\n' "$repo" "$workflow" "$why"
       continue
     fi
-    if [ -n "$resolver" ]; then
+    if [ -n "$bound_answer" ]; then
+      answer="$bound_answer"
+    elif [ -n "$resolver" ]; then
       answer="$("$resolver" "$repo" "$workflow" "$version")" || answer=""
     else
       answer="$(default_resolver "$repo" "$workflow" "$version")" || answer=""
@@ -1284,6 +1310,7 @@ main() {
     # `tag_was_published` closes "the tag exists but never published"; it cannot close
     # "published but not yet applied", and no tag-based check can.
     case "${origin:-}" in
+      published-binding) mark=' (immutable publication and current pin verified; not applied-revision evidence)' ;;
       inferred) mark=' (deployed version inferred from newest PUBLISHED tag; not applied-revision evidence)' ;;
       pinned) mark=' (deployed version is what the manifest PINS and was published; not applied-revision evidence)' ;;
     esac

@@ -139,6 +139,24 @@ applied_revision() {
     refuse "$repo: OCIRepository listing was not parseable"
     return 1
   }
+  if is_digest "$revision"; then
+    local binding file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}"
+    binding="$(publication_binding "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$file" "$repo" publish-app "$revision")" || {
+      refuse "$repo: bare digest has no exact publication binding"; return 1;
+    }
+    # artifact.revision is the registry manifest digest. artifact.digest hashes
+    # Flux's local archive and must never be substituted for that identity.
+    printf '%s\n' "$json" | jq -e --argjson binding "$binding" --arg url "$url" '
+      select((.metadata.continue // "")=="") | [.items[] | select(.spec.url==$url)][0] |
+      .metadata.namespace==$binding.namespace and .metadata.name==$binding.name and
+      .spec.ref.digest==$binding.digest and (.metadata.generation | type=="number") and
+      .metadata.generation>0 and .status.observedGeneration==.metadata.generation and
+      any(.status.conditions[]?; .type=="Ready" and .status=="True") and
+      any(.status.conditions[]?; .type=="SourceVerified" and .status=="True")' >/dev/null || return 1
+    [ "$(tag_commit "$repo" "$(printf '%s\n' "$binding" | jq -r .gitTag)")" = "$(printf '%s\n' "$binding" | jq -r .sourceSHA)" ] || return 1
+    printf '%s\t%s\n' "$(registry_tag_for_git_tag "$(printf '%s\n' "$binding" | jq -r .gitTag)")" "$revision"
+    return 0
+  fi
   local tag="${revision%%@*}" digest="${revision#*@}"
   if [ "$tag" = "$revision" ] || ! plausible_tag "$tag" || ! is_digest "$digest"; then
     refuse "$repo: applied revision '$revision' is not <tag>@sha256:<digest>; the OCIRepository has not applied an artifact"
@@ -331,6 +349,12 @@ main() {
     refuse 'generation outputs must not be symlinks'; exit 1
   fi
   local canonical_baseline_checked=0
+  local bootstrap_file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}" bootstrap_document=''
+  if [ -e "$bootstrap_file" ] || [ -n "${PUBLISH_BOOTSTRAP_FILE:-}" ]; then
+    bootstrap_document="$(read_bound_publications "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$bootstrap_file")" || {
+      refuse 'publication bindings are invalid; no file written'; exit 1;
+    }
+  fi
   if [ -f "$IDENTITIES_OUTPUT" ]; then
     [ "$(head -n1 "$IDENTITIES_OUTPUT")" = "$IDENTITIES_HEADER" ] || {
       refuse 'observed identities header is malformed; no file written'; exit 1;
@@ -459,6 +483,16 @@ main() {
       identity_date="${old_identity##*$'\t'}"
     fi
     identities_rows="${identities_rows}${repo}"$'\t'"${workflow}"$'\t'"${identity_tuple}"$'\t'"${identity_date}"$'\n'
+    if [ -n "$bootstrap_document" ] && printf '%s\n' "$bootstrap_document" | jq -e --arg repo "$repo" 'any(.publications[]; .consumer==$repo)' >/dev/null; then
+      if ! printf '%s\n' "$bootstrap_document" | jq -e --arg repo "$repo" --arg digest "$actual_digest" --arg signer "$OBS_SIGNER" \
+        'all(.publications[] | select(.consumer==$repo); .digest==$digest and .signerSHA==$signer)' >/dev/null; then
+        refuse "$repo: observation differs from the immutable publication binding"
+        unresolved=$((unresolved + 1)); continue
+      fi
+      # Real observation retires the first-publication approval. Retain only
+      # the immutable identity binding needed to attribute a bare Flux digest.
+      bootstrap_document="$(printf '%s\n' "$bootstrap_document" | jq --arg repo "$repo" '.publications |= map(if .consumer==$repo then .kind="published-binding" else . end)')"
+    fi
   done <<<"$consumers"
 
   if [ "$unresolved" -gt 0 ]; then
@@ -467,10 +501,15 @@ main() {
   fi
   [ "$examined" -gt 0 ] || { refuse 'no consumers examined; no file written'; exit 1; }
 
-  local tmp identities_tmp
+  local tmp identities_tmp bootstrap_tmp=''
   tmp="$(mktemp "${OUTPUT}.XXXXXX")"
   identities_tmp="$(mktemp "${IDENTITIES_OUTPUT}.XXXXXX")"
-  trap 'rm -f "$tmp" "$identities_tmp"' EXIT
+  trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}"' EXIT
+  if [ -n "$bootstrap_document" ]; then
+    bootstrap_tmp="$(mktemp "${bootstrap_file}.XXXXXX")"
+    printf '%s\n' "$bootstrap_document" >"$bootstrap_tmp"
+    chmod 0644 "$bootstrap_tmp"
+  fi
   {
     printf '%s\n' "$HEADER"
     printf '%s' "$rows" | LC_ALL=C sort
@@ -483,6 +522,7 @@ main() {
   chmod 0644 "$tmp" "$identities_tmp"
   mv "$tmp" "$OUTPUT"
   mv "$identities_tmp" "$IDENTITIES_OUTPUT"
+  [ -z "$bootstrap_tmp" ] || mv "$bootstrap_tmp" "$bootstrap_file"
   trap - EXIT
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }

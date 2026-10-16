@@ -31,6 +31,7 @@ readonly data_file='scripts/publish-workflow-approved-revisions.tsv'
 readonly identities_file='scripts/publish-workflow-approved-revisions.identities.tsv'
 readonly generated_paths='scripts/publish-workflow-approved-revisions.tsv
 scripts/publish-workflow-approved-revisions.identities.tsv
+scripts/publish-workflow-bootstrap-publications.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -209,7 +210,9 @@ check() {
   # loop in a subshell where the accumulated result is lost. A `case` inside a
   # command substitution is not an option either: the pattern's own `)` closes
   # the substitution early — measured, it captured the loop's source as data.
-  consumers="$(awk 'NR > 1 { print $1 }' "${root_dir}/${data_file}" | sort -u)"
+  # The validated approval reader includes a first publication before its
+  # ordinary observed row exists, without granting unregistered consumers.
+  consumers="$approved_consumer_inventory"
   missing=''
   leaked=''
   while IFS= read -r consumer; do
@@ -333,9 +336,13 @@ check() {
 # A relocated consumer must update the automation boundary in the same change.
 discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")"
-actual_paths="$(printf '%s\n%s\n%s\n' "${data_file}" "${identities_file}" "${discovered_paths}" | sort)"
+actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
+approved_consumer_inventory="$(bash -c 'source "$1"; printf "%s" "$approved" | cut -f1 | sort -u' _ \
+  "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" ||
+  fail 'approved consumer inventory is unresolved'
+readonly approved_consumer_inventory
 
 out="$(check "${workflow}")" || fail "the committed workflow violates its own contract: ${out}"
 [ "${out}" = 'ok' ] || fail "unexpected check output on the committed workflow: ${out}"
