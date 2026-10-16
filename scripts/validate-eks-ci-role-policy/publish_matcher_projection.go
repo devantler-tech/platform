@@ -19,7 +19,7 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 	switch spec["url"] {
 	case "oci://ghcr.io/devantler-tech/github-config/manifests", "oci://ghcr.io/devantler-tech/aws/manifests":
 		workflow = "publish-manifests"
-	case "oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests", "oci://ghcr.io/devantler-tech/wedding-app/manifests":
+	case "oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests", "oci://ghcr.io/devantler-tech/wedding-app/manifests", "oci://ghcr.io/devantler-tech/data-product-controller/manifests":
 		workflow = "publish-app"
 	default:
 		return document

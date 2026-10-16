@@ -1712,6 +1712,30 @@ else
   fail "validate-main gives the live report packages: ${registry_permission:-none}; GHCR metadata will return 403"
 fi
 
+# Digest-bound publication evidence executes cosign, including on a hosted runner
+# with no local installation. The installer must be pinned and precede the report.
+report_has_verifier() {
+  jq -e '
+    [.steps | to_entries[] | select((.value.run // "") | contains("./scripts/report-publish-workflow-signing-revisions.sh")) | .key] as $reports |
+    [.steps | to_entries[] | select((.value.uses // "") | test("^sigstore/cosign-installer@[0-9a-f]{40}$")) | .key] as $installers |
+    ($reports|length)==1 and ($installers|length)==1 and $installers[0] < $reports[0]
+  ' "$1" >/dev/null
+}
+yq -o=json '.jobs.validate-shared-publish-pin' "$REPO_ROOT/.github/workflows/validate-main.yaml" >"$WORK/main-report-job.json"
+if ! report_has_verifier "$WORK/main-report-job.json"; then
+  fail 'the live report lacks a pinned cosign installer before verification'
+fi
+for mutation in \
+  '.steps |= map(select((.uses // "") | startswith("sigstore/cosign-installer@") | not))' \
+  '.steps |= reverse' \
+  '.steps |= map(if (.uses // "") | startswith("sigstore/cosign-installer@") then .uses="sigstore/cosign-installer@main" else . end)'; do
+  jq "$mutation" "$WORK/main-report-job.json" >"$WORK/main-report-job-mutated.json"
+  if report_has_verifier "$WORK/main-report-job-mutated.json"; then
+    fail 'the report dependency guard accepted a missing, late or unpinned installer'
+  fi
+done
+pass 'the live report installs a pinned verifier before resolving bound publications'
+
 # ---------------------------------------------------------------------------
 # 25. REGISTRY-ONLY HIGHER VERSIONS MUST NOT BE SILENTLY OUTRANKED. (#3331 review)
 #     Flux selects from registry tags. If the highest current version survives in GHCR
