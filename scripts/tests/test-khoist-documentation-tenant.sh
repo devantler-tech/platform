@@ -18,7 +18,7 @@ validate() {
     (map(select(.kind=="OCIRepository"))[0] |
       .spec.url=="oci://ghcr.io/devantler-tech/data-product-controller/manifests" and
       (.spec.ref|keys)==["digest"] and (.spec.ref.digest|test("^sha256:[0-9a-f]{64}$")) and
-      .spec.secretRef.name=="ghcr-auth" and .spec.verify.provider=="cosign" and
+      (.spec|has("secretRef")|not) and .spec.verify.provider=="cosign" and
       (.spec.verify.matchOIDCIdentity|length)==1) and
     (map(select(.kind=="Kustomization"))[0] |
       .spec.path=="./documentation" and .spec.targetNamespace=="data-product-controller" and
@@ -38,6 +38,7 @@ kubectl kustomize "$repo_root/k8s/providers/docker/apps" >"$work/local.yaml"
 yq -o=json -I=0 '.' "$work/local.yaml" | jq -es 'all(.[]; .metadata.name!="khoist-documentation")' >/dev/null
 # A changed trust boundary must fail this guard, not merely change its output.
 for mutation in \
+  'map(if .kind=="OCIRepository" then .spec.secretRef={name:"unneeded-registry-credential"} else . end)' \
   'map(if .kind=="Role" then .rules[0].resources=["secrets"] else . end)' \
   'map(if .kind=="RoleBinding" then .roleRef.kind="ClusterRole" else . end)' \
   'map(if .kind=="Kustomization" then .spec.path="." else . end)' \

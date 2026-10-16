@@ -10,8 +10,7 @@ spec:
   url: oci://ghcr.io/devantler-tech/data-product-controller/manifests
   ref:
     digest: sha256:b9b5ff9e0cedf1305528e058708e9729eed9aa39a5dcdd967b7e74197264fe65
-  secretRef:
-    name: ghcr-auth
+  # The artifact is public; verification needs no registry credential.
   verify:
     provider: cosign
     matchOIDCIdentity:
