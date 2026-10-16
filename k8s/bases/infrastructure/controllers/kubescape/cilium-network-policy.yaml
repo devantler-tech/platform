@@ -63,6 +63,12 @@ spec:
         # scan fails ("open .../allcontrols.json: no such file or directory"),
         # so the cluster has no posture/compliance scanning at all.
         - matchName: "release-assets.githubusercontent.com"
+        # Config scan: since scanner v4.0.16 the bundle's checksums.txt is
+        # verified with Sigstore before use, which first refreshes Sigstore's
+        # trust root over TUF from this CDN. Without it the refresh times out
+        # and every config scan aborts at checksum verification (#4966). Keep
+        # the verification; allow only the trust-root host.
+        - matchName: "tuf-repo-cdn.sigstore.dev"
         # Vuln scan: kubevuln builds an SBOM per workload image, so it pulls
         # manifests + layer blobs from every registry the cluster runs images
         # from (docker.io, quay.io, ghcr.io, registry.k8s.io, reg.kyverno.io).
