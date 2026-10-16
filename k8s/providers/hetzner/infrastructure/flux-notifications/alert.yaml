@@ -74,6 +74,9 @@ spec:
       namespace: aws
     - kind: Kustomization
       name: "*"
+      namespace: data-product-controller
+    - kind: Kustomization
+      name: "*"
       namespace: github-config
     - kind: Kustomization
       name: "*"

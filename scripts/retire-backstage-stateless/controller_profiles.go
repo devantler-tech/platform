@@ -15,6 +15,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/blang/semver/v4"
 )
 
 const cnpgControllerImage = "ghcr.io/cloudnative-pg/cloudnative-pg:1.30.1"
@@ -81,10 +83,24 @@ func controllerProfile(s snapshot, r map[string]any) (string, error) {
 			}
 			return "trust-bundle", nil
 		case "cnpg-default-monitoring":
+			operatorVersion := text(field(r, "metadata", "annotations", "cnpg.io/operatorVersion"))
+			if field(r, "metadata", "labels", "app.kubernetes.io/managed-by") != "cloudnative-pg" || field(r, "metadata", "labels", "cnpg.io/reload") != "true" || !auditedCNPGMonitoringWriter(operatorVersion) {
+				return "", errors.New("monitoring producer metadata unverified")
+			}
 			return "cnpg-monitoring", nil
 		}
 	}
 	return "", nil
+}
+
+// auditedCNPGMonitoringWriter admits only controller versions whose copy
+// behavior is covered by this retirement proof. A later operator upgrade must
+// fail closed until its constructor and reconciliation behavior are reviewed.
+func auditedCNPGMonitoringWriter(version string) bool {
+	if _, err := semver.Parse(version); err != nil {
+		return false
+	}
+	return version == "1.29.1" || version == "1.30.1"
 }
 
 func (e engine) collectWriters(ctx context.Context, s *snapshot) error {
@@ -381,11 +397,15 @@ func controllerProjection(s snapshot, r map[string]any, normalized bool) (map[st
 		}
 	case "cnpg-monitoring":
 		data := object(r["data"])
-		if len(data) != 1 || text(data["queries"]) == "" || len(object(r["binaryData"])) != 0 || len(object(s.monitoring["binaryData"])) != 0 || !reflect.DeepEqual(data, object(s.monitoring["data"])) || field(r, "metadata", "annotations", "cnpg.io/operatorVersion") != "1.30.1" {
+		if len(data) != 1 || text(data["queries"]) == "" || len(object(r["binaryData"])) != 0 || len(object(s.monitoring["binaryData"])) != 0 || !reflect.DeepEqual(data, object(s.monitoring["data"])) {
 			return nil, errors.New("generated monitoring data unverified")
 		}
 		if normalized {
 			p["data"] = map[string]any{"queries": "controller-managed-monitoring"}
+			// CloudNativePG updates this last-writer annotation only when it
+			// patches changed query data, so an operator-only upgrade leaves the
+			// prior valid version in place.
+			object(p["annotations"])["cnpg.io/operatorVersion"] = "controller-managed-version"
 		}
 	}
 	return p, nil
