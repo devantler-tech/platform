@@ -57,6 +57,10 @@ is measured from `startedAt`, so even the oldest read in the capture is within `
 }
 ```
 
+The judge requires every observation to carry a distinct pod UID, but it cannot see the cluster. The
+calling procedure binds those UIDs to the live pods, for example by refusing to replace a server whose
+pod UID changed after the capture.
+
 The envelope must carry exactly these fields. A health body may carry any other native fields, but a
 duplicate member, or a case variant of a field the judge reads, makes the capture `UNKNOWN`, because
 a typed decode would read it ambiguously. The strict-JSON check is shared with the ARC transport
