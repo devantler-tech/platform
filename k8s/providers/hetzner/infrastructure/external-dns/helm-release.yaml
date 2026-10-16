@@ -21,6 +21,7 @@ spec:
       name: cloudflare
     sources:
       - gateway-httproute
+      - crd
     policy: sync
     # TXT-registry ownership is what makes this single writer safe to reschedule:
     # every managed record gets a paired "_externaldns." TXT carrying this
