@@ -159,6 +159,10 @@ func TestJudgeVerdictsAgainstNativeServers(t *testing.T) {
 
 	c.step("one server unreachable", func() {
 		c.stop("openbao-2")
+		c.waitUntil("the remaining servers are unsealed with exactly one active", func() bool {
+			_, ok := c.activeAmong([]string{"openbao-0", "openbao-1"})
+			return ok
+		})
 		c.expect("UNKNOWN", map[string]string{"openbao-2": "no health evidence"})
 	})
 
@@ -348,10 +352,13 @@ func (c *cluster) wipe(name string) {
 func (c *cluster) step(name string, run func()) {
 	c.t.Helper()
 	c.t.Logf("state: %s", name)
+	// Deferred so the dump also runs when t.Fatal unwinds the step.
+	defer func() {
+		if c.t.Failed() {
+			c.dumpLogs()
+		}
+	}()
 	run()
-	if c.t.Failed() {
-		c.dumpLogs()
-	}
 }
 
 // dumpLogs prints the tail of each server log after a failure. Server logs
@@ -419,7 +426,6 @@ func (c *cluster) waitUntil(what string, ready func() bool) {
 	deadline := time.Now().Add(waitLimit)
 	for !ready() {
 		if time.Now().After(deadline) {
-			c.dumpLogs()
 			c.t.Fatalf("timed out waiting until %s", what)
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -437,8 +443,14 @@ func (c *cluster) waitHealth(name string, ready func(int, healthBody) bool) {
 // activeIfSettled returns the one active server when every server answers
 // healthy, unsealed and initialized with exactly one active.
 func (c *cluster) activeIfSettled() (string, bool) {
+	return c.activeAmong(serverNames)
+}
+
+// activeAmong returns the one active server when every named server answers
+// healthy, unsealed and initialized with exactly one active.
+func (c *cluster) activeAmong(names []string) (string, bool) {
 	active := ""
-	for _, name := range serverNames {
+	for _, name := range names {
 		status, body, _ := c.health(name)
 		if status != http.StatusOK || !body.Initialized || body.Sealed {
 			return "", false
