@@ -64,7 +64,7 @@ need to change.
 | Candidate | OSI licence | Popular and maintained | Simple to run and use | Cloud-native self-hosting | Fits our sites | Own logins, per-client isolation | Platform guardrails |
 |---|---|---|---|---|---|---|---|
 | **Payload** | ✅ MIT. SSO and some workflow features are a paid add-on we do not need | ✅ ~45k stars, ~1M npm downloads a week, weekly releases | ✅ one Next.js process plus Postgres; polished editor | ⚠️ no official image, so we build it; Postgres and S3 adapters | ✅ REST and GraphQL, framework-agnostic live preview, built-in localisation | ✅ built-in users and access control; one instance per client | ✅ our signed image; no exception expected |
-| **Strapi** | ⚠️ MIT except `ee/`; live preview, content history and SSO need paid plans | ✅ ~73k stars, weekly releases | ❌ 2 GB memory minimum, 4 GB recommended | ⚠️ no official image; Postgres; S3 provider | ✅ REST and GraphQL; free localisation | ✅ built-in users and roles; one instance per client | ✅ our signed image, as for Payload |
+| **Strapi** | ⚠️ MIT except `ee/`; live preview, content history and SSO need paid plans | ✅ ~73k stars, weekly releases | ⚠️ documented host minimum of 2 GB, 4 GB recommended, which sizes a whole server with the build; Payload publishes no figure, so increment 2 measures both | ⚠️ no official image; Postgres; S3 provider | ✅ REST and GraphQL; free localisation | ✅ built-in users and roles; one instance per client | ✅ our signed image, as for Payload |
 | **Directus** | ❌ MSCL since v12 (June 2026), with enforced limits on the free tier | ✅ ~38k stars, monthly releases | ✅ | ✅ official amd64 and arm64 image | ✅ | ✅ | — |
 | **PocketBase** | ✅ MIT | ⚠️ ~61k stars, but pre-1.0 without a compatibility promise | ❌ its dashboard is for developers, not client editors | ❌ SQLite only, one instance, no official image | ⚠️ | ⚠️ | — |
 | **Pages CMS** | ✅ MIT | ❌ ~4k stars; no release since 2.1.8 (8 June 2026) | ✅ simple forms | ⚠️ Next.js plus Postgres; no official image | ✅ any framework; live after a rebuild | ✅ invited by email, sign in with a one-time code | ❌ its GitHub App needs repository Administration and Actions write; edits commit to protected branches |
@@ -92,9 +92,11 @@ Its costs, accepted with this choice:
 
 ## Rejected alternatives
 
-- **Strapi**, the runner-up. The most popular candidate and a good editor, but it needs 2–4 GB of
-  memory per instance, which is far from "one small workload" when every client has their own. Live
-  preview and content history, which make editing safe for non-technical clients, need a paid plan.
+- **Strapi**, the runner-up. The most popular candidate and a good editor. Its documented host
+  minimum is 2 GB (4 GB recommended), but that sizes a whole server, build included, and Payload
+  publishes no figure, so increment 2 measures both before memory weighs on the choice. What ranks
+  it below Payload is that live preview and content history, which make editing safe for
+  non-technical clients, need a paid plan.
 - **Directus.** The best editing experience and an official multi-arch image, but its licence is
   source-available (MSCL since v12), not OSI-approved, and the software enforces seat, collection and
   permission limits unless a licence key is installed.
@@ -159,7 +161,8 @@ Its costs, accepted with this choice:
   and no Kubernetes cluster was started for this spike. The editing flow — sign in, edit a text and
   an image, see the page change — is therefore not yet demonstrated. Increment 2 carries that check,
   with screenshots, before anything reaches production.
-- Payload does not publish a memory footprint. Increment 2 measures it before sizing capacity.
+- Payload does not publish a memory footprint, and Strapi publishes only a host minimum. Increment 2
+  measures both before sizing capacity.
 
 ## Decisions for the maintainer
 
