@@ -4,7 +4,9 @@
 // The heal job restores main after a merge-group deploy fails, and it needs
 // five things to be true to work at all: it must fire on a failed or cancelled
 // merge-group deploy that actually touched k8s, or on a successful one whose
-// PR had already left the queue (#3091), and on nothing else; it must
+// PR had already left the queue (#3091), and on nothing else — not even a
+// failed deploy whose queue preflight refused the entry before production was
+// touched, which a pinned outcome step reports (#4937); it must
 // hold the shared prod-deploy lock; that lock must not be preemptible, or the
 // heal is cancelled by the next deploy midway through; it must check out
 // main, or it restores the wrong revision; it must opt in to orphaned-fence
@@ -31,6 +33,7 @@ import (
 const expectedHealCondition = "always() && " +
 	"github.event_name == 'merge_group' && " +
 	"needs.changes.outputs.k8s == 'true' && " +
+	"needs.deploy-prod.outputs.stopped_before_production != 'true' && " +
 	"(needs.deploy-prod.result == 'failure' || " +
 	"needs.deploy-prod.result == 'cancelled' || " +
 	"(needs.deploy-prod.result == 'success' && " +
@@ -136,6 +139,10 @@ func validateWorkflowContract(workflow string) error {
 		if err := validateDeployRecovery(workflow, target.key, target.label); err != nil {
 			return err
 		}
+	}
+
+	if err := validateProductionOutcome(workflow); err != nil {
+		return err
 	}
 
 	return validateOrphanCheck(healJob)

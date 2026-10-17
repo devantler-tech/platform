@@ -31,7 +31,8 @@ var reviewedGateJobConditions = map[string]string{
 	"ci.yaml/changes":                    "",
 	"dr-rebuild.yaml/supersession-gate":  "",
 	"ci.yaml/heal-prod-on-failure": "always() && github.event_name == 'merge_group' && " +
-		"needs.changes.outputs.k8s == 'true' && (needs.deploy-prod.result == 'failure' || " +
+		"needs.changes.outputs.k8s == 'true' && needs.deploy-prod.outputs.stopped_before_production != 'true' && " +
+		"(needs.deploy-prod.result == 'failure' || " +
 		"needs.deploy-prod.result == 'cancelled' || (needs.deploy-prod.result == 'success' && " +
 		"needs.merge-group-queue-membership.outputs.evicted == 'true'))",
 	"ci.yaml/validate-eks-authorization": "needs.changes.outputs.k8s == 'true' && " +
