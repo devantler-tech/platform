@@ -69,7 +69,7 @@ sudo dpkg -i /tmp/sops_amd64.deb
 brew install yq
 
 # KSail — cluster + workload lifecycle (Homebrew)
-brew tap devantler-tech/formulas && brew install ksail
+brew install --cask devantler-tech/tap/ksail
 ```
 
 Verify the toolchain:
@@ -406,7 +406,7 @@ Resources under `k8s/bases/infrastructure/` are **component-folder-first**: a co
 A CR is split out into its own **plural-Kind folder** only when it cannot live with its component:
 
 - **Dependency split** — the CRD ships with the controller's HelmRelease, so the CR must reconcile a layer later to avoid the CR-and-its-CRD-in-one-Kustomization deadlock: `metric-templates/` (Flagger `MetricTemplate`; see [`docs/progressive-delivery.md`](docs/progressive-delivery.md)), `tracing-policies/` (Tetragon `TracingPolicy`), the Coroot CR in `coroot/`, and `resource-graph-definitions/` (KRO, which also installs its CRD via the controller layer).
-- **Cluster-scoped / cross-cutting** — no single owning component: `cluster-policies/` (Kyverno), `cluster-roles/` + `cluster-role-bindings/`, `cluster-secret-stores/`, `external-secrets/` (bootstrap ExternalSecrets), `cluster-security-exceptions/` (Kubescape), `limit-ranges/`, and `vertical-pod-autoscalers/` (prod system VPAs).
+- **Cluster-scoped / cross-cutting** — no single owning component: `cluster-policies/` (Kyverno), `deleting-policies/` (Kyverno `DeletingPolicy`), `cluster-roles/` + `cluster-role-bindings/`, `cluster-secret-stores/`, `external-secrets/` (bootstrap ExternalSecrets) and `cluster-security-exceptions/` (Kubescape). Two cross-cutting folders live outside this layer: `limit-ranges/` and `priority-classes/` in `k8s/bases/bootstrap/`, and the prod system VPAs in `k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers/`.
 
 ### Kustomization Flow
 
@@ -498,7 +498,7 @@ export GITHUB_ACTOR=devantler
 
 ### Tool Reinstallation
 
-If tools stop working, reinstall in order: Docker (restart the service if needed) → KSail (`brew reinstall ksail`) → kubectl (check the cluster context) → SOPS, Age, and yq v4 (check the encryption keys and `yq --version`).
+If tools stop working, reinstall in order: Docker (restart the service if needed) → KSail (`brew reinstall --cask devantler-tech/tap/ksail`) → kubectl (check the cluster context) → SOPS, Age, and yq v4 (check the encryption keys and `yq --version`).
 
 ## What's Useful for the AI Assistant
 
