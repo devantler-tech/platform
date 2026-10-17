@@ -724,17 +724,26 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 		setMarkerContent("flux-policy-post-restart-reads", strconv.Itoa(reads))
 		// The restart first proves both fences. Change only subsequent quiet-window
 		// observations, leaving the real acquisition and cleanup paths exercised.
-		if reads > 1 {
+		// The one exception is a parent condition that is already present when
+		// the restart proves the fences.
+		if state == "parent-reconciling-at-restart-proof" {
+			// A Reconciling=True condition left behind by an execution that the
+			// restart retired: it is already on the suspended parent at the
+			// restart's own proof, and no later read clears it (#4873).
+			parent["status"].(map[string]any)["conditions"] = []any{
+				map[string]any{"type": "Reconciling", "status": "True", "message": "fixture-private-controller-message"},
+			}
+		} else if reads > 1 {
 			switch state {
 			case "unreadable":
 				return commandFailure(92, "injected quiet-window fence read failure")
 			case "child-not-owned":
 				setMarkerContent("flux-policy-handoff-owner", "fixture-private-owner")
 				child["metadata"].(map[string]any)["annotations"].(map[string]any)["platform.devantler.tech/ghcr-policy-handoff-owner"] = "fixture-private-owner"
-			case "parent-frozen-reconciling":
-				// A Reconciling=True condition left behind by an execution the
-				// restart retired: the suspended parent is never reconciled again,
-				// so the condition and the resourceVersion stay as they are (#4873).
+			case "parent-reconciling":
+				// A Reconciling=True condition that first appears after the
+				// restart's proof. Every pre-handoff process is gone by then, so
+				// only an execution that is still running can have written it.
 				parent["status"].(map[string]any)["conditions"] = []any{
 					map[string]any{"type": "Reconciling", "status": "True", "message": "fixture-private-controller-message"},
 				}

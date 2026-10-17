@@ -18,28 +18,36 @@ func TestQuietWindowTimeoutExplainsObservedFailures(t *testing.T) {
 		{
 			name: "read failure",
 			env:  map[string]string{"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "unreadable"},
-			want: "unreadable=2 child_not_owned=0 parent_not_owned=0 parent_changed=0 version_changes=0",
+			want: "unreadable=2 child_not_owned=0 parent_not_owned=0 parent_reconciling=0 parent_changed=0 version_changes=0",
 		},
 		{
 			name:         "child ownership changed",
 			env:          map[string]string{"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "child-not-owned"},
-			want:         "unreadable=0 child_not_owned=2 parent_not_owned=0 parent_changed=0 version_changes=0",
+			want:         "unreadable=0 child_not_owned=2 parent_not_owned=0 parent_reconciling=0 parent_changed=0 version_changes=0",
 			foreignChild: true,
 		},
 		{
 			name: "parent resumed by another writer",
 			env:  map[string]string{"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "parent-not-owned"},
-			want: "unreadable=0 child_not_owned=0 parent_not_owned=2 parent_changed=0 version_changes=0",
+			want: "unreadable=0 child_not_owned=0 parent_not_owned=2 parent_reconciling=0 parent_changed=0 version_changes=0",
+		},
+		{
+			// Every pre-handoff process is gone before the restart's proof, so a
+			// condition written after it needs a live execution. Two unchanged
+			// resourceVersions do not prove that execution has finished.
+			name: "parent starts reconciling after the restart proof",
+			env:  map[string]string{"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "parent-reconciling"},
+			want: "unreadable=0 child_not_owned=0 parent_not_owned=0 parent_reconciling=2 parent_changed=0 version_changes=0",
 		},
 		{
 			name: "parent version keeps changing",
 			env:  map[string]string{"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "parent-changed"},
-			want: "unreadable=0 child_not_owned=0 parent_not_owned=0 parent_changed=1 version_changes=0",
+			want: "unreadable=0 child_not_owned=0 parent_not_owned=0 parent_reconciling=0 parent_changed=1 version_changes=0",
 		},
 		{
 			name: "child version keeps changing",
 			env:  map[string]string{"FAKE_FLUX_POLICY_RESOURCE_VERSION_CHURN_AFTER_PAUSE": "true"},
-			want: "unreadable=0 child_not_owned=0 parent_not_owned=0 parent_changed=0 version_changes=1",
+			want: "unreadable=0 child_not_owned=0 parent_not_owned=0 parent_reconciling=0 parent_changed=0 version_changes=1",
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -71,22 +79,24 @@ func TestQuietWindowTimeoutExplainsObservedFailures(t *testing.T) {
 	}
 }
 
-// A suspended parent keeps a Reconciling=True condition written by an execution
-// the controller restart retired; the new controller never reconciles it again.
-// Ownership and an unchanged resourceVersion prove the pause, as for the child,
-// so the frozen condition alone must not time the handoff out (#4873).
-func TestQuietWindowAcceptsFrozenParentReconcilingCondition(t *testing.T) {
+// A Reconciling=True condition left on the suspended parent by an execution the
+// controller restart retired is already present at the restart's own proof.
+// That proof refuses it, so the post-pause quiet window never sees it (#4873).
+func TestRestartProofRefusesParentReconcilingLeftByRetiredExecution(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
 	result := f.runHelper(validConfig(), nil, map[string]string{
-		"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "parent-frozen-reconciling",
+		"FAKE_FLUX_POLICY_QUIET_OBSERVATION_STATE": "parent-reconciling-at-restart-proof",
 	})
-	requireSuccessResult(t, result)
+	requireFailureResult(t, result)
 	output := result.stdout + result.stderr
+	requireContains(t, output, "parent Flux policy fence changed to an unrecognized state during the kustomize-controller handoff restart")
 	requireNotContains(t, output, "did not acknowledge a stable pause")
 	requireNotContains(t, output, "fixture-private-controller-message")
 	operations := readLines(f.operationLog)
-	requireLine(t, operations, "ivpol-policy-apply:verify-app-images")
+	for _, forbidden := range []string{"ivpol-policy-apply:verify-app-images", "variables-patch", "root-patch"} {
+		requireNoLine(t, operations, forbidden)
+	}
 	requireLine(t, operations, "flux-policy-resume:infrastructure")
 	requireLine(t, operations, "flux-policy-parent-resume:flux-system")
 }
