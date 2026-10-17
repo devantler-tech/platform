@@ -183,14 +183,19 @@ data:
             icon: mdi-water-boiler
             href: https://stokercloud.dk/v3/
             description: NBE pellet boiler monitoring and control.
-    # devantler.tech is not deployed from this cluster, so it
-    # is listed statically under Business. Client and personal sites are
-    # discovered from gethomepage.dev annotations on tenant HTTPRoutes.
+    # devantler.tech and ksail.devantler.tech are not deployed from this cluster
+    # (both are served by GitHub Pages), so they are listed statically under
+    # Business. Client and personal sites are discovered from gethomepage.dev
+    # annotations on tenant HTTPRoutes.
     - Business:
         - devantler.tech:
             icon: mdi-web
             href: https://devantler.tech
             description: Business site — products, services, guides and documentation.
+        - ksail.devantler.tech:
+            icon: https://ksail.devantler.tech/favicon.svg
+            href: https://ksail.devantler.tech
+            description: KSail documentation — one CLI to spin up Kubernetes clusters and run them with GitOps.
     # Analytics is populated dynamically from the gethomepage.dev annotations on
     # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
     # spec.service.apex.annotations).
