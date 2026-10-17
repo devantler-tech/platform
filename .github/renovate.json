@@ -235,6 +235,12 @@
       "labels": ["security/review-required"]
     },
     {
+      "description": "The flux-operator chart (dedicated regex manager above) installs and upgrades Flux itself. Its chart lives on ghcr.io, which gives Renovate no release date for it, and a release with no date never clears the repository-wide wait, so no update was proposed after 0.50.0 (#4985, the same cause as #4754). minimumReleaseAge is therefore 0 days. Raising the PR adopts nothing: automerge is off whatever the update type, so every update is reviewed against the operator's release notes and the HelmRelease post-renderers before merge. Placed after the broad automerge rules so none of them can turn automerge back on.",
+      "matchPackageNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false
+    },
+    {
       "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
       "matchManagers": ["crossplane"],
       "matchPackageNames": [
