@@ -78,6 +78,10 @@ mkdir "${scratch}/native"
 tar -xzf "${scratch}/native.tar.gz" -C "${scratch}/native"
 OPENBAO_TLS_TEST_BINARY="${scratch}/native/bao" go test \
   "${root_dir}/scripts/tests/openbao-transport-runtime" -count=1
+# Drive three servers of the same release through the states a replacement
+# meets and require the health judge's verdict in each (#4969).
+OPENBAO_HEALTH_TEST_BINARY="${scratch}/native/bao" go test \
+  "${root_dir}/scripts/tests/openbao-health-native" -count=1 -timeout 10m
 
 replicas="$(yq -er '.data.openbao_replicas' "${root_dir}/k8s/clusters/prod/bootstrap/config-map.yaml")"
 readonly replicas

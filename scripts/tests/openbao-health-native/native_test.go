@@ -141,6 +141,10 @@ func TestJudgeVerdictsAgainstNativeServers(t *testing.T) {
 	})
 
 	c.step("after a leader change", func() {
+		// Autopilot admits a joined server as a voter only after it has been
+		// stable for a while; until then the first server is the only voter and
+		// no other server can win an election.
+		c.waitVoters(serverNames)
 		before := c.active()
 		c.stepDown(before)
 		// A stepped-down server may win the next election again, so repeat the
@@ -269,7 +273,10 @@ func (c *cluster) config(s *server, join bool) string {
 		"0.0.0.0:8200", s.apiAddr,
 		"0.0.0.0:8201", s.clusterAddr,
 		"/openbao/data", filepath.ToSlash(filepath.Join(s.root, "data")),
-		"/openbao/audit/audit.log", filepath.ToSlash(filepath.Join(s.root, "audit.log")),
+		// The audit device is stored in the shared Raft log, so every server must
+		// declare the identical path, as every production pod does. A relative path
+		// resolves inside each server's own working directory.
+		"/openbao/audit/audit.log", "audit.log",
 		`service_registration "kubernetes" {}`, "",
 	}
 	for _, name := range serverNames {
@@ -622,4 +629,44 @@ func onlyServer(report judgeReport, name string, reasons ...string) bool {
 		}
 	}
 	return false
+}
+
+// waitVoters waits until the Raft configuration, read through the active
+// server, lists exactly the named servers and every one of them votes.
+func (c *cluster) waitVoters(names []string) {
+	c.t.Helper()
+	c.waitUntil("every server is a Raft voter", func() bool {
+		leader, ok := c.activeAmong(names)
+		if !ok {
+			return false
+		}
+		status, data := c.request(leader, http.MethodGet, "/v1/sys/storage/raft/configuration", nil, true)
+		if status != http.StatusOK {
+			return false
+		}
+		var result struct {
+			Data struct {
+				Config struct {
+					Servers []struct {
+						NodeID string `json:"node_id"`
+						Voter  bool   `json:"voter"`
+					} `json:"servers"`
+				} `json:"config"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(data, &result) != nil || len(result.Data.Config.Servers) != len(names) {
+			return false
+		}
+		want := make(map[string]bool, len(names))
+		for _, name := range names {
+			want[name] = true
+		}
+		for _, peer := range result.Data.Config.Servers {
+			if !want[peer.NodeID] || !peer.Voter {
+				return false
+			}
+			delete(want, peer.NodeID)
+		}
+		return len(want) == 0
+	})
 }

@@ -70,3 +70,9 @@ a typed decode would read it ambiguously. The strict-JSON check is shared with t
 proof in `internal/strictjson`.
 
 Run the regressions with `go test ./scripts/judge-openbao-health ./internal/strictjson`.
+
+Those regressions use recorded responses. `scripts/tests/openbao-health-native` runs three real servers of the
+production release on the local machine with a throwaway store and checks the judge's verdict in each
+state a replacement meets. It needs the pinned server binary, which
+`scripts/tests/test-openbao-standby-canary.sh` downloads, verifies and passes in; on its own it is
+skipped.
