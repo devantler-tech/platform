@@ -1,0 +1,21 @@
+# Pins the preserve-retiring-namespace rule before the ValidatingPolicy rewrite
+# (#4995): deleting arc-runners is denied while it carries the retirement
+# journal annotation, and allowed when it does not. kyverno test presents the
+# resource as both the request object and the previous object; values.yaml
+# sets the operation to DELETE. The allowed control is the -unannotated fixture.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-retirement-namespace-delete
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-arc-retirement
+    rule: preserve-retiring-namespace
+    resources:
+      - arc-runners
+    kind: Namespace
+    result: fail

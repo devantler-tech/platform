@@ -1,0 +1,48 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: CREATE
+# The policy's context reads the arc-runners Namespace's retirement journal.
+# Each resource gets the parsed journal it would see in that phase.
+policies:
+  - name: restrict-arc-retirement
+    resources:
+      - name: listener-unfenced
+        values:
+          retirement:
+            present: false
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: unfenced
+      - name: listener-uninstalling
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: uninstalling
+      - name: listener-uninstalled
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: uninstalled
+      - name: listener-restored
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: restored
+      - name: listener-unknown-phase
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: unknown
+      - name: other-scale-set-listener
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: uninstalled

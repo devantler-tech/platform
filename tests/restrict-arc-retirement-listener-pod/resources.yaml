@@ -1,0 +1,84 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: listener-unfenced
+  namespace: arc-systems
+  labels:
+    actions.github.com/scale-set-name: platform-linux
+    actions.github.com/scale-set-namespace: arc-runners
+    app.kubernetes.io/component: runner-scale-set-listener
+spec:
+  containers:
+    - name: listener
+      image: ghcr.io/actions/gha-runner-scale-set-controller:0.15.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: listener-uninstalling
+  namespace: arc-systems
+  labels:
+    actions.github.com/scale-set-name: platform-linux
+    actions.github.com/scale-set-namespace: arc-runners
+    app.kubernetes.io/component: runner-scale-set-listener
+spec:
+  containers:
+    - name: listener
+      image: ghcr.io/actions/gha-runner-scale-set-controller:0.15.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: listener-uninstalled
+  namespace: arc-systems
+  labels:
+    actions.github.com/scale-set-name: platform-linux
+    actions.github.com/scale-set-namespace: arc-runners
+    app.kubernetes.io/component: runner-scale-set-listener
+spec:
+  containers:
+    - name: listener
+      image: ghcr.io/actions/gha-runner-scale-set-controller:0.15.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: listener-restored
+  namespace: arc-systems
+  labels:
+    actions.github.com/scale-set-name: platform-linux
+    actions.github.com/scale-set-namespace: arc-runners
+    app.kubernetes.io/component: runner-scale-set-listener
+spec:
+  containers:
+    - name: listener
+      image: ghcr.io/actions/gha-runner-scale-set-controller:0.15.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: listener-unknown-phase
+  namespace: arc-systems
+  labels:
+    actions.github.com/scale-set-name: platform-linux
+    actions.github.com/scale-set-namespace: arc-runners
+    app.kubernetes.io/component: runner-scale-set-listener
+spec:
+  containers:
+    - name: listener
+      image: ghcr.io/actions/gha-runner-scale-set-controller:0.15.0
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: other-scale-set-listener
+  namespace: arc-systems
+  labels:
+    actions.github.com/scale-set-name: other-linux
+    actions.github.com/scale-set-namespace: arc-runners
+    app.kubernetes.io/component: runner-scale-set-listener
+spec:
+  containers:
+    - name: listener
+      image: ghcr.io/actions/gha-runner-scale-set-controller:0.15.0

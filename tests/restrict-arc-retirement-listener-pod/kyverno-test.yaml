@@ -1,0 +1,37 @@
+# Pins the fence-retired-listener-pod rule before the ValidatingPolicy rewrite
+# (#4995). The retirement journal's phase is read from the arc-runners
+# Namespace through an API call, which kyverno test cannot make, so values.yaml
+# supplies the parsed journal per resource. Once the retirement has passed the
+# uninstalling phase the listener pod may not be created again; before that,
+# and with no journal at all, it may.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-retirement-listener-pod
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-arc-retirement
+    rule: fence-retired-listener-pod
+    resources:
+      - arc-systems/listener-unfenced
+      - arc-systems/listener-uninstalling
+    kind: Pod
+    result: pass
+  - policy: restrict-arc-retirement
+    rule: fence-retired-listener-pod
+    resources:
+      - arc-systems/listener-uninstalled
+      - arc-systems/listener-restored
+      - arc-systems/listener-unknown-phase
+    kind: Pod
+    result: fail
+  - policy: restrict-arc-retirement
+    rule: fence-retired-listener-pod
+    resources:
+      - arc-systems/other-scale-set-listener
+    kind: Pod
+    result: skip

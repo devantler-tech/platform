@@ -1,0 +1,21 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: restrict-arc-retirement
+    resources:
+      - name: arc-github-app
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            phase: drained
+            record:
+              phase: drained
+          request.oldObject:
+            spec:
+              refreshInterval: 24h
