@@ -3576,3 +3576,19 @@ two changed entries and one added entry against `409c6cdc`:
 The generator records the real Ready/SourceVerified product observation and
 retires its publication bootstrap into an immutable binding. No observation
 is synthesized. Existing tenant RBAC and admission limits are unchanged.
+
+## 2026-10-17 — Alert on an unhealthy Crossplane provider fleet
+
+For #3457, the validator measures two added entries against `f4ed0a8e`, and
+nothing changed or removed:
+
+- ClusterRole crossplane-provider-unhealthy-alert is added as
+  `6a8845e6cd798bea6c9dd0353f5ac34dc93e3f2ccdda4e4d92288705e0dc6a45`.
+- ClusterRoleBinding crossplane-provider-unhealthy-alert is added as
+  `1cc87f7bfd2b06426b26df11488ceb00e9a22e749bfca05814c1c9a0edc7be9a`.
+
+The ClusterRole grants read-only `get` and `list` on
+`providers.pkg.crossplane.io` and nothing else. The binding grants it to one
+subject, the `observability/crossplane-provider-unhealthy-alert`
+ServiceAccount, which the new alert CronJob runs as. No other RBAC, admission
+scope, AWS identity, credential or permission grant changes.

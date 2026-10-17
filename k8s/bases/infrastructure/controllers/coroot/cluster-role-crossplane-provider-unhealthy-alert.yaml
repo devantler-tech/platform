@@ -1,0 +1,18 @@
+# What the crossplane-provider-unhealthy-alert CronJob may read.
+#
+# Read-only, and ONLY the Crossplane Provider package. Providers are
+# cluster-scoped, so a ClusterRole is required; it grants get/list on that single
+# resource type and nothing else.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: crossplane-provider-unhealthy-alert
+rules:
+  - apiGroups:
+      - pkg.crossplane.io
+    resources:
+      - providers
+    verbs:
+      - get
+      - list

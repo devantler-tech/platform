@@ -105,6 +105,18 @@ stays quiet by design, exactly as the old Alertmanager did.
   remove this coverage. The archive branch was added after wedding-db remained
   3/3 Ready while Barman rejected WAL from a replacement system ID for roughly
   three days.
+- **An unhealthy Crossplane Provider fleet alerts on its own.** kstatus has no
+  readiness rule for a Crossplane `Provider`, so the `wait: true` gate above
+  does not cover one: during #3454 every Provider was `Healthy=False` with no
+  provider pod running while `infrastructure` stayed Ready.
+  `bases/infrastructure/controllers/coroot/cron-job-crossplane-provider-unhealthy-alert.yaml`
+  lists every `providers.pkg.crossplane.io` every 30 minutes and posts to the
+  same Slack webhook when a Provider's `Healthy` condition has not been `True`
+  (False, Unknown or missing) for more than 15 minutes, keyed on that
+  condition's `lastTransitionTime` (creation time when the condition is
+  missing). A provider upgrade is unhealthy for about a minute, inside the
+  grace. It is read-only (`get`/`list` on Providers only), exits cleanly on a
+  cluster without Crossplane, and is independent of any Flux health gate.
 - **Velero maintenance OOMKills remain visible after a successful retry.**
   `bases/components/coroot-velero-maintenance-oom-alert/cron-job-velero-maintenance-oom-alert.yaml`
   checks retained repository-maintenance pod status every 30 minutes. It alerts

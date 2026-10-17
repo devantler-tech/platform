@@ -935,6 +935,8 @@ jobs:
               - 'scripts/tests/test-coroot-final-remediation.sh'
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
+              - 'scripts/tests/test-crossplane-provider-unhealthy-alert.sh'
+              - 'scripts/tests/fixtures/crossplane-provider-list/**'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'
@@ -2238,6 +2240,15 @@ jobs:
         # shape against a stubbed API and delivery, so the fire, each quiet
         # verdict and both silent-zero guards are pinned by behaviour.
         run: bash scripts/tests/test-stranded-volume-attach-alert.sh
+
+      - name: 🩺 Validate the unhealthy Crossplane provider alert
+        if: needs.changes.outputs.k8s == 'true'
+        # Flux does not gate on Provider health, so this CronJob is the only
+        # signal for a Provider fleet that is not Healthy (#3454, #3457). Runs its
+        # real script against a stubbed API and delivery, so the grace period,
+        # both silent-zero guards and the credential handling are pinned by
+        # behaviour.
+        run: bash scripts/tests/test-crossplane-provider-unhealthy-alert.sh
 
       - name: 🧹 Validate the prune-protected-orphan alert
         if: needs.changes.outputs.k8s == 'true'
