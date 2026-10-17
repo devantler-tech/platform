@@ -8,6 +8,27 @@ import (
 	"testing"
 )
 
+func TestJournalWriterUsesItsOwnFieldManager(t *testing.T) {
+	retirementRunner(t)
+	f := retirementFixture(t)
+	seen := false
+	execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if program == "kubectl" && strings.Contains(joined, "patch namespace backstage") {
+			seen = true
+			if !strings.Contains(joined, "--field-manager=backstage-retirement") {
+				t.Error("retirement journal has no independent field owner")
+				return nil, fmt.Errorf("journal field manager missing")
+			}
+		}
+		return f.execute(ctx, program, args...)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, execute); code != 0 || !seen {
+		t.Fatalf("journal ownership was not established: code=%d %s", code, &out)
+	}
+}
+
 func TestMissingOrIneffectiveAdmissionCannotAuthorizeOwnerDeletion(t *testing.T) {
 	for _, mode := range []string{"policy read fails", "policy missing", "negative control accepted", "positive control rejected"} {
 		t.Run(mode, func(t *testing.T) {

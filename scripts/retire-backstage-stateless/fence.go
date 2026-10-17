@@ -170,7 +170,7 @@ func (e engine) installFence(ctx context.Context, s snapshot, kept map[string]ma
 	if e.sourceCurrent(ctx) != nil {
 		return "", errors.New("current source unverified before fencing")
 	}
-	p, err := e.write(ctx, patch, "patch", "namespace", "backstage", "--type=json", "--patch-file=REQUEST", "--output=json")
+	p, err := e.write(ctx, patch, "patch", "namespace", "backstage", "--field-manager=backstage-retirement", "--type=json", "--patch-file=REQUEST", "--output=json")
 	if err != nil || !metadataValid(p) || field(p, "metadata", "uid") != field(s.namespace, "metadata", "uid") || field(p, "metadata", "annotations", fenceAnnotation) != record {
 		return "", errors.New("durable retirement fence unconfirmed")
 	}
