@@ -556,6 +556,14 @@ jobs:
           shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
           bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
 
+      # Kyverno 1.20 removes the kyverno.io ClusterPolicy API most policies here still use.
+      # This spans the Renovate policy, the CLI pin and the manifests, so it runs here for
+      # the same reason as the gates above; its first case checks the tree as committed (#4994).
+      - name: 📌 Validate the Kyverno 1.20 cap
+        run: |
+          shellcheck scripts/check-kyverno-1-20-cap.sh scripts/tests/test-kyverno-1-20-cap.sh
+          bash scripts/tests/test-kyverno-1-20-cap.sh
+
       # Renovate moves only the source commit of the vendored origin-ca-issuer CRDs, and
       # the bytes do not change with it, so nothing but the updater's own record can tell
       # a bump from a refresh (#4136). The test runs a copy of the updater against stub
