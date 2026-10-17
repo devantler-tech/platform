@@ -335,6 +335,39 @@ if STUB_DELIVERY_EXIT=22 run_scenario "${dir}"; then
 fi
 pass "a failed webhook delivery fails the Job"
 
+# 11 — the full API response shape. provider()/fleet() build only the fields the
+# script reads, so they cannot show that the extra fields a real response carries
+# leave the verdict alone. This fixture has exactly the structure of a
+# `GET /apis/pkg.crossplane.io/v1/providers` body read from prod on 2026-10-17
+# (Crossplane v2.4.2, metadata.managedFields aside): every field path that
+# response carried, including the list metadata and each Provider's spec and
+# status extras. The values are invented; production data is not committed.
+readonly shape_fleet_file="${root_dir}/scripts/tests/fixtures/crossplane-provider-list/provider-list-api-shape.json"
+[ -f "${shape_fleet_file}" ] || fail "ProviderList shape fixture not found: ${shape_fleet_file}"
+shape_fleet="$(cat "${shape_fleet_file}")"
+jq -e '.kind == "ProviderList" and (.items | length) == 4
+  and all(.items[]; any(.status.conditions[]; .type == "Healthy" and .status == "True"))' \
+  <<<"${shape_fleet}" >/dev/null ||
+  fail "the shape fixture is not the four-Provider healthy ProviderList this scenario asserts on"
+dir="$(expect_quiet shape_healthy "${shape_fleet}")"
+grep -q 'Checked 4 Crossplane provider' "${dir}/stdout.log" ||
+  fail "scenario 'shape_healthy': the script did not count the four Providers"
+grep -q 'none unhealthy beyond 900s' "${dir}/stdout.log" ||
+  fail "scenario 'shape_healthy': the quiet verdict was not reported"
+pass "a full-shape ProviderList reads as four healthy Providers"
+
+# The same objects with one Healthy condition flipped, keeping its
+# lastTransitionTime (already past the grace) and every other field.
+dir="$(expect_alert shape_one_unhealthy "$(
+  jq --arg m "${incident_message}" '(.items[] | select(.metadata.name == "upbound-provider-family-aws")
+      | .status.conditions[] | select(.type == "Healthy"))
+    |= (.status = "False" | .reason = "UnhealthyPackageRevision" | .message = $m)' <<<"${shape_fleet}"
+)" 'upbound-provider-family-aws. — Healthy=False since')"
+if jq -e '.text | test("provider-aws-iam|provider-upjet-github|provider-upjet-unifi")' "${dir}/delivered-payload.json" >/dev/null; then
+  fail "scenario 'shape_one_unhealthy': a healthy Provider was named in the alert"
+fi
+pass "one unhealthy Provider in the full shape alerts and names only that Provider"
+
 # ---------------------------------------------------------------------------
 # Wiring.
 # ---------------------------------------------------------------------------

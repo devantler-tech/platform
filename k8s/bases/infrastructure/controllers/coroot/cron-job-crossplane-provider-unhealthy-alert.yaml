@@ -19,7 +19,9 @@
 #
 # The grace period keys on the Healthy condition's `lastTransitionTime`.
 # crossplane-runtime keeps a condition's stored timestamp whenever type, status,
-# reason and message are unchanged. Measured on this cluster:
+# reason and message are unchanged. Measured on this cluster, with the
+# 2026-10-17 samples taken on Crossplane v2.4.2 (re-measure after a Crossplane
+# minor upgrade, since this rule is what makes the grace reachable):
 #   * during #3454 (2026-08-29T15:09:53Z) all five Providers were Healthy=False
 #     with `lastTransitionTime` stable at 14:51:40–14:51:42Z for ~18 minutes
 #     across an active reconcile loop;

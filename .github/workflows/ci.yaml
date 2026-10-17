@@ -929,6 +929,7 @@ jobs:
               - 'scripts/tests/test-cnpg-degraded-alert.sh'
               - 'scripts/tests/test-stranded-volume-attach-alert.sh'
               - 'scripts/tests/test-crossplane-provider-unhealthy-alert.sh'
+              - 'scripts/tests/fixtures/crossplane-provider-list/**'
               - 'scripts/tests/test-prune-protected-orphan-alert.sh'
               - 'scripts/tests/test-coroot-alert-autosuppressor.sh'
               - 'scripts/tests/test-coroot-application-health-reconciler.sh'

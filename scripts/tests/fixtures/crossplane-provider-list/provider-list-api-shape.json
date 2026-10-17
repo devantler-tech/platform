@@ -1,0 +1,198 @@
+{
+  "apiVersion": "pkg.crossplane.io/v1",
+  "kind": "ProviderList",
+  "metadata": {
+    "continue": "",
+    "resourceVersion": "20000"
+  },
+  "items": [
+    {
+      "apiVersion": "pkg.crossplane.io/v1",
+      "kind": "Provider",
+      "metadata": {
+        "creationTimestamp": "2026-06-29T05:17:58Z",
+        "generation": 3,
+        "labels": {
+          "kustomize.toolkit.fluxcd.io/name": "infrastructure",
+          "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+        },
+        "name": "provider-aws-iam",
+        "resourceVersion": "100001",
+        "uid": "00000000-0000-4000-8000-000000000001"
+      },
+      "spec": {
+        "package": "xpkg.example.invalid/example/provider-aws-iam:v1.0.0",
+        "packagePullPolicy": "IfNotPresent",
+        "revisionActivationPolicy": "Automatic",
+        "revisionHistoryLimit": 1,
+        "runtimeConfigRef": {
+          "apiVersion": "pkg.crossplane.io/v1beta1",
+          "kind": "DeploymentRuntimeConfig",
+          "name": "default"
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-16T18:02:03Z",
+            "observedGeneration": 3,
+            "reason": "HealthyPackageRevision",
+            "status": "True",
+            "type": "Healthy"
+          },
+          {
+            "lastTransitionTime": "2026-10-16T18:02:03Z",
+            "observedGeneration": 3,
+            "reason": "ActivePackageRevision",
+            "status": "True",
+            "type": "Installed"
+          }
+        ],
+        "currentIdentifier": "xpkg.example.invalid/example/provider-aws-iam:v1.0.0",
+        "currentRevision": "provider-aws-iam-0123456789ab",
+        "resolvedPackage": "xpkg.example.invalid/example/provider-aws-iam:v1.0.0"
+      }
+    },
+    {
+      "apiVersion": "pkg.crossplane.io/v1",
+      "kind": "Provider",
+      "metadata": {
+        "creationTimestamp": "2026-06-18T11:13:01Z",
+        "generation": 3,
+        "labels": {
+          "kustomize.toolkit.fluxcd.io/name": "infrastructure",
+          "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+        },
+        "name": "provider-upjet-github",
+        "resourceVersion": "100002",
+        "uid": "00000000-0000-4000-8000-000000000002"
+      },
+      "spec": {
+        "package": "xpkg.example.invalid/example/provider-upjet-github:v1.0.0",
+        "packagePullPolicy": "IfNotPresent",
+        "revisionActivationPolicy": "Automatic",
+        "revisionHistoryLimit": 1,
+        "runtimeConfigRef": {
+          "apiVersion": "pkg.crossplane.io/v1beta1",
+          "kind": "DeploymentRuntimeConfig",
+          "name": "default"
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-13T05:29:11Z",
+            "observedGeneration": 3,
+            "reason": "HealthyPackageRevision",
+            "status": "True",
+            "type": "Healthy"
+          },
+          {
+            "lastTransitionTime": "2026-10-13T05:29:11Z",
+            "observedGeneration": 3,
+            "reason": "ActivePackageRevision",
+            "status": "True",
+            "type": "Installed"
+          }
+        ],
+        "currentIdentifier": "xpkg.example.invalid/example/provider-upjet-github:v1.0.0",
+        "currentRevision": "provider-upjet-github-0123456789ab",
+        "resolvedPackage": "xpkg.example.invalid/example/provider-upjet-github:v1.0.0"
+      }
+    },
+    {
+      "apiVersion": "pkg.crossplane.io/v1",
+      "kind": "Provider",
+      "metadata": {
+        "creationTimestamp": "2026-06-18T11:13:01Z",
+        "generation": 3,
+        "labels": {
+          "kustomize.toolkit.fluxcd.io/name": "infrastructure",
+          "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+        },
+        "name": "provider-upjet-unifi",
+        "resourceVersion": "100003",
+        "uid": "00000000-0000-4000-8000-000000000003"
+      },
+      "spec": {
+        "package": "xpkg.example.invalid/example/provider-upjet-unifi:v1.0.0",
+        "packagePullPolicy": "IfNotPresent",
+        "revisionActivationPolicy": "Automatic",
+        "revisionHistoryLimit": 1,
+        "runtimeConfigRef": {
+          "apiVersion": "pkg.crossplane.io/v1beta1",
+          "kind": "DeploymentRuntimeConfig",
+          "name": "default"
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-17T16:55:06Z",
+            "observedGeneration": 3,
+            "reason": "HealthyPackageRevision",
+            "status": "True",
+            "type": "Healthy"
+          },
+          {
+            "lastTransitionTime": "2026-10-17T16:55:06Z",
+            "observedGeneration": 3,
+            "reason": "ActivePackageRevision",
+            "status": "True",
+            "type": "Installed"
+          }
+        ],
+        "currentIdentifier": "xpkg.example.invalid/example/provider-upjet-unifi:v1.0.0",
+        "currentRevision": "provider-upjet-unifi-0123456789ab",
+        "resolvedPackage": "xpkg.example.invalid/example/provider-upjet-unifi:v1.0.0"
+      }
+    },
+    {
+      "apiVersion": "pkg.crossplane.io/v1",
+      "kind": "Provider",
+      "metadata": {
+        "creationTimestamp": "2026-06-29T05:17:58Z",
+        "generation": 3,
+        "labels": {
+          "kustomize.toolkit.fluxcd.io/name": "infrastructure",
+          "kustomize.toolkit.fluxcd.io/namespace": "flux-system"
+        },
+        "name": "upbound-provider-family-aws",
+        "resourceVersion": "100004",
+        "uid": "00000000-0000-4000-8000-000000000004"
+      },
+      "spec": {
+        "package": "xpkg.example.invalid/example/upbound-provider-family-aws:v1.0.0",
+        "packagePullPolicy": "IfNotPresent",
+        "revisionActivationPolicy": "Automatic",
+        "revisionHistoryLimit": 1,
+        "runtimeConfigRef": {
+          "apiVersion": "pkg.crossplane.io/v1beta1",
+          "kind": "DeploymentRuntimeConfig",
+          "name": "default"
+        }
+      },
+      "status": {
+        "conditions": [
+          {
+            "lastTransitionTime": "2026-10-16T18:01:40Z",
+            "observedGeneration": 3,
+            "reason": "HealthyPackageRevision",
+            "status": "True",
+            "type": "Healthy"
+          },
+          {
+            "lastTransitionTime": "2026-10-16T18:01:40Z",
+            "observedGeneration": 3,
+            "reason": "ActivePackageRevision",
+            "status": "True",
+            "type": "Installed"
+          }
+        ],
+        "currentIdentifier": "xpkg.example.invalid/example/upbound-provider-family-aws:v1.0.0",
+        "currentRevision": "upbound-provider-family-aws-0123456789ab",
+        "resolvedPackage": "xpkg.example.invalid/example/upbound-provider-family-aws:v1.0.0"
+      }
+    }
+  ]
+}
