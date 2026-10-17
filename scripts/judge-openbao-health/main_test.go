@@ -239,6 +239,7 @@ func TestCommandExitCodesAndPrivateOutput(t *testing.T) {
 		{"unknown flag", document(recent, healthy...), append(append([]string(nil), all...), "--assume-healthy"), 2, ""},
 		{"repeated flag cannot narrow the servers", document(recent, healthy[0]), append(append([]string(nil), all...), "--expect-servers", "openbao-0"), 2, ""},
 		{"repeated flag cannot swap the release", document(recent, healthy...), append(append([]string(nil), all...), "--expect-version=2.6.2"), 2, ""},
+		{"repeated flags after a -- value", document(recent, healthy...), []string{"--expect-servers", "--", "--expect-version", "--", "--expect-servers", "openbao-0,openbao-1,openbao-2", "--expect-version", "2.6.3"}, 2, ""},
 		{"positional argument", document(recent, healthy...), append(append([]string(nil), all...), "extra"), 2, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -297,33 +297,36 @@ func parseExpectation(servers, version string, maxAge time.Duration) (expectatio
 	return want, nil
 }
 
+// onceValue refuses a second Set, so a flag given twice is an error.
+type onceValue struct {
+	flag.Value
+	name string
+	set  bool
+}
+
+func (v *onceValue) Set(value string) error {
+	if v.set {
+		return fmt.Errorf("--%s was given more than once", v.name)
+	}
+	v.set = true
+	return v.Value.Set(value)
+}
+
 // parseArgs parses args without ever exiting 0 on its own: -h and every parse
 // error become errors, and a flag given twice is refused, so a trailing
 // duplicate cannot quietly narrow the expected servers or swap the release.
+// The refusal happens in the flag values themselves, so it holds wherever the
+// parser assigns a value, including after an argument that is itself "--".
 func parseArgs(set *flag.FlagSet, args []string) error {
 	set.Init(set.Name(), flag.ContinueOnError)
 	set.SetOutput(io.Discard)
+	set.VisitAll(func(f *flag.Flag) {
+		if _, wrapped := f.Value.(*onceValue); !wrapped {
+			f.Value = &onceValue{Value: f.Value, name: f.Name}
+		}
+	})
 	if err := set.Parse(args); err != nil {
 		return fmt.Errorf("invalid arguments: %w", err)
-	}
-	seen := map[string]int{}
-	for _, arg := range args {
-		if arg == "--" {
-			break
-		}
-		if !strings.HasPrefix(arg, "-") {
-			continue
-		}
-		name := strings.TrimLeft(arg, "-")
-		if before, _, found := strings.Cut(name, "="); found {
-			name = before
-		}
-		if set.Lookup(name) != nil {
-			seen[name]++
-			if seen[name] > 1 {
-				return fmt.Errorf("--%s was given more than once", name)
-			}
-		}
 	}
 	return nil
 }
