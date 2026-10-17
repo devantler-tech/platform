@@ -157,6 +157,9 @@ patches:
   # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
   # fanning them out to the Headlamp plugin, Slack, and Coroot — see file.
   - path: kubescape/patches/route-runtime-detection-alerts.yaml
+  # Prod-only release switch for the node-agent's default detection rules
+  # (#4968). OFF: runtime detection runs with no rules until it is turned on.
+  - path: kubescape/patches/install-default-runtime-rules.yaml
   # WORKAROUND: recover the storage consumer before the volume-client rollout;
   # remove this production-only restriction through #4777 after verification.
   - path: kubescape/patches/storage-volume-client-placement.yaml
