@@ -3,9 +3,14 @@
 #
 # Kyverno 1.20 removes the kyverno.io ClusterPolicy and Policy APIs. While the platform
 # still has resources of that API group, the Kyverno chart and the CI policy CLI must
-# stay on the 1.19 line: Renovate must not propose 1.20, and the committed pins must
-# not be on it (#4994). Once the last such resource is migrated, this check fails until
-# the cap rules and the check itself are removed, so the cap cannot outlive its reason.
+# stay on the 1.19 line: Renovate must not propose 1.20, and nothing committed may
+# deploy or run it (#4994). Once the last such resource is migrated, this check fails
+# until the cap rules and the check itself are removed, so the cap cannot outlive its
+# reason.
+#
+# The chart version is judged in what Flux applies, not in the base file: every Flux
+# root is rendered with kubectl kustomize, so a provider overlay or an inline patch that
+# sets the version is judged like the base pin.
 #
 # Exit 0: the cap and the pins agree with the tree. Exit 1: they do not, or the inputs
 # could not be read; a read failure is never a pass.
@@ -16,8 +21,10 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly root_dir
 readonly renovate_config="${RENOVATE_CONFIG:-${root_dir}/.github/renovate.json}"
 readonly k8s_root="${K8S_ROOT:-${root_dir}/k8s}"
+# The tree whose Flux roots are rendered. Separate from K8S_ROOT only so the test's
+# resource-scan fixtures need no cluster overlays.
+readonly render_root="${RENDER_K8S_ROOT:-${k8s_root}}"
 readonly cli_pin_file="${KYVERNO_CLI_PIN_FILE:-${root_dir}/.github/scripts/kyverno-version.sh}"
-readonly chart_pin_file="${KYVERNO_HELM_RELEASE:-${root_dir}/k8s/bases/infrastructure/controllers/kyverno/helm-release.yaml}"
 
 # The first releases on the Kyverno 1.20 line. The chart's minor tracks Kyverno's
 # minor: chart 3.0 carries 1.10 and every later chart minor carries the next Kyverno
@@ -26,6 +33,12 @@ readonly chart_package='kyverno'
 readonly chart_bound='3.10.0'
 readonly cli_package='kyverno/kyverno'
 readonly cli_bound='1.20.0'
+
+# Kyverno chart HelmReleases the rendered Flux roots must contain: one in each provider's
+# controllers layer on 2026-10-17. A walk that finds fewer checked less than it should,
+# never that the tree is clean. Lower it only after checking by hand that the walk still
+# finds every release Flux deploys.
+readonly expected_min_chart_releases=2
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -136,21 +149,76 @@ version_lt "${cli_bound}" "${cli_cap}" &&
   fail "the ${cli_package} cap <${cli_cap} admits Kyverno 1.20; it must be <${cli_bound} or lower"
 
 # The committed pins must be inside their caps, so a hand-edited bump cannot bypass them.
-chart_pin="$(awk '
-  $1 == "chart:" && $2 == "kyverno" { in_chart = 1; next }
-  in_chart && $1 == "version:" { print $2; exit }
-' "${chart_pin_file}")" || fail "cannot read ${chart_pin_file}"
-[[ "${chart_pin}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
-  fail "cannot read the Kyverno chart version from ${chart_pin_file}, got '${chart_pin}'"
 cli_pin="$(sed -n 's/^KYVERNO_VERSION="\([^"]*\)"$/\1/p' "${cli_pin_file}")" ||
   fail "cannot read ${cli_pin_file}"
 [[ "${cli_pin}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
   fail "cannot read exactly one KYVERNO_VERSION from ${cli_pin_file}, got '${cli_pin}'"
-
-version_lt "${chart_pin}" "${chart_cap}" ||
-  fail "the Kyverno chart is pinned at ${chart_pin}, outside its cap <${chart_cap}"
 version_lt "${cli_pin}" "${cli_cap}" ||
   fail "the Kyverno CLI is pinned at ${cli_pin}, outside its cap <${cli_cap}"
 
-printf 'PASS: %s kyverno.io resources remain in %s files; Kyverno is held below 1.20 (chart %s <%s, CLI %s <%s)\n' \
-  "${legacy_count}" "${manifest_count}" "${chart_pin}" "${chart_cap}" "${cli_pin}" "${cli_cap}"
+# Every Kyverno chart version Flux would deploy, in the base or set by any overlay. The
+# roots are the spec.path of every Flux Kustomization each cluster overlay renders, read
+# from the render so a newly wired layer is judged too (the discovery
+# scripts/guard-oci-repository-verify.sh uses). Flux applies a Flux Kustomization's own
+# spec.patches after the build rendered here, so one that carries any is refused.
+command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required to render the Flux roots'
+command -v yq >/dev/null 2>&1 || fail 'yq is required to read the rendered Flux roots'
+[[ -d "${render_root}/clusters" ]] ||
+  fail "no cluster overlays under ${render_root}, so no Flux root could be rendered"
+
+work="$(mktemp -d)"
+trap 'rm -rf "${work}"' EXIT
+
+render() {
+  kubectl kustomize "$1" >"${work}/render.yaml" 2>"${work}/render.err" ||
+    fail "cannot render ${1#"${render_root}"/}, so the Kyverno chart version it deploys is unknown: $(tr '\n' ' ' <"${work}/render.err")"
+}
+
+roots=()
+for overlay in "${render_root}"/clusters/*/; do
+  overlay="${overlay%/}"
+  # clusters/base is the wiring template the cluster overlays consume, not a cluster.
+  [[ "${overlay}" == */base ]] && continue
+  render "${overlay}"
+  # Evaluated per document: yq's eval-all pairs every match with every other in a
+  # collected array, so one row per match needs the per-document form.
+  flux_rows="$(yq -N -r '
+    .. | select(type == "!!map" and .kind == "Kustomization" and
+      ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) |
+    [(.metadata.name // "-"), (((.spec.patches // []) | length) | tostring), (.spec.path // "")] |
+    join("	")
+  ' "${work}/render.yaml")" || fail "cannot read the Flux Kustomizations in ${overlay#"${render_root}"/}"
+  while IFS=$'\t' read -r name patch_count path; do
+    [[ -n "${name}" ]] || continue
+    [[ "${patch_count}" == '0' ]] ||
+      fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} carries spec.patches, which Flux applies after the build this check renders, so the Kyverno chart version it deploys is unknown"
+    [[ -n "${path}" ]] || fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} names no spec.path"
+    roots+=("${render_root}/${path#./}")
+  done <<<"${flux_rows}"
+done
+[[ "${#roots[@]}" -gt 0 ]] || fail "the cluster overlays under ${render_root} name no Flux root"
+
+chart_releases=0
+chart_pins=''
+for root in "${roots[@]}"; do
+  render "${root}"
+  release_rows="$(yq -N -r '
+    .. | select(type == "!!map" and .kind == "HelmRelease" and .spec.chart.spec.chart == "kyverno") |
+    [((.metadata.namespace // "-") + "/" + (.metadata.name // "-")), ((.spec.chart.spec.version // "") | tostring)] |
+    join("	")
+  ' "${work}/render.yaml")" || fail "cannot read the HelmReleases in ${root#"${render_root}"/}"
+  while IFS=$'\t' read -r release chart_pin; do
+    [[ -n "${release}" ]] || continue
+    chart_releases=$((chart_releases + 1))
+    [[ "${chart_pin}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+      fail "${root#"${render_root}"/} deploys the Kyverno chart in ${release} at '${chart_pin}', not one exact version, so it cannot be held below the cap"
+    version_lt "${chart_pin}" "${chart_cap}" ||
+      fail "${root#"${render_root}"/} deploys the Kyverno chart in ${release} at ${chart_pin}, outside its cap <${chart_cap}"
+    [[ " ${chart_pins} " == *" ${chart_pin} "* ]] || chart_pins="${chart_pins:+${chart_pins} }${chart_pin}"
+  done <<<"${release_rows}"
+done
+[[ "${chart_releases}" -ge "${expected_min_chart_releases}" ]] ||
+  fail "the ${#roots[@]} rendered Flux roots hold ${chart_releases} Kyverno chart HelmReleases, expected at least ${expected_min_chart_releases}, so some were not examined"
+
+printf 'PASS: %s kyverno.io resources remain in %s files; Kyverno is held below 1.20 (chart %s <%s in %s HelmReleases across %s Flux roots, CLI %s <%s)\n' \
+  "${legacy_count}" "${manifest_count}" "${chart_pins}" "${chart_cap}" "${chart_releases}" "${#roots[@]}" "${cli_pin}" "${cli_cap}"
