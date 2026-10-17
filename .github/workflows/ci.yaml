@@ -1032,6 +1032,7 @@ jobs:
               - 'scripts/guard-helm-post-renderers.sh'
               - 'scripts/tests/test-guard-helm-post-renderers.sh'
               - 'scripts/tests/test-kubescape-storage-placement.sh'
+              - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
               - 'scripts/build-controller-helm.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
@@ -3432,6 +3433,30 @@ jobs:
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
             bash scripts/tests/test-kubescape-storage-placement.sh
+          fi
+
+      - name: 🧩 Verify the Kubescape runtime-rules switch
+        # Runtime detection loads its rules only from the chart's alertCRD objects (#4968). This
+        # renders the pinned chart in both switch states and refuses an undeclared switch, an on
+        # state that binds no enabled rule, and an on state that changes anything else.
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-kubescape-runtime-rules-switch.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/controllers/kubescape \
+            k8s/bases/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kustomization.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/kubescape \
+            k8s/bases/components ksail.prod.yaml \
+            scripts/tests/test-kubescape-runtime-rules-switch.sh \
+            scripts/build-controller-helm.sh \
+            scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-kubescape-runtime-rules-switch.sh
           fi
 
       - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart

@@ -71,6 +71,19 @@ alone.
 What it does **not** do: it is **detection-only**. It will tell you a process
 misbehaved; it will not stop it.
 
+**Detection needs rules, and production does not load them yet.** The node-agent
+checks only the rules it finds in `Rules` and `RuntimeRuleAlertBinding` objects.
+The chart installs its default rule set and a binding over every scanned namespace
+only when `alertCRD.installDefault` is true. Production declares that switch,
+**off**, in
+[`install-default-runtime-rules.yaml`](../k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/install-default-runtime-rules.yaml),
+so the agent keeps building profiles but raises no alerts: an empty alert route
+means nothing was checked. Turning the switch on adds exactly those two objects
+and sends alerts through the existing Alertmanager (Slack, Headlamp) and stdout
+(Coroot) routes. `scripts/tests/test-kubescape-runtime-rules-switch.sh` renders
+the pinned chart in both states and refuses an undeclared switch, an on state
+that binds no enabled rule, and an on state that changes anything else (#4968).
+
 ### Tetragon — *enforcement and precise kernel observability*
 
 Installed via [#1688](https://github.com/devantler-tech/platform/pull/1688)

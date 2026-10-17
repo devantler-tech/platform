@@ -1,0 +1,30 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kubescape
+  namespace: kubescape
+spec:
+  # Matches the base interval so this patch is a no-op on that field once merged.
+  interval: 10m
+  values:
+    alertCRD:
+      # Release switch for the node-agent's default detection rules (#4968). It is
+      # OFF: production runs runtime detection with NO rules, so the agent profiles
+      # workloads but checks nothing, and an empty alert route means nothing was
+      # checked, not that nothing happened.
+      #
+      # The chart installs its `default-rules` Rules object and the cluster-wide
+      # `all-rules-all-pods` RuntimeRuleAlertBinding only when this is true, and
+      # defaults it to false. Turning it on adds exactly those two objects and
+      # nothing else (no RBAC, workload or CRD change). The binding covers every
+      # pod outside `excludeNamespaces`, and alerts then flow to the existing
+      # Alertmanager (Slack, Headlamp) and stdout (Coroot) routes.
+      #
+      # It stays off until the rollout is decided: the anomaly rules depend on
+      # complete application profiles, several workloads have only partial ones,
+      # and the alert volume on the Slack route has never been measured.
+      #
+      # Keep the value explicit. scripts/tests/test-kubescape-runtime-rules-switch.sh
+      # fails when it is absent, renders the pinned chart in both states, and
+      # requires the on state to bind at least one enabled rule.
+      installDefault: false
