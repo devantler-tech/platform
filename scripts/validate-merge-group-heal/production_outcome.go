@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -102,38 +103,77 @@ func validateProductionOutcome(workflow string) error {
 	return nil
 }
 
-// queuePreflightEnv is the whole environment the queue preflight may see.
-var queuePreflightEnv = map[string]string{
-	"GH_TOKEN":      "${{ github.token }}",
-	"QUEUE_RECEIPT": "${{ needs.changes.outputs.queue_receipt }}",
+// The report vouches that nothing before the composite reached production, so
+// everything that shapes those steps is checked against what is allowed, never
+// against a list of what is forbidden: the workflow's top level and the deploy
+// job may hold only the keys they hold today (no `env`, `defaults`,
+// `strategy`, `container`, `services` or `continue-on-error`, any of which
+// could change what the earlier steps run), checkout and Go setup only their
+// current inputs, and the preflight only its name, id, exact environment and
+// exact command. Anything else could let an earlier step change production and
+// then fail, which the report would read as a refusal and the heal would skip.
+var (
+	allowedWorkflowKeys  = []string{"name", "on", "permissions", "concurrency", "jobs"}
+	allowedDeployJobKeys = []string{"name", "needs", "if", "runs-on", "environment", "concurrency", "permissions", "outputs", "steps"}
+	allowedCheckoutWith  = []string{"persist-credentials", "fetch-depth"}
+	allowedSetupGoWith   = []string{"go-version-file", "cache"}
+	queuePreflightEnv    = map[string]string{
+		"GH_TOKEN":      "${{ github.token }}",
+		"QUEUE_RECEIPT": "${{ needs.changes.outputs.queue_receipt }}",
+	}
+)
+
+// onlyKeys reports the first key of m that allowed does not list.
+func onlyKeys(what string, m map[string]any, allowed ...string) error {
+	for key := range m {
+		if !slices.Contains(allowed, key) {
+			return fmt.Errorf("%s may not set %q", what, key)
+		}
+	}
+	return nil
 }
 
-// validateOutcomePreflight pins the third deploy step whole. The report reads a
-// failed preflight as "nothing reached production", so the step may hold only
-// a name, its id, its exact environment and its exact command: any other key
-// (`uses`, `if`, `shell`, `continue-on-error`, `working-directory`, …) or any
-// extra variable (a GOFLAGS or BASH_ENV, say) could let it change production
-// and then fail, which the heal would then skip.
+// validateOutcomePreflight checks everything that shapes the steps before the
+// composite against the allow-lists above.
 func validateOutcomePreflight(workflow string) error {
-	var parsed struct {
-		Jobs map[string]struct {
-			Steps []map[string]any `yaml:"steps"`
-		} `yaml:"jobs"`
-	}
+	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(workflow), &parsed); err != nil {
 		return fmt.Errorf("parse workflow: %w", err)
 	}
-	steps := parsed.Jobs["deploy-prod"].Steps
+	if err := onlyKeys("the workflow", parsed, allowedWorkflowKeys...); err != nil {
+		return err
+	}
+	jobs, _ := parsed["jobs"].(map[string]any)
+	deploy, _ := jobs["deploy-prod"].(map[string]any)
+	if err := onlyKeys("the deploy job", deploy, allowedDeployJobKeys...); err != nil {
+		return err
+	}
+	rawSteps, _ := deploy["steps"].([]any)
+	steps := make([]map[string]any, 0, len(rawSteps))
+	for _, raw := range rawSteps {
+		step, ok := raw.(map[string]any)
+		if !ok {
+			return errors.New("every deploy step must be a mapping")
+		}
+		steps = append(steps, step)
+	}
 	if len(steps) != 5 {
 		return errors.New("deploy job must be exactly checkout, Go setup, queue preflight, production composite and outcome report")
 	}
-	preflight := steps[2]
-	for key := range preflight {
-		switch key {
-		case "name", "id", "env", "run":
-		default:
-			return fmt.Errorf("the queue preflight may not set %q", key)
+
+	for i, inputs := range [][]string{allowedCheckoutWith, allowedSetupGoWith} {
+		if err := onlyKeys(fmt.Sprintf("deploy step %d", i+1), steps[i], "name", "uses", "with"); err != nil {
+			return err
 		}
+		with, _ := steps[i]["with"].(map[string]any)
+		if err := onlyKeys(fmt.Sprintf("deploy step %d's inputs", i+1), with, inputs...); err != nil {
+			return err
+		}
+	}
+
+	preflight := steps[2]
+	if err := onlyKeys("the queue preflight", preflight, "name", "id", "env", "run"); err != nil {
+		return err
 	}
 	if id, _ := preflight["id"].(string); id != "queue-preflight" {
 		return errors.New("the production composite must directly follow the queue preflight")

@@ -70,6 +70,9 @@ func TestProductionOutcomeMutations(t *testing.T) {
 	}
 	workflow := string(data)
 	outcomeStep := "      - name: 🧾 Record whether production was left untouched"
+	jobAnchor := "    # `true` only when the queue preflight refused"
+	stepsAnchor := "stopped_before_production }}\n    steps:\n      - name: 📑 Checkout\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n        with:\n"
+	setupAnchor := stepsAnchor + "          persist-credentials: false\n          fetch-depth: 0\n\n      - name: ⚙️ Setup Go\n        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0\n        with:\n"
 	for _, tc := range []struct{ name, from, to string }{
 		{"output from another step", "${{ steps.production-outcome.outputs.stopped_before_production }}", "${{ steps.queue-preflight.outputs.stopped_before_production }}"},
 		{"extra output", "      stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}", "      stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}\n      other: 'true'"},
@@ -89,6 +92,15 @@ func TestProductionOutcomeMutations(t *testing.T) {
 		{"preflight gains a variable", "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n        run: go run", "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n          GOFLAGS: -toolexec=./deploy\n        run: go run"},
 		{"preflight reads another receipt", "          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}\n        run: go run", "          QUEUE_RECEIPT: forged\n        run: go run"},
 		{"preflight runs elsewhere", "        run: go run ./scripts/verify-merge-group-queued check\n", "        working-directory: other\n        run: go run ./scripts/verify-merge-group-queued check\n"},
+		{"workflow environment", "\njobs:\n", "\nenv:\n  BASH_ENV: ./deploy.sh\njobs:\n"},
+		{"workflow defaults", "\njobs:\n", "\ndefaults:\n  run:\n    working-directory: other\njobs:\n"},
+		{"deploy job environment", jobAnchor, "    env:\n      GOFLAGS: -toolexec=./deploy\n" + jobAnchor},
+		{"deploy job defaults", jobAnchor, "    defaults:\n      run:\n        working-directory: other\n" + jobAnchor},
+		{"deploy job matrix", jobAnchor, "    strategy:\n      matrix:\n        leg: [a, b]\n" + jobAnchor},
+		{"deploy job suppressed", jobAnchor, "    continue-on-error: true\n" + jobAnchor},
+		{"checkout another ref", stepsAnchor, stepsAnchor + "          ref: other\n"},
+		{"setup-go another input", setupAnchor, setupAnchor + "          go-version: stable\n"},
+		{"checkout gains an environment", stepsAnchor, strings.Replace(stepsAnchor, "        with:\n", "        env:\n          BASH_ENV: ./deploy.sh\n        with:\n", 1)},
 		{"unidentified composite", "        id: production-deploy\n", ""},
 		{"not last", outcomeStep, "      - run: echo later-production-step\n\n" + outcomeStep},
 		{"step after it", "            printf 'stopped_before_production=true\\n' >>\"${GITHUB_OUTPUT}\"\n          fi\n", "            printf 'stopped_before_production=true\\n' >>\"${GITHUB_OUTPUT}\"\n          fi\n\n      - uses: ./.github/actions/deploy-prod\n"},
