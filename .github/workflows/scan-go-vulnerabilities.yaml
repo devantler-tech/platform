@@ -32,7 +32,8 @@ permissions: {}
 
 concurrency:
   group: scan-go-vulnerabilities-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer run of the same pull request or branch supersedes the older scan.
+  cancel-in-progress: true
 
 jobs:
   inventory:
