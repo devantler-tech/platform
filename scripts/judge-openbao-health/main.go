@@ -304,6 +304,7 @@ type onceValue struct {
 	set  bool
 }
 
+// Set assigns the first value and rejects every later assignment to this flag.
 func (v *onceValue) Set(value string) error {
 	if v.set {
 		return fmt.Errorf("--%s was given more than once", v.name)
