@@ -124,13 +124,19 @@ Its costs, accepted with this choice:
   client another's content.
 - **A reusable building block.** One platform definition renders the per-client set: Deployment,
   Service, HTTPRoute on the shared Gateway, CloudNativePG Cluster, barman-cloud ObjectStore and
-  ScheduledBackup, ExternalSecrets from OpenBao, and a CiliumNetworkPolicy. Model it on the
+  ScheduledBackup, and ExternalSecrets from OpenBao. Model it on the
   existing `WebApp` KRO definition that composes onto a `Tenant` ([tenant abstraction](../tenant-abstraction.md)),
   or use a Kustomize component if KRO cannot express the database parts cleanly.
+- **Network policy.** The platform keeps only its default-deny floor. The instance's egress
+  allow-list is a CiliumNetworkPolicy in the client's tenant artifact, like other app-specific
+  policy today. Moving it into the platform definition would change the tenant contract, so that
+  change would first be documented in [`docs/TENANTS.md`](../TENANTS.md).
 - **State and backups.** Content lives in the instance's CloudNativePG database, backed up with
   barman-cloud to the existing S3-compatible backup storage, as Umami is. Media goes through Payload's
-  S3 storage adapter to S3-compatible storage under a per-client prefix. A restore of one instance is
-  tested before the pilot.
+  S3 storage adapter to S3-compatible storage under a per-client prefix. A prefix only names
+  objects, so each instance also gets its own storage credential from OpenBao, with a policy that
+  allows only its own prefix. Before the pilot, a test shows that credential is refused on another
+  client's prefix, and a restore of one instance is tested.
 - **Logins.** Payload's own users: an administrator role for Devantler Tech and an editor role for
   the client, limited by access control to the content they edit. The editor is not behind platform
   SSO. Payload's login lockout (`maxLoginAttempts`, `lockTime`) limits password guessing.
