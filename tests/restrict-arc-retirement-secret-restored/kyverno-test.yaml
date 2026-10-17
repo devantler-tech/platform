@@ -1,0 +1,21 @@
+# Pins the fence-retired-secret rule before the ValidatingPolicy rewrite
+# (#4995): with the retirement journal in phase "restored", creating the ARC
+# GitHub App credential is denied. values.yaml supplies the journal the policy
+# otherwise reads from the arc-runners Namespace by API call. Each phase needs
+# its own directory because the rule matches one Secret name.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-retirement-secret-restored
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-arc-retirement
+    rule: fence-retired-secret
+    resources:
+      - arc-runners/arc-github-app
+    kind: Secret
+    result: fail
