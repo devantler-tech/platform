@@ -228,77 +228,53 @@ func TestFluxOperatorVersionRemainsDiscoverable(t *testing.T) {
 // ghcr.io gives Renovate no release date for the flux-operator chart, and an
 // undated release never clears the repository-wide minimumReleaseAge, so a
 // discoverable version is still never proposed without a 0-day exemption (#4985).
-// The exemption must not let an update merge unreviewed.
+// The exemption must not let an update merge unreviewed, so every update of the
+// chart, of any type, must resolve to both settings.
 func TestFluxOperatorUpdatesAreProposedAndReviewed(t *testing.T) {
+	config, dep := fluxOperatorRenovateConfig(t)
+	if err := checkUpdatePolicy(config.PackageRules, dep, fluxOperatorUpdatePolicy); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var fluxOperatorUpdatePolicy = map[string]any{"automerge": false, "minimumReleaseAge": "0 days"}
+
+type renovateConfig struct {
+	CustomManagers []struct {
+		CustomType         string `json:"customType"`
+		DatasourceTemplate string `json:"datasourceTemplate"`
+		DepNameTemplate    string `json:"depNameTemplate"`
+	} `json:"customManagers"`
+	PackageRules []map[string]any `json:"packageRules"`
+}
+
+// fluxOperatorRenovateConfig reads the committed Renovate config and describes
+// the chart as its dedicated manager extracts it.
+func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependency) {
+	t.Helper()
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/renovate.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var config struct {
-		PackageRules []map[string]any `json:"packageRules"`
-	}
+	var config renovateConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
-	depName := strings.TrimPrefix(chartSources[0].url, "oci://")
-	// Renovate applies package rules in order and the last match wins, so read the
-	// effective value of each setting from the last rule that may match the chart.
-	releaseAge, automerge := "", any(nil)
-	for _, rule := range config.PackageRules {
-		if !mayMatchPackage(rule, depName) {
-			continue
-		}
-		if value, ok := rule["minimumReleaseAge"].(string); ok {
-			releaseAge = value
-		}
-		if value, ok := rule["automerge"]; ok {
-			automerge = value
+	dep := renovateDependency{
+		packageName: strings.TrimPrefix(chartSources[0].url, "oci://"),
+		packageFile: chartSources[0].directory + "/oci-repository.yaml",
+	}
+	count := 0
+	for _, manager := range config.CustomManagers {
+		if manager.DepNameTemplate == dep.packageName {
+			count++
+			dep.manager, dep.datasource = "custom."+manager.CustomType, manager.DatasourceTemplate
 		}
 	}
-	if releaseAge != "0 days" {
-		t.Fatalf("flux-operator must be exempt from the undatable release-age wait, got %q", releaseAge)
+	if count != 1 || dep.manager == "custom." || dep.datasource == "" {
+		t.Fatalf("expected one flux-operator manager naming its type and datasource, found %d", count)
 	}
-	if automerge != false {
-		t.Fatalf("flux-operator updates must never automerge, got %v", automerge)
-	}
-}
-
-// mayMatchPackage is false only when the rule provably cannot match the chart:
-// it names managers or datasources that exclude the chart's, or names packages
-// only literally and not the chart. Any other filter is assumed to match.
-func mayMatchPackage(rule map[string]any, depName string) bool {
-	if !listAllows(rule["matchManagers"], "custom.regex", "regex") ||
-		!listAllows(rule["matchDatasources"], "docker") {
-		return false
-	}
-	names, ok := rule["matchPackageNames"].([]any)
-	if !ok || len(names) == 0 {
-		return true
-	}
-	for _, raw := range names {
-		name, _ := raw.(string)
-		// A regex (/…/), glob or negation may match; only a plain literal is decidable.
-		if name == depName || strings.HasPrefix(name, "/") || strings.ContainsAny(name, "*?!{") {
-			return true
-		}
-	}
-	return false
-}
-
-// listAllows is true when the filter is absent or names one of the values.
-func listAllows(filter any, values ...string) bool {
-	entries, ok := filter.([]any)
-	if !ok {
-		return true
-	}
-	for _, entry := range entries {
-		for _, value := range values {
-			if entry == value {
-				return true
-			}
-		}
-	}
-	return false
+	return config, dep
 }
 
 func TestCIExecutesMigrationContract(t *testing.T) {
