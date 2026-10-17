@@ -266,7 +266,7 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 3. `ksail.prod.yaml` has `kustomizationFile: clusters/prod`, so KSail/Flux use `k8s/clusters/prod/kustomization.yaml` as the entry point — no root `k8s/kustomization.yaml` or file rewriting is needed.
 4. `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` provisions / reconciles the Hetzner servers, Talos, CCM, and CSI with the Git/SOPS pull credential; the wrapper also passes a SOPS-ciphertext revision so token-only rotations refresh the Cluster Autoscaler machine template.
 5. The bridge decrypts only the Git/SOPS pull credential and performs real OCI manifest reads for all ten consumers (the Platform and tenant manifest artifacts, the data-product-controller image, the application and World at Ruin zone images, and the KSail plus provider-upjet-unifi packages used by Kyverno verification). On nodes with a changed credential revision, it applies Talos `RegistryAuthConfig` workers-first, reboots under a scheduling fence, removes the exact incoming KSail image from the CRI cache, proves a registry-backed pull, and only then records both proof markers. When the credential proof is current and only the verified image differs, it instead removes and pulls a proof copy in Talos containerd's `system` namespace without cordoning or evicting the Kubernetes CRI image; a failed registry pull leaves that workload cache intact and does not publish a new proof marker. It then updates `variables-base`, force-syncs and verifies the PushSecret plus tenant/Kyverno ExternalSecrets, and finally reasserts root auth — all before a mutable `latest` tag is published. The DR workflow first runs `--check-only` before creating infrastructure, then uses explicit `--allow-incomplete-fanout` bootstrap mode after cluster creation and requires a full bridge pass after Flux converges.
-6. `scripts/run-ksail-prod-with-pull-auth.sh workload push` packages manifests and pushes them with the separate Actions write token.
+6. `scripts/run-ksail-prod-with-pull-auth.sh workload push <staging-ref>` packages manifests and pushes them with the separate Actions write token to a unique `oci://ghcr.io/devantler-tech/platform/manifests:staging-<sha>-<run>-<attempt>` reference (the wrapper rejects any other target). The `publish-platform-manifests` step of the `deploy-prod` action is its only caller: it signs and attests that staged digest, verifies the evidence, and only then promotes the digest to `latest`.
 7. `scripts/refresh-flux-ghcr-auth.sh --check-only` revalidates the newly-published artifact without mutating the cluster.
 8. `scripts/reconcile-flux-workloads.sh` triggers Flux with Git/SOPS pull auth (DR calls `scripts/run-ksail-prod-with-pull-auth.sh workload reconcile` directly). The wrapper exists because a change to the Flux control plane restarts the controllers the reconcile runs through, cancelling the reconcile the deploy itself triggered; it retries once, and only on evidence that this deploy restarted the control plane, so a genuine failure still fails on the first attempt. Both normal delivery and DR then require `infrastructure-controllers` to apply the exact newly-published digest and report `Ready`.
 9. After `cluster update`, the full bridge reasserts every pull path in case a partial update or older managed state was applied. The normal deploy passes a non-secret, same-job handoff that binds the staged credential revision and image to each Kubernetes Node UID. If KSail only erased the Talos proof annotation, the reassert restores that marker without repeating the uncached pull or rolling reboot; a changed credential, image, or Node UID still takes the full proof path. When nothing has drifted, the bridge first proves that read-only — root auth, `variables-base` and every consumer hold the Git/SOPS value, the `ghcr-seed-probe` ExternalSecret has just read that value back out of OpenBao, admission already enforces the candidate policy, and two node inventories show current proof and no fences — and then exits without taking the synchronization Lease, pausing Flux, restarting kustomize-controller or writing anything. Any failed read or mismatch runs the full fenced transaction instead. DR applies the same Cilium rollout guard around publish and convergence, and also runs the bridge after an OpenBao raft restore because the snapshot may contain an older GHCR value.
@@ -276,12 +276,12 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 - OCI artifacts are pushed to **GHCR** (not a local registry).
 - Nodes are real Hetzner servers; `ksail cluster update` can scale workers in place or swap ISO versions, and the KSail-managed Cluster Autoscaler adds/removes compute-only workers within configured pools.
 - Ingress is a real Hetzner Cloud Load Balancer provisioned by the hcloud CCM from the Cilium Gateway's Service.
-- DNS A/AAAA records at the apex + wildcard must point at the LB IP (a human step — see `docs/dr/runbook.md` scenario 4).
+- DNS records follow the LB IP automatically: external-dns (`policy: sync`, `gateway-httproute` source) keeps them pointed at the load balancer once the HTTPRoutes are Ready. Edit records by hand only when external-dns itself is broken (see `docs/dr/runbook.md` scenario 4, step 5).
 
 ### Dual-Provider Model
 
 - **Local / CI:** `ksail cluster create` → Talos + Docker provider → local OCI registry → `ksail workload push` / `reconcile`.
-- **Production:** `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by KSail → the same wrapper's `workload push` to GHCR → `workload reconcile`.
+- **Production:** `scripts/run-ksail-prod-with-pull-auth.sh cluster create|update` → Talos + Hetzner provider → Hetzner CCM + CSI installed by KSail → the same wrapper's `workload push` to a GHCR staging reference → signed digest promoted to `latest` → `workload reconcile`.
 
 ## CI/CD Pipelines
 
@@ -295,6 +295,10 @@ Production uses **Talos + Hetzner** via KSail's native Hetzner provider. KSail o
 - `GHCR_TOKEN` — long-lived PAT (owner: `devantler`) with `write:packages` scope, used only for OCI push/signing. It is **not** a pull credential.
 - `SOPS_AGE_KEY` — Age private key for SOPS secret decryption.
 - `HCLOUD_TOKEN` — Hetzner Cloud API token (read/write), used by the KSail Hetzner provider and by the Hetzner CCM / CSI at runtime.
+- `KUBE_CONFIG` — kubeconfig for the prod cluster (must contain the `admin@prod` context).
+- `TALOS_CONFIG` — talosconfig for the prod cluster, used by `ksail cluster update`.
+- `WG_SERVER_PRIVATE_KEY` — WireGuard private key for the control-plane `wg0` listener, expanded into `talos/control-planes/wireguard.yaml` when KSail renders machine config.
+- `DR_GH_ADMIN_TOKEN` — optional, DR only: lets `dr-rebuild.yaml` refresh the `KUBE_CONFIG` / `TALOS_CONFIG` environment secrets after a rebuild.
 
 The authoritative **production pull** credential for Flux, tenants, Kyverno,
 and Talos hosts is
@@ -336,7 +340,7 @@ terminal, transcript, or file — use the non-printing primitives** (see the abs
 
 ```bash
 # Change a value in place — nothing is printed, the file stays encrypted
-sops set k8s/clusters/local/bootstrap/variables-cluster-secret.enc.yaml '["stringData"]["key"]' '"value"'
+sops set k8s/clusters/local/bootstrap/secret.enc.yaml '["stringData"]["key"]' '"value"'
 sops unset <file>.enc.yaml '["stringData"]["obsolete-key"]'
 
 # Re-encrypt to new recipients after a .sops.yaml change
@@ -368,7 +372,7 @@ Secrets* above and the rules under *Validate before any manifest PR* below.
 - **Small, focused changes** — one concern per PR.
 - **Never commit plaintext secrets** — all secrets must be SOPS-encrypted with the `.enc.yaml` suffix.
 - **Put a change in the layer that matches its scope** — edit `k8s/bases/` when it should hold for **every consumer of that resource**; add an overlay `patches/` fragment only for a genuine per-consumer difference. "Every consumer" is **not** "every cluster": much of `k8s/bases/` has a single consumer today by design, since the local Docker overlay opts *in* to apps and heavier infrastructure rather than deploying them. A shared component's canonical configuration still belongs in its base — patching it into the one provider that happens to use it today leaves the base stale for whoever opts in next. Bases are shared, not frozen: editing them is the ordinary case, not an exception — `k8s/bases/` changes in about half of all commits, far more often than the overlays it feeds. What to avoid is mutating a base to obtain a *per-overlay* result — that silently moves every other consumer with it. One question decides it: **would every consumer of this resource want the change?** If yes, the base is correct.
-- **Flux dependency order** — `bootstrap` → `infrastructure-controllers` → `infrastructure` → `apps`. One prod-only side layer hangs off `infrastructure` without gating `apps`: `infrastructure-overprovisioning` (apply-only autoscaler buffer). Declarative GitHub org management runs as a normal **app** (`github-config`) consuming the `devantler-tech/.github` artifact, with its Crossplane provider in the `infrastructure` layer — see [`docs/github-management.md`](docs/github-management.md).
+- **Flux dependency order** — `bootstrap` → `infrastructure-controllers` → `infrastructure` → `apps`. The prod-only autoscaler buffer (`CapacityBuffer` in `k8s/providers/hetzner/infrastructure/overprovisioning/`) is part of the Hetzner `infrastructure` layer, not a separate Flux layer. Declarative GitHub org management runs as a normal **app** (`github-config`) consuming the `devantler-tech/.github` artifact, with its Crossplane provider in the `infrastructure` layer — see [`docs/github-management.md`](docs/github-management.md).
 - **File & directory naming** — kebab-case folders, one resource per file, and filenames led by the resource Kind (CR folders and `patches/` excepted — both name files by intent). Talos machine-config patches (`talos/`, `talos-local/`) also hold one document per file with intent names; only the k8s-manifest-specific rules don't apply to them. Enforced by the `naming` CI job. See [File and Directory Naming Conventions](#file-and-directory-naming-conventions) below.
 
 ### File and Directory Naming Conventions
@@ -382,8 +386,8 @@ pinned gate locally before a manifest PR, with Go installed:
 
 ```bash
 actions_dir="$(mktemp -d)"
-git clone --quiet --depth 1 --branch v4.9.1 https://github.com/devantler-tech/.github.git "$actions_dir"
-git -C "$actions_dir" checkout --quiet --detach 30882cccda9e41c622f6493e21e7eb6f3339b91f
+git clone --quiet --depth 1 --branch v7.12.0 https://github.com/devantler-tech/.github.git "$actions_dir"
+git -C "$actions_dir" checkout --quiet --detach e1681322e671f8e277c5e230a57fe66cdf1a612d
 GOWORK=off go -C "$actions_dir/actions/validate-naming" run -mod=readonly . \
   --root "$PWD" --config .github/manifest-naming.yaml
 ```
@@ -488,12 +492,11 @@ With the KSail Hetzner provider the cluster is cattle — rebuild it in place:
 export HCLOUD_TOKEN=...
 export WG_SERVER_PRIVATE_KEY=...
 export SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt
-export GHCR_TOKEN=...  # publication only
-export GITHUB_ACTOR=devantler
 ./scripts/run-ksail-prod-with-pull-auth.sh cluster update
+# Publish and reconcile the manifests through CD, which stages, signs,
+# verifies and promotes them before Flux reconciles.
+gh workflow run cd.yaml --repo devantler-tech/platform --ref main
 # For a full rebuild from zero, see docs/dr/runbook.md scenario 4.
-./scripts/run-ksail-prod-with-pull-auth.sh workload push
-./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile
 ```
 
 ### Tool Reinstallation

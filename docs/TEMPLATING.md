@@ -77,8 +77,10 @@ with your own public key and re-encrypt every `*.enc.yaml` file in the repo.
 
 GitHub Actions expect:
 
-- Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `HCLOUD_TOKEN`
-- Variables: (none required after the Hetzner migration)
+- Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `HCLOUD_TOKEN`, `KUBE_CONFIG`,
+  `TALOS_CONFIG`, `WG_SERVER_PRIVATE_KEY` (plus the optional, DR-only
+  `DR_GH_ADMIN_TOKEN`)
+- Variables: none
 
 See `.github/workflows/` for the exact names.
 
@@ -149,7 +151,7 @@ No manual steps are required -- cluster creation is fully automated.
 1. `cp -R talos talos-<env>` (or reuse `talos`).
 2. `cp -R k8s/clusters/prod k8s/clusters/<env>` and update `cluster_name` +
    `provider` in the new overlay's `cluster-meta` patch.
-3. Edit `k8s/clusters/<env>/bootstrap/variables-cluster-{config-map,secret.enc}.yaml`.
+3. Edit `k8s/clusters/<env>/bootstrap/config-map.yaml` and `k8s/clusters/<env>/bootstrap/secret.enc.yaml`.
 4. `cp ksail.prod.yaml ksail.<env>.yaml`; update the per-cluster fields.
 5. Add the new environment to `.github/workflows/` pipelines as needed.
 
