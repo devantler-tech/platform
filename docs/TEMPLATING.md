@@ -108,8 +108,8 @@ The platform uses a **hybrid SOPS + OpenBao** model:
   (database passwords, OIDC client secrets). PushSecrets seed these into
   OpenBao at first reconciliation.
 - **OpenBao** (self-hosted Vault fork) is the single source of truth for
-  all non-bootstrap secrets. Runs in the `openbao` namespace with
-  standalone file storage.
+  all non-bootstrap secrets. Runs in the `openbao` namespace in HA mode
+  with integrated Raft storage (`openbao_replicas`: 1 by default, 3 in prod).
 - **External Secrets Operator** syncs secrets from OpenBao into native K8s
   `Secret` objects via `ExternalSecret` and `ClusterSecretStore` CRs.
 - **PushSecret** CRs in `k8s/bases/infrastructure/vault-seed/` seed
