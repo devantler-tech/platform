@@ -731,10 +731,20 @@ func fakeKubectlGetFluxPolicyFences(args []string, namespace string) int {
 			case "child-not-owned":
 				setMarkerContent("flux-policy-handoff-owner", "fixture-private-owner")
 				child["metadata"].(map[string]any)["annotations"].(map[string]any)["platform.devantler.tech/ghcr-policy-handoff-owner"] = "fixture-private-owner"
-			case "parent-unstable":
+			case "parent-frozen-reconciling":
+				// A Reconciling=True condition left behind by an execution the
+				// restart retired: the suspended parent is never reconciled again,
+				// so the condition and the resourceVersion stay as they are (#4873).
 				parent["status"].(map[string]any)["conditions"] = []any{
 					map[string]any{"type": "Reconciling", "status": "True", "message": "fixture-private-controller-message"},
 				}
+			case "parent-not-owned":
+				// Observed only: another writer resumed the parent. The marker state
+				// is untouched, so cleanup still exercises the real resume path.
+				parent["spec"].(map[string]any)["suspend"] = false
+			case "parent-changed":
+				// Every quiet-window read sees the owned parent at a new version.
+				parent["metadata"].(map[string]any)["resourceVersion"] = strconv.Itoa(1000 + reads)
 			default:
 				return commandFailure(91, "unknown quiet-window observation state %q", state)
 			}
