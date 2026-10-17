@@ -126,8 +126,9 @@ Its costs, accepted with this choice:
   client another's content.
 - **A reusable building block.** One platform definition renders the per-client set: Deployment,
   Service, HTTPRoute on the shared Gateway, CloudNativePG Cluster, barman-cloud ObjectStore and
-  ScheduledBackup, and ExternalSecrets from OpenBao. Model it on the
-  existing `WebApp` KRO definition that composes onto a `Tenant` ([tenant abstraction](../tenant-abstraction.md)),
+  ScheduledBackup, and ExternalSecrets from OpenBao, including a stable per-client value mapped to
+  `PAYLOAD_SECRET`, which Payload needs to start and which must not change between restarts. Model
+  it on the existing `WebApp` KRO definition that composes onto a `Tenant` ([tenant abstraction](../tenant-abstraction.md)),
   or use a Kustomize component if KRO cannot express the database parts cleanly.
 - **Network policy.** The platform keeps only its default-deny floor. The instance's egress
   allow-list is a CiliumNetworkPolicy in the client's tenant artifact, like other app-specific
@@ -135,10 +136,12 @@ Its costs, accepted with this choice:
   change would first be documented in [`docs/TENANTS.md`](../TENANTS.md).
 - **State and backups.** Content lives in the instance's CloudNativePG database, backed up with
   barman-cloud to the existing S3-compatible backup storage, as Umami is. Media goes through Payload's
-  S3 storage adapter to S3-compatible storage under a per-client prefix. A prefix only names
-  objects, so each instance also gets its own storage credential from OpenBao, with a policy that
-  allows only its own prefix. Before the pilot, a test shows that credential is refused on another
-  client's prefix, and a restore of one instance is tested.
+  S3 storage adapter to S3-compatible storage under a per-client prefix. The database backup does
+  not cover those objects, so the prefix gets its own backup, retention and recovery. A prefix
+  only names objects, so each instance also gets its own storage credential from OpenBao, with a
+  policy that allows only its own prefix. Before the pilot, a test shows that credential is refused
+  on another client's prefix, and a restore test brings back one instance's database and media
+  together and checks that a restored media record serves its object.
 - **Logins.** Payload's own users: an administrator role for Devantler Tech and an editor role for
   the client, limited by access control to the content they edit. The editor is not behind platform
   SSO. Payload's login lockout (`maxLoginAttempts`, `lockTime`) limits password guessing.
