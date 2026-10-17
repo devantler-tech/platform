@@ -240,7 +240,9 @@ func globExpressions(glob string) (strict, permissive *regexp.Regexp) {
 }
 
 // checkUpdatePolicy fails unless every update of dep, of any type, certainly
-// resolves to each required setting.
+// resolves to each required setting as package rules in this file set it under
+// that key. It does not model the stabilityDays alias of minimumReleaseAge, a
+// rule that sets enabled: false, or the top-level vulnerabilityAlerts block.
 func checkUpdatePolicy(rules []map[string]any, dep renovateDependency, required map[string]any) error {
 	settings := make([]string, 0, len(required))
 	for setting := range required {

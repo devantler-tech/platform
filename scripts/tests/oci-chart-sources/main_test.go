@@ -241,9 +241,10 @@ var fluxOperatorUpdatePolicy = map[string]any{"automerge": false, "minimumReleas
 
 type renovateConfig struct {
 	CustomManagers []struct {
-		CustomType         string `json:"customType"`
-		DatasourceTemplate string `json:"datasourceTemplate"`
-		DepNameTemplate    string `json:"depNameTemplate"`
+		CustomType          string `json:"customType"`
+		DatasourceTemplate  string `json:"datasourceTemplate"`
+		DepNameTemplate     string `json:"depNameTemplate"`
+		PackageNameTemplate string `json:"packageNameTemplate"`
 	} `json:"customManagers"`
 	PackageRules []map[string]any `json:"packageRules"`
 }
@@ -266,7 +267,12 @@ func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependenc
 	}
 	count := 0
 	for _, manager := range config.CustomManagers {
-		if manager.DepNameTemplate == dep.packageName {
+		// Renovate looks a dependency up by packageName, which defaults to depName.
+		name := manager.PackageNameTemplate
+		if name == "" {
+			name = manager.DepNameTemplate
+		}
+		if name == dep.packageName {
 			count++
 			dep.manager, dep.datasource = "custom."+manager.CustomType, manager.DatasourceTemplate
 		}
