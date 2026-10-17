@@ -1,0 +1,16 @@
+# Grants the crossplane-provider-unhealthy-alert ServiceAccount its read-only view
+# of Crossplane Providers. See
+# cluster-role-crossplane-provider-unhealthy-alert.yaml for the scope rationale.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: crossplane-provider-unhealthy-alert
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: crossplane-provider-unhealthy-alert
+subjects:
+  - kind: ServiceAccount
+    name: crossplane-provider-unhealthy-alert
+    namespace: observability

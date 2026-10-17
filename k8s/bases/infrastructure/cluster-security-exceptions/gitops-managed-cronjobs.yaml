@@ -28,6 +28,8 @@
 #                                                   allowlist (platform)
 #   * observability/cronjob-failure-alert         — alerts on a reconcile CronJob failing on consecutive runs
 #                                                   or no longer finishing (platform)
+#   * observability/crossplane-provider-unhealthy-alert — alerts on a Crossplane Provider not Healthy
+#                                                   past its grace period (platform)
 #   * observability/crossplane-sync-alerter       — alerts on a Crossplane managed resource that reports
 #                                                   Ready but has stopped syncing (platform)
 #   * observability/posture-staleness-alert       — alerts when Kubescape's configuration-scan data
@@ -67,7 +69,8 @@ spec:
     rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn
     stale-node cleanup, the observability heartbeat / alerting jobs (CNPG degraded
     cluster, stranded volume attach, stranded autoscaler node, reconcile-CronJob
-    failure, Crossplane sync, posture-scan staleness, prune-protected orphans,
+    failure, Crossplane sync, unhealthy Crossplane provider, posture-scan
+    staleness, prune-protected orphans,
     Velero maintenance OOM) / Coroot reconcilers (alert autosuppression, cloud
     pricing, application health, risk acceptance), the OpenBao
     raft-snapshot backup, the Umami database-login rotation, and Umami tenant

@@ -38,6 +38,13 @@ resources:
   - cluster-role-stranded-volume-attach-alert.yaml
   - cluster-role-binding-stranded-volume-attach-alert.yaml
   - cron-job-stranded-volume-attach-alert.yaml
+  # Unhealthy-Crossplane-Provider alert (#3457): Flux does not gate on Provider
+  # health, so a provider fleet outage otherwise reads green. 404 off-Crossplane.
+  - service-account-crossplane-provider-unhealthy-alert.yaml
+  - secret-crossplane-provider-unhealthy-alert.yaml
+  - cluster-role-crossplane-provider-unhealthy-alert.yaml
+  - cluster-role-binding-crossplane-provider-unhealthy-alert.yaml
+  - cron-job-crossplane-provider-unhealthy-alert.yaml
   # The prune-protected-orphan alert (#3503) deliberately lives in its own
   # folder, controllers/prune-protected-orphan-alert/, so retiring this one
   # cannot prune the check that would report what it leaves behind.

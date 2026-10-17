@@ -154,6 +154,8 @@ rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||cnpg-degraded-alert 51487655b693fe18c5d7196d0042e4bc8345a15b0ea3afe03216e69d37905940
 
+rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-provider-unhealthy-alert 1cc87f7bfd2b06426b26df11488ceb00e9a22e749bfca05814c1c9a0edc7be9a
+
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-alerter 2ff039b4399f755bb15112771e2586ac05d68b113313824972720f4a6e156147
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-exporter 89816b5cc430d16ae2fef6695022844c8658573eb5af90178ec8195c9601f1b1
@@ -199,6 +201,8 @@ rbac.authorization.k8s.io/v1|ClusterRole||cluster-reader 20e4b8161fb84aacd02d314
 rbac.authorization.k8s.io/v1|ClusterRole||cnpg-degraded-alert 42c958c00b28103b38a39a68780018e23dd665fcf53bfb7e409aafd956338482
 
 rbac.authorization.k8s.io/v1|ClusterRole||cnpg-tenant-edit 942ba69a066888eb7a82444a29f3917aa8c836c0bb800cee159e4e3bda4e3974
+
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-provider-unhealthy-alert 6a8845e6cd798bea6c9dd0353f5ac34dc93e3f2ccdda4e4d92288705e0dc6a45
 
 rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-alerter faf47ab2d737acd58c26bbf7aa3b46f23e5b22fc52aed6acd0fcf7f434fc431f
 
