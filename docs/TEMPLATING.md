@@ -79,8 +79,11 @@ GitHub Actions expect:
 
 - Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `HCLOUD_TOKEN`, `KUBE_CONFIG`,
   `TALOS_CONFIG`, `WG_SERVER_PRIVATE_KEY` (plus the optional, DR-only
-  `DR_GH_ADMIN_TOKEN`)
-- Variables: none
+  `DR_GH_ADMIN_TOKEN`), and `APP_PRIVATE_KEY` for the organization's GitHub App
+- Variables: `APP_CLIENT_ID`, the same GitHub App's client ID
+
+In devantler-tech the GitHub App pair comes from the organization. A copy
+outside it has to create both.
 
 See `.github/workflows/` for the exact names.
 

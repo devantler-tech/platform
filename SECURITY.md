@@ -80,8 +80,9 @@ Out of scope:
   current recipients). Reporting that ciphertext is present in git is not a
   vulnerability.
 - The platform OCI artifact published to GHCR is signed with cosign keyless
-  signing (Fulcio + Rekor) by the shared publication step of the
-  `deploy-prod` action, under the GitHub Actions OIDC identity of the
+  signing (Fulcio + Rekor) by the shared `publish-platform-manifests`
+  composite action, which both the `deploy-prod` action and
+  `dr-rebuild.yaml` call, under the GitHub Actions OIDC identity of the
   workflow that ran it. Flux verifies the signature before it applies
   anything: the root `OCIRepository`'s `spec.verify` (patched through the
   FluxInstance, and set by `ksail.prod.yaml` at bootstrap) trusts only

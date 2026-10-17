@@ -3,8 +3,9 @@
 Status: **partly implemented**. Goal: automated rotation of platform secrets,
 preferring **OpenBao-native** mechanisms. The OpenBao Database secrets engine
 rotates the umami PostgreSQL credentials today (weekly blue/green handover by the
-`umami-db-rotation` CronJob in `k8s/bases/infrastructure/vault-db-rotation/`), and
-the fleetdm MySQL static role is configured but idle while fleetdm is disabled.
+`umami-db-rotation` CronJob in `k8s/bases/infrastructure/vault-db-rotation/`). The
+fleetdm MySQL static role is defined in the `vault-config` Job, which creates it
+only once fleetdm's MySQL is reachable, so it does not exist while fleetdm is disabled.
 This document is the design for the remaining phases; each ships as its own
 reviewed PR.
 
@@ -18,7 +19,8 @@ reviewed PR.
 - **OpenBao = KV v2, Kubernetes auth, OIDC (Dex) auth and the Database secrets
   engine**, all configured by the `vault-config` Job. The engine holds static
   roles `umami`, `umami-blue` and `umami-green` on the `umami-postgres`
-  connection, and `fleet` on the `fleetdm-mysql` connection.
+  connection. The Job adds the `fleetdm-mysql` connection and its `fleet` role
+  once fleetdm's MySQL is reachable.
 - **Two sourcing paths coexist (mid-migration):**
   - **OpenBao → ESO**: generators (the `password-*` files in `k8s/bases/infrastructure/vault-seed/`) seed OpenBao KV
     once; `ExternalSecret`s sync to consumer namespaces (1h refresh). Used by
