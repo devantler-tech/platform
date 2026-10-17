@@ -4,6 +4,12 @@ The protected `retire-backstage-stateless.yaml` workflow runs this command on
 reviewed `main`. Keep its confirmation, source binding and first-attempt rules;
 a diagnostic result does not authorize a replay or clearing an operation journal.
 
+Admission DELETE probes carry `dryRun: [All]` in their `DeleteOptions` body.
+Kubernetes reads options from a nonempty DELETE body instead of its query string;
+the URL's `dryRun=All` alone does not prevent deletion. For an older attempt that
+used query-only probes, `HOLD_ADMISSION` does not establish that no deletion was
+submitted. Inspect its existing journal and resources without replaying it.
+
 After the controller-owned lifecycle has completed, the separate protected
 `complete-backstage-retirement.yaml` workflow can remove the durable namespace
 journal. It is not a retry path. The completion command accepts only the exact
