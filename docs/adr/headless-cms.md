@@ -24,8 +24,9 @@ Two facts about this platform shape the comparison:
   platform already runs a third-party Node application with its own CloudNativePG database,
   barman-cloud backups to S3-compatible storage and a Cilium policy (Umami), so that shape is
   proven here.
-- **Every portfolio repository changes `main` only through reviewed pull requests.** A tool that
-  writes to a site's repository therefore meets the same rules as code.
+- **Every portfolio repository changes `main` only through pull requests that pass required
+  checks**, client sites included. A tool that writes to a site's repository therefore meets the
+  same rules as code.
 
 ## Git-based or API-based
 
@@ -36,8 +37,8 @@ Two facts about this platform shape the comparison:
   hosted service (Decap Turbo, Keystatic Cloud, Tina Cloud), which the epic puts out of scope. The
   two exceptions, Pages CMS and self-hosted TinaCMS, fail other criteria (see the table).
 - **Edits land in code repositories.** A Git-based CMS commits to the site's repository. Either each
-  client edit waits for a reviewed pull request, or the CMS gets a standing bypass on the branch
-  rules. The first is not "edit it yourself"; the second is the blanket exception the epic rules out.
+  client edit waits for a pull request to pass its checks and merge, or the CMS gets a standing
+  bypass on the branch rules. The first is not "edit it yourself"; the second is the blanket exception the epic rules out.
 - **What API-based costs.** One more workload, a database and a media location per client. The
   platform already runs and backs up that shape, so the cost is capacity, not new machinery.
 - **What we give up.** Content as files in Git, with Git history as its record. Payload's built-in
@@ -63,7 +64,7 @@ need to change.
 | Candidate | OSI licence | Popular and maintained | Simple to run and use | Cloud-native self-hosting | Fits our sites | Own logins, per-client isolation | Platform guardrails |
 |---|---|---|---|---|---|---|---|
 | **Payload** | ✅ MIT. SSO and some workflow features are a paid add-on we do not need | ✅ ~45k stars, ~1M npm downloads a week, weekly releases | ✅ one Next.js process plus Postgres; polished editor | ⚠️ no official image, so we build it; Postgres and S3 adapters | ✅ REST and GraphQL, framework-agnostic live preview, built-in localisation | ✅ built-in users and access control; one instance per client | ✅ our signed image; no exception expected |
-| **Strapi** | ⚠️ MIT except `ee/`; live preview, content history and SSO need paid plans | ✅ ~73k stars, weekly releases | ❌ 2 GB memory minimum, 4 GB recommended | ⚠️ no official image; Postgres; S3 provider | ✅ REST and GraphQL; free localisation | ✅ built-in users and roles; one instance per client | ✅ |
+| **Strapi** | ⚠️ MIT except `ee/`; live preview, content history and SSO need paid plans | ✅ ~73k stars, weekly releases | ❌ 2 GB memory minimum, 4 GB recommended | ⚠️ no official image; Postgres; S3 provider | ✅ REST and GraphQL; free localisation | ✅ built-in users and roles; one instance per client | ✅ our signed image, as for Payload |
 | **Directus** | ❌ MSCL since v12 (June 2026), with enforced limits on the free tier | ✅ ~38k stars, monthly releases | ✅ | ✅ official amd64 and arm64 image | ✅ | ✅ | — |
 | **PocketBase** | ✅ MIT | ⚠️ ~61k stars, but pre-1.0 without a compatibility promise | ❌ its dashboard is for developers, not client editors | ❌ SQLite only, one instance, no official image | ⚠️ | ⚠️ | — |
 | **Pages CMS** | ✅ MIT | ❌ ~4k stars; no release since 2.1.8 (8 June 2026) | ✅ simple forms | ⚠️ Next.js plus Postgres; no official image | ✅ any framework; live after a rebuild | ✅ invited by email, sign in with a one-time code | ❌ its GitHub App needs repository Administration and Actions write; edits commit to protected branches |
