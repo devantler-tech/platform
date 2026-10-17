@@ -1,0 +1,15 @@
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: arc-github-app
+  namespace: arc-runners
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: example-store
+  target:
+    name: arc-github-app
+  dataFrom:
+    - extract:
+        key: example/arc-github-app
