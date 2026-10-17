@@ -28,8 +28,9 @@ prints one JSON line naming each failed server and reason. It never prints a hea
 identity or a cluster identity.
 
 **Health is not quorum.** A `PROVEN` verdict says each server answered its health endpoint as
-initialized and unsealed. It does not prove Raft membership, quorum or storage health. Those need an
-authenticated read and are a separate step of #4756.
+initialized and unsealed. It does not prove Raft membership, quorum or storage health. Membership and
+quorum need an authenticated read, which [`judge-openbao-quorum`](../judge-openbao-quorum/README.md)
+judges; neither command proves storage health.
 
 **Kubernetes Ready is not an input.** The readiness probe accepts sealed and uninitialized servers
 on purpose, so that the initialization job can reach them during bootstrap. Ready therefore says
