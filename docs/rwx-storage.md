@@ -1,17 +1,17 @@
 # RWX Storage with Longhorn
 
-Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod) using dedicated Hetzner Cloud Volumes attached to each worker node. It replaces the `hcloud` StorageClass as the cluster default.
+Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod). It stores replicas on each storage worker's root filesystem under `/var/lib/longhorn`, and its `longhorn-wffc` StorageClass is the cluster default.
 
 > **Local Docker clusters do not support Longhorn** — the iSCSI kernel modules required by Longhorn are not available in Docker-based Talos containers.
 
 ## Architecture
 
 ```
-Hetzner Cloud Volume (per worker)
-  └── mounted at /var/lib/longhorn (Talos machine config)
-        └── Longhorn engine
-              ├── longhorn StorageClass (default — RWO + RWX)
-              └── hcloud StorageClass (non-default — Hetzner block only)
+Worker root filesystem: /var/lib/longhorn (bind-mounted into the kubelet by Talos)
+  └── Longhorn engine
+        ├── longhorn-wffc StorageClass (default — RWO + RWX, WaitForFirstConsumer)
+        └── longhorn StorageClass (non-default — RWO + RWX, Immediate)
+hcloud StorageClass (non-default — Hetzner block only)
 ```
 
 ## Prerequisites
@@ -51,30 +51,12 @@ IMAGE=$(talosctl --nodes <healthy-IP> get machineconfig -o jsonpath='{.spec.mach
 talosctl upgrade --nodes <IP> --image "$IMAGE" --preserve
 ```
 
-### 2. Hetzner Cloud Volumes for workers
+### 2. Longhorn data directory on workers
 
-Each worker node needs a dedicated Hetzner Cloud Volume mounted at `/var/lib/longhorn`.
-
-**Create and attach volumes** (repeat for each worker):
-
-```bash
-# List servers to find worker names
-hcloud server list
-
-# Create a volume and attach it to a worker
-# Do NOT use --format — Talos expects to partition/format the disk itself
-# The volume appears as /dev/sdb on the worker
-hcloud volume create \
-  --name <cluster>-worker-<n>-longhorn \
-  --size 50 \
-  --server <worker-server-name>
-```
-
-The Talos machine config patch (`talos/workers/mount-longhorn-data.yaml`) handles mounting `/dev/sdb` at `/var/lib/longhorn`.
-
-> **Verify the device path** after attaching: on Hetzner Cloud, the first attached volume
-> consistently appears as `/dev/sdb`. Confirm with `talosctl disks --nodes <worker-ip>`.
-> If the volume shows a different path, update `talos/workers/mount-longhorn-data.yaml` accordingly.
+Longhorn needs no extra disk. The Talos patch `talos/workers/mount-longhorn-data.yaml`
+bind-mounts `/var/lib/longhorn` from the worker's root filesystem into the kubelet so the CSI
+driver can reach it. Do not partition `/dev/sdb` for Longhorn: hcloud-csi attaches its Cloud
+Volumes at `/dev/sdb`, `/dev/sdc` and so on, and partitioning would destroy them.
 
 ## Storage consumers during client recovery
 
@@ -95,7 +77,8 @@ and storage readiness remains healthy across separated samples.
 
 | StorageClass | Default | Access Modes | Backing |
 | --- | --- | --- | --- |
-| `longhorn` | ✅ Yes | RWO, RWX | Longhorn on Hetzner volumes |
+| `longhorn-wffc` | ✅ Yes | RWO, RWX | Longhorn on worker root filesystems; binds when the consuming pod is scheduled (WaitForFirstConsumer) |
+| `longhorn` | ❌ No | RWO, RWX | Same Longhorn backing, binds immediately; kept for existing claims that name it |
 | `hcloud` | ❌ No | RWO only | Hetzner Cloud Block Storage |
 
 ### Using RWX volumes
@@ -111,7 +94,7 @@ spec:
   resources:
     requests:
       storage: 5Gi
-  # storageClassName: longhorn  # optional — it's the default
+  # storageClassName: longhorn-wffc  # optional — it's the default
 ```
 
 ### Using Hetzner block storage explicitly
@@ -155,20 +138,6 @@ See [Longhorn Talos Linux Support](https://longhorn.io/docs/advanced-resources/o
 
 ## Scaling
 
-To change the Hetzner volume size:
-
-```bash
-# Volumes can only be resized up, not down
-hcloud volume resize --size 50 <volume-id>
-```
-
-After resizing, the Hetzner block device grows immediately but the XFS partition and filesystem must be expanded:
-
-```bash
-# From a privileged pod on the worker (or via talosctl debug container):
-sgdisk -e /dev/sdb          # Fix GPT to use all space
-growpart /dev/sdb 1          # Grow partition 1 to fill disk
-xfs_growfs /var/lib/longhorn # Expand XFS filesystem online
-```
-
-Longhorn detects the additional space automatically once the filesystem is grown.
+Longhorn's capacity on each storage worker is the free space on that worker's root filesystem.
+There is no separate volume to resize; capacity follows the worker's disk and the number of
+storage workers.

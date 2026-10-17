@@ -61,7 +61,6 @@ ships only core controllers by default and makes additional components opt-in.
 - **Backup / DR** — Velero with CloudNativePG backups; see [`docs/dr/`](dr)
 - **Virtualization** — KubeVirt + CDI _(opt-in locally; disabled on the
   Hetzner/prod overlay)_
-- **Testing** — Testkube _(opt-in locally; not deployed to prod)_
 
 ### Apps
 

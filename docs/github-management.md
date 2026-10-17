@@ -49,7 +49,7 @@ GitHub API reconciliation is asynchronous: the tenant Kustomization uses
 awaiting manual bootstrap cannot freeze unrelated application delivery. Artifact
 verification, admission and apply failures still fail the tenant reconciliation;
 the parent continues checking application health. Crossplane's separate sync
-exporter and `crossplane-sync-alert` report unsynced repositories and failed
+exporter and the `crossplane-sync-alerter` CronJob report unsynced repositories and failed
 alert delivery rather than hiding them behind Flux readiness. The bootstrap
 isolation guard checks the rendered tenant before publication.
 
@@ -128,7 +128,7 @@ reconcile, then batch the rest.
 1. Activate the namespaced MRD in
    `k8s/providers/hetzner/infrastructure/crossplane/managed-resource-activation-policy.yaml`
    (plural.group form, e.g. `repositoryrulesets.repo.github.m.upbound.io`); add
-   its API group to the app `Role` in `k8s/bases/apps/github-config/rbac.yaml`
+   its API group to the app `Role` in `k8s/bases/apps/github-config/role.yaml`
    if it is a new group.
 2. Add the managed resources in `.github`'s `deploy/` — same Observe-first flow
    where an external object already exists. Each active MRD costs the apiserver
