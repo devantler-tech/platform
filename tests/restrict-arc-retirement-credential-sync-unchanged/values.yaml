@@ -16,4 +16,3 @@ policies:
             phase: drained
             record:
               phase: drained
-
