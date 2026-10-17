@@ -35,6 +35,17 @@ results:
       - github-config/attacker-team
     kind: Team
     result: pass
+  # None of the paved-road teams names a parent team or a directory group.
+  # attacker-team is here for the same reason as above: the nesting rule judges
+  # only those fields, whatever the allow-list says about the object.
+  - policy: restrict-github-team-management
+    rule: teams-not-nested-or-directory-linked
+    resources:
+      - github-config/admins
+      - github-config/maintainers
+      - github-config/attacker-team
+    kind: Team
+    result: pass
   # References must go through the allow-listed Team objects, never a raw ID.
   - policy: restrict-github-team-management
     rule: teammemberships-reference-allow-listed-teams

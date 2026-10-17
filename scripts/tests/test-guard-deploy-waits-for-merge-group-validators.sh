@@ -6,8 +6,8 @@
 #   exit 1  a required merge-group validator is missing from deploy-prod.needs
 #   exit 2  the guard could not check
 #
-# The first case runs the guard against the REAL committed ci.yaml. Every other case is a small
-# fixture workflow that isolates one condition.
+# The first case runs the guard against the REAL committed ci.yaml. Small fixtures isolate its
+# condition handling; copies of the actual workflow protect the independent consumer fixture job.
 
 set -uo pipefail
 
@@ -115,6 +115,123 @@ printf 'jobs:\n  deploy-prod: [unclosed\n' >"$broken"
 expect "unparseable YAML cannot be checked" 2 "$broken"
 
 expect "a missing file cannot be checked" 2 "$scratch/does-not-exist.yaml"
+
+# The full consumer fixture suite must start independently of changes, yet both deployment and
+# merge admission must wait for it. Keep this check in changes: a removed or focused fixture job
+# cannot be relied on to test its own wiring. A skipped deploy alone is accepted by the aggregate.
+consumer_fixture_wiring() {
+  local file="$1" workflow_json
+  workflow_json="$(yq -o=json -I=0 '.' "$file" 2>/dev/null)" || return 2
+  jq -e \
+    --arg job 'validate-consumer-discovery' \
+    --arg checkout 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' \
+    --arg suite_run $'bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n' \
+    --arg production_run $'shellcheck -x scripts/guard-consumer-discovery-conservation.sh\nshellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh\n./scripts/guard-consumer-discovery-conservation.sh\n' '
+      .jobs[$job] as $suite
+      | (($suite | type) == "object")
+      and ($suite["runs-on"] == "ubuntu-latest")
+      and ($suite.permissions == {"contents": "read"})
+      and ($suite | has("needs") | not)
+      and ($suite | has("if") | not)
+      and (($suite["continue-on-error"] // false) == false)
+      and ($suite | has("env") | not)
+      and ((.env // {}) | has("CONSUMER_CONSERVATION_REGRESSION") | not)
+      and (($suite.steps | length) == 2)
+      and ($suite.steps[0].uses == $checkout)
+      and ($suite.steps[0].with["persist-credentials"] == false)
+      and ($suite.steps[1].run == $suite_run)
+      and ($suite.steps | all(
+        (has("if") | not)
+        and (has("env") | not)
+        and (has("working-directory") | not)
+        and ((.["continue-on-error"] // false) == false)))
+      and ((.jobs["deploy-prod"].needs | if type == "array" then . else [.] end)
+        | index($job) != null)
+      and ((.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
+        | index($job) != null)
+      and any(.jobs["ci-required-checks"].steps[];
+        (.["with"]["job-results"] // "") | contains("needs." + $job + ".result"))
+      and any(.jobs.changes.steps[];
+        .run == $production_run
+        and (has("if") | not)
+        and ((.["continue-on-error"] // false) == false))
+      and all(.jobs.changes.steps[];
+        ((.run // "") | contains("bash scripts/tests/test-guard-consumer-discovery-conservation.sh") | not))
+    ' <<<"$workflow_json" >/dev/null || {
+    printf 'consumer fixtures must run independently and gate deployment plus required checks\n' >&2
+    return 1
+  }
+}
+
+expect_wiring() {
+  local name="$1" want="$2" file="$3" got
+  cases=$((cases + 1))
+  consumer_fixture_wiring "$file" >"$scratch/wiring.stdout" 2>"$scratch/wiring.stderr"
+  got=$?
+  if [ "$got" -ne "$want" ]; then
+    printf 'FAIL %s: exit %s, want %s\n' "$name" "$got" "$want"
+    sed 's/^/     /' "$scratch/wiring.stderr"
+    failures=$((failures + 1))
+  else
+    printf 'ok   %s\n' "$name"
+  fi
+}
+
+ci_workflow="$repo_root/.github/workflows/ci.yaml"
+expect_wiring "the actual workflow independently runs and requires the full consumer fixture suite" 0 "$ci_workflow"
+
+# Each ablation changes the actual dispatcher configuration, rather than a second hand-written
+# workflow. Dropping admission, ordering, or the full command must make the wiring check fail.
+ablate_wiring() {
+  local name="$1" expression="$2" file="$scratch/consumer-ablation.yaml"
+  if ! yq "$expression" "$ci_workflow" >"$file"; then
+    printf 'FAIL cannot construct consumer wiring ablation: %s\n' "$name"
+    cases=$((cases + 1))
+    failures=$((failures + 1))
+    return
+  fi
+  expect_wiring "$name" 1 "$file"
+}
+
+ablate_wiring "removing the fixture job is refused" \
+  'del(.jobs["validate-consumer-discovery"])'
+ablate_wiring "removing the deployment dependency is refused" \
+  '.jobs["deploy-prod"].needs -= ["validate-consumer-discovery"]'
+ablate_wiring "removing the required-check dependency is refused" \
+  '.jobs["ci-required-checks"].needs -= ["validate-consumer-discovery"]'
+ablate_wiring "removing the aggregated fixture result is refused" \
+  '.jobs["ci-required-checks"].steps[0].with["job-results"] |= sub("needs.validate-consumer-discovery.result", "needs.changes.result")'
+ablate_wiring "removing both dependencies cannot hide the fixture job" \
+  '.jobs["deploy-prod"].needs -= ["validate-consumer-discovery"] | .jobs["ci-required-checks"].needs -= ["validate-consumer-discovery"]'
+ablate_wiring "replacing the full fixture command with success is refused" \
+  '.jobs["validate-consumer-discovery"].steps[1].run = "true\n"'
+ablate_wiring "a conditional fixture job is refused" \
+  '.jobs["validate-consumer-discovery"].if = "false"'
+ablate_wiring "a conditional fixture step is refused" \
+  '.jobs["validate-consumer-discovery"].steps[1].if = "false"'
+ablate_wiring "tolerating a fixture job failure is refused" \
+  '.jobs["validate-consumer-discovery"].continue-on-error = true'
+ablate_wiring "tolerating a fixture step failure is refused" \
+  '.jobs["validate-consumer-discovery"].steps[1].continue-on-error = true'
+ablate_wiring "serializing fixtures behind changes is refused" \
+  '.jobs["validate-consumer-discovery"].needs = ["changes"]'
+ablate_wiring "focusing the job through its environment is refused" \
+  '.jobs["validate-consumer-discovery"].env.CONSUMER_CONSERVATION_REGRESSION = "templates"'
+ablate_wiring "focusing the step through its environment is refused" \
+  '.jobs["validate-consumer-discovery"].steps[1].env.CONSUMER_CONSERVATION_REGRESSION = "templates"'
+ablate_wiring "focusing fixtures through workflow environment is refused" \
+  '.env.CONSUMER_CONSERVATION_REGRESSION = "templates"'
+ablate_wiring "focusing the fixture command itself is refused" \
+  '.jobs["validate-consumer-discovery"].steps[1].run = "CONSUMER_CONSERVATION_REGRESSION=templates bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
+ablate_wiring "putting the full fixtures back on the changes critical path is refused" \
+  '(.jobs.changes.steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) += "bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
+ablate_wiring "removing the real production guard from changes is refused" \
+  '(.jobs.changes.steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) |= sub("./scripts/guard-consumer-discovery-conservation.sh", "true")'
+
+yq '.jobs["unrelated-validator"] = {"runs-on": "ubuntu-latest", "if": "false", "steps": [{"run": "true"}]}' \
+  "$ci_workflow" >"$scratch/unrelated-job.yaml"
+expect_wiring "an unrelated conditional job does not change consumer fixture admission" 0 "$scratch/unrelated-job.yaml"
+expect_wiring "unparseable consumer workflow cannot be checked" 2 "$broken"
 
 printf '\n%s of %s cases passed\n' "$((cases - failures))" "$cases"
 [ "$failures" -eq 0 ]

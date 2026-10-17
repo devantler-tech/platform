@@ -40,12 +40,17 @@
 #     egress would break cluster-wide. #2610's ../homogeneous-devices/
 #     component (wildcard selection covering both NICs) must be ACTIVATED
 #     and soaked FIRST; only then may this component be referenced.
+#     Satisfied: homogeneous-devices/ has been live since 2026-07-25 (#2793)
+#     and was re-verified on every node on 2026-09-28 (#2610).
 #
-# SAFETY: this component is staged, not activation-ready. Keep it
-# unreferenced until its own low-traffic activation + soak; it changes the
-# NAT path for ALL pod egress (Cloudflare-bound responses, registry pulls,
-# webhooks) and `rollOutCiliumPods: true` means enabling it rolls every
-# Cilium agent one node at a time. bandwidth-manager-bbr's
+# ACTIVATION (#4260): referenced from the Hetzner controllers overlay, AFTER
+# homogeneous-devices/. It changes the NAT path for ALL pod egress
+# (Cloudflare-bound responses, registry pulls, webhooks) and
+# `rollOutCiliumPods: true` means activating it rolls every Cilium agent one
+# node at a time, so it ships on its own PR in a low-traffic window, with
+# external egress verified from a static and an autoscaled node after the
+# roll. scripts/tests/test-cilium-ebpf-host-routing-activation.sh pins the
+# reference, its order and the rendered values. bandwidth-manager-bbr's
 # bbrHostNamespaceOnly guard stays `true` until THIS component has merged,
 # been activated, and passed its own live soak (that guard removal is a
 # further separate change). Roll back by removing the component reference,

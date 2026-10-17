@@ -40,11 +40,6 @@ spec:
     - observability.${domain}
   rules:
     - filters:
-        - type: RequestHeaderModifier
-          requestHeaderModifier:
-            set:
-              - name: X-Auth-Request-Redirect
-                value: https://observability.${domain}/
         - type: ResponseHeaderModifier
           responseHeaderModifier:
             set:

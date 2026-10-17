@@ -1,0 +1,65 @@
+name: Verify Wedding Backup Cutover
+
+# Dormant operator proof: create one fresh online backup only after the reviewed
+# dedicated archive is active. Catalogue and isolated restore proofs are separate.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-wedding-backup-cutover"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  verify:
+    name: 💒 Verify fresh dedicated Wedding backup
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require main and explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == verify-wedding-backup-cutover ]]
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: 🔑 Restore production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🎯 Select stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+
+      - name: 💒 Take and verify a fresh backup
+        shell: bash
+        env:
+          WEDDING_BACKUP_CONFIRM: ${{ inputs.confirm }}
+        run: bash scripts/verify-wedding-backup-cutover.sh

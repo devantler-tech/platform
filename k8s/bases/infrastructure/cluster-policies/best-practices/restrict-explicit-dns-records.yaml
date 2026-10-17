@@ -1,0 +1,64 @@
+---
+# The CRD source is watched cluster-wide by the existing ExternalDNS writer.
+# Tenant edit permissions must not become a second way to claim hostnames.
+# Keep this allow-list independent of labels and applying identity: only records
+# in the owning product's tenant namespace with the approved shape may pass.
+# Deploy and verify this boundary BEFORE enabling the CRD source.
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-explicit-dns-records
+  annotations:
+    policies.kyverno.io/title: Restrict Explicit DNS Records
+    policies.kyverno.io/category: Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: DNSEndpoint
+    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/description: >-
+      Limits explicit ExternalDNS records to the owning product's namespace and
+      the approved DNS-only documentation CNAME. Tenant labels do not grant DNS
+      ownership. New records require a reviewed allow-list change.
+spec:
+  background: false
+  rules:
+    - name: approved-platform-records
+      context:
+        - name: approvedEndpoints
+          variable:
+            value:
+              - dnsName: khoist.devantler.tech
+                recordType: CNAME
+                recordTTL: 300
+                targets:
+                  - devantler-tech.github.io
+                providerSpecific:
+                  - name: cloudflare/proxied
+                    value: "false"
+      match:
+        any:
+          - resources:
+              kinds:
+                - externaldns.k8s.io/*/DNSEndpoint
+              operations:
+                - CREATE
+                - UPDATE
+      validate:
+        failureAction: Enforce
+        # Do not grandfather an invalid record on UPDATE, including server-side
+        # apply. Inventory existing records before enabling CRD discovery.
+        allowExistingViolations: false
+        message: >-
+          Explicit DNS records require platform ownership and an approved
+          endpoint, target, record type and DNS-only provider configuration.
+        deny:
+          conditions:
+            any:
+              # JMESPath equality compares literals without wildcard matching.
+              # the complete endpoint list: extra targets, endpoints, routing
+              # fields or provider settings cannot slip through.
+              - key: "{{ request.object.metadata.namespace }}"
+                operator: NotEquals
+                value: data-product-controller
+              - key: "{{ request.object.spec.endpoints == approvedEndpoints }}"
+                operator: Equals
+                value: false

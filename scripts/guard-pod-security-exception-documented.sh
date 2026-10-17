@@ -3,7 +3,7 @@
 # Fail when a control suppressed by a ClusterSecurityException is not named in that
 # file's fail-open warning block.
 #
-# #3516 exists because C-0211 was added to `pod-security-mutations-unscoped.yaml`
+# #3516 exists because C-0211 was added to the residual mutation exception
 # under `spec.posture` while the warning block above it still spoke only about
 # C-0013. That warning is the file's one record of a real hazard: the exception makes
 # every control it suppresses report `status: passed` with `subStatus: "w/exceptions"`
@@ -39,7 +39,7 @@ set -euo pipefail
 
 readonly BEGIN_MARK='fail-open-warning:BEGIN'
 readonly END_MARK='fail-open-warning:END'
-readonly DEFAULT_FILE='k8s/bases/infrastructure/cluster-security-exceptions/pod-security-mutations-unscoped.yaml'
+readonly DEFAULT_FILE='k8s/bases/infrastructure/cluster-security-exceptions/pod-security-mutations-residual.yaml'
 
 me="$(basename "$0")"
 die() {

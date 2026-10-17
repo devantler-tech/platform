@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {readFile,lstat,realpath} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import path from 'node:path';
-import {targets} from './wedding-backup-projection.mjs';
+import {targets,retired} from './wedding-backup-projection.mjs';
 const check=x=>{if(!x)throw Error('refused');};
 const hash=b=>createHash('sha256').update(b).digest('hex');
 
@@ -26,6 +26,20 @@ export function createReader({kubectl,kubeconfig}){
    check(await realpath(kubectl)===kubectl&&(await lstat(kubectl)).isFile());
    out=await capture(kubectl,['--kubeconfig',kubeconfig,'--context','admin@prod','--namespace',t.namespace,'get',t.resource,t.name,'--output=json','--request-timeout=20s'],{env:{PATH:'/usr/bin:/bin'},maxBytes:t.kind==='Secret'?32768:262144});
    const object=JSON.parse(out.toString('utf8'));check(object&&typeof object==='object'&&!Array.isArray(object));return object;
+  }catch{throw Error('read_refused');}finally{out?.fill(0);}
+ };
+}
+// Resolves true only when the retired object is observed absent. It asks for the
+// object's name alone, so a retired Secret that still exists never has its
+// content read. A failed or unexpected read is a refusal, not an absence.
+export function createAbsenceReader({kubectl,kubeconfig}){
+ return async requested=>{
+  let out;
+  try{
+   const t=retired.find(x=>x.id===requested.id);check(t&&path.isAbsolute(kubectl)&&path.isAbsolute(kubeconfig));
+   check(await realpath(kubectl)===kubectl&&(await lstat(kubectl)).isFile());
+   out=await capture(kubectl,['--kubeconfig',kubeconfig,'--context','admin@prod','--namespace',t.namespace,'get',t.resource,t.name,'--ignore-not-found','--output=name','--request-timeout=20s'],{env:{PATH:'/usr/bin:/bin'},maxBytes:1024});
+   return out.length===0;
   }catch{throw Error('read_refused');}finally{out?.fill(0);}
  };
 }

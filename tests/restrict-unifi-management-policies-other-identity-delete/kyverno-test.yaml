@@ -1,0 +1,19 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-unifi-management-policies-other-identity-delete
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-policies.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-unifi-management-policies
+    rule: prune-only-without-delete
+    resources:
+      - unifi/wildcard
+    kind: Record
+    result: skip

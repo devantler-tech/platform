@@ -121,7 +121,7 @@ SVIDs, or it deadlocks. Options, hardest constraint first:
   be scoped to the exact datastore traffic. A blanket `fromEndpoints: [{}]`
   authentication policy is an allow rule and weakens workload isolation.
 - **Talos node firewall** already allows the SPIRE mesh-auth port 4250
-  node-to-node (`talos/workers/allow-cilium-mutual-auth-ingress.yaml`, `talos/control-planes/allow-internal-node-ingress.yaml`). Postgres
+  node-to-node (`talos/workers/allow-internal-node-ingress.yaml`, `talos/control-planes/allow-internal-node-ingress.yaml`). Postgres
   :5432 between nodes is intra-cluster pod traffic over the CNI, not a host port,
   so no Talos firewall change is expected — **verify** spire-db instances and
   spire-server can co-locate or cross nodes without a host-firewall drop.

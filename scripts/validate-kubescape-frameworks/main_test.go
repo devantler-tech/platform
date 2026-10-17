@@ -2329,3 +2329,184 @@ func TestLiteralNarrowingStillRefusesARealShellStringScan(t *testing.T) {
 		}
 	}
 }
+
+// --- The UNCONDITIONAL FALSE-POSITIVE class (#3585) --------------------------
+//
+// Two legitimate shapes the unconditional path refused. Each acceptance below is
+// paired with the refusals it must NOT open, because "accept more" would otherwise
+// pass by accepting everything.
+
+// RED PROOF for platform#3585 (1): a plain scan word only counts as evidence of an
+// invocation when it has room to take part in one. `echo scan "$STATUS"` passes
+// `scan` with ONE word in front of it and ONE single word after it: too few for
+// `scan` to be the subcommand of `<binary> workload scan`, and too few for it to be
+// a renamed binary followed by `workload scan`. A double-quoted expansion is exactly
+// one argument, so it cannot supply the missing words.
+func TestIssue3585EchoedScanWordBesideAQuotedExpansionIsAccepted(t *testing.T) {
+	line := `echo scan "$STATUS"`
+	got, err := setOf(t, goodScan+"\n"+line+"\n")
+	if err != nil {
+		t.Fatalf("unconditional %q: expected ACCEPT — the scan word has no room to take part in an invocation; got: %v", line, err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("unconditional %q: set = %q, want %q", line, strings.Join(got, ","), "mitre,nsa")
+	}
+	// The conditional screen applies the same rule, so the same diagnostic line in an
+	// `if:` step is ordinary shell too.
+	workflow := "jobs:\n  validate:\n    steps:\n" +
+		"      - run: " + goodScan + "\n" +
+		"      - if: ${{ github.ref == 'refs/heads/main' }}\n        run: " + line + "\n"
+	set, err := frameworkSet(writeTemp(t, workflow))
+	if err != nil {
+		t.Fatalf("conditional %q: expected ACCEPT — the scan word has no room to take part in an invocation; got: %v", line, err)
+	}
+	if strings.Join(set, ",") != "mitre,nsa" {
+		t.Fatalf("conditional %q: set = %q, want %q", line, strings.Join(set, ","), "mitre,nsa")
+	}
+}
+
+// NEGATIVE CONTROLS for the rule above: wherever a plain scan word DOES have room for
+// the rest of an invocation, the line stays refused. Each differs from the accepted
+// `echo scan "$STATUS"` in the one property the narrowing relies on.
+func TestIssue3585ScanWordWithRoomForAnInvocationIsStillRefused(t *testing.T) {
+	cases := map[string]string{
+		// An UNQUOTED expansion splits into any number of words, so `scan` may be a
+		// renamed binary followed by `workload scan`.
+		"unquoted expansion after the scan word": `echo scan $STATUS`,
+		// `"$@"` and `"${a[@]}"` expand to one word PER ELEMENT even inside quotes.
+		"quoted positional list after the scan word": `echo scan "$@"`,
+		"quoted array after the scan word":           `echo scan "${ARGS[@]}"`,
+		// Two single-word expansions are two words: room for `workload scan`.
+		"two quoted expansions after the scan word": `echo scan "$A" "$B"`,
+		// An expansion in FRONT supplies the binary and `workload` at once.
+		"expansion before the scan word": `$CMD scan "$STATUS"`,
+		// Quoted single-word expansions still fill the roles they stand in.
+		"quoted expansions filling workload and scan": `ksail "$W" "$S" --framework nsa`,
+		"quoted expansion filling workload":           `env ksail "$W" scan --framework nsa`,
+		"quoted expansion filling the binary":         `"$K" workload scan --framework nsa`,
+		// The binary's own name is evidence wherever it stands: a wrapper such as
+		// `xargs` appends arguments it reads at run time, so the line need not show them.
+		"ksail with one quoted word after it": `echo ksail "$V"`,
+		"ksail last, after an expansion":      `$WRAP ksail`,
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line + "\n"},
+			{"alone", line + "\n"},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Errorf("%s, %s: expected FAIL CLOSED — %q leaves a plain scan word room to take part "+
+					"in an invocation beside an expansion", name, shape.label, line)
+				continue
+			}
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Errorf("%s, %s: the refusal must name undecidability, proving a whitelist rule fired "+
+					"rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// RED PROOF for platform#3585 (2): quoting confined to the VALUE of a plainly spelled
+// option is resolved by the shell at parse time, so `--framework="nsa,mitre"` executes
+// exactly the argument `--framework=nsa,mitre`. It is read as that argument: accepted,
+// counted as the gate, and its framework set taken from the resolved value.
+func TestIssue3585QuotedFrameworkValueIsReadAsTheShellPassesIt(t *testing.T) {
+	for name, line := range map[string]string{
+		"double-quoted value (the reproduction)": `ksail workload scan --framework="nsa,mitre" -o kubescape.sarif`,
+		"single-quoted value":                    `ksail workload scan --framework='nsa,mitre' -o kubescape.sarif`,
+		"partly quoted value":                    `ksail workload scan --framework=nsa,"mitre" -o kubescape.sarif`,
+	} {
+		got, err := setOf(t, line+"\n")
+		if err != nil {
+			t.Errorf("%s: expected ACCEPT — the quoting resolves at parse time; got: %v", name, err)
+			continue
+		}
+		if strings.Join(got, ",") != "mitre,nsa" {
+			t.Errorf("%s: set = %q, want %q — the value must be read as the shell passes it", name, strings.Join(got, ","), "mitre,nsa")
+		}
+	}
+	// The value is READ, not waved through: a reduced set in the same spelling is a
+	// coverage regression and must still be caught.
+	set, err := setOf(t, `ksail workload scan --framework="nsa" -o kubescape.sarif`+"\n")
+	if err == nil {
+		err = checkRequired(set)
+	}
+	if err == nil {
+		t.Fatal(`--framework="nsa": expected the missing mitre framework to be reported — the quoted value must be read, not skipped`)
+	}
+	// And the invocation is COUNTED as the gate: beside another scan it is the second of
+	// two, not an argument the guard ignores.
+	if _, err := setOf(t, goodScan+"\n"+`ksail workload scan --framework="nsa" -o kubescape.sarif`+"\n"); err == nil ||
+		!strings.Contains(err.Error(), "scan invocations") {
+		t.Fatalf("a quoted-value scan beside a counted one must be refused as a second invocation; got: %v", err)
+	}
+}
+
+// NEGATIVE CONTROLS for the rule above: the acceptance is confined to quoting in the
+// VALUE of a plainly spelled option name. An option NAME the shell assembles, and a
+// value that expands at run time, both stay refused.
+func TestIssue3585ConstructedOptionWordIsStillRefused(t *testing.T) {
+	cases := map[string]string{
+		"quoted fragment in the option name":       `ksail workload scan --frame"work"=nsa,mitre`,
+		"whole option word quoted":                 `ksail workload scan "--framework=nsa,mitre"`,
+		"quoted option name":                       `ksail workload scan "--framework"="nsa,mitre"`,
+		"escaped character in the option name":     `ksail workload scan --frame\work="nsa,mitre"`,
+		"escaped equals sign":                      `ksail workload scan --framework\=nsa,mitre`,
+		"expansion in a quoted value":              `ksail workload scan --framework="$FW"`,
+		"expansion beside a quoted value":          `ksail workload scan --framework="nsa,mitre"$EXTRA`,
+		"quoted value of another option expanding": `ksail workload scan --framework=nsa,mitre --format="$FMT"`,
+	}
+	for name, line := range cases {
+		for _, shape := range []struct {
+			label string
+			body  string
+		}{
+			{"paired with a counted scan", goodScan + " -o kubescape.sarif\n" + line + "\n"},
+			{"alone", line + "\n"},
+		} {
+			_, err := setOf(t, shape.body)
+			if err == nil {
+				t.Errorf("%s, %s: expected FAIL CLOSED — %q is not a plainly spelled option with a "+
+					"parse-time value", name, shape.label, line)
+				continue
+			}
+			if !strings.Contains(err.Error(), "not decidable from the text") {
+				t.Errorf("%s, %s: the refusal must name undecidability, proving the option-word rule "+
+					"fired rather than a coincidental one; got: %v", name, shape.label, err)
+			}
+		}
+	}
+}
+
+// The framework value is located among SHELL words, not whitespace-separated text.
+// Splitting the raw line on spaces found a `--framework` INSIDE a quoted argument and
+// read its value, while bash passed that text as one argument of `-o` and ran only
+// the real, reduced `--framework nsa`. Measured: both shapes below passed the guard.
+func TestQuotedArgumentTextCannotSupplyTheFrameworkValue(t *testing.T) {
+	for name, line := range map[string]string{
+		"inside the -o value":       `ksail workload scan -o "x --framework nsa,mitre " --framework nsa`,
+		"inside the --format value": `ksail workload scan --format "sarif --framework nsa,mitre " --framework nsa --compliance-threshold 95`,
+	} {
+		set, err := setOf(t, line+"\n")
+		if err == nil {
+			err = checkRequired(set)
+		}
+		if err == nil {
+			t.Errorf("%s: expected FAIL CLOSED — bash runs `--framework nsa`, so reading %v from quoted text "+
+				"credits a framework that is never scanned", name, set)
+		}
+	}
+	// The control: the real flag is read even when a quoted argument mentions another set.
+	got, err := setOf(t, `ksail workload scan -o "x --framework pss " --framework nsa,mitre`+"\n")
+	if err != nil {
+		t.Fatalf("expected ACCEPT — the real --framework is nsa,mitre; got: %v", err)
+	}
+	if strings.Join(got, ",") != "mitre,nsa" {
+		t.Fatalf("set = %q, want %q — the value must come from the real flag", strings.Join(got, ","), "mitre,nsa")
+	}
+}

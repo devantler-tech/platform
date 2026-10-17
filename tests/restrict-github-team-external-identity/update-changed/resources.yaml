@@ -1,0 +1,36 @@
+---
+# #3144: created compliant, then re-pointed at a foreign team by an update.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed
+---
+# The same re-pointing from no identity at all.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: other
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed
+---
+# Moving from another value to the approved identity is the repair path and is accepted.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606"
+spec:
+  forProvider:
+    privacy: closed

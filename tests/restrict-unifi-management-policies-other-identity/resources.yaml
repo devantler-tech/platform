@@ -1,0 +1,11 @@
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: wildcard
+  namespace: unifi
+  annotations:
+    platform.devantler.tech/unifi-management: observe-only
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}

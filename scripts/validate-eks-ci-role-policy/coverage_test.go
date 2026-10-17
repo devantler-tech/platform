@@ -36,8 +36,13 @@ const prodDeployComposite = "./.github/actions/deploy-prod"
 // files describe this very trigger in their comments, so a text search would
 // pass on prose alone and keep passing after the trigger itself was deleted.
 type workflow struct {
-	On   triggerSet     `yaml:"on"`
-	Jobs map[string]job `yaml:"jobs"`
+	On          triggerSet     `yaml:"on"`
+	Jobs        map[string]job `yaml:"jobs"`
+	Permissions any            `yaml:"permissions"`
+	Concurrency struct {
+		Group            string `yaml:"group"`
+		CancelInProgress bool   `yaml:"cancel-in-progress"`
+	} `yaml:"concurrency"`
 }
 
 // job and step are named rather than inlined so the workflow-coverage guards in
@@ -50,6 +55,7 @@ type job struct {
 	Needs           any    `yaml:"needs"`
 	If              string `yaml:"if"`
 	ContinueOnError any    `yaml:"continue-on-error"`
+	Permissions     any    `yaml:"permissions"`
 }
 
 type step struct {
@@ -148,7 +154,12 @@ func (t *triggerSet) UnmarshalYAML(value *yaml.Node) error {
 // (`merge_group:` is null, `push:` is a mapping), so unmarshalling is lenient
 // and a null trigger simply yields no branches.
 type triggerSpec struct {
-	Branches []string `yaml:"branches"`
+	Branches       []string `yaml:"branches"`
+	BranchesIgnore []string `yaml:"branches-ignore"`
+	Paths          []string `yaml:"paths"`
+	PathsIgnore    []string `yaml:"paths-ignore"`
+	Tags           []string `yaml:"tags"`
+	TagsIgnore     []string `yaml:"tags-ignore"`
 }
 
 func (t *triggerSpec) UnmarshalYAML(value *yaml.Node) error {
@@ -610,14 +621,32 @@ func shellKeepsErrexit(shell string) bool {
 	return false
 }
 
+// enforces reports whether a gate step's verdict can stop its job. A step-level
+// `if:` is evaluated at run time, so `if: false` — or any condition — can skip
+// the gate on the very run it was meant to judge; and a tolerated failure
+// (`continue-on-error: true`, or an expression, whose value is unknowable here)
+// turns a red gate into a green step. Either way the gate is written into the
+// route and decides nothing, so neither counts as running it (#4361).
+func (s step) enforces() bool {
+	return s.If == "" && !errorIsTolerated(s.ContinueOnError)
+}
+
 // runsValidator reports whether any job in the workflow actually executes the
 // gate.
 func (w workflow) runsValidator() bool {
 	for _, job := range w.Jobs {
-		for _, step := range job.Steps {
-			if shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
-				return true
-			}
+		if job.runsValidator() {
+			return true
+		}
+	}
+	return false
+}
+
+// runsValidator reports whether THIS job executes the authorization gate.
+func (j job) runsValidator() bool {
+	for _, step := range j.Steps {
+		if step.enforces() && shellKeepsErrexit(step.Shell) && runsGate(step.Run, validatorInvocation) {
+			return true
 		}
 	}
 	return false
@@ -632,7 +661,7 @@ func (j job) runsIsolatedChartNamespaceValidator() bool {
 		if runsCommand(step.Run, ".github/scripts/setup-ksail.sh") {
 			ksailReady = true
 		}
-		if ksailReady && step.If == "" && step.TimeoutMinutes.is(10) &&
+		if ksailReady && step.enforces() && step.TimeoutMinutes.is(10) &&
 			shellKeepsErrexit(step.Shell) &&
 			runsGate(step.Run, isolatedChartNamespaceValidatorInvocation) {
 			return true

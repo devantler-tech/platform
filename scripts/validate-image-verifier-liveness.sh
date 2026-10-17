@@ -51,9 +51,9 @@ usage() {
 Usage: validate-image-verifier-liveness.sh [--nodes <ip>[,<ip>...]]
 
 Asserts, for every node, that Talos' own image verification is live: every
-declared ImageVerificationRules pattern is materialised in order and in phase
-"running", and a TUFTrustedRoots trust root is in phase "running" to verify
-against.
+declared ImageVerificationRules decision (pattern, actions and signer identity)
+is materialised in order and in phase "running", and a TUFTrustedRoots trust
+root is in phase "running" to verify against.
 
 Nodes are discovered from the cluster when --nodes/TALOS_NODES is not given, so
 autoscaled nodes are covered without anyone maintaining a list. A discovered
@@ -65,7 +65,8 @@ replacement reusing a departed node's address is not mistaken for it. An
 explicitly pinned fleet is the caller's claim about what to check and is not
 re-read.
 
-Environment overrides: TALOSCTL, KUBECTL, KUBECTL_CONTEXT, TALOS_NODES
+Environment overrides: TALOSCTL, KUBECTL, KUBECTL_CONTEXT, TALOS_NODES,
+IMAGE_POLICY_CHECKER (compiled reviewed helper; otherwise built with Go).
 Exit: 0 every node can enforce; 1 at least one cannot; 2 usage/infrastructure error.
 USAGE
   exit 2
@@ -108,34 +109,25 @@ fail_infra() {
   exit 2
 }
 
-# Read the ordered `rules[].image` policy without adding a yq dependency to the
-# production workflow. This manifest intentionally uses one plain or quoted
-# scalar per `- image:` row; if that shape disappears, an empty result fails
-# closed below instead of inventing an expected policy.
-declared_patterns_text="$(awk '
-  /^[[:space:]]*-[[:space:]]+image:[[:space:]]*/ {
-    line = $0
-    sub(/^[[:space:]]*-[[:space:]]+image:[[:space:]]*/, "", line)
-    sub(/[[:space:]]+#.*$/, "", line)
-    gsub(/^[[:space:]]+|[[:space:]]+$/, "", line)
-    if ((substr(line, 1, 1) == "\"" && substr(line, length(line), 1) == "\"") ||
-        (substr(line, 1, 1) == sprintf("%c", 39) && substr(line, length(line), 1) == sprintf("%c", 39))) {
-      line = substr(line, 2, length(line) - 2)
-    }
-    if (line != "") print line
-  }
-' "${policy_manifest}")" || fail_infra "could not read declared image-verification rules from ${policy_manifest}"
-
-declared_rule_patterns=()
-while IFS= read -r pattern; do
-  [[ -n "${pattern}" ]] || continue
-  declared_rule_patterns+=("${pattern}")
-done <<<"${declared_patterns_text}"
-[[ "${#declared_rule_patterns[@]}" -gt 0 ]] ||
-  fail_infra "no image-verification rules found in ${policy_manifest}"
-readonly declared_rule_count="${#declared_rule_patterns[@]}"
-declared_patterns_json="$(printf '%s\n' "${declared_rule_patterns[@]}" |
-  jq -R -s -c 'split("\n") | map(select(length > 0))')" ||
+# Build the reviewed YAML/JSON comparator once, before any live node query.
+# Tests may supply the same compiled helper to avoid repeated builds.
+policy_checker="${IMAGE_POLICY_CHECKER:-}"
+if [[ -z "${policy_checker}" ]]; then
+  helper_work="$(mktemp -d)" || fail_infra 'could not create private policy-checker directory'
+  trap 'rm -rf "${helper_work}"' EXIT
+  policy_checker="${helper_work}/validate-image-verification-policy"
+  GOWORK=off GOFLAGS="" go -C "${root_dir}" build -mod=readonly -trimpath \
+    -o "${policy_checker}" ./scripts/validate-image-verification-policy >/dev/null 2>&1 || \
+    fail_infra 'could not build the reviewed image-verification policy comparator'
+fi
+[[ -x "${policy_checker}" ]] || fail_infra 'image-verification policy comparator is unavailable'
+declared_rules_json="$("${policy_checker}" normalize "${policy_manifest}" 2>/dev/null)" || \
+  fail_infra 'could not parse the complete declared image-verification policy'
+readonly declared_rules_json
+declared_rule_count="$(printf '%s' "${declared_rules_json}" | jq -r 'length')" || \
+  fail_infra 'could not count the declared image-verification rules'
+readonly declared_rule_count
+declared_patterns_json="$(printf '%s' "${declared_rules_json}" | jq -c 'map(.imagePattern)')" || \
   fail_infra 'could not encode the declared image-verification rule set'
 readonly declared_patterns_json
 
@@ -341,11 +333,12 @@ get_resource_json() {
   out="$("${talosctl_bin}" -n "${node}" get "${type}" -o json 2>/dev/null)" || status=$?
   [[ "${status}" -eq 0 ]] || return "${status}"
   # `jq -s` on empty input yields `[]`, which is the "none present" verdict.
-  printf '%s' "${out}" | jq -s -c '[.[] | {
+  printf '%s' "${out}" | jq -s -c --arg type "${type}" '[.[] | {
     id: (.metadata.id // ""),
     phase: (.metadata.phase // ""),
     owner: (.metadata.owner // ""),
-    imagePattern: (.spec.imagePattern // "")
+    imagePattern: (.spec.imagePattern // ""),
+    spec: (if $type == "imageverificationrules.security.talos.dev" then .spec else null end)
   }]' 2>/dev/null
 }
 
@@ -353,7 +346,7 @@ get_resource_json() {
 # live, 1 when it is not.
 check_node() {
   local node="$1" rules trustroots status=0
-  local total_rules running_rules running_patterns total_roots running_roots
+  local total_rules running_rules running_patterns running_decisions total_roots running_roots
 
   rules="$(get_resource_json "${node}" "${rules_type}")" || status=$?
   if [[ "${status}" -ne 0 || -z "${rules}" ]]; then
@@ -397,6 +390,21 @@ check_node() {
     return 1
   fi
 
+  # Matching patterns alone can hide stale publishers or a skip/deny action.
+  # Preserve the complete native spec, in first-match order, and fail closed
+  # when it cannot be read or compared. Diagnostics never print raw signers.
+  running_decisions="$(printf '%s' "${rules}" | jq -c --arg owner "${rules_owner}" \
+    '[sort_by(.id)[] | select(.phase == "running" and .owner == $owner) | .spec]')" || \
+    fail_infra "could not read complete image-verification decisions on ${node}"
+  status=0
+  printf '%s' "${running_decisions}" | "${policy_checker}" compare "${policy_manifest}" >/dev/null 2>&1 || status=$?
+  if [[ "${status}" -eq 1 ]]; then
+    printf 'FAIL %s: installed signer identities or actions do not match the declared verification policy\n' "${node}"
+    return 1
+  elif [[ "${status}" -ne 0 ]]; then
+    fail_infra "could not compare complete image-verification decisions on ${node} — refusing incomplete or malformed proof"
+  fi
+
   status=0
   trustroots="$(get_resource_json "${node}" "${trustroot_type}")" || status=$?
   if [[ "${status}" -ne 0 || -z "${trustroots}" ]]; then
@@ -427,7 +435,7 @@ check_node() {
     return 1
   fi
 
-  printf 'OK   %s: %s rule(s) in phase running, %s trust root(s) running\n' \
+  printf 'OK   %s: %s rule(s) in phase running with exact declared decisions, %s trust root(s) running\n' \
     "${node}" "${running_rules}" "${running_roots}"
   return 0
 }

@@ -1,0 +1,30 @@
+# Cluster-internal TCP reachable from the node CIDR only on worker nodes.
+# Pairs with cluster/block-ingress-by-default.yaml.
+#   cilium-health 4240, cilium-mutual-auth 4250, NodePort range 30000-32767
+# cilium-mutual-auth 4250: Cilium SPIRE mutual authentication
+# (authentication.mutual.spire.enabled in the cilium HelmRelease). cilium-agents
+# perform the agent-to-agent mTLS handshake on TCP 4250 (the mesh-auth
+# listener) for flows that a narrow Cilium policy marks
+# `authentication.mode: required`. The source is the peer node's host-network
+# cilium-agent, so the traffic arrives from the node CIDR. Without this port the
+# cross-node handshake times out (`dial tcp 10.0.1.x:4250: i/o timeout`) and
+# Cilium black-holes the authenticated flow; that silently broke the
+# coroot-heartbeat dead-man's switch, whose coroot-prometheus health-gate only
+# succeeded when the CronJob landed on Prometheus's node.
+# NodePort range: the Hetzner Cloud LB reaches NodePorts over the private
+# network.
+#
+# Keep the rule COUNT low — add ports to this rule when the subnet set
+# matches, don't add new rules (see the ENOBUFS note in
+# ../control-planes/allow-public-ingress.yaml).
+apiVersion: v1alpha1
+kind: NetworkRuleConfig
+name: worker-internal-node-ingress
+portSelector:
+  ports:
+    - 4240
+    - 4250
+    - 30000-32767
+  protocol: tcp
+ingress:
+  - subnet: 10.0.0.0/16

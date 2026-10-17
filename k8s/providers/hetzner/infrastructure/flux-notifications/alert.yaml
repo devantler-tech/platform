@@ -74,6 +74,9 @@ spec:
       namespace: aws
     - kind: Kustomization
       name: "*"
+      namespace: data-product-controller
+    - kind: Kustomization
+      name: "*"
       namespace: github-config
     - kind: Kustomization
       name: "*"
@@ -81,12 +84,18 @@ spec:
     - kind: Kustomization
       name: "*"
       namespace: wedding-app
+    - kind: Kustomization
+      name: "*"
+      namespace: world-at-ruin
     - kind: HelmRelease
       name: "*"
       namespace: actual-budget
     - kind: HelmRelease
       name: "*"
-      namespace: backstage
+      namespace: arc-ksail-analysis
+    - kind: HelmRelease
+      name: "*"
+      namespace: arc-systems
     - kind: HelmRelease
       name: "*"
       namespace: cert-manager
@@ -174,4 +183,5 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: whoami
-  summary: "Flux reconciliation error — prod platform"
+  eventMetadata:
+    summary: "Flux reconciliation error — prod platform"

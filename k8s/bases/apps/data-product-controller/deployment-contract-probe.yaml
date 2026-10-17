@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-product-controller-contract-probe
+  namespace: data-product-controller
+  labels:
+    app.kubernetes.io/name: data-product-controller
+    app.kubernetes.io/instance: data-product-controller
+    app.kubernetes.io/component: contract-probe
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-product-controller
+      app.kubernetes.io/instance: data-product-controller
+      app.kubernetes.io/component: contract-probe
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: data-product-controller
+        app.kubernetes.io/instance: data-product-controller
+        app.kubernetes.io/component: contract-probe
+    spec:
+      serviceAccountName: data-product-controller-contract-probe
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-auth
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: contract-probe
+          image: ghcr.io/devantler-tech/data-product-controller:2.9.1@sha256:d82b984165bc71844c323f752f474f80a7a7f7a78972a5e1171d9f814cb9bb34
+          imagePullPolicy: IfNotPresent
+          command:
+            - /contract-probe
+          env:
+            - name: CONTRACT_PROBE_URL
+              value: https://harbour-data.${domain}/openapi.json
+            - name: CONTRACT_READINESS_ENABLED
+              value: "true"
+          ports:
+            - name: management
+              containerPort: 8081
+              protocol: TCP
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 5m
+              memory: 24Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: management
+              scheme: HTTP
+            timeoutSeconds: 7
+            periodSeconds: 30
+            failureThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: management
+              scheme: HTTP
+            timeoutSeconds: 2
+            periodSeconds: 10
+            failureThreshold: 3

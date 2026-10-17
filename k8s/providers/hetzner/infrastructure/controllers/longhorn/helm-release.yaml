@@ -18,7 +18,7 @@ spec:
   chart:
     spec:
       chart: longhorn
-      version: 1.12.1
+      version: 1.13.0
       sourceRef:
         kind: HelmRepository
         name: longhorn
@@ -75,10 +75,11 @@ spec:
       # Only create default disks on nodes explicitly labeled for storage.
       # This prevents control plane nodes (which lack dedicated volumes)
       # from hosting replicas and running out of memory.
-      createDefaultDiskOnLabeledNodesOnly: true
-      # Restrict Longhorn system-managed pods (instance-managers, etc.)
-      # to storage nodes. Prevents ~100Mi overhead per non-storage node.
-      systemManagedComponentsNodeSelector: "node.longhorn.io/create-default-disk:true"
+      createDefaultDiskLabeledNodes: true
+      # Volume clients must run on eligible compute workers too. Disk creation
+      # stays label-gated above, and the replica policy excludes autoscaled nodes.
+      # Changing this setting uses the protected all-volumes-detached procedure.
+      systemManagedComponentsNodeSelector: ""
       # Tell Longhorn this cluster runs the Cluster Autoscaler: Longhorn then
       # annotates its system-managed per-node pods (instance-managers, etc.)
       # as safe-to-evict where no replica pins them, so the autoscaler can
@@ -142,13 +143,19 @@ spec:
       provisionerReplicaCount: ${longhorn_csi_provisioner_replicas:=1}
       resizerReplicaCount: ${longhorn_csi_resizer_replicas:=1}
       snapshotterReplicaCount: ${longhorn_csi_snapshotter_replicas:=1}
+      # Chart 1.13.0 adds a cluster-wide `get secrets` ClusterRole for the CSI
+      # controller sidecars, on by default for clusters whose StorageClasses
+      # or volumes name a provisioner- or controller-side Secret. Nothing here
+      # does: neither Longhorn StorageClass nor the snapshot class sets a CSI
+      # secret parameter, and none of the 14 live Longhorn volumes carries a
+      # controller Secret reference (checked 2026-10-06). Turn it back on in
+      # the same change that introduces an encrypted volume.
+      allowControllerSecretAccess: false
 
-    # Restrict Longhorn DaemonSets to storage-labeled nodes only.
-    # Control planes don't carry disks and no pods on them mount Longhorn
-    # volumes — running longhorn-manager there wastes ~250Mi per node.
+    # Managers are volume clients, not a declaration of replica-storage capacity.
+    # Keep the chart's normal scheduling constraints; do not select storage labels.
     longhornManager:
-      nodeSelector:
-        node.longhorn.io/create-default-disk: "true"
+      nodeSelector: {}
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}
@@ -190,13 +197,14 @@ spec:
     #
     # It does NOT go unnoticed, though. This HelmRelease is a member of the pinned
     # EKS authorization surface (document 217 of the rendered membership), so any
-    # chart bump moves the aggregate fingerprint and reds that gate, forcing a
+    # chart bump moves its approved-surface entry and reds that gate, forcing a
     # re-approval — which is exactly the checkpoint where this patch gets
     # re-verified. The gate is the backstop; this comment is the instruction.
     #
     # The three writable paths (/var/cache/nginx, /var/config/nginx, /var/run) are
-    # chart-provided emptyDirs and world-writable, so no fsGroup is needed, and
-    # nginx listens on 8000, so dropping ALL capabilities costs no bind privilege.
+    # chart-provided emptyDirs and world-writable, so the UI needs no fsGroup to
+    # run; the one set below exists for C-0211 and names its own group. nginx
+    # listens on 8000, so dropping ALL capabilities costs no bind privilege.
     # readOnlyRootFilesystem is deliberately NOT set: the ui entrypoint renders its
     # nginx config at start-up, so that is a separate (C-0017) question with real
     # breakage risk rather than something to bundle into a non-root change.
@@ -214,8 +222,10 @@ spec:
                 template:
                   spec:
                     securityContext:
-                      # Source-owned C-0211 canary: the UI uses only emptyDir
-                      # volumes and sets no fsGroup, so this changes no ownership.
+                      # C-0211 requires a pod-level fsGroup (#3522). 486 is the
+                      # group the UI already runs as, and its only volumes are
+                      # the chart's emptyDirs, so this grants no new access.
+                      fsGroup: 486
                       fsGroupChangePolicy: OnRootMismatch
                       runAsNonRoot: true
                       runAsUser: 499
@@ -288,3 +298,48 @@ spec:
                       - name: longhorn-driver-deployer
                         securityContext:
                           seLinuxOptions: {}
+          # longhorn-global-manager is new in chart 1.13.0: three leader-elected
+          # replicas of `longhorn-manager global`, hosting the two controllers
+          # that watch Pods and PersistentVolumes cluster-wide. Unlike the
+          # DaemonSet of the same image it mounts no volume and no host path,
+          # opens only the unprivileged health port 9505 and never writes to its
+          # filesystem (read at tag v1.13.0: app/global.go builds API clients,
+          # runs the Lease election and serves /v1/healthz). So it gets a full
+          # non-root context rather than a C-0211 exception. The image's default
+          # user is root; the explicit numeric uid overrides it, and
+          # runAsNonRoot is the backstop if that uid is ever removed. 65532
+          # names no account in the image and owns nothing there; the binary in
+          # /usr/local/sbin is world-executable. The chart exposes no
+          # securityContext value for this Deployment.
+          - target:
+              kind: Deployment
+              name: longhorn-global-manager
+            patch: |
+              apiVersion: apps/v1
+              kind: Deployment
+              metadata:
+                name: longhorn-global-manager
+              spec:
+                template:
+                  spec:
+                    securityContext:
+                      fsGroup: 65532
+                      fsGroupChangePolicy: OnRootMismatch
+                      runAsNonRoot: true
+                      runAsUser: 65532
+                      runAsGroup: 65532
+                      seccompProfile:
+                        type: RuntimeDefault
+                    containers:
+                      - name: longhorn-global-manager
+                        securityContext:
+                          seLinuxOptions: {}
+                          runAsNonRoot: true
+                          runAsUser: 65532
+                          runAsGroup: 65532
+                          allowPrivilegeEscalation: false
+                          capabilities:
+                            drop:
+                              - ALL
+                          seccompProfile:
+                            type: RuntimeDefault

@@ -2,6 +2,7 @@ package refreshfluxghcrauth
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -13,8 +14,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 var (
@@ -26,7 +30,8 @@ var (
 
 	// Set once by prepareFakeCommandBinary; see the comment there for why the
 	// fakes do not run from the test binary itself.
-	fakeCommandBinary string
+	fakeCommandBinary      string
+	errForeignFixtureGroup = errors.New("process group has a different owner")
 )
 
 type commandResult struct {
@@ -111,7 +116,9 @@ func prepareFakeCommandBinary() func() {
 	cleanup := func() { _ = os.RemoveAll(dir) }
 
 	candidate := filepath.Join(dir, "fake-commands")
-	build := exec.Command("go", "test", "-c", "-o", candidate, ".")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	build := fixtureCommand(ctx, "go", "test", "-c", "-o", candidate, ".")
 	build.Dir = filepath.Join(rootPath, "scripts", "tests", "refresh-flux-ghcr-auth")
 	if output, buildErr := build.CombinedOutput(); buildErr != nil {
 		fmt.Fprintf(os.Stderr,
@@ -135,11 +142,11 @@ func findRepoRoot() string {
 }
 
 func readKSailOperatorVersion() string {
-	path := filepath.Join(rootPath, "k8s", "bases", "infrastructure", "controllers", "ksail-operator", "helm-release.yaml")
+	path := filepath.Join(rootPath, "k8s", "bases", "infrastructure", "controllers", "ksail-operator", "oci-repository.yaml")
 	for _, line := range strings.Split(mustReadFile(path), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "version:") {
-			return strings.TrimSpace(strings.TrimPrefix(trimmed, "version:"))
+		if strings.HasPrefix(trimmed, "tag:") {
+			return strings.TrimSpace(strings.TrimPrefix(trimmed, "tag:"))
 		}
 	}
 	panic("KSail operator chart version not found")
@@ -435,7 +442,9 @@ func (f *fixture) clearRunStatePreservingCluster(helper, preserveClusterState bo
 
 func runCaptured(t *testing.T, cwd string, environment map[string]string, executable string, args ...string) commandResult {
 	t.Helper()
-	cmd := exec.Command(executable, args...)
+	ctx, cancel := fixtureCommandContext(t)
+	defer cancel()
+	cmd := fixtureCommand(ctx, executable, args...)
 	cmd.Dir = cwd
 	cmd.Env = environmentSlice(environment)
 	var stdout bytes.Buffer
@@ -443,6 +452,18 @@ func runCaptured(t *testing.T, cwd string, environment map[string]string, execut
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
+	if cleanupErr := finishFixtureCommand(cmd); cleanupErr != nil {
+		// A failed observation still fails the test. It must not prevent
+		// stopping the group this transport itself created.
+		stopErr := cleanupErr
+		if !errors.Is(cleanupErr, errForeignFixtureGroup) {
+			stopErr = cmd.Cancel()
+		}
+		t.Fatalf("fixture process cleanup: %v; stop result: %v", cleanupErr, stopErr)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("fixture command did not finish within its test budget: %v", ctx.Err())
+	}
 	exitCode := 0
 	if err != nil {
 		var exitError *exec.ExitError
@@ -452,6 +473,139 @@ func runCaptured(t *testing.T, cwd string, environment map[string]string, execut
 		exitCode = exitError.ExitCode()
 	}
 	return commandResult{exitCode: exitCode, stdout: stdout.String(), stderr: stderr.String()}
+}
+
+// Leave time to stop and reap fixture children before Go's package timer exits
+// the test process without running cleanup. An unlimited package still has a
+// finite command budget; production operation deadlines are not changed.
+func fixtureCommandContext(t *testing.T) (context.Context, context.CancelFunc) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	if packageDeadline, ok := t.Deadline(); ok {
+		deadline = minTime(deadline, packageDeadline.Add(-10*time.Second))
+	}
+	return context.WithDeadline(t.Context(), deadline)
+}
+
+func minTime(a, b time.Time) time.Time {
+	if b.Before(a) {
+		return b
+	}
+	return a
+}
+
+// Each command owns a new process group. Cancelling only the shell leaves its
+// background renewal and transport children alive, so cancellation targets the
+// group created by this command, never a host-wide process-name match.
+func fixtureCommand(ctx context.Context, executable string, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, executable, args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.WaitDelay = 3 * time.Second
+	cmd.Cancel = func() error {
+		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			return os.ErrProcessDone
+		}
+		return err
+	}
+	return cmd
+}
+
+// A completed shell can leave a child with redirected output, so waiting for
+// stdout/stderr alone is not a termination proof. Briefly allow already-ending
+// children to be reaped, then fail the test and stop only this command's group.
+// This reports ordinary helper leaks instead of silently hiding them.
+func finishFixtureCommand(cmd *exec.Cmd) error {
+	if cmd.Process == nil {
+		return nil
+	}
+	group := -cmd.Process.Pid
+	deadline := time.Now().Add(time.Second)
+	for {
+		err := syscall.Kill(group, 0)
+		if errors.Is(err, syscall.ESRCH) {
+			return nil
+		}
+		if err != nil {
+			probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			live, probeErr := inspectFixtureGroup(exec.CommandContext(probeCtx,
+				"/bin/ps", "-axo", "pid=,pgid=,uid=,stat="), cmd.Process.Pid, os.Geteuid())
+			if probeErr != nil {
+				return fmt.Errorf("cannot verify owned process group termination: %w", probeErr)
+			}
+			if !live {
+				return nil
+			}
+			return fmt.Errorf("cannot signal a live owned process group: %w", err)
+		}
+		if !time.Now().Before(deadline) {
+			probeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			live, probeErr := inspectFixtureGroup(exec.CommandContext(probeCtx,
+				"/bin/ps", "-axo", "pid=,pgid=,uid=,stat="), cmd.Process.Pid, os.Geteuid())
+			if probeErr != nil {
+				return probeErr
+			}
+			if !live {
+				return nil
+			}
+			if err := syscall.Kill(group, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+				return fmt.Errorf("stop owned process group: %w", err)
+			}
+			return errors.New("helper left running descendants after completion")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// A signal probe is ambiguous for a disappearing or zombie-only group on
+// macOS. Require a successful, complete native process observation instead of
+// treating EPERM as either proof of liveness or permission to ignore it.
+func inspectFixtureGroup(probe *exec.Cmd, group, uid int) (bool, error) {
+	data, err := probe.Output()
+	if err != nil {
+		return false, fmt.Errorf("read fixture process group: %w", err)
+	}
+	return parseFixtureGroup(data, group, uid)
+}
+
+func parseFixtureGroup(data []byte, group, uid int) (bool, error) {
+	if len(data) == 0 || len(data) > 1024*1024 || group <= 1 {
+		return false, errors.New("incomplete process observation")
+	}
+	live, observed := false, false
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 4 {
+			return false, errors.New("malformed process observation")
+		}
+		var values [3]int
+		for i := range values {
+			value, err := strconv.Atoi(fields[i])
+			// Darwin renders the system nobody UID as -2. It is a valid
+			// unrelated row, never a reason to discard the whole snapshot.
+			if err != nil || (i < 2 && value < 0) {
+				return false, errors.New("invalid process identity")
+			}
+			values[i] = value
+		}
+		observed = true
+		if values[1] != group || fields[3][0] == 'Z' {
+			continue
+		}
+		if values[2] != uid {
+			return false, errForeignFixtureGroup
+		}
+		live = true
+	}
+	if !observed {
+		return false, errors.New("empty process observation")
+	}
+	return live, nil
 }
 
 func environmentMap(values []string) map[string]string {

@@ -44,8 +44,8 @@ name: Diagnose Cilium ExternalAuth ipcache
 #
 # PUBLIC LOG. This repository's workflow logs are public, so the script prints no address, node
 # name or pod name — only counts, identities, encryption keys and the verdict. The endpoint
-# helper's success line names the API endpoint, so it is discarded; a failure annotation from it
-# can still name the endpoint, as the deploy path's does.
+# helper prints no address either, on success or failure; its standard output is discarded so
+# this log carries the diagnostic's lines only.
 #
 # The script's own test needs no cluster and no secrets, so it runs in ci.yaml's required
 # `validate` job rather than here.
@@ -135,8 +135,8 @@ jobs:
         # KUBE_CONFIG can outlive the control-plane node whose address it was minted with, and a
         # routine control-plane rollout would then leave every read INCONCLUSIVE. Same helper and
         # same position as the deploy composite: resolve the KSail-owned floating IP, fail closed on
-        # missing or foreign ownership, and switch admin@prod before any API call. Its success line
-        # names the endpoint, so stdout is discarded to keep the public log address-free.
+        # missing or foreign ownership, and switch admin@prod before any API call. It prints no
+        # address; stdout is discarded to keep this log to the diagnostic's own lines.
         shell: bash
         env:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

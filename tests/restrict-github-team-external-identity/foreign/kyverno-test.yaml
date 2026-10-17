@@ -1,0 +1,21 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-github-team-external-identity-foreign
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-external-identity.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-github-team-external-identity
+    rule: teams-external-name-is-an-approved-identity
+    resources:
+      - github-config/admins
+      - github-config/maintainers
+      - github-config/other
+    kind: Team
+    result: fail

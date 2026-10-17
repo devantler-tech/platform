@@ -15,10 +15,12 @@ results:
     resources:
       - observability/declared-group
       - crossview/infrastructure-as-code-group
+      - client-site/clients-group
+      - personal-site/personal-group
     kind: HTTPRoute
     result: pass
 
-  # --- undeclared, missing, bookmark-named and mis-cased groups are denied ---
+  # --- undeclared, missing, bookmark-named, mis-cased and retired groups are denied ---
   - policy: restrict-homepage-service-groups
     rule: declared-service-group
     resources:
@@ -26,6 +28,8 @@ results:
       - whoami/missing-group
       - whoami/bookmark-group-name
       - whoami/wrong-case-group
+      - client-site/retired-customer-sites-group
+      - personal-site/retired-personal-sites-group
     kind: HTTPRoute
     result: fail
 

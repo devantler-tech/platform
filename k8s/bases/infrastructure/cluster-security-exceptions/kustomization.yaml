@@ -3,6 +3,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - admission-controllers.yaml
+  - arc-openbao-listener.yaml
   - batch-workloads.yaml
   - cilium-network-policies.yaml
   - controller-rbac.yaml
@@ -14,13 +15,15 @@ resources:
   - image-verification.yaml
   - infrastructure-privileged.yaml
   - kubescape-privileged.yaml
-  - pod-security-mutations-unscoped.yaml
+  - pod-security-mutations-residual.yaml
   - pod-security-mutations.yaml
   - secret-reader-rbac.yaml
   - service-account-tokens.yaml
   - talos-cis-control-plane-false-positives.yaml
   - talos-cis-worker-false-positives.yaml
+  - umami-db-rotation-service-account-token.yaml
   - umami-provisioning-service-account-token.yaml
   - upstream-chart-defaults.yaml
   - vpa-managed-resources.yaml
   - wildcard-rbac.yaml
+  - world-at-ruin-trial-operator.yaml

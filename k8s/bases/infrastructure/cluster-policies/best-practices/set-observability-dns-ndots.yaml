@@ -1,16 +1,16 @@
-# Coroot's server, ClickHouse, and CloudNativePG integration use qualified
-# service or object-store names. Kubernetes' default ndots:5 resolver policy
-# first expands names with fewer than five dots through every namespace search
-# suffix, generating several guaranteed NXDOMAIN responses for each successful
-# lookup. Coroot correctly surfaces that amplification as a DNS warning.
+# Coroot's operator emits one- and two-dot relative service names. ndots:1
+# sends those names to upstream DNS before searching cluster domains. ndots:3
+# keeps these lookups in the cluster while still trying fully qualified service
+# names and three-dot object-store names without search-path amplification.
 #
 # Keep the mutation deliberately narrow: only Coroot-owned pods and the CNPG
-# Cluster backing Coroot receive ndots:1. Other workloads retain the Kubernetes
-# default until their own lookup behavior is measured. This changes lookup
+# Cluster backing Coroot receive a resolver override. CNPG retains ndots:1;
+# its same-namespace service and object-store lookups are unchanged. Other
+# workloads retain the Kubernetes default until their lookup behavior is measured. This changes lookup
 # order only; it does not alter the DNS server, search domains, or network
 # policy. The option is applied at Pod admission; the Coroot and CNPG manifests
-# carry a shared rollout token so existing pods are recreated declaratively when
-# this policy first reaches a cluster. Match CREATE only: adding dnsConfig to an
+# carry rollout tokens so changed pods are recreated declaratively.
+# Match CREATE only: adding dnsConfig to an
 # existing Pod during an unrelated metadata UPDATE would violate Kubernetes Pod
 # immutability and can block the owning controller's reconciliation.
 apiVersion: kyverno.io/v1
@@ -18,13 +18,14 @@ kind: ClusterPolicy
 metadata:
   name: set-observability-dns-ndots
   annotations:
-    policies.kyverno.io/title: Prefer Absolute Observability DNS Names
+    policies.kyverno.io/title: Resolve Observability Names Without Upstream Leakage
     policies.kyverno.io/category: Observability, Reliability
     policies.kyverno.io/subject: Pod
     policies.kyverno.io/minversion: 1.6.0
     policies.kyverno.io/description: >-
-      Prevents Coroot and its database from expanding qualified DNS names
-      through every cluster search suffix before trying the absolute name.
+      Keeps Coroot's relative service lookups inside cluster DNS while avoiding
+      search-path amplification for fully qualified names. Preserves the
+      database's existing resolver behavior.
 spec:
   background: false
   rules:
@@ -57,7 +58,7 @@ spec:
             dnsConfig:
               options:
                 - name: ndots
-                  value: "1"
+                  value: "3"
     - name: set-coroot-db-dns-ndots
       match:
         any:

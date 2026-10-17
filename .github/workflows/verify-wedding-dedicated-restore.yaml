@@ -1,0 +1,85 @@
+name: Verify Wedding Dedicated Restore
+
+# An operator proof, never a PR-triggered production mutation. It preserves the
+# live database and deletes only the temporary namespace owned by this run.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-wedding-dedicated-restore"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  restore:
+    name: 💒 Prove isolated dedicated Wedding restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: prod
+    permissions:
+      contents: read
+    env:
+      WEDDING_RESTORE_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require main and explicit confirmation
+        id: invocation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${CONFIRM}" == verify-wedding-dedicated-restore && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🔑 Restore production kubeconfig
+        id: kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🎯 Select stable production API endpoint
+        id: endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+
+      - name: 💒 Take a fresh dedicated backup
+        shell: bash
+        env:
+          WEDDING_BACKUP_CONFIRM: verify-wedding-backup-cutover
+        run: bash scripts/verify-wedding-backup-cutover.sh
+
+      - name: 💒 Restore and compare aggregate guest data
+        run: go run ./scripts/verify-wedding-dedicated-restore
+
+      # A separate always step covers cancellation and timeout as well as the
+      # Go program's normal/error cleanup. It never deletes a foreign namespace.
+      - name: 🧹 Verify temporary namespace and storage cleanup
+        if: ${{ always() && steps.invocation.outcome == 'success' && steps.kubeconfig.outcome == 'success' && steps.endpoint.outcome == 'success' }}
+        run: go run ./scripts/verify-wedding-dedicated-restore --cleanup

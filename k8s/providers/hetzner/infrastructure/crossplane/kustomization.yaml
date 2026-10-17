@@ -11,5 +11,6 @@ resources:
   - deployment-runtime-config-aws-iam.yaml
   - deployment-runtime-config-upjet-unifi.yaml
   - managed-resource-activation-policy.yaml
+  - managed-resource-activation-policy-arc.yaml
   - managed-resource-activation-policy-aws.yaml
   - managed-resource-activation-policy-unifi.yaml

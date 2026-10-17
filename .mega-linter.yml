@@ -63,6 +63,12 @@ BASH_SHFMT_ARGUMENTS:
   # written. Without it shfmt de-indents them and CI commits the reflow.
   - -ci
 
+# These four files are sourced libraries, not executable entry points. MegaLinter
+# 10 selects all .sh files even without a shebang. Only its execute-bit check is
+# scoped off these exact paths; ShellCheck and formatting still inspect them.
+# guard-test-script-exec-bit.sh checks both this boundary and their tracked modes.
+BASH_EXEC_FILTER_REGEX_EXCLUDE: '(^|/)scripts/(cosign-failure-lib|ghcr-auth-lib|publish-workflow-approved-revisions\.lib|refresh-flux-ghcr-auth-safety)\.sh$'
+
 DISABLE_LINTERS:
   # gitleaks is deprecated in MegaLinter's own descriptor, which recommends exactly this entry and
   # prints the notice on every run. Its 2 findings were triaged before removing it: both are
@@ -124,9 +130,11 @@ DISABLE_ERRORS_LINTERS:
   # It then went 109 -> 93 when the RBAC breadth in the vendored KubeVirt and CDI operator
   # bundles was dispositioned as a class — 16 findings, and 16 of the 25 HIGH/CRITICAL on this
   # tree. Both files are upstream release artifacts that update-vendored-operators.sh fetches at
-  # a pinned version and verifies against a recorded SHA-256; every finding sits on a ClusterRole
-  # or Role named for the operator itself, and narrowing those grants would break the operator
-  # and diverge the bundle from the checksum it is verified against. See .trivyignore.yaml for the
+  # a pinned version and verifies against a recorded SHA-256 before adding this repository's
+  # resource-scoped Checkov annotations. The committed files are upstream plus those annotations;
+  # every finding sits on an upstream ClusterRole or Role named for the operator itself, and
+  # narrowing those grants would break the operator and alter the pinned upstream source.
+  # See .trivyignore.yaml for the
   # reasoning and #2990 for the measurement. The five checks stay live on the cluster roles this
   # repository does author, where the residual HIGH/CRITICAL was dispositioned per class by #2990
   # (see the entry below), and

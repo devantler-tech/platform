@@ -1,18 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {execFileSync,spawnSync} from 'node:child_process';
-import {readFile} from 'node:fs/promises';
+import {readFile,mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
 import path from 'node:path';
 import {fixture} from './runtime-fixture.mjs';
 const root=path.resolve(import.meta.dirname,'../..');
 const yaml=p=>JSON.parse(execFileSync('yq',['-o=json','.',path.join(root,p)],{encoding:'utf8'}));
 
-test('Wedding archive identity is isolated from retained predecessor WAL',()=>{
+for(const store of ['wedding-db-dedicated','tenant-selected-archive'])test('production patches preserve the tenant-selected store and database protections: '+store,async t=>{
  const overlay=yaml('k8s/providers/hetzner/apps/wedding-app/patches/flux-kustomization-protect-wedding-db.yaml');
- const candidate=overlay.spec?.patches?.find(entry=>entry.target?.group==='postgresql.cnpg.io'&&entry.target.kind==='Cluster'&&entry.target.name==='wedding-db'&&entry.patch.trimStart().startsWith('- op:'));
- assert.ok(candidate,'Wedding Cluster archive-incarnation patch is missing');
- const operations=JSON.parse(execFileSync('yq',['-o=json','.'],{input:candidate.patch,encoding:'utf8'}));
- assert.deepEqual(operations,[{op:'add',path:'/spec/plugins/0/parameters/serverName',value:'wedding-db-20260909'}]);
+ const dir=await mkdtemp(path.join(tmpdir(),'wedding-archive-render-'));
+ t.after(()=>rm(dir,{recursive:true,force:true}));
+ const cluster={apiVersion:'postgresql.cnpg.io/v1',kind:'Cluster',metadata:{name:'wedding-db',namespace:'wedding-app'},spec:{instances:3,plugins:[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:store}}]}};
+ await writeFile(path.join(dir,'cluster.yaml'),JSON.stringify(cluster));
+ await writeFile(path.join(dir,'kustomization.yaml'),JSON.stringify({apiVersion:'kustomize.config.k8s.io/v1beta1',kind:'Kustomization',resources:['cluster.yaml'],patches:overlay.spec.patches}));
+ const rendered=JSON.parse(execFileSync('yq',['-o=json','.'],{input:execFileSync('kubectl',['kustomize',dir],{encoding:'utf8'}),encoding:'utf8'}));
+ assert.deepEqual(rendered.spec.plugins,[{name:'barman-cloud.cloudnative-pg.io',enabled:true,isWALArchiver:true,parameters:{barmanObjectName:store,serverName:'wedding-db-20260909'}}]);
+ assert.equal(rendered.spec.instances,3);
+ assert.deepEqual(rendered.spec.postgresql.synchronous,{method:'any',number:1,dataDurability:'preferred'});
+ assert.equal(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/prune'],'disabled');
+ assert.notEqual(rendered.metadata.annotations['kustomize.toolkit.fluxcd.io/force'],'enabled');
+ // Flux has no per-resource force opt-out: the owning layer must disable it.
+ assert.equal(yaml('k8s/clusters/base/flux-kustomization-apps.yaml').spec.force,false);
 });
 // Test-only resolution of scalar context references; the production proposal
 // contains no expression language beyond these direct input/step handoffs.
@@ -42,13 +52,13 @@ for(const flag of [undefined,false])test('actual proposed omitted/false step doe
  const {child,reads}=await executeStep(t,flag);assert.equal(child.status,0);assert.equal(child.stderr,'');assert.equal(reads,'');assert.equal(child.stdout,'');
 });
 test('actual proposed true step uses the publisher digest and succeeds after wait',async t=>{
- const {child,reads}=await executeStep(t,true);assert.equal(child.status,0);assert.equal(child.stderr,'');assert.equal(JSON.parse(child.stdout).projectionEqual,true);assert.equal(reads.trim().split('\n').length,22);
+ const {child,reads}=await executeStep(t,true);assert.equal(child.status,0);assert.equal(child.stderr,'');assert.equal(JSON.parse(child.stdout).projectionEqual,true);assert.equal(reads.trim().split('\n').length,20);
 });
 for(const state of [{wait:'failure'},{publish:'failure'}])test('actual proposed true step refuses failed dependency before API reads '+JSON.stringify(state),async t=>{
  const {child,reads}=await executeStep(t,true,state);assert.equal(child.status,2);assert.equal(child.stderr,'');assert.deepEqual(JSON.parse(child.stdout),{verified:false});assert.equal(reads,'');
 });
 
-test('dedicated ObjectStore is staged without moving the active archive',()=>{
+test('dedicated ObjectStore and credential are the only Wedding backup wiring',async()=>{
  const prodBootstrap=yaml('k8s/clusters/prod/bootstrap/secret-wedding-db-backup-r2.enc.yaml');
  assert.equal(prodBootstrap.metadata.name,'wedding-db-backup-r2-bootstrap');
  assert.deepEqual(Object.keys(prodBootstrap.stringData).sort(),['access_key_id','secret_access_key']);
@@ -74,14 +84,6 @@ test('dedicated ObjectStore is staged without moving the active archive',()=>{
   ['ACCESS_KEY_ID','apps/wedding-app/backup/r2','access_key_id'],
   ['SECRET_ACCESS_KEY','apps/wedding-app/backup/r2','secret_access_key'],
  ]);
- const active=yaml('k8s/bases/apps/wedding-app/object-store.yaml');
- assert.equal(active.metadata.name,'wedding-db');
- assert.equal(active.spec.configuration.destinationPath,'s3://${r2_bucket}/cnpg/wedding-db');
- assert.deepEqual([
-  active.spec.configuration.s3Credentials.accessKeyId.name,
-  active.spec.configuration.s3Credentials.secretAccessKey.name,
-  active.spec.configuration.s3Credentials.region.name,
- ],['wedding-db-backup-r2','wedding-db-backup-r2','wedding-db-backup-r2']);
  const store=yaml('k8s/bases/apps/wedding-app/object-store-dedicated.yaml');
  assert.equal(store.metadata.name,'wedding-db-dedicated');
  assert.equal(store.spec.configuration.destinationPath,'s3://wedding-db-backups/cnpg/wedding-db');
@@ -93,8 +95,27 @@ test('dedicated ObjectStore is staged without moving the active archive',()=>{
  const resources=yaml('k8s/bases/apps/wedding-app/kustomization.yaml').resources;
   assert.ok(resources.includes('external-secret-db-backup-dedicated.yaml'));
  assert.ok(resources.includes('object-store-dedicated.yaml'));
- assert.ok(resources.includes('object-store.yaml'),'the active shared ObjectStore stays present during staging');
-  assert.ok(resources.includes('external-secret-db-backup.yaml'),'shared projection remains available for rollback until restore acceptance');
+ // Shared access is retired (#3253): the tenant namespace must not hold the
+ // platform-wide backup credential, nor a store that reads the shared bucket.
+ for(const retired of ['object-store.yaml','external-secret-db-backup.yaml']){
+  assert.ok(!resources.includes(retired),retired+' must stay retired');
+  await assert.rejects(readFile(path.join(root,'k8s/bases/apps/wedding-app',retired)),{code:'ENOENT'});
+ }
+ for(const file of resources.filter(name=>name.endsWith('.yaml'))){
+  const text=await readFile(path.join(root,'k8s/bases/apps/wedding-app',file),'utf8');
+  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}/,file+' must not reach the shared backup credential or bucket');
+ }
+ // The same holds for what production actually renders, whichever file or
+ // overlay patch a regression would arrive through.
+ const rendered=execFileSync('yq',['-o=json','-I=0','.'],{input:execFileSync('kubectl',['kustomize',path.join(root,'k8s/providers/hetzner/apps')],{encoding:'utf8',maxBuffer:64*1024*1024}),encoding:'utf8',maxBuffer:64*1024*1024}).split('\n').filter(Boolean).map(line=>JSON.parse(line));
+ const wedding=rendered.filter(doc=>doc.metadata?.namespace==='wedding-app');
+ assert.ok(wedding.some(doc=>doc.kind==='ObjectStore'&&doc.metadata.name==='wedding-db-dedicated'),'the render must contain the dedicated store, or nothing was examined');
+ assert.ok(rendered.some(doc=>doc.metadata?.namespace!=='wedding-app'&&JSON.stringify(doc).includes('infrastructure/backup/r2')),'the render must contain a shared consumer, or the pattern below matches nothing');
+ for(const doc of wedding){
+  const label=doc.kind+'/'+doc.metadata.name,text=JSON.stringify(doc);
+  assert.ok(!(doc.kind==='ObjectStore'&&doc.metadata.name!=='wedding-db-dedicated'),label+' is not the dedicated store');
+  assert.doesNotMatch(text,/infrastructure\/backup\/r2|\$\{r2_bucket\}|platform-backups|wedding-db-backup-r2(?!-dedicated)/,label+' reaches the shared backup credential or bucket');
+ }
 });
 
 test('thin local cluster does not advertise an unavailable Wedding backup path',async()=>{
@@ -111,7 +132,7 @@ test('thin local cluster does not advertise an unavailable Wedding backup path',
  assert.doesNotMatch(architecture,/Wedding's local bootstrap|local MinIO bucket/);
 });
 
-test('rotation docs keep staged Wedding inactive and use the non-printing SOPS path',async()=>{
+test('rotation docs use the non-printing SOPS path',async()=>{
  const runbook=await readFile(path.join(root,'docs/dr/runbook.md'),'utf8');
  const scenario=runbook.slice(runbook.indexOf('## Scenario 7 — R2 / Cloudflare credential rotation'));
  const revoke=scenario.indexOf('Revoke the old token');
@@ -123,13 +144,32 @@ test('rotation docs keep staged Wedding inactive and use the non-printing SOPS p
  assert.match(beforeRevoke,/gh run watch "\$run_id" --repo devantler-tech\/platform --exit-status/);
  assert.match(beforeRevoke,/sops set --value-stdin/);
  assert.doesNotMatch(beforeRevoke,/^sops k8s\/clusters\/prod\/bootstrap\//m);
- assert.match(beforeRevoke,/staged ObjectStore remains[^]*inactive/i);
  assert.match(beforeRevoke,/Do not revoke the shared credential/i);
- assert.match(beforeRevoke,/Wedding remains a shared-token consumer[^]*Umami[^]*Coroot/i);
  assert.doesNotMatch(beforeRevoke,/cnpg\.io\/instanceRole/);
 
  const architecture=await readFile(path.join(root,'docs/dr/velero-cnpg.md'),'utf8');
  assert.match(architecture,/apps\/wedding-app\/backup\/r2/);
  assert.match(architecture,/tenant-isolated database[^]*dedicated bucket[^]*dedicated OpenBao path/i);
  assert.doesNotMatch(architecture,/local MinIO bucket/);
+});
+
+test('fresh backup dispatch refuses wrong confirmation and foreign branches before credential restoration',()=>{
+ const workflow=yaml('.github/workflows/verify-wedding-backup-cutover.yaml');
+ assert.deepEqual(Object.keys(workflow.on),['workflow_dispatch']);
+ assert.equal(workflow.concurrency.group,'prod-deploy');
+ assert.equal(workflow.concurrency['cancel-in-progress'],false);
+ assert.equal(workflow.concurrency.queue,'max');
+ const job=workflow.jobs.verify;
+ assert.equal(job.environment,'prod');
+ const guard=job.steps[0];
+ for(const [ref,confirm,expected] of [
+  ['refs/heads/main','verify-wedding-backup-cutover',0],
+  ['refs/heads/feature','verify-wedding-backup-cutover',1],
+  ['refs/heads/main','wrong',1],
+ ]){
+  const env={...process.env};
+  for(const [key,value] of Object.entries(guard.env))env[key]=scalar(value,{github:{ref},inputs:{confirm}});
+  const result=spawnSync('/bin/bash',['-e','-o','pipefail','-c',guard.run],{env,encoding:'utf8'});
+  assert.equal(result.status,expected);
+ }
 });

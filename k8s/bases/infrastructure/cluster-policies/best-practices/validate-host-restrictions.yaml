@@ -23,12 +23,11 @@ metadata:
     policies.kyverno.io/category: Pod Security, Best Practices
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Pod
-    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
       Blocks host-level access (hostPath, hostNetwork, hostPID, hostIPC)
       in non-infrastructure namespaces to prevent container escape.
 spec:
-  validationFailureAction: Enforce
   background: true
   rules:
     - name: disallow-host-path
@@ -54,6 +53,7 @@ spec:
                 - velero
                 - chaos-mesh
       validate:
+        failureAction: Enforce
         message: "hostPath volumes are not allowed."
         pattern:
           spec:
@@ -82,6 +82,7 @@ spec:
                 - velero
                 - chaos-mesh
       validate:
+        failureAction: Enforce
         message: "hostNetwork, hostPID, and hostIPC are not allowed."
         pattern:
           spec:
@@ -127,6 +128,7 @@ spec:
                   - key: cnpg.io/cluster
                     operator: Exists
       validate:
+        failureAction: Enforce
         message: >-
           hostUsers: true is not allowed in a namespace opted into user
           namespaces. Remove the field to inherit hostUsers: false, or drop the

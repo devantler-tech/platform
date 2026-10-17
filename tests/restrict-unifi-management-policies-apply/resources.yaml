@@ -1,0 +1,72 @@
+---
+# What the platform's patch produces.
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: retained
+  namespace: unifi
+spec:
+  managementPolicies: [Observe, Create, Update, LateInitialize]
+  forProvider: {}
+---
+# A source transformer that ran after the patch and put Delete back.
+apiVersion: vpn.unifi.m.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: delete-restored
+  namespace: unifi
+spec:
+  managementPolicies: [Observe, Create, Update, Delete, LateInitialize]
+  forProvider: {}
+---
+apiVersion: route.unifi.m.crossplane.io/v1alpha1
+kind: TrafficRoute
+metadata:
+  name: wildcard
+  namespace: unifi
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}
+---
+# No list at all: the CRD defaults it to "*".
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: omitted
+  namespace: unifi
+spec:
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: observing
+  namespace: unifi
+  annotations:
+    platform.devantler.tech/unifi-management: observe-only
+spec:
+  managementPolicies: [Observe]
+  forProvider: {}
+---
+# The annotation added by the source's commonAnnotations after the patches ran.
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: observe-only-widened
+  namespace: unifi
+  annotations:
+    platform.devantler.tech/unifi-management: observe-only
+spec:
+  managementPolicies: [Observe, Create, Update, LateInitialize]
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: observe-only-empty
+  namespace: unifi
+  annotations:
+    platform.devantler.tech/unifi-management: observe-only
+spec:
+  managementPolicies: []
+  forProvider: {}

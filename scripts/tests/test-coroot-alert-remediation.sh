@@ -11,6 +11,7 @@ readonly coroot="${root_dir}/k8s/bases/infrastructure/coroot/coroot.yaml"
 readonly coroot_patch="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml"
 readonly coroot_db="${root_dir}/k8s/providers/hetzner/infrastructure/coroot/cluster.yaml"
 readonly vault_snapshot="${root_dir}/k8s/bases/infrastructure/vault-backup/cron-job.yaml"
+readonly heartbeat="${CLUSTER_HEARTBEAT_MANIFEST:-${root_dir}/k8s/bases/infrastructure/controllers/coroot/cron-job.yaml}"
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -19,6 +20,20 @@ fail() {
 
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 command -v kubectl >/dev/null 2>&1 || fail 'kubectl is required'
+command -v jq >/dev/null 2>&1 || fail 'jq is required'
+
+# The heartbeat calls a dotted public hostname, not a relative cluster service.
+# Keep its resolver change local to that template, without replacing cluster DNS.
+yq -e '
+  .spec.jobTemplate.spec.template.spec |
+  (((.dnsConfig.options | length) == 1) and
+  (.dnsConfig.options[0].name == "ndots") and
+  (.dnsConfig.options[0].value == "1") and
+  ((.dnsPolicy // "ClusterFirst") == "ClusterFirst") and
+  (.dnsConfig.nameservers == null) and (.dnsConfig.searches == null))
+' "${heartbeat}" >/dev/null ||
+  fail 'the heartbeat must try dotted names first without overriding cluster DNS or search domains'
+
 command -v kyverno >/dev/null 2>&1 || fail 'Kyverno CLI is required'
 
 policies="$(kubectl kustomize "${policy_dir}")" ||
@@ -116,8 +131,20 @@ vex_capacity="$(
     "${kubescape_release}"
 )" || fail 'the VEX queue object-size limit is missing'
 readonly vex_capacity
-[[ "${vex_capacity}" == '8000000' ]] ||
-  fail 'the VEX queue must admit the observed 6.605 MB record with finite headroom'
+# The record grows with the vulnerability feed: the same Backstage 1.52.0 image went
+# from 6,604,551 bytes (2026-09-20) to 8,551,938 bytes (2026-10-06), which passed the
+# former 8 MB ceiling after sixteen days and had every later write refused (#3955).
+# Require the ceiling the chart gives the vulnerability manifests a VEX record is
+# derived from, and at least twice the largest record seen, so a limit set a few
+# percent above one day's payload cannot come back.
+readonly vex_largest_observed=8551938
+readonly vulnerability_manifest_capacity=50000000
+[[ "${vex_capacity}" =~ ^[1-9][0-9]*$ ]] ||
+  fail "the VEX queue object-size limit must be a finite byte count, not '${vex_capacity}'"
+((vex_capacity >= 2 * vex_largest_observed)) ||
+  fail "the VEX queue limit ${vex_capacity} leaves less than twice the largest observed record (${vex_largest_observed} bytes)"
+((vex_capacity == vulnerability_manifest_capacity)) ||
+  fail "the VEX queue limit must equal the ${vulnerability_manifest_capacity}-byte ceiling of the vulnerability manifests it is derived from, not ${vex_capacity}"
 
 coroot_node_agent_image="$(yq -er '.spec.nodeAgent.image.name' "${coroot}")" ||
   fail 'the Coroot node-agent image pin is missing'
@@ -152,9 +179,10 @@ resolver_policy_count="$(
           (.match.any[0].resources.namespaces | length) == 1 and
           .match.any[0].resources.namespaces[0] == "observability" and
           (.mutate.patchStrategicMerge.spec.dnsConfig.options | length) == 1 and
-          .mutate.patchStrategicMerge.spec.dnsConfig.options[0].name == "ndots" and
-          .mutate.patchStrategicMerge.spec.dnsConfig.options[0].value == "1"
+          .mutate.patchStrategicMerge.spec.dnsConfig.options[0].name == "ndots"
         )] | length) == 2 and
+      .spec.rules[0].mutate.patchStrategicMerge.spec.dnsConfig.options[0].value == "3" and
+      .spec.rules[1].mutate.patchStrategicMerge.spec.dnsConfig.options[0].value == "1" and
       .spec.rules[0].match.any[0].resources.selector.matchLabels."app.kubernetes.io/part-of" == "coroot" and
       .spec.rules[0].match.any[0].resources.selector.matchLabels."app.kubernetes.io/managed-by" == "coroot-operator" and
       (.spec.rules[0].match.any[0].resources.selector.matchLabels | length) == 2 and
@@ -165,7 +193,7 @@ resolver_policy_count="$(
 )"
 readonly resolver_policy_count
 [[ "${resolver_policy_count}" == '1' ]] ||
-  fail 'the resolver policy must set ndots:1 only when Coroot and its CNPG database pods are created'
+  fail 'the resolver policy must scope ndots:3 to Coroot and preserve ndots:1 for CNPG on creation'
 
 apply_resolver_policy() {
   local labels="$1"
@@ -190,8 +218,8 @@ apply_resolver_policy() {
 coroot_mutation="$(apply_resolver_policy $'    app.kubernetes.io/part-of: coroot\n    app.kubernetes.io/managed-by: coroot-operator')" ||
   fail 'the Coroot resolver mutation could not be evaluated'
 readonly coroot_mutation
-[[ "${coroot_mutation}" == *'dnsConfig:'* && "${coroot_mutation}" == *'value: "1"'* ]] ||
-  fail 'the Coroot selector must produce an effective ndots:1 Pod mutation'
+[[ "${coroot_mutation}" == *'dnsConfig:'* && "${coroot_mutation}" == *'value: "3"'* ]] ||
+  fail 'the Coroot selector must produce an effective ndots:3 Pod mutation'
 
 database_mutation="$(apply_resolver_policy '    cnpg.io/cluster: coroot-db')" ||
   fail 'the Coroot database resolver mutation could not be evaluated'
@@ -229,7 +257,7 @@ authored_options_mutation="$(
 )" || fail 'the authored resolver-options case could not be evaluated'
 readonly authored_options_mutation
 [[ "${authored_options_mutation}" == *'single-request-reopen'* &&
-  "${authored_options_mutation}" != *'value: "1"'* &&
+  "${authored_options_mutation}" != *'name: ndots'* &&
   "${authored_options_mutation}" == *'pass: 0'* ]] ||
   fail 'the resolver mutation must preserve an explicitly authored DNS options list'
 
@@ -244,8 +272,8 @@ readonly rollout_annotation
 rollout_token="$(yq -er ".spec.podAnnotations.\"${rollout_annotation}\"" "${coroot}")" ||
   fail 'the Coroot server DNS-policy rollout token is missing'
 readonly rollout_token
-[[ "${rollout_token}" == '2026-09-15-ndots-1' ]] ||
-  fail 'the Coroot server must retain the first DNS-policy rollout token'
+[[ "${rollout_token}" == '2026-09-30-ndots-3' ]] ||
+  fail 'the Coroot server must roll after the ndots:3 policy is Ready'
 
 for component_path in \
   nodeAgent \
@@ -263,21 +291,43 @@ cluster_agent_rollout_token="$(
   yq -er ".spec.clusterAgent.podAnnotations.\"${rollout_annotation}\"" "${coroot}"
 )" || fail 'the clusterAgent DNS-policy rollout token is missing'
 readonly cluster_agent_rollout_token
-[[ "${cluster_agent_rollout_token}" == '2026-09-15-ndots-2' ]] ||
-  fail 'the clusterAgent must use the post-policy rollout token'
+[[ "${cluster_agent_rollout_token}" == "${rollout_token}" ]] ||
+  fail 'the clusterAgent must use the same post-policy rollout token as the server'
 
 database_rollout_token="$(
   yq -er ".spec.inheritedMetadata.annotations.\"${rollout_annotation}\"" "${coroot_db}"
 )" || fail 'the Coroot database DNS-policy rollout token is missing'
 readonly database_rollout_token
-[[ "${database_rollout_token}" == "${rollout_token}" ]] ||
-  fail 'the Coroot database DNS-policy rollout token must match every Coroot component'
+[[ "${database_rollout_token}" == '2026-09-15-ndots-1' ]] ||
+  fail 'the Coroot database must retain its existing ndots:1 rollout token'
 
 database_restart_request="$(
   yq -er '.metadata.annotations."kubectl.kubernetes.io/restartedAt"' "${coroot_db}"
 )" || fail 'the Coroot database declarative restart request is missing'
 readonly database_restart_request
-[[ "${database_restart_request}" == '2026-09-14T22:48:00Z' ]] ||
-  fail 'the Coroot database must request the reviewed post-policy rolling restart'
+
+# A later supported rollout must preserve the DNS-policy restart requirement.
+# Round-trip the timestamp so normalized invalid dates cannot pass the floor.
+valid_database_restart_request() {
+  jq -en --arg request "$1" '
+    ($request | fromdateiso8601) as $requested_at |
+    ($requested_at | todateiso8601) == $request and
+    $requested_at >= ("2026-09-14T22:48:00Z" | fromdateiso8601)
+  ' >/dev/null
+}
+
+for request in '2026-09-14T22:48:00Z' '2026-10-10T23:35:00Z' '2028-02-29T00:00:00Z'; do
+  valid_database_restart_request "${request}" ||
+    fail 'the restart guard must accept valid post-policy requests'
+done
+for request in '2026-09-14T22:47:59Z' '2027-02-30T00:00:00Z' '2026-10-32T00:00:00Z' \
+  '2026-10-10T23:35:00' 'later' ''; do
+  if valid_database_restart_request "${request}" 2>/dev/null; then
+    fail 'the restart guard must reject malformed and pre-policy requests'
+  fi
+done
+
+valid_database_restart_request "${database_restart_request}" ||
+  fail 'the Coroot database must request a valid restart at or after the reviewed post-policy rollout'
 
 printf 'Coroot alert remediation contract is valid.\n'

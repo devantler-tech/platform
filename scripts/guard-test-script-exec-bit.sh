@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Root test scripts are entry points even when CI invokes them through Bash.
+# Nested fixtures and sourced libraries are outside this convention. Read the
+# index: a local chmod cannot repair the mode that a fresh CI clone receives.
+set -euo pipefail
+repo_root="${1:-.}"
+inventory="$(mktemp)"
+trap 'rm -f "$inventory"' EXIT
+git -C "$repo_root" ls-files --stage -z -- 'scripts/tests/*.sh' > "$inventory" || {
+  echo '::error::cannot read tracked test entries' >&2; exit 2
+}
+count=0
+status=0
+while IFS= read -r -d '' record; do
+  path="${record#*$'\t'}"
+  entry="${path#scripts/tests/}"
+  [[ "$entry" != */* ]] || continue
+  count=$((count + 1))
+  metadata="${record%%$'\t'*}"
+  if [[ ! "$metadata" =~ ^100755[[:space:]][0-9a-f]+[[:space:]]0$ ]]; then
+    echo "::error::$path must be tracked 100755 at stage zero" >&2
+    status=1
+  fi
+done < "$inventory"
+if [[ "$count" == 0 ]]; then
+  echo '::error::found no tracked root test entries; cannot verify execute bits' >&2
+  exit 2
+fi
+[[ "$status" == 0 ]] || exit "$status"
+library_filter='(^|/)scripts/(cosign-failure-lib|ghcr-auth-lib|publish-workflow-approved-revisions\.lib|refresh-flux-ghcr-auth-safety)\.sh$'
+if ! actual_library_filter="$(yq -r '.BASH_EXEC_FILTER_REGEX_EXCLUDE' "$repo_root/.mega-linter.yml")"; then
+  echo '::error::cannot read the bash-exec library exclusion' >&2
+  exit 2
+fi
+if [[ "$actual_library_filter" != "$library_filter" ]]; then
+  echo '::error::bash-exec must exclude only the four reviewed sourced libraries' >&2
+  exit 1
+fi
+for library in cosign-failure-lib.sh ghcr-auth-lib.sh publish-workflow-approved-revisions.lib.sh refresh-flux-ghcr-auth-safety.sh; do
+  path="scripts/$library"
+  entry="$(git -C "$repo_root" ls-files --stage -- "$path")" || exit 2
+  metadata="${entry%%$'\t'*}"
+  if [[ ! "$metadata" =~ ^100644[[:space:]][0-9a-f]+[[:space:]]0$ ]] || [[ -x "$repo_root/$path" ]]; then
+    echo "::error::$path must remain a non-executable tracked sourced library" >&2
+    exit 1
+  fi
+done
+printf 'Verified tracked execute bits on %s test entries.\n' "$count"

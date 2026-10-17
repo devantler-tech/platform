@@ -20,12 +20,6 @@
 #     30 MiB that return to baseline and produce no pressure or OOMs. Coroot's
 #     short-window regression reached 122%/h; 250 remains finite and exposes a
 #     sustained 3.5x hourly increase while ignoring the measured sawtooth.
-#   * backstage-db MemoryLeakPercent = 75. Its two PostgreSQL instances remain
-#     in a repeating 40-130 MiB weekly band under 512 MiB limits. Cache warmup
-#     after the runtime rollout produced a 40%/h short-window slope, while the
-#     seven-day regression, OOM, and pressure checks stayed healthy. Seventy-five
-#     leaves 87% headroom above that measured warmup but still exposes sustained
-#     near-doubling growth, and is scoped only to this database cluster.
 #   * kubescape MemoryLeakPercent = 150. The server performs one authored
 #     posture scan at 09:12 UTC; the reviewed scan raised its short-window slope
 #     to 120%/h while RSS remained 192 MiB under a 1 GiB limit, the scan Job
@@ -125,7 +119,7 @@ spec:
   schedule: "* * * * *"
   # Never overlap Coroot writes. A run may start at most ten seconds after its
   # schedule and has fifty-five seconds plus two seconds of termination grace.
-  # Nineteen two-query log checks require five four-worker batches, whose
+  # Twenty two-query log checks require five four-worker batches, whose
   # worst-case query budget is fifty seconds; five seconds remain for PID and
   # threshold work. The launch allowance applies only to a missed schedule; it
   # does not extend the preceding Job, so each run is still gone before the
@@ -150,6 +144,9 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
+            # Pod-level group for the volumes this non-root job mounts; the privilege-
+            # adjacent C-0211 field the namespace exclusion leaves unset (#3522).
+            fsGroup: 65532
             seccompProfile:
               type: RuntimeDefault
             fsGroupChangePolicy: OnRootMismatch
@@ -184,7 +181,8 @@ spec:
                   REQUEST_MAX_TIME=5
 
                   coroot_request() {
-                    curl -fsS --max-time "$REQUEST_MAX_TIME" "$@"
+                    curl -fsS --noproxy '*' --resolve "$COROOT_RESOLVE" \
+                      --max-time "$REQUEST_MAX_TIME" "$@"
                   }
 
                   log_info() {
@@ -198,10 +196,30 @@ spec:
                   }
                   http_status() {
                     curl -sS --output /dev/null --write-out '%{http_code}' \
+                      --noproxy '*' --resolve "$COROOT_RESOLVE" \
                       --max-time "$REQUEST_MAX_TIME" "$1" 2>/dev/null || true
                   }
 
-                  PID=$(coroot_request "$BASE/api/user" | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
+                  # Each curl process otherwise starts with an empty DNS cache.
+                  # Resolve the ClusterIP once through the project lookup and
+                  # share it only within this bounded Job. The next run resolves
+                  # anew; failed initialization cannot reach any policy writes.
+                  if ! project_response=$(curl -fsS --noproxy '*' \
+                    --max-time "$REQUEST_MAX_TIME" --write-out '\n%{remote_ip}' "$BASE/api/user"); then
+                    log_error "could not resolve or contact Coroot service"
+                    exit 1
+                  fi
+                  coroot_address=$(printf '%s\n' "$project_response" | tail -n 1)
+                  case "$coroot_address" in
+                    ''|*[!0-9a-fA-F:.]*)
+                      log_error "Coroot service lookup returned an unusable address"
+                      exit 1 ;;
+                    *:*) coroot_address="[$coroot_address]" ;;
+                    *.*) ;;
+                    *) log_error "Coroot service lookup returned an unusable address"; exit 1 ;;
+                  esac
+                  COROOT_RESOLVE="coroot-coroot.observability.svc.cluster.local.:8080:$coroot_address"
+                  PID=$(printf '%s\n' "$project_response" | sed '$d' | jq -r '[.. | objects | select(.name=="platform" and has("id")) | .id] | first // empty')
                   [ -n "$PID" ] || { log_error "could not resolve platform project id"; exit 1; }
 
                   MAX_CONCURRENT_RECONCILIATIONS=4
@@ -290,9 +308,6 @@ spec:
 
                   APID="$PID:_:Unknown:apid"
                   queue_reconciliation reconcile_threshold "$APID" MemoryLeakPercent 10 250 talos-apid-bounded-rpc-sawtooth
-
-                  BACKSTAGE_DB="$PID:backstage:DatabaseCluster:backstage-db"
-                  queue_reconciliation reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup
 
                   KUBESCAPE="$PID:kubescape:Deployment:kubescape"
                   # The daily posture scan deliberately loads policy and cluster
@@ -409,6 +424,21 @@ spec:
                             ($s | contains("err=\"Invalid client_id")) and
                             ($s | test(" request_id=[0-9a-f-]{36}$"))
                           )] as $ok | "\($all|length):\($ok|length)"
+                        ')
+                        ;;
+                      stale-oauth2-proxy-cancellation)
+                        counts=$(printf '%s' "$entries" | jq -r '
+                          . as $all |
+                          [$all[] | .message as $s |
+                            (try ($s | capture(
+                              "^\\[(?<timestamp>[0-9]{4}/[0-9]{2}/[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2})\\] \\[error_page\\.go:91\\] Error proxying to upstream server: context canceled$"
+                            )) catch null) as $match |
+                            select(
+                              $match != null and
+                              ((try ($match.timestamp | strptime("%Y/%m/%d %H:%M:%S") | mktime) catch null) as $logged_at |
+                               $logged_at != null and $logged_at < (now - 3600))
+                            )
+                          ] as $ok | "\($all|length):\($ok|length)"
                         ')
                         ;;
                       talos-runtime)
@@ -756,6 +786,13 @@ spec:
 
                   queue_reconciliation reconcile_logs "$PID:observability:CronJob:coroot-alert-autosuppressor" autosuppressor-lifecycle 10
                   queue_reconciliation reconcile_logs "$PID:dex:Deployment:dex" dex-invalid-client 10
+                  # Coroot can retain one old oauth2-proxy cancellation in the
+                  # selected last-hour view after the originating Pod is gone.
+                  # Accept only the exact current-version message when its own
+                  # timestamp proves it is older than that window. A fresh or
+                  # malformed cancellation, any other error, a mixed set, or
+                  # more than ten retained entries stays fail-visible.
+                  queue_reconciliation reconcile_logs "$PID:oauth2-proxy:Deployment:oauth2-proxy" stale-oauth2-proxy-cancellation 10
                   queue_reconciliation reconcile_logs "$PID:_:Unknown:init" talos-runtime 1000
                   queue_reconciliation reconcile_logs "$PID:kube-system:StaticPods:kube-apiserver" apiserver-client-noise 100
                   # A single recovered etcd leader transition can make the

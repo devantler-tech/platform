@@ -24,6 +24,17 @@
 # Usage: verify-matcher-accepts-digest.sh <sha256:...>
 set -euo pipefail
 
+# Resolved with parameter expansion alone, so the library is found from any working directory
+# without depending on an external `dirname`.
+script_dir="${BASH_SOURCE[0]}"
+case "${script_dir}" in
+  */*) script_dir="${script_dir%/*}" ;;
+  *) script_dir="." ;;
+esac
+readonly script_dir
+# shellcheck source=scripts/cosign-failure-lib.sh
+source "${script_dir}/cosign-failure-lib.sh"
+
 readonly digest="${1-}"
 
 # Defaults are carried here rather than required from the caller so the DR
@@ -88,26 +99,43 @@ echo "staged artifact: ${artifact}"
 # verify_as captures cosign's own output rather than discarding it. When this
 # gate fires for real it is standing between a bad matcher and production, and
 # the operator reading the log needs cosign's reason — not just the fact that
-# it said no. The log is only printed on the failure paths, so a passing deploy
-# stays quiet.
+# it said no. Stderr also reaches the operator on successful calls, so a warning
+# about a fallback cannot disappear. A failure also retains stdout diagnostics.
 log="$(mktemp)"
-readonly log
-trap 'rm -f "${log}"' EXIT
+stdout_log="$(mktemp)"
+readonly log stdout_log
+trap 'rm -f "${log}" "${stdout_log}"' EXIT
 
 verify_as() {
+  local verification_rc=0
   cosign verify \
     --certificate-oidc-issuer-regexp "${issuer}" \
     --certificate-identity-regexp "$1" \
-    "${artifact}" >"${log}" 2>&1
+    "${artifact}" 2>&1 >"${stdout_log}" | tee "${log}" >&2 || verification_rc=$?
+  if [[ "${verification_rc}" != 0 ]]; then
+    cat "${stdout_log}" >&2 || return 1
+    cat "${stdout_log}" >>"${log}" || return 1
+  fi
+  return "${verification_rc}"
 }
 
 # THE CHECK. Fails when the matcher production will actually enforce would not
 # accept the signature on the digest we are about to point production at.
+#
+# Every failure stops promotion; only the WORDING depends on why cosign failed.
+# The matcher finding is reserved for output that shows cosign read the
+# signature and refused its identity. An unreachable registry, a refused
+# credential or an unrecognised failure is named as what it is, because none of
+# them says anything about the matcher (#3545).
 if ! verify_as "${subject}"; then
-  echo "::error::the cosign matcher in the manifests does not verify ${artifact}." >&2
-  echo "::error::promoting this digest would point production at bytes its own matcher rejects," >&2
-  echo "::error::stopping GitOps delivery until a human intervenes (#3005, #3006)." >&2
-  cat "${log}" >&2
+  failure_class="$(cosign_failure_class "${log}")"
+  if [[ "${failure_class}" == "rejected" ]]; then
+    echo "::error::the cosign matcher in the manifests does not verify ${artifact}." >&2
+    echo "::error::promoting this digest would point production at bytes its own matcher rejects," >&2
+    echo "::error::stopping GitOps delivery until a human intervenes (#3005, #3006)." >&2
+  else
+    cosign_report_no_verdict "${failure_class}" "${artifact}" "${log}" >&2
+  fi
   exit 1
 fi
 echo "the configured matcher verifies the staged digest"
@@ -131,7 +159,6 @@ if ! verify_as "${subject}"; then
   echo "::error::the negative control exited non-zero, but the staged digest can no longer be" >&2
   echo "::error::verified either — so this run cannot prove the control refused for the right" >&2
   echo "::error::reason. Treating an unprovable control as a failure, not a pass." >&2
-  cat "${log}" >&2
   exit 1
 fi
 

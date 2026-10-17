@@ -64,6 +64,8 @@ hcloud_skip_rules="$(yq -er '
     select(
       .conditions.storageClass[0] == "hcloud" and
       (.conditions.storageClass | length) == 1 and
+      .conditions.pvcLabels."backup.platform.devantler.tech/volume-data" == "independently-mirrored" and
+      (.conditions.pvcLabels | length) == 1 and
       .action.type == "skip"
     )
   ] | length
@@ -71,13 +73,46 @@ hcloud_skip_rules="$(yq -er '
 readonly hcloud_skip_rules
 
 [[ "${hcloud_skip_rules}" == '1' ]] ||
-  fail "the production Velero policy must contain exactly one hcloud skip rule; found ${hcloud_skip_rules}"
+  fail "the production Velero policy must contain exactly one labelled hcloud skip rule; found ${hcloud_skip_rules}"
+
+hcloud_skip_rule_count="$(yq -er '
+  .data["policy.yaml"] | from_yaml |
+  [.volumePolicies[] |
+    select(
+      .action.type == "skip" and
+      ((.conditions.storageClass // []) | contains(["hcloud"]))
+    )
+  ] | length
+' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
+readonly hcloud_skip_rule_count
+
+[[ "${hcloud_skip_rule_count}" == '1' ]] ||
+  fail "the production Velero policy must contain exactly one hcloud skip rule; found ${hcloud_skip_rule_count}"
+
+unsafe_hcloud_skip_rules="$(yq -er '
+  .data["policy.yaml"] | from_yaml |
+  [.volumePolicies[] |
+    select(
+      .action.type == "skip" and
+      ((.conditions.storageClass // []) | contains(["hcloud"])) and
+      .conditions.pvcLabels."backup.platform.devantler.tech/volume-data" != "independently-mirrored"
+    )
+  ] | length
+' "${volume_policy}")" || fail 'the production Velero volume policy is invalid'
+readonly unsafe_hcloud_skip_rules
+
+[[ "${unsafe_hcloud_skip_rules}" == '0' ]] ||
+  fail "every hcloud skip rule must require the independently mirrored PVC label; found ${unsafe_hcloud_skip_rules} unsafe rule(s)"
 
 rendered_infrastructure="$(mktemp)"
 readonly rendered_infrastructure
-trap 'rm -f "${rendered_infrastructure}"' EXIT
+rendered_controllers="$(mktemp)"
+readonly rendered_controllers
+trap 'rm -f "${rendered_infrastructure}" "${rendered_controllers}"' EXIT
 kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure" >"${rendered_infrastructure}" ||
   fail 'the production infrastructure overlay did not render'
+kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers" >"${rendered_controllers}" ||
+  fail 'the production infrastructure controllers overlay did not render'
 
 hcloud_pvcs="$(
   yq -r '
@@ -88,7 +123,71 @@ hcloud_pvcs="$(
 readonly hcloud_pvcs
 
 [[ "${hcloud_pvcs}" == 'openbao/vault-snapshots' ]] ||
-  fail "the hcloud skip rule is safe only for the independently mirrored OpenBao snapshot PVC; found: ${hcloud_pvcs:-none}"
+  fail "the explicit production hcloud PVC inventory changed; found: ${hcloud_pvcs:-none}"
+
+independently_mirrored_pvcs="$(
+  yq -r '
+    select(
+      .kind == "PersistentVolumeClaim" and
+      .metadata.labels."backup.platform.devantler.tech/volume-data" == "independently-mirrored"
+    ) |
+    .metadata.namespace + "/" + .metadata.name
+  ' "${rendered_infrastructure}" | sed '/^---$/d' | sort
+)" || fail 'the independently mirrored PVC inventory could not be read'
+readonly independently_mirrored_pvcs
+
+[[ "${independently_mirrored_pvcs}" == 'openbao/vault-snapshots' ]] ||
+  fail "only openbao/vault-snapshots may opt out of Velero volume-data backup; found: ${independently_mirrored_pvcs:-none}"
+
+controller_hcloud_claims="$({
+  yq -r '
+    select(.kind == "HelmRelease" and .metadata.name == "openbao") |
+    [
+      {"consumer": "openbao/data", "storageClass": .spec.values.server.dataStorage.storageClass},
+      {"consumer": "openbao/audit", "storageClass": .spec.values.server.auditStorage.storageClass}
+    ] | .[] | select(.storageClass == "hcloud") | .consumer
+  ' "${rendered_controllers}"
+  yq -r '
+    select(.kind == "Coroot" and .metadata.name == "coroot") |
+    [
+      {"consumer": "coroot/server", "storageClass": .spec.storage.className},
+      {"consumer": "coroot/prometheus", "storageClass": .spec.prometheus.storage.className},
+      {"consumer": "coroot/clickhouse", "storageClass": .spec.clickhouse.storage.className},
+      {"consumer": "coroot/keeper", "storageClass": .spec.clickhouse.keeper.storage.className}
+    ] | .[] | select(.storageClass == "hcloud") | .consumer
+  ' "${rendered_infrastructure}"
+} | sed '/^---$/d' | sort)" || fail 'the controller-created hcloud PVC inventory could not be read'
+readonly controller_hcloud_claims
+
+expected_controller_hcloud_claims=$'coroot/clickhouse\ncoroot/keeper\ncoroot/prometheus\ncoroot/server\nopenbao/audit\nopenbao/data'
+readonly expected_controller_hcloud_claims
+
+[[ "${controller_hcloud_claims}" == "${expected_controller_hcloud_claims}" ]] ||
+  fail "the controller-created hcloud PVC inventory changed; found: ${controller_hcloud_claims:-none}"
+
+# Controller-created claims have no independently-mirrored marker in their
+# declarations. Because the skip policy now requires that marker, these six
+# consumers fall through to defaultVolumesToFsBackup instead of losing data.
+controller_opt_outs="$({
+  yq -r '
+    select(.kind == "HelmRelease" and .metadata.name == "openbao") |
+    .. | select(
+      tag == "!!map" and
+      ."backup.platform.devantler.tech/volume-data" == "independently-mirrored"
+    ) | ."backup.platform.devantler.tech/volume-data"
+  ' "${rendered_controllers}"
+  yq -r '
+    select(.kind == "Coroot" and .metadata.name == "coroot") |
+    .. | select(
+      tag == "!!map" and
+      ."backup.platform.devantler.tech/volume-data" == "independently-mirrored"
+    ) | ."backup.platform.devantler.tech/volume-data"
+  ' "${rendered_infrastructure}"
+} | sed '/^---$/d')" || fail 'the controller-created PVC opt-out inventory could not be read'
+readonly controller_opt_outs
+
+[[ -z "${controller_opt_outs}" ]] ||
+  fail 'a controller-created hcloud PVC declaration must not opt out of Velero volume-data backup'
 
 longhorn_snapshot_rules="$(yq -er '
   .data["policy.yaml"] | from_yaml |

@@ -124,15 +124,6 @@ pass 'the Cilium DNS proxy aggregation has a narrow application policy'
   fail 'the exact Talos apid application must have a finite memory-growth threshold'
 pass 'the Talos apid memory sawtooth has a narrow application policy'
 
-# The two Backstage PostgreSQL instances repeatedly return to a 40-130 MiB
-# weekly band under their 512 MiB limits. After the runtime rollout, cache
-# warmup produced a 40%/h short-window slope without OOM or pressure. Preserve
-# a finite ceiling above that measured slope and scope it to this database.
-# shellcheck disable=SC2016
-[[ "${script_body}" == *'reconcile_threshold "$BACKSTAGE_DB" MemoryLeakPercent 10 75 backstage-postgres-cache-warmup'* ]] ||
-  fail 'the exact Backstage database must have a finite cache-warmup threshold'
-pass 'the Backstage PostgreSQL cache warmup has a narrow application policy'
-
 # The Kubescape server performs one authored posture scan at 09:12 UTC. Its
 # working set rises during that scan but remains far below the 1 GiB hard limit,
 # with no OOM or pressure signal. Keep the exception exact and finite so an
@@ -231,9 +222,13 @@ setup_scenario() {
   printf '%s' "${leader_mode}" >"${dir}/leader-mode"
   printf '%s' "${cnpg_instance_mode}" >"${dir}/cnpg-instance-mode"
   printf '%s' 'known' >"${dir}/coroot-mode"
+  printf '%s' 'stale' >"${dir}/oauth2-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
+  printf '%s' '192.0.2.10' >"${dir}/service-address"
+  : >"${dir}/dns-requests"
+  : >"${dir}/cached-requests"
 
   cat >"${dir}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
@@ -243,11 +238,13 @@ url=""
 payload=""
 method="GET"
 write_out=""
+resolve=""
 prev=""
 for arg in "$@"; do
   [ "${prev}" = "-d" ] && payload="${arg}"
   [ "${prev}" = "-X" ] && method="${arg}"
   { [ "${prev}" = "-w" ] || [ "${prev}" = "--write-out" ]; } && write_out="${arg}"
+  [ "${prev}" = "--resolve" ] && resolve="${arg}"
   case "${arg}" in http://*) url="${arg}" ;; esac
   prev="${arg}"
 done
@@ -258,6 +255,18 @@ case "${url}" in
   http://coroot-coroot.observability.svc.cluster.local.:8080/*) ;;
   *) printf 'non-absolute Coroot service URL: %s\n' "${url}" >&2; exit 64 ;;
 esac
+address="$(cat "${dir}/service-address")"
+if [ -z "${resolve}" ]; then
+  printf '%s\n' "${url}" >>"${dir}/dns-requests"
+  [ "${address}" != "dns-failure" ] || exit 6
+else
+  case "${address}" in *:*) address="[${address}]" ;; esac
+  [ "${resolve}" = "coroot-coroot.observability.svc.cluster.local.:8080:${address}" ] || {
+    printf 'wrong cached service address: %s\n' "${resolve}" >&2
+    exit 64
+  }
+  printf '%s\n' "${url}" >>"${dir}/cached-requests"
+fi
 
 release_query_slot() {
   [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
@@ -285,6 +294,7 @@ acquire_query_slot() {
 case "${url}" in
   */api/user)
     printf '%s\n' '{"data":{"projects":[{"id":"95rsc5yp","name":"platform"}]}}'
+    [[ "${write_out}" != *'%{remote_ip}'* ]] || printf '\n%s' "${address}"
     ;;
   */logs?query=*)
     acquire_query_slot
@@ -307,6 +317,28 @@ case "${url}" in
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"time=2026-09-19T16:24:05.370Z level=ERROR msg=\"failed to parse authorization request\" err=\"Invalid client_id (\\\"\\\").\" request_id=af4e2eb0-e04b-41cc-93f0-a5f8f808e2ef"}]}}'
       elif [ "$(cat "${dir}/dex-mode")" = "unknown" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"database connection refused"}]}}'
+      fi
+    elif [[ "$url" == *'%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy'* ]]; then
+      if [ "${severity}" = "fatal" ]; then
+        printf '%s\n' '{"data":{"status":"ok","entries":null}}'
+      else
+        case "$(cat "${dir}/oauth2-mode")" in
+          stale)
+            printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"[2026/09/25 16:33:47] [error_page.go:91] Error proxying to upstream server: context canceled"}]}}'
+            ;;
+          fresh)
+            jq -cn '{data:{status:"ok",entries:[{severity:"error",message:((now | strftime("[%Y/%m/%d %H:%M:%S]")) + " [error_page.go:91] Error proxying to upstream server: context canceled")} ]}}'
+            ;;
+          malformed)
+            printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"[not-a-time] [error_page.go:91] Error proxying to upstream server: context canceled"}]}}'
+            ;;
+          mixed)
+            printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"[2026/09/25 16:33:47] [error_page.go:91] Error proxying to upstream server: context canceled"},{"severity":"error","message":"[2026/09/25 16:33:48] [error_page.go:91] Error proxying to upstream server: connection refused"}]}}'
+            ;;
+          excess)
+            jq -cn '{data:{status:"ok",entries:[range(0;11) | {severity:"error",message:"[2026/09/25 16:33:47] [error_page.go:91] Error proxying to upstream server: context canceled"}]}}'
+            ;;
+        esac
       fi
     elif [[ "$url" == *'%3A_%3AUnknown%3Ainit'* ]]; then
       if [ "${severity}" = "fatal" ]; then
@@ -449,7 +481,7 @@ case "${url}" in
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "known" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"coroot-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "wrong-object" ]; then
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"backstage-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":{"error":"Operation cannot be fulfilled on objectstores.barmancloud.cnpg.io \"retired-demo-db\": the object has been modified; please apply your changes to the latest version and try again","logging_pod":"coroot-db-6","service.name":"/k8s/observability/coroot-db"}}]}}'
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "malformed" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"Retention policy enforcement failed","attributes":"not-an-object"}]}}'
       elif [ "$(cat "${dir}/cnpg-instance-mode")" = "mixed" ]; then
@@ -550,11 +582,11 @@ case "${url}" in
       if [ "${severity}" = "fatal" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
       elif [ "$(cat "${dir}/storage-mode")" = "known" ]; then
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/ghcr.io-backstage-backstage-1.52.0-993611.m: no such file or directory","service.name":"/k8s/kubescape/storage"}}]}}'
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/example-demo-image-993611.m: no such file or directory","service.name":"/k8s/kubescape/storage"}}]}}'
       elif [ "$(cat "${dir}/storage-mode")" = "malformed" ]; then
         printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":null,"service.name":"/k8s/kubescape/storage"}}]}}'
       else
-        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/ghcr.io-backstage-backstage-1.52.0-993611.m: permission denied","service.name":"/k8s/kubescape/storage"}}]}}'
+        printf '%s\n' '{"data":{"status":"ok","entries":[{"severity":"error","message":"load metadata error","attributes":{"error":"failed to read metadata file: open /data/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifests/kubescape/example-demo-image-993611.m: permission denied","service.name":"/k8s/kubescape/storage"}}]}}'
       fi
     else
       printf '%s\n' '{"data":{"status":"ok","entries":[]}}'
@@ -632,6 +664,10 @@ case "${url}" in
     elif [[ "${url}" == *'%3Akube-system%3ADaemonSet%3Ahcloud-csi-node'* ]] &&
       [ "$(cat "${dir}/csi-node-mode")" != "known" ]; then
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
+    elif [[ "${url}" == *'%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy'* ]] &&
+      [ "$(cat "${dir}/oauth2-mode")" != "stale" ] &&
+      [ "$(cat "${dir}/oauth2-mode")" != "excess" ]; then
+      printf '%s\n' '{"form":{"configs":[{"threshold":0},null,{"threshold":10}]}}'
     else
       printf '%s\n' '{"form":{"configs":[{"threshold":0},null,null]}}'
     fi
@@ -667,6 +703,33 @@ pass 'an absent Coroot log stream is a clean no-policy target'
 
 known_dir="$(setup_scenario known known null)"
 known_output="$(run_scenario "${known_dir}")"
+[ "$(wc -l <"${known_dir}/dns-requests" | tr -d ' ')" -eq 1 ] ||
+  fail 'one reconciliation must resolve the Coroot service only once'
+[ "$(wc -l <"${known_dir}/cached-requests" | tr -d ' ')" -gt 20 ] ||
+  fail 'ordinary API reads and policy writes must reuse the resolved service address'
+[ "$(wc -l <"${absent_log_stream_dir}/dns-requests" | tr -d ' ')" -eq 1 ] ||
+  fail 'HTTP status probes must also reuse the resolved service address'
+pass 'one job-scoped DNS lookup serves every API request and status probe'
+
+ipv6_dir="$(setup_scenario service-ipv6 known null)"
+printf '%s' '2001:db8::10' >"${ipv6_dir}/service-address"
+run_scenario "${ipv6_dir}" >/dev/null
+[ "$(wc -l <"${ipv6_dir}/dns-requests" | tr -d ' ')" -eq 1 ] ||
+  fail 'an IPv6 service address must also be cached within one run'
+pass 'IPv6 service addresses use curl bracket syntax'
+
+for invalid_address in '' 'not-an-address' 'dns-failure'; do
+  invalid_dir="$(setup_scenario invalid-service-address known null)"
+  printf '%s' "${invalid_address}" >"${invalid_dir}/service-address"
+  if run_scenario "${invalid_dir}" >"${invalid_dir}/output" 2>&1; then
+    fail 'failed DNS or an unusable address must stop reconciliation'
+  fi
+  [ ! -s "${invalid_dir}/posts.ndjson" ] ||
+    fail 'failed service initialization must never mutate policy'
+  [ ! -s "${invalid_dir}/cached-requests" ] ||
+    fail 'an unusable address must never reach a policy request'
+done
+pass 'service initialization failures stop before policy reads or writes'
 printf '%s\n' "${known_output}" | jq -s -e \
   'length > 0 and all(.[]; .level == "info" and (.msg | type == "string" and length > 0))' \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
@@ -693,13 +756,13 @@ jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aapid/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 250) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Aruntime/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
   any(.[]; (.url | contains("%3Alonghorn-system%3ADaemonSet%3Aengine-image-ei-a4d05f02/inspection/MemoryOOM/config")) and .body.configs[0].threshold == 0 and .body.configs[2].threshold == 1) and
-  any(.[]; (.url | contains("%3Abackstage%3ADatabaseCluster%3Abackstage-db/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 75) and
   any(.[]; (.url | contains("%3Akubescape%3ADeployment%3Akubescape/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 150) and
   any(.[]; (.url | contains("%3Akube-system%3ADaemonSet%3Acilium/inspection/DnsNxdomainErrors/config")) and .body.configs[2].threshold == 50000) and
   any(.[]; (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsLatency/config")) and .body.configs[2].threshold == 0.75) and
   all(.[]; ((.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsServerErrors/config")) or (.url | contains("%3Akubescape%3AStatefulSet%3Aalertmanager/inspection/DnsNxdomainErrors/config"))) | not) and
   any(.[]; (.url | contains("%3Aobservability%3ACronJob%3Acoroot-alert-autosuppressor/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3Adex%3ADeployment%3Adex/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
+  any(.[]; (.url | contains("%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy/inspection/LogErrors/config")) and .body.configs[2].threshold == 10) and
   any(.[]; (.url | contains("%3A_%3AUnknown%3Ainit/inspection/LogErrors/config")) and .body.configs[2].threshold == 1000) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-apiserver/inspection/LogErrors/config")) and .body.configs[2].threshold == 100) and
   any(.[]; (.url | contains("%3Akube-system%3AStaticPods%3Akube-controller-manager/inspection/LogErrors/config")) and .body.configs[2].threshold == 5000) and
@@ -721,6 +784,26 @@ jq -s -e '
 ' "${known_dir}/posts.ndjson" >/dev/null ||
   fail 'reviewed evidence did not produce the exact app-level policies'
 pass 'reviewed application-health signals receive narrow app-level policies'
+
+for oauth2_mode in fresh malformed mixed; do
+  oauth2_near_miss_dir="$(setup_scenario "oauth2-${oauth2_mode}" known null)"
+  printf '%s' "${oauth2_mode}" >"${oauth2_near_miss_dir}/oauth2-mode"
+  run_scenario "${oauth2_near_miss_dir}" >/dev/null
+  jq -s -e '
+    any(.[]; (.url | contains("%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy/inspection/LogErrors/config")) and .body.configs[2] == null)
+  ' "${oauth2_near_miss_dir}/posts.ndjson" >/dev/null ||
+    fail "oauth2-proxy ${oauth2_mode} cancellation evidence did not remain visible"
+done
+pass 'the oauth2-proxy stale-entry policy rejects fresh, malformed, and mixed errors'
+
+oauth2_excess_dir="$(setup_scenario oauth2-excess known null)"
+printf '%s' 'excess' >"${oauth2_excess_dir}/oauth2-mode"
+run_scenario "${oauth2_excess_dir}" >/dev/null
+jq -s -e '
+  any(.[]; (.url | contains("%3Aoauth2-proxy%3ADeployment%3Aoauth2-proxy/inspection/LogErrors/config")) and .body.configs[2].threshold == 10)
+' "${oauth2_excess_dir}/posts.ndjson" >/dev/null ||
+  fail 'stale oauth2-proxy cancellations did not retain the finite ten-event cap'
+pass 'excess stale oauth2-proxy cancellations still exceed the finite policy'
 
 unknown_dir="$(setup_scenario unknown unknown 1)"
 run_scenario "${unknown_dir}" >/dev/null

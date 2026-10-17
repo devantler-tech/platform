@@ -33,7 +33,11 @@
 
 set -uo pipefail
 
-readonly subject_name="${SUBJECT_NAME:-ghcr.io/devantler-tech/platform/manifests}"
+if [[ -z "${SUBJECT_NAME:-}" ]]; then
+  echo "::error::SUBJECT_NAME is empty; cannot identify the published artifact" >&2
+  exit 2
+fi
+readonly subject_name="${SUBJECT_NAME}"
 readonly oidc_issuer="${OIDC_ISSUER:-https://token.actions.githubusercontent.com}"
 
 # Predicate types the two attestation steps write. Checked by TYPE rather than
@@ -44,7 +48,7 @@ readonly provenance_predicate="${PROVENANCE_PREDICATE:-https://slsa.dev/provenan
 
 usage() {
   echo "usage: ${0##*/} <sha256:digest>" >&2
-  echo "env: ENFORCE=true|false  WORKFLOW_REF=<owner/repo/.github/workflows/x.yaml@ref>" >&2
+  echo "env: SUBJECT_NAME=<registry/repository> ENFORCE=true|false WORKFLOW_REF=<owner/repo/.github/workflows/x.yaml@ref>" >&2
 }
 
 digest="${1-}"

@@ -15,7 +15,8 @@ spec:
   path: .
   prune: true
   wait: true
-  force: true
+  # Immutable conflicts require an operator plan; individual Jobs opt into recreation.
+  force: false
   serviceAccountName: ascoachingogvaner
   sourceRef:
     kind: OCIRepository

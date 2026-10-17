@@ -13,6 +13,9 @@
   "kubernetes": {
     "managerFilePatterns": ["/^k8s/.+\\.ya?ml$/"]
   },
+  "crossplane": {
+    "managerFilePatterns": ["/^k8s/.+\\.ya?ml$/"]
+  },
   "github-actions": {
     "enabled": false
   },
@@ -38,26 +41,22 @@
     },
     {
       "customType": "regex",
-      "description": "Track the flux-operator OCI Helm chart version in its HelmRelease via the docker datasource. The built-in `flux` manager silently stopped proposing flux-operator bumps after 0.48.0 (2026-04-21) even though 0.49.0/0.50.0 published, letting the version drift from the chart KSail seeds at bootstrap. This regex manager tracks ghcr.io/controlplaneio-fluxcd/charts/flux-operator deterministically (same datasource that bumps Dockerfile FROM tags elsewhere) so it cannot silently drift again.",
+      "description": "Track the flux-operator OCI chart tag in its OCIRepository via the docker datasource. The dedicated manager preserves update discovery after the migration from HelmRepository/chart.spec to OCIRepository/chartRef.",
       "managerFilePatterns": [
-        "/^k8s/bases/infrastructure/controllers/flux-operator/helm-release\\.ya?ml$/"
+        "/^k8s/bases/infrastructure/controllers/flux-operator/oci-repository\\.ya?ml$/"
       ],
-      "matchStrings": [
-        "chart:\\s*flux-operator\\s+version:\\s*(?<currentValue>\\S+)"
-      ],
+      "matchStrings": ["tag:\\s*(?<currentValue>\\S+)"],
       "datasourceTemplate": "docker",
       "depNameTemplate": "ghcr.io/controlplaneio-fluxcd/charts/flux-operator",
       "versioningTemplate": "semver"
     },
     {
       "customType": "regex",
-      "description": "Track the ksail-operator OCI Helm chart version (its HelmRelease chart.spec.version) via the devantler-tech/ksail GitHub *releases*, NOT the chart's own OCI registry tags. The chart is published per global monorepo version, so a release that builds no ksail binary (e.g. the copilot-plugin-only release v7.74.1) still publishes a ksail-operator chart at that version whose default image tag (v<appVersion>) points at a ghcr.io/devantler-tech/ksail:v<ver> image that was never built or cosign-signed. The verify-ksail-images ImageValidatingPolicy then denies the Pod (MANIFEST_UNKNOWN), hanging the Helm upgrade and stalling the whole infrastructure-controllers layer (and infrastructure -> apps behind it). Resolving from github-releases means the chart only bumps to versions that have a real ksail release — hence a built, tag-signed image. Mirrors the flux-operator manager above; the built-in flux manager is disabled for this chart in packageRules below so the two cannot open duplicate/registry-based PRs.",
+      "description": "Track the ksail-operator OCI Helm chart version (the tag of its OCIRepository) via the devantler-tech/ksail GitHub *releases*, NOT the chart's own OCI registry tags. The chart is published per global monorepo version, so a release that builds no ksail binary (e.g. the copilot-plugin-only release v7.74.1) still publishes a ksail-operator chart at that version whose default image tag (v<appVersion>) points at a ghcr.io/devantler-tech/ksail:v<ver> image that was never built or cosign-signed. The verify-ksail-images ImageValidatingPolicy then denies the Pod (MANIFEST_UNKNOWN), hanging the Helm upgrade and stalling the whole infrastructure-controllers layer (and infrastructure -> apps behind it). Resolving from github-releases means the chart only bumps to versions that have a real ksail release — hence a built, tag-signed image. Mirrors the flux-operator manager above; the built-in flux manager is disabled for this chart in packageRules below so the two cannot open duplicate/registry-based PRs.",
       "managerFilePatterns": [
-        "/^k8s/bases/infrastructure/controllers/ksail-operator/helm-release\\.ya?ml$/"
+        "/^k8s/bases/infrastructure/controllers/ksail-operator/oci-repository\\.ya?ml$/"
       ],
-      "matchStrings": [
-        "chart:\\s*ksail-operator\\s+version:\\s*(?<currentValue>\\S+)"
-      ],
+      "matchStrings": ["tag:\\s*(?<currentValue>\\S+)"],
       "datasourceTemplate": "github-releases",
       "depNameTemplate": "devantler-tech/ksail",
       "versioningTemplate": "semver",
@@ -75,10 +74,8 @@
     },
     {
       "customType": "regex",
-      "description": "Track the kubelet-serving-cert-approver release in the vendored-resource updater. A version-only bump fails CI's image-version binding until the immutable source commit, SHA-256 and complete vendored resources are refreshed together. Re-check the standalone PDB selector and resource-scoped Checkov dispositions on every bump.",
-      "managerFilePatterns": [
-        "/^scripts/update-vendored-operators\\.sh$/"
-      ],
+      "description": "Track the kubelet-serving-cert-approver release in the vendored-resource updater. A version-only bump fails CI's image-version binding until the immutable source commit, SHA-256 and complete vendored resources are refreshed together. Re-check the resource-scoped Checkov dispositions on every bump; CI checks that the standalone PDB still selects the upstream pod labels.",
+      "managerFilePatterns": ["/^scripts/update-vendored-operators\\.sh$/"],
       "matchStrings": [
         "readonly cert_approver_version='(?<currentValue>[0-9.]+)'"
       ],
@@ -86,6 +83,18 @@
       "depNameTemplate": "alex1989hu/kubelet-serving-cert-approver",
       "versioningTemplate": "semver",
       "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the upstream commit the vendored origin-ca-issuer CRDs are fetched at, as a digest of the trunk branch — the ref the CRDs were rendered from before they were vendored. The flux manager's chart bumps never touch these vendored files. The datasource is github-digest, NOT git-refs: both resolve the branch head, but git-refs reports no release timestamp, and Renovate withholds an undated update whenever a release-age cooldown applies to it. The matching packageRule below turns that cooldown off for this source and says why. A commit-only bump fails CI until scripts/update-vendored-operators.sh --render-remotes has re-fetched both CRDs at the new commit.",
+      "managerFilePatterns": ["/^scripts/update-vendored-operators\\.sh$/"],
+      "matchStrings": [
+        "readonly origin_ca_issuer_commit='(?<currentDigest>[0-9a-f]{40})'"
+      ],
+      "currentValueTemplate": "trunk",
+      "datasourceTemplate": "github-digest",
+      "depNameTemplate": "cloudflare/origin-ca-issuer",
+      "packageNameTemplate": "cloudflare/origin-ca-issuer"
     },
     {
       "customType": "regex",
@@ -122,7 +131,7 @@
     },
     {
       "customType": "regex",
-      "description": "Track the PostgreSQL operand image pinned on the platform-owned CloudNativePG Clusters (coroot-db, umami-db, backstage-db — each a cluster.yaml). These pin spec.imageName explicitly instead of riding the CNPG operator default because the latest GA operator (v1.29.1) still defaults to postgresql:18.3-system-trixie — a now-frozen tag (last rebuilt 2026-05-11) carrying fixable base-OS CVEs (openssl/libssl3, libgnutls30, libc6, python3.13) — and the default only advances to 18.4 in the not-yet-GA v1.30, so the built-in flux manager bumping the cloudnative-pg operator chart does NOT clear them. spec.imageName lives in the Cluster CR (not a chart version or a values.yaml), so the flux, kubernetes, and helm-values managers never see it; a custom manager is the only way to keep it current. Matches the `# renovate:` comment and the imageName line that follows it (mirroring the crossview manager above), resolving from the docker datasource (ghcr.io/cloudnative-pg/postgresql); docker versioning tracks the 18.4-system-trixie -> 18.5-system-trixie minor line while preserving the -system-trixie flavor suffix. The tenant-owned wedding-db pins its own imageName in the external wedding-app artifact and is intentionally not covered here. NOTE (platform#2149): this manager's file pattern originally targeted a `postgres-cluster.yaml` filename that has never existed in this repo — the actual files are `cluster.yaml` — so the manager silently matched nothing since it was authored; fixed to the real filename.",
+      "description": "Track the PostgreSQL operand image pinned on the platform-owned CloudNativePG Clusters (coroot-db, umami-db — each a cluster.yaml). These pin spec.imageName explicitly instead of riding the CNPG operator default because the latest GA operator (v1.29.1) still defaults to postgresql:18.3-system-trixie — a now-frozen tag (last rebuilt 2026-05-11) carrying fixable base-OS CVEs (openssl/libssl3, libgnutls30, libc6, python3.13) — and the default only advances to 18.4 in the not-yet-GA v1.30, so the built-in flux manager bumping the cloudnative-pg operator chart does NOT clear them. spec.imageName lives in the Cluster CR (not a chart version or a values.yaml), so the flux, kubernetes, and helm-values managers never see it; a custom manager is the only way to keep it current. Matches the `# renovate:` comment and the imageName line that follows it (mirroring the crossview manager above), resolving from the docker datasource (ghcr.io/cloudnative-pg/postgresql); docker versioning tracks the 18.4-system-trixie -> 18.5-system-trixie minor line while preserving the -system-trixie flavor suffix. The tenant-owned wedding-db pins its own imageName in the external wedding-app artifact and is intentionally not covered here. NOTE (platform#2149): this manager's file pattern originally targeted a `postgres-cluster.yaml` filename that has never existed in this repo — the actual files are `cluster.yaml` — so the manager silently matched nothing since it was authored; fixed to the real filename.",
       "managerFilePatterns": ["/(^|/)cluster\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+imageName:\\s*\\S+:(?<currentValue>\\S+)"
@@ -144,6 +153,12 @@
   },
   "packageRules": [
     {
+      "description": "Coroot operator chart 0.10.3 has invalid CEL syntax and 0.10.4 exceeds the Kubernetes CEL cost budget (#4338). Exclude only these broken charts; retain normal updates for corrected releases.",
+      "matchDatasources": ["helm"],
+      "matchPackageNames": ["coroot-operator"],
+      "allowedVersions": "!/^0\\.10\\.[34]$/"
+    },
+    {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
       "matchPackageNames": [
@@ -162,7 +177,7 @@
       "enabled": false
     },
     {
-      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, helm-release.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
+      "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, oci-repository.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
       "matchPackageNames": [
         "devantler-tech/ksail",
         "ghcr.io/devantler-tech/charts/ksail-operator",
@@ -213,9 +228,29 @@
       "automerge": true
     },
     {
-      "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). The Go module github.com/siderolabs/talos/pkg/machinery is grouped into the same PR because its version tracks the Talos release line exactly and the repository's Kubernetes/Talos compatibility check reads it, so a Talos bump that arrives without it fails that check. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the talos.version pin in ksail.prod.yaml (KSail derives the installer image from it plus the extensions list), but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, and also sets TALOSCTL_SHA256 in .github/scripts/setup-talosctl.sh: Renovate moves TALOS_VERSION there but cannot compute an asset checksum, so the CI setup step fails closed and, when the served bytes match the release's published sha256sum.txt, prints the exact value to set. prBodyNotes repeats this checklist on every Talos PR. Then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above.",
-      "matchPackageNames": ["siderolabs/talos", "github.com/siderolabs/talos/pkg/machinery"],
+      "description": "Crossplane provider packages (the crossplane manager reads each Provider's spec.package). NOT automerged, whatever the update type: every provider is part of the production-authorization surface, so a bump cannot pass CI until its fingerprint is re-approved in scripts/validate-eks-ci-role-policy/main.go, and a provider's revision-hashed service account can stop matching an exact-name carve-out on upgrade. Before merge, first-party ghcr.io/devantler-tech packages are verified against this organisation's signers, and xpkg.upbound.io/upbound packages against Upbound's supplychain.yml build identity (scripts/check-upbound-package-signatures.sh). crossplane-contrib/provider-upjet-github publishes no signature, so nothing verifies it: it is pinned by digest so the reviewed bytes are the ones that run, and each bump moves the tag and digest together. Review its upstream release before approving. minimumReleaseAge is 0 days for these packages: neither xpkg.upbound.io nor ghcr.io gives Renovate a release date for them, and a release with no date never clears the repository-wide wait, so no update was proposed at all (#4754). Raising the PR adopts nothing: it is never automerged and cannot merge without the review, the signature check and the fingerprint re-approval named above.",
+      "matchManagers": ["crossplane"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false,
+      "labels": ["security/review-required"]
+    },
+    {
+      "description": "provider-aws-iam depends on provider-family-aws, which ships the ProviderConfig CRD every family member uses, and the two must be pinned to the same release (see provider-aws-iam.yaml), so they move in one PR. Grouping does not force equal versions; scripts/tests/test-crossplane-aws-family-version-parity.sh fails a PR that pins them apart.",
+      "matchManagers": ["crossplane"],
+      "matchPackageNames": [
+        "xpkg.upbound.io/upbound/provider-family-aws",
+        "xpkg.upbound.io/upbound/provider-aws-iam"
+      ],
+      "groupName": "crossplane aws providers"
+    },
+    {
+      "description": "Talos Linux distribution upgrades (tracked by the custom manager above; depName siderolabs/talos). The Go module github.com/siderolabs/talos/pkg/machinery is grouped into the same PR because its version tracks the Talos release line exactly and the repository's Kubernetes/Talos compatibility check reads it, so a Talos bump that arrives without it fails that check. Renovate opens the PR automatically — the same flow as every other dependency, with no Dependency Dashboard approval gate. It is NOT automerged: the custom manager bumps the talos.version pin in ksail.prod.yaml (KSail derives the installer image from it plus the extensions list), but the Hetzner iso snapshot id in ksail.prod.yaml is not a version string and cannot be auto-derived, and a lockstep kubernetesVersion bump may be needed when Talos's supported Kubernetes range moves. CI's system-test also runs off ksail.yaml (docker), so it never boots this prod config. A maintainer completes the iso (and any kubernetesVersion) edit on the open PR, and also sets TALOSCTL_SHA256 in .github/scripts/setup-talosctl.sh: Renovate moves TALOS_VERSION there but cannot compute an asset checksum, so the CI setup step fails closed and, when the served bytes match the release's published sha256sum.txt, prints the exact value to set. prBodyNotes repeats this checklist on every Talos PR. Then merges. automerge:false is placed last so it overrides the broad talos/** and major-update automerge rules above. separateMinorPatch gives patch releases their own branch (renovate/patch-talos) beside the minor one (renovate/talos): without it Renovate proposes only the newest non-major release, so while a minor upgrade waits on a migration — v1.14 sat parked for weeks — no patch for the running release line is ever offered (#3388).",
+      "matchPackageNames": [
+        "siderolabs/talos",
+        "github.com/siderolabs/talos/pkg/machinery"
+      ],
       "groupName": "talos",
+      "separateMinorPatch": true,
       "automerge": false,
       "addLabels": ["talos"],
       "prBodyNotes": [
@@ -248,20 +283,63 @@
       "addLabels": ["vendored-manifest"]
     },
     {
-      "description": "kubelet-serving-cert-approver is vendored as a complete upstream manifest. Keep Renovate visibility through the updater version, but require a reviewed whole-bundle refresh with matching source commit, digest, image and PDB selector. The ghcr.io name covers the kustomization images: pin (tag + digest): a tag or digest update there fails CI's image-pin guard until the updater's version and cert_approver_image_digest move with it. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
-      "matchPackageNames": ["alex1989hu/kubelet-serving-cert-approver", "ghcr.io/alex1989hu/kubelet-serving-cert-approver"],
+      "description": "kubelet-serving-cert-approver is vendored as a complete upstream manifest. Keep Renovate visibility through the updater version, but require a reviewed whole-bundle refresh with matching source commit, digest and image. The ghcr.io name covers the kustomization images: pin (tag + digest): a tag or digest update there fails CI's image-pin guard until the updater's version and cert_approver_image_digest move with it. automerge:false placed last so it overrides the major/minor/patch automerge defaults above.",
+      "matchPackageNames": [
+        "alex1989hu/kubelet-serving-cert-approver",
+        "ghcr.io/alex1989hu/kubelet-serving-cert-approver"
+      ],
       "automerge": false,
       "addLabels": ["security/review-required"]
+    },
+    {
+      "description": "The origin-ca-issuer CRDs are vendored upstream bytes pinned by source commit and SHA-256 (custom manager above). Renovate can only move the commit: the update PR is the signal that upstream moved, and it stays red until the CRDs are re-fetched at that commit. Scoped to the github-digest datasource so the chart, which the flux manager tracks under its own name, keeps its normal updates. minimumReleaseAge is 0 days here because the age of a branch head is the age of its newest commit, so every upstream commit restarts the repository-wide cooldown and a branch that moves at least weekly would never be proposed at all. Nothing is adopted by raising the PR early, because it cannot merge without the reviewed re-fetch. Digest updates do not automerge by default here; automerge:false is explicit, and must stay the last word on this package, so a later automerge default cannot adopt a commit whose CRDs were never fetched.",
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["cloudflare/origin-ca-issuer"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false,
+      "addLabels": ["vendored-manifest"],
+      "prBodyNotes": [
+        "**This PR cannot go green as opened.** It moves only `origin_ca_issuer_commit`. Run `scripts/update-vendored-operators.sh --render-remotes` on this branch and commit what it changes. If it stops on a CRD digest, review the upstream change to that CRD before recording the new digest."
+      ]
+    },
+    {
+      "description": "Keep Fleet's chart/server and database-preparation image together. Independent publication timing can still produce a one-sided group; the native Fleet Deployment image check must pass before merge.",
+      "matchPackageNames": ["fleet", "fleetdm/fleet"],
+      "groupName": "fleet",
+      "automerge": false
     },
     {
       "description": "Review the Kyverno chart and CI policy engine together. Grouping can produce a one-sided update because their releases are independent; require the chart appVersion to match the shared CLI pin before merging. automerge:false follows the broad controller and major-update rules so they cannot bypass this comparison.",
       "matchPackageNames": ["kyverno", "kyverno/kyverno"],
       "groupName": "kyverno",
       "automerge": false
+    },
+    {
+      "description": "This test-only parser witnesses the verified Coroot node-agent source, not the latest library. Keep proposals visible, but require the consumer regression and a verified deployed-source refresh before adopting a different parser (platform#4934).",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["github.com/coroot/logparser"],
+      "automerge": false,
+      "prBodyNotes": [
+        "This is a test-witness update, not a production parser upgrade. Reverify the deployed node-agent source and refresh the consumer binding in the same reviewed change; the CRI severity tests reject an independently updated parser."
+      ]
+    },
+    {
+      "description": "The feature-flag validator (scripts/validate-feature-flags) stays on the v2 YAML parser: v2 resolves plain on/off/yes/no as booleans exactly as Kubernetes does, while v3 reads them as strings and accepts a definition the cluster would decode differently (platform#4496). v2 and v3 are separately maintained module paths, and sigs.k8s.io/yaml itself depends on v2, so the major proposal is not an upgrade. Patch and minor updates of the v2 line stay enabled.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["go.yaml.in/yaml/v2"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "The Helm SDK is HARD-PINNED at v4.2.0 in every Go module here (scripts/render-helm-chart, scripts/tests/openbao-strategy-transition): they build the exact Helm the deployed Flux helm-controller embeds, so an offline render matches what production renders. scripts/build-controller-helm.sh refuses any other version or module sum, so a standalone update can never go green, and closing it only delays the next offer (#4424, #4731, tracked in #4738). The version moves with the controller instead: when a Flux update changes the embedded Helm, update this pattern, the version and sum in scripts/build-controller-helm.sh, its expected build metadata, HELM_VERSION in .github/workflows/ci.yaml, scripts/guard-helm-post-renderers.sh and both go.mod files in one reviewed change. scripts/tests/test-controller-helm-sdk-renovate-pin.sh fails when this pattern and the build guard disagree. Placed last so no earlier rule can widen it.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["helm.sh/helm/v4"],
+      "allowedVersions": "/^v?4\\.2\\.0$/",
+      "automerge": false
     }
   ],
   "ignorePaths": [
-    "k8s/bases/infrastructure/cluster-policies/samples",
-    "k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/deployment.yaml"
+    "k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/deployment.yaml",
+    "scripts/retire-backstage-stateless/poller-native/go.mod"
   ]
 }

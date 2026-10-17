@@ -1,0 +1,42 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-network-policies-tenant-scaffold
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # A tenant generated from platform-tenant-template must be admissible on day
+  # one, under the tenant's own identity, by every rule that evaluates it (the
+  # reserved-name rule matches only the generated names, so it has no row). The
+  # sibling shell test asserts the exact pass count, so a rule that stopped
+  # matching cannot read as a pass here.
+  - policy: restrict-tenant-network-policies
+    rule: cnp-ingress-sources-must-be-constrained
+    resources:
+      - tenant-ns/tenant-ns
+    kind: CiliumNetworkPolicy
+    result: pass
+  - policy: restrict-tenant-network-policies
+    rule: cnp-egress-destinations-must-be-constrained
+    resources:
+      - tenant-ns/tenant-ns
+    kind: CiliumNetworkPolicy
+    result: pass
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-not-opt-out-of-default-deny
+    resources:
+      - tenant-ns/tenant-ns
+    kind: CiliumNetworkPolicy
+    result: pass
+  - policy: restrict-tenant-network-policies
+    rule: cnp-must-use-the-singular-spec-container
+    resources:
+      - tenant-ns/tenant-ns
+    kind: CiliumNetworkPolicy
+    result: pass

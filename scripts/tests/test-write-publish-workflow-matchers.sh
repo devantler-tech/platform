@@ -7,8 +7,14 @@ WRITER="$ROOT/scripts/write-publish-workflow-matchers.sh"
 GUARD="$ROOT/scripts/guard-publish-workflow-approved-revisions.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# The fixture's observed rows are independent of the real first-publication record.
+export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 TREE="$WORK/consumer tree"
 SET="$TREE/scripts/approved.tsv"
+# A record that approves no canonical publisher; that family has its own suite.
+CANONICAL_NONE="$WORK/canonical-none.tsv"
+printf 'consumer\tworkflow\trepository\tcommit\n' >"$CANONICAL_NONE"
 A=1111111111111111111111111111111111111111
 B=2222222222222222222222222222222222222222
 C=3333333333333333333333333333333333333333
@@ -51,6 +57,7 @@ EOF
 .github publish-manifests github-config $A $B
 ascoachingogvaner publish-app ascoachingogvaner $C $B
 aws publish-manifests aws $A $A
+data-product-controller publish-app data-product-controller $A $B
 wedding-app publish-app wedding-app $A $B
 EOF
   for file in "${GENERIC_FILES[@]}"; do
@@ -60,10 +67,10 @@ EOF
 }
 
 write_matchers() {
-  APPROVED_REVISIONS_FILE="$SET" PUBLISH_CONSUMER_ROOT="$TREE" bash "$WRITER"
+  APPROVED_REVISIONS_FILE="$SET" CANONICAL_APPROVALS_FILE="$CANONICAL_NONE" PUBLISH_CONSUMER_ROOT="$TREE" bash "$WRITER"
 }
 guard() {
-  APPROVED_REVISIONS_FILE="$SET" PUBLISH_CONSUMER_ROOT="$TREE" \
+  APPROVED_REVISIONS_FILE="$SET" CANONICAL_APPROVALS_FILE="$CANONICAL_NONE" PUBLISH_CONSUMER_ROOT="$TREE" \
     APPROVED_REVISIONS_ENFORCE=1 bash "$GUARD"
 }
 snapshot() {
@@ -115,6 +122,21 @@ before="$(snapshot)"
 write_matchers >"$WORK/writer.log" 2>&1
 [ "$(snapshot)" = "$before" ] || fail 'unchanged input was not byte-idempotent'
 printf 'ok: unchanged input is a byte-identical no-op\n'
+
+# A manifests publisher can preapprove the released repair before moving its pin.
+awk -F '\t' -v OFS='\t' -v candidate="$C" -v signer="$A" '
+  $2 == "publish-manifests" {$7=candidate}
+  $1 == "aws" {$7=signer}
+  {print}
+' "$SET" >"$WORK/candidate.tsv"
+mv "$WORK/candidate.tsv" "$SET"
+write_matchers >"$WORK/writer.log" 2>&1 || fail 'writer refused the released manifests candidate'
+guard >"$WORK/guard.log" 2>&1 || fail 'manifests candidate did not converge to a guard-clean tree'
+[ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/github-config/oci-repository.yaml")" = \
+  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@(1111111111111111111111111111111111111111|2222222222222222222222222222222222222222|3333333333333333333333333333333333333333)$' ] || fail 'manifest publisher did not receive its signer, pin and released candidate'
+[ "$(yq -r '.spec.verify.matchOIDCIdentity[0].subject' "$TREE/k8s/bases/apps/aws/oci-repository.yaml")" = \
+  '^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@1111111111111111111111111111111111111111$' ] || fail 'manifest candidate equal to its signer was not deduplicated'
+printf 'ok: manifests release candidate is exact and deduplicated before pin adoption\n'
 
 # The real operational trigger: generator advances a pin, then writer converges before guard.
 awk -F '\t' -v OFS='\t' -v pin="$D" 'NR > 1 {$6=pin} {print}' "$SET" >"$WORK/moved.tsv"

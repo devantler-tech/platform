@@ -10,8 +10,12 @@ description: >-
   secret is passed in as an input.
 
 inputs:
+  recovery-source-sha:
+    description: Validated main checkout required to remain current during recovery; empty for speculative merge-group deployment.
+    required: false
+    default: ""
   verify-wedding-backup-staging:
-    description: Compare the staged dedicated wedding backup credential during an opted-in manual deployment.
+    description: Verify the dedicated Wedding backup credential and active archive during an opted-in manual deployment.
     required: false
     default: "false"
   sops-age-key:
@@ -57,6 +61,19 @@ runs:
         APPROVED_REVISIONS_ENFORCE: '1'
       run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
+    # Keep signer approval ahead of credentials, then refuse stale recovery
+    # before installing tools or changing production.
+    - name: 🧭 Verify the validated recovery still matches main
+      id: verify_recovery_source
+      shell: bash
+      env:
+        RECOVERY_SOURCE_SHA: ${{ inputs.recovery-source-sha }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        if [[ -n "${RECOVERY_SOURCE_SHA}" ]]; then
+          bash scripts/verify-prod-recovery-source.sh "${RECOVERY_SOURCE_SHA}"
+        fi
+
     - name: ⚙️ Setup KSail
       # Install the KSail CLI from the release tarball and verify the
       # downloaded asset against GitHub's published release checksum before
@@ -66,7 +83,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.186.0"
+        KSAIL_VERSION: "7.202.58"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -188,6 +205,14 @@ runs:
       shell: bash
       run: bash scripts/guard-coroot-baseline-context.sh before-publish
 
+    - name: 🧭 Validate GitHub bootstrap isolation
+      shell: bash
+      run: |
+        bootstrap_render="$(mktemp)"
+        trap 'rm -f "$bootstrap_render"' EXIT
+        kubectl kustomize k8s/providers/hetzner/apps > "$bootstrap_render"
+        bash scripts/guard-github-bootstrap-isolation.sh "$bootstrap_render"
+
     - name: 💾 Validate live persistence retirement safety
       # A commit parent is not evidence that its protection reached production:
       # two direct pushes can be waiting behind one manual dispatch. Compare the
@@ -200,6 +225,16 @@ runs:
       run: |
         shellcheck scripts/tests/test-pvc-prune-safety.sh
         bash scripts/tests/test-pvc-prune-safety.sh
+
+    - name: 🛑 Verify ARC drain recovery has no active pool
+      # Read complete metadata lists before the mutable artifact can move.
+      # No App key, JIT configuration or full Pod response is requested.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        bash scripts/retire-arc-pool.sh before-publish
+        go run ./scripts/guard-arc-recovery before-publish
 
     - name: 🛡️ Suspend autoscaling for gated Cilium rollout
       id: cilium_rollout_gate
@@ -230,7 +265,7 @@ runs:
 
     - name: 🔑 Stage Flux and consumer GHCR pull credential
       id: stage_flux_ghcr_auth
-      # Validate all eight packages, synchronize and prove an uncached pull of
+      # Validate all ten packages, synchronize and prove an uncached pull of
       # the declared incoming image on every stale Talos node, then stage and
       # verify the Kubernetes fan-out BEFORE publishing latest. Every pull
       # consumer has one known-readable credential before the mutable tag can
@@ -243,6 +278,16 @@ runs:
         --record-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
 
+    - name: 💾 Detach volumes for the reviewed Longhorn client migration
+      id: longhorn_client_prepare
+      # The pinned migration is a no-op after positive live completion proof.
+      # Its durable journal precedes every owned pause; it never deletes storage.
+      # Both production entrypoints already hold the prod-deploy concurrency lock.
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: go run ./scripts/maintain-longhorn-clients before-publish
+
     - name: 📋 Record the Flux control-plane baseline
       # Before the mutable tag moves, because Flux may observe the new revision
       # before the reconcile step runs — the same reason the Cilium gate suspends
@@ -250,7 +295,9 @@ runs:
       # window would already be reflected in a snapshot taken inside the reconcile
       # wrapper, making its "before" and "after" identical and reporting a
       # cancellation this deploy inflicted on itself as a workload failure
-      # (#3478). Never fails the deploy: without a baseline the wrapper reads the
+      # (#3478). Also follow maintenance's completed controller rolls, which
+      # must not grant a retry for an unrelated later reconciliation failure.
+      # Never fails the deploy: without a baseline the wrapper reads the
       # generations itself, exactly as it did before this step existed.
       shell: bash
       env:
@@ -270,6 +317,7 @@ runs:
       id: publish_platform_manifest
       uses: ./.github/actions/deploy-prod/publish-platform-manifests
       with:
+        recovery-source-sha: ${{ inputs.recovery-source-sha }}
         ghcr-token: ${{ inputs.ghcr-token }}
         hcloud-token: ${{ inputs.hcloud-token }}
 
@@ -279,6 +327,21 @@ runs:
       # complete consumer fan-out was staged before the mutable tag moved.
       shell: bash
       run: ./scripts/refresh-flux-ghcr-auth.sh --check-only
+
+    - name: 🛡️ Reassert the root source verification
+      id: reassert_flux_root_verify
+      # The root source's cosign matcher is delivered through that same source,
+      # so a bad live value can never be replaced by a deploy (#3014). Repair it
+      # from this commit's declared value, through the FluxInstance flux-operator
+      # renders it from, after the new artifact is published so the source can
+      # verify and fetch it. A healthy cluster takes no write. Never skipped: a
+      # green deploy therefore always ran it, and the step summary says what it did.
+      shell: bash
+      run: ./scripts/reassert-flux-root-verify.sh
+
+    - name: 💾 Apply Longhorn clients and restore the owned database pauses
+      shell: bash
+      run: go run ./scripts/maintain-longhorn-clients after-publish
 
     - name: 🔁 Trigger Flux reconciliation
       id: reconcile
@@ -296,14 +359,11 @@ runs:
 
     - name: 🩺 Diagnose Flux on failure
       if: failure() && steps.reconcile.outcome == 'failure'
-      # Shared composite (extracted from the richest platform-template variant,
-      # devantler-tech/actions#367). Its default `kustomizations` input is
-      # `infrastructure-controllers infrastructure apps` — identical to the list
-      # this callsite previously hard-coded — so this is behaviour-preserving for
-      # the describe loop and a strict diagnostics upgrade otherwise (Nodes,
-      # all-pods, failing/CrashLooping pod logs, Job logs, failing-Job describes,
-      # larger --tail values). Failure-path-only: it cannot affect a green deploy.
-      uses: devantler-tech/actions/diagnose-flux@e182f2207fb386ef827f48b3cc9b7deac873046a # v7.1.0
+      # Canonical bounded diagnostics retain the same default Kustomizations:
+      # infrastructure-controllers infrastructure apps. Current failures precede
+      # capped recent Job output, with per-command and collection deadlines.
+      # This remains failure-path-only and preserves the original deploy verdict.
+      uses: devantler-tech/.github/actions/diagnose-flux@ef34177c48310d4e8d6605233cb7218b926dcc55 # v7.2.11
 
     - name: ⏳ Wait for the newly published Flux revision
       id: wait_flux_revision
@@ -319,7 +379,33 @@ runs:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
-    - name: Verify staged wedding backup credential
+    - name: 💾 Verify restored database redundancy and retained storage
+      shell: bash
+      run: go run ./scripts/maintain-longhorn-clients verify
+
+    - name: 💾 Restore owned maintenance on every failure path
+      if: >-
+        always() &&
+        (steps.longhorn_client_prepare.outcome == 'success' ||
+        steps.longhorn_client_prepare.outcome == 'failure' ||
+        steps.longhorn_client_prepare.outcome == 'cancelled')
+      shell: bash
+      env:
+        # Only a step that never ran proves the candidate was not published.
+        # A failed publish may have moved the tag and is never treated as skipped.
+        LONGHORN_PUBLICATION_NOT_STARTED: ${{ steps.publish_platform_manifest.outcome == 'skipped' || steps.publish_platform_manifest.outcome == '' }}
+      run: go run ./scripts/maintain-longhorn-clients restore
+
+    - name: 🛑 Verify ARC stayed inactive across recovery
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: |
+        bash scripts/retire-arc-pool.sh after-reconcile
+        go run ./scripts/guard-arc-recovery after-reconcile
+
+    - name: Verify dedicated Wedding backup credential and active archive
       id: verify_wedding_backup_staging
       shell: bash
       env:
@@ -440,6 +526,20 @@ runs:
       shell: bash
       run: ./scripts/verify-talos-schematic-readback.sh
 
+    - name: 🧾 Read back the kubelet settings on every node
+      # A green machine-config sync does not prove that every running kubelet
+      # took the declared settings: two autoscaler nodes ran without the disk
+      # eviction thresholds for weeks after the fix deployed, and nothing
+      # reported it (#3137). A finding fails the deploy: the comparison passed on
+      # every production deploy for a day before it was made blocking. The
+      # steps after it that reassert credentials run on a failure too. The
+      # check only reads Kubernetes.
+      if: >-
+        steps.cluster_update.outcome == 'success' &&
+        steps.wait_prod_api_stability.outcome == 'success'
+      shell: bash
+      run: ./scripts/verify-kubelet-config-readback.sh
+
     - name: 📣 Report suppressed machine-config sync
       # The step above is the pipeline's ONLY Talos machine-config sync, and the
       # rollout gate skips it. A skipped step inside a green deploy reads as
@@ -514,3 +614,86 @@ runs:
         ./scripts/refresh-flux-ghcr-auth.sh
         --reuse-runtime-proof
         "${RUNNER_TEMP}/ghcr-runtime-proof-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+
+    - name: 🚦 Verify the gateway applies every HTTPRoute
+      # The Cilium operator can run for hours without its Gateway API
+      # controller, which starts only if a CRD check succeeds when a leader
+      # starts (#4198). Flux, the HelmReleases and the pods all stay healthy
+      # while every route change, and every Flagger traffic shift, silently
+      # stops reaching the gateway. The check waits a bounded time for every
+      # route to be applied, rejects routes the gateway refused or that name a
+      # missing Gateway, and fails when a running operator logged the failed
+      # start. It runs last, so an operator restart caused by this deploy's own
+      # Talos update is covered even when no route changed.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      run: ./scripts/verify-gateway-routes-applied.sh
+
+    - name: Verify the deployed data product UI release
+      # The protected deployment must prove current Apps/chart/Helm identities,
+      # all current Pods and public endpoints before its candidate can merge.
+      # Recovery reads this action from main's checkout with main's release pins.
+      if: >-
+        !cancelled() &&
+        steps.wait_flux_revision.outcome == 'success' &&
+        (
+          steps.cluster_update.outcome == 'skipped' ||
+          steps.wait_prod_api_stability.outcome == 'success'
+        )
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: |
+        export KUBECONFIG="${HOME}/.kube/config"
+        umask 077
+        apps_verify_file="$(mktemp "${RUNNER_TEMP}/dpc-apps-verify.XXXXXX")"
+        trap 'rm -f "${apps_verify_file}"' EXIT
+        # Read the exact declared root-source policy, including its immutable
+        # approved signers, rather than maintaining a second signer list.
+        yq -o=json '[.spec.kustomize.patches[] |
+          select(.target.kind == "OCIRepository" and .target.name == "flux-system")]' \
+          k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml |
+          jq -er 'if length == 1 then .[0].patch else error("ambiguous root source patch") end' |
+          yq -o=json '.' |
+          jq -e 'if type != "array" then error("invalid root policy patch") else . end |
+            [.[] | select((.path // "") as $p | $p == "/spec/verify" or
+              ($p | startswith("/spec/verify/")) or ("/spec/verify" | startswith($p + "/")))] |
+            if length == 1 and .[0].path == "/spec/verify" and
+              (.[0].op == "add" or .[0].op == "replace") and (.[0].value | type) == "object"
+            then .[0].value else error("ambiguous root verification policy") end' >"${apps_verify_file}"
+        domain="$(yq -er '.data.domain' k8s/clusters/prod/bootstrap/config-map.yaml)"
+        image_digest="$(yq -er '.spec.values.image.digest' k8s/bases/apps/data-product-controller/helm-release.yaml)"
+        chart_digest="$(yq -er '.spec.ref.digest' k8s/bases/apps/data-product-controller/oci-repository.yaml)"
+        # Pods report a platform manifest digest rather than the image index.
+        # Resolve only the selected immutable release, never a mutable tag or
+        # an independently maintained runtime pin. Attestations are not runtimes.
+        runtime_digests="$(docker buildx imagetools inspect \
+          "ghcr.io/devantler-tech/data-product-controller@${image_digest}" --raw |
+          jq -ers --arg image_digest "${image_digest}" '
+            if length != 1 then error("ambiguous image manifest") else .[0] end |
+            if .schemaVersion != 2 then error("unsupported image schema")
+            elif .mediaType == "application/vnd.oci.image.manifest.v1+json" or
+                 .mediaType == "application/vnd.docker.distribution.manifest.v2+json"
+            then $image_digest
+            elif .mediaType == "application/vnd.oci.image.index.v1+json" or
+                 .mediaType == "application/vnd.docker.distribution.manifest.list.v2+json"
+            then [.manifests[] | select(.platform.os == "linux" and
+                   (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .digest] |
+              if length > 0 and all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
+              then unique[] else error("no valid runtime manifests") end
+            else error("unsupported image media type") end')"
+        runtime_args=()
+        while IFS= read -r runtime_digest; do
+          runtime_args+=(--runtime-digest "${runtime_digest}")
+        done <<<"${runtime_digests}"
+        ./scripts/verify-data-product-ui-rollout.sh \
+          --context admin@prod --domain "${domain}" \
+          --image-digest "${image_digest}" "${runtime_args[@]}" \
+          --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}" \
+          --apps-verify-file "${apps_verify_file}"

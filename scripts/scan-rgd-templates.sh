@@ -28,6 +28,7 @@ readonly RGD_ROOT_PATH="k8s/bases/infrastructure/resource-graph-definitions"
 RGD_PATHS=()
 RGD_API_VERSIONS=()
 RGD_KINDS=()
+RGD_DEFINITION_GROUPS=()
 
 fail() {
   echo "FAIL: $*" >&2
@@ -213,6 +214,7 @@ while IFS= read -r candidate; do
   definition_api_version="$(yq -r '.apiVersion // ""' "$candidate")"
   [[ "$definition_api_version" == */* ]] ||
     fail "RGD does not declare a grouped apiVersion: $candidate"
+  RGD_DEFINITION_GROUPS+=("${definition_api_version%/*}")
   schema_api_version="$(yq -r '.spec.schema.apiVersion // ""' "$candidate")"
   [ -n "$schema_api_version" ] || fail "RGD does not declare spec.schema.apiVersion: $candidate"
   if [[ "$schema_api_version" == */* ]]; then
@@ -236,6 +238,9 @@ done < <(printf '%s\n' "${K8S_RESOURCE_PATHS[@]}")
 readonly RGD_PATHS
 readonly RGD_API_VERSIONS
 readonly RGD_KINDS
+readonly RGD_DEFINITION_GROUPS
+rgd_definition_groups_json="$(printf '%s\n' "${RGD_DEFINITION_GROUPS[@]}" | jq -Rsc 'split("\n") | map(select(length > 0)) | unique')"
+readonly rgd_definition_groups_json
 
 rgd_selectors_json='[]'
 for rgd_index in "${!RGD_KINDS[@]}"; do
@@ -394,7 +399,7 @@ replacement_entries_json() {
 protected_flux_patch_targets() {
   local patch_entries_json="$1" targeted_flux flux_patch_entry flux_patch_body
   local flux_patch_documents protected_flux_patch_kinds
-  targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" '
+  targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" --argjson definition_groups "$rgd_definition_groups_json" '
     def selector_matches($value; $pattern):
       ($pattern == "")
       or (try ($value | test("^(" + $pattern + ")$")) catch false);
@@ -405,13 +410,13 @@ protected_flux_patch_targets() {
     ]
     | .[] as $target
     | select(
-        ($target.kind // "") == ""
-        or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+        (selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+          and any($definition_groups[]; selector_matches(.; ($target.group // ""))))
         or any($generated[];
           selector_matches(.kind; ($target.kind // ""))
           and selector_matches(.group; ($target.group // ""))
           and selector_matches(.version; ($target.version // ""))))
-    | $target.kind // "missing kind"
+    | if ($target.kind // "") == "" then "missing kind" else $target.kind end
   ' <<<"$patch_entries_json")"
   if [ -n "$targeted_flux" ]; then
     printf '%s\n' "$targeted_flux"
@@ -1075,7 +1080,11 @@ while IFS= read -r candidate; do
   [ "$flux_substitution_override_count" -eq 0 ] || fail \
     "Flux Kustomization must not override the substitution opt-out: $candidate"
 
-  targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" '
+  # Kustomize target fields are conjunctive: an omitted kind is broad only inside the
+  # selected API group. A UniFi-only group cannot mutate a sealed RGD/generated API, but
+  # an absent or matching group still can. Definition groups come from the scanned RGDs,
+  # and their entire kind family remains protected across API versions.
+  targeted_flux="$(jq -r --argjson generated "$rgd_selectors_json" --argjson definition_groups "$rgd_definition_groups_json" '
     def selector_matches($value; $pattern):
       ($pattern == "")
       or (try ($value | test("^(" + $pattern + ")$")) catch false);
@@ -1097,13 +1106,14 @@ while IFS= read -r candidate; do
     | .[] as $target
     | select(
         ($target | type) != "object"
-        or ($target.kind // "") == ""
-        or selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+        or (selector_matches("ResourceGraphDefinition"; ($target.kind // ""))
+          and any($definition_groups[]; selector_matches(.; ($target.group // ""))))
         or any($generated[];
           selector_matches(.kind; ($target.kind // ""))
           and selector_matches(.group; ($target.group // ""))
           and selector_matches(.version; ($target.version // ""))))
-    | if ($target | type) == "object" then $target.kind // "missing kind"
+    | if ($target | type) == "object" then
+        if ($target.kind // "") == "" then "missing kind" else $target.kind end
       else "invalid selector" end
   ' <<<"$candidate_documents")"
   [ -z "$targeted_flux" ] || fail \

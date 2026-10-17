@@ -62,9 +62,9 @@ spec:
     # static baseline. 9 = the Hetzner account cap (10) MINUS ONE RESERVED SLOT:
     # 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes. KSail
     # passes it to cluster-autoscaler --max-nodes-total, which counts every node,
-    # so this total framing already matches the runtime. Each pool max is 4, so
-    # any single CX type can still fill the autoscaler headroom (or any mix); the
-    # cluster total stays <= 9.
+    # so this total framing already matches the runtime. The general pools each
+    # allow 4 nodes; the isolated organization runner pool allows 1. Any mix shares the
+    # same cluster ceiling of 9.
     #
     # THE RESERVED SLOT IS LOAD-BEARING — DO NOT RAISE THIS TO THE ACCOUNT CAP.
     # `deploy-prod` ensures the autoscaler config secret on EVERY deploy, and that
@@ -111,7 +111,9 @@ spec:
         # the cx33 pool in #2420 stranded two live cx33 nodes for 47 days exactly
         # this way (#3178). When removing a pool, drain and delete its nodes in
         # the same change: docs/dr/runbook.md → "Stranded autoscaler nodes on a
-        # LIVE cluster".
+        # LIVE cluster". Keep DECLARED_POOLS in the stranded-autoscaler-node-
+        # alerter CronJob equal to this list; CI fails until they match, and the
+        # CronJob alerts on any autoscaler node whose pool is not in it.
         pools:
           - name: autoscale-cx43
             serverType: cx43
@@ -123,6 +125,19 @@ spec:
             location: fsn1
             min: 0
             max: 4
+          # Zero idle organization runner capacity. The taint prevents ordinary workloads
+          # and warm-capacity buffers from keeping this larger worker alive.
+          - name: autoscale-arc-runners
+            serverType: cx53
+            location: fsn1
+            min: 0
+            max: 1
+            labels:
+              platform.devantler.tech/ci-runner: enabled
+            taints:
+              - key: platform.devantler.tech/ci-runner
+                value: enabled
+                effect: NoSchedule
     # These components are installed by ksail. There is a known race on
     # Hetzner clusters between ksail's metrics-server install and Flux's
     # kubelet-serving-cert-approver install (required because Talos
@@ -159,7 +174,7 @@ spec:
       # Roll the already-declared audit/AppArmor Image Factory schematic onto
       # static nodes. Machine-config sync alone cannot replace baked-in kernel
       # arguments when the running OS version remains unchanged (#4098).
-      version: v1.14.0
+      version: v1.14.4
       # Hetzner Talos ISO (x86_64). The v1.11.2 ISO (122630) was deprecated
       # and removed from Hetzner on 2026-03-18. Use v1.12.4 (125127).
       iso: 125127

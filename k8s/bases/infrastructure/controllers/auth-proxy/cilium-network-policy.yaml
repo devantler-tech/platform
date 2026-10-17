@@ -19,6 +19,17 @@ spec:
             - port: "8080"
               protocol: TCP
   egress:
+    # Registry requests have passed the maintainer-team SSO gate.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: data-product-controller
+            k8s:app.kubernetes.io/name: data-product-controller
+            k8s:app.kubernetes.io/instance: data-product-controller
+            k8s:app.kubernetes.io/component: controller
+      toPorts:
+        - ports:
+            - port: "8082"
+              protocol: TCP
     # Actual Budget upstream (personal finance app; Service actual-budget-actualbudget :5006).
     - toEndpoints:
         - matchLabels:
@@ -26,14 +37,6 @@ spec:
       toPorts:
         - ports:
             - port: "5006"
-              protocol: TCP
-    # Backstage upstream (developer portal; Service backstage :7007).
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: backstage
-      toPorts:
-        - ports:
-            - port: "7007"
               protocol: TCP
     # Crossview upstream (cluster resource explorer; Service :80 -> pod :3001).
     - toEndpoints:

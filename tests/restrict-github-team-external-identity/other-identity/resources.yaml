@@ -1,0 +1,12 @@
+---
+# The rule is not limited to the github-config ServiceAccount: any writer but the provider is held to it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed

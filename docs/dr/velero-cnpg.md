@@ -28,33 +28,42 @@ The shared `platform-backups` credential is SOPS-encrypted per environment in
 `k8s/clusters/<env>/bootstrap/secret.enc.yaml`, seeded into OpenBao at
 `infrastructure/backup/r2` by the `seed-r2-credentials` PushSecret, and
 materialised into the Velero and participating CNPG namespaces by
-ExternalSecrets. Wedding's tenant-isolated destination is currently staged
-beside that active shared archive: its separate `wedding-db-backups` bucket and credential use
+ExternalSecrets. Wedding's tenant-isolated destination uses a separate
+`wedding-db-backups` bucket and credential, with
 `secret-wedding-db-backup-r2.enc.yaml`, the `seed-wedding-db-backup-r2`
 PushSecret, and the dedicated `apps/wedding-app/backup/r2` OpenBao path. The two
-credential branches rotate independently. The live Wedding Cluster keeps using
-the shared `wedding-db` ObjectStore until the existing catalog has been mirrored
-and a reviewed cutover changes it to `wedding-db-dedicated`. The dispatch-only
-`Mirror Wedding Backup Catalogue` workflow does the copy from inside the
-`wedding-app` namespace and reports the evaluator's parity verdict: it can be
-re-run safely, and only a `CONVERGED` run means the switch may start. Run it once
-more immediately before the switch. `CONVERGED` does not cover WAL archived between
-that run and the reference change, so after the reference change the cutover
-**must** run the same workflow in `catch-up` mode with the recorded switch time.
-That pass requires the Cluster to archive through `wedding-db-dedicated`, copies
-the now-quiescent shared catalogue once more, and refuses any destination object
-written before the switch or outside the Cluster's server directory. Within that
-server directory it proves the first segment archived through the dedicated store
-that is newer than the shared catalogue's newest segment is that segment's
-successor, so there is no gap. Record the switch time in UTC at or after the last
-archive to the shared store and before the first archive to the dedicated store:
-too early and the pass refuses the newest shared objects, too late and it refuses
-the Cluster's first post-switch objects. The cutover is complete only when it
-reports `CAUGHT UP`; `NOT CAUGHT UP` means no newer segment has been archived
-through the dedicated store yet, so run it again after the next archive. Until
-then, a
-shared-token rotation must verify Wedding together with Umami, Coroot, and
-Velero before the previous shared token is revoked.
+credential branches rotate independently. The tenant source selects
+`wedding-db-dedicated` for the live Wedding Cluster; the platform's production
+tenant patch preserves its `wedding-db-20260909` archive identity. That dedicated
+credential is the only backup credential in the `wedding-app` namespace: the shared `wedding-db`
+ObjectStore and its projection of the shared credential were retired (#3253)
+once the predecessor catalogue had been mirrored into the dedicated bucket, a
+restore from the dedicated bucket alone had succeeded, and the shared
+destination had been observed refusing the dedicated credential (protected
+`main` run 37234932425; see restore-drill.md). The shared credential can read
+every shared consumer's backups, so it must not return to a tenant namespace.
+`Verify Wedding Backup Denial` runs in the platform's observability namespace,
+using its existing shared credential and a run-owned copy of only the dedicated
+keys. It can be rerun after a rotation without restoring shared tenant access.
+The completed catalogue-copy and incident-specific recovery workflows are
+removed. Their catalogue evaluator remains because the read-only coverage
+proof uses it. #4481 removes the predecessor catalogue that still sits in the
+shared bucket. That copy is no longer written to or pruned, and every holder of
+the shared credential can read it. Before it is removed, dispatch `Verify
+Wedding Shared Backup Coverage` on `main` with
+`confirm=verify-wedding-shared-backup-coverage`. It only reads: a pod beside the
+shared credential in `umami` and one beside the dedicated credential in
+`wedding-app` each list their side, and the verdict is `COVERED` only when every
+object in the shared copy is in the dedicated bucket with matching content, or
+was provably removed there by the 30-day retention. Remove the shared copy only
+after a `COVERED` run, and run the proof again afterwards: it then reports
+`EMPTY`. `Verify Wedding Backup Cutover`
+is a main-only, protected production dispatch: confirm
+`verify-wedding-backup-cutover` to request a fresh online primary backup. It
+refuses a shared archive, unhealthy database, changed database identity, or
+incomplete backup receipt. Record its backup ID and WAL segment, then confirm
+that the dedicated catalogue contains that completed backup and advancing WAL.
+Backup completion alone does not prove an isolated restore.
 
 ## Velero
 
@@ -80,24 +89,25 @@ captured. *How* each volume is captured depends on its storage backend:
 | Storage backend                    | Method                               | Why                                                                                  |
 | ---------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
 | Longhorn (`longhorn` SC)           | CSI snapshot → Kopia data mover → R2  | Crash-consistent; also backs up PVCs of scaled-to-zero apps (no running pod needed).  |
-| hcloud (`hcloud` SC; only `openbao/vault-snapshots`) | Skipped by Velero; the OpenBao CronJob mirrors raft snapshots directly to R2 | The PVC is unmounted during Velero's window, so FSB cannot read it, and Hetzner block storage has no CSI snapshot support. |
+| hcloud + `backup.platform.devantler.tech/volume-data=independently-mirrored` (`openbao/vault-snapshots` only) | Skipped by Velero; the OpenBao CronJob mirrors raft snapshots directly to R2 | The PVC is unmounted during Velero's window, so FSB cannot read it, and Hetzner block storage has no CSI snapshot support. |
+| other hcloud claims (OpenBao data/audit and Coroot telemetry) | File-system backup (Kopia) → R2 | hcloud-csi has no snapshot support; mounted controller-created claims use the fail-safe FSB path. The copy is file-level and taken while ClickHouse runs, so Coroot telemetry restores best-effort only ([#3673](https://github.com/devantler-tech/platform/issues/3673)). |
 | anything else / new PVCs           | File-system backup (Kopia) → R2       | Fail-safe default.                                                                    |
 
-The routing is declarative (by StorageClass), not per-pod annotations:
+The routing is declarative through storage attributes, not per-pod annotations:
 
 - `defaultVolumesToFsBackup: true` everywhere is the **fail-safe default** — any
   volume not otherwise routed is Kopia-FSB'd, so nothing is ever silently
   skipped.
 - **prod only:** a Velero **Volume Policy** ConfigMap (`velero-volume-policies`,
   referenced by the schedule's `spec.resourcePolicy`) routes `storageClass:
-  [longhorn]` to `snapshot` and `storageClass: [hcloud]` to `skip`. The only
-  hcloud PVC is `openbao/vault-snapshots`; its own CronJob mirrors every raft
-  snapshot directly to R2, and no pod mounts it during Velero's window. A
-  regression check rejects any additional hcloud PVC until its backup method is
-  reviewed, so this narrow skip cannot silently cover new data. Unknown storage
-  classes retain the fail-safe FSB fallback. `snapshotMoveData: true` makes the
-  Longhorn data mover upload CSI snapshots to R2 (so they are not tied to
-  Longhorn at restore time).
+  [longhorn]` to `snapshot`. It skips an hcloud claim only when that PVC also
+  carries `backup.platform.devantler.tech/volume-data=independently-mirrored`.
+  Only `openbao/vault-snapshots` carries the marker; its CronJob mirrors every
+  raft snapshot directly to R2, and no pod mounts it during Velero's window.
+  OpenBao data/audit storage, Coroot telemetry storage, future hcloud claims,
+  and unknown storage classes retain the fail-safe FSB fallback.
+  `snapshotMoveData: true` makes the Longhorn data mover upload CSI snapshots to
+  R2 (so they are not tied to Longhorn at restore time).
 - **local/CI:** no Volume Policy and no CSI (the docker `local-path` provider
   cannot snapshot) → every mounted volume uses FSB, so the CI restore drill
   still regression-tests the production fallback path.
@@ -138,9 +148,9 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   CNPG `Cluster` gets an ExternalSecret next to it because the Barman plugin's
   `ObjectStore` can only reference a Secret in the Cluster's own namespace.
   Shared consumers read `infrastructure/backup/r2`. Wedding's active
-  `wedding-db` ObjectStore still reads that path while its inactive
   `wedding-db-dedicated` ObjectStore reads `apps/wedding-app/backup/r2` and
-  points at `wedding-db-backups` for the staged migration.
+  points at `wedding-db-backups`. It is the namespace's only backup store: the
+  earlier `wedding-db` ObjectStore on the shared path is retired (#3253).
   The earlier reusable `cnpg-r2-credentials` Secret in `cnpg-system` was
   removed because no `Cluster` could reference it across namespaces.
 - Live example: `umami-db` — `k8s/bases/apps/umami/external-secret-db-backup.yaml`
@@ -164,26 +174,33 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
   advance the server name in the same reviewed recovery change that creates the
   new Cluster. Do not change it for an ordinary rollout of a healthy Cluster.
 
-## Local clusters: MinIO replaces R2
+## Local clusters: disposable S3 storage replaces R2
 
-Same Velero install, different backend. Local uses an in-cluster
-**Bitnami MinIO** chart (single replica, ephemeral storage) so the entire
-S3 code path runs end-to-end in CI. The redirection happens via Flux
-variable overrides in `k8s/clusters/local/bootstrap/`:
+The optional local backup components use a pinned **SeaweedFS** Deployment
+with one replica and ephemeral storage. The existing `minio` resource names
+and S3 endpoint remain compatible with Velero and CNPG configuration. Enable
+the components explicitly for a manual restore drill; ordinary CI validates
+manifests without creating a cluster. Flux variable overrides in
+`k8s/clusters/local/bootstrap/` select the local backend:
 
 | Variable               | Local value                                       |
 | ---------------------- | ------------------------------------------------- |
 | `r2_endpoint`          | `http://minio.minio.svc.cluster.local:9000`       |
-| `r2_region`            | `us-east-1` (MinIO ignores; Velero requires)      |
+| `r2_region`            | `us-east-1`                                       |
 | `r2_bucket`            | `platform-backups`                                |
 | `r2_access_key_id`     | `minio` (SOPS-encrypted)                          |
 | `r2_secret_access_key` | `minio-local-development-only` (SOPS-encrypted)   |
 
-No code changes between local and prod — only the variable values differ.
-This is the whole point of the substitution layer: the CI restore drill
-(see [restore-drill.md](./restore-drill.md))
-exercises the *exact* same `velero backup` / `velero restore` calls
-that an operator would run against R2 in prod.
+Velero uses the same backup and restore commands with these endpoint overrides.
+The server starts as UID/GID 65532 with a read-only root filesystem and no
+capabilities or ServiceAccount token. Its launcher requires valid mounted
+credential files and creates one private S3 identity; missing, empty or
+malformed credentials stop startup. Internal HTTP APIs bind loopback, and the
+network policy permits only S3 HTTP ingress from Pod peers, blocking their access
+to the additional management gRPC listener. This does not claim isolation from
+trusted node processes. See [restore-drill.md](./restore-drill.md) for the full manual drill.
+Fixture S3 operations and the protected Wedding bootstrap verification do not
+establish a real Velero/CNPG restore or production R2 compatibility.
 
 Wedding is deliberately absent from the Docker apps overlay because its tenant
 deployment depends on production-only GHCR, CNPG, and Longhorn resources. The
@@ -192,7 +209,7 @@ dedicated Wedding bootstrap credential nor an unused `wedding-db-backups`
 bucket. Dedicated ObjectStore acceptance uses the hosted manifest checks and a
 live production backup, WAL archive, and isolated restore instead.
 
-The MinIO credentials are hard-coded local-only secrets. They are
+The S3 credentials are hard-coded local-only secrets. They are
 SOPS-encrypted at rest per the platform-wide rule, but they are not
 sensitive — the bucket is in-cluster and ephemeral, accessible only from
 inside the local Docker cluster, and is wiped on every
@@ -257,11 +274,20 @@ credential.
 
 After the rotation merges, let Flux reconcile. For Wedding, run `cd.yaml`
 manually with `verify-wedding-backup-staging=true`; the verifier checks the
-bootstrap Secret, OpenBao projection, both ObjectStores, the still-shared live
-Cluster reference, and live source stability without printing either
-credential. During initial staging, stop after that proof and retain the shared
-token. Catalog mirroring, the active-reference change, a new backup and WAL,
-and an isolated restore are separate cutover gates. See runbook.md Scenario 7.
+bootstrap Secret, OpenBao projection, the dedicated ObjectStore, the dedicated
+live Cluster reference, and live source stability without printing the
+credential. It also refuses unless the retired shared ObjectStore, its
+ExternalSecret and its Secret are observed absent from `wedding-app`. The
+owned Secret is removed just after its ExternalSecret, so a refusal on the first
+run after the retiring deploy calls for a fresh dispatch, not a re-run. Use
+`Verify Wedding Backup Cutover` to take and verify a fresh
+backup after a Wedding credential rotation. The catalogue and WAL checks must
+also pass before retiring the replaced dedicated token. `Verify Wedding Backup
+Denial` proves that `platform-backups` refuses the new token from the platform's
+observability namespace, using its existing shared credential as a positive
+control. A successful current-source proof is required to establish denial. The
+shared platform identity still serves other databases and
+Velero. See runbook.md Scenario 7.
 
 ## Related
 

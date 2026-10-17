@@ -3,6 +3,15 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  # Re-adopt the retained release without activating a runner. Suspension does
+  # not drain an installed scale set; runtime acceptance remains a separate gate.
+  - retained-ksail-analysis/
+  - arc-credential-transport/
+  # Issuance restrictions must be active before credentials or runners are used.
+  # This layer follows installation of the Kyverno admission controller.
+  - cluster-policies/restrict-arc-openbao-certificate.yaml
+  # A retained namespace journal constrains asynchronous native portal cleanup.
+  - cluster-policies/restrict-backstage-retirement.yaml
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers
@@ -46,7 +55,7 @@ resources:
   # the file headers.
   - cluster-policies/restrict-storage-to-baseline-workers.yaml
   - cluster-policies/drain-autoscale-node-storage.yaml
-  # Longhorn 1.12.1 generates a shell pre-stop hook in its distroless CSI
+  # Longhorn 1.13.0 generates a shell pre-stop hook in its distroless CSI
   # registrar. Admission prevents reintroduction; retrofit fixes the existing
   # runtime-generated DaemonSet. Both are exact and version-coupled (#3931).
   - cluster-policies/remove-longhorn-registrar-prestop.yaml
@@ -79,6 +88,7 @@ resources:
   # worker instead of staying Pending (#4031). The PriorityClass lives in the
   # bootstrap layer so it exists before any Pod names it.
   - cluster-policies/prioritise-hcloud-volume-pods.yaml
+  - cluster-policies/prioritise-database-pods.yaml
   # Prod-only: reconcile Coroot's node Custom Cloud Pricing to Hetzner rates
   # (Coroot otherwise prices non-AWS/GCP/Azure nodes at the GCP-C4 fallback,
   # ~16x the real bill). Lives in this `infrastructure` layer because it targets
@@ -104,6 +114,17 @@ resources:
   - coroot/service-account-crossplane-sync-alerter.yaml
   - coroot/cluster-role-crossplane-sync-alerter.yaml
   - coroot/cluster-role-binding-crossplane-sync-alerter.yaml
+  # Prod-only: alerts through Alertmanager when an autoscaler node belongs to a
+  # pool ksail.prod.yaml no longer declares, since the autoscaler never scales
+  # such a node down (#3178). See the file header.
+  - coroot/cron-job-stranded-autoscaler-node-alerter.yaml
+  - coroot/service-account-stranded-autoscaler-node-alerter.yaml
+  - coroot/cluster-role-stranded-autoscaler-node-alerter.yaml
+  - coroot/cluster-role-binding-stranded-autoscaler-node-alerter.yaml
+  # Prod-only: alerts through Alertmanager when Crossview cannot read its admin
+  # or any other user: the schema is missing or the database is unreachable,
+  # while its probe stays green (#3315). See the file header.
+  - coroot/cron-job-crossview-login-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the
@@ -117,6 +138,7 @@ resources:
   - coroot/object-store.yaml
   - coroot/scheduled-backup.yaml
   - coroot/cilium-network-policy.yaml
+  - coroot/cilium-network-policy-wedding-backup-denial.yaml
   - coroot/pod-disruption-budget.yaml
   # Prod-only safety-net alerting: a Flux notification-controller Provider + Alert
   # that posts Kustomization reconciliation errors to the SAME Slack webhook the
@@ -154,8 +176,8 @@ resources:
   # predated #5277; the old balloon-pod buffer was already removed in #2087.)
   - overprovisioning/
   # Prod-only: static VerticalPodAutoscalers for kube-system + kyverno. auto-vpa
-  # (Kyverno) can't reach these namespaces (global resourceFilters), so VPA is
-  # supplied as plain manifests here. Pairs with the LimitRange memory-seed
+  # (Kyverno) excludes these namespaces explicitly, so VPA is supplied as plain
+  # manifests here. Pairs with the LimitRange memory-seed
   # patches below — together VPA right-sizes requests down while keeping a
   # generous, no-OOM burst limit. See vertical-pod-autoscalers/kustomization.yaml.
   - vertical-pod-autoscalers/

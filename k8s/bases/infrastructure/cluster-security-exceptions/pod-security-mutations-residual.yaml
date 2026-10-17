@@ -1,0 +1,73 @@
+---
+# C-0211 remains unmet in eleven elevated infrastructure workloads outside the
+# namespaces where add-security-context runs. Keep their exception at workload
+# scope; pod-security-mutations.yaml covers namespaces where the mutation runs.
+# Kubescape scores stored workload templates, not the admission-mutated pods.
+#
+# The eleven were checked against live PROD stored specs on 2026-09-26 after
+# #4212, #4215 and #4218: eight Longhorn workloads, two observability agents,
+# and Velero's node-agent. All lack a pod-level fsGroup and also lack an
+# effective runAsGroup or runAsNonRoot. Their elevated access is intentional;
+# changing these fields without a workload-specific rollout would risk storage,
+# telemetry or backup behavior. A new workload in those namespaces must keep
+# its C-0211 finding visible until assessed separately.
+#
+# The CRD's match.resources entries have kind and name but no namespace field.
+# All selectors below are kind+name and checked against live workload names.
+# The one collision, DaemonSet/node-agent in kubescape, is not workload-scanned:
+# kubescape is in the operator's excludeNamespaces. Recheck collisions and the
+# live population before extending this exception.
+#
+# fail-open-warning:BEGIN — every spec.posture controlID must be named below.
+# C-0211 can read status: passed together with subStatus: "w/exceptions" and
+# appliedIgnoreRules even when the stored workload still lacks the required
+# fields. A bare passed status is not proof that a resource can leave this
+# exception. Check subStatus and the live stored template before narrowing it.
+# fail-open-warning:END
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: pod-security-mutations-residual
+spec:
+  reason: >-
+    C-0211's privilege-adjacent fields remain absent from eleven elevated
+    storage, observability and backup workload templates. These exact workloads
+    are excepted while other workloads regain a real C-0211 verdict.
+  posture:
+    - controlID: C-0211
+      action: ignore
+  match:
+    resources:
+      - apiGroup: apps
+        kind: Deployment
+        name: csi-attacher
+      - apiGroup: apps
+        kind: Deployment
+        name: csi-provisioner
+      - apiGroup: apps
+        kind: Deployment
+        name: csi-resizer
+      - apiGroup: apps
+        kind: Deployment
+        name: csi-snapshotter
+      - apiGroup: apps
+        kind: Deployment
+        name: longhorn-driver-deployer
+      - apiGroup: apps
+        kind: DaemonSet
+        name: ^engine-image-ei-[0-9a-f]+$
+      - apiGroup: apps
+        kind: DaemonSet
+        name: longhorn-csi-plugin
+      - apiGroup: apps
+        kind: DaemonSet
+        name: longhorn-manager
+      - apiGroup: apps
+        kind: DaemonSet
+        name: audit-log-forwarder-agent
+      - apiGroup: apps
+        kind: DaemonSet
+        name: coroot-node-agent
+      - apiGroup: apps
+        kind: DaemonSet
+        name: node-agent

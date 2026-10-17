@@ -4,6 +4,7 @@ kind: ClusterPolicy
 metadata:
   name: audit-privileged-rbac
   annotations:
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/title: Restrict Privileged RBAC
     policies.kyverno.io/category: Security
     policies.kyverno.io/severity: high
@@ -32,9 +33,11 @@ spec:
   # pinned versions and applies this policy to their RBAC in CI, so such a change
   # fails its own pull request first.
   #
-  # Coverage limit: Kyverno's own resource filters skip kube-system, kube-public,
-  # kube-node-lease, kyverno, and Kyverno's controller roles for every policy, so a
-  # privileged grant created there is not evaluated in any mode.
+  # Coverage limit: Kyverno's own resource filters skip the kyverno namespace and
+  # Kyverno's controller roles for every policy, so a privileged grant created
+  # there is not evaluated in any mode. kube-system, kube-public and kube-node-lease
+  # are covered by background scans (#4234); kube-system only there, since the
+  # webhooks skip it at admission.
   background: true
   rules:
     - name: privileged-rules

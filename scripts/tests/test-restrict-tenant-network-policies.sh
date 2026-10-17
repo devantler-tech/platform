@@ -47,15 +47,20 @@ expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
 
 # 3. CONTROL for 2: the identical bodies, in the identical namespace, submitted
 #    by the TENANT. Only the applying identity differs. Without this the zero
-#    above is indistinguishable from the policy simply not matching. Both bodies
-#    fail the reserved-name rule; allow-dns ALSO fails the egress rule, because
-#    it reaches CoreDNS by naming kube-system through the namespace label, and
-#    allow-cnpg-operator ALSO fails the ingress rule for naming cnpg-system — the
-#    cross-namespace selector a tenant is refused (#3399, #3655). The generated floor
-#    is exempt from that only through its applying identity, which is the point.
+#    above is indistinguishable from the policy simply not matching. All three
+#    bodies fail the reserved-name rule; allow-dns ALSO fails the egress rule,
+#    because it reaches CoreDNS by naming kube-system through the namespace
+#    label, and allow-cnpg-operator ALSO fails the ingress rule for naming
+#    cnpg-system — the cross-namespace selector a tenant is refused (#3399,
+#    #3655). default-deny ALSO fails both the ingress and the egress rule: its
+#    one empty rule per direction names no source or destination, which those
+#    rules refuse because a sourceless rule WITH toPorts allows every peer on
+#    that port. Without toPorts, as here, Cilium allows nothing (#3501), so the
+#    refusal is conservative, not a hole. The generated floor is exempt from all
+#    of that only through its applying identity, which is the point.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 10, fail: 5, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 8, fail: 7, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to author the reserved generated names"
 
 # 4. Carve-out: platform-authored policies applied by flux-system's
@@ -77,7 +82,17 @@ apply "${tests}/node-group-resources.yaml" "${tests}/values.yaml" "${tests}/user
 expect_summary "pass: 48, fail: 16, warn: 0, error: 0, skip: 0" \
   "tenant node/provider selectors must remain forbidden"
 
-# 7. Static action guard. Every count above is a RULE result; none of them says
+# 7. The day-one policy platform-tenant-template ships must stay admissible
+#    under the tenant's own identity. Tightening this boundary has made a freshly
+#    generated tenant inadmissible three times, each found only by the
+#    template's scheduled run (#3652); this makes the next one fail here. Four
+#    rules evaluate it, and none may refuse it.
+apply "${tests}/tenant-scaffold/resources.yaml" \
+  "${tests}/tenant-scaffold/values.yaml" "${tests}/tenant-scaffold/user-info.yaml"
+expect_summary "pass: 4, fail: 0, warn: 0, error: 0, skip: 0" \
+  "the platform-tenant-template scaffold must be admissible on day one"
+
+# 8. Static action guard. Every count above is a RULE result; none of them says
 #    what admission actually does on a violation. Enforcement lives in each
 #    rule's own `failureAction`, because the deprecated top-level
 #    spec.validationFailureAction defaults an action-less rule to Audit — which

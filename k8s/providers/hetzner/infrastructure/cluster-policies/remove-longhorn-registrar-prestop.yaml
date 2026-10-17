@@ -1,9 +1,9 @@
-# Prod-only: remove Longhorn v1.12.1's impossible pre-stop hook from the
+# Prod-only: remove Longhorn v1.13.0's impossible pre-stop hook from the
 # generated CSI node-driver-registrar container.
 #
-# ROOT CAUSE (#3931): Longhorn v1.12.1 generates longhorn-csi-plugin with a
+# ROOT CAUSE (#3931): Longhorn v1.13.0 generates longhorn-csi-plugin with a
 # `/bin/sh -c rm ...` pre-stop hook on
-# longhornio/csi-node-driver-registrar:v2.17.0. That image is distroless and
+# longhornio/csi-node-driver-registrar:v2.18.0. That image is distroless and
 # has no /bin/sh, so every pod termination emits FailedPreStopHook and Talos
 # ExecSync errors. The registrar already handles SIGTERM and removes its
 # registration socket itself. Removing this hook therefore restores the
@@ -23,13 +23,13 @@ kind: ClusterPolicy
 metadata:
   name: remove-longhorn-registrar-prestop
   annotations:
-    platform.devantler.tech/longhorn-chart-version: "1.12.1"
+    platform.devantler.tech/longhorn-chart-version: "1.13.0"
     policies.kyverno.io/title: Remove Broken Longhorn Registrar Pre-stop Hook
     policies.kyverno.io/category: Storage, Reliability
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: DaemonSet
     policies.kyverno.io/description: >-
-      Removes only the shell-based pre-stop hook that Longhorn 1.12.1 adds to
+      Removes only the shell-based pre-stop hook that Longhorn 1.13.0 adds to
       its distroless node-driver-registrar sidecar. The registrar performs its
       own SIGTERM socket cleanup; the valid longhorn-manager hook is retained.
 spec:

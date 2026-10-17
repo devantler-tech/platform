@@ -14,12 +14,8 @@ metadata:
   name: umami-db
   namespace: umami
   annotations:
-    # Never let Flux delete+recreate this database: the apps Flux Kustomization
-    # runs force: true + prune: true, and the longhorn PVCs are reclaimPolicy=
-    # Delete, so a force-recreate would wipe the data (the failure that hit
-    # coroot-db on 2026-06-18). Flux can still update it; immutable changes must
-    # be made by an operator with a backup/restore plan.
-    kustomize.toolkit.fluxcd.io/force: disabled
+    # The owning Flux layer has force=false: immutable conflicts require an
+    # operator's backup/restore plan. Keep this database when its manifest is removed.
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   # Pin the PostgreSQL operand image explicitly instead of riding the CNPG operator
@@ -32,7 +28,8 @@ spec:
   # 11 PostgreSQL CVEs incl. the RCE-class CVE-2026-6473. Renovate keeps this current
   # via the cluster.yaml customManager in .github/renovate.json; CNPG rolls
   # the image in place (replicas first, then a primary switchover), so the >=2-instance
-  # HA Clusters stay available with no data-loss path (force/prune are disabled above).
+  # HA Clusters remain available; Flux force=false and the prune annotation
+  # prevent automatic replacement and garbage collection of this Cluster.
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
   imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
@@ -110,6 +107,21 @@ spec:
   # carries `cnpg.io/reload` so rotations are picked up promptly. Attributes
   # mirror the initdb owner (LOGIN + CNPG defaults), so no other role attribute
   # changes.
+  #
+  # Blue/green login colours (#4107). Rotating a static role revokes its old
+  # password at once, so a single rotated login left old pods failing with
+  # 28P01 until the rollout replaced them (~80s every week). The app logs in as
+  # `umami_blue` or `umami_green` — whichever OpenBao rotated most recently
+  # (external-secret-db-active.yaml) — and the weekly umami-db-rotation
+  # CronJob only rotates the OTHER, idle colour, so old pods keep a valid
+  # password until they are replaced. Both are members of `umami`, and
+  # OpenBao's rotation statement sets `SET role = 'umami'` on them, so
+  # objects stay owned by `umami`. Each colour is enforced from its own
+  # OpenBao-synced Secret, exactly like `umami`, which keeps umami-db-rotated.
+  # The colours were created without a passwordSecret first (#4324): CNPG
+  # refuses to CREATE a managed role whose passwordSecret does not exist yet.
+  # `umami` keeps LOGIN and its rotating password until the cut-over is
+  # verified live; retiring it is the last step on #4107.
   managed:
     roles:
       - name: umami
@@ -117,6 +129,20 @@ spec:
         login: true
         passwordSecret:
           name: umami-db-rotated
+      - name: umami_blue
+        ensure: present
+        login: true
+        inRoles:
+          - umami
+        passwordSecret:
+          name: umami-db-blue
+      - name: umami_green
+        ensure: present
+        login: true
+        inRoles:
+          - umami
+        passwordSecret:
+          name: umami-db-green
   resources:
     requests:
       cpu: 50m

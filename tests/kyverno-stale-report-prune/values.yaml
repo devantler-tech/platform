@@ -5,6 +5,13 @@ features:
     skipResourceFilters: false
     backgroundScanInterval: 1m
 config:
+  matchConditions:
+    - name: exclude-already-filtered-auth-reviews
+      expression: >-
+        !((request.resource.group == "authentication.k8s.io" &&
+        request.resource.resource == "tokenreviews") ||
+        (request.resource.group == "authorization.k8s.io" &&
+        request.resource.resource in ["subjectaccessreviews", "selfsubjectaccessreviews"]))
   resourceFiltersInclude:
     - "[Lease,*,*]"
     - "[PolicyReport,*,*]"
@@ -15,3 +22,6 @@ config:
     - "[ClusterBackgroundScanReport,*,*]"
   resourceFiltersExclude:
     - "[Node,*,*]"
+    - "[*/*,kube-system,*]"
+    - "[*/*,kube-public,*]"
+    - "[*/*,kube-node-lease,*]"

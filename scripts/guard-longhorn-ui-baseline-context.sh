@@ -32,6 +32,11 @@ has_defaults() {
     ([.spec.template.spec.containers[] | .securityContext.seLinuxOptions] == [{}])' \
     "${scratch}/deployment.json" >/dev/null
 }
+# The source sets fsGroup to the UI's own group 486 (C-0211, #4214). A stored template
+# without it is accepted before the rollout, but not as the result of one.
+has_reconciled_fs_group() {
+  jq -e '.spec.template.spec.securityContext.fsGroup == 486' "${scratch}/deployment.json" >/dev/null
+}
 has_proof() {
   jq -e '.metadata.uid != null and
     .metadata.annotations["pod-security.devantler.tech/longhorn-ui-baseline-proof"] == .metadata.uid' \
@@ -47,7 +52,8 @@ invariants() {
     .status.replicas == 1 and .status.updatedReplicas == 1 and
     .status.readyReplicas == 1 and .status.availableReplicas == 1 and
     (.status.terminatingReplicas // 0) == 0 and
-    .spec.template.spec.securityContext.fsGroup == null and
+    (.spec.template.spec.securityContext.fsGroup == null or
+      .spec.template.spec.securityContext.fsGroup == 486) and
     .spec.template.spec.securityContext.runAsNonRoot == true and
     .spec.template.spec.securityContext.runAsUser == 499 and
     .spec.template.spec.securityContext.runAsGroup == 486 and
@@ -95,7 +101,8 @@ fi
 ready=false
 for ((attempt = 0; attempt < 12; attempt++)); do
   read_ui
-  if [[ -s "${scratch}/deployment.json" ]] && invariants && has_defaults; then
+  if [[ -s "${scratch}/deployment.json" ]] && invariants && has_defaults &&
+    has_reconciled_fs_group; then
     ready=true
     break
   fi
@@ -108,7 +115,7 @@ write_changes=0
 for ((sample = 0; sample < 3; sample++)); do
   sleep 10
   read_ui
-  if ! invariants || ! has_defaults; then
+  if ! invariants || ! has_defaults || ! has_reconciled_fs_group; then
     fail 'UI lost readiness or a security invariant during observation'
   fi
   [[ "$(jq -r '.metadata.generation' "${scratch}/deployment.json")" == "${generation}" ]] ||

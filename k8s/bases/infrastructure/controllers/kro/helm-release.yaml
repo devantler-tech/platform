@@ -16,13 +16,9 @@ spec:
     crds: CreateReplace
   upgrade:
     crds: CreateReplace
-  chart:
-    spec:
-      chart: kro
-      version: 0.9.2
-      sourceRef:
-        kind: HelmRepository
-        name: kro
+  chartRef:
+    kind: OCIRepository
+    name: kro
   # https://kro.run -- KRO (kube-resource-orchestrator) lets the platform define
   # higher-level APIs as ResourceGraphDefinitions (RGDs) that expand
   # into a graph of standard Kubernetes resources. This release installs the

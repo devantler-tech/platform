@@ -2,7 +2,6 @@ package refreshfluxghcrauth
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -314,7 +313,7 @@ func TestFenceReportSweepsCordonOwnerNotOnlyTheRecoveryJournal(t *testing.T) {
 
 	// The ordinary path really does claim ownership with an empty journal —
 	// if that ever stops being true this test should be revisited, not deleted.
-	requireContains(t, script, `      "" "${was_cordoned}" "${initial_node_taints}" || return 1`)
+	requireContains(t, script, `      "" "${was_cordoned}" "${initial_node_taints}" || claim_result=$?`)
 }
 
 // The runbook tells an operator each printed release command is CAS-guarded,
@@ -493,7 +492,9 @@ func TestFenceReleaseCommandsSurviveAQuoteInClusterState(t *testing.T) {
 		// reused verbatim and only its closing brace is supplied.
 		harness := quote + "\n}\n" +
 			`printf 'kubectl --type=json -p %s' "$(fence_shell_quote "$1")"`
-		command := exec.Command("/bin/bash", "-c", harness, "bash", value)
+		ctx, cancel := fixtureCommandContext(t)
+		defer cancel()
+		command := fixtureCommand(ctx, "/bin/bash", "-c", harness, "bash", value)
 		emitted, err := command.Output()
 		if err != nil {
 			t.Fatalf("emit quoted command for %q: %v", value, err)
@@ -503,7 +504,7 @@ func TestFenceReleaseCommandsSurviveAQuoteInClusterState(t *testing.T) {
 		// final argument. A broken escape shows up as a parse failure or as a
 		// different string — never as a silent pass.
 		replay := `eval "set -- ${1#kubectl }"; printf '%s' "${@: -1}"`
-		back := exec.Command("/bin/bash", "-c", replay, "bash", string(emitted))
+		back := fixtureCommand(ctx, "/bin/bash", "-c", replay, "bash", string(emitted))
 		got, err := back.Output()
 		if err != nil {
 			t.Fatalf("emitted command does not re-parse for %q: %v", value, err)
@@ -578,7 +579,9 @@ func TestInterruptedFenceReportDoesNotCallAnUndefinedCleanupHelper(t *testing.T)
 	env := f.baseEnvironment()
 	env["PATH"] = slowDir + string(os.PathListSeparator) + env["PATH"]
 
-	cmd := exec.Command(helperPath, "--fences")
+	ctx, cancel := fixtureCommandContext(t)
+	defer cancel()
+	cmd := fixtureCommand(ctx, helperPath, "--fences")
 	cmd.Dir = rootPath
 	cmd.Env = environmentSlice(env)
 	stdout := &syncBuffer{}
@@ -593,7 +596,7 @@ func TestInterruptedFenceReportDoesNotCallAnUndefinedCleanupHelper(t *testing.T)
 	deadline := time.Now().Add(30 * time.Second)
 	for !strings.Contains(stdout.String(), "GHCR deploy fences") {
 		if time.Now().After(deadline) {
-			_ = cmd.Process.Kill()
+			_ = cmd.Cancel()
 			_ = cmd.Wait()
 			t.Fatalf("fence report never started; stdout = %q stderr = %q",
 				stdout.String(), stderr.String())
@@ -605,6 +608,12 @@ func TestInterruptedFenceReportDoesNotCallAnUndefinedCleanupHelper(t *testing.T)
 		t.Fatalf("signal fence report: %v", err)
 	}
 	_ = cmd.Wait()
+	if err := finishFixtureCommand(cmd); err != nil {
+		t.Fatalf("fence report process cleanup: %v", err)
+	}
+	if ctx.Err() != nil {
+		t.Fatalf("fence report exceeded its test budget: %v", ctx.Err())
+	}
 
 	combined := stdout.String() + stderr.String()
 	// Without the guard the trap reaches an undefined function; the message is

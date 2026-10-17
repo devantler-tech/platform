@@ -1,0 +1,7 @@
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: arc-openbao-ca
+spec:
+  ca:
+    secretName: arc-openbao-ca

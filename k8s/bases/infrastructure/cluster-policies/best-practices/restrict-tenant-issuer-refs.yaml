@@ -61,7 +61,7 @@ metadata:
     policies.kyverno.io/category: Security, cert-manager
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Certificate, CertificateRequest
-    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/minversion: 1.13.0
     policies.kyverno.io/description: >-
       Blocks tenant-applied Certificate and CertificateRequest resources in
       ksail tenant namespaces from referencing a cluster-scoped issuer via
@@ -71,7 +71,6 @@ metadata:
       kustomize-controller) and cert-manager's own derived CertificateRequests
       are excluded.
 spec:
-  validationFailureAction: Enforce
   # Admission-only: the excludes match on request.userInfo (the applying
   # ServiceAccount), which is unavailable during background scans. Every
   # escalation path is a create/update that passes through admission, so
@@ -98,6 +97,7 @@ spec:
                 name: kustomize-controller
                 namespace: flux-system
       validate:
+        failureAction: Enforce
         message: >-
           Tenant Certificates must reference a namespaced Issuer
           (kind: Issuer), not a cluster-scoped issuer such as ClusterIssuer.
@@ -133,6 +133,7 @@ spec:
                 name: cert-manager
                 namespace: cert-manager
       validate:
+        failureAction: Enforce
         message: >-
           Tenant CertificateRequests must reference a namespaced Issuer
           (kind: Issuer), not a cluster-scoped issuer such as ClusterIssuer.

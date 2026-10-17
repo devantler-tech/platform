@@ -11,7 +11,7 @@
 # THE SEAMS
 # The guard reads the approved set from APPROVED_REVISIONS_FILE and scans PUBLISH_CONSUMER_ROOT;
 # both are pointed at a synthetic tree built here. Discovery, attribution and the registered
-# consumer list are REAL (sourced from the report), so the fixture carries exactly the four
+# consumer list are REAL (sourced from the report), so the fixture carries exactly the
 # registered consumers plus the three generic subject files the guard excludes by name.
 
 set -euo pipefail
@@ -43,6 +43,13 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# These synthetic source trees have their own evidence; production receipts do not belong here.
+export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
+printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
+# The canonical-publisher approvals are a separate record with its own suite; this one runs
+# against a record that approves nothing, so a real approval cannot move these cases.
+readonly CANONICAL_NONE="$WORK/canonical-none.tsv"
+printf 'consumer\tworkflow\trepository\tcommit\n' >"$CANONICAL_NONE"
 
 # The registered consumers, from the report itself, so this test cannot drift from the list
 # the guard enforces. Each row: <repo>\t<workflow>.
@@ -221,7 +228,8 @@ build_tree() {
 # run_guard <root> <enforce> — runs the guard against the fixture; prints combined output, returns its status.
 run_guard() {
   local root="$1" enforce="$2"
-  APPROVED_REVISIONS_FILE="$root/scripts/approved.tsv" PUBLISH_CONSUMER_ROOT="$root" \
+  APPROVED_REVISIONS_FILE="$root/scripts/approved.tsv" CANONICAL_APPROVALS_FILE="$CANONICAL_NONE" \
+    PUBLISH_CONSUMER_ROOT="$root" \
     APPROVED_REVISIONS_ENFORCE="$enforce" bash "$GUARD" 2>&1
 }
 
@@ -477,10 +485,26 @@ else
   expect_refusal 'a publish-app row without a release candidate is refused' \
     "$root" 0 "$app_consumer" 'release_candidate_sha'
 
-  root="$(build_tree set-manifests-candidate pattern)"
+  root="$(build_tree set-manifests-candidate pair)"
   write_set "$root/scripts/approved.tsv" "$manifests_consumer" "$(printf '%s\tpublish-manifests\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$manifests_consumer" "$DIGEST" "$(signer_for "$manifests_consumer")" "$SHA_B" "$SHA_E")"
-  expect_refusal 'a publish-manifests row carrying a release candidate is refused' \
-    "$root" 0 "$manifests_consumer" "must be '-'"
+  write_consumer "$root" "$manifests_consumer" publish-manifests "($(signer_for "$manifests_consumer")|$SHA_B|$SHA_E)"
+  expect_pass 'a publish-manifests row carrying an exact release candidate is readable' "$root" 0
+  expect_pass 'the complete manifests candidate set passes enforcement' "$root" 1
+  for ref in "$(signer_for "$manifests_consumer")|$SHA_B|$SHA_E" \
+    "($(signer_for "$manifests_consumer")|$SHA_B|$SHA_E|$SHA_D)" \
+    "($(signer_for "$manifests_consumer")|$SHA_B|$SHA_E|$SHA_E)"; do
+    write_consumer "$root" "$manifests_consumer" publish-manifests "$ref"
+    expect_refusal 'an ungrouped, foreign or duplicate manifests candidate set is refused' \
+      "$root" 1 "$manifests_consumer" 'not the generated set'
+  done
+  write_consumer "$root" "$manifests_consumer" publish-manifests "($(signer_for "$manifests_consumer")|$SHA_B)"
+  expect_refusal 'a manifests matcher missing its declared candidate is refused' \
+    "$root" 1 "$manifests_consumer" 'not the generated set'
+  for candidate in main deadbeef "$SHA_E|$SHA_D"; do
+    write_set "$root/scripts/approved.tsv" "$manifests_consumer" "$(printf '%s\tpublish-manifests\t1.0.0\t%s\t%s\t%s\t%s\t2026-09-03' "$manifests_consumer" "$DIGEST" "$(signer_for "$manifests_consumer")" "$SHA_B" "$candidate")"
+    expect_refusal 'a non-commit manifests candidate is refused' \
+      "$root" 0 "$manifests_consumer" 'release_candidate_sha'
+  done
 
   root="$(build_tree set-seven-field pattern)"
   write_set "$root/scripts/approved.tsv" "$app_consumer" "$(printf '%s\tpublish-app\t1.0.0\t%s\t%s\t%s\t2026-09-03' "$app_consumer" "$DIGEST" "$(signer_for "$app_consumer")" "$SHA_B")"
@@ -504,6 +528,32 @@ root="$(build_tree consumer-missing pattern)"
 rm -f "$root/$(first_path "$first_consumer")"
 expect_refusal 'a registered consumer with no OCIRepository in the tree is refused' \
   "$root" 0 "$first_consumer" 'no OCIRepository under'
+
+# First publication is distinct from an ordinary observed row. Exercise the
+# real consumer discovery and matcher guard rather than a second parser model.
+root="$(build_tree bootstrap-binding pair)"
+binding_path="$(first_path "$app_consumer")"
+yq -i '.metadata.namespace="product" | .metadata.name="product-manifests" | del(.spec.ref.semver) | .spec.ref.digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$root/$binding_path"
+bootstrap_file="$root/scripts/bootstrap.json"
+jq -n --arg consumer "$app_consumer" --arg path "$binding_path" --arg signer "$(signer_for "$app_consumer")" --arg pin "$SHA_B" --arg candidate "$SHA_E" --arg digest "$DIGEST" '{schemaVersion:1,publications:[{
+ kind:"published-bootstrap",consumer:$consumer,workflow:"publish-app",sourcePath:$path,
+ namespace:"product",name:"product-manifests",artifactURL:("oci://ghcr.io/devantler-tech/"+$consumer+"/manifests"),
+ gitTag:"v1.0.0",sourceSHA:$signer,digest:$digest,signerSHA:$signer,mainPinSHA:$pin,candidateSHA:$candidate,verifiedOn:"2026-10-15"}]}' >"$bootstrap_file"
+export PUBLISH_BOOTSTRAP_FILE="$bootstrap_file"
+write_set "$root/scripts/approved.tsv" "$app_consumer"
+expect_pass 'a complete first publication supplies only its approved revisions' "$root" 1
+jq '.publications[0].kind="published-binding"' "$bootstrap_file" >"$bootstrap_file.tmp"
+mv "$bootstrap_file.tmp" "$bootstrap_file"
+expect_refusal 'a retired bootstrap cannot replace a disappeared observed row' "$root" 1 'cannot regress to bootstrap'
+write_set "$root/scripts/approved.tsv"
+expect_pass 'an ordinary row takes over from bootstrap approval' "$root" 1
+jq --arg old "$SHA_D" '.publications[0].signerSHA=$old' "$bootstrap_file" >"$bootstrap_file.tmp"
+mv "$bootstrap_file.tmp" "$bootstrap_file"
+expect_pass 'retained publication identity never adds revisions beside an ordinary row' "$root" 1
+write_consumer "$root" "$app_consumer" publish-app "($(signer_for "$app_consumer")|$SHA_B|$SHA_E|$SHA_D)"
+yq -i '.metadata.namespace="product" | .metadata.name="product-manifests" | del(.spec.ref.semver) | .spec.ref.digest="sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"' "$root/$binding_path"
+expect_refusal 'a historical binding cannot widen the ordinary matcher' "$root" 1 'not the generated set'
+unset PUBLISH_BOOTSTRAP_FILE
 
 # ── wiring: CI reaches the guard and this test ──────────────────────────────────────────────
 ci="$REPO_ROOT/.github/workflows/ci.yaml"

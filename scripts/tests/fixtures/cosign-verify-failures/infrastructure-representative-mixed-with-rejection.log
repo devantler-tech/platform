@@ -1,0 +1,2 @@
+Error: no matching signatures: none of the expected identities matched what was in the certificate, got subjects [https://github.com/devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main] with issuer https://token.actions.githubusercontent.com
+ Post "https://rekor.sigstore.dev/api/v1/log/entries/retrieve": dial tcp 192.0.2.20:443: i/o timeout

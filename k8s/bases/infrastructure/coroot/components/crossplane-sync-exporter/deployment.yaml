@@ -40,7 +40,7 @@ spec:
         # the multi-GVK rollout reset its metric handler to an empty response.
         # Pin the ConfigMap data checksum here so every config change gets a new
         # pod and loads the final collector set during process startup.
-        platform.devantler.tech/config-checksum: "2762015805-13322"
+        platform.devantler.tech/config-checksum: "3295501477-14032"
     spec:
       serviceAccountName: crossplane-sync-exporter
       # kube-state-metrics reads the managed resources through the API server.

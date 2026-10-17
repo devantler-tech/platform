@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -744,6 +745,52 @@ func TestEvaluateCatchUpProvesContinuityAcrossTheSwitch(t *testing.T) {
 	if summary.ServerName != catchUpServer || summary.SourceNewestWAL != "000000030000000100000001" ||
 		summary.FirstPostSwitchWAL != "000000030000000100000002" {
 		t.Fatalf("summary = %+v, want the post-switch segment to follow the server's newest shared segment", summary)
+	}
+}
+
+// The receipt identifies a complete backup in the active server's directory,
+// so an operator can bind the fresh Backup request to actual bucket contents.
+func TestCatchUpReceiptIdentifiesNewestCompleteBackupForCurrentServer(t *testing.T) {
+	const freshID = "20260913T093000"
+	for _, tt := range []struct {
+		name     string
+		dataSize int64
+		want     string
+	}{
+		{"complete fresh backup", 100, catchUpServer + "/" + freshID},
+		{"info without data", -1, catchUpServer + "/20260908T030000"},
+		{"empty data archive", 0, catchUpServer + "/20260908T030000"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			// A copied backup from another server must not mask the active one,
+			// even when its identifier sorts later.
+			other := []Object{
+				{Key: "wedding-db/base/20260914T030000/backup.info", Size: 100, ETag: "a1", LastModified: beforeSwitch},
+				{Key: "wedding-db/base/20260914T030000/data.tar.gz", Size: 100, ETag: "b2", LastModified: beforeSwitch},
+			}
+			source := append(sourceListing(), other...)
+			destination := append(catchUpDestination(), other...)
+			prefix := catchUpServer + "/base/" + freshID + "/"
+			destination = append(destination, Object{Key: prefix + "backup.info", Size: 100, ETag: "fresh-info", LastModified: afterSwitch})
+			if tt.dataSize >= 0 {
+				destination = append(destination, Object{Key: prefix + "data.tar.gz", Size: tt.dataSize, ETag: "fresh-data", LastModified: afterSwitch})
+			}
+			summary, err := EvaluateCatchUp(switchTime, catchUpServer, source, source, destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			receipt, err := json.Marshal(summary)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := json.Unmarshal(receipt, &fields); err != nil {
+				t.Fatal(err)
+			}
+			if got := fields["destinationNewestBaseBackup"]; got != tt.want {
+				t.Fatalf("receipt backup = %v, want %s", got, tt.want)
+			}
+		})
 	}
 }
 

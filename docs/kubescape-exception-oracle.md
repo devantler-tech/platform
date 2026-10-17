@@ -44,6 +44,34 @@ The command fails closed if any supplied summary is still a stripped LIST
 skeleton, has an incomplete workload identity, or carries malformed control
 data.
 
+### Leave out summaries whose object is gone
+
+The LIST above also returns summaries of objects that no longer exist, because
+nothing removes the summary of a deleted non-workload object (see
+[result coverage](kubescape-result-coverage.md#posture-results-whose-object-is-gone)).
+To explain only findings that can still be remediated, take the identities from
+the orphan report instead of from the LIST:
+
+```bash
+status=0
+scripts/report-kubescape-scan-orphans.sh --context admin@prod \
+  --resource summaries --list live >"${oracle_dir}/live.tsv" || status=$?
+# 0: every summary is live. 1: the orphaned ones were left out. 2: stop.
+[[ "${status}" -le 1 ]]
+
+cut -f 1,2 "${oracle_dir}/live.tsv" \
+  | while IFS=$'\t' read -r namespace name; do
+      kubectl --context=admin@prod \
+        get workloadconfigurationscansummaries "${name}" \
+        --namespace "${namespace}" -o json \
+        >"${oracle_dir}/posture/${namespace}__${name}.json"
+    done
+```
+
+The report's `Total:` line on stderr says how many summaries it could not
+classify. Those are left out as well, so a non-zero `unknown` means the answer
+no longer covers every object that may exist.
+
 ## Explain every failed pair
 
 Build the repeated posture arguments from the collected directory so the

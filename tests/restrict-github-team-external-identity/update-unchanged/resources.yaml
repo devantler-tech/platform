@@ -1,0 +1,24 @@
+---
+# A team the provider created anew carries an identity that is not approved yet. The artifact's next apply leaves it as it is and must not be refused, or the object could never be updated again.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "88888888"
+spec:
+  forProvider:
+    privacy: closed
+---
+# The steady state: every reconcile re-applies the approved identity unchanged.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: maintainers
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606"
+spec:
+  forProvider:
+    privacy: closed

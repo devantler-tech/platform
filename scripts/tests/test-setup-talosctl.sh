@@ -30,13 +30,17 @@ cat >"${fake_bin}/curl" <<'FAKE_CURL'
 set -euo pipefail
 output=''
 url=''
+retry=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) output=$2; shift 2 ;;
+    --retry) retry=$2; shift 2 ;;
+    --retry-delay | --retry-max-time) shift 2 ;;
     -*) shift ;;
     *) url=$1; shift ;;
   esac
 done
+printf '%s %s\n' "${retry}" "${url}" >>"${TEST_RETRY_LOG}"
 case "${url}" in
   */talosctl-linux-amd64)
     cp "${TEST_FIXTURE_DIR}/talosctl" "${output}"
@@ -102,6 +106,7 @@ run_installer() {
         TEST_FIXTURE_DIR="${fixture_dir}" \
         TEST_INSTALL_MARKER="${test_root}/installed" \
         TEST_MANIFEST_REACHABLE="${manifest_reachable:-1}" \
+        TEST_RETRY_LOG="${test_root}/retries" \
         "${test_root}/setup-talosctl-variant.sh" 2>&1
   ); then
     status=0
@@ -281,6 +286,18 @@ jobs:
 FIXTURE
 if assert_callsite "${callsite_fixture}" 'fixture(smuggled)' 2>/dev/null; then
   printf 'a raw talosctl install in a NON-setup step must be rejected\n' >&2
+  exit 1
+fi
+
+# --- Case 8: one momentary error from the release host must not fail the job
+# (#4549). Every request for the binary across the cases above asked curl to
+# retry transient failures; "seen" guards against passing without reading one.
+verdict=$(awk '
+  $2 ~ /\/talosctl-linux-amd64$/ { seen = 1; if ($1 !~ /^[1-9][0-9]*$/) bad = 1 }
+  END { print (seen && !bad) ? "retried" : "not-retried" }
+' "${test_root}/retries")
+if [ "${verdict}" != 'retried' ]; then
+  printf 'setup-talosctl.sh does not retry transient failures for the talosctl download\n' >&2
   exit 1
 fi
 

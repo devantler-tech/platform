@@ -1,0 +1,124 @@
+---
+# #4517, #4525: every value these rules compare is written by the party they
+# constrain, so each comparison has to be literal. Kyverno's list operators
+# read * and ? in either operand as wildcards; a value of * then matches every
+# entry of an allow-list. Its equality operators read only the policy's own
+# side that way, so the resolve and teamId rows were refused before as well and
+# are here to keep it so. Each resource is on the paved road except for the one
+# field its name says, so a row fails on what judges that field: one condition,
+# or for init-only-username-star the two that both read the merged username.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-github-team-management-literal-comparison
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-management.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-github-team-management
+    rule: teams-bind-provider-identity-to-object-name
+    resources:
+      - github-config/display-name-star
+      - github-config/display-name-question
+      - github-config/init-display-name-star
+      - github-config/init-display-name-question
+    kind: Team
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teammemberships-reference-allow-listed-teams
+    resources:
+      - github-config/ref-name-star
+      - github-config/ref-name-question
+      - github-config/resolve-star
+      - github-config/resolve-question
+      - github-config/init-team-id-star
+      - github-config/init-team-id-question
+      - github-config/init-ref-name-star
+      - github-config/init-ref-name-question
+      # #4525: the provider resolves a reference in the namespace the reference
+      # names, so a Team object outside github-config is one these rules never
+      # judged.
+      - github-config/ref-namespace-foreign
+      - github-config/ref-namespace-star
+      - github-config/ref-namespace-question
+      - github-config/init-ref-namespace-foreign
+      - github-config/init-ref-namespace-star
+      - github-config/init-ref-namespace-question
+      # A selector resolves to whichever Team carries the labels, so it is
+      # refused even beside an allow-listed reference.
+      - github-config/selector-beside-reference
+      - github-config/init-selector-beside-reference
+    kind: TeamMembership
+    result: fail
+  # Naming github-config itself is the same reference as leaving it out.
+  - policy: restrict-github-team-management
+    rule: teammemberships-reference-allow-listed-teams
+    resources:
+      - github-config/ref-namespace-own
+      - github-config/ref-namespace-empty
+    kind: TeamMembership
+    result: pass
+  - policy: restrict-github-team-management
+    rule: teammemberships-allow-listed-members
+    resources:
+      - github-config/username-star
+      - github-config/username-question
+      - github-config/init-username-star
+      - github-config/init-only-username-star
+    kind: TeamMembership
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teammemberships-known-roles
+    resources:
+      - github-config/role-star
+      - github-config/role-question
+      - github-config/init-role-star
+      - github-config/init-role-question
+    kind: TeamMembership
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teamrepositories-reference-allow-listed-teams
+    resources:
+      - github-config/repo-ref-name-star
+      - github-config/repo-ref-name-question
+      - github-config/repo-resolve-star
+      - github-config/repo-init-team-id-star
+      - github-config/repo-init-ref-name-star
+      - github-config/repo-ref-namespace-foreign
+      - github-config/repo-ref-namespace-star
+      - github-config/repo-init-ref-namespace-foreign
+      - github-config/repo-init-ref-namespace-star
+      - github-config/repo-init-ref-namespace-question
+      - github-config/permission-star
+      - github-config/permission-question
+      - github-config/init-permission-star
+      - github-config/capped-wildcard-team-admin
+      - github-config/repo-selector-beside-reference
+      - github-config/repo-init-selector-beside-reference
+    kind: TeamRepository
+    result: fail
+  - policy: restrict-github-team-management
+    rule: teamrepositories-reference-allow-listed-teams
+    resources:
+      - github-config/repo-ref-namespace-own
+      - github-config/repo-ref-namespace-empty
+    kind: TeamRepository
+    result: pass
+  - policy: restrict-github-team-management
+    rule: teamrepositories-maintainers-capped-below-admin
+    resources:
+      - github-config/capped-permission-star
+      - github-config/capped-permission-question
+      - github-config/capped-init-permission-star
+    kind: TeamRepository
+    result: fail
+  # A reference that is not literally `maintainers` is not the maintainers
+  # team: the ceiling leaves it alone and the reference rule above refuses it.
+  - policy: restrict-github-team-management
+    rule: teamrepositories-maintainers-capped-below-admin
+    resources:
+      - github-config/capped-wildcard-team-admin
+    kind: TeamRepository
+    result: skip

@@ -35,11 +35,12 @@ spec:
   # The DNS-policy rollout token is deliberately repeated on every Coroot-owned
   # pod template below. set-observability-dns-ndots is admission-only, so this
   # declarative template change recreates the existing stack once and ensures
-  # every pod is admitted with ndots:1. Change the token only when another
-  # admission-time DNS policy migration needs a controlled rollout.
+  # every pod is admitted with ndots:3. The policy landed and was verified Ready
+  # before this rollout. Change the token only after a new admission-time DNS
+  # policy is Ready; combining both changes can recreate pods under the old rule.
   podAnnotations:
     secret.reloader.stakater.com/reload: coroot-db-app
-    platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
+    platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
 
   # COMPONENT IMAGE PINS. The operator does NOT bake a fixed tag into its
   # components: when an image is left unset it lists `ghcr.io/coroot/<component>`
@@ -103,7 +104,7 @@ spec:
   # Velero backs the observability namespace up daily.
   prometheus:
     podAnnotations:
-      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
+      platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
     retention: 7d
     storage:
       size: 10Gi
@@ -130,7 +131,7 @@ spec:
   # field), so anti-affinity is the available placement knob.
   clickhouse:
     podAnnotations:
-      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
+      platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
     shards: 1
     replicas: 2
     affinity:
@@ -143,7 +144,7 @@ spec:
             topologyKey: kubernetes.io/hostname
     keeper:
       podAnnotations:
-        platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
+        platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
       replicas: 3
       affinity:
         podAntiAffinity:
@@ -165,7 +166,7 @@ spec:
   # bundled Prometheus/ClickHouse).
   nodeAgent:
     podAnnotations:
-      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-1
+      platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
     # Disable the ICMP latency pinger. It measures node/pod RTT by sending ICMP
     # echo probes and reading kernel RX timestamps via SO_TIMESTAMPING
     # (SOF_TIMESTAMPING_RX_SOFTWARE) — but Cilium's eBPF datapath here (VXLAN
@@ -239,9 +240,8 @@ spec:
   # COMPONENT IMAGE PINS note at the top of spec).
   clusterAgent:
     podAnnotations:
-      # The first rollout shared the same Flux reconciliation as the admission
-      # policy and this pod was recreated before that policy became Ready. Use a
-      # second token so it is admitted only after the policy has landed.
-      platform.devantler.tech/dns-policy-rollout: 2026-09-15-ndots-2
+      # Keep this collector on the same post-policy rollout as the other
+      # operator-managed components; the database has a separate DNS policy.
+      platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
     image:
       name: ghcr.io/coroot/coroot-cluster-agent:1.7.1

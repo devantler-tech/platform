@@ -69,6 +69,13 @@ spec:
                 # Ingress cannot bypass the guard.
                 - HTTPRoute
                 - Ingress
+              # Never DELETE. On a delete Kyverno evaluates the object being
+              # removed, so a route whose group has left the list below could
+              # not be deleted at all — which blocked a retirement that removed
+              # a group and its last route in one deploy (#4732).
+              operations:
+                - CREATE
+                - UPDATE
       preconditions:
         all:
           # Only routes that opt into the dashboard. Everything else is none of
@@ -83,8 +90,9 @@ spec:
           gethomepage.dev/group to a service group declared in the Homepage
           layout (k8s/bases/apps/homepage/config-map.yaml): Internal Developer
           Platform, Kubernetes, Observability, Security, Diagnostics, Device
-          Management, Infrastructure as Code, Cloud, Network, Finance, Analytics,
-          Personal Sites, or Customer Sites. An undeclared group still renders,
+          Management, Infrastructure as Code, Cloud, Network, Home, Finance,
+          Analytics, Business, Clients, or Personal.
+          An undeclared group still renders,
           but sorts below every declared group with a generic icon. Bookmark
           group names are deliberately not accepted here.
         deny:
@@ -95,7 +103,6 @@ spec:
               - key: "{{ request.object.metadata.annotations.\"gethomepage.dev/group\" || 'MISSING' }}"
                 operator: NotIn
                 value:
-                  - Internal Developer Platform
                   - Kubernetes
                   - Observability
                   - Security
@@ -104,7 +111,9 @@ spec:
                   - Infrastructure as Code
                   - Cloud
                   - Network
+                  - Home
                   - Finance
                   - Analytics
-                  - Personal Sites
-                  - Customer Sites
+                  - Business
+                  - Clients
+                  - Personal

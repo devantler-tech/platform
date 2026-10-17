@@ -92,6 +92,28 @@ data:
         "reason": "Admission webhook timeouts are configured by upstream Helm charts (Kyverno, cert-manager, VPA, KEDA) at appropriate values for their operation. Changing these would cause admission failures."
       },
       {
+        "name": "arc-openbao-listener",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^ConfigMap$",
+              "name": "^arc-openbao-listener$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0012$"
+          }
+        ],
+        "reason": "C-0012's generic credential-text pattern matches the mandatory native OpenBao TLS private-key file setting. Its value is a public path to a mounted Secret, never credential content. Enforced restrict-arc-openbao-listener admission and unconditional source tests permit exactly the audited public listener in openbao, reject extra or binary data and reject this name elsewhere. Other ConfigMaps, controls and genuine credentials remain scanned."
+      },
+      {
         "name": "batch-workloads",
         "policyType": "postureExceptionPolicy",
         "actions": [
@@ -485,7 +507,7 @@ data:
             "controlID": "^C-0026$"
           }
         ],
-        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy. All CronJobs on this cluster are GitOps-managed platform components delivered by Flux after PR review (the review is the approval): Cilium Hubble cert rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn stale-node cleanup, the observability heartbeat / CNPG degraded-cluster alert / stranded-volume-attach alert / reconcile-CronJob failure alert / Coroot alert-autosuppressor / Coroot cloud-pricing jobs, the OpenBao raft-snapshot backup, and Umami tenant provisioning. Namespace-scoped to the infrastructure namespaces that run these, so a CronJob in any unexpected namespace still surfaces for review."
+        "reason": "C-0026 lists every CronJob for manual approval and has no hardening remedy. All CronJobs on this cluster are GitOps-managed platform components delivered by Flux after PR review (the review is the approval): Cilium Hubble cert rotation, the Kubescape scan schedulers / stale host-data cleanup, Longhorn stale-node cleanup, the observability heartbeat / alerting jobs (CNPG degraded cluster, stranded volume attach, stranded autoscaler node, reconcile-CronJob failure, Crossplane sync, posture-scan staleness, prune-protected orphans, Velero maintenance OOM) / Coroot reconcilers (alert autosuppression, cloud pricing, application health, risk acceptance), the OpenBao raft-snapshot backup, the Umami database-login rotation, and Umami tenant provisioning. Namespace-scoped to the infrastructure namespaces that run these, so a CronJob in any unexpected namespace still surfaces for review."
       },
       {
         "name": "health-probes",
@@ -554,7 +576,7 @@ data:
             "controlID": "^C-0237$"
           }
         ],
-        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at both the Flux OCI source layer and the Talos containerd pull layer (ImageVerificationConfig). Third-party chart images are not all signed and there is no admission-layer signature enforcement, so this cluster-wide control still fails on unsigned workload images."
+        "reason": "First-party images (ghcr.io/devantler-tech/*) are cosign-signed and verified at Pod admission by Kyverno's verify-app-images policy, at the Talos containerd pull layer (ImageVerificationConfig), and at the Flux OCI source layer. Third-party chart images are not all signed or verified at admission, so this cluster-wide control still fails on unsigned workload images."
       },
       {
         "name": "infrastructure-privileged",
@@ -689,12 +711,15 @@ data:
           },
           {
             "controlID": "^C-0055$"
+          },
+          {
+            "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects allowPrivilegeEscalation: false, drop ALL capabilities and seccompProfile at container admission, and runAsNonRoot, runAsUser and runAsGroup at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. The exception is scoped to the namespaces that mutation runs in, so it cannot suppress a control where nothing injects it. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
+        "reason": "Kyverno mutate policy \"add-security-context\" injects allowPrivilegeEscalation: false, drop ALL capabilities and seccompProfile at container admission, and runAsNonRoot, runAsUser and runAsGroup at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. C-0211 is included here; its remaining gaps outside those namespaces are scoped to named elevated workloads in pod-security-mutations-residual. The namespace exception cannot suppress a new workload where nothing injects these fields. readOnlyRootFilesystem (C-0017) is handled separately — set in-spec per workload."
       },
       {
-        "name": "pod-security-mutations-unscoped",
+        "name": "pod-security-mutations-residual",
         "policyType": "postureExceptionPolicy",
         "actions": [
           "disable"
@@ -703,7 +728,78 @@ data:
           {
             "designatorType": "Attributes",
             "attributes": {
-              "kind": ".*"
+              "kind": "^Deployment$",
+              "name": "^csi-attacher$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^csi-provisioner$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^csi-resizer$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^csi-snapshotter$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Deployment$",
+              "name": "^longhorn-driver-deployer$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^engine-image-ei-[0-9a-f]+$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^longhorn-csi-plugin$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^longhorn-manager$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^audit-log-forwarder-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^coroot-node-agent$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^DaemonSet$",
+              "name": "^node-agent$"
             }
           }
         ],
@@ -712,7 +808,7 @@ data:
             "controlID": "^C-0211$"
           }
         ],
-        "reason": "Kyverno mutate policy \"add-security-context\" injects runAsNonRoot, runAsUser, runAsGroup and fsGroupChangePolicy at pod admission. The Deployment spec does not contain them and Kubescape scans the stored spec, not the live pod. This control remains cluster-wide because narrowing it is blocked on evidence rather than on expressiveness: C-0211's residual population is every scanned workload the mutation does not reach, sized at 39 by the 2026-09-20 re-measurement against the live PROD stored specs; remaining remediation on #3239."
+        "reason": "C-0211's privilege-adjacent fields remain absent from eleven elevated storage, observability and backup workload templates. These exact workloads are excepted while other workloads regain a real C-0211 verdict."
       },
       {
         "name": "secret-reader-rbac",
@@ -831,13 +927,6 @@ data:
             "attributes": {
               "kind": "^ClusterRole$",
               "name": "^plugin-barman-cloud$"
-            }
-          },
-          {
-            "designatorType": "Attributes",
-            "attributes": {
-              "kind": "^Role$",
-              "name": "^backstage-db$"
             }
           },
           {
@@ -1200,6 +1289,28 @@ data:
         "reason": "Infrastructure controllers and platform middleware need Kubernetes API access via SA tokens. This includes GitOps controllers, policy engines, certificate managers, autoscalers, monitoring, cluster dashboards (headlamp), service discovery (homepage), device management (fleetdm), identity providers (dex), auth proxies (oauth2-proxy), and config watchers (reloader). The platform uses RBAC to restrict what each SA can do."
       },
       {
+        "name": "umami-db-rotation-service-account-token",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^CronJob$",
+              "name": "^umami-db-rotation$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0034$"
+          }
+        ],
+        "reason": "The Umami database-login rotation CronJob needs its service-account token to authenticate to OpenBao's Kubernetes auth method. Its OpenBao role permits only reading the two login colours' rotation metadata and rotating them, and the ServiceAccount holds no Kubernetes RBAC."
+      },
+      {
         "name": "umami-provisioning-service-account-token",
         "policyType": "postureExceptionPolicy",
         "actions": [
@@ -1330,5 +1441,34 @@ data:
           }
         ],
         "reason": "Flux GitOps controllers and Velero legitimately require cluster-admin / wildcard RBAC by design: arbitrary-manifest reconciliation (Flux) and cluster-wide backup/restore (Velero). The specific bindings are matched by kind+name so C-0187 still catches any new wildcard or cluster-admin grant."
+      },
+      {
+        "name": "world-at-ruin-trial-operator",
+        "policyType": "postureExceptionPolicy",
+        "actions": [
+          "disable"
+        ],
+        "resources": [
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^RoleBinding$",
+              "name": "^world-at-ruin-zone-trial-operator$"
+            }
+          },
+          {
+            "designatorType": "Attributes",
+            "attributes": {
+              "kind": "^Role$",
+              "name": "^world-at-ruin-zone-trial-operator$"
+            }
+          }
+        ],
+        "posturePolicies": [
+          {
+            "controlID": "^C-0002$"
+          }
+        ],
+        "reason": "The configured administrator's private scripted zone trial intentionally grants namespaced exec to run its short-lived admission-token helper while retaining the global reader roles and withholding Secret API access. RBAC cannot constrain exec to one command. The uniquely named trial Role and binding are retired before production credentials or player data are added."
       }
     ]

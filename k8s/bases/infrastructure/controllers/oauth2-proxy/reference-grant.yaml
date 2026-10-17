@@ -8,10 +8,10 @@ spec:
   from:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      namespace: actual-budget
+      namespace: data-product-controller
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
-      namespace: backstage
+      namespace: actual-budget
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       namespace: crossview

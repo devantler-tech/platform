@@ -1,0 +1,13 @@
+---
+# The identity is data and is never expanded as a policy variable: a value
+# written in variable syntax is a foreign value like any other.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "{{ request.object.metadata.name }}"
+spec:
+  forProvider:
+    privacy: closed

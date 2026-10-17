@@ -2,7 +2,7 @@ import {fileURLToPath} from 'node:url';
 import {realpath} from 'node:fs/promises';
 import path from 'node:path';
 import {verifyProjection} from './wedding-backup-projection.mjs';
-import {createReader,createSourceGuard} from './wedding-backup-io.mjs';
+import {createReader,createAbsenceReader,createSourceGuard} from './wedding-backup-io.mjs';
 export async function run(env){
  if(env.WEDDING_BACKUP_VERIFY===undefined||env.WEDDING_BACKUP_VERIFY==='false')return {code:0,result:{verified:false,skipped:true}};
  try{
@@ -13,10 +13,12 @@ export async function run(env){
   // that GITHUB_WORKFLOW_SHA was the checkout which produced the artifact.
   const options={enabled:true,sourceSha:env.GITHUB_SHA,recipeSha:env.GITHUB_WORKFLOW_SHA,digest:env.WEDDING_BACKUP_DIGEST};
   const sourceUnchanged=await createSourceGuard({workspace,recipeDirectory,sourceSha:options.sourceSha,recipeSha:options.recipeSha,cipherSha:env.WEDDING_BACKUP_CIPHER_SHA256,bootstrapSha:env.WEDDING_BACKUP_BOOTSTRAP_SHA256,git:await realpath(env.WEDDING_BACKUP_GIT_BIN)});
+  const kubectl=await realpath(env.WEDDING_BACKUP_KUBECTL_BIN),kubeconfig=path.join(env.HOME,'.kube/config');
   const result=await verifyProjection(options,{
    invocation:{repository:env.GITHUB_REPOSITORY,event:env.GITHUB_EVENT_NAME,ref:env.GITHUB_REF,sha:env.GITHUB_SHA,checkout:env.GITHUB_SHA,attempt:env.GITHUB_RUN_ATTEMPT,run:env.GITHUB_RUN_ID,workflowRef:env.GITHUB_WORKFLOW_REF,workflowSha:env.GITHUB_WORKFLOW_SHA},
    sourceUnchanged,
-   read:createReader({kubectl:await realpath(env.WEDDING_BACKUP_KUBECTL_BIN),kubeconfig:path.join(env.HOME,'.kube/config')})
+   read:createReader({kubectl,kubeconfig}),
+   absent:createAbsenceReader({kubectl,kubeconfig})
   });
   if(!result.verified)return {code:2,result:{verified:false}};
   return{code:0,result:{...result,sourceSha:options.sourceSha,digest:options.digest,run:env.GITHUB_RUN_ID}};

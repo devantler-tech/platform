@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "publications": [
+    {
+      "kind": "published-binding",
+      "consumer": "data-product-controller",
+      "workflow": "publish-app",
+      "sourcePath": "k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml",
+      "namespace": "data-product-controller",
+      "name": "khoist-documentation",
+      "artifactURL": "oci://ghcr.io/devantler-tech/data-product-controller/manifests",
+      "gitTag": "v5.4.0",
+      "digest": "sha256:b9b5ff9e0cedf1305528e058708e9729eed9aa39a5dcdd967b7e74197264fe65",
+      "sourceSHA": "f190acc276231fd9374cdc9cf4766c6013d0fe1b",
+      "signerSHA": "ea4df9004d4ab43b6c9af5b0c5f55712f7211328",
+      "mainPinSHA": "ea4df9004d4ab43b6c9af5b0c5f55712f7211328",
+      "candidateSHA": "ea4df9004d4ab43b6c9af5b0c5f55712f7211328",
+      "verifiedOn": "2026-10-16"
+    }
+  ]
+}

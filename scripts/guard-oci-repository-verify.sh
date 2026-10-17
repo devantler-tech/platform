@@ -97,13 +97,15 @@ readonly TEMPLATED_TENANT_STREAM_URL='oci://ghcr.io/devantler-tech/${schema.spec
 # discovery fixture; the roots are resolved relative to this directory).
 readonly K8S_DIR="${OCI_VERIFY_K8S_DIR:-$REPO_ROOT/k8s}"
 
-# 5 on 2026-09-04, counted per rendered root: providers/hetzner/apps carries the aws,
-# github-config, wedding-app and ascoachingogvaner manifests consumers (4) and
-# providers/hetzner/infrastructure carries the tenant RGD template (1). The docker
-# provider opts into no apps and renders no tenant RGD, and the staged-off
-# data-product-controller chart is in no root at all. A consumer wired into both
-# providers would count twice.
-readonly EXPECTED_MIN_IN_SCOPE=5
+# 9 on 2026-10-16, counted per rendered root: providers/hetzner/apps carries the aws,
+# github-config, wedding-app and ascoachingogvaner manifests consumers, the
+# world-at-ruin zone manifests, the data-product-controller chart and its
+# documentation manifests source (7),
+# providers/hetzner/infrastructure carries the tenant RGD template (1) and
+# providers/hetzner/infrastructure/controllers carries the ksail-operator chart (1).
+# The docker provider opts into no apps and renders none of them. A consumer wired
+# into both providers would count twice.
+readonly EXPECTED_MIN_IN_SCOPE=9
 readonly EXPECTED_MIN="${OCI_VERIFY_EXPECTED_MIN:-$EXPECTED_MIN_IN_SCOPE}"
 
 # <url><TAB><reason>, one per line; `#` lines are comments. The reason names what retires

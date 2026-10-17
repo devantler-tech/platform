@@ -14,8 +14,12 @@ spec:
   retryInterval: 2m
   path: .
   prune: true
-  wait: true
-  force: true
+  # Applying the signed artifact must succeed, but asynchronous GitHub API
+  # operations (including manual repository bootstrap) cannot gate app delivery.
+  # Crossplane's Synced condition is monitored by crossplane-sync-alert instead.
+  wait: false
+  # Immutable conflicts require an operator plan; individual Jobs opt into recreation.
+  force: false
   # Runs as the app SA: the GitHub managed resources are applied with only the
   # namespace-scoped authority in rbac.yaml. This Kustomization is itself applied
   # by the `apps` Flux Kustomization; it must NOT dependsOn it (deadlock) — it

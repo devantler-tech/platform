@@ -1,0 +1,224 @@
+---
+# Recovery after a rebuild: the artifact states the identity the provider would record.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: admins-approved
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The same for the other approved team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: maintainers-approved
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# The usual shape: no identity, the provider creates and records it.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: unset
+  namespace: github-config
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# References admins but stands for the maintainers team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: swapped-team
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Names one repository and stands for another.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: other-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "17046606:platform"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# A team that is not approved at all.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: foreign-team
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The provider also accepts a team slug; only the approved numeric identity is.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: slug-identity
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "admins:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# A wildcard is not an identity.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: wildcard
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "*"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Nor is a wildcard in place of the repository.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: wildcard-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:*"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# The declared repository is only a prefix of the stored one.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: longer-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail-other"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# Nothing declared under forProvider, so nothing can be approved.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: undeclared-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:"
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+---
+# References maintainers but stands for the admins team.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: swapped-team-reverse
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: maintainers
+      policy:
+        resolve: Always
+---
+# The repository under initProvider is not what this rule reads, so it may not accompany a stored identity.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: init-provider-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail"
+spec:
+  forProvider:
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+  initProvider:
+    repository: ksail
+---
+# Nor next to a declared one.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamRepository
+metadata:
+  name: init-provider-second-subject
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "18573307:ksail"
+spec:
+  forProvider:
+    repository: ksail
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always
+  initProvider:
+    repository: platform

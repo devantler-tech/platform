@@ -1,0 +1,2 @@
+Error: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: unexpected status code 403 Forbidden (HEAD responses have no body, use GET for details)
+error during command execution: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: unexpected status code 403 Forbidden (HEAD responses have no body, use GET for details)

@@ -32,6 +32,9 @@ they sit inside a wider set of controls:
 | Runtime enforcement | **Tetragon** | Declarative kernel-hook policies that **terminate the offending process** (SIGKILL) on a policy match |
 | Forensics | **API audit log** ([`talos/cluster/enable-audit-logging.yaml`](../talos/cluster/enable-audit-logging.yaml)) | Who-did-what record of control-plane mutations |
 
+With the configured `lsm=` order, AppArmor is the exclusive major LSM; SELinux is
+skipped, so Talos's default SELinux labeling of its own services does not apply.
+
 This document focuses on the two middle-to-bottom rows — the eBPF sensors.
 
 ---

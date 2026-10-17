@@ -15,8 +15,9 @@ resources:
   #
   # Vendored without changing upstream document bytes apart from reviewed
   # Checkov annotations. The updater pins an immutable source commit and SHA-256;
-  # Renovate tracks its version there. Re-vendor the whole bundle on a bump and
-  # re-check the standalone PDB selector against the upstream pod labels.
+  # Renovate tracks its version there. Re-vendor the whole bundle on a bump. CI
+  # fails the bump if the standalone PDB no longer selects the upstream pod
+  # labels (scripts/guard-pdb-selector-match.sh).
   - namespace.yaml
   - service-account.yaml
   - role.yaml

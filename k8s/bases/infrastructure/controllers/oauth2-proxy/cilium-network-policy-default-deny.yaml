@@ -5,9 +5,18 @@ metadata:
   namespace: oauth2-proxy
 spec:
   endpointSelector: {}
-  # Selecting all endpoints with empty ingress/egress arrays puts every pod in
-  # the namespace into deny-by-default. Other CNPs in the namespace add
-  # specific allow rules per workload (see cilium-network-policy.yaml,
-  # ../auth-proxy/cilium-network-policy.yaml).
-  ingress: []
-  egress: []
+  # Selecting all endpoints with one empty rule per direction puts every pod in
+  # the namespace into deny-by-default: the empty rule names no peer and no
+  # port, so it allows nothing. Empty lists (`ingress: []`) are not enough —
+  # the Cilium agent rejects the whole policy unless a direction holds a rule.
+  # Keep this identical to the spec the add-default-deny ClusterPolicy
+  # generates under the same name, or Flux and Kyverno fight over the object.
+  # Other CNPs in the namespace add specific allow rules per workload (see
+  # cilium-network-policy.yaml, ../auth-proxy/cilium-network-policy.yaml).
+  ingress:
+    - {}
+  egress:
+    - {}
+  enableDefaultDeny:
+    ingress: true
+    egress: true

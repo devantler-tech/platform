@@ -115,19 +115,23 @@ func TestRefreshesRootAndFanoutWithoutLeakingPlaintext(t *testing.T) {
 		"devantler-tech/platform/manifests:latest",
 		"devantler-tech/wedding-app/manifests:latest",
 		"devantler-tech/ascoachingogvaner/manifests:latest",
+		"devantler-tech/world-at-ruin/zone-manifests:0.114.0",
 		"devantler-tech/data-product-controller:latest",
 		"devantler-tech/wedding-app:latest",
 		"devantler-tech/ascoachingogvaner:latest",
+		"devantler-tech/world-at-ruin/zone:v0.114.0",
 		"devantler-tech/ksail:v" + ksailOperatorVersion,
-		"devantler-tech/provider-upjet-unifi:v1.0.0",
+		"devantler-tech/provider-upjet-unifi:v1.0.4",
 	}
 	requireLinesEqual(t, readLines(f.registryReadLog), append(append([]string{}, requiredRegistryReads...), requiredRegistryReads...))
 	requireLinesEqual(t, readLines(f.fanoutLog), []string{
 		"pushsecret/flux-system/seed-ghcr",
+		"externalsecret/data-product-controller/ghcr-auth",
 		"externalsecret/wedding-app/ghcr-auth",
 		"externalsecret/ascoachingogvaner/ghcr-auth",
 		"externalsecret/kyverno/ghcr-auth",
 		"pushsecret/flux-system/seed-ghcr",
+		"externalsecret/data-product-controller/ghcr-auth",
 		"externalsecret/wedding-app/ghcr-auth",
 		"externalsecret/ascoachingogvaner/ghcr-auth",
 		"externalsecret/kyverno/ghcr-auth",
@@ -161,6 +165,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"flux-policy-pause:infrastructure",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
+		"fanout:externalsecret/data-product-controller/ghcr-auth",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
@@ -186,6 +191,7 @@ func TestStagesKubernetesConsumersBeforeTalosDrains(t *testing.T) {
 		"node-uncordon:prod-control-plane-1",
 		"variables-patch",
 		"fanout:pushsecret/flux-system/seed-ghcr",
+		"fanout:externalsecret/data-product-controller/ghcr-auth",
 		"fanout:externalsecret/wedding-app/ghcr-auth",
 		"fanout:externalsecret/ascoachingogvaner/ghcr-auth",
 		"fanout:externalsecret/kyverno/ghcr-auth",
@@ -461,7 +467,7 @@ func TestPDBBlockedDrainRestoresOriginalSchedulability(t *testing.T) {
 	result := f.runHelper(validConfig(), nil, map[string]string{"FAKE_DRAIN_FAIL_NODE": "prod-worker-1"})
 	requireFailureResult(t, result)
 	output := result.stdout + result.stderr
-	requireContains(t, output, "drain: cannot evict pod backstage-db-4: would violate PodDisruptionBudget backstage-db-primary")
+	requireContains(t, output, "drain: cannot evict pod example-db-4: would violate PodDisruptionBudget example-db-primary")
 	operations := readLines(f.operationLog)
 	for _, expected := range []string{"node-claim-cordon:prod-worker-1", "node-drain:prod-worker-1", "node-uncordon:prod-worker-1"} {
 		requireLine(t, operations, expected)

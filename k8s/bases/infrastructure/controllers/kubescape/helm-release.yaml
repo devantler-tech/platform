@@ -12,7 +12,7 @@ spec:
   chart:
     spec:
       chart: kubescape-operator
-      version: 1.40.4
+      version: 1.40.5
       sourceRef:
         kind: HelmRepository
         name: kubescape
@@ -55,7 +55,10 @@ spec:
     # is NOT the same as passing. A posture score that omits a namespace reads
     # exactly like one where that namespace is clean, and nothing distinguishes
     # them from the score alone. The same trap is documented for the `kubescape`
-    # namespace in cluster-security-exceptions/pod-security-mutations-unscoped.yaml.
+    # namespace in cluster-security-exceptions/pod-security-mutations-residual.yaml.
+    #
+    # Each namespace here has a row saying why in scripts/kubescape-unscanned-namespaces.tsv,
+    # and CI fails when the two lists differ, so change both together (#3215).
     #
     # It was undeclared until #3923, so the scope could only be learned by reading
     # a live ConfigMap. Two issues were planned against `kube-system` on the
@@ -160,6 +163,17 @@ spec:
     # this into an empty GVR watch pool, so scheduled keepLocal scans persist
     # detailed posture without restoring the per-resource queue flood observed
     # in issue #2463. Add a match only after that command path carries keepLocal.
+    #
+    # An empty watch pool also means the operator sees no deletions, and its
+    # deletion handler is the only upstream path that removes the posture
+    # result of a non-workload object: the storage cleanup compares results
+    # with the live cluster for workload kinds only. So the result of a deleted
+    # Role, ServiceAccount, Secret, Service or policy stays in the store unless
+    # the patched storage image below may look that object up and finds it gone
+    # (never a Secret or ConfigMap), and a stored result is not proof that its
+    # object exists (#3697). Check one with
+    # scripts/report-kubescape-scan-orphans.sh; a watch added here would not
+    # remove the results already left behind.
     continuousScanning:
       matchingRules:
         match: []
@@ -208,16 +222,18 @@ spec:
         # which grant the scanner SA the `list` RBAC the getter needs (the chart never grants
         # it). The merged getter still swallows a missing-RBAC/CRD source, so this bump cannot
         # break scans on its own. Drop this override + the reader RBAC once the chart grants
-        # the securityexceptions RBAC and selects a scanner >= v4.0.14. v4.0.12 carries
+        # the securityexceptions RBAC and selects a scanner >= v4.0.16. v4.0.12 carries
         # kubescape#2556: without a configured SaaS backend, older images can auto-enable
         # submission and abort on account-ID chmod before the in-cluster receiver persists
         # posture results. It also ships the v0.13 CEL policy bundle, which lacks the
         # ValidatingAdmissionPolicy for C-0262 and makes every full cluster scan abort after
         # discovery. v4.0.13 refreshes that bundle to v0.14; v4.0.14 additionally fixes the
-        # scanner's concurrent CEL parameter lookup. Keep the non-root security context;
+        # scanner's concurrent CEL parameter lookup. v4.0.16 carries kubescape#4044: a later
+        # report replaces a control's stored aggregate status, so a stale "w/exceptions"
+        # marker clears once its last suppression is gone (#4523). Keep the non-root security context;
         # the scanner fix makes chmod best-effort and preserves explicit local-only intent.
         # (Same component-image-ahead-of-chart pattern as the nodeAgent override above.)
-        tag: v4.0.14
+        tag: v4.0.16
       # The daily posture scan is intentionally CPU-bursty. With the chart's
       # 600m:250m limit:request ratio, auto-vpa right-sized the live request to
       # 50m and therefore the limit to 120m. Coroot measured the scanner pinned
@@ -269,16 +285,24 @@ spec:
       # individual HTTP handlers; two summary workers can still read the same
       # resourceVersion and race their updates. Serialize that kind explicitly.
       #
-      # Valid VEX records currently exceed the chart's 500 kB default and are
-      # rejected with HTTP 413 before persistence. One megabyte covers the
-      # observed records with headroom while retaining a finite queue bound.
+      # Valid VEX records exceed the chart's 1 MB default for their kind and are
+      # rejected with HTTP 413 before persistence, which the scanner reports
+      # only as a warning: the stored record then silently stops following the
+      # daily scan.
       kindQueues:
         vulnerabilitymanifestsummaries:
           workerCount: 1
         openvulnerabilityexchangecontainers:
-          # Backstage 1.52.0 produced a valid 6,604,551-byte VEX record. Keep a
-          # finite 8 MB ceiling (about 21% headroom) for this exact object kind.
-          maxObjectSize: 8000000
+          # A VEX record carries one statement per vulnerability match, so it
+          # grows with the vulnerability feed even when the image does not
+          # change. A scanned image produced 6,604,551 bytes on 2026-09-20 and
+          # 8,551,938 bytes on 2026-10-06; the 8 MB ceiling chosen from the first
+          # figure (about 21% headroom) refused every write from then on (#3955).
+          # Use the finite ceiling the chart gives vulnerabilitymanifests, the
+          # kind this record is derived from in the same scan (the manifest was
+          # 10,909,075 bytes when the record was 8.55 MB). That is 5.8 times the
+          # largest record seen, and this kind no longer fails before its source.
+          maxObjectSize: 50000000
       image:
         # Storage v0.0.297 starts two deferred profile-maintenance workers. They
         # can both read and then race while promoting to SQLite's single writer;
@@ -291,26 +315,31 @@ spec:
         # image is the exact v0.0.297 source plus the reviewed 60-second busy
         # timeout, one maintenance worker, autocommitted derived writes, and a
         # short atomic source-row finalization transaction. Executable failpoints
-        # prove partial passes remain pending and replay to convergence. The
+        # prove partial passes remain pending and replay to convergence. It also
+        # removes the scan record of a deleted non-workload object, only after
+        # the API server answered that the object does not exist (#3697); the
+        # read access for that lookup is the storage scan-record cleanup role. The
         # main-only publisher attaches SBOM/provenance and signs the digest
         # before this pin may advance.
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.6-75f74568e74d6172f0cd5852c98e6d014ac43896@sha256:e3947c98ca99761a5a932a56b91c6e29a91cdcede6125b863eaad6853c66d826"
+        tag: "v0.0.297-sqlite-contention.7-b6c585af18f3b32cc3fbb6228ab39af765f94abf@sha256:1adc507780a6fc288f01af7fa2d6e093d815776ca8836fc27450f687fe0d5fbc"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
     persistence:
       size:
         backingStorage: 10Gi
-    # Chart defaults are grossly overprovisioned for small clusters.
-    # Align with VPA recommendations.
+    # Keep the idle reservation small while allowing vulnerability scans to
+    # burst. VPA scales limits with requests: the former 10:1 CPU ratio squeezed
+    # scans against their limit despite spare node capacity. A 20:1 ratio gives
+    # one core at the 50m floor without raising the idle request (#4389).
     kubevuln:
       resources:
         requests:
           cpu: 50m
           memory: 256Mi
         limits:
-          cpu: 500m
+          cpu: "1"
           memory: 1Gi
   # Drop all capabilities and pin a CONTAINER-level seccompProfile on the four
   # kubescape-operator Deployments. Post-rendered rather than set through

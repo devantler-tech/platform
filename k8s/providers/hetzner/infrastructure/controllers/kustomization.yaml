@@ -8,6 +8,10 @@ resources:
   # local/CI only): no VirtualMachines/DataVolumes exist on Hetzner and
   # virt-handler crash-looped (1000+ restarts) with zero VMs.
   - ../../../../bases/infrastructure/controllers/
+  # Retain the protected ARC namespaces and release in Flux inventory while
+  # registration is repaired. Flux reconciles the controller with its watch
+  # scope limited to arc-runners; the organization pool stays outside aggregates.
+  - ../../../../bases/infrastructure/controllers/actions-runner-controller/
   # Prod-only: a minimal Alertmanager scoped to Kubescape runtime-detection
   # alerts. The Headlamp Kubescape plugin's "Runtime Detection > Alerts" tab
   # reads ONLY from a Prometheus Alertmanager (GET /api/v2/alerts), which the
@@ -61,6 +65,7 @@ resources:
   # HelmRelease is included via ../../../../bases/...; this dir only adds the
   # prod-only ConfigMap, and the patch below rewires the HelmRelease.
   - velero/
+  - openbao/transport/
   # Opt-in game-day chaos engineering — uncomment to enable, re-comment when the
   # game day ends (see docs/chaos-engineering.md). Left off by default: the
   # chaos-daemon is a permanently-privileged DaemonSet, so it ships only while
@@ -103,22 +108,32 @@ components:
   # Enabling replaces the node qdisc and rolls every Cilium agent; after both
   # guards close, use a separate low-traffic activation. Rollback = re-comment.
   # - cilium/components/bandwidth-manager-bbr/
-  # Default-off eBPF host-routing/masquerade prerequisite staging for pod BBR
-  # (#2609). Changes the NAT path for ALL pod egress and rolls every Cilium
-  # agent when enabled. HARD BLOCKER: do NOT enable until #2610's
-  # homogeneous-devices/ component (above) has been ACTIVATED and soaked —
-  # under the private-only pin, public egress would get no masquerade program
-  # while iptables masquerade is off, breaking external egress cluster-wide
-  # (see the component's DEVICE section). Then activate on its own in a
-  # low-traffic window (before bandwidth-manager-bbr's host-only guard may be
-  # lifted), verify `cilium status --verbose` + Hubble for drops.
-  # Rollback = re-comment.
-  # - cilium/components/ebpf-host-routing/
+  # ACTIVE eBPF host routing + BPF masquerade (#2609 staged it, #4260
+  # activates it). Moves pod->external SNAT from iptables to eBPF; changes the
+  # NAT path for ALL pod egress and rolls every Cilium agent one node at a
+  # time. Its hard blocker — #2610's homogeneous-devices/ (above), so the
+  # masquerade program attaches to the public default-route NICs — has been
+  # live since 2026-07-25 and was re-verified on every node on 2026-09-28.
+  # MUST stay listed AFTER homogeneous-devices/, and on its own PR: never
+  # together with another datapath knob. Deploy in a low-traffic window; after
+  # the roll verify `cilium status --verbose` (Masquerading: BPF, Host
+  # Routing: BPF), external egress from a pod on a static AND an autoscaled
+  # node, and Hubble for unexpected drops. bandwidth-manager-bbr's host-only
+  # guard may be lifted only after this has soaked.
+  # Rollback = re-comment (every node rolls back under the rolling update).
+  # CI then also needs scripts/tests/test-cilium-ebpf-host-routing-activation.sh
+  # reverted, and the kube-system/cilium HelmRelease line in
+  # scripts/validate-eks-ci-role-policy/approved-surface.txt set back to
+  # e56bb694c251d8f859edc76d005e3508e622ef2f3ba8d7e56ce722de9affbcf9.
+  - cilium/components/ebpf-host-routing/
 patches:
   - path: openbao/patches/store-data-on-hcloud.yaml
   # Prod-only: HARD-pin OpenBao to the static baseline workers so its hcloud
   # block volumes never ride a node the autoscaler can reclaim (#2363) — see file.
   - path: openbao/patches/keep-off-autoscale-nodes.yaml
+  # Replace an OpenBao server only when its Pod is deleted or lost — see file.
+  - path: openbao/patches/standby-oidc-canary.yaml
+  - path: openbao/transport/patches/enable-arc-transport.yaml
   # Umami's Namespace moved into the preceding controllers layer with its
   # Kyverno Role; keep the prod-only user-namespace label with its new owner.
   - path: kyverno/patches/enable-user-namespaces.yaml
@@ -133,6 +148,7 @@ patches:
   # for openbao + any non-Longhorn PVC. The base tier stays all-FSB because the
   # docker/local-path provider cannot snapshot.
   - path: velero/patches/enable-csi-snapshots.yaml
+  - path: velero/patches/prioritise-node-agent.yaml
   # Prod-only: enable the ksail-operator's native Dex OIDC. The operator does
   # eager startup OIDC discovery that needs a cluster-resolvable + TLS-trusted
   # issuer, which the local *.platform.lan host-file domain isn't — see file.
@@ -141,6 +157,15 @@ patches:
   # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
   # fanning them out to the Headlamp plugin, Slack, and Coroot — see file.
   - path: kubescape/patches/route-runtime-detection-alerts.yaml
+  # WORKAROUND: recover the storage consumer before the volume-client rollout;
+  # remove this production-only restriction through #4777 after verification.
+  - path: kubescape/patches/storage-volume-client-placement.yaml
+    target:
+      group: helm.toolkit.fluxcd.io
+      version: v2
+      kind: HelmRelease
+      name: kubescape
+      namespace: kubescape
   # NB: the Coroot CR moved to the `infrastructure` layer (so the operator's
   # CRD is installed first), so its hetzner patch now lives in
   # ../coroot/patches/ and is applied by ../kustomization.yaml, not here.

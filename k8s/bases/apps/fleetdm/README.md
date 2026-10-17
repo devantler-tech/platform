@@ -8,6 +8,15 @@ allowing low-level access to OS-specific features through osquery.
 - [Helm Chart](https://github.com/fleetdm/fleet/tree/main/charts/fleet)
 - [Chart values reference](https://github.com/fleetdm/fleet/blob/main/charts/fleet/values.yaml)
 
+> [!NOTE]
+> **Retained, not deployed.** FleetDM was switched off on 3 June 2026 because
+> it was not in use: [`../kustomization.yaml`](../kustomization.yaml) no longer
+> lists this folder, so nothing below is running. The manifests and the idle
+> supporting resources (OpenBao policies and seeds, network policies, security
+> exceptions) are kept so it can be switched back on. The production-only Helm
+> release patch was deleted with the app and must be restored from Git history
+> first. The rest of this page describes the configuration that is kept.
+
 ## Platform integration
 
 - **Ingress**: exposed via a Gateway API `HTTPRoute` attached to the
@@ -16,15 +25,20 @@ allowing low-level access to OS-specific features through osquery.
   (`fleet.tls.enabled: false`).
 - **Reachability**: unlike `homepage`, the Fleet endpoint is **not**
   behind `oauth2-proxy` — enrolled devices cannot complete an OIDC flow.
-  Traffic flows Cloudflare Tunnel → Gateway → Fleet Service.
-- **HA**:
-  - Fleet API: `${fleetdm_replicas:=2}` with a PodDisruptionBudget
-    (`minAvailable: 1`), pod anti-affinity (chart default), and
-    topology spread across nodes;
-  - MySQL: Bitnami subchart in `replication` mode (1 primary + 2
-    secondaries, prod) — `standalone` (local);
-  - Redis: Bitnami subchart in `replication` mode (2 replicas, prod)
-    — `standalone` (local).
+  Traffic flows from the production load balancer to the Gateway and on to
+  the Fleet Service.
+- **Replicas**: every count is a Flux variable with a default in
+  [`helm-release.yaml`](helm-release.yaml). Production overrides them in
+  [`k8s/clusters/prod/bootstrap/config-map.yaml`](../../../clusters/prod/bootstrap/config-map.yaml):
+  - Fleet API: `fleetdm_replicas`, default 2, production 1. A
+    [PodDisruptionBudget](pod-disruption-budget.yaml) and a topology spread
+    across nodes are defined for when more than one runs;
+  - MySQL: Bitnami subchart, `standalone` by default and in production.
+    Setting `fleetdm_mysql_architecture` to `replication` adds
+    `fleetdm_mysql_secondary_replicas` secondaries (default 2, production 0);
+  - Redis: Bitnami subchart, `standalone` by default and in production.
+    `fleetdm_redis_architecture` and `fleetdm_redis_replicas` work the same
+    way.
 - **Vulnerability processing**: runs in a dedicated container
   (`vulnProcessing.dedicated: true`) so the API pods don't OOM every
   hour during the scan.
@@ -40,7 +54,7 @@ stored in this repo either.
 | Secret | Source | OpenBao path |
 | --- | --- | --- |
 | License key | **User-fed** — an operator writes it to OpenBao (`bao kv put secret/apps/fleetdm/license license-key=<jwt>`); it persists via the raft snapshot mirror. **Fleet premium license JWT** — replace before expiry or Fleet reverts to the free tier. | `apps/fleetdm/license` |
-| MDM server private key | **Auto-generated**, consumed via `server-key-external-secret.yaml`. **Must stay stable** — losing it invalidates every enrolled device, so its durability comes from OpenBao persistence (the Velero backup of the `openbao` PVC). | `apps/fleetdm/server` |
+| MDM server private key | **Auto-generated**, consumed via `external-secret-server-key.yaml`. **Must stay stable** — losing it invalidates every enrolled device, so its durability comes from OpenBao persistence (the Velero backup of the `openbao` PVC). | `apps/fleetdm/server` |
 | MySQL root / user / replication passwords | **Auto-generated**, consumed via the `external-secret-*` files. | `apps/fleetdm/mysql` |
 | Redis password | **Auto-generated**. | `apps/fleetdm/redis` |
 

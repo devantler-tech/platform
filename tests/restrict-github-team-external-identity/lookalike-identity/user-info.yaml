@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: lookalike
+userInfo:
+  username: system:serviceaccount:github-config:provider-upjet-github-f5d83a3e04ea
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:github-config
+    - system:authenticated

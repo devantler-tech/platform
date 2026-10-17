@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       verify-wedding-backup-staging:
-        description: Verify the staged dedicated wedding backup credential after deployment
+        description: Verify the Wedding backup credential and active dedicated archive after deployment
         required: false
         type: boolean
         default: false
@@ -50,6 +50,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: 💾 Validate two-stage PVC retirement
         env:
@@ -179,9 +185,18 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.186.0"
+          KSAIL_VERSION: "7.202.58"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
+
+      - name: ⚖️ Read Kyverno CLI version for chart admission
+        id: chart-kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+
+      - name: ⚖️ Install Kyverno CLI for chart admission
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.chart-kyverno-version.outputs.release }}
 
       - name: 🔐 Validate isolated chart child namespaces
         # Manual recovery deploys may not bypass the rendered namespace proof
@@ -280,6 +295,7 @@ jobs:
   # route the way around that gate.
   validate-ghcr-fanout-component-gate:
     name: 🔗 Validate GHCR Fan-out Component Gate
+    needs: [validate-root-verify]
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -295,6 +311,23 @@ jobs:
           shellcheck scripts/tests/test-guard-ghcr-fanout-component-gate.sh
           bash scripts/guard-ghcr-fanout-component-gate.sh
           bash scripts/tests/test-guard-ghcr-fanout-component-gate.sh
+
+  # A manual dispatch can deploy a direct main push without a merge-group
+  # revision. Validate the root-source recovery path on that exact revision.
+  # The fan-out gate depends on this job, and deploy-prod depends on fan-out.
+  validate-root-verify:
+    name: 🛡️ Validate Root Source Repair
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🛡️ Validate the root source repair before deployment
+        run: bash scripts/tests/test-reassert-flux-root-verify.sh
 
   deploy-prod:
     name: 🚀 Deploy to Production
@@ -318,6 +351,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: 🚀 Deploy to Production
         # The deploy logic (push → sign → attest → reconcile → cluster update)
@@ -326,6 +360,7 @@ jobs:
         # composite actions cannot read `secrets` directly.
         uses: ./.github/actions/deploy-prod
         with:
+          recovery-source-sha: ${{ github.sha }}
           sops-age-key: ${{ secrets.SOPS_AGE_KEY }}
           verify-wedding-backup-staging: ${{ inputs.verify-wedding-backup-staging }}
           kube-config: ${{ secrets.KUBE_CONFIG }}

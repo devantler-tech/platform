@@ -1,0 +1,14 @@
+# Platform-applied DNS-01 issuance requires no public listener or tenant issuer grant.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: zone-trial
+  namespace: world-at-ruin
+spec:
+  secretName: world-at-ruin-zone-tls
+  dnsNames:
+    - zone-trial.devantler.tech
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod

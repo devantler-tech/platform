@@ -27,6 +27,11 @@ results:
       - wedding-app/no-hostnames
       - wedding-app/approved-plus-smuggled
       - wedding-app/platform-applied-route
+      # #4527: a wildcard is compared as text, never read as a pattern.
+      - wedding-app/wildcard-covering-approved
+      - wedding-app/wildcard-everything
+      - wedding-app/single-character-wildcard
+      - wedding-app/approved-plus-wildcard
     kind: HTTPRoute
     result: fail
   # --- ascoachingogvaner: previously UNCOVERED by this policy ---
@@ -42,6 +47,9 @@ results:
     rule: ascoachingogvaner-approved-hostnames
     resources:
       - ascoachingogvaner/steals-wedding-hostname
+      - ascoachingogvaner/wildcard-covering-approved
+      - ascoachingogvaner/single-character-wildcard
+      - ascoachingogvaner/approved-plus-wildcard
     kind: HTTPRoute
     result: fail
   # --- fail-closed catch-all ---

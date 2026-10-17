@@ -74,11 +74,6 @@ data:
     # — and note tenant repositories carry their own routes, so a group can be
     # claimed from outside this repository.
     layout:
-      # First on the page: the Internal Developer Platform (Backstage and any
-      # future self-service portals). Keep this entry first so the IDP is the
-      # landing focus.
-      Internal Developer Platform:
-        icon: mdi-developer-board
       Kubernetes:
         icon: si-talos-#FF7300
       Observability:
@@ -101,14 +96,20 @@ data:
         icon: si-hetzner
       Network:
         icon: si-cloudflare
+      # Devices in the home: heating and other IoT. Network gear stays under
+      # Network, because a UniFi site is not tied to one physical location.
+      Home:
+        icon: mdi-home-automation
       Finance:
         icon: mdi-finance
       Analytics:
         icon: si-umami
-      Personal Sites:
-        icon: mdi-web
-      Customer Sites:
+      Business:
+        icon: mdi-briefcase
+      Clients:
         icon: mdi-briefcase-account
+      Personal:
+        icon: mdi-web
       # Bookmark groups (bookmarks.yaml). Listing them here is what gives them a
       # real icon and a deterministic position; unlisted groups fall back to
       # alphabetical with a generic icon, which is why the bookmark rail used to
@@ -174,16 +175,22 @@ data:
             icon: unifi
             href: https://unifi.ui.com
             description: Central hub for managing on-prem UniFi network infrastructure.
-    # Personal Sites also gains cluster-hosted entries from the
-    # gethomepage.dev annotations on other repositories' HTTPRoutes.
+    # Devices in the home. The link carries no installation number on purpose:
+    # this repository is public, and StokerCloud shows a boiler's data to anyone
+    # who knows its number. Log in there instead.
+    - Home:
+        - StokerCloud:
+            icon: mdi-water-boiler
+            href: https://stokercloud.dk/v3/
+            description: NBE pellet boiler monitoring and control.
     # devantler.tech is not deployed from this cluster, so it
-    # is listed statically here; Homepage renders discovered services above
-    # static ones within the same group.
-    - Personal Sites:
+    # is listed statically under Business. Client and personal sites are
+    # discovered from gethomepage.dev annotations on tenant HTTPRoutes.
+    - Business:
         - devantler.tech:
             icon: mdi-web
             href: https://devantler.tech
-            description: Personal site — portfolio, guides and product documentation.
+            description: Business site — products, services, guides and documentation.
     # Analytics is populated dynamically from the gethomepage.dev annotations on
     # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
     # spec.service.apex.annotations).
@@ -265,6 +272,9 @@ data:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
     - Learning & Reference:
+        - KHoist Docs:
+            - icon: mdi-crane
+              href: https://khoist.devantler.tech/
         - KodeKloud:
             - icon: mdi-school-outline
               href: https://kodekloud.com
@@ -291,6 +301,9 @@ data:
             - icon: si-reddit-#FF4500
               href: https://reddit.com
     - Banking:
+        - Stripe:
+            - icon: si-stripe-#635BFF
+              href: https://dashboard.stripe.com
         - Enable Banking:
             - icon: mdi-bank-outline
               href: https://enablebanking.com

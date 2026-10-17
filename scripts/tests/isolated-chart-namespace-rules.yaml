@@ -3,8 +3,8 @@ rules:
     # This rule is deliberately path-scoped by its caller to the reviewed
     # data-product-controller component. That gives every rendered child the
     # chart provenance which a cluster-wide admission rule cannot recover from
-    # the final object alone. Namespace, ClusterRole, and ClusterRoleBinding are
-    # the only reviewed cluster-scoped shapes in the exact pinned render; every
+    # the final object alone. Namespace, ClusterRole, ClusterRoleBinding and the
+    # namespaced DataProduct CRD are the reviewed cluster-scoped shapes; every
     # namespaced child must declare the release namespace explicitly.
     #
     # The two cluster-scoped RBAC shapes are pinned by name rather than by kind
@@ -125,7 +125,8 @@ rules:
     expression: >-
       has(object.metadata) &&
       has(object.kind) &&
-      (object.kind in ['ClusterRole', 'ClusterRoleBinding', 'Namespace']
+      (object.kind in ['ClusterRole', 'ClusterRoleBinding', 'Namespace',
+                      'CustomResourceDefinition']
         ? (!has(object.metadata.namespace) &&
            ((object.kind == 'ClusterRole' &&
              has(object.metadata.name) &&
@@ -153,6 +154,19 @@ rules:
              has(object.subjects) &&
              object.subjects.all(s,
                has(s.namespace) && s.namespace == 'data-product-controller')) ||
+            (object.kind == 'CustomResourceDefinition' &&
+             object.apiVersion == 'apiextensions.k8s.io/v1' &&
+             object.metadata.name == 'dataproducts.data.devantler.tech' &&
+             object.spec.group == 'data.devantler.tech' &&
+             object.spec.scope == 'Namespaced' &&
+             object.spec.names.kind == 'DataProduct' &&
+             object.spec.names.plural == 'dataproducts' &&
+             (!has(object.spec.conversion) ||
+              object.spec.conversion.strategy == 'None') &&
+             object.spec.versions.size() == 1 &&
+             object.spec.versions[0].name == 'v1alpha1' &&
+             object.spec.versions[0].served == true &&
+             object.spec.versions[0].storage == true) ||
             (object.kind == 'Namespace' &&
              has(object.metadata.name) &&
              object.metadata.name == 'data-product-controller' &&

@@ -323,14 +323,18 @@ func EvaluateParity(runStart time.Time, before, after, destination []Object) (Su
 // CatchUpSummary is the non-secret evidence a successful catch-up reports.
 // Converged is true only when the dedicated store holds a segment archived after
 // the switch that continues the shared catalogue's WAL sequence without a gap.
+// DestinationNewestBaseBackup identifies a complete backup only within the
+// active server's directory, allowing a fresh Backup receipt to be checked
+// against actual catalogue objects rather than controller status alone.
 type CatchUpSummary struct {
-	ServerName         string `json:"serverName"`
-	SourceObjects      int    `json:"sourceObjects"`
-	MatchedObjects     int    `json:"matchedObjects"`
-	PostSwitchObjects  int    `json:"postSwitchObjects"`
-	Converged          bool   `json:"converged"`
-	SourceNewestWAL    string `json:"sourceNewestWal"`
-	FirstPostSwitchWAL string `json:"firstPostSwitchWal"`
+	DestinationNewestBaseBackup string `json:"destinationNewestBaseBackup"`
+	ServerName                  string `json:"serverName"`
+	SourceObjects               int    `json:"sourceObjects"`
+	MatchedObjects              int    `json:"matchedObjects"`
+	PostSwitchObjects           int    `json:"postSwitchObjects"`
+	Converged                   bool   `json:"converged"`
+	SourceNewestWAL             string `json:"sourceNewestWal"`
+	FirstPostSwitchWAL          string `json:"firstPostSwitchWal"`
 }
 
 // serverNamePattern accepts a Barman server directory name: one path segment.
@@ -438,6 +442,12 @@ func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, des
 			serverSource[key] = object
 		}
 	}
+	serverDestination := make(map[string]Object, len(destinationIndex))
+	for key, object := range destinationIndex {
+		if strings.HasPrefix(key, serverPrefix) {
+			serverDestination[key] = object
+		}
+	}
 	if newestBaseBackup(serverSource) == "" {
 		return CatchUpSummary{}, fmt.Errorf("%w: no complete base backup under %s", ErrNoBaseBackup, serverName)
 	}
@@ -464,12 +474,13 @@ func EvaluateCatchUp(switchTime time.Time, serverName string, before, after, des
 		}
 	}
 	summary := CatchUpSummary{
-		ServerName:         serverName,
-		SourceObjects:      len(beforeIndex),
-		MatchedObjects:     matched,
-		PostSwitchObjects:  postSwitch,
-		SourceNewestWAL:    sourceWAL,
-		FirstPostSwitchWAL: first,
+		DestinationNewestBaseBackup: newestBaseBackup(serverDestination),
+		ServerName:                  serverName,
+		SourceObjects:               len(beforeIndex),
+		MatchedObjects:              matched,
+		PostSwitchObjects:           postSwitch,
+		SourceNewestWAL:             sourceWAL,
+		FirstPostSwitchWAL:          first,
 	}
 	if first == "" {
 		return summary, nil
@@ -818,7 +829,40 @@ func run(args []string, stdout io.Writer) error {
 		}
 		return json.NewEncoder(stdout).Encode(summary)
 	}
-	return errors.New("usage: mirror-wedding-backup-catalogue validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination> | evaluate-catch-up <switch-time> <server-name> <source-bucket> <source-before> <source-after> <destination> | validate-switch-time <switch-time>")
+	if len(args) == 4 && args[0] == "coverage-multipart-keys" {
+		shared, dedicated, err := readCoverageListings(args[1], args[2], args[3])
+		if err != nil {
+			return err
+		}
+		keys, err := MultipartKeys(shared.Objects, dedicated.Objects)
+		if err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if _, err := fmt.Fprintln(stdout, key); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(args) == 6 && args[0] == "evaluate-coverage" {
+		shared, dedicated, err := readCoverageListings(args[1], args[2], args[3])
+		if err != nil {
+			return err
+		}
+		if err := applySumsFile(shared.Objects, args[4]); err != nil {
+			return err
+		}
+		if err := applySumsFile(dedicated.Objects, args[5]); err != nil {
+			return err
+		}
+		summary, err := EvaluateCoverage(shared, dedicated)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(stdout).Encode(summary)
+	}
+	return errors.New("usage: mirror-wedding-backup-catalogue coverage-multipart-keys <shared-bucket> <shared> <dedicated> | evaluate-coverage <shared-bucket> <shared> <dedicated> <shared-sums> <dedicated-sums> | validate-plan <source-bucket> <source-prefix> <source-secret> <destination-bucket> <destination-prefix> <destination-secret> | evaluate <run-start> <source-bucket> <source-before> <source-after> <destination> | evaluate-catch-up <switch-time> <server-name> <source-bucket> <source-before> <source-after> <destination> | validate-switch-time <switch-time>")
 }
 
 // main exits non-zero with the refusal reason when a plan or mirror is not trusted.

@@ -1,0 +1,2 @@
+Error: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: unexpected status code 503 Service Unavailable
+error during command execution: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: unexpected status code 503 Service Unavailable

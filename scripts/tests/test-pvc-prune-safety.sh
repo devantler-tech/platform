@@ -129,12 +129,9 @@ if [[ -n "${unprotected_current}" ]]; then
   fail "every rendered production PVC, HelmRelease, and Namespace must disable Flux pruning; missing on: ${unprotected_current//$'\n'/, }"
 fi
 
-force_enabled_current="$(awk -F '\t' '
-  $1 == "PersistentVolumeClaim" && $5 != "disabled" {print $2 "/" $3}
-' "${current_resources}")"
-if [[ -n "${force_enabled_current}" ]]; then
-  fail "every rendered production PVC must disable Flux force replacement; missing on: ${force_enabled_current//$'\n'/, }"
-fi
+# A disabled resource annotation cannot override spec.force=true on its layer.
+# Validate the actual layer/template defaults and rendered patch results instead.
+bash "${root_dir}/scripts/tests/test-flux-force-safety.sh"
 
 cut -f1-3 "${base_resources}" >"${temp_dir}/base-identities.tsv"
 cut -f1-3 "${current_resources}" >"${temp_dir}/current-identities.tsv"

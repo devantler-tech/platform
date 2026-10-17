@@ -16,10 +16,8 @@
 # Kyverno's webhook chain. The Kyverno validate-pod-security policy
 # (Enforce mode) still gates the pod at the webhook layer.
 #
-# Note: 'disable_mlock = true' in the chart values means OpenBao does
-# NOT request the IPC_LOCK capability, so IPC_LOCK is *not* the
-# constraint -- the constraint is the chart's missing seccompProfile /
-# runAsNonRoot defaults.
+# OpenBao removed mlock in 2.0.0; IPC_LOCK is not required. The constraint
+# is the chart's missing seccompProfile / runAsNonRoot defaults, not mlock.
 apiVersion: v1
 kind: Namespace
 metadata:

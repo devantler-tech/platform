@@ -6,10 +6,11 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly workflow="${root_dir}/.github/workflows/publish-kubescape-storage-hotfix.yaml"
 readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch"
+readonly cleanup_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
-readonly image_tag='v0.0.297-sqlite-contention.6-75f74568e74d6172f0cd5852c98e6d014ac43896@sha256:e3947c98ca99761a5a932a56b91c6e29a91cdcede6125b863eaad6853c66d826'
+readonly image_tag='v0.0.297-sqlite-contention.7-b6c585af18f3b32cc3fbb6228ab39af765f94abf@sha256:1adc507780a6fc288f01af7fa2d6e093d815776ca8836fc27450f687fe0d5fbc'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
@@ -19,6 +20,7 @@ fail() {
 command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 [[ -f "${workflow}" ]] || fail 'the Kubescape storage compatibility-image workflow is missing'
 [[ -f "${patch_file}" ]] || fail 'the Kubescape storage compatibility patch is missing'
+[[ -f "${cleanup_patch_file}" ]] || fail 'the Kubescape storage scan-record cleanup patch is missing'
 
 [[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
   fail 'the hotfix workflow must deny permissions by default'
@@ -35,8 +37,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.6-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the separated connection-lifetime revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.7-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the scan-record cleanup revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -186,6 +188,129 @@ grep -qF 'persistence can run between maintenance writes' "${patch_file}" ||
 if grep -qF 'ImmediateTransaction' "${patch_file}"; then
   fail 'read-heavy profile transactions must not reserve SQLite write access before their write phase'
 fi
+
+# Both patches must reach the tested source and the published image, in the same order.
+[[ "$(yq -er '.env.CLEANUP_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch' ]] ||
+  fail 'the workflow must apply the reviewed scan-record cleanup patch'
+for job in verify publish; do
+  job_script="$(JOB="${job}" yq -er '
+    [.jobs[strenv(JOB)].steps[] | select((.run // "") | contains("git apply")) | .run] | join("\n")
+  ' "${workflow}")" || fail "could not read how the ${job} job applies its patches"
+  # The literal shell variables are the contract.
+  # shellcheck disable=SC2016
+  apply_order="$(grep -E '^\s*git apply "\$\{(HOTFIX|CLEANUP)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
+  # shellcheck disable=SC2016
+  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" ' ]] ||
+    fail "the ${job} job must apply the compatibility patch and then the cleanup patch, once each"
+  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '4' ]] ||
+    fail "the ${job} job must run exactly one check and one apply for each of the two patches"
+  # shellcheck disable=SC2016
+  grep -qF 'git apply --check "${CLEANUP_PATCH}"' <<<"${job_script}" ||
+    fail "the ${job} job must check the cleanup patch before applying it"
+done
+for trigger in pull_request push; do
+  TRIGGER="${trigger}" yq -e '
+    .on[strenv(TRIGGER)].paths |
+    contains(["k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"])
+  ' "${workflow}" >/dev/null ||
+    fail "a cleanup patch change must start the workflow on ${trigger}"
+done
+
+[[ "$(grep -c '^diff --git ' "${cleanup_patch_file}")" == '5' ]] ||
+  fail 'the cleanup patch must touch only its wiring, implementation and regression-test files'
+for touched in main.go pkg/registry/file/cleanup.go pkg/registry/file/discovery.go \
+  pkg/registry/file/object_presence.go pkg/registry/file/object_presence_test.go; do
+  grep -qF "diff --git a/${touched} b/${touched}" "${cleanup_patch_file}" ||
+    fail "the cleanup patch no longer changes ${touched}"
+done
+grep -qF 'return resourceMaps.ObjectPresence(ref) == ObjectPresenceAbsent' "${cleanup_patch_file}" ||
+  fail 'a scan record may be removed only on a positive absent answer'
+grep -qF 'ObjectPresenceUnknown ObjectPresence = iota' "${cleanup_patch_file}" ||
+  fail 'an unset lookup answer must be unknown, never absent'
+grep -qF 'details.Name != ref.Name' "${cleanup_patch_file}" ||
+  fail 'only a not-found answer that names the object may prove absence'
+grep -qF 'tail == strings.ToLower(labelKind)+"-"+labelName' "${cleanup_patch_file}" ||
+  fail 'a record must be resolved from its labels only when the workload id spells the same object'
+grep -qF 'TestObjectPresenceForEverySkippedKind' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove removal and retention for every previously skipped kind'
+grep -qF 'TestObjectPresenceIsUnknownWhenTheLookupProvesNothing' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove a failed lookup keeps the record'
+grep -qF '"workloadconfigurationscans":          {deleteScanRecordByWlid},' "${cleanup_patch_file}" ||
+  fail 'the object lookup must be registered for configuration scan records'
+grep -qF '"workloadconfigurationscansummaries":  {deleteScanRecordByWlid},' "${cleanup_patch_file}" ||
+  fail 'the object lookup must be registered for configuration scan summaries'
+if grep -E '^\+' "${cleanup_patch_file}" | grep -E '\{[^}]*deleteScanRecordByWlid[^}]*\},' |
+  grep -vqE '"workloadconfigurationscan(s|summaries)": +\{deleteScanRecordByWlid\},'; then
+  fail 'the object lookup must not be registered for any other record type'
+fi
+grep -qF 'TestObjectPresenceAsksADeniedResourceOnlyOnce' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove a refused resource is not asked for again and again'
+grep -qF 'TestObjectPresenceAgainstRealServerAnswers' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove how real server answers are classified'
+grep -qF '"truncated name label"' "${cleanup_patch_file}" ||
+  fail 'the cleanup patch must prove a truncated name label never selects an object'
+if grep -qE '^\+.*\.(Delete|DeleteCollection|Update|Patch|Apply|Create)\(' "${cleanup_patch_file}"; then
+  fail 'the cleanup patch must only read from the cluster'
+fi
+
+# The lookup the cleanup patch makes needs read access, and nothing beyond it.
+readonly kubescape_base="${root_dir}/k8s/bases/infrastructure/controllers/kubescape"
+readonly cleanup_role="${kubescape_base}/cluster-role-storage-scan-record-cleanup.yaml"
+readonly cleanup_binding="${kubescape_base}/cluster-role-binding-storage-scan-record-cleanup.yaml"
+[[ -f "${cleanup_role}" ]] || fail 'the storage scan-record cleanup role is missing'
+[[ -f "${cleanup_binding}" ]] || fail 'the storage scan-record cleanup role binding is missing'
+for wired in cluster-role-storage-scan-record-cleanup.yaml cluster-role-binding-storage-scan-record-cleanup.yaml; do
+  WIRED="${wired}" yq -e '.resources | contains([strenv(WIRED)])' "${kubescape_base}/kustomization.yaml" >/dev/null ||
+    fail "the Kubescape base does not deploy ${wired}"
+done
+[[ "$(yq -er '.rules | length' "${cleanup_role}")" -gt 0 ]] ||
+  fail 'the storage scan-record cleanup role grants nothing'
+[[ "$(yq -er '[.rules[].verbs[]] | unique | join(",")' "${cleanup_role}")" == 'get' ]] ||
+  fail 'the storage scan-record cleanup role may only read single objects'
+[[ "$(yq -er '[.rules[] | select(has("resourceNames") or has("nonResourceURLs"))] | length' "${cleanup_role}")" == '0' ]] ||
+  fail 'the storage scan-record cleanup role must stay a plain resource grant'
+[[ "$(yq -er 'keys | join(",")' "${cleanup_role}")" == 'apiVersion,kind,metadata,rules' ]] ||
+  fail 'the storage scan-record cleanup role must be a plain list of rules, with no aggregation'
+# Every grant is listed, so widening what the storage pod can read is a reviewed change here.
+# Secrets and ConfigMaps must never appear: reading one by name returns its contents.
+expected_grants="$(
+  cat <<'GRANTS'
+/endpoints
+/nodes
+/persistentvolumeclaims
+/persistentvolumes
+/podtemplates
+/serviceaccounts
+apiregistration.k8s.io/apiservices
+autoscaling/horizontalpodautoscalers
+cilium.io/ciliumclusterwidenetworkpolicies
+cilium.io/ciliumnetworkpolicies
+coordination.k8s.io/leases
+discovery.k8s.io/endpointslices
+gateway.networking.k8s.io/httproutes
+networking.k8s.io/ingresses
+networking.k8s.io/networkpolicies
+policy/poddisruptionbudgets
+rbac.authorization.k8s.io/clusterrolebindings
+rbac.authorization.k8s.io/clusterroles
+rbac.authorization.k8s.io/rolebindings
+rbac.authorization.k8s.io/roles
+storage.k8s.io/csistoragecapacities
+storage.k8s.io/storageclasses
+GRANTS
+)"
+readonly expected_grants
+# $group is a yq variable, not a shell one.
+# shellcheck disable=SC2016
+actual_grants="$(yq -er '.rules[] | .apiGroups[] as $group | .resources[] | $group + "/" + .' "${cleanup_role}" | LC_ALL=C sort)" ||
+  fail 'could not read the storage scan-record cleanup grants'
+readonly actual_grants
+[[ "${actual_grants}" == "${expected_grants}" ]] ||
+  fail 'the storage scan-record cleanup role must grant exactly the reviewed resources'
+[[ "$(yq -er '.roleRef.kind + "/" + .roleRef.name' "${cleanup_binding}")" == "ClusterRole/$(yq -er '.metadata.name' "${cleanup_role}")" ]] ||
+  fail 'the storage scan-record cleanup binding must reference its role'
+[[ "$(yq -er '[.subjects[] | .kind + "/" + .namespace + "/" + .name] | join(",")' "${cleanup_binding}")" == 'ServiceAccount/kubescape/storage' ]] ||
+  fail 'the storage scan-record cleanup role must be bound to the storage service account alone'
 
 storage_repository="$(yq -er '
   .spec.values.storage.image.repository |

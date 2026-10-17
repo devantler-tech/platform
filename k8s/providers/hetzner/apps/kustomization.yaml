@@ -3,6 +3,15 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
+  # The product owns deploy/documentation; this production-only tenant registers
+  # the signed source and an identity limited to its DNS endpoint resources.
+  - khoist-documentation/
+  # Temporary database-only control, replication and monitoring for the protected
+  # retirement orphan. #4266 removes this after verified retained-data cleanup.
+  - retained-backstage-db/namespace.yaml
+  - retained-backstage-db/cilium-network-policy.yaml
+  - retained-backstage-db/password-coroot-monitor.yaml
+  - retained-backstage-db/external-secret-coroot-monitor.yaml
   # Prod-only tenant: the UniFi network managed declaratively through Crossplane
   # Managed Resources (providers/hetzner/apps/unifi/). Lives in the hetzner apps
   # overlay because its provider and the controller API it reaches are
@@ -15,6 +24,8 @@ resources:
   # the devantler-tech/aws repo sync lands in a follow-up increment. Hetzner-only
   # because Crossplane (and the provider packages) are prod-only.
   - aws/
+  # Owner-only scripted zone trial; public packages need no registry credential fanout.
+  - world-at-ruin/
   # Default-off disposable proof for user namespaces + Longhorn idmapped mounts
   # (platform#2599). Activate in a short-lived PR by uncommenting this resource,
   # capture the completed Job's logs, then remove it again so its generic
@@ -32,9 +43,6 @@ resources:
   - umami/cilium-network-policy.yaml
   - umami/password-coroot-monitor.yaml
   - umami/external-secret-coroot-monitor.yaml
-  - backstage/cilium-network-policy.yaml
-  - backstage/password-coroot-monitor.yaml
-  - backstage/external-secret-coroot-monitor.yaml
   # Crossview bundles a plain PostgreSQL Deployment instead of CNPG. These
   # resources supply its init hook, dedicated credential, and scrape-only
   # network path; the HelmRelease patch below wires them into the chart output.
@@ -42,6 +50,9 @@ resources:
   - crossview/cilium-network-policy.yaml
   - crossview/password-coroot-monitor.yaml
   - crossview/external-secret-coroot-monitor.yaml
+  # Admits only the prod crossview-login-alerter CronJob (observability) to the
+  # app's port, so an empty database is reported without anyone logging in.
+  - crossview/cilium-network-policy-login-alerter.yaml
 components:
   - ../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
@@ -56,6 +67,23 @@ components:
 # they need only a path — no redundant `target:` selector. JSON6902 patches have
 # no embedded identity and keep an explicit target.
 patches:
+  # Request a controlled CNPG rollout for the existing platform databases.
+  # Pod priority is immutable: CREATE admission alone cannot protect them.
+  - target:
+      group: postgresql.cnpg.io
+      kind: Cluster
+      name: (backstage-db|umami-db)
+    patch: |
+      - op: add
+        path: /spec/priorityClassName
+        value: hcloud-volume-workload
+      # CNPG 1.30.1 compares container environments, but not priorityClassName.
+      # This stable marker rolls every old template, regardless of creation time.
+      - op: add
+        path: /spec/env
+        value:
+          - name: PLATFORM_DATABASE_PRIORITY_CLASS
+            value: hcloud-volume-workload
   # fleetdm disabled 2026-06-03 (see bases/apps/kustomization.yaml). Its
   # prod-only HelmRelease patch (timeout + MySQL primary service address +
   # hcloud storageClass) and the providers/hetzner/apps/fleetdm/ dir were
@@ -64,10 +92,9 @@ patches:
   # spec.interval) fails. Restore the patch from git history if re-enabling.
   - path: wedding-app/patches/flux-kustomization-protect-wedding-db.yaml
   # Prod-only Coroot Postgres integration for the in-repo CNPG DBs (strategic
-  # merge: inheritedMetadata scrape annotations + pg_stat_statements params, plus
-  # for backstage a dedicated pg_monitor managed role). These self-identify, so no target.
+  # merge: inheritedMetadata scrape annotations + pg_stat_statements params).
+  # These self-identify, so no target.
   - path: umami/patches/enable-coroot-monitoring.yaml
-  - path: backstage/patches/enable-coroot-monitoring.yaml
   # Crossview is a Helm-rendered Deployment, so its JSON6902 patch adds chart
   # values and appends post-render patches without replacing the base list.
   - target:
@@ -91,7 +118,7 @@ patches:
   # namespace-label patches opt proven-stateless workloads into the
   # add-security-context Kyverno rule. Local/CI stays out, and so do stateful
   # workloads apart from the Actual Budget pilot component above; in mixed
-  # namespaces (umami, backstage) the rule itself excludes the
+  # namespaces (umami) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
   # Headlamp takes an exact-target values patch instead of a namespace label
   # (#2651). Its chart renders `hostUsers: {{ .Values.hostUsers }}` from a
@@ -115,7 +142,6 @@ patches:
         value: false
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
-  - path: backstage/patches/enable-user-namespaces.yaml
   - target:
       group: helm.toolkit.fluxcd.io
       version: v2

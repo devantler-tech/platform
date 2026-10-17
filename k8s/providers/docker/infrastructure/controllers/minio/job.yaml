@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: mc
-          image: quay.io/minio/mc:RELEASE.2025-04-08T15-39-49Z@sha256:7e3efb09c22c0882fbf341b9d99f61f94ae6c4c20a06f2f1a2b20ea8993d8952
+          image: quay.io/minio/aistor/mc:RELEASE.2026-03-12T04-18-55Z@sha256:6c33dc0fbf65c362be95003cd010ed95a41c556500833ea139f86de40c4c4e9f
           securityContext:
             runAsNonRoot: true
             allowPrivilegeEscalation: false

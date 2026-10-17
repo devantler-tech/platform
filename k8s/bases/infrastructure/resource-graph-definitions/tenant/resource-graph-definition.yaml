@@ -304,7 +304,7 @@ spec:
           path: .
           prune: true
           wait: true
-          force: true
+          force: false
           # A tenant that ships a CNPG database (wedding-app does) would
           # otherwise fail this Kustomization for the whole of any rolling
           # update — CNPG rolls every instance on an operator, barman-cloud
@@ -341,7 +341,7 @@ spec:
           path: .
           prune: true
           wait: true
-          force: true
+          force: false
           # A tenant that ships a CNPG database (wedding-app does) would
           # otherwise fail this Kustomization for the whole of any rolling
           # update — CNPG rolls every instance on an operator, barman-cloud

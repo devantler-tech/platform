@@ -54,8 +54,11 @@ case "${SCENARIO}" in
 esac
 if [[ -f "${FIXTURE_DIR}/input.${count}.json" ]]; then cat "${FIXTURE_DIR}/input.${count}.json"; else cat "${FIXTURE_DIR}/input.json"; fi
 SH
-printf '#!/usr/bin/env bash\nexit 0\n' >"${scratch}/bin/sleep"
-chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/sleep"
+chmod +x "${scratch}/bin/kubectl"
+# Advance the guard's own Bash elapsed-time counter instead of waiting in tests.
+# An exported function runs in that shell, unlike an external sleep executable.
+sleep() { SECONDS=$((SECONDS + $1)); }
+export -f sleep
 export PATH="${scratch}/bin:${PATH}" FIXTURE_DIR="${scratch}"
 script="${root_dir}/scripts/guard-coroot-baseline-context.sh"
 
@@ -127,6 +130,24 @@ check 'pod-level SELinux options satisfy every container' after-reconcile pass n
 use hardened
 check 'hardened, ready and stable templates pass' after-reconcile pass normal enabled
 grep -qx 'PASS: six Coroot templates carry both fields, are ready, and are stable' "${scratch}/output"
+
+# A sequential DaemonSet rollout can outlast the old twelve-poll allowance.
+jq '.items[5].status.updatedNumberScheduled = 2' "${scratch}/hardened.json" >"${scratch}/rolling.json"
+use hardened
+for ((n = 1; n <= 20; n++)); do cp "${scratch}/rolling.json" "${scratch}/input.${n}.json"; done
+check 'a healthy sequential rollout may take more than one minute' after-reconcile pass normal enabled
+[[ "$(cat "${scratch}/count")" == 24 ]] || {
+  printf 'FAIL: delayed convergence must still receive three stability samples\n' >&2
+  exit 1
+}
+
+use rolling
+check 'a rollout that never converges still times out' after-reconcile fail normal enabled 'did not all reach both fields'
+reads="$(cat "${scratch}/count")"
+[[ "${reads}" -gt 12 && "${reads}" -le 120 ]] || {
+  printf 'FAIL: convergence must retain a bounded ten-minute polling deadline\n' >&2
+  exit 1
+}
 
 # Rewrites during observation. Call 1 proves readiness; calls 2-4 are samples.
 jq '.items[0].metadata.resourceVersion = "101"' "${scratch}/hardened.json" >"${scratch}/v101.json"

@@ -1,0 +1,2 @@
+Error: GET https://ghcr.io/token?scope=repository%3Adevantler-tech%2Fplatform%2Fmanifests%3Apull&service=ghcr.io: UNAUTHORIZED: authentication required
+error during command execution: GET https://ghcr.io/token?scope=repository%3Adevantler-tech%2Fplatform%2Fmanifests%3Apull&service=ghcr.io: UNAUTHORIZED: authentication required

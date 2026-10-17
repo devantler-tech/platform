@@ -10,9 +10,12 @@ production credentials remain read-only.
 The Longhorn HelmRelease supplies `fsGroupChangePolicy: OnRootMismatch` and an
 empty container `seLinuxOptions` object through its existing `longhorn-ui`
 post-renderer. The empty object leaves SELinux/MCS label selection to the runtime.
-The UI has no `fsGroup` and uses only `emptyDir` volumes, so the ownership policy
-has no effect on mounted data. Its existing numeric identity, dropped capabilities,
-seccomp profile, replica count and volumes remain unchanged.
+It also sets `fsGroup: 486`, the group the UI already runs as, because C-0211
+requires a pod-level `fsGroup` (#4214). The UI uses only ephemeral `emptyDir`
+volumes: `fsGroup` gives their files the group the UI already runs as, and
+`fsGroupChangePolicy` has no effect on `emptyDir`. Its existing numeric
+identity, dropped capabilities, seccomp profile, replica count and volumes
+remain unchanged.
 
 The real pinned chart test exercises the defaults present and absent, proves
 that every other rendered resource is identical, and renders the source rollback.
@@ -28,11 +31,12 @@ handle the evidence in deployment order:
    disarms before reading the workload; a successfully proven deployment does
    not freeze the UI's initial replica count or identity on later chart changes.
 2. An existing canary must be Helm-owned, fully ready, non-root, have no init
-   containers, and use only ephemeral volumes without an `fsGroup`. API failure is an error, never an
+   containers, and use only ephemeral volumes, with no `fsGroup` or the UI's own group 486. API failure is an error, never an
    empty population. A reachable API reporting an uninstalled UI allows the
    initial installation but still requires the next step.
 3. After Flux reports the released revision Ready, the guard reads the stored
-   defaults and complete rollout status, then watches the template for 30 seconds.
+   defaults, including `fsGroup: 486`, and complete rollout status, then watches
+   the template for 30 seconds.
    Missing fields, unhealthy replicas, changed privilege settings or a rewriting
    owner fail the deployment. The output records the observed generation without
    emitting workload environment values or credentials.
@@ -109,11 +113,15 @@ rebuild does not run it yet; a fresh ClickHouse needs longer than the guard's
 wait to become ready. On a fresh cluster the label exists before the operator
 creates its templates, so admission applies at creation without a write.
 
-The remaining rollout and its acceptance measurements are tracked in
-[issue #3239](https://github.com/devantler-tech/platform/issues/3239). C-0211 sizing
-depends on a complete measurement of stored controllers and every regular/init
-container, with runtime health evidence. The original 33-workload denominator is
-historical; neither this canary nor a stale scanner verdict completes that target.
+The two universal gaps are closed: every one of the 38 scanned workloads in the
+excluded namespaces carries both fields in its stored spec, measured against live
+prod on 2026-09-25. C-0211 is now excepted in the namespaces where the
+admission mutation runs, plus the eleven elevated workloads named in
+`pod-security-mutations-residual.yaml`. Other workloads in excluded namespaces
+retain their C-0211 verdict. The residual and the narrowing are tracked in
+[issue #3522](https://github.com/devantler-tech/platform/issues/3522). Verify
+the live stored templates and scan `subStatus` after deployment; a bare scanner
+`passed` status cannot distinguish a genuine pass from an exception.
 
 The existing namespace inventory test pins the default-off controller rollout.
 Its historical demand for post-rollout evidence inside the activation commit is

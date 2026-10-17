@@ -170,4 +170,261 @@ spec:
   egressDeny:
     - anything: true'
 
-printf 'PASS: effective authorization rules reject privilege paths and accept the data-product controller RBAC\n'
+# A Cilium policy with no rule in any direction is rejected by the agent
+# (Valid=False) although the API server accepts it, so nothing in it is
+# enforced. The add-default-deny ClusterPolicy generated exactly this shape into
+# every namespace for ~101 days (#3501).
+assert_rejected 'cilium-policy-empty-direction-lists' 'apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: example
+spec:
+  endpointSelector: {}
+  ingress: []
+  egress: []
+  enableDefaultDeny:
+    ingress: true
+    egress: true' 'require-cilium-policy-rules'
+
+assert_rejected 'cilium-policy-no-spec' 'apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: no-spec
+  namespace: example' 'require-cilium-policy-rules'
+
+assert_rejected 'clusterwide-policy-empty-second-spec' 'apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: one-empty-spec
+specs:
+  - endpointSelector: {}
+    egress:
+      - toEntities: [kube-apiserver]
+  - endpointSelector: {}
+    ingressDeny: []
+    egressDeny: []' 'require-cilium-policy-rules'
+
+# The generated copies are not rendered documents: they exist only inside the
+# Kyverno rule that writes them, so the template itself must be checked.
+assert_rejected 'kyverno-generates-empty-cilium-policy' 'apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generates-empty-default-deny
+spec:
+  rules:
+    - name: generate-default-deny
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: cilium.io/v2
+        kind: CiliumNetworkPolicy
+        name: default-deny
+        namespace: "{{request.object.metadata.name}}"
+        data:
+          spec:
+            endpointSelector: {}
+            ingress: []
+            egress: []' 'require-generated-cilium-policy-rules'
+
+assert_rejected 'kyverno-foreach-generates-empty-cilium-policy' 'apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: foreach-generates-empty-policy
+spec:
+  rules:
+    - name: generate-per-entry
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+      generate:
+        foreach:
+          - list: request.object.data
+            apiVersion: cilium.io/v2
+            kind: CiliumNetworkPolicy
+            name: "{{element}}"
+            namespace: "{{request.object.metadata.namespace}}"
+            data:
+              spec:
+                endpointSelector: {}' 'require-generated-cilium-policy-rules'
+
+# The pinned Kyverno v1 schema does not yet admit nested generate foreach
+# entries, so use a future Kyverno API version to exercise the CEL guard itself
+# instead of passing because kubeconform rejected the document first.
+assert_rejected 'kyverno-nested-foreach-generates-empty-cilium-policy' 'apiVersion: kyverno.io/v9
+kind: ClusterPolicy
+metadata:
+  name: nested-foreach-generates-empty-policy
+spec:
+  rules:
+    - name: generate-per-nested-entry
+      match:
+        any:
+          - resources:
+              kinds: [ConfigMap]
+      generate:
+        foreach:
+          - list: request.object.data
+            foreach:
+              - list: element.value
+                apiVersion: cilium.io/v2
+                kind: CiliumNetworkPolicy
+                name: "{{element}}"
+                namespace: "{{request.object.metadata.namespace}}"
+                data:
+                  spec:
+                    endpointSelector: {}' 'require-generated-cilium-policy-rules'
+
+assert_accepted 'kyverno-nested-foreach-generates-valid-cilium-policy' 'apiVersion: kyverno.io/v9
+kind: ClusterPolicy
+metadata:
+  name: nested-foreach-generates-valid-policy
+spec:
+  rules:
+    - name: generate-per-nested-entry
+      generate:
+        foreach:
+          - list: request.object.data
+            foreach:
+              - list: element.value
+                apiVersion: cilium.io/v2
+                kind: CiliumNetworkPolicy
+                name: "{{element}}"
+                namespace: "{{request.object.metadata.namespace}}"
+                data:
+                  spec:
+                    endpointSelector: {}
+                    ingress:
+                      - {}'
+
+assert_rejected 'kyverno-deeply-nested-generate-is-fail-closed' 'apiVersion: kyverno.io/v9
+kind: ClusterPolicy
+metadata:
+  name: deeply-nested-generate
+spec:
+  rules:
+    - name: generate-per-deep-entry
+      generate:
+        foreach:
+          - list: request.object.data
+            foreach:
+              - list: element.value
+                foreach:
+                  - list: element.children
+                    apiVersion: cilium.io/v2
+                    kind: CiliumNetworkPolicy
+                    name: "{{element}}"
+                    namespace: "{{request.object.metadata.namespace}}"
+                    data:
+                      spec:
+                        endpointSelector: {}
+                        ingress:
+                          - {}' 'require-generated-cilium-policy-rules'
+
+# One empty rule per direction is valid and allows nothing; a non-Cilium kind
+# of the same name, a generated standard NetworkPolicy (where an absent rule
+# list is the normal default-deny) and a clone without inline data stay out of
+# scope.
+assert_accepted 'cilium-default-deny-by-selection' 'apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: example
+spec:
+  endpointSelector: {}
+  ingress:
+    - {}
+  egress:
+    - {}
+  enableDefaultDeny:
+    ingress: true
+    egress: true
+---
+apiVersion: cilium.io/v2
+kind: CiliumClusterwideNetworkPolicy
+metadata:
+  name: deny-only-with-intent
+spec:
+  endpointSelector: {}
+  enableDefaultDeny:
+    egress: false
+  egressDeny:
+    - toCIDR: [169.254.169.254/32]
+---
+apiVersion: example.com/v1
+kind: CiliumNetworkPolicy
+metadata:
+  name: same-kind-other-group
+  namespace: example
+spec: {}
+---
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: generates-valid-policies
+spec:
+  rules:
+    - name: generate-cilium-default-deny
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: cilium.io/v2
+        kind: CiliumNetworkPolicy
+        name: default-deny
+        namespace: "{{request.object.metadata.name}}"
+        data:
+          spec:
+            endpointSelector: {}
+            ingress:
+              - {}
+            egress:
+              - {}
+    - name: generate-standard-default-deny
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: networking.k8s.io/v1
+        kind: NetworkPolicy
+        name: default-deny
+        namespace: "{{request.object.metadata.name}}"
+        data:
+          spec:
+            podSelector: {}
+            policyTypes: [Ingress, Egress]
+    - name: clone-cilium-policy
+      match:
+        any:
+          - resources:
+              kinds: [Namespace]
+      generate:
+        apiVersion: cilium.io/v2
+        kind: CiliumNetworkPolicy
+        name: copied
+        namespace: "{{request.object.metadata.name}}"
+        clone:
+          namespace: kube-system
+          name: template'
+
+# The real generator and the copy Flux applies in oauth2-proxy, as committed and
+# with their directions emptied the way they shipped before #3501, so the rules
+# are proven against the real documents' layout rather than only hand-written
+# fixtures.
+readonly default_deny_policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/add-default-deny.yaml"
+readonly oauth2_proxy_default_deny="${root_dir}/k8s/bases/infrastructure/controllers/oauth2-proxy/cilium-network-policy-default-deny.yaml"
+assert_accepted 'committed-default-deny' "$(cat "${default_deny_policy}")
+---
+$(cat "${oauth2_proxy_default_deny}")"
+assert_rejected 'committed-default-deny-generator-emptied' "$(yq '
+  (.spec.rules[] | select(.name == "generate-default-deny") | .generate.data.spec)
+    |= (.ingress = [] | .egress = [])' "${default_deny_policy}")" 'require-generated-cilium-policy-rules'
+assert_rejected 'committed-oauth2-proxy-default-deny-emptied' "$(yq '
+  .spec.ingress = [] | .spec.egress = []' "${oauth2_proxy_default_deny}")" 'require-cilium-policy-rules'
+
+printf 'PASS: effective authorization rules reject privilege paths and rule-less Cilium policies, and accept the data-product controller RBAC and valid Cilium policies\n'

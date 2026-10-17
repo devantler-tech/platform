@@ -29,6 +29,12 @@ spec:
     - fromEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: minio
+      # SeaweedFS also opens a management gRPC listener. Only S3 HTTP is
+      # allowed between Pods, including the bucket-creation Job.
+      toPorts:
+        - ports:
+            - port: "9000"
+              protocol: TCP
   egress:
     # DNS resolution
     - toEndpoints:

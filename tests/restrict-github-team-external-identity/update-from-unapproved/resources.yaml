@@ -1,0 +1,14 @@
+---
+# A team the provider created anew carries an identity that is not approved
+# yet. Re-pointing it must still be refused: the previous value being
+# unapproved is not a licence to change it.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed

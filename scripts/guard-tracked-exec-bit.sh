@@ -231,12 +231,50 @@ split_separators() {
 }
 segmented="$(printf '%s\n' "$scan" | split_separators)"
 
+# 🔴 A SCRIPT PATH IN FRONT OF THE MATCHED ONE IS JUDGED AS ITS OWN OCCURRENCE (#4066).
+#
+# `grep -o` takes the longest match, so `./scripts/a.sh ./scripts/b.sh` is ONE
+# occurrence ending at b.sh. The walk below rightly reads b.sh as a.sh's argument
+# and discards it, and a.sh — the file actually execed — was never judged at all.
+# So every earlier word that is itself a script path also yields the occurrence
+# that ends at it, carrying the same leading context; the walk then decides each
+# one exactly as it would a path with nothing after it.
+#
+# `allow_bare` mirrors the extraction shape. An explicitly-relative `./` or `../`
+# word is always expanded, as the `./` shapes extract one anywhere a command can
+# stand. A BARE word is expanded only for the `run:` and run-block shapes, the
+# only positions where a bare path is extracted at all, so a bare filter entry or
+# argument never gains a command position it did not already have.
+expand_leading_paths() {
+  EXPAND_SCRIPT_PATH_RE="$SCRIPT_PATH_RE" EXPAND_RELATIVE_PATH_RE="$RELATIVE_PATH_RE" \
+    awk -v allow_bare="$1" '
+      BEGIN {
+        rel = "(^|[\"\047])" ENVIRON["EXPAND_RELATIVE_PATH_RE"] "$"
+        bare = "^[\"\047]?" ENVIRON["EXPAND_SCRIPT_PATH_RE"] "$"
+      }
+      {
+        print
+        rest = $0; consumed = 0
+        while (match(rest, /[^[:space:]]+/)) {
+          word = substr(rest, RSTART, RLENGTH)
+          end = consumed + RSTART + RLENGTH - 1
+          consumed = end
+          rest = substr(rest, RSTART + RLENGTH)
+          if (rest !~ /[^[:space:]]/) break
+          if (word ~ rel || (allow_bare == 1 && word ~ bare)) print substr($0, 1, end)
+        }
+      }
+    '
+}
+
 invocations="$(
   {
-    printf '%s\n' "$segmented" |
-      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*\./${SCRIPT_PATH_RE}" || true
-    printf '%s\n' "$segmented" |
-      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true
+    { printf '%s\n' "$segmented" |
+      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*\./${SCRIPT_PATH_RE}" || true; } |
+      expand_leading_paths 0
+    { printf '%s\n' "$segmented" |
+      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true; } |
+      expand_leading_paths 1
     # A run block puts the command at the START of its own line. But line-leading
     # position is command position only when the PREVIOUS line did not end in a
     # backslash: a continuation line is an ARGUMENT list, and this repository has
@@ -246,18 +284,56 @@ invocations="$(
     # of state and nothing else; the extraction is left to grep so the emitted
     # occurrence STOPS at the path instead of running to the end of the line,
     # which is what lets a trailing argument coexist with a line-leading command.
-    awk '!cont { print }
-         { cont = ($0 ~ /\\[[:space:]]*$/) }' <<<"$segmented" |
-      grep -oE "^[[:space:]]*(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true
+    { awk '!cont { print }
+           { cont = ($0 ~ /\\[[:space:]]*$/) }' <<<"$segmented" |
+      grep -oE "^[[:space:]]*(${TOKEN_RE}[[:space:]]+)*(\./)?${SCRIPT_PATH_RE}" || true; } |
+      expand_leading_paths 1
     # Any other relative path, extracted in the same two command-position shapes
     # as a `./scripts/` path, so the classifier below still decides whether it
     # is execed at all.
-    printf '%s\n' "$segmented" |
-      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true
-    printf '%s\n' "$segmented" |
-      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true
+    { printf '%s\n' "$segmented" |
+      grep -oE "${LEADING_DELIM}(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true; } |
+      expand_leading_paths 0
+    { printf '%s\n' "$segmented" |
+      grep -oE "run:[[:space:]]+[\"']?(${TOKEN_RE}[[:space:]]+)*${RELATIVE_PATH_RE}" || true; } |
+      expand_leading_paths 1
   }
 )"
+
+# 🔴 A WRAPPER'S OWN ARGUMENTS ARE NOT THE COMMAND IT RUNS (#3692).
+#
+# `timeout 10 ./scripts/x.sh`, `nice -n 5 ./scripts/x.sh` and
+# `sudo -u root scripts/x.sh` all exec the file. Read word by word, though, `10`,
+# `5` and `root` look like a command that takes the path as an argument, so each
+# of these was discarded and the bit went unchecked. A wrapper therefore declares
+# what it consumes before the command: how many leading positional words it takes
+# (timeout's duration, flock's lock file), and which of its options take their
+# value as the NEXT word. Only those words are skipped; any other word after a
+# wrapper is still the command, and the path is still its argument.
+wrapper_positionals() {
+  case "$1" in
+    timeout | flock) echo 1 ;;
+    *) echo 0 ;;
+  esac
+}
+
+# 0 when option $2 of wrapper $1 takes its value as the next word. A value attached
+# to the option (`-oL`, `--signal=KILL`) is part of the same word and needs no skip.
+wrapper_option_takes_value() {
+  case "$1:$2" in
+    sudo:-u | sudo:-g | sudo:-C | sudo:-D | sudo:-h | sudo:-p | sudo:-r | sudo:-t | sudo:-T | sudo:-U) return 0 ;;
+    sudo:--user | sudo:--group | sudo:--chdir | sudo:--host | sudo:--prompt | sudo:--other-user) return 0 ;;
+    timeout:-k | timeout:-s | timeout:--kill-after | timeout:--signal) return 0 ;;
+    nice:-n | nice:--adjustment) return 0 ;;
+    env:-u | env:-C | env:-S | env:--unset | env:--chdir | env:--split-string) return 0 ;;
+    ionice:-c | ionice:-n | ionice:--class | ionice:--classdata) return 0 ;;
+    stdbuf:-i | stdbuf:-o | stdbuf:-e | stdbuf:--input | stdbuf:--output | stdbuf:--error) return 0 ;;
+    flock:-w | flock:-E | flock:--timeout | flock:--conflict-exit-code) return 0 ;;
+    xargs:-a | xargs:-d | xargs:-E | xargs:-I | xargs:-L | xargs:-n | xargs:-P | xargs:-s) return 0 ;;
+    exec:-a | time:-f | time:-o) return 0 ;;
+  esac
+  return 1
+}
 
 direct=""
 unresolved=""
@@ -293,13 +369,22 @@ while IFS= read -r occurrence; do
   read -ra prefix_tokens <<<"$prefix"
   reaches_path=1
   saw_wrapper=0
+  wrapper=""
+  skip_value=0
+  positionals=0
   for token in ${prefix_tokens+"${prefix_tokens[@]}"}; do
+    if ((skip_value == 1)); then
+      skip_value=0
+      continue
+    fi
     case "$token" in
       # A control keyword introduces a command position rather than taking the
       # path as an argument: `if ./scripts/x.sh` execs the file.
       if | elif | while | until | then | do | else | "!" | "{")
         reaches_path=1
         saw_wrapper=0
+        wrapper=""
+        positionals=0
         ;;
       # A quote is TRANSPARENT — never a reset. It marks a command position in
       # `run: "./scripts/x.sh"`, but in `foo "./scripts/x.sh"` the path is an
@@ -311,21 +396,37 @@ while IFS= read -r occurrence; do
         # entry — a path filter, not a command.
         if ((saw_wrapper == 0)); then
           reaches_path=0
+        elif wrapper_option_takes_value "$wrapper" "$token"; then
+          skip_value=1
         fi
         ;;
-      *=*) ;;                                                     # NAME=value: an environment assignment is transparent
-      sudo | exec | time | env | command | nohup | xargs)          # a wrapper that still execs the file
+      # NAME=value: an environment assignment is transparent.
+      *=*) ;;
+      # A wrapper that still execs the file.
+      sudo | exec | time | env | command | nohup | xargs | timeout | nice | stdbuf | setsid | ionice | flock)
         saw_wrapper=1
+        wrapper="$token"
+        positionals="$(wrapper_positionals "$token")"
         ;;
-      bash | sh | zsh | dash | ksh | source | .)                   # handed to an interpreter
+      # Handed to an interpreter.
+      bash | sh | zsh | dash | ksh | source | .)
         reaches_path=0
         ;;
-      *)                                                           # an argument to some other command, which does not exec it
-        reaches_path=0
+      *)
+        if ((positionals > 0)); then
+          # The wrapper's own leading argument.
+          positionals=$((positionals - 1))
+        else
+          # An argument to some other command, which does not exec it.
+          reaches_path=0
+        fi
         ;;
     esac
   done
   ((reaches_path == 1)) || continue
+  # A path still owed to the wrapper is its operand, not its command:
+  # `flock scripts/x.sh cmd` uses the file as a lock and never execs it.
+  ((skip_value == 0 && positionals == 0)) || continue
 
   relative="$(printf '%s' "$occurrence" | grep -oE "${RELATIVE_PATH_RE}\$" || true)"
   if [[ -n "$relative" && ! "$relative" =~ ^\./(scripts|\.github)/ ]]; then

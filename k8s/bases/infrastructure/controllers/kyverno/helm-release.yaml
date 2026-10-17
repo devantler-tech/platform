@@ -43,14 +43,31 @@ spec:
     # given an explicit limit below (see the admissionController.container.resources block
     # and the OOM incident it documents); the chart default proved too low.
     features:
+      # Preserve producer severity for every controller; colored text lets a
+      # resource kind such as "Alert" promote an informational notice to fatal.
+      logging:
+        format: json
       backgroundScan:
         # Honor config.resourceFilters during background scans (chart default is
         # true = filters skipped = report-per-resource for everything). With this
-        # false, the chart's default filters (Event, ReplicaSet, Node,
-        # EphemeralReport, kube-system/public/node-lease, ...) plus the additions
-        # below actually suppress background-scan reports for those kinds.
+        # false, the chart's default filters (Event, ReplicaSet, EphemeralReport,
+        # the kyverno namespace, ...) plus the additions below actually suppress
+        # background-scan reports for those kinds; the entries dropped under
+        # resourceFiltersExclude below (Node, and the three Kubernetes system
+        # namespaces) are scanned.
         skipResourceFilters: false
     config:
+      # These three virtual review APIs are already in the chart's resourceFilters.
+      # Skip their no-op webhook round trip before Kyverno handles the request:
+      # discovery of aggregated APIs can itself need delegated authorization.
+      # Keep other review types and same-named resources in other groups in scope.
+      matchConditions:
+        - name: exclude-already-filtered-auth-reviews
+          expression: >-
+            !((request.resource.group == "authentication.k8s.io" &&
+            request.resource.resource == "tokenreviews") ||
+            (request.resource.group == "authorization.k8s.io" &&
+            request.resource.resource in ["subjectaccessreviews", "selfsubjectaccessreviews"]))
       # Additive (chart `concat`s this onto its ~80-entry default resourceFilters
       # -- nothing default is lost, and it stays correct across chart upgrades).
       # Exclude high-churn kinds that have ZERO matching policy in this repo, so
@@ -82,12 +99,35 @@ spec:
       # so a Kyverno outage never blocks Node registration). Node traffic stays
       # small — kubelet heartbeats go to the `nodes/status` subresource, and the
       # subresource filter `[Node/?*,*,*]` is untouched.
+      #
+      # The three Kubernetes system namespaces are dropped too, so background
+      # scans report on them again (#4234): without this, no Kyverno policy has
+      # evaluated anything in them since background scans started honouring the
+      # filters. The webhooks' namespaceSelector still skips kube-system.
+      # kube-public and kube-node-lease remain in admission scope: the bootstrap
+      # Role in kube-public matches Enforce audit-privileged-rbac; node Leases
+      # stay resource-filtered above. Other kinds can match other admission rules.
+      # See docs/policy-reports.md for the recorded coverage/admission decision.
+      # Every generate or mutate-existing policy excludes these three
+      # namespaces explicitly, so nothing is created or changed in them.
+      # `[*/*,kyverno,*]` stays: add-default-deny and add-default-limitrange do not
+      # exclude kyverno, so dropping it would generate a default-deny policy in
+      # Kyverno's own namespace and a LimitRange colliding with the Flux-owned one.
       resourceFiltersExclude:
         - "[Node,*,*]"
+        - "[*/*,kube-system,*]"
+        - "[*/*,kube-public,*]"
+        - "[*/*,kube-node-lease,*]"
     # Restricted PSS baseline: kyverno's mutation policies exclude the kyverno namespace,
     # so we must set pod-level seccompProfile + runAsNonRoot via chart values.
     admissionController:
       replicas: ${kyverno_admission_replicas:=2}
+      # Structured severity keeps colored trace flag values containing "error"
+      # from becoming error events in Coroot, without reducing verbosity.
+      featuresOverride:
+        logging:
+          format: json
+          verbosity: 2
       # Explicit resources = the COLD-START FLOOR. Kyverno's global resourceFilters
       # exclude ns/kyverno from auto-vpa, so the admission controller was long left
       # on the chart-default limits.memory: 384Mi, which OOMKilled (exit 137) under

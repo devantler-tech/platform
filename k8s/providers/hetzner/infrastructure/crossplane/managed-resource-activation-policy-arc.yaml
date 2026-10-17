@@ -1,0 +1,10 @@
+# Establish this namespaced CRD before the ARC RunnerGroup is applied.
+# Keep the runtime App's resource separate from the github-config tenant's
+# activation policy and Role; no tenant or App permission is added here.
+apiVersion: apiextensions.crossplane.io/v1alpha1
+kind: ManagedResourceActivationPolicy
+metadata:
+  name: github-arc-runners
+spec:
+  activate:
+    - runnergroups.actions.github.m.upbound.io

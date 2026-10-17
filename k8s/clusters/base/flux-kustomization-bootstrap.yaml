@@ -25,4 +25,5 @@ spec:
       name: sops-age
   wait: true
   prune: true
-  force: true
+  # Immutable conflicts require an operator plan; individual Jobs opt into recreation.
+  force: false

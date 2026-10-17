@@ -26,4 +26,6 @@ resources:
   - tracing-policies/
   - vault-config/
   - vault-backup/
+  # Weekly blue/green rotation of Umami's DB login (#4107).
+  - vault-db-rotation/
   - vault-seed/

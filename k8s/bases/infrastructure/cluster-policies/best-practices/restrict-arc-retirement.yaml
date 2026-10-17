@@ -1,0 +1,253 @@
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: restrict-arc-retirement
+  annotations:
+    policies.kyverno.io/title: Preserve the Owned ARC Retirement Fence
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+spec:
+  background: false
+  webhookConfiguration:
+    failurePolicy: Fail
+  rules:
+    - name: fence-pool-retirement
+      match:
+        any:
+          - resources:
+              kinds: [helm.toolkit.fluxcd.io/v2/HelmRelease]
+              names: [platform-runners]
+              namespaces: [arc-runners]
+              operations: [CREATE, UPDATE]
+      context:
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+        - name: baselineHRSpec1
+          variable:
+            jmesPath: >-
+              merge(retirement.record.baseline.hrSpec0 || `{}`, {values: merge(retirement.record.baseline.hrSpec0.values || `{}`, {maxRunners: `1`})})
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating this release or reopening runner admission.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.hrSpec0.suspend == `false` && retirement.record.baseline.hrSpec0.values.minRunners == `0` && retirement.record.baseline.hrSpec0.values.maxRunners == `0` && ((((request.operation == 'CREATE' && (retirement.record.baseline.hrUID || '') == '') || (request.operation == 'UPDATE' && ((retirement.record.baseline.hrUID || '') == '' || (request.object.metadata.uid || '') == retirement.record.baseline.hrUID))) && request.object.spec == retirement.record.baseline.hrSpec0) || (request.operation == 'UPDATE' && (request.object.metadata.uid || '') == retirement.record.baseline.hrUID && retirement.record.baseline.maximum == `1` && (retirement.record.baseline.hrUID || '') != '' && (retirement.record.baseline.arsUID || '') != '' && (retirement.record.baseline.esoUID || '') != '' && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.zeroSource.sha || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.zeroSource.digest || '') && request.object.spec == baselineHRSpec1))) || (retirement.phase != 'baseline' && (request.operation == 'UPDATE' && ((retirement.record.baseline == `null` && (request.object.spec.suspend == `true` || (request.object.spec.values.minRunners == `0` && request.object.spec.values.maxRunners == `0`))) || (retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.hrSpec0.suspend == `false` && retirement.record.baseline.hrSpec0.values.minRunners == `0` && retirement.record.baseline.hrSpec0.values.maxRunners == `0` && (request.object.metadata.uid || '') == retirement.record.baseline.hrUID && (request.object.spec == retirement.record.baseline.hrSpec0 || request.object.spec == merge(retirement.record.baseline.hrSpec0, {suspend: `true`})))))) }}
+                operator: NotEquals
+                value: true
+    - name: fence-scale-set-retirement
+      match:
+        any:
+          - resources:
+              kinds: [actions.github.com/v1alpha1/AutoscalingRunnerSet]
+              names: [platform-linux]
+              namespaces: [arc-runners]
+              operations: [CREATE, UPDATE]
+      context:
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating this scale set or reopening its admission.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.arsSpec0.minRunners == `0` && retirement.record.baseline.arsSpec0.maxRunners == `0` && ((((request.operation == 'CREATE' && (retirement.record.baseline.arsUID || '') == '') || (request.operation == 'UPDATE' && ((retirement.record.baseline.arsUID || '') == '' || (request.object.metadata.uid || '') == retirement.record.baseline.arsUID))) && request.object.spec == retirement.record.baseline.arsSpec0) || (request.operation == 'UPDATE' && (request.object.metadata.uid || '') == retirement.record.baseline.arsUID && retirement.record.baseline.maximum == `1` && (retirement.record.baseline.hrUID || '') != '' && (retirement.record.baseline.arsUID || '') != '' && (retirement.record.baseline.esoUID || '') != '' && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.zeroSource.sha || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.zeroSource.digest || '') && request.object.spec == merge(retirement.record.baseline.arsSpec0, {maxRunners: `1`})))) || (retirement.phase != 'baseline' && (request.operation == 'UPDATE' && ((retirement.record.baseline == `null` && request.object.spec.minRunners == `0` && request.object.spec.maxRunners == `0`) || (retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.arsSpec0.minRunners == `0` && retirement.record.baseline.arsSpec0.maxRunners == `0` && (request.object.metadata.uid || '') == retirement.record.baseline.arsUID && request.object.spec == retirement.record.baseline.arsSpec0)))) }}
+                operator: NotEquals
+                value: true
+    - name: fence-listener-retirement
+      match:
+        any:
+          - resources:
+              kinds: [actions.github.com/v1alpha1/AutoscalingListener]
+              namespaces: [arc-systems]
+              operations: [CREATE, UPDATE]
+      context:
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+          - key: "{{ request.object.spec.autoscalingRunnerSetNamespace || '' }}"
+            operator: Equals
+            value: arc-runners
+          - key: "{{ request.object.spec.autoscalingRunnerSetName || '' }}"
+            operator: Equals
+            value: platform-linux
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement permits only a zero-capacity listener or unchanged deletion cleanup.
+        deny:
+          conditions:
+            any:
+              # Listener bounds are nonpointer ints with omitempty in ARC0.15.
+              # Finalizer-only updates on an already deleting old listener must
+              # remain possible; its spec cannot change through that exception.
+              - key: >-
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && retirement.record.baseline.maximum == `1` && (retirement.record.baseline.hrUID || '') != '' && (retirement.record.baseline.arsUID || '') != '' && (retirement.record.baseline.esoUID || '') != '' && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.zeroSource.sha || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.zeroSource.digest || '') && (request.object.spec.minRunners || `0`) == `0` && request.object.spec.maxRunners == `1`) || ((request.object.spec.minRunners || `0`) == `0` && (request.object.spec.maxRunners || `0`) == `0`) || (request.operation == 'UPDATE' && request.object.metadata.deletionTimestamp != `null` && request.oldObject.metadata.deletionTimestamp != `null` && request.object.spec == request.oldObject.spec) }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ request.operation == 'CREATE' && contains(['uninstalled', 'credential-removing', 'absent', 'restored'], retirement.phase) }}
+                operator: Equals
+                value: true
+    - name: fence-retired-listener-pod
+      match:
+        any:
+          - resources:
+              kinds: [v1/Pod]
+              namespaces: [arc-systems]
+              operations: [CREATE]
+              selector:
+                matchLabels:
+                  actions.github.com/scale-set-name: platform-linux
+                  actions.github.com/scale-set-namespace: arc-runners
+                  app.kubernetes.io/component: runner-scale-set-listener
+      context:
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating this finalized listener process.
+        deny:
+          conditions:
+            all:
+              - key: "{{ retirement.phase }}"
+                operator: NotIn
+                value: [unfenced, baseline, fenced, drained, quiescing, quiesced, uninstalling]
+    - name: fence-credential-recreation
+      match:
+        any:
+          - resources:
+              kinds: [external-secrets.io/v1/ExternalSecret]
+              names: [arc-github-app]
+              namespaces: [arc-runners]
+              operations: [CREATE, UPDATE]
+      context:
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+      preconditions:
+        all:
+          - key: "{{ retirement.present }}"
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating or rewriting its credential-sync object.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ (retirement.phase == 'baseline' && retirement.record.namespaceUID == retirement.namespaceUID && retirement.record.baseline.version == `1` && (retirement.record.baseline.maximum == `0` || retirement.record.baseline.maximum == `1`) && regex_match('^[0-9a-f]{40}$', retirement.record.baseline.sourceSHA || '') && regex_match('^sha256:[0-9a-f]{64}$', retirement.record.baseline.digest || '') && request.object.spec == retirement.record.baseline.esoSpec && ((request.operation == 'CREATE' && (retirement.record.baseline.esoUID || '') == '') || (request.operation == 'UPDATE' && ((retirement.record.baseline.esoUID || '') == '' || (request.object.metadata.uid || '') == retirement.record.baseline.esoUID)))) || (retirement.phase != 'baseline' && request.operation == 'UPDATE' && request.object.spec == request.oldObject.spec) }}
+                operator: NotEquals
+                value: true
+    - name: fence-retired-secret
+      match:
+        any:
+          - resources:
+              kinds: [v1/Secret]
+              names: [arc-github-app]
+              namespaces: [arc-runners]
+              operations: [CREATE]
+      context:
+        # Presence and authority come from one fresh Namespace response.
+        - name: retirement
+          apiCall:
+            urlPath: /api/v1/namespaces/arc-runners
+            jmesPath: >-
+              {present: contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement'), namespaceUID: metadata.uid, record: parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}'), phase: (contains(keys(metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (parse_json(metadata.annotations."platform.devantler.tech/arc-retirement" || '{"phase":"unknown"}').phase || 'unknown')) || 'unfenced'}
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: ARC retirement forbids recreating its finalized credential.
+        deny:
+          conditions:
+            all:
+              - key: "{{ retirement.phase }}"
+                operator: NotIn
+                value: [unfenced, baseline, fenced, drained, quiescing, quiesced, uninstalling, uninstalled]
+    - name: preserve-retirement-journal
+      match:
+        any:
+          - resources:
+              kinds: [v1/Namespace]
+              names: [arc-runners]
+              operations: [UPDATE]
+      preconditions:
+        all:
+          - key: >-
+              {{ contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') || contains(keys(request.object.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') }}
+            operator: Equals
+            value: true
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: Only protected administrator recovery may replace or clear the ARC retirement journal.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ contains(request.userInfo.groups || `[]`, 'system:masters') }}
+                operator: NotEquals
+                value: true
+              - key: >-
+                  {{ contains(keys(request.object.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') == contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') && (request.object.metadata.annotations."platform.devantler.tech/arc-retirement" || '') == (request.oldObject.metadata.annotations."platform.devantler.tech/arc-retirement" || '') }}
+                operator: NotEquals
+                value: true
+    - name: preserve-retiring-namespace
+      match:
+        any:
+          - resources:
+              kinds: [v1/Namespace]
+              names: [arc-runners]
+              operations: [DELETE]
+      validate:
+        failureAction: Enforce
+        allowExistingViolations: false
+        message: The owned ARC retirement journal must survive namespace deletion.
+        deny:
+          conditions:
+            all:
+              - key: >-
+                  {{ contains(keys(request.oldObject.metadata.annotations || `{}`), 'platform.devantler.tech/arc-retirement') }}
+                operator: Equals
+                value: true

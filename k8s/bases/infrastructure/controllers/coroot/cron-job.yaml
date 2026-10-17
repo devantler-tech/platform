@@ -56,6 +56,13 @@ spec:
             app: cluster-heartbeat
         spec:
           restartPolicy: Never
+          # Only the public heartbeat hostname is resolved. Try it before
+          # cluster search suffixes, preserving the cluster DNS server and
+          # normal fallback search behavior for names that do not resolve.
+          dnsConfig:
+            options:
+              - name: ndots
+                value: "1"
           # curl-only heartbeat; it never calls the Kubernetes API, so no
           # ServiceAccount token is mounted (kubescape C-0034).
           automountServiceAccountToken: false

@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: provider
+userInfo:
+  username: system:serviceaccount:crossplane-system:provider-upjet-github-f5d83a3e04ea
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:crossplane-system
+    - system:authenticated

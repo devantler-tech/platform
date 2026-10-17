@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: crossplane-core
+userInfo:
+  username: system:serviceaccount:crossplane-system:crossplane
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:crossplane-system
+    - system:authenticated

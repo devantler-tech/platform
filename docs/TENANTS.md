@@ -139,17 +139,44 @@ reusable workflow, which builds and pushes the image, pins its digest into
 **cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
 (§5) **verifies** that signature against the `publish-app.yaml` identity.
 
-That verification establishes the GitHub OIDC issuer and that the signer ran the
-`publish-app.yaml` workflow path at a 40-hex commit — the **commit shape**, not a reviewed
-revision. The verifiers in use (Flux, the `verify-app-images` admission policy, and the Talos
-pull rule) match only the certificate's issuer and subject, so a commit reference under that
-path does not prove the commit belongs to the actions repository's reviewed history.
-Application tenants may advance that workflow at any 40-hex commit without a platform-side
-revision update. Package write access, namespace, RBAC, network policy, and admission policy
-bound what a release can do; the remaining risk is accepted in
-[#3746](https://github.com/devantler-tech/platform/issues/3746). A tenant that needs authority
-outside those bounds requires a reviewed platform change; an ordinary release inside them does
-not.
+`publish-app.yaml` signs two artifacts separately: the OCI **manifest** artifact and the
+container **image**. Three verifiers check them, and they do not check the same thing:
+
+| Verifier | Artifact | What it accepts |
+|---|---|---|
+| **Flux** — the tenant's `OCIRepository` | manifest | Only the approved `publish-app.yaml` revisions listed for this tenant: the revision that signed the artifact running now, the tenant's current pin, and the latest release candidate of the shared workflow. Any other commit is refused. |
+| **Admission** — the `verify-app-images` Kyverno policy | image | Any 40-hex commit of `publish-app.yaml` in the actions repository, from the GitHub OIDC issuer — the **commit shape**, not a reviewed revision. |
+| **Node pull** — the Talos image-verification rule | image | The same commit shape as the admission policy. |
+
+Because the signatures are separate, a release can pass one layer and fail another: if only the
+manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
+refuses the pull (`ImagePullBackOff`).
+
+The approved Flux list covers the production consumers already registered with the approval
+generator. It lives in `scripts/publish-workflow-approved-revisions.tsv`, and
+`scripts/write-publish-workflow-matchers.sh` writes it into each of those consumers'
+`OCIRepository`. The generator's consumer list is fixed in code
+(`scripts/report-publish-workflow-signing-revisions.sh` and the
+`Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
+covered until a reviewed platform change adds it there. The `Tenant` archetype pilot (below) still
+generates an `OCIRepository` that accepts any 40-hex `publish-app.yaml` commit, the same shape as
+admission.
+
+**What this means for a registered tenant:** the platform must approve a `publish-app.yaml` commit
+before `cd.yaml` can move to it. Each registered application tenant runs a required check that
+refuses a pin the platform's committed approved list does not contain, so a pin change made too
+early waits instead of merging. The daily `Regenerate Approved Publish Revisions` workflow in this
+repository (06:20 UTC, or run it by hand) adds the latest released `devantler-tech/actions`
+revision to the list in a pull request. Once that pull request is merged and deployed, re-run the
+tenant's check; the pin change can then merge, and Flux accepts the releases it makes. The
+generator never adds a commit that is not the latest release, so pinning one needs a reviewed
+platform change to the approved list. Releases on an approved revision need no platform change.
+
+The admission policy and the node pull rule do not prove that a commit belongs to the actions
+repository's reviewed history; that remaining risk is accepted in
+[#3746](https://github.com/devantler-tech/platform/issues/3746). Package write access,
+namespace, RBAC, network policy and admission policy bound what a release can do. A tenant that
+needs authority outside those bounds requires a reviewed platform change.
 
 > Tags come from `release.yaml` → semantic-release: merge Conventional-Commit
 > PRs to `main` and a `vX.Y.Z` tag (and thus a publish) follows automatically.
@@ -250,9 +277,12 @@ carry itself**:
   only example in the repo: `wedding-app`'s CNPG `Cluster` `storage.storageClass: longhorn`
   (local/docker has no longhorn, so the artifact stays class-agnostic and the overlay supplies
   the class).
-- **Operational-safety annotations** — platform-enforced guards such as
-  `kustomize.toolkit.fluxcd.io/{force,prune}: disabled` on a stateful resource to prevent a
-  Flux delete+recreate data-loss event.
+- **Operational-safety settings** — `kustomize.toolkit.fluxcd.io/prune: disabled` preserves
+  a stateful resource when its manifest is removed. Platform and generated tenant Flux layers
+  set `spec.force: false` so immutable conflicts fail rather than replace resources. Jobs that
+  need recreation can opt in with `kustomize.toolkit.fluxcd.io/force: enabled`; persistent claims
+  and database clusters must not opt in. A resource's `force: disabled` annotation cannot
+  override a forcing layer.
 
 **Everything a tenant can express in its own `deploy/` is tenant-owned and must NOT be patched
 here** — **hostnames**, **`gethomepage.dev/*` dashboard annotations**, routes, and app config:

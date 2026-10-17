@@ -9,6 +9,7 @@ data:
   # exporter receives access to the new kind.
   managed-resources.tsv: |
     actions.github.m.upbound.io	v1alpha1	RepositoryPermissions	repositorypermissions
+    actions.github.m.upbound.io	v1alpha1	RunnerGroup	runnergroups
     dns.unifi.m.crossplane.io	v1alpha1	Record	records
     enterprise.github.m.upbound.io	v1alpha1	OrganizationRuleset	organizationrulesets
     iam.aws.m.upbound.io	v1beta1	OpenIDConnectProvider	openidconnectproviders
@@ -71,6 +72,25 @@ data:
             group: actions.github.m.upbound.io
             version: v1alpha1
             kind: RepositoryPermissions
+          metricNamePrefix: crossplane
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metrics:
+            - name: managed_resource_condition
+              help: "Crossplane managed resource condition status (1 = True, 0 = False)."
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition: [type]
+                    reason: [reason]
+                  valueFrom: [status]
+        - groupVersionKind:
+            group: actions.github.m.upbound.io
+            version: v1alpha1
+            kind: RunnerGroup
           metricNamePrefix: crossplane
           labelsFromPath:
             name: [metadata, name]

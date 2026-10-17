@@ -19,7 +19,7 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 	switch spec["url"] {
 	case "oci://ghcr.io/devantler-tech/github-config/manifests", "oci://ghcr.io/devantler-tech/aws/manifests":
 		workflow = "publish-manifests"
-	case "oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests", "oci://ghcr.io/devantler-tech/wedding-app/manifests":
+	case "oci://ghcr.io/devantler-tech/ascoachingogvaner/manifests", "oci://ghcr.io/devantler-tech/wedding-app/manifests", "oci://ghcr.io/devantler-tech/data-product-controller/manifests":
 		workflow = "publish-app"
 	default:
 		return document
@@ -37,12 +37,11 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 		return document
 	}
 	subject, ok := matcher["subject"].(string)
-	prefix := `^https://github\.com/devantler-tech/actions/\.github/workflows/` + workflow + `\.yaml@`
-	if !ok || !strings.HasPrefix(subject, prefix) || !strings.HasSuffix(subject, "$") {
+	if !ok {
 		return document
 	}
-	ref := strings.TrimSuffix(strings.TrimPrefix(subject, prefix), "$")
-	if !isExactPublishRevisionSet(ref, maxPublishRevisions(workflow)) {
+	projectedSubject, ok := projectPublishSubject(subject, workflow)
+	if !ok {
 		return document
 	}
 
@@ -50,7 +49,7 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 	projectedSpec := cloneStringAnyMap(spec)
 	projectedVerify := cloneStringAnyMap(verify)
 	projectedMatcher := cloneStringAnyMap(matcher)
-	projectedMatcher["subject"] = prefix + `[0-9a-f]{40}$`
+	projectedMatcher["subject"] = projectedSubject
 	projectedVerify["matchOIDCIdentity"] = []any{projectedMatcher}
 	projectedSpec["verify"] = projectedVerify
 	projected["spec"] = projectedSpec
@@ -59,12 +58,9 @@ func publishMatcherSurfaceDocument(identity resourceIdentity, document map[strin
 
 // maxPublishRevisions is the largest approved set a workflow's consumers carry: the
 // applied signer and the default-branch pin, plus the latest released actions revision
-// for publish-app consumers (#3917).
-func maxPublishRevisions(workflow string) int {
-	if workflow == "publish-app" {
-		return 3
-	}
-	return 2
+// for both publish-app and publish-manifests consumers (#4416).
+func maxPublishRevisions() int {
+	return 3
 }
 
 // isExactPublishRevisionSet accepts one concrete SHA or one parenthesized set of at most
@@ -87,4 +83,66 @@ func isExactPublishRevisionSet(ref string, limit int) bool {
 		}
 	}
 	return true
+}
+
+// isExactCanonicalCommitSet accepts one concrete commit, or exactly two distinct ones
+// written "(first|second)": the commit a canonical publisher moves from and the one it
+// moves to (#4713). The text is kept in the projection as written, so either commit
+// changing, or the second being added or dropped, moves the fingerprint.
+func isExactCanonicalCommitSet(ref string) bool {
+	if exactGitCommit.MatchString(ref) {
+		return true
+	}
+	inner, ok := strings.CutPrefix(ref, "(")
+	if !ok {
+		return false
+	}
+	inner, ok = strings.CutSuffix(inner, ")")
+	if !ok {
+		return false
+	}
+	first, second, ok := strings.Cut(inner, "|")
+	return ok && first != second && exactGitCommit.MatchString(first) && exactGitCommit.MatchString(second)
+}
+
+const (
+	publishSubjectHost     = `^https://github\.com/devantler-tech/`
+	legacyPublishFamily    = `actions/\.github/workflows/`
+	canonicalPublishFamily = `\.github/\.github/workflows/`
+	// canonicalPublishWorkflow is the only workflow whose artifacts may also accept the
+	// canonical publisher; application-image publishers stay legacy-only (#4502).
+	canonicalPublishWorkflow = "publish-manifests"
+)
+
+// projectPublishSubject replaces the generated legacy signer set with the shared pattern
+// and leaves everything else exactly as written. A legacy-only subject projects to the
+// approved pattern subject. A two-family subject keeps its group, its repository family
+// and its canonical commit or commits, so adding, removing or moving a canonical approval
+// always moves the fingerprint, while the daily legacy regeneration inside it does not.
+func projectPublishSubject(subject, workflow string) (string, bool) {
+	legacy := legacyPublishFamily + workflow + `\.yaml@`
+	if rest, ok := strings.CutPrefix(subject, publishSubjectHost+legacy); ok {
+		ref, anchored := strings.CutSuffix(rest, "$")
+		if !anchored || !isExactPublishRevisionSet(ref, maxPublishRevisions()) {
+			return "", false
+		}
+		return publishSubjectHost + legacy + `[0-9a-f]{40}$`, true
+	}
+	if workflow != canonicalPublishWorkflow {
+		return "", false
+	}
+	inner, ok := strings.CutPrefix(subject, publishSubjectHost+"("+legacy)
+	if !ok {
+		return "", false
+	}
+	inner, ok = strings.CutSuffix(inner, ")$")
+	if !ok {
+		return "", false
+	}
+	canonical := `|` + canonicalPublishFamily + workflow + `\.yaml@`
+	ref, commit, ok := strings.Cut(inner, canonical)
+	if !ok || !isExactCanonicalCommitSet(commit) || !isExactPublishRevisionSet(ref, maxPublishRevisions()) {
+		return "", false
+	}
+	return publishSubjectHost + "(" + legacy + `[0-9a-f]{40}` + canonical + commit + ")$", true
 }

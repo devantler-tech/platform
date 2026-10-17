@@ -105,6 +105,7 @@ case "${args}" in
     exit 1
     ;;
   *" -n oauth2-proxy get endpointslices -l kubernetes.io/service-name=oauth2-proxy -o json ") serve_per_call endpoints ;;
+  *" -n whoami get endpointslices -l kubernetes.io/service-name=whoami -o json ") serve_per_call backend ;;
   *" -n kube-system get daemonsets cilium cilium-envoy -o json ") serve_per_call datapath ;;
   *" get ciliumnodes -o json ") serve_per_call ciliumnodes ;;
   *" get nodes -o json ") serve_per_call nodes ;;
@@ -187,6 +188,13 @@ reset_fixtures() {
 {"items":[{"endpoints":[
  {"addresses":["10.244.22.235"],"nodeName":"prod-worker-1","targetRef":{"kind":"Pod","uid":"uid-pod-a"},"conditions":{"ready":true,"serving":true,"terminating":false}},
  {"addresses":["10.244.23.28"],"nodeName":"prod-worker-2","targetRef":{"kind":"Pod","uid":"uid-pod-b"},"conditions":{"ready":true,"serving":true,"terminating":false}}
+]}]}
+JSON
+
+  # The control backend runs on prod-worker-2, which hosts neither client in the base topology.
+  cat >"${fixtures}/backend.json" <<'JSON'
+{"items":[{"endpoints":[
+ {"addresses":["10.244.23.77"],"nodeName":"prod-worker-2","targetRef":{"kind":"Pod","uid":"uid-pod-w"},"conditions":{"ready":true,"serving":true,"terminating":false}}
 ]}]}
 JSON
 
@@ -675,6 +683,84 @@ require_inconclusive 'an ingress IP change during the run must be INCONCLUSIVE' 
 require_cleaned_up
 pass 'a missing or changing ingress IP is INCONCLUSIVE'
 
+# ---------------------------------------------------------------------------
+# The control backend's node hosts neither client (the first production run's INCONCLUSIVE).
+# ---------------------------------------------------------------------------
+# Backend beside the only endpoint-free node: no cross-node client can be placed, so nothing runs.
+reset_fixtures
+sed 's/"nodeName":"prod-worker-2"/"nodeName":"prod-worker-3"/' "${fixtures}/backend.json" >"${fixtures}/backend.tmp"
+mv "${fixtures}/backend.tmp" "${fixtures}/backend.json"
+grep -Fq '"nodeName":"prod-worker-3"' "${fixtures}/backend.json" || fail 'fixture did not move the control backend'
+run_default
+require_inconclusive 'a cross-node client beside the control backend must not be placed' 'apart from the nodes hosting the control backend, so no cross-node path can be forced'
+require_nothing_created
+
+# Backend beside the first endpoint node: the same-node client moves to the other endpoint node.
+reset_fixtures
+sed 's/"nodeName":"prod-worker-2"/"nodeName":"prod-worker-1"/' "${fixtures}/backend.json" >"${fixtures}/backend.tmp"
+mv "${fixtures}/backend.tmp" "${fixtures}/backend.json"
+grep -Fq '"nodeName":"prod-worker-1"' "${fixtures}/backend.json" || fail 'fixture did not move the control backend'
+printf '%s\n' '{"spec":{"nodeName":"prod-worker-2"},"status":{"phase":"Succeeded"}}' >"${fixtures}/pod-same.json"
+sed 's/^PROBE control 200 45 10\.0\.10\.3$/PROBE control 200 45 10.0.10.4/' "${fixtures}/log-same.txt" >"${fixtures}/log-same.tmp"
+mv "${fixtures}/log-same.tmp" "${fixtures}/log-same.txt"
+[[ "$(grep -c '^PROBE control 200 45 10\.0\.10\.4$' "${fixtures}/log-same.txt")" -eq "${requests}" ]] || fail 'fixture did not move the same-node control answers'
+run_default
+require_rc 0 'a same-node client moved off the control backend node must still reach a verdict'
+require_text 'VERDICT: FIXED' 'the moved same-node client did not produce the verdict'
+require_safe_surface
+grep -Fq 'kubernetes.io/hostname: host-w2' "${fixtures}/applied.yaml" || fail 'the same-node pod was not moved to the endpoint node without the control backend'
+if grep -Fq 'kubernetes.io/hostname: host-w1' "${fixtures}/applied.yaml"; then
+  fail 'a pod was pinned to the node hosting the control backend'
+fi
+require_cleaned_up
+
+# Backend on both endpoint nodes: no same-node control remains.
+reset_fixtures
+cat >"${fixtures}/backend.json" <<'JSON'
+{"items":[{"endpoints":[
+ {"addresses":["10.244.22.77"],"nodeName":"prod-worker-1","targetRef":{"kind":"Pod","uid":"uid-pod-w"},"conditions":{"ready":true,"serving":true,"terminating":false}},
+ {"addresses":["10.244.23.77"],"nodeName":"prod-worker-2","targetRef":{"kind":"Pod","uid":"uid-pod-x"},"conditions":{"ready":true,"serving":true,"terminating":false}}
+]}]}
+JSON
+run_default
+require_inconclusive 'a same-node client beside the control backend must not be placed' 'apart from the nodes hosting the control backend, so there is no same-node control'
+require_nothing_created
+
+# Unreadable, empty, unsettled or moving backend placement.
+reset_fixtures
+rm "${fixtures}/backend.json"
+run_default
+require_inconclusive 'an unreadable control backend must be INCONCLUSIVE' 'could not read the control backend endpoints'
+require_nothing_created
+reset_fixtures
+printf '%s\n' '{"items":[]}' >"${fixtures}/backend.json"
+run_default
+require_inconclusive 'a control backend without endpoints must be INCONCLUSIVE' 'control backend Service has no endpoints'
+require_nothing_created
+reset_fixtures
+sed 's/"ready":true/"ready":false/' "${fixtures}/backend.json" >"${fixtures}/backend.tmp"
+mv "${fixtures}/backend.tmp" "${fixtures}/backend.json"
+grep -Fq '"ready":false' "${fixtures}/backend.json" || fail 'fixture did not unsettle the control backend'
+run_default
+require_inconclusive 'an unsettled control backend must be INCONCLUSIVE' 'control backend endpoint is not settled'
+require_nothing_created
+reset_fixtures
+sed 's/"nodeName":"prod-worker-2",//' "${fixtures}/backend.json" >"${fixtures}/backend.tmp"
+mv "${fixtures}/backend.tmp" "${fixtures}/backend.json"
+if grep -Fq 'nodeName' "${fixtures}/backend.json"; then
+  fail 'fixture did not drop the control backend endpoint node'
+fi
+run_default
+require_inconclusive 'a control backend endpoint without a node must be INCONCLUSIVE' 'control backend endpoint is not settled'
+require_nothing_created
+reset_fixtures
+sed 's/"nodeName":"prod-worker-2"/"nodeName":"prod-worker-3"/' "${fixtures}/backend.json" >"${fixtures}/backend-after.json"
+grep -Fq '"nodeName":"prod-worker-3"' "${fixtures}/backend-after.json" || fail 'fixture did not move the control backend mid-run'
+run_default
+require_inconclusive 'a control backend moving during the run must be INCONCLUSIVE' 'control backend endpoints changed during the run'
+require_cleaned_up
+pass 'no client runs beside the control backend, and its placement is read before and after'
+
 reset_fixtures
 gen_log "${fixtures}/log-cross.txt" '200 45 ' '000 0 '
 gen_log "${fixtures}/log-same.txt" '200 45 ' "302 0 ${dex_redirect}" 8 '000 0 '
@@ -834,12 +920,12 @@ job_minutes="$(sed -n 's/^    timeout-minutes: \([0-9][0-9]*\)$/\1/p' "${workflo
 # Worst case the script allows (timeout 10, requests x timeout = 250, warm-up 12):
 #   route wait (120s wall clock) + one in-flight 30s request past its deadline
 #   + the shared pod wait (deadline + 180s grace) + one in-flight request
-#   + ~26 other bounded kubectl calls (topology, datapath, ingress IPs, leftovers, applies, logs,
+#   + ~28 other bounded kubectl calls (topology, datapath, ingress IPs, leftovers, applies, logs,
 #     cleanup) at 30s
 #   + 10 minutes of job setup and slack.
 # The deadline formula is the script's own.
 max_deadline=$(((2 * 25 + 2 * 12 + 1) * 10 + 12 + 60))
-worst_seconds=$((120 + 35 + max_deadline + 180 + 35 + 26 * 30 + 600))
+worst_seconds=$((120 + 35 + max_deadline + 180 + 35 + 28 * 30 + 600))
 grep -Fq 'readonly route_wait_seconds="${PROBE_ROUTE_WAIT_SECONDS:-120}"' "${script}" || fail 'the route wait bound the timeout was sized for changed'
 grep -Fq "readonly request_timeout='30s'" "${script}" || fail 'the request timeout the job timeout was sized for changed'
 ((job_minutes * 60 >= worst_seconds)) ||

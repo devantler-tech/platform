@@ -35,10 +35,22 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source=scripts/tenant-publication-binding.lib.sh
+source "$REPO_ROOT/scripts/tenant-publication-binding.lib.sh"
 
 # Matches the subject spelling `guard-shared-publish-workflow-pin.sh` validates. Kept
 # textually parallel to that guard: if one moves, the other should be looked at.
-readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
+#
+# The optional group opener admits the two-publisher-family subject (#4502), which holds
+# the legacy family first inside one group: `…/devantler-tech/(actions/…@<ref>|\.github/…@<commit>)$`.
+# Without it a consumer that gains a canonical approval drops out of the scan, and the
+# identity floor then reports a deployed consumer as missing. The legacy family stays the
+# anchor on purpose: every answer this report gives is about the legacy signer, so a
+# file whose subjects name ONLY the canonical family is not selected and its consumer
+# fails the floor rather than being reported with a revision this script never looked up.
+# Selection is per FILE: the pin guard, not this scan, is what refuses a canonical-only
+# subject wherever it is written.
+readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?actions/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
 
 # 🔴 AN IDENTITY FLOOR, NOT A COUNT. A count answers "did I find five things?", which is
 # not the question — "did I find THESE five?" is. With a bare count, one consumer moving
@@ -50,6 +62,7 @@ readonly EXPECTED_CONSUMERS=(
   '.github'
   'ascoachingogvaner'
   'aws'
+  'data-product-controller'
   'wedding-app'
 )
 
@@ -60,6 +73,7 @@ readonly EXPECTED_CONSUMERS=(
 readonly EXPECTED_ARTIFACTS=(
   'ascoachingogvaner/manifests'
   'aws/manifests'
+  'data-product-controller/manifests'
   'github-config/manifests'
   'wedding-app/manifests'
 )
@@ -176,7 +190,41 @@ registry_tag_for_git_tag() {
   printf '%s\n' "${tag//+/_}"
 }
 
-# Print "<repo>\t<workflow>\t<pinned-version-or-empty>" per consumer.
+# Print "<repo>\t<workflow>\t<pinned-version-or-empty>\t<artifact>" per consumer.
+#
+# Discovery is a raw FILE SCAN of the repository: the files carrying a shared-workflow subject,
+# then every consumer document in each (`consumer_rows`). Production is what Flux RENDERS, and
+# the two can disagree — a base production excludes, a ref or URL an overlay patches, a consumer
+# in a file this scan never opens. `guard-consumer-discovery-conservation.sh` applies the same
+# `consumer_rows` to the production render and fails when the two sets differ (#3332).
+#
+# Fails when the scan cannot read the tree or a selected file: its consumers are UNKNOWN, and
+# dropping them would report the rest as the whole set. A second argument of `with-subject`
+# appends each consumer's cosign subjects as a fifth column (see `consumer_rows`).
+# The guard-only `with-identity` mode adds the literal object namespace/name and exact URL
+# after that subject; default discovery and --list-consumers keep their four-column contract.
+discover_consumers() {
+  local root="$1" mode="${2:-}" file files rows found='' rc=0
+  [ -d "$root" ] || return 0
+  # grep exits 1 when NOTHING matches, which is an answer, and 2 when it could not read
+  # something, which is not: a file it failed to read is never selected, so its consumers
+  # would leave the set without any of the refusals below.
+  files="$(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root")" || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    printf 'could not scan %s for consumer manifests (grep exit %s), so the consumers it holds are UNKNOWN\n' \
+      "$root" "$rc" >&2
+    return 1
+  fi
+  files="$(printf '%s\n' "$files" | sed '/^$/d' | sort -u)"
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    rows="$(consumer_rows "$file" "$mode")" || return 1
+    found="$found$rows"$'\n'
+  done <<<"$files"
+  printf '%s' "$found" | sed '/^$/d' | sort -u
+}
+
+# Print one discovery row per consumer DOCUMENT in one (possibly multi-document) YAML file.
 #
 # 🔴 ITERATES DOCUMENTS, NOT FILES. Reading one value per FILE drops every consumer after
 # the first in a multi-document manifest, and — worse — pairs fields across documents: with
@@ -189,68 +237,154 @@ registry_tag_for_git_tag() {
 # grep: an unanchored grep matches prose, so a comment mentioning the other workflow
 # reattributed a consumer — and where a consumer's cd.yaml calls both shared workflows
 # that returns the wrong revision silently.
-discover_consumers() {
-  local root="$1" file url version subjects repo workflow workflows artifact
-  [ -d "$root" ] || return 0
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    while IFS=$'\t' read -r url subjects version; do
-      # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
-      # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
-      # so their row was `url\t\tsubject` and the subject landed in `version` — both
-      # vanished from discovery. Every field is emitted with a `-` placeholder instead of
-      # empty, so no field is ever blank and no collapse is possible.
-      [ "$version" = "-" ] && version=""
-      [ "$subjects" = "-" ] && subjects=""
-      [ -n "$url" ] || continue
-      case "$url" in
-        oci://ghcr.io/devantler-tech/*) ;;
-        *) continue ;;
-      esac
-      # Exactly one shared publish workflow per document, or the attribution is ambiguous
-      # and a guess would be worse than a failure.
-      workflows="$(printf '%s\n' "$subjects" |
-        grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
-      [ -n "$workflows" ] || continue
-      if [ "$(printf '%s\n' "$workflows" | grep -c .)" -ne 1 ]; then
-        printf 'ambiguous: %s names more than one shared publish workflow\n' "$url" >&2
-        continue
+#
+# 🔴 A FILE yq CANNOT PARSE IS NOT A FILE WITH NO CONSUMERS. The extraction used to end in
+# `|| true`, so a parse failure read as zero rows and the file's consumers silently left the
+# set. It now fails, naming the file; documents that parse but hold no consumer still yield
+# nothing. So does a consumer this function cannot attribute (two shared workflows named, or
+# a repository that is empty or fails `plausible_repo`): skipping it dropped a deployed
+# consumer from every set built here, identically, where no comparison could notice.
+#
+# `with-subject` as the second argument appends the document's cosign subjects as a fifth
+# column. The conservation guard compares on it, so a patched signer constraint is a
+# divergence; the report's own four-column rows are unchanged.
+# `with-identity` retains those five fields and appends namespace, name and the exact URL.
+# An absent/empty namespace is recorded as `-`, never guessed to be a default namespace.
+# The guard-only `with-object-contract` mode emits namespace, name, URL, effective ref,
+# subjects, filter/activity flags and verification settings for EVERY top-level Flux OCI
+# document, including unsigned sources that could overwrite an attributed consumer.
+consumer_rows() {
+  local file="$1" mode="${2:-}" rows row url version subjects repo workflow workflows artifact filtered active literal_keys namespace name literal_identity verification extra identity_fields='' contract_field=''
+  # Append conservation fields to the same yq array so omitted refs and namespaces keep
+  # the original boolean columns and cannot shift later fields into earlier ones.
+  if [ "$mode" = with-identity ] || [ "$mode" = with-object-contract ]; then
+    identity_fields=',
+     ((.metadata.namespace // "" | select(. != "")) // "-" | tostring),
+     ((.metadata.name // "" | select(. != "")) // "-" | tostring),
+     (((.metadata.name | type) == "!!str"
+       and (.metadata.name | test("^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$"))
+       and (.metadata.namespace == null or .metadata.namespace == ""
+         or ((.metadata.namespace | type) == "!!str"
+           and (.metadata.namespace | test("^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"))))) | tostring)'
+  fi
+  if [ "$mode" = with-object-contract ]; then
+    # Read verification before the subject path: yq can materialize missing parent
+    # mappings while traversing them, which must not change an absent verify contract.
+    contract_field='(.spec.verify // {} | sort_keys(..) | to_json(0)), '
+  fi
+  # The prose about each field lives OUTSIDE the single-quoted yq program deliberately: a
+  # backtick inside it reads as a command substitution to shellcheck (SC2016), so it is in
+  # the comment block at the end of the loop below.
+  if ! rows="$(yq eval -r '
+    select(.kind == "OCIRepository" and ((.apiVersion // "" | tostring) | test("^source[.]toolkit[.]fluxcd[.]io/[^/]+$"))) |
+    ['"$contract_field"'(.spec.url // "-"),
+     ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
+     (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned"),
+     (.spec.ref | has("semverFilter") | tostring),
+     (((.spec | has("suspend") | not) or
+        ((.spec.suspend | type) == "!!bool" and .spec.suspend == false)) | tostring),
+     (([.. | select(type == "!!map") | to_entries | .[] | .key
+          | select(test("\\$\\{"))] | length) == 0 | tostring)'"$identity_fields"'] | @tsv
+  ' "$file" 2>/dev/null)"; then
+    printf 'could not parse %s as YAML, so the consumers it declares are UNKNOWN\n' "$file" >&2
+    return 1
+  fi
+  while IFS= read -r row; do
+    if [ "$mode" = with-object-contract ]; then
+      IFS=$'\t' read -r verification url subjects version filtered active literal_keys namespace name literal_identity extra <<<"$row"
+    else
+      IFS=$'\t' read -r url subjects version filtered active literal_keys namespace name literal_identity extra <<<"$row"
+    fi
+    # 🔴 TAB IS IFS WHITESPACE, so `read` COLLAPSES consecutive tabs and an empty MIDDLE
+    # field silently shifts every later field left. Two consumers pin no `spec.ref.tag`,
+    # so their row was `url\t\tsubject` and the subject landed in `version` — both
+    # vanished from discovery. Every field is emitted with a `-` placeholder instead of
+    # empty, so no field is ever blank and no collapse is possible.
+    [ "$version" = "-" ] && version=""
+    [ "$subjects" = "-" ] && subjects=""
+    [ -n "$url" ] || continue
+    if [ "$literal_keys" != true ]; then
+      printf 'consumer mapping key in %s is decided by substitution, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
+    if [ "$mode" = with-object-contract ]; then
+      if [ "$literal_identity" != true ] || [ -z "$verification" ] || [ -n "$extra" ] ||
+          { [ "$filtered" != true ] && [ "$filtered" != false ]; } ||
+          { [ "$active" != true ] && [ "$active" != false ]; }; then
+        printf 'OCI object contract in %s is incomplete or has no literal identity, so its consumers are UNKNOWN\n' "$file" >&2
+        return 1
       fi
-      workflow="$workflows"
-      repo="${url#oci://ghcr.io/devantler-tech/}"
-      repo="${repo%%/*}"
-      [ -n "$repo" ] || continue
-      repo="$(oci_name_to_repo "$repo")"
-      plausible_repo "$repo" || continue
-      # The artifact names the deployed consumer; the repository only names its source.
-      artifact="${url#oci://ghcr.io/devantler-tech/}"
-      artifact="${artifact%/}"
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$namespace" "$name" "$url" "$version" "${subjects:--}" "$filtered" "$active" "$verification"
+      continue
+    fi
+    case "$url" in
+      oci://ghcr.io/devantler-tech/*) ;;
+      *) continue ;;
+    esac
+    # Exactly one shared publish workflow per document, or the attribution is ambiguous
+    # and a guess would be worse than a failure.
+    workflows="$(printf '%s\n' "$subjects" |
+      grep -oE 'publish-(app|manifests)\\?\.yaml@' | sed 's/\\\{0,1\}\.yaml@$//' | sort -u || true)"
+    [ -n "$workflows" ] || continue
+    # A paused source keeps an older artifact, even while its registry selector
+    # resolves to a newer revision. Only absence or literal false proves activity.
+    if [ "$active" != true ]; then
+      printf 'consumer suspension in %s prevents attribution of a fetched revision, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
+    # Flux filters registry tags before SemVer selection. This resolver has no
+    # compatible evaluator. Refuse filters on attributed report consumers; an
+    # unrelated chart or unsigned artifact remains outside this report's scope.
+    if [ "$filtered" != false ]; then
+      printf 'semverFilter in %s needs Flux-compatible tag filtering, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
+    if [ "$(printf '%s\n' "$workflows" | grep -c .)" -ne 1 ]; then
+      printf 'ambiguous: %s in %s names more than one shared publish workflow, so its attribution is UNKNOWN\n' \
+        "$url" "$file" >&2
+      return 1
+    fi
+    workflow="$workflows"
+    if [ "$mode" = with-identity ] && [ "$literal_identity" != true ]; then
+      printf 'consumer identity in %s is missing, malformed or decided at runtime, so its consumers are UNKNOWN\n' "$file" >&2
+      return 1
+    fi
+    repo="${url#oci://ghcr.io/devantler-tech/}"
+    repo="${repo%%/*}"
+    [ -n "$repo" ] && repo="$(oci_name_to_repo "$repo")"
+    if [ -z "$repo" ] || ! plausible_repo "$repo"; then
+      printf 'unattributable: %s in %s names no plausible source repository, so its attribution is UNKNOWN\n' \
+        "$url" "$file" >&2
+      return 1
+    fi
+    # The artifact names the deployed consumer; the repository only names its source.
+    artifact="${url#oci://ghcr.io/devantler-tech/}"
+    artifact="${artifact%/}"
+    if [ "$mode" = with-identity ]; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$repo" "$workflow" "$version" "$artifact" "$subjects" "$namespace" "$name" "$url"
+    elif [ "$mode" = 'with-subject' ]; then
+      printf '%s\t%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact" "$subjects"
+    else
       printf '%s\t%s\t%s\t%s\n' "$repo" "$workflow" "$version" "$artifact"
-      # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
-      # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
-      # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
-      # serves, and the real signer would be omitted from the proposed allow-list — a
-      # confident wrong answer, which is the one outcome this report must never produce. A
-      # digest or an omitted ref also collapsed to the meaningless `semver:`, which
-      # `effective_version` then refused as a bounded constraint, so a resolvable consumer
-      # read as UNRESOLVED.
-      #
-      # An omitted ref emits `unpinned`, NOT the literal `latest`, so it stays distinct from
-      # a document that explicitly writes `tag: latest`. The two are different questions: an
-      # explicit tag is a written-down selector this resolver can look up, while an omitted
-      # ref is a mutable pointer with no release version behind it. Emitting `latest` for
-      # both made the omitted case an exact lookup for a tag that is not a release, and
-      # `effective_version` refuses `unpinned` by name instead.
-      #
-      # These live OUTSIDE the single-quoted yq program deliberately: a backtick inside it
-      # reads as a command substitution to shellcheck (SC2016), so prose belongs out here.
-    done < <(yq eval -r '
-      select(.kind == "OCIRepository") |
-      [(.spec.url // "-"),
-       ((.spec.verify.matchOIDCIdentity // []) | map(.subject // "") | join(" ") | select(. != "") // "-"),
-       (((.spec.ref.digest // "") | select(. != "") | "digest:" + .) // ((.spec.ref.semver // "") | select(. != "") | "semver:" + .) // ((.spec.ref.tag // "") | select(. != "")) // "unpinned")] | @tsv
-    ' "$file" 2>/dev/null || true)
-  done < <(grep -rlE "$SUBJECT_PATTERN" --include='*.yaml' "$root" 2>/dev/null | sort -u) | sort -u
+    fi
+    # 🔴 FLUX RESOLVES `spec.ref` AS digest > semver > tag, AND AN OMITTED `ref` MEANS
+    # the mutable `latest` tag. Reading `tag` first inverts that: a document carrying BOTH
+    # a tag and a digest (or a tag and a semver) would be attributed to a tag Flux never
+    # serves, and the real signer would be omitted from the proposed allow-list — a
+    # confident wrong answer, which is the one outcome this report must never produce. A
+    # digest or an omitted ref also collapsed to the meaningless `semver:`, which
+    # `effective_version` then refused as a bounded constraint, so a resolvable consumer
+    # read as UNRESOLVED.
+    #
+    # An omitted ref emits `unpinned`, NOT the literal `latest`, so it stays distinct from
+    # a document that explicitly writes `tag: latest`. The two are different questions: an
+    # explicit tag is a written-down selector this resolver can look up, while an omitted
+    # ref is a mutable pointer with no release version behind it. Emitting `latest` for
+    # both made the omitted case an exact lookup for a tag that is not a release, and
+    # `effective_version` refuses `unpinned` by name instead.
+  done <<<"$rows"
 }
 
 # 🔴 A SEMVER RANGE IS A CONSTRAINT, NOT "WHATEVER IS NEWEST". Discovery carries the
@@ -417,8 +551,11 @@ pin_at_ref() {
   # calling the same shared workflow at the same revision is not ambiguity, and counting call
   # SITES rather than revisions would report a perfectly unambiguous consumer as UNRESOLVED and
   # fail the run. Zero means this consumer does not call that workflow at that ref.
-  local matches count
-  matches="$(printf '%s\n' "$body" | yq eval -r '.jobs[].uses // ""' - 2>/dev/null |
+  # A streaming parser can emit one valid document before failing on the next.
+  # Only a complete successful parse may supply evidence to the pin filter.
+  local calls matches count
+  calls="$(printf '%s\n' "$body" | yq eval -r '.jobs[].uses // ""' - 2>/dev/null)" || return 1
+  matches="$(printf '%s\n' "$calls" |
     grep -E "^devantler-tech/actions/\\.github/workflows/${workflow}\\.yaml@[0-9a-f]{40}$" |
     sort -u || true)"
   count="$(printf '%s' "$matches" | grep -c . || true)"
@@ -940,7 +1077,50 @@ deployed_tag() {
   return 1
 }
 
-# Default resolver: "<signing revision>\t<current pin>\t<pinned|inferred>".
+# The report keeps the publisher repository and workflow attached to each revision.
+# pin_at_ref above remains legacy-only for the legacy approval generator.
+report_publisher_at_ref() {
+  local repo="$1" workflow="$2" ref="$3" body calls pattern
+  case "$workflow" in
+    publish-manifests) pattern='(actions|[.]github)' ;;
+    publish-app) pattern='actions' ;;
+    *) return 1 ;;
+  esac
+  body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml" \
+    --raw-field "ref=${ref}" -H "Accept: application/vnd.github.raw")" || return 1
+  [ -n "$body" ] || return 1
+  calls="$(printf '%s\n' "$body" | yq eval -o=json -I=0 '[.jobs[].uses // ""]' - 2>/dev/null)" || return 1
+  # Keep decoded calls intact: a second document, non-text value or embedded
+  # control cannot turn into a valid prefix. Count unsupported/floating callers
+  # before validating the sole identity; even identical jobs are separate callers.
+  printf '%s\n' "$calls" | jq -sre --arg workflow "$workflow" --arg family "$pattern" '
+    select(length == 1 and (.[0] | type == "array" and
+      all(.[]; type == "string" and (test("[[:cntrl:]]") | not)))) | .[0] |
+    [.[] | select(test("/[.]github/workflows/" + $workflow + "[.]yaml@"))] |
+    select(length == 1) | .[0] |
+    select(test("^devantler-tech/" + $family + "/[.]github/workflows/" + $workflow + "[.]yaml@[0-9a-f]{40}$"))
+  '
+}
+
+# Existing injected resolvers supply legacy SHAs. Fully qualified answers must
+# retain the exact supported repository/workflow identity, never a floating ref.
+report_publisher_identity() {
+  local answer="$1" workflow="$2" pattern
+  case "$workflow" in
+    publish-manifests) pattern='(actions|[.]github)' ;;
+    publish-app) pattern='actions' ;;
+    *) return 1 ;;
+  esac
+  if is_sha "$answer"; then
+    printf 'devantler-tech/actions/.github/workflows/%s.yaml@%s\n' "$workflow" "$answer"
+  elif [[ "$answer" =~ ^devantler-tech/${pattern}/[.]github/workflows/${workflow}[.]yaml@[0-9a-f]{40}$ ]]; then
+    printf '%s\n' "$answer"
+  else
+    return 1
+  fi
+}
+
+# Default resolver: "<signing identity>\t<current identity>\t<pinned|inferred>".
 default_resolver() {
   local repo="$1" workflow="$2" version="${3:-}" branch tagline tag origin tag_sha signing current
   branch="$(gh_retry api "repos/devantler-tech/${repo}" --jq .default_branch)" || return 1
@@ -953,11 +1133,27 @@ default_resolver() {
   # Fail closed rather than fall back to the tag: an empty or malformed third field would
   # restore exactly the mutable-ref read this change exists to close.
   is_sha "${tag_sha:-}" || return 1
-  current="$(pin_at_ref "$repo" "$workflow" "$branch")" || return 1
+  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
   # The COMMIT, never `$tag`. `$tag` remains the human-facing name and is what the Actions
   # run query above was scoped to; it is not a stable ref to read file content at.
-  signing="$(pin_at_ref "$repo" "$workflow" "$tag_sha")" || return 1
+  signing="$(report_publisher_at_ref "$repo" "$workflow" "$tag_sha")" || return 1
   printf '%s\t%s\t%s\n' "$signing" "$current" "$origin"
+}
+
+# Digest pins need an exact, reviewed publication binding, reverified against the
+# immutable registry artifact. This is never evidence of a Flux apply.
+bound_publication_resolver() {
+  local repo="$1" workflow="$2" digest="$3" root="$4" file binding branch current tag source
+  file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}"
+  binding="$(publication_binding "$root" "$file" "$repo" "$workflow" "$digest")" || return 1
+  verify_bound_publication "$binding" || return 1
+  branch="$(gh_retry api "repos/devantler-tech/$repo" --jq .default_branch)" || return 1
+  plausible_ref "$branch" || return 1
+  current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+  tag="$(printf '%s\n' "$binding" | jq -r .gitTag)"
+  source="$(printf '%s\n' "$binding" | jq -r .sourceSHA)"
+  [ "$(tag_commit "$repo" "$tag")" = "$source" ] || return 1
+  printf '%s\t%s\tpublished-binding\n' "$(printf '%s\n' "$binding" | jq -r .signerSHA)" "$current"
 }
 
 # identity_floor <noun> <registry> <found> <expected>...: exits unless the discovered identities
@@ -1003,7 +1199,8 @@ identity_floor() {
 main() {
   local root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}"
   local consumers
-  consumers="$(discover_consumers "$root")"
+  consumers="$(discover_consumers "$root")" ||
+    fail 'consumer discovery could not read every file it selected (see above), so the consumer set is UNKNOWN'
 
   # The repository floor first: EXPECTED_CONSUMERS is what the approved revision set is keyed on.
   identity_floor consumer EXPECTED_CONSUMERS "$(printf '%s' "$consumers" | cut -f1 | sort -u)" \
@@ -1017,7 +1214,7 @@ main() {
   fi
 
   local resolver="${PUBLISH_REVISION_RESOLVER:-}"
-  local repo workflow version _artifact answer signing current origin field field_count
+  local repo workflow version _artifact answer signing current origin field field_count signing_identity current_identity
   local diverged=0 unresolved=0 examined=0
   # Scratch for one consumer's refusal diagnostic. A file rather than a process
   # substitution so the capture works under a plain POSIX-ish shell, and so the
@@ -1032,6 +1229,12 @@ main() {
   while IFS=$'\t' read -r repo workflow version _artifact; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
+    local bound_answer=''
+    case "$version" in
+      digest:*)
+        bound_answer="$(bound_publication_resolver "$repo" "$workflow" "${version#digest:}" "$root")" || bound_answer=''
+        ;;
+    esac
     # Classify from the manifest first: a bounded range is refused before any resolver is
     # consulted, because the constraint is written down rather than discovered remotely.
     #
@@ -1041,7 +1244,7 @@ main() {
     # "bounded semver constraint" for all of them told a reader of the step summary the
     # wrong thing for four of the five, and the summary is stdout-only (see the note at the
     # tally below), so the real cause was not merely elsewhere -- it was absent.
-    if ! version="$(effective_version "$version" 2>"$why_file")"; then
+    if [ -z "$bound_answer" ] && ! version="$(effective_version "$version" 2>"$why_file")"; then
       unresolved=$((unresolved + 1))
       # One row per consumer: fold the diagnostic to a single line, and fall back to the
       # generic wording only if the refusal was silent.
@@ -1050,7 +1253,9 @@ main() {
       printf 'UNRESOLVED %-22s %-18s %s\n' "$repo" "$workflow" "$why"
       continue
     fi
-    if [ -n "$resolver" ]; then
+    if [ -n "$bound_answer" ]; then
+      answer="$bound_answer"
+    elif [ -n "$resolver" ]; then
       answer="$("$resolver" "$repo" "$workflow" "$version")" || answer=""
     else
       answer="$(default_resolver "$repo" "$workflow" "$version")" || answer=""
@@ -1058,7 +1263,8 @@ main() {
     # The one-tab-free-line case that `cut -f2` without `-s` used to accept is covered by
     # the same shape check below: fewer than two fields is UNRESOLVED, never agreement.
     # A resolver answer must be EXACTLY one line of two or three tab-separated fields,
-    # each SHA field non-empty. Anything else is UNRESOLVED, never agreement.
+    # each revision is a legacy SHA or a fully qualified supported publisher.
+    # Anything else is UNRESOLVED, never agreement.
     #
     # 🔴 `read` IS NOT SAFE HERE, on two independent counts, both measured on this exact
     # path: it stops at the FIRST LINE, so a valid line followed by trailing output was
@@ -1082,7 +1288,8 @@ main() {
       *$'\n'*) field_count=0 ;;
     esac
     if [ "$field_count" -lt 2 ] || [ "$field_count" -gt 3 ] ||
-      ! is_sha "${signing:-}" || ! is_sha "${current:-}"; then
+      ! signing_identity="$(report_publisher_identity "${signing:-}" "$workflow")" ||
+      ! current_identity="$(report_publisher_identity "${current:-}" "$workflow")"; then
       unresolved=$((unresolved + 1))
       printf 'UNRESOLVED %-22s %-18s could not resolve both revisions to a commit SHA\n' \
         "$repo" "$workflow"
@@ -1103,20 +1310,38 @@ main() {
     # `tag_was_published` closes "the tag exists but never published"; it cannot close
     # "published but not yet applied", and no tag-based check can.
     case "${origin:-}" in
+      published-binding) mark=' (immutable publication and current pin verified; not applied-revision evidence)' ;;
       inferred) mark=' (deployed version inferred from newest PUBLISHED tag; not applied-revision evidence)' ;;
       pinned) mark=' (deployed version is what the manifest PINS and was published; not applied-revision evidence)' ;;
     esac
-    if [ "$signing" = "$current" ]; then
+    # Preserve the legacy report format. If either side is canonical, print both
+    # complete identities so a SHA is never mistaken for an approval in another family.
+    if [[ "$signing_identity" == devantler-tech/actions/* && "$current_identity" == devantler-tech/actions/* ]]; then
+      signing="${signing_identity##*@}"
+      current="${current_identity##*@}"
+    else
+      signing="$signing_identity"
+      current="$current_identity"
+    fi
+    if [ "$signing_identity" = "$current_identity" ]; then
       printf 'IN-SYNC    %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"
-      printf '           allow-list must accept: %s\n' "$signing"
+      if is_sha "$signing"; then
+        printf '           allow-list must accept: %s\n' "$signing"
+      else
+        printf '           publisher identity to assess against approvals: %s\n' "$signing"
+      fi
     else
       diverged=$((diverged + 1))
       printf 'DIVERGED   %-22s %-18s signed=%s pinned=%s%s\n' \
         "$repo" "$workflow" "$signing" "$current" "$mark"
       # AC4: an allow-list narrowed to the current pin alone would stop verifying the
       # deployed artifact. Naming BOTH is the actionable output of this whole script.
-      printf '           allow-list must accept: %s AND %s\n' "$signing" "$current"
+      if is_sha "$signing" && is_sha "$current"; then
+        printf '           allow-list must accept: %s AND %s\n' "$signing" "$current"
+      else
+        printf '           publisher identities to assess against approvals: %s AND %s\n' "$signing" "$current"
+      fi
     fi
   done <<<"$consumers"
   rm -f "$why_file"

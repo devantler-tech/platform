@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Asserts that the GHCR fan-out requirement follows the apps-base component gate.
+# Asserts that the GHCR fan-out requirement follows each app's production gate.
 #
 # An app that pulls private first-party images declares its own ghcr-auth
 # ExternalSecret, and scripts/refresh-flux-ghcr-auth.sh lists its namespace in
@@ -22,9 +22,9 @@
 #
 # The invariant, scoped to apps only:
 #
-#   an app under k8s/bases/apps/ that DECLARES a ghcr-auth ExternalSecret is
-#   present in FANOUT_NAMESPACES if and only if it is enabled (uncommented) in
-#   k8s/bases/apps/kustomization.yaml
+#   an app under k8s/bases/apps/ or k8s/providers/hetzner/apps/ that DECLARES a
+#   ghcr-auth ExternalSecret is present in FANOUT_NAMESPACES if and only if it
+#   is enabled in its owning apps kustomization.yaml.
 #
 # FANOUT_NAMESPACES also carries infrastructure namespaces that are not apps at
 # all (kyverno's ghcr-auth comes from
@@ -36,8 +36,10 @@
 # Exit codes:
 #   0  parity holds
 #   1  drift: an enabled ghcr-auth app is unlisted, a disabled one is listed, or
-#      a listed namespace is neither a ghcr-auth app nor a declared non-app
-#   2  could not check: missing root or inputs, or a selector that matched
+#      a listed namespace is neither a ghcr-auth app nor a declared non-app,
+#      or an app keeps a ghcr-auth declaration its kustomization does not deploy
+#   2  could not check: missing root or inputs, an app with no kustomization or
+#      a reference that does not resolve, or a selector that matched
 #      NOTHING (no ghcr-auth app, or an empty FANOUT_NAMESPACES). An empty
 #      result from a filtered read is a claim about the filter, and a guard that
 #      checked nothing must never look like a guard that passed.
@@ -56,6 +58,8 @@ die() { printf '%s\n' "$1" >&2; exit 2; }
 
 apps_dir="$repo_root/k8s/bases/apps"
 apps_kustomization="$apps_dir/kustomization.yaml"
+prod_apps_dir="$repo_root/k8s/providers/hetzner/apps"
+prod_apps_kustomization="$prod_apps_dir/kustomization.yaml"
 fanout_script="$repo_root/scripts/refresh-flux-ghcr-auth.sh"
 
 [ -d "$apps_dir" ] || die "guard: no apps base at $apps_dir"
@@ -63,26 +67,109 @@ fanout_script="$repo_root/scripts/refresh-flux-ghcr-auth.sh"
 [ -r "$fanout_script" ] || die "guard: unreadable $fanout_script"
 command -v yq >/dev/null 2>&1 || die "guard: yq is required"
 
+# --- what an app's kustomization actually deploys ---------------------------
+# Kustomize deploys what a kustomization REFERENCES, not what sits on disk. A
+# manifest kept beside the kustomization but dropped from its `.resources` is
+# never created, so counting it as a declaration would make the guard report
+# parity for an ExternalSecret production never reconciles (platform#3499).
+#
+# reachable_manifests <dir> prints the canonical path of every local file the
+# kustomization in <dir> reaches through `resources:`, `components:` and the legacy `bases:`,
+# recursing into referenced directories. A remote entry (a URL or a git
+# reference) is skipped: it cannot hold a manifest from this repository. Any
+# local reference this cannot resolve exits 2, because a reachable set that is
+# missing an entry would read a deployed declaration as dead.
+reachable_manifests() { # <dir>
+  local dir kustomization entry target
+  dir="$(cd "$1" 2>/dev/null && pwd -P)" || die "guard: cannot resolve $1"
+  case " ${reachable_visited:-} " in *" $dir "*) return 0 ;; esac
+  reachable_visited="${reachable_visited:-} $dir"
+  kustomization=""
+  for target in kustomization.yaml kustomization.yml Kustomization; do
+    [ -f "$dir/$target" ] && { kustomization="$dir/$target"; break; }
+  done
+  [ -n "$kustomization" ] ||
+    die "guard: $dir has no kustomization, so what it deploys is unknown"
+  local entries
+  entries="$(yq -N -r '(.resources // []) + (.components // []) + (.bases // []) | .[]' "$kustomization" 2>/dev/null)" ||
+    die "guard: could not parse .resources/.components/.bases from $kustomization"
+  while IFS= read -r entry; do
+    [ -n "$entry" ] || continue
+    case "$entry" in
+      *://* | git@* | github.com/*) continue ;;
+    esac
+    if [ -d "$dir/$entry" ]; then
+      reachable_manifests "$dir/$entry"
+    elif [ -f "$dir/$entry" ]; then
+      printf '%s/%s\n' "$(cd "$(dirname "$dir/$entry")" && pwd -P)" "$(basename "$entry")"
+    else
+      die "guard: $kustomization references $entry, which does not exist"
+    fi
+  done <<<"$entries"
+}
+
 # --- the apps that declare a ghcr-auth ExternalSecret -----------------------
 # Match the DECLARATION (kind + metadata.name), never a bare `name: ghcr-auth`:
 # a ServiceAccount imagePullSecret and an OCIRepository secretRef both REFERENCE
 # the secret without declaring the ExternalSecret, so a plain grep would report
 # apps whose credential is declared elsewhere.
 ghcr_apps=()
-for app_path in "$apps_dir"/*/; do
+ghcr_gates=()
+unreachable=()
+for app_path in "$apps_dir"/*/ "$prod_apps_dir"/*/; do
   [ -d "$app_path" ] || continue
   app="$(basename "$app_path")"
   declares=""
+  reachable=""
+  reachable_done=""
   while IFS= read -r manifest; do
     [ -n "$manifest" ] || continue
     if hit="$(yq -N -r 'select(.kind == "ExternalSecret" and .metadata.name == "ghcr-auth") | .metadata.name' \
       "$manifest" 2>/dev/null)" && [ -n "$hit" ]; then
-      declares=yes
-      break
+      if [ -z "$reachable_done" ]; then
+        # A die inside the substitution exits only its subshell, so pass its
+        # status on: an unresolvable reference must end the guard with 2, never
+        # leave an empty set that reads every declaration as undeployed.
+        reachable_visited=""
+        reachable="$(reachable_manifests "$app_path")" || exit 2
+        reachable_done=yes
+      fi
+      canonical="$(cd "$(dirname "$manifest")" && pwd -P)/$(basename "$manifest")"
+      if grep -qxF -- "$canonical" <<<"$reachable"; then
+        declares=yes
+      else
+        unreachable+=("$app: ${manifest#"$repo_root"/}")
+      fi
     fi
-  done < <(find "$app_path" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
-  [ -n "$declares" ] && ghcr_apps+=("$app")
+  done < <(find "$app_path" \( -type f -o -type l \) \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
+  if [ -n "$declares" ]; then
+    if ((${#ghcr_apps[@]} > 0)); then
+      case " ${ghcr_apps[*]} " in
+        *" $app "*) die "guard: $app declares ghcr-auth in more than one application root" ;;
+      esac
+    fi
+    ghcr_apps+=("$app")
+    case "$app_path" in
+      "$prod_apps_dir"/*) ghcr_gates+=("$prod_apps_kustomization") ;;
+      *) ghcr_gates+=("$apps_kustomization") ;;
+    esac
+  fi
 done
+
+# A declaration on disk that the app's kustomization does not deploy is drift
+# on its own: the guard cannot say whether the author meant to stage the
+# credential off or forgot to list the file, and either way the inventory above
+# would not match what production creates. Reported before the empty-set check
+# so an app whose only declaration is dead is named rather than read as "no
+# ghcr-auth app at all".
+if ((${#unreachable[@]} > 0)); then
+  for entry in "${unreachable[@]}"; do
+    printf '  FAIL %s declares a ghcr-auth ExternalSecret that its kustomization does not deploy; reference the file from its kustomization or delete it.\n' \
+      "$entry"
+  done
+  printf '\nA ghcr-auth declaration on disk is not what production deploys.\n' >&2
+  exit 1
+fi
 
 ((${#ghcr_apps[@]} > 0)) ||
   die "guard: found NO app declaring a ghcr-auth ExternalSecret under $apps_dir — refusing to report parity on an empty set"
@@ -95,8 +182,24 @@ enabled_list="$(yq -N -r '.resources[]' "$apps_kustomization" 2>/dev/null)" ||
 [ -n "$enabled_list" ] ||
   die "guard: $apps_kustomization declares no resources — refusing to report parity"
 
+# Resolve $1 against the resource list in its own base or provider app layer.
+# Return success only for an active entry; an unknown app or unavailable provider
+# gate terminates with status 2 instead of claiming that the app is staged off.
 is_enabled() { # <app>
-  printf '%s\n' "$enabled_list" | grep -qxF -- "$1/"
+  local index selected_list
+  for index in "${!ghcr_apps[@]}"; do
+    [ "${ghcr_apps[$index]}" = "$1" ] || continue
+    if [ "${ghcr_gates[$index]}" = "$apps_kustomization" ]; then
+      selected_list="$enabled_list"
+    else
+      selected_list="$(yq -N -r '.resources[]' "${ghcr_gates[$index]}" 2>/dev/null)" ||
+        die "guard: could not parse prod app gate ${ghcr_gates[$index]}"
+      [ -n "$selected_list" ] || die "guard: prod app gate is empty"
+    fi
+    printf '%s\n' "$selected_list" | grep -qxF -- "$1/"
+    return
+  done
+  die "guard: no component gate for $1"
 }
 
 # --- the declared fan-out namespaces ----------------------------------------
@@ -140,22 +243,23 @@ drift=0
 printf 'ghcr-auth apps: %s\n' "${ghcr_apps[*]}"
 printf 'fan-out namespaces: %s\n' "$(printf '%s' "$fanout_list" | tr '\n' ' ')"
 
-for app in "${ghcr_apps[@]}"; do
+for index in "${!ghcr_apps[@]}"; do
+  app="${ghcr_apps[$index]}"
   if is_enabled "$app"; then
     if is_listed "$app"; then
-      printf '  ok   %s — enabled in the apps base and listed in FANOUT_NAMESPACES\n' "$app"
+      printf '  ok   %s — enabled in its app layer and listed in FANOUT_NAMESPACES\n' "$app"
     else
       printf '  FAIL %s is ENABLED in %s but MISSING from FANOUT_NAMESPACES in %s; its running consumer pull credential would never be proven.\n' \
-        "$app" "k8s/bases/apps/kustomization.yaml" "scripts/refresh-flux-ghcr-auth.sh"
+        "$app" "${ghcr_gates[$index]}" "scripts/refresh-flux-ghcr-auth.sh"
       drift=1
     fi
   else
     if is_listed "$app"; then
       printf '  FAIL %s is COMMENTED OUT of %s but still listed in FANOUT_NAMESPACES in %s; the post-reconcile reassertion cannot ever find its ExternalSecret and every prod deploy would fail.\n' \
-        "$app" "k8s/bases/apps/kustomization.yaml" "scripts/refresh-flux-ghcr-auth.sh"
+        "$app" "${ghcr_gates[$index]}" "scripts/refresh-flux-ghcr-auth.sh"
       drift=1
     else
-      printf '  ok   %s — staged off in the apps base and absent from FANOUT_NAMESPACES\n' "$app"
+      printf '  ok   %s — staged off in its app layer and absent from FANOUT_NAMESPACES\n' "$app"
     fi
   fi
 done
@@ -168,12 +272,12 @@ while IFS= read -r ns; do
   listed_is_app=0
   for app in "${ghcr_apps[@]}"; do [ "$app" = "$ns" ] && listed_is_app=1 && break; done
   ((listed_is_app)) && continue
-  printf '  FAIL %s is in FANOUT_NAMESPACES but declares no ghcr-auth ExternalSecret under k8s/bases/apps/ and is not a declared non-app namespace.\n' "$ns"
+  printf '  FAIL %s is in FANOUT_NAMESPACES but declares no ghcr-auth ExternalSecret under the base or prod app roots and is not a declared non-app namespace.\n' "$ns"
   drift=1
 done <<<"$fanout_list"
 
 if ((drift)); then
-  printf '\nThe apps-base component gate and the GHCR fan-out requirement disagree.\n' >&2
+  printf '\nThe application component gates and the GHCR fan-out requirement disagree.\n' >&2
   exit 1
 fi
 printf '\nThe GHCR fan-out requirement follows the apps-base component gate.\n'

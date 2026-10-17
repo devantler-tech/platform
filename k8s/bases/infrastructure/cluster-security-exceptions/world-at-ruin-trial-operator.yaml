@@ -1,0 +1,24 @@
+# Exec is needed to mint a short-lived token without granting Secret API access.
+# The uniquely named owner binding is the whole exception; other exec grants remain findings.
+apiVersion: kubescape.io/v1beta1
+kind: ClusterSecurityException
+metadata:
+  name: world-at-ruin-trial-operator
+spec:
+  reason: >-
+    The configured administrator's private scripted zone trial intentionally
+    grants namespaced exec to run its short-lived admission-token helper while
+    retaining the global reader roles and withholding Secret API access. RBAC
+    cannot constrain exec to one command. The uniquely named trial Role and
+    binding are retired before production credentials or player data are added.
+  posture:
+    - controlID: C-0002
+      action: ignore
+  match:
+    resources:
+      - apiGroup: rbac.authorization.k8s.io
+        kind: RoleBinding
+        name: ^world-at-ruin-zone-trial-operator$
+      - apiGroup: rbac.authorization.k8s.io
+        kind: Role
+        name: ^world-at-ruin-zone-trial-operator$

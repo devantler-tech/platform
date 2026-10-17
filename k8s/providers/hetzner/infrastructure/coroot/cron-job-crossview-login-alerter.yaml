@@ -1,0 +1,251 @@
+# Alerts when Crossview's login cannot work because the app cannot find its
+# users in its database: the schema is gone, or the database is unreachable.
+#
+# WHY THIS EXISTS
+#
+# Crossview creates its tables and its break-glass admin once, at its own
+# startup. When its database comes back empty underneath a running app, every
+# OIDC sign-in fails with `relation "users" does not exist`, yet the pod stays
+# Ready: the chart's liveness and readiness probe is `/api/health`, which never
+# touches the database. That is how login stayed broken for six days in August
+# 2026 with every probe green (platform#3315). Durable storage (platform#3319)
+# makes an empty database rarer; it does not make one visible.
+#
+# WHAT IT CHECKS
+#
+# `GET /api/auth/check` is unauthenticated and answers 200 in both states, so
+# no HTTP probe can tell them apart. Its body can: a bootstrapped Crossview
+# always has the admin it seeds at startup, so `"hasAdmin":true` or
+# `"hasUsers":true` shows the app can read its users table and is healthy.
+# Both `false` means it cannot: the empty schema showing through, as in the
+# outage, or a database it cannot reach. Every sign-in fails in both cases, so
+# both alert; the runbook says how to tell them apart, because only the first
+# needs the app rolled.
+#
+# NO FLAPPING. One healthy read ends the run. An alert needs every one of
+# SAMPLES reads, SAMPLE_INTERVAL_SECONDS apart, to answer both false: six
+# minutes, longer than a planned database restart takes to detach, reattach and
+# start its volume, so routine maintenance does not page. A lost schema is
+# persistent: it lasts until the app restarts.
+#
+# NO SILENT ZERO. A read that is not a 200 with boolean `hasAdmin` and
+# `hasUsers` is not an answer, so a run that never gets a definitive one fails the Job instead of
+# reporting health. This CronJob is on the `cronjob-failure-alert` watch list
+# (bases/components/coroot-cronjob-failure-alert), which alerts in Slack when two
+# runs in a row fail or no run has finished for an hour. That also covers an
+# upstream change to the endpoint's response shape.
+#
+# DELIVERY follows cron-job-stranded-autoscaler-node-alerter.yaml: POST to every
+# Alertmanager peer's v2 API, which fans out to Slack. The alert carries an
+# `endsAt` of three missed runs, so it resolves once Crossview can read its users
+# again and a broken Job degrades to "the alert resolves", never a stuck alert.
+#
+# READ-ONLY BY CONSTRUCTION. It reads one public endpoint and needs no
+# Kubernetes API access, so no ServiceAccount token is mounted. Restoring login
+# stays a reviewed change: see the runbook annotation below.
+#
+# PROD-ONLY: Crossview, Alertmanager and the Slack webhook are wired only in the
+# hetzner overlay. providers/hetzner/apps/crossview/cilium-network-policy-login-alerter.yaml
+# admits this pod (and only this pod label) to Crossview's port. Retire this
+# CronJob together with Crossview.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: crossview-login-alerter
+  namespace: observability
+  annotations:
+    # SAMPLES and SAMPLE_INTERVAL_SECONDS below are pod environment variables,
+    # not Flux inputs. The infrastructure Kustomization runs post-build
+    # substitution, which would otherwise blank them. This resource has no Flux
+    # substitutions of its own.
+    kustomize.toolkit.fluxcd.io/substitute: disabled
+spec:
+  # Every 15 minutes: an outage that took six days to notice now surfaces within
+  # about twenty-five. Must stay well under the 45-minute endsAt below.
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 60
+  successfulJobsHistoryLimit: 1
+  # Must be at least the cronjob-failure-alert threshold for this target (2), or
+  # the detector cannot observe the streak it alerts on.
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      # Worst case: --retry-max-time only stops NEW attempts, so a read can take
+      # its 30s retry budget plus one more 10s attempt (40s), and a delivery 20s
+      # plus 10s (30s) per Alertmanager peer. SAMPLES reads, (SAMPLES - 1) waits
+      # and two peers: 4*40 + 3*120 + 2*30 = 580s.
+      activeDeadlineSeconds: 720
+      template:
+        metadata:
+          labels:
+            app: crossview-login-alerter
+        spec:
+          restartPolicy: Never
+          # Reads one unauthenticated HTTP endpoint; it has no use for a token.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+            # The two non-privilege C-0211 fields the cluster-wide
+            # add-security-context mutation cannot supply in observability
+            # (#3239). Values match add-security-context.yaml.
+            fsGroupChangePolicy: OnRootMismatch
+          containers:
+            - name: alerter
+              # curl + jq, digest-pinned (same image as the other alerters).
+              # observability is exempt from disallow-latest-tag.
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
+              env:
+                # Every read must answer that no user is readable before the
+                # alert fires: four reads two minutes apart span six minutes.
+                - name: SAMPLES
+                  value: "4"
+                - name: SAMPLE_INTERVAL_SECONDS
+                  value: "120"
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                runAsUser: 65532
+                runAsGroup: 65532
+                # CIS-5.7.3 (C-0211); a documented no-op on this AppArmor cluster.
+                seLinuxOptions: {}
+                capabilities:
+                  drop:
+                    - ALL
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                  ephemeral-storage: 1Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+                  ephemeral-storage: 8Mi
+              volumeMounts:
+                - name: scratch
+                  mountPath: /tmp
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -eu
+                  # Alertmanager HA does not replicate received alerts between
+                  # peers, so every alert goes to each StatefulSet pod directly.
+                  AM_PEERS="http://alertmanager-0.alertmanager-headless.kubescape.svc.cluster.local.:9093 http://alertmanager-1.alertmanager-headless.kubescape.svc.cluster.local.:9093"
+                  CHECK_URL="http://crossview-service.crossview.svc.cluster.local.:80/api/auth/check"
+                  BODY="/tmp/auth-check.json"
+
+                  case "$SAMPLES" in
+                    [1-9]) ;;
+                    *) echo "ERROR: SAMPLES must be a single digit from 1 to 9 (got '$SAMPLES')"; exit 1 ;;
+                  esac
+                  case "$SAMPLE_INTERVAL_SECONDS" in
+                    ''|*[!0-9]*) echo "ERROR: SAMPLE_INTERVAL_SECONDS must be a non-negative integer (got '$SAMPLE_INTERVAL_SECONDS')"; exit 1 ;;
+                  esac
+                  if [ "${#SAMPLE_INTERVAL_SECONDS}" -gt 3 ]; then
+                    echo "ERROR: SAMPLE_INTERVAL_SECONDS must stay below 1000 to fit the Job deadline"
+                    exit 1
+                  fi
+
+                  missing=0
+                  sample=0
+                  observed=""
+                  while [ "$sample" -lt "$SAMPLES" ]; do
+                    sample=$((sample + 1))
+                    if [ "$sample" -gt 1 ]; then
+                      sleep "$SAMPLE_INTERVAL_SECONDS"
+                    fi
+                    rm -f "$BODY"
+                    # A refused or timed-out connection says nothing about the
+                    # schema, so it is recorded as no answer, never as health.
+                    code=$(curl -sS --retry 3 --retry-delay 2 --retry-all-errors \
+                      --max-time 10 --retry-max-time 30 -o "$BODY" -w '%{http_code}' \
+                      "$CHECK_URL") || code="000"
+                    if [ "$code" != "200" ] || [ ! -s "$BODY" ]; then
+                      echo "sample ${sample}/${SAMPLES}: no answer (HTTP ${code}) from ${CHECK_URL}"
+                      continue
+                    fi
+                    # Only boolean hasAdmin and hasUsers are an answer. Anything
+                    # else means the endpoint's contract changed, which must not
+                    # read as health. Either one true proves the users table is
+                    # readable, so a deleted break-glass admin alone never pages.
+                    verdict=$(jq -r '
+                      if type == "object" and (.hasAdmin | type) == "boolean"
+                        and (.hasUsers | type) == "boolean"
+                      then (if .hasAdmin or .hasUsers then "readable" else "missing" end)
+                      else "unrecognised" end' "$BODY" 2>/dev/null) || verdict="unrecognised"
+                    case "$verdict" in
+                      readable)
+                        echo "sample ${sample}/${SAMPLES}: $(jq -c '{hasAdmin, hasUsers}' "$BODY"); Crossview can read its users"
+                        exit 0
+                        ;;
+                      missing)
+                        missing=$((missing + 1))
+                        observed=$(jq -c '{authMode, hasAdmin, hasUsers}' "$BODY")
+                        echo "sample ${sample}/${SAMPLES}: no readable user ${observed}"
+                        ;;
+                      *)
+                        echo "sample ${sample}/${SAMPLES}: HTTP 200 without boolean hasAdmin and hasUsers"
+                        ;;
+                    esac
+                  done
+
+                  if [ "$missing" -ne "$SAMPLES" ]; then
+                    echo "ERROR: ${missing} of ${SAMPLES} reads found no readable user and none found one; that is neither healthy nor a confirmed outage"
+                    exit 1
+                  fi
+
+                  # endsAt = three missed runs after this POST. jq formats it:
+                  # BusyBox date has no relative offsets, and only `+%s` is
+                  # portable. Computed after sampling, so the hold-over is not
+                  # shortened by the time the reads took.
+                  ENDS=$(jq -nr --argjson t "$(date -u +%s)" '($t + 2700) | todate')
+                  case "$ENDS" in
+                    ????-??-??T??:??:??Z) ;;
+                    *) echo "ERROR: could not compute endsAt (got '$ENDS')"; exit 1 ;;
+                  esac
+
+                  alerts=$(jq -cn --arg e "$ENDS" --arg observed "$observed" \
+                    --arg n "$SAMPLES" --arg s "$SAMPLE_INTERVAL_SECONDS" '[{
+                      labels: {
+                        alertname: "CrossviewLoginBroken",
+                        severity: "warning",
+                        namespace: "crossview"
+                      },
+                      annotations: {
+                        summary: "Crossview cannot read its users, so every sign-in fails",
+                        description: "GET /api/auth/check answered \($observed) on all \($n) reads, \($s)s apart. A bootstrapped Crossview always has the break-glass admin it creates at its own startup, so no admin and no users means the app cannot read its users table: its database has lost the schema, or the app cannot reach it. OIDC sign-in fails either way while the pod stays Ready, because its probe (/api/health) never touches the database.",
+                        runbook: "Check the crossview-postgres Deployment in the crossview namespace and database errors reported by Crossview. Restore database reachability or authentication if those fail; the app reconnects on its own once the database is back with its data. A Ready database alone does not prove schema loss. If the errors confirm a missing users table, roll the app so it re-runs its one-shot schema bootstrap by bumping the platform.devantler.tech/db-bootstrap value in providers/hetzner/apps/crossview/patches/enable-durable-storage.yaml, then find out why the database came back empty (crossview-postgres-pvc). The alert resolves on its own once a read finds a user again."
+                      },
+                      endsAt: $e
+                    }]')
+                  echo "Crossview cannot read its users; alerting"
+
+                  # --fail makes a rejected POST observable; the Job fails only
+                  # when no peer accepted the alert.
+                  delivered=0
+                  for am in $AM_PEERS; do
+                    if curl -sS --retry 3 --retry-delay 2 --retry-all-errors --max-time 10 --retry-max-time 20 \
+                         --fail -X POST -H 'Content-Type: application/json' \
+                         -d "$alerts" "$am/api/v2/alerts" >/dev/null; then
+                      delivered=$((delivered + 1))
+                    else
+                      echo "WARN: $am rejected the POST"
+                    fi
+                  done
+                  if [ "$delivered" -eq 0 ]; then
+                    echo "ERROR: no alertmanager peer accepted the POST; the alert was NOT delivered"
+                    exit 1
+                  fi
+                  echo "posted the alert to $delivered alertmanager peer(s)"
+          volumes:
+            - name: scratch
+              emptyDir:
+                sizeLimit: 1Mi

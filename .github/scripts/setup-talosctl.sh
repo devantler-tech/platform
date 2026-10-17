@@ -20,10 +20,10 @@ set -euo pipefail
 # inspects a single node, which reads as a fleet-wide fault rather than a stale
 # pin.
 # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-TALOS_VERSION="1.14.0"
+TALOS_VERSION="1.14.4"
 # SHA-256 of talosctl-linux-amd64 for the TALOS_VERSION above, from that
 # release's sha256sum.txt. UPDATE BOTH TOGETHER.
-TALOSCTL_SHA256="2c147c4a99d124c95bd5c190fe054e0b3c93495f2243fd652ebd423adb8377c7"
+TALOSCTL_SHA256="0a69e3f9b682c5cd844b78dae305f6056ceb86c5fcc6913dcea78c527ed97cee"
 
 asset_name="talosctl-linux-amd64"
 release_base="https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}"
@@ -33,7 +33,11 @@ release_base="https://github.com/siderolabs/talos/releases/download/v${TALOS_VER
 target=$(mktemp "${RUNNER_TEMP:-/tmp}/talosctl.XXXXXX")
 trap 'rm -f "${target}"' EXIT
 
-curl -fsSL "${release_base}/${asset_name}" -o "${target}"
+# The download retries curl's transient failures (timeouts, 408, 429 and 5xx) a few
+# times, because one momentary error from the release host would otherwise fail the job
+# (#4549). The bytes are still checked against the pin above, and a persistent failure
+# still stops here.
+curl -fsSL --retry 5 --retry-delay 3 --retry-max-time 60 "${release_base}/${asset_name}" -o "${target}"
 
 actual_digest=$(sha256sum "${target}" | cut -d' ' -f1)
 

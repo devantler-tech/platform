@@ -1,0 +1,12 @@
+# Explicit owner-only exception for the private trial. No Secret API or workload writes.
+# Kubernetes cannot constrain an exec grant to one command. Retire this role before
+# introducing player accounts, authoritative persistence or production zone credentials.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: world-at-ruin-zone-trial-operator
+  namespace: world-at-ruin
+rules:
+  - apiGroups: [""]
+    resources: [pods/portforward, pods/exec]
+    verbs: [create]

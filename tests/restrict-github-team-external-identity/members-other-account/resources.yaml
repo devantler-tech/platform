@@ -1,0 +1,16 @@
+---
+# The same service account name in a tenant namespace is not the provider.
+apiVersion: team.github.m.upbound.io/v1alpha1
+kind: TeamMembership
+metadata:
+  name: lookalike-recorded
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999:devantler"
+spec:
+  forProvider:
+    username: devantler
+    teamIdRef:
+      name: admins
+      policy:
+        resolve: Always

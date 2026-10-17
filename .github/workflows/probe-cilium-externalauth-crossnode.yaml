@@ -31,7 +31,8 @@ name: Probe Cilium ExternalAuth Cross-Node
 # DORMANT, TWICE OVER. No `schedule:` or `pull_request:` trigger, and an exact confirmation phrase.
 #
 # PUBLIC LOG. The script prints only counts and the verdict — no address, node name or URL. The
-# endpoint helper's success line names the API endpoint, so it is discarded.
+# endpoint helper prints no address either; its standard output is discarded so this log carries
+# the probe's lines only.
 #
 # scripts/tests/test-probe-cilium-externalauth-crossnode.sh pins the script's behaviour and the
 # shape of this workflow. It needs no cluster and no secrets, so it runs in ci.yaml's required

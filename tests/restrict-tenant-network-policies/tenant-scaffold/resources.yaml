@@ -1,0 +1,37 @@
+---
+# The day-one CiliumNetworkPolicy devantler-tech/platform-tenant-template ships
+# (deploy/networkpolicy.yaml), with its `app` placeholder renamed the way the
+# template's rename script renames it: the tenant name, which on this platform
+# is also the tenant's namespace. Keep it byte-for-byte in step with the
+# template's copy apart from that rename, so a tightening of the tenant boundary
+# that would make a freshly generated tenant inadmissible fails a platform PR
+# instead of the template's next scheduled run (#3652).
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: tenant-ns
+  namespace: tenant-ns
+  labels:
+    app.kubernetes.io/name: tenant-ns
+spec:
+  endpointSelector: {}
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "3000"
+              protocol: TCP
+    - fromEndpoints:
+        - matchLabels:
+            k8s:app.kubernetes.io/name: tenant-ns
+        - matchLabels:
+            k8s:cnpg.io/cluster: tenant-ns-db
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:app.kubernetes.io/name: tenant-ns
+        - matchLabels:
+            k8s:cnpg.io/cluster: tenant-ns-db
+    - toEntities:
+        - kube-apiserver

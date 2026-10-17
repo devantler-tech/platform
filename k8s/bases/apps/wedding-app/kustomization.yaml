@@ -2,17 +2,17 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  # db-backup-external-secret stays platform-side: it projects the SHARED R2
-  # backup credential from the infra OpenBao path via the ClusterSecretStore
+  # The backup ExternalSecret stays platform-side: it projects the Wedding
+  # backup credential from OpenBao via the ClusterSecretStore
   # (flux-system-applied), which a tenant SecretStore cannot reach. The tenant's
-  # own CiliumNetworkPolicy (networkpolicy.yaml) and namespaced SecretStore now
-  # live in the tenant repo's deploy/.
-  - external-secret-db-backup.yaml
-  # Stage the dedicated identity and destination beside the active shared
-  # archive. The Cluster still references object-store.yaml until the existing
-  # catalog has been mirrored and the cutover gate has passed.
+  # own CiliumNetworkPolicy (networkpolicy.yaml) and namespaced SecretStore live
+  # in the tenant repo's deploy/.
+  #
+  # Wedding archives only through its dedicated identity and destination. The
+  # shared platform backup credential is deliberately NOT projected into this
+  # namespace: it can read every other consumer's backups. Shared access was
+  # retired after a dedicated-only restore and an observed access denial (#3253).
   - external-secret-db-backup-dedicated.yaml
-  - object-store.yaml
   - object-store-dedicated.yaml
   - external-secret-ghcr-auth.yaml
   - namespace.yaml

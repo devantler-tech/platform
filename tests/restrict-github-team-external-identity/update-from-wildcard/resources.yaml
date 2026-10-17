@@ -1,0 +1,12 @@
+---
+# A previous identity of * must not make every later value count as unchanged. A name is refused like any other value that is not the approved identity.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "security-admins"
+spec:
+  forProvider:
+    privacy: closed

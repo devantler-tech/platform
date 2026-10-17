@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -516,11 +515,16 @@ func TestManualBridgePrerequisitesYAMLToolPreflightRejectsMissingOrIncompatibleY
 			}
 
 			library := filepath.Join(repositoryRoot(t), "scripts", "ghcr-auth-lib.sh")
-			command := exec.Command("/bin/bash", "-c", `source "$1"; require_flux_ghcr_yaml_tool`, "bash", library)
+			ctx, cancel := fixtureCommandContext(t)
+			defer cancel()
+			command := fixtureCommand(ctx, "/bin/bash", "-c", `source "$1"; require_flux_ghcr_yaml_tool`, "bash", library)
 			command.Env = environmentWithPath(os.Environ(), binDirectory)
 			var stderr bytes.Buffer
 			command.Stderr = &stderr
 			err := command.Run()
+			if ctx.Err() != nil {
+				t.Fatalf("YAML preflight exceeded its test budget: %v", ctx.Err())
+			}
 			if err == nil {
 				t.Error("YAML tool preflight succeeded, want non-zero exit")
 			}
@@ -561,18 +565,18 @@ func TestRequiredPackageCoverageProviderUpjetUnifiReferenceIsPreflighted(t *test
 
 func TestRequiredPackageCoverageExactDeclaredKsailOperatorImageIsPreflighted(t *testing.T) {
 	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
-	helmRelease := readRepositoryFile(t, "k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml")
+	chartSource := readRepositoryFile(t, "k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml")
 
 	ksailOperatorVersion := ""
-	for line := range strings.SplitSeq(helmRelease, "\n") {
+	for line := range strings.SplitSeq(chartSource, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "version:") {
-			ksailOperatorVersion = strings.TrimSpace(strings.TrimPrefix(line, "version:"))
+		if strings.HasPrefix(line, "tag:") {
+			ksailOperatorVersion = strings.TrimSpace(strings.TrimPrefix(line, "tag:"))
 			break
 		}
 	}
 	requireContains(t, helper, `"devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"`)
-	requireContains(t, helper, ".spec.chart.spec.version")
+	requireContains(t, helper, ".spec.ref.tag")
 	if ksailOperatorVersion == "" {
 		t.Error("declared KSail operator version is empty")
 	}
@@ -639,6 +643,7 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"name: publishkubescapestorage",
 		"name: publishkubescapenodeagent",
 		"name: publishcorootnodeagent",
+		"name: publishksailanalysis",
 		"name: publishprovider",
 		"name: ksailcd",
 		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-storage-hotfix\\.yaml@refs/heads/main$",
@@ -655,6 +660,10 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"image == 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"verifyImageSignatures(image, [attestors.publishcorootnodeagent])",
+		"^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/ksail-analysis-runner'",
+		"image == 'ghcr.io/devantler-tech/ksail-analysis-runner'",
+		"verifyImageSignatures(image, [attestors.publishksailanalysis])",
 		"image.startsWith('ghcr.io/devantler-tech/ksail')",
 	} {
 		requireContains(t, policy, expected)

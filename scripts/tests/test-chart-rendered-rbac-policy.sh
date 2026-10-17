@@ -161,17 +161,14 @@ render() {
   [ "$(jq -s length "${work}/release.json")" -eq 1 ] ||
     fail "${name}: expected exactly one HelmRelease in the production controllers overlay"
 
-  local chart version release namespace source_kind source_name source_namespace url
-  chart="$(jq -r '.spec.chart.spec.chart' "${work}/release.json")"
-  version="$(jq -r '.spec.chart.spec.version' "${work}/release.json")"
+  bash "${repo_root}/scripts/tests/resolve-rendered-chart.sh" \
+    "${work}/release.json" "${scratch}/overlay.yaml" >"${work}/chart.json"
+  local chart version release namespace url
+  chart="$(jq -r '.chart' "${work}/chart.json")"
+  version="$(jq -r '.version' "${work}/chart.json")"
+  url="$(jq -r '.url' "${work}/chart.json")"
   release="$(jq -r '.spec.releaseName // .metadata.name' "${work}/release.json")"
   namespace="$(jq -r '.spec.targetNamespace // .metadata.namespace' "${work}/release.json")"
-  source_kind="$(jq -r '.spec.chart.spec.sourceRef.kind' "${work}/release.json")"
-  source_name="$(jq -r '.spec.chart.spec.sourceRef.name' "${work}/release.json")"
-  source_namespace="$(jq -r '.spec.chart.spec.sourceRef.namespace // .metadata.namespace' "${work}/release.json")"
-  [ "$source_kind" = "HelmRepository" ] || fail "${name}: chart source is not a HelmRepository"
-  url="$(yq -r "select(.kind == \"HelmRepository\" and .metadata.name == \"${source_name}\"
-      and .metadata.namespace == \"${source_namespace}\") | .spec.url" "${scratch}/overlay.yaml")"
 
   # jq and yq print "null" for a missing field, so an empty check alone passes it.
   local field
@@ -205,7 +202,7 @@ render() {
 
   jq '.spec.values // {}' "${work}/release.json" >"${work}/values.json"
   case "$url" in
-    oci://*) helm pull "${url}/${chart}" --version "$version" --destination "$work" >/dev/null ;;
+    oci://*) helm pull "$url" --version "$version" --destination "$work" >/dev/null ;;
     *) helm pull "$chart" --repo "$url" --version "$version" --destination "$work" >/dev/null ;;
   esac
 

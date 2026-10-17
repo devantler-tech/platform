@@ -1,14 +1,12 @@
 ---
 # Static VerticalPodAutoscalers for kube-system + kyverno (prod/hetzner only).
 #
-# WHY STATIC (not auto-vpa): `auto-vpa` is a Kyverno *generate* policy, and
-# Kyverno's global resourceFilters (`[*/*,kube-system,*]`, `[*/*,kyverno,*]` in
-# the kyverno ConfigMap) exclude these two namespaces from ALL Kyverno
-# processing — so auto-vpa never creates VPAs there. Narrowing that global
-# filter would re-expose both namespaces to EVERY mutate/validate policy (several
-# of which don't self-exclude kube-system, e.g. image-signature verification on
-# the third-party system images), so the surgical fix is to author the VPA
-# objects directly here. VPA's own admission webhook has empty selectors, so it
+# WHY STATIC (not auto-vpa): `auto-vpa` is a Kyverno *generate* policy that
+# excludes kube-system and kyverno explicitly (#4231): Kyverno's global
+# resourceFilters still exclude kyverno from all processing, and background scans
+# cover kube-system again (#4234), but a generated VPA there would fight these
+# Flux-owned objects of the same names. So the VPA objects are authored directly
+# here. VPA's own admission webhook has empty selectors, so it
 # injects recommendations into every namespace regardless.
 #
 # NO PER-WORKLOAD DUPLICATION: the shared updatePolicy + resourcePolicy (which

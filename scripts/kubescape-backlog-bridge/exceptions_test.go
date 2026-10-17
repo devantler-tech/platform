@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"regexp/syntax"
 	"strings"
 	"testing"
 	"time"
@@ -890,4 +892,193 @@ func TestNoExceptionsPathRemainsLegitimate(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("want no policies, got %d", len(got))
 	}
+}
+
+// The vacuity check is exact only for the constructs it models (#4086). Three
+// constructs fall outside it and each lets a pattern that can never match pass
+// as matchable: word boundaries, multi-line anchors, and a text anchor sitting
+// beside input that an alternative or repetition consumes on its other side.
+// Each is refused by name instead of being decided wrongly.
+func TestUndecidableAnchorConstructsAreRefused(t *testing.T) {
+	for _, tc := range []struct{ pattern, construct string }{
+		{`a\\bb`, "word boundary"},
+		{`a\\Bb`, "word boundary"},
+		{`(?m)a^b`, "multi-line anchor"},
+		{`(?m)^a$`, "multi-line anchor"},
+		{`(?:a$|b$)c`, "end anchor"},
+		{`c(?:^a|^b)`, "start anchor"},
+		{`(?:a$)+b`, "end anchor"},
+		{`^a(?:^b)*$`, "start anchor"},
+	} {
+		t.Run(tc.pattern, func(t *testing.T) {
+			exc := filepath.Join(t.TempDir(), "exceptions.json")
+			writeRaw(t, exc, `[{"name":"undecidable","policyType":"postureExceptionPolicy",`+
+				`"actions":["disable"],`+
+				`"resources":[{"designatorType":"Attributes","attributes":{"kind":"^`+tc.pattern+`$"}}],`+
+				`"posturePolicies":[{"controlID":"^C-0016$"}]}]`)
+
+			_, err := loadExceptions(exc)
+			if !errors.Is(err, errBadExceptions) {
+				t.Fatalf("pattern %q must be refused, got %v", tc.pattern, err)
+			}
+
+			if !strings.Contains(err.Error(), tc.construct) {
+				t.Fatalf("refusal must name the %s construct, got %v", tc.construct, err)
+			}
+		})
+	}
+}
+
+// The control: every real shape the generated artifact uses, and anchors at the
+// ends of the pattern or of one of its top-level alternatives, still load.
+func TestEdgeAnchorsAndRealShapesStillLoad(t *testing.T) {
+	for _, pattern := range []string{
+		`^a$|^b$`,
+		`^(kube-system|velero)$`,
+		`^crossplane:provider:provider-github-[0-9a-f]+:system$`,
+		`.*`,
+		`^(?:[^ab]|a[^b]|ab.+)$`,
+		`^^a$$`,
+		`^C-001|C-002$`,
+		`^[$^]$`,
+	} {
+		t.Run(pattern, func(t *testing.T) {
+			if err := refuseUndecidableConstructs(pattern); err != nil {
+				t.Fatalf("pattern %q must stay accepted: %v", pattern, err)
+			}
+		})
+	}
+}
+
+// A differential guard on the check's exactness: random patterns built from the
+// accepted constructs — anchors placed anywhere, so the construct refusal is
+// exercised too — are compared with an exhaustive search of the compiled
+// automaton. For every pattern the bridge accepts structurally, the vacuity
+// verdict must equal the search's answer.
+func TestVacuityCheckIsExactForAcceptedConstructs(t *testing.T) {
+	rng := rand.New(rand.NewPCG(4086, 1)) //nolint:gosec // deterministic test corpus
+
+	var gen func(depth int) string
+	gen = func(depth int) string {
+		leaves := []string{"a", "b", "[ab]", "[^a]", ".", "^", "$", "", `[^\x00-\x{10FFFF}]`}
+		if depth == 0 {
+			return leaves[rng.IntN(len(leaves))]
+		}
+
+		switch rng.IntN(6) {
+		case 0:
+			return gen(depth-1) + gen(depth-1)
+		case 1:
+			return "(?:" + gen(depth-1) + "|" + gen(depth-1) + ")"
+		case 2:
+			return "(?:" + gen(depth-1) + ")" + []string{"*", "+", "?", "{2}", "{0,2}"}[rng.IntN(5)]
+		case 3:
+			return gen(depth-1) + gen(depth-1) + gen(depth-1)
+		default:
+			return leaves[rng.IntN(len(leaves))]
+		}
+	}
+
+	checked, refused := 0, 0
+	for range 4000 {
+		pattern := gen(3)
+		if refuseUndecidableConstructs(pattern) != nil {
+			refused++
+
+			continue
+		}
+
+		wrapped := "^(?:" + pattern + ")$"
+		want := searchNonEmptyMatch(t, wrapped)
+
+		got, err := canMatchNonEmpty(wrapped)
+		if err != nil {
+			t.Fatalf("canMatchNonEmpty(%q): %v", pattern, err)
+		}
+
+		if got != want {
+			t.Errorf("pattern %q: check says %v, exhaustive search says %v", pattern, got, want)
+		}
+
+		checked++
+	}
+
+	if checked < 1000 || refused == 0 {
+		t.Fatalf("compared %d accepted and refused %d patterns; the corpus no longer exercises the check",
+			checked, refused)
+	}
+}
+
+// searchNonEmptyMatch decides, by exhaustive search of the compiled program,
+// whether pattern matches some non-empty string. A state is a program counter
+// plus whether input has been consumed and whether the end of the text has been
+// asserted: a start anchor holds only before any input, and nothing may be
+// consumed after an end anchor. Every rune instruction with a non-empty rune set
+// can consume, so the search needs no alphabet. Any other zero-width assertion is
+// outside the accepted constructs and fails the test.
+func searchNonEmptyMatch(t *testing.T, pattern string) bool {
+	t.Helper()
+
+	parsed, err := syntax.Parse(pattern, syntax.Perl)
+	if err != nil {
+		t.Fatalf("parse %q: %v", pattern, err)
+	}
+
+	prog, err := syntax.Compile(parsed.Simplify())
+	if err != nil {
+		t.Fatalf("compile %q: %v", pattern, err)
+	}
+
+	type state struct {
+		pc              uint32
+		consumed, ended bool
+	}
+
+	seen := map[state]bool{}
+	queue := []state{{pc: uint32(prog.Start)}}
+
+	for len(queue) > 0 {
+		s := queue[0]
+		queue = queue[1:]
+
+		if seen[s] {
+			continue
+		}
+
+		seen[s] = true
+		inst := prog.Inst[s.pc]
+
+		switch inst.Op {
+		case syntax.InstMatch:
+			if s.consumed {
+				return true
+			}
+		case syntax.InstFail:
+		case syntax.InstAlt, syntax.InstAltMatch:
+			queue = append(queue, state{inst.Out, s.consumed, s.ended}, state{inst.Arg, s.consumed, s.ended})
+		case syntax.InstCapture, syntax.InstNop:
+			queue = append(queue, state{inst.Out, s.consumed, s.ended})
+		case syntax.InstEmptyWidth:
+			switch syntax.EmptyOp(inst.Arg) {
+			case syntax.EmptyBeginText:
+				if !s.consumed {
+					queue = append(queue, state{inst.Out, s.consumed, s.ended})
+				}
+			case syntax.EmptyEndText:
+				queue = append(queue, state{inst.Out, s.consumed, true})
+			default:
+				t.Fatalf("pattern %q reached an unmodelled assertion %v", pattern, inst.Arg)
+			}
+		case syntax.InstRune:
+			if !s.ended && len(inst.Rune) > 0 {
+				queue = append(queue, state{inst.Out, true, false})
+			}
+		case syntax.InstRune1, syntax.InstRuneAny, syntax.InstRuneAnyNotNL:
+			if !s.ended {
+				queue = append(queue, state{inst.Out, true, false})
+			}
+		}
+	}
+
+	return false
 }

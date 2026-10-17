@@ -90,10 +90,14 @@ if [[ "${phase}" == before-publish ]]; then
   exit 0
 fi
 
-# Flux has reported the released revision Ready. Allow bounded rollout time,
-# then require consecutive stable observations of all six stored templates.
+# Flux can report the Coroot resource Ready before its generated workloads finish
+# rolling. In particular, node agents update sequentially. Allow ten minutes of
+# elapsed convergence time (including API reads), then require the same stable
+# observations of all six templates. A final in-flight API read remains bounded
+# by its request timeout; unsuccessful convergence never passes the guard.
 ready=false
-for ((attempt = 0; attempt < 12; attempt++)); do
+deadline=$((SECONDS + 600))
+while ((SECONDS < deadline)); do
   read_templates
   if population && owned_and_ready && has_fields; then
     ready=true
@@ -101,7 +105,7 @@ for ((attempt = 0; attempt < 12; attempt++)); do
   fi
   sleep 5
 done
-[[ "${ready}" == true ]] || fail 'the six templates did not all reach both fields and a complete healthy rollout'
+[[ "${ready}" == true ]] || fail 'the six templates did not all reach both fields and a complete healthy rollout within ten minutes'
 baseline="$(snapshot)"
 previous="${baseline}"
 # Per template, so one write each on two objects is not mistaken for a loop.

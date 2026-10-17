@@ -1,9 +1,10 @@
 ---
 # CPU-only default LimitRange for kube-system.
 #
-# kube-system is in Kyverno's global resourceFilters (`[*/*,kube-system,*]`), so
-# NONE of the Kyverno resource policies touch it: no `add-resource-defaults`
-# stamp, no generated `default-limitrange`, and no `auto-vpa` VerticalPodAutoscaler.
+# Kyverno changes nothing in kube-system: the webhooks skip it at admission, so there
+# is no `add-resource-defaults` stamp, and the generate policies exclude it by name,
+# so there is no generated `default-limitrange` and no `auto-vpa` VerticalPodAutoscaler
+# (background scans only report on it, #4234).
 # Its VPAs are instead the static prod objects in
 # providers/hetzner/infrastructure/vertical-pod-autoscalers/, which control requests
 # AND limits and keep the ratio this LimitRange admits. This LimitRange supplies a CPU

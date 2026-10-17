@@ -1,7 +1,7 @@
 # What the cnpg-degraded-alert CronJob may read.
 #
 # Read-only, and ONLY the CNPG Cluster CR. The check has to see clusters in every
-# namespace that runs one (umami, wedding-app, backstage, observability), so it is
+# namespace that runs one (umami, wedding-app, observability), so it is
 # cluster-scoped by necessity — but it is list-only on a single resource type,
 # which is the least privilege that satisfies that.
 ---

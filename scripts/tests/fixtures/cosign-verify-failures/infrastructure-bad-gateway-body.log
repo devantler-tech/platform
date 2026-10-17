@@ -1,0 +1,2 @@
+Error: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: unexpected status code 502 Bad Gateway: <html><body><h1>502 Bad Gateway</h1></body></html>
+error during command execution: GET https://ghcr.io/v2/devantler-tech/platform/manifests/manifests/latest: unexpected status code 502 Bad Gateway: <html><body><h1>502 Bad Gateway</h1></body></html>

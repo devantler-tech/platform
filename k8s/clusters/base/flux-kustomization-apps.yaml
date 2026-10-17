@@ -56,4 +56,5 @@ spec:
       kind: Cluster
       current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
   prune: true
-  force: true
+  # Immutable conflicts require an operator plan; individual Jobs opt into recreation.
+  force: false

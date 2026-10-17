@@ -1,0 +1,2 @@
+Error: Get "https://ghcr.io/v2/": read tcp 198.51.100.4:51234->192.0.2.10:443: read: connection reset by peer
+error during command execution: Get "https://ghcr.io/v2/": read tcp 198.51.100.4:51234->192.0.2.10:443: read: connection reset by peer

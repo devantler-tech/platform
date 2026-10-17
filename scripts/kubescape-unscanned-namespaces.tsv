@@ -1,0 +1,20 @@
+# Reviewed list of namespaces the in-cluster Kubescape scan does NOT cover (#3215).
+#
+# Checked by scripts/guard-kubescape-scan-scope.sh against the operator's
+# `.spec.values.excludeNamespaces` in
+# k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml. The two must hold exactly
+# the same namespaces, so a namespace can only leave scan coverage through a change that also
+# adds a row here, with a reason, for review.
+#
+# A namespace listed here produces no posture result at all. That is NOT the same as passing:
+# no control is evaluated there, and the posture score reads the same as if it were clean.
+#
+# One tab-separated row per namespace:
+#   <namespace>	<why it is not scanned>
+kubescape	The scanner's own namespace. Excluded by the chart default; its four operator Deployments are measured by neither the in-cluster scan nor the CI scan, which never renders the HelmRelease (#3215).
+kube-system	Control-plane and CNI workloads that Talos and KSail install. Excluded by the chart default, so exceptions and opt-ins here change no posture result (#3919, #3923).
+kube-public	Holds only the cluster-info ConfigMap and no workloads. Excluded by the chart default.
+kube-node-lease	Holds only node heartbeat Leases and no workloads. Excluded by the chart default.
+kubeconfig	Not present on this platform. Kept to match the chart default the cluster already runs.
+gmp-system	Google Managed Prometheus. Not present on this platform. Kept to match the chart default.
+gmp-public	Google Managed Prometheus. Not present on this platform. Kept to match the chart default.

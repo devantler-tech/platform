@@ -1,0 +1,41 @@
+# Production replaces an OpenBao server only when its Pod is deleted or lost.
+# OnDelete creates a missing Pod from the newest StatefulSet revision. A rolling
+# update with a partition instead builds every ordinal below the partition from
+# the stored current revision, which production kept from before the pins that
+# keep these volumes on the baseline workers: when openbao-0 was lost, admission
+# refused its replacement and the cluster ran on two of three servers (#4391).
+# The earlier one-replica canary (openbao-2) has run the repaired release
+# unsealed since; nothing here replaces a running server.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: openbao
+  namespace: openbao
+spec:
+  # SSA retains an old rollingUpdate field owned by a prior update, even when
+  # the new strategy omits it. Helm's three-way merge clears it in the same
+  # validated patch that sets OnDelete, without force-replacing the StatefulSet.
+  # Keep rollback on the same in-place protocol.
+  upgrade:
+    serverSideApply: disabled
+  rollback:
+    serverSideApply: disabled
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: apps
+              version: v1
+              kind: StatefulSet
+              name: openbao
+              namespace: openbao
+            patch: |
+              apiVersion: apps/v1
+              kind: StatefulSet
+              metadata:
+                name: openbao
+                namespace: openbao
+              spec:
+                updateStrategy:
+                  type: OnDelete
+                  rollingUpdate: null

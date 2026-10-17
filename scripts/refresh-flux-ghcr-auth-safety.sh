@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 
 # Safety-critical helpers for refresh-flux-ghcr-auth.sh. Keep these functions
 # side-effect free except where their names explicitly describe an operation so
@@ -7,6 +7,40 @@
 readonly GHCR_PULL_VERIFIED_REVISION_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-revision-v2"
 readonly GHCR_PULL_VERIFIED_IMAGE_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-image-v2"
 readonly GHCR_PULL_VERIFIED_NODE_UID_ANNOTATION="platform.devantler.tech/ghcr-pull-verified-node-uid-v2"
+
+# Plan only the obsolete phase of an unowned, healthy node whose immutable
+# identity and current runtime proof agree. Callers must hold the deploy Lease.
+# UID, resourceVersion and phase tests bind every inspected field atomically.
+completed_node_phase_cleanup_patch() {
+  local state_file="$1"
+  local desired_revision="$2"
+  local operator_image="$3"
+
+  jq -e --arg revision "${desired_revision}" --arg image "${operator_image}" '
+    (.metadata.annotations // {}) as $a
+    | "platform.devantler.tech/ghcr-auth-drain-phase" as $phase
+    | if ($a | has($phase) | not) then []
+      elif (($a[$phase] == "claimed" or $a[$phase] == "mutating")
+        and (.metadata.uid | type == "string" and length > 0)
+        and (.metadata.resourceVersion | type == "string" and length > 0)
+        and (.metadata.deletionTimestamp == null)
+        and ((.spec.unschedulable // false) == false)
+        and any(.status.conditions[]?; .type == "Ready" and .status == "True")
+        and (($a["platform.devantler.tech/ghcr-auth-drain-owner"] // "") == "")
+        and (($a["platform.devantler.tech/ghcr-auth-drain-recovery"] // "") == "")
+        and (($a["platform.devantler.tech/ghcr-auth-scale-down-owner"] // "") == "")
+        and $a["platform.devantler.tech/ghcr-pull-verified-revision-v2"] == $revision
+        and $a["platform.devantler.tech/ghcr-pull-verified-image-v2"] == $image
+        and $a["platform.devantler.tech/ghcr-pull-verified-node-uid-v2"] == .metadata.uid)
+      then [
+        {op:"test", path:"/metadata/uid", value:.metadata.uid},
+        {op:"test", path:"/metadata/resourceVersion", value:.metadata.resourceVersion},
+        {op:"test", path:"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase", value:$a[$phase]},
+        {op:"remove", path:"/metadata/annotations/platform.devantler.tech~1ghcr-auth-drain-phase"}
+      ]
+      else error("historical phase lacks safe current runtime proof") end
+  ' "${state_file}"
+}
 
 # Name the nodes that still hold a drain fence, so a refusal is actionable
 # without a live cluster query. A transaction killed before its EXIT trap
@@ -144,6 +178,8 @@ node_claim_preconditions_still_hold() {
     "platform.devantler.tech/ghcr-auth-drain-owner" \
     --arg recovery_annotation \
     "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg phase_annotation \
+    "platform.devantler.tech/ghcr-auth-drain-phase" \
     --arg scale_down_annotation \
     "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
     --arg scale_down_owner_annotation \
@@ -206,6 +242,41 @@ autoscaled_node_claim_is_safe() {
       and (((.metadata.annotations // {}) | has($scale_down_annotation) | not)
         or ((.metadata.annotations // {})[$scale_down_annotation] == "true"))
     end
+  ' "${state_file}" >/dev/null
+}
+
+# An autoscaled node that Cluster Autoscaler IS removing (its hard
+# ToBeDeletedByClusterAutoscaler taint, or a deletionTimestamp) and on which the
+# bridge holds nothing can be deselected rather than failing the whole deploy:
+# nothing of ours needs releasing and rebooting it would be pointless. The
+# advisory DeletionCandidateOfClusterAutoscaler marker is NOT deletion. Any
+# bridge ownership marker keeps the node on the fail-closed path, as does every
+# other unsafe state autoscaled_node_claim_is_safe rejects (a cordon by any
+# actor, an ambiguous scale-down-disabled value).
+autoscaled_node_is_being_deleted_unowned() {
+  local state_file="$1"
+
+  jq -e \
+    --arg drain_owner_annotation \
+    "platform.devantler.tech/ghcr-auth-drain-owner" \
+    --arg recovery_annotation \
+    "platform.devantler.tech/ghcr-auth-drain-recovery" \
+    --arg phase_annotation \
+    "platform.devantler.tech/ghcr-auth-drain-phase" \
+    --arg scale_down_annotation \
+    "cluster-autoscaler.kubernetes.io/scale-down-disabled" \
+    --arg scale_down_owner_annotation \
+    "platform.devantler.tech/ghcr-auth-scale-down-owner" '
+    ((.metadata.labels // {})["ksail.io/autoscaled"] // "") == "true"
+    and ((.spec.unschedulable // false) == false)
+    and (((.metadata.annotations // {}) | has($scale_down_annotation) | not)
+      or ((.metadata.annotations // {})[$scale_down_annotation] == "true"))
+    and (.metadata.deletionTimestamp != null
+      or any(.spec.taints[]?; .key == "ToBeDeletedByClusterAutoscaler"))
+    and (((.metadata.annotations // {})[$drain_owner_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$recovery_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$phase_annotation] // "") == "")
+    and (((.metadata.annotations // {})[$scale_down_owner_annotation] // "") == "")
   ' "${state_file}" >/dev/null
 }
 

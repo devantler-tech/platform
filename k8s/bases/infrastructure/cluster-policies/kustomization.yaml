@@ -13,12 +13,17 @@ resources:
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml
   - best-practices/propagate-reloader-to-flagger-primary.yaml
+  - best-practices/restrict-github-team-external-identity.yaml
   - best-practices/restrict-github-team-management.yaml
+  - best-practices/restrict-arc-openbao-listener.yaml
+  - best-practices/restrict-arc-retirement.yaml
+  - best-practices/restrict-explicit-dns-records.yaml
   - best-practices/restrict-homepage-service-groups.yaml
   - best-practices/restrict-tenant-issuer-refs.yaml
   - best-practices/restrict-tenant-network-policies.yaml
   - best-practices/restrict-tenant-route-hostnames.yaml
   - best-practices/restrict-tenant-secret-stores.yaml
+  - best-practices/restrict-unifi-management-policies.yaml
   - best-practices/set-observability-dns-ndots.yaml
   - best-practices/validate-host-restrictions.yaml
   - best-practices/validate-pdb-drain-safe.yaml
@@ -30,10 +35,13 @@ resources:
   - flux/helm-release-enable-tests.yaml
   - flux/helm-release-install-crds.yaml
   - flux/helm-release-remediation-retries.yaml
-  # Upstream kyverno/policies (synced via reusable-workflows, patched below)
-  - samples/best-practices/add-ns-quota/add-ns-quota.yaml
-  - samples/other/create-pod-antiaffinity/create-pod-antiaffinity.yaml
-  - samples/other/spread-pods-across-topology/spread-pods-across-topology.yaml
+  # Adopted from upstream kyverno/policies (Apache-2.0) and owned here since
+  # platform#4257: the upstream paths stopped resolving, so the nightly sync was
+  # retired. The upstream files are kept verbatim; the platform changes stay in
+  # the patches below so they remain easy to review.
+  - best-practices/add-ns-quota.yaml
+  - best-practices/create-pod-antiaffinity.yaml
+  - best-practices/spread-pods-across-topology.yaml
 patches:
   # --- add-ns-quota: exclude system namespaces, set generateExisting, tune resource values ---
   - target:

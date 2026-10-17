@@ -1359,6 +1359,49 @@ rules:
 	}
 }
 
+// TestAuthorizationSurfaceRejectsCrossDocumentPrivilegeComposition proves a
+// stale approval cannot authorize a safe binding and a separately changed role
+// when their combined render grants a different permission set.
+func TestAuthorizationSurfaceRejectsCrossDocumentPrivilegeComposition(t *testing.T) {
+	const baseline = `apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-reader
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: tenant-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: tenant-reader
+subjects:
+  - kind: ServiceAccount
+    name: tenant
+    namespace: tenant
+`
+
+	ledgerFor := func(rendered string) []string {
+		t.Helper()
+		entries, _, _, err := evaluateRenderedSurface([]byte(rendered))
+		if err != nil {
+			t.Fatalf("evaluate rendered surface: %v", err)
+		}
+		return surfaceLedger(entries)
+	}
+
+	approved := ledgerFor(baseline)
+	composed := strings.Replace(baseline, "resources: [configmaps]", "resources: [secrets]", 1)
+	if delta := describeLedgerDelta(approved, ledgerFor(composed)); len(delta) == 0 {
+		t.Fatal("separately changed role composed with an approved binding did not move the aggregate surface")
+	}
+}
+
 // TestAuthorizationSubstitutionSourceIdentitiesPinsReferencedInputs covers Flux.
 func TestAuthorizationSubstitutionSourceIdentitiesPinsReferencedInputs(t *testing.T) {
 	documents, err := decodeDocuments([]byte(`apiVersion: kustomize.toolkit.fluxcd.io/v1
@@ -1667,10 +1710,10 @@ func TestCiliumTenantEditSupportsFluxReconciliationWithoutBuiltInEditAggregation
 	}
 }
 
-// TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions keeps
+// TestAuthorizationSurfaceEntryNormalizesOnlyImmutableDependencyPins keeps
 // routine dependency pins out of the authorization approval fingerprint while
 // preserving every field that can configure, redirect, or float the chart.
-func TestAuthorizationSurfaceEntryNormalizesOnlyPinnedHelmChartVersions(t *testing.T) {
+func TestAuthorizationSurfaceEntryNormalizesOnlyImmutableDependencyPins(t *testing.T) {
 	const manifest = `apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -1685,6 +1728,9 @@ spec:
         kind: HelmRepository
         name: controller
   values:
+    initContainers:
+      - name: prepare
+        image: docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
     rbac:
       clusterAdmin: false
   postRenderers:
@@ -1713,6 +1759,14 @@ spec:
 	if actual := entry(strings.Replace(manifest, "version: 1.2.3", "version: v2.0.0-rc.1", 1)); actual != baseline {
 		t.Fatal("exact Helm chart version update moved the authorization surface")
 	}
+	if actual := entry(strings.Replace(
+		manifest,
+		"sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616",
+		"sha256:fd7dc98638c8e305f4dc34e979f1c0fdfdcaeb0fbf8fcff77ae834b6da3d7e6e",
+		1,
+	)); actual != baseline {
+		t.Fatal("exact container image digest update moved the authorization surface")
+	}
 
 	mutations := []struct {
 		name string
@@ -1723,6 +1777,10 @@ spec:
 		{name: "wildcard version", old: "version: 1.2.3", new: "version: '1.2.x'"},
 		{name: "substituted version", old: "version: 1.2.3", new: "version: ${chart_version}"},
 		{name: "missing version pin", old: "      version: 1.2.3\n", new: ""},
+		{name: "container image tag", old: "busybox:1.38.0@", new: "busybox:1.39.0@"},
+		{name: "digest-only container image", old: "busybox:1.38.0@", new: "busybox@"},
+		{name: "substituted container image digest", old: "sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616", new: "${busybox_digest}"},
+		{name: "floating container image", old: "docker.io/library/busybox:1.38.0@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616", new: "docker.io/library/busybox:latest"},
 		{name: "chart identity", old: "chart: controller", new: "chart: controller-shadow"},
 		{name: "source identity", old: "name: controller\n  values:", new: "name: untrusted\n  values:"},
 		{name: "authorization values", old: "clusterAdmin: false", new: "clusterAdmin: true"},

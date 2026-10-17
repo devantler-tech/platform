@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-product-controller-ui-kit
+  namespace: data-product-controller
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: data-product-controller
+    app.kubernetes.io/instance: data-product-controller
+    app.kubernetes.io/component: ui-kit
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

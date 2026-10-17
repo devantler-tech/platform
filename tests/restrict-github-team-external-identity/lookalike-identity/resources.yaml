@@ -1,0 +1,12 @@
+---
+# A ServiceAccount with the provider's name in a tenant namespace is not the provider.
+apiVersion: team.github.m.upbound.io/v1beta1
+kind: Team
+metadata:
+  name: admins
+  namespace: github-config
+  annotations:
+    crossplane.io/external-name: "99999999"
+spec:
+  forProvider:
+    privacy: closed

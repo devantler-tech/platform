@@ -28,11 +28,15 @@ readonly workflow="${root_dir}/.github/workflows/regenerate-publish-workflow-app
 readonly generator='scripts/generate-publish-workflow-approved-revisions.sh'
 readonly guard='scripts/guard-publish-workflow-approved-revisions.sh'
 readonly data_file='scripts/publish-workflow-approved-revisions.tsv'
+readonly identities_file='scripts/publish-workflow-approved-revisions.identities.tsv'
 readonly generated_paths='scripts/publish-workflow-approved-revisions.tsv
+scripts/publish-workflow-approved-revisions.identities.tsv
+scripts/publish-workflow-bootstrap-publications.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
-k8s/bases/apps/wedding-app/oci-repository.yaml'
+k8s/bases/apps/wedding-app/oci-repository.yaml
+k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml'
 readonly endpoint_script='scripts/use-prod-stable-api-endpoint.sh'
 
 work_dir="$(mktemp -d)"
@@ -206,7 +210,9 @@ check() {
   # loop in a subshell where the accumulated result is lost. A `case` inside a
   # command substitution is not an option either: the pattern's own `)` closes
   # the substitution early — measured, it captured the loop's source as data.
-  consumers="$(awk 'NR > 1 { print $1 }' "${root_dir}/${data_file}" | sort -u)"
+  # The validated approval reader includes a first publication before its
+  # ordinary observed row exists, without granting unregistered consumers.
+  consumers="$approved_consumer_inventory"
   missing=''
   leaked=''
   while IFS= read -r consumer; do
@@ -291,6 +297,37 @@ check() {
   [ "$(q "$f" ".jobs.regenerate.steps[${guard_idx}].env.APPROVED_REVISIONS_ENFORCE")" = '1' ] ||
     { printf 'VIOLATION A15: the regeneration guard must enforce exact approved revisions\n'; return 1; }
 
+  # A16 — the body follows the pull-request template: `## Why` and `## What`, then an
+  # issue line that is either `Fixes #<n>` or the explicit no-issue marker. The earlier
+  # body linked `Part of #3308`, an issue that had closed, so every run that drove one
+  # of these PRs had to rewrite the body before promotion (platform#4204).
+  # Presence alone is not the template: the sections must also appear in order
+  # (## Why, then ## What, then the issue line), so compare their first line numbers.
+  local body why_line what_line issue_line
+  body="$(q "$f" ".jobs.regenerate.steps[${pr_idx}].with.body")"
+  why_line="$(printf '%s\n' "${body}" | grep -nx '## Why' | head -n 1 | cut -d: -f1)"
+  what_line="$(printf '%s\n' "${body}" | grep -nx '## What' | head -n 1 | cut -d: -f1)"
+  issue_line="$(printf '%s\n' "${body}" | grep -nxE 'Fixes #[0-9]+|No issue: trivial fix\.' | head -n 1 | cut -d: -f1)"
+  if [ -z "${why_line}" ] || [ -z "${what_line}" ]; then
+    printf 'VIOLATION A16: the generated pull-request body lacks the template headings ## Why / ## What\n'; return 1
+  fi
+  [ -n "${issue_line}" ] ||
+    { printf 'VIOLATION A16: the generated pull-request body has no issue line (Fixes #N or the no-issue marker)\n'; return 1; }
+  # Either/or: a body carrying both alternatives (or two issue lines) contradicts itself.
+  [ "$(printf '%s\n' "${body}" | grep -cxE 'Fixes #[0-9]+|No issue: trivial fix\.')" = '1' ] ||
+    { printf 'VIOLATION A16: the generated pull-request body has more than one issue line\n'; return 1; }
+  if ! { [ "${why_line}" -lt "${what_line}" ] && [ "${what_line}" -lt "${issue_line}" ]; }; then
+    printf 'VIOLATION A16: the generated pull-request body is out of template order (## Why %s, ## What %s, issue line %s)\n' "${why_line}" "${what_line}" "${issue_line}"; return 1
+  fi
+  # Headings alone are not the template either: each section needs prose under it.
+  printf '%s\n' "${body}" | sed -n "$((why_line + 1)),$((what_line - 1))p" | grep -q '[^[:space:]]' ||
+    { printf 'VIOLATION A16: the generated pull-request body has an empty ## Why section\n'; return 1; }
+  printf '%s\n' "${body}" | sed -n "$((what_line + 1)),$((issue_line - 1))p" | grep -q '[^[:space:]]' ||
+    { printf 'VIOLATION A16: the generated pull-request body has an empty ## What section\n'; return 1; }
+  if printf '%s\n' "${body}" | grep -qE 'Part of #[0-9]+'; then
+    printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'; return 1
+  fi
+
   printf 'ok\n'
 }
 
@@ -299,9 +336,13 @@ check() {
 # A relocated consumer must update the automation boundary in the same change.
 discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")"
-actual_paths="$(printf '%s\n%s\n' "${data_file}" "${discovered_paths}" | sort)"
+actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
+approved_consumer_inventory="$(bash -c 'source "$1"; printf "%s" "$approved" | cut -f1 | sort -u' _ \
+  "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" ||
+  fail 'approved consumer inventory is unresolved'
+readonly approved_consumer_inventory
 
 out="$(check "${workflow}")" || fail "the committed workflow violates its own contract: ${out}"
 [ "${out}" = 'ok' ] || fail "unexpected check output on the committed workflow: ${out}"
@@ -373,6 +414,14 @@ ablate A15 'writer gated off' '(.jobs.regenerate.steps[] | select(.run // "" | c
 ablate A15 'guard enforcement off' '(.jobs.regenerate.steps[] | select(.run // "" | contains("guard-publish-workflow-approved-revisions.sh")) | .env.APPROVED_REVISIONS_ENFORCE) = "0"'
 ablate A8 'consumer matcher omitted' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.add-paths) = "scripts/publish-workflow-approved-revisions.tsv"'
 ablate A9 'writer failure ignored' '(.jobs.regenerate.steps[] | select(.run // "" | contains("write-publish-workflow-matchers.sh")) | .continue-on-error) = true'
+ablate A16 'Why heading dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("## Why\n"; "")'
+ablate A16 'issue line dropped' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\.\n"; "")'
+ablate A16 'issue line moved first' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("No issue: trivial fix\\.\n"; "") | sub("## Why\n"; "No issue: trivial fix.\n\n## Why\n"))'
+ablate A16 'What before Why' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= (sub("## Why\n"; "## TMP\n") | sub("## What\n"; "## Why\n") | sub("## TMP\n"; "## What\n"))'
+ablate A16 'both issue alternatives' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "No issue: trivial fix.\nFixes #1")'
+ablate A16 'closed-issue link restored' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "Fixes #1\n\nPart of #3308.")'
+ablate A16 'Why section emptied' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("(?s)## Why\n.*?## What"; "## Why\n\n## What")'
+ablate A16 'What section emptied' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("(?s)## What\n.*?No issue"; "## What\n\nNo issue")'
 
 # Execute the actual change-detection step in a disposable checkout. This proves
 # that the PR boundary handles each matcher, staged changes, and unrelated paths.
@@ -415,4 +464,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 45 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 53 ablations + change-detection cases passed\n'

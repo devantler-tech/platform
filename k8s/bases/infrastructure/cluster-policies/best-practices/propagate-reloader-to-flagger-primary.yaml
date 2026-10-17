@@ -17,8 +17,10 @@
 #
 # This mutate-existing rule copies umami's source Deployment
 # secret.reloader.stakater.com/reload annotation onto umami-umami-primary, so
-# Reloader restarts the primary on rotation. mutateExistingOnPolicyUpdate applies
-# it to a primary that already exists (not just one created after the policy).
+# Reloader restarts the primary on rotation. It also sets the serving primary's
+# no-surge strategy: Flagger copies that field only when the primary is first
+# created, so updating the source alone leaves an existing primary at 25% surge.
+# mutateExistingOnPolicyUpdate applies both to a primary that already exists.
 # Mirrors the existing mutate-existing pattern in disable-default-sa-automount.yaml.
 #
 # The background controller needs update access on the target Deployment to run
@@ -43,7 +45,8 @@ metadata:
       Copies umami's Flagger canary source Deployment
       secret.reloader.stakater.com/reload annotation onto umami-umami-primary so
       Stakater Reloader restarts the live primary when the referenced Secret
-      rotates (Flagger does not carry the annotation across itself).
+      rotates. Also retrofits the no-surge strategy on the existing primary,
+      which Flagger does not resynchronize from the source.
 spec:
   rules:
     - name: copy-secret-reload-to-primary
@@ -72,3 +75,9 @@ spec:
           metadata:
             annotations:
               secret.reloader.stakater.com/reload: "{{ request.object.metadata.annotations.\"secret.reloader.stakater.com/reload\" }}"
+          spec:
+            strategy:
+              type: RollingUpdate
+              rollingUpdate:
+                maxSurge: 0
+                maxUnavailable: 1
