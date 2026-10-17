@@ -19,6 +19,8 @@ KSail (static baseline)
 Cluster Autoscaler (dynamic workers, managed by KSail)
 ├── Pool: autoscale-cx43 → 0-4 × CX43 (8 vCPU, 16 GB)
 ├── Pool: autoscale-cx53 → 0-4 × CX53 (16 vCPU, 32 GB)
+├── Pool: autoscale-arc-runners → 0-1 × CX53 (CI runners only: ci-runner label + NoSchedule taint)
+├── capacityBuffers: true (CapacityBuffer warm headroom, see overprovisioning/)
 ├── maxNodesTotal: 9 (total cluster nodes incl. baseline: 6 static + 3 autoscaler — one server slot stays reserved, see Cost guardrails)
 └── Expander: [LeastNodes, LeastWaste] (priority chain)
 ```
@@ -41,8 +43,8 @@ Cluster Autoscaler (dynamic workers, managed by KSail)
   manages the Talos snapshot lifecycle. Node pool configuration lives in
   `ksail.prod.yaml`, not in Flux manifests.
 - **Storage architecture** — autoscaler nodes are **compute-only** (no
-  Hetzner volume, no Longhorn storage). Static KSail workers have
-  dedicated Hetzner volumes and serve as Longhorn storage nodes. Pods on
+  Longhorn storage). Static KSail workers are the Longhorn storage nodes and
+  keep replicas on their root filesystem under `/var/lib/longhorn`. Pods on
   autoscaler nodes access Longhorn PVCs via the CSI driver (network).
   The Hetzner Cluster Autoscaler [does not support volume attachment](https://github.com/kubernetes/autoscaler/blob/master/cluster-autoscaler/cloudprovider/hetzner/README.md).
 
@@ -72,6 +74,7 @@ spec:
         expander: [LeastNodes, LeastWaste]
         maxNodesTotal: 9
         scaleDownUnneededTime: "10m"
+        capacityBuffers: true
         pools:
           - name: autoscale-cx43
             serverType: cx43
@@ -83,6 +86,17 @@ spec:
             location: fsn1
             min: 0
             max: 4
+          - name: autoscale-arc-runners
+            serverType: cx53
+            location: fsn1
+            min: 0
+            max: 1
+            labels:
+              platform.devantler.tech/ci-runner: enabled
+            taints:
+              - key: platform.devantler.tech/ci-runner
+                value: enabled
+                effect: NoSchedule
 ```
 
 | Field | Default | Description |
@@ -96,6 +110,8 @@ spec:
 | `pools[].location` | — | Hetzner datacenter (e.g., `fsn1`) |
 | `pools[].min` | — | Minimum nodes in pool |
 | `pools[].max` | — | Maximum nodes in pool |
+| `pools[].labels` / `pools[].taints` | — | Node labels and taints for the pool's servers (the runner pool uses both to keep ordinary workloads off) |
+| `capacityBuffers` | `false` | Install the CapacityBuffer CRD and controller so the platform's `CapacityBuffer` reserves warm scale-up headroom |
 
 ### Cost guardrails
 
@@ -149,7 +165,10 @@ and the autoscaler reclaims any node that empties out
 
 It runs as a `HelmRelease` in `kube-system`
 (`k8s/providers/hetzner/infrastructure/controllers/descheduler/`), as a
-single-replica Deployment on a 30-minute descheduling loop. Enabled strategies:
+two-replica Deployment on a 30-minute descheduling loop. Required pod
+anti-affinity keeps the replicas on different nodes, and leader election lets
+only the lease holder evict pods, so a standby survives a node drain. Enabled
+strategies:
 
 - **Placement repair** — `RemovePodsViolatingNodeAffinity` (required affinity),
   `RemovePodsViolatingNodeTaints`, `RemovePodsViolatingInterPodAntiAffinity`,
