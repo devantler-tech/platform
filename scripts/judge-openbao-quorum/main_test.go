@@ -188,6 +188,8 @@ func TestCommandExitCodes(t *testing.T) {
 		{"help", []string{"-h"}, 2},
 		{"unknown flag", []string{"--input", write(current), servers, "--replace", "openbao-1", "--force"}, 2},
 		{"flag twice", []string{"--input", write(current), servers, "--replace", "openbao-1", "--replace", "openbao-2"}, 2},
+		{"flag twice after a -- value", []string{"--expect-servers", "--", "--replace", "--", "--expect-servers", "openbao-1", "--replace", "openbao-1", "--input", write(current)}, 2},
+		{"flag twice in = form", []string{"--input", write(current), servers, "--replace=openbao-1", "-replace=openbao-2"}, 2},
 		{"replace not expected", []string{"--input", write(current), servers, "--replace", "openbao-9"}, 2},
 		{"positional argument", []string{"--input", write(current), servers, "--replace", "openbao-1", "extra"}, 2},
 		{"missing input", []string{servers, "--replace", "openbao-1"}, 2},
