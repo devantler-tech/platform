@@ -4,10 +4,14 @@ name: Scan Go Vulnerabilities
 # Go code, a module file or the inventory is scanned, and a daily run on main catches an advisory
 # published after merge, so an unchanged module that has become vulnerable turns main red.
 #
+# This workflow is not one of the checks the main ruleset requires: a red scan shows on the pull
+# request and on main, but does not stop a merge on its own.
+#
 # scripts/go-vulnerability-modules.tsv lists every tracked module once: scanned, a negative
-# control, or exempt with its reason. The inventory job fails on an unlisted module, and every
-# scan includes the negative control, which must report its known advisories. A scan that reports
-# nothing on a module known to be vulnerable is a broken scanner, never a clean result.
+# control, test-only, or exempt with its reason. The inventory job fails on an unlisted module, and
+# every scan includes the negative control, which must report its known advisories. A scan that
+# reports nothing on a module known to be vulnerable is a broken scanner, never a clean result,
+# and a scan that analysed no package with Go code in its module fails as well.
 #
 # The scan itself is the organization's reviewed govulncheck action, the same scanner and
 # allowlist format the shared Go validation uses. Resolve a finding with
@@ -22,7 +26,9 @@ on:
       - "**/.govulncheck-allow.txt"
       - scripts/go-vulnerability-modules.tsv
       - scripts/check-go-vulnerability-inventory.sh
+      - scripts/judge-go-vulnerability-scan.sh
       - scripts/tests/test-check-go-vulnerability-inventory.sh
+      - scripts/tests/test-judge-go-vulnerability-scan.sh
       - .github/workflows/scan-go-vulnerabilities.yaml
   schedule:
     - cron: "37 5 * * *" # Daily at 05:37 UTC
@@ -31,8 +37,9 @@ on:
 permissions: {}
 
 concurrency:
-  group: scan-go-vulnerabilities-${{ github.event.pull_request.number || github.ref }}
-  # A newer run of the same pull request or branch supersedes the older scan.
+  group: scan-go-vulnerabilities-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  # A newer run of the same pull request, or of the same trigger on a branch, supersedes the older
+  # scan. A manual run never cancels the daily one.
   cancel-in-progress: true
 
 jobs:
@@ -50,10 +57,20 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: 🧪 Test the inventory check
+      # The judge's regressions read their throwaway modules with go list.
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧪 Test the inventory check and the scan judge
         run: |
-          shellcheck scripts/check-go-vulnerability-inventory.sh scripts/tests/test-check-go-vulnerability-inventory.sh
+          set -euo pipefail
+          shellcheck scripts/check-go-vulnerability-inventory.sh scripts/judge-go-vulnerability-scan.sh \
+            scripts/tests/test-check-go-vulnerability-inventory.sh scripts/tests/test-judge-go-vulnerability-scan.sh
           bash scripts/tests/test-check-go-vulnerability-inventory.sh
+          bash scripts/tests/test-judge-go-vulnerability-scan.sh
 
       - name: 🧾 Require a row for every tracked Go module
         run: bash scripts/check-go-vulnerability-inventory.sh
@@ -83,21 +100,25 @@ jobs:
       GOMEMLIMIT: 8GiB
       MODULE: ${{ matrix.directory }}
       EXPECT: ${{ matrix.expect }}
-      REPORT: .govulncheck-report.json
     steps:
       - name: 📄 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: 🔎 Detect an accepted-advisory list
-        id: allow
+      # The report goes under the runner's temporary directory, outside the checkout, so the judge
+      # can only read a report this job's scan wrote.
+      - name: 🔎 Prepare the scan
+        id: prepare
         run: |
           set -euo pipefail
+          report="$RUNNER_TEMP/govulncheck-report.json"
+          rm -f -- "$report"
+          printf 'report=%s\n' "$report" >>"$GITHUB_OUTPUT"
           if [ -f "$MODULE/.govulncheck-allow.txt" ]; then
-            printf 'file=%s\n' "$MODULE/.govulncheck-allow.txt" >>"$GITHUB_OUTPUT"
+            printf 'allow=%s\n' "$MODULE/.govulncheck-allow.txt" >>"$GITHUB_OUTPUT"
           else
-            printf 'file=\n' >>"$GITHUB_OUTPUT"
+            printf 'allow=\n' >>"$GITHUB_OUTPUT"
           fi
 
       # continue-on-error lets the next step judge the outcome against the module's expectation;
@@ -110,47 +131,18 @@ jobs:
         with:
           work-dir: ${{ matrix.directory }}
           go-version-file: ${{ matrix.directory }}/go.mod
-          allow-file: ${{ steps.allow.outputs.file }}
-          output-file: .govulncheck-report.json
+          allow-file: ${{ steps.prepare.outputs.allow }}
+          output-file: ${{ steps.prepare.outputs.report }}
 
+      # A scan that analysed no Go code also reports no advisory, so the judge requires the report
+      # to name at least one analysed package of the module with Go code, and fails on any report
+      # or module it cannot read.
       - name: ⚖️ Judge the scan against the module's expectation
         env:
           OUTCOME: ${{ steps.scan.outcome }}
-        run: |
-          set -euo pipefail
-          case "$EXPECT" in
-            clean)
-              if [ "$OUTCOME" != success ]; then
-                echo "::error::$MODULE reaches an advisory, or the scan failed (outcome '$OUTCOME')." \
-                  "The scan step lists each advisory; see docs/go-vulnerability-scan.md."
-                exit 1
-              fi
-              echo "$MODULE reaches no unaccepted advisory."
-              ;;
-            blocking)
-              if [ "$OUTCOME" = success ]; then
-                echo "::error::The negative control $MODULE reported no advisory, although it calls affected functions." \
-                  "The scanner or its database is not working, so no scan in this run can be trusted."
-                exit 1
-              fi
-              # The scan failing proves nothing on its own: an operational error also fails it.
-              # Require the report to show at least one reachable finding from a symbol scan.
-              if ! reachable="$(jq -ers '
-                  if (.[0].config.scan_level // "") != "symbol" then error("not a symbol scan") else
-                  [.[] | select(has("finding")) | .finding
-                   | select((.trace[0].function // null) != null) | .osv] | unique | length end
-                ' "$REPORT")"; then
-                echo "::error::The negative control $MODULE failed without a readable symbol-scan report, so the failure was not a finding."
-                exit 1
-              fi
-              if [ "$reachable" -lt 1 ]; then
-                echo "::error::The negative control $MODULE failed, but its report holds no reachable finding."
-                exit 1
-              fi
-              echo "The negative control $MODULE reported $reachable reachable advisories, as it must."
-              ;;
-            *)
-              echo "::error::Unknown expectation '$EXPECT' for $MODULE."
-              exit 1
-              ;;
-          esac
+          REPORT: ${{ steps.prepare.outputs.report }}
+          # The Go release the scan set up for this module, never a downloaded one.
+          GOTOOLCHAIN: local
+        run: >-
+          bash scripts/judge-go-vulnerability-scan.sh --module "$MODULE" --expect "$EXPECT"
+          --outcome "$OUTCOME" --report "$REPORT"
