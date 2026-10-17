@@ -21,6 +21,7 @@ const (
 	productionOutcomeStepID = "production-outcome"
 	productionDeployStepID  = "production-deploy"
 	productionOutcomeOutput = "${{ steps.production-outcome.outputs.stopped_before_production }}"
+	queuePreflightCommand   = "go run ./scripts/verify-merge-group-queued check"
 	productionOutcomeScript = `if [[ "${GITHUB_RUN_ATTEMPT}" == '1' && "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
   printf 'stopped_before_production=true\n' >>"${GITHUB_OUTPUT}"
 fi`
@@ -72,8 +73,13 @@ func validateProductionOutcome(workflow string) error {
 	if composite.Uses != deployCompositePath || composite.ID != productionDeployStepID {
 		return errors.New("the production-outcome step must directly follow the identified production composite")
 	}
-	if preflight.ID != "queue-preflight" {
-		return errors.New("the production composite must directly follow the queue preflight")
+	// The preflight's body is pinned too: a step that kept the id but ran
+	// something else could change production and then fail, which the report
+	// would read as a refusal before production.
+	if preflight.ID != "queue-preflight" ||
+		strings.TrimSpace(preflight.Run) != queuePreflightCommand ||
+		preflight.Uses != "" || preflight.If != nil || preflight.Shell != "" || preflight.Continue != nil {
+		return errors.New("the production composite must directly follow the pinned queue preflight")
 	}
 	for i, step := range steps {
 		if i != len(steps)-1 && step.ID == productionOutcomeStepID {
