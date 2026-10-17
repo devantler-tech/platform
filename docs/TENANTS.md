@@ -114,8 +114,8 @@ and workloads consume the values **from OpenBao via `ExternalSecret`s**.
 
 ### The GHCR image-pull secret (`ghcr-auth`)
 
-A **platform-managed** credential, not a tenant secret. Every registration dir
-ships an `ExternalSecret` for it (`external-secret-ghcr-auth.yaml`, or just
+A **platform-managed** credential, not a tenant secret. Every registration dir whose
+artifact or images are private ships an `ExternalSecret` for it (`external-secret-ghcr-auth.yaml`, or just
 `external-secret.yaml` when it is the directory's only one) that sources the shared org pull
 credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `openbao`
 **ClusterSecretStore** and materialises the `ghcr-auth` dockerconfigjson the
