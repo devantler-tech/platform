@@ -9,8 +9,10 @@ The decision behind this design is recorded in
 
 ## Two ways in
 
-Everything on the home network that the Platform or the maintainer needs to reach uses exactly one
-of two paths.
+Every internal web UI, and every appliance on the home network that the Platform or the maintainer
+needs to reach, is exposed in exactly one of two ways. This choice decides how people reach it.
+Integrations running on the Platform reach the home network through the WireGuard tunnel either
+way.
 
 | Path | What it is for | How it is protected |
 | --- | --- | --- |
@@ -62,6 +64,7 @@ public files.
 | Server end of the tunnel | In place, with no peer registered, so nothing can connect yet | [platform#2462](https://github.com/devantler-tech/platform/pull/2462) |
 | Home gateway registered as the tunnel's peer | Open | [platform#2473](https://github.com/devantler-tech/platform/issues/2473) |
 | Home gateway client and its DNS records | Defined in the UniFi tenant and paused | [unifi#2](https://github.com/devantler-tech/unifi/issues/2) |
+| Routing integration traffic between the tunnel and the networks it serves | Not built: the server end only listens | Not tracked yet |
 | Every internal web UI confirmed behind the zero-trust gate | Open | [platform#5001](https://github.com/devantler-tech/platform/issues/5001) |
 | Private per-appliance exposure record, with a quick way to move one appliance to VPN-only | Open | [platform#5001](https://github.com/devantler-tech/platform/issues/5001) |
 
