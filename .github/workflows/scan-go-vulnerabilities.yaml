@@ -1,0 +1,155 @@
+name: Scan Go Vulnerabilities
+
+# Reports advisories the platform's Go modules actually reach (#4961). A pull request that changes
+# Go code, a module file or the inventory is scanned, and a daily run on main catches an advisory
+# published after merge, so an unchanged module that has become vulnerable turns main red.
+#
+# scripts/go-vulnerability-modules.tsv lists every tracked module once: scanned, a negative
+# control, or exempt with its reason. The inventory job fails on an unlisted module, and every
+# scan includes the negative control, which must report its known advisories. A scan that reports
+# nothing on a module known to be vulnerable is a broken scanner, never a clean result.
+#
+# The scan itself is the organization's reviewed govulncheck action, the same scanner and
+# allowlist format the shared Go validation uses. Resolve a finding with
+# docs/go-vulnerability-scan.md.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "**/.govulncheck-allow.txt"
+      - scripts/go-vulnerability-modules.tsv
+      - scripts/check-go-vulnerability-inventory.sh
+      - scripts/tests/test-check-go-vulnerability-inventory.sh
+      - .github/workflows/scan-go-vulnerabilities.yaml
+  schedule:
+    - cron: "37 5 * * *" # Daily at 05:37 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scan-go-vulnerabilities-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  inventory:
+    name: 🧾 Check the Go module inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      modules: ${{ steps.matrix.outputs.modules }}
+    steps:
+      - name: 📄 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🧪 Test the inventory check
+        run: |
+          shellcheck scripts/check-go-vulnerability-inventory.sh scripts/tests/test-check-go-vulnerability-inventory.sh
+          bash scripts/tests/test-check-go-vulnerability-inventory.sh
+
+      - name: 🧾 Require a row for every tracked Go module
+        run: bash scripts/check-go-vulnerability-inventory.sh
+
+      - name: 🗂️ Build the scan matrix
+        id: matrix
+        run: |
+          set -euo pipefail
+          modules="$(bash scripts/check-go-vulnerability-inventory.sh --matrix)"
+          printf 'modules=%s\n' "$modules" >>"$GITHUB_OUTPUT"
+
+  scan:
+    name: 🛡️ Scan ${{ matrix.directory }}
+    needs: [inventory]
+    runs-on: ubuntu-latest
+    # One scan attempt with its own deadline, plus checkout and Go setup.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.inventory.outputs.modules) }}
+    env:
+      # govulncheck builds a whole-program call graph in memory. A soft heap limit under half of
+      # the public runner's 16 GB keeps a large module from getting the runner killed mid-scan.
+      GOMEMLIMIT: 8GiB
+      MODULE: ${{ matrix.directory }}
+      EXPECT: ${{ matrix.expect }}
+      REPORT: .govulncheck-report.json
+    steps:
+      - name: 📄 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: 🔎 Detect an accepted-advisory list
+        id: allow
+        run: |
+          set -euo pipefail
+          if [ -f "$MODULE/.govulncheck-allow.txt" ]; then
+            printf 'file=%s\n' "$MODULE/.govulncheck-allow.txt" >>"$GITHUB_OUTPUT"
+          else
+            printf 'file=\n' >>"$GITHUB_OUTPUT"
+          fi
+
+      # continue-on-error lets the next step judge the outcome against the module's expectation;
+      # that step fails the job on anything else, so no finding or error passes through.
+      - name: 🛡️ Scan for reachable vulnerabilities
+        id: scan
+        continue-on-error: true
+        timeout-minutes: 30
+        uses: devantler-tech/.github/.github/actions/govulncheck@61693f6ef2740f113ecd2a4ae01840557abe44e8 # v7.12.3
+        with:
+          work-dir: ${{ matrix.directory }}
+          go-version-file: ${{ matrix.directory }}/go.mod
+          allow-file: ${{ steps.allow.outputs.file }}
+          output-file: .govulncheck-report.json
+
+      - name: ⚖️ Judge the scan against the module's expectation
+        env:
+          OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          set -euo pipefail
+          case "$EXPECT" in
+            clean)
+              if [ "$OUTCOME" != success ]; then
+                echo "::error::$MODULE reaches an advisory, or the scan failed (outcome '$OUTCOME')." \
+                  "The scan step lists each advisory; see docs/go-vulnerability-scan.md."
+                exit 1
+              fi
+              echo "$MODULE reaches no unaccepted advisory."
+              ;;
+            blocking)
+              if [ "$OUTCOME" = success ]; then
+                echo "::error::The negative control $MODULE reported no advisory, although it calls affected functions." \
+                  "The scanner or its database is not working, so no scan in this run can be trusted."
+                exit 1
+              fi
+              # The scan failing proves nothing on its own: an operational error also fails it.
+              # Require the report to show at least one reachable finding from a symbol scan.
+              if ! reachable="$(jq -ers '
+                  if (.[0].config.scan_level // "") != "symbol" then error("not a symbol scan") else
+                  [.[] | select(has("finding")) | .finding
+                   | select((.trace[0].function // null) != null) | .osv] | unique | length end
+                ' "$REPORT")"; then
+                echo "::error::The negative control $MODULE failed without a readable symbol-scan report, so the failure was not a finding."
+                exit 1
+              fi
+              if [ "$reachable" -lt 1 ]; then
+                echo "::error::The negative control $MODULE failed, but its report holds no reachable finding."
+                exit 1
+              fi
+              echo "The negative control $MODULE reported $reachable reachable advisories, as it must."
+              ;;
+            *)
+              echo "::error::Unknown expectation '$EXPECT' for $MODULE."
+              exit 1
+              ;;
+          esac
