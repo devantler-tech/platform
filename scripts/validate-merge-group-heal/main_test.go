@@ -25,6 +25,9 @@ jobs:
       - uses: actions/checkout@example
       - uses: actions/setup-go@example
       - id: queue-preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}
         run: go run ./scripts/verify-merge-group-queued check
       - id: production-deploy
         uses: ./.github/actions/deploy-prod

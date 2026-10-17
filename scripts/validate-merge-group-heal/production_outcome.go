@@ -66,20 +66,15 @@ func validateProductionOutcome(workflow string) error {
 		!strings.HasPrefix(steps[1].Uses, "actions/setup-go@") || steps[1].ID != "" || steps[1].If != nil {
 		return errors.New("deploy job must be exactly checkout, Go setup, queue preflight, production composite and outcome report")
 	}
-	outcome, composite, preflight := steps[4], steps[3], steps[2]
+	outcome, composite := steps[4], steps[3]
 	if outcome.ID != productionOutcomeStepID {
 		return errors.New("the production-outcome step must be the deploy job's last step")
 	}
 	if composite.Uses != deployCompositePath || composite.ID != productionDeployStepID {
 		return errors.New("the production-outcome step must directly follow the identified production composite")
 	}
-	// The preflight's body is pinned too: a step that kept the id but ran
-	// something else could change production and then fail, which the report
-	// would read as a refusal before production.
-	if preflight.ID != "queue-preflight" ||
-		strings.TrimSpace(preflight.Run) != queuePreflightCommand ||
-		preflight.Uses != "" || preflight.If != nil || preflight.Shell != "" || preflight.Continue != nil {
-		return errors.New("the production composite must directly follow the pinned queue preflight")
+	if err := validateOutcomePreflight(workflow); err != nil {
+		return err
 	}
 	for i, step := range steps {
 		if i != len(steps)-1 && step.ID == productionOutcomeStepID {
@@ -103,6 +98,57 @@ func validateProductionOutcome(workflow string) error {
 	}
 	if strings.TrimSpace(outcome.Run) != productionOutcomeScript {
 		return errors.New("the production-outcome step must run exactly the pinned script")
+	}
+	return nil
+}
+
+// queuePreflightEnv is the whole environment the queue preflight may see.
+var queuePreflightEnv = map[string]string{
+	"GH_TOKEN":      "${{ github.token }}",
+	"QUEUE_RECEIPT": "${{ needs.changes.outputs.queue_receipt }}",
+}
+
+// validateOutcomePreflight pins the third deploy step whole. The report reads a
+// failed preflight as "nothing reached production", so the step may hold only
+// a name, its id, its exact environment and its exact command: any other key
+// (`uses`, `if`, `shell`, `continue-on-error`, `working-directory`, …) or any
+// extra variable (a GOFLAGS or BASH_ENV, say) could let it change production
+// and then fail, which the heal would then skip.
+func validateOutcomePreflight(workflow string) error {
+	var parsed struct {
+		Jobs map[string]struct {
+			Steps []map[string]any `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal([]byte(workflow), &parsed); err != nil {
+		return fmt.Errorf("parse workflow: %w", err)
+	}
+	steps := parsed.Jobs["deploy-prod"].Steps
+	if len(steps) != 5 {
+		return errors.New("deploy job must be exactly checkout, Go setup, queue preflight, production composite and outcome report")
+	}
+	preflight := steps[2]
+	for key := range preflight {
+		switch key {
+		case "name", "id", "env", "run":
+		default:
+			return fmt.Errorf("the queue preflight may not set %q", key)
+		}
+	}
+	if id, _ := preflight["id"].(string); id != "queue-preflight" {
+		return errors.New("the production composite must directly follow the queue preflight")
+	}
+	if run, _ := preflight["run"].(string); strings.TrimSpace(run) != queuePreflightCommand {
+		return errors.New("the queue preflight must run exactly " + queuePreflightCommand)
+	}
+	env, ok := preflight["env"].(map[string]any)
+	if !ok || len(env) != len(queuePreflightEnv) {
+		return errors.New("the queue preflight must set exactly its pinned environment")
+	}
+	for name, want := range queuePreflightEnv {
+		if got, _ := env[name].(string); got != want {
+			return fmt.Errorf("the queue preflight's %s must be %s", name, want)
+		}
 	}
 	return nil
 }
