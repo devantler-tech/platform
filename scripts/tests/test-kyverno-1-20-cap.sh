@@ -82,6 +82,14 @@ expect_fail 'later override' 'would override the cap' "RENOVATE_CONFIG=${overrid
 narrowed="$(renovate_with narrowed '(.packageRules[] | select(.matchPackageNames == ["kyverno"])) += {"matchUpdateTypes": ["major"]}')"
 expect_fail 'cap narrowed' 'must not be narrowed by matchUpdateTypes' "RENOVATE_CONFIG=${narrowed}"
 
+# 7b. Any filter counts, including one no list of known filters names.
+dep_narrowed="$(renovate_with dep-narrowed '(.packageRules[] | select(.matchPackageNames == ["kyverno/kyverno"])) += {"matchDepNames": ["other"]}')"
+expect_fail 'cap narrowed by another filter' 'must not be narrowed by matchDepNames' "RENOVATE_CONFIG=${dep_narrowed}"
+disabled="$(renovate_with disabled '(.packageRules[] | select(.matchPackageNames == ["kyverno"])) += {"enabled": false}')"
+expect_fail 'cap disables instead' 'must not be narrowed by enabled' "RENOVATE_CONFIG=${disabled}"
+shared="$(renovate_with shared '(.packageRules[] | select(.matchPackageNames == ["kyverno"]) | .matchPackageNames) = ["kyverno", "other"]')"
+expect_fail 'cap shared with another package' 'must name only kyverno in matchPackageNames' "RENOVATE_CONFIG=${shared}"
+
 # 8. The CLI pin is bumped to 1.20 by hand while the cap is in place.
 sed 's/^KYVERNO_VERSION=.*/KYVERNO_VERSION="1.20.0"/' "${root_dir}/.github/scripts/kyverno-version.sh" >"${work}/kyverno-version.sh"
 expect_fail 'CLI pinned at 1.20' 'outside its cap' "KYVERNO_CLI_PIN_FILE=${work}/kyverno-version.sh"

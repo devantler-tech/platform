@@ -75,20 +75,21 @@ cap_rules() {
 # Read one package's cap and check it cannot be widened or bypassed.
 # Prints the bound the cap sets.
 read_cap() {
-  local package="$1" rules count index allowed later
+  local package="$1" rules count index allowed later extra
 
   rules="$(cap_rules "${package}")" || fail "${renovate_config} must be valid JSON"
   count="$(jq -r 'length' <<<"${rules}")"
   [[ "${count}" == '1' ]] ||
     fail "Renovate must hold ${package} with exactly one allowedVersions rule, found ${count}"
 
-  for narrowing in matchFileNames matchManagers matchDatasources matchUpdateTypes \
-    matchCurrentVersion matchDepTypes matchCurrentValue excludePackageNames; do
-    [[ "$(jq -r --arg key "${narrowing}" '.[0].value | has($key)' <<<"${rules}")" == 'false' ]] ||
-      fail "the ${package} cap must not be narrowed by ${narrowing}, so it holds every update"
-  done
-  [[ "$(jq -r '.[0].value | if has("enabled") then .enabled else true end' <<<"${rules}")" == 'true' ]] ||
-    fail "the ${package} cap must cap with allowedVersions, not disable the package"
+  # The cap names its one package and nothing else, so no filter can narrow which updates
+  # it holds. Listing the allowed keys, not the narrowing ones, keeps a filter Renovate adds
+  # later from slipping past this check.
+  [[ "$(jq -c '.[0].value.matchPackageNames' <<<"${rules}")" == "$(jq -cn --arg p "${package}" '[$p]')" ]] ||
+    fail "the ${package} cap must name only ${package} in matchPackageNames"
+  extra="$(jq -r '.[0].value | keys - ["description", "matchPackageNames", "allowedVersions"] | join(", ")' <<<"${rules}")"
+  [[ -z "${extra}" ]] ||
+    fail "the ${package} cap must not be narrowed by ${extra}, so it holds every update"
 
   allowed="$(jq -r '.[0].value.allowedVersions' <<<"${rules}")"
   [[ "${allowed}" =~ ^\<([0-9]+\.[0-9]+\.[0-9]+)$ ]] ||
