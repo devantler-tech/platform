@@ -77,8 +77,13 @@ with your own public key and re-encrypt every `*.enc.yaml` file in the repo.
 
 GitHub Actions expect:
 
-- Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `HCLOUD_TOKEN`
-- Variables: (none required after the Hetzner migration)
+- Secrets: `GHCR_TOKEN`, `SOPS_AGE_KEY`, `HCLOUD_TOKEN`, `KUBE_CONFIG`,
+  `TALOS_CONFIG`, `WG_SERVER_PRIVATE_KEY` (plus the optional, DR-only
+  `DR_GH_ADMIN_TOKEN`), and `APP_PRIVATE_KEY` for the organization's GitHub App
+- Variables: `APP_CLIENT_ID`, the same GitHub App's client ID
+
+In devantler-tech the GitHub App pair comes from the organization. A copy
+outside it has to create both.
 
 See `.github/workflows/` for the exact names.
 
@@ -106,8 +111,8 @@ The platform uses a **hybrid SOPS + OpenBao** model:
   (database passwords, OIDC client secrets). PushSecrets seed these into
   OpenBao at first reconciliation.
 - **OpenBao** (self-hosted Vault fork) is the single source of truth for
-  all non-bootstrap secrets. Runs in the `openbao` namespace with
-  standalone file storage.
+  all non-bootstrap secrets. Runs in the `openbao` namespace in HA mode
+  with integrated Raft storage (`openbao_replicas`: 1 by default, 3 in prod).
 - **External Secrets Operator** syncs secrets from OpenBao into native K8s
   `Secret` objects via `ExternalSecret` and `ClusterSecretStore` CRs.
 - **PushSecret** CRs in `k8s/bases/infrastructure/vault-seed/` seed
@@ -149,7 +154,7 @@ No manual steps are required -- cluster creation is fully automated.
 1. `cp -R talos talos-<env>` (or reuse `talos`).
 2. `cp -R k8s/clusters/prod k8s/clusters/<env>` and update `cluster_name` +
    `provider` in the new overlay's `cluster-meta` patch.
-3. Edit `k8s/clusters/<env>/bootstrap/variables-cluster-{config-map,secret.enc}.yaml`.
+3. Edit `k8s/clusters/<env>/bootstrap/config-map.yaml` and `k8s/clusters/<env>/bootstrap/secret.enc.yaml`.
 4. `cp ksail.prod.yaml ksail.<env>.yaml`; update the per-cluster fields.
 5. Add the new environment to `.github/workflows/` pipelines as needed.
 
