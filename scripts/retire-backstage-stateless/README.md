@@ -4,6 +4,30 @@ The protected `retire-backstage-stateless.yaml` workflow runs this command on
 reviewed `main`. Keep its confirmation, source binding and first-attempt rules;
 a diagnostic result does not authorize a replay or clearing an operation journal.
 
+After the controller-owned lifecycle has completed, the separate protected
+`complete-backstage-retirement.yaml` workflow can remove the durable namespace
+journal. It is not a retry path. The completion command accepts only the exact
+terminal state: the captured stateless identities are absent, retained Helm
+history is uninstalled, the operation receipt and journal agree, both database
+instances and continuous archiving are healthy, reciprocal Retain volumes are
+unchanged, and the production apps root is blocked by that journal alone. Its
+single JSON Patch tests the namespace UID, resourceVersion and exact journal
+value before removing only that annotation. It then waits for current Flux
+readiness and repeats the retained-data proof twice.
+
+A completion refusal is always nonzero and names only its bounded stage:
+
+```text
+PORTAL-RETIREMENT=HOLD_COMPLETION stage=evidence-first
+```
+
+An already-cleared, partial, foreign or changed state is a refusal, never
+success or permission to broaden the write. Successful completion reports:
+
+```text
+PORTAL-RETIREMENT=COMPLETED journal=REMOVED preservationSamples=2 flux=READY dataRetirement=UNASSESSED
+```
+
 A preflight refusal exits nonzero and identifies the failing stage, for example:
 
 ```text
