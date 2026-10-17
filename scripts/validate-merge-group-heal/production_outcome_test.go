@@ -22,35 +22,40 @@ func TestActualProductionOutcome(t *testing.T) {
 // TestProductionOutcomeScript runs the pinned script for every outcome pair a
 // step can report. Only a refused preflight with a skipped composite may tell
 // the heal to stand down; every other pair, including the cancelled and empty
-// ones a crashed or cancelled job leaves, must write nothing.
+// ones a crashed or cancelled job leaves, must write nothing, and so must
+// every attempt after the first, whose refusal says nothing about what the
+// first attempt deployed.
 func TestProductionOutcomeScript(t *testing.T) {
 	outcomes := []string{"success", "failure", "cancelled", "skipped", ""}
-	for _, preflight := range outcomes {
-		for _, production := range outcomes {
-			output := filepath.Join(t.TempDir(), "output")
-			if err := os.WriteFile(output, nil, 0o600); err != nil {
-				t.Fatal(err)
-			}
-			cmd := exec.Command("bash", "-euo", "pipefail", "-c", productionOutcomeScript)
-			cmd.Env = []string{
-				"PATH=" + os.Getenv("PATH"),
-				"PREFLIGHT_OUTCOME=" + preflight,
-				"PRODUCTION_OUTCOME=" + production,
-				"GITHUB_OUTPUT=" + output,
-			}
-			if out, err := cmd.CombinedOutput(); err != nil {
-				t.Fatalf("preflight=%q production=%q: %v\n%s", preflight, production, err, out)
-			}
-			written, err := os.ReadFile(output)
-			if err != nil {
-				t.Fatal(err)
-			}
-			want := ""
-			if preflight == "failure" && production == "skipped" {
-				want = "stopped_before_production=true\n"
-			}
-			if string(written) != want {
-				t.Errorf("preflight=%q production=%q wrote %q, want %q", preflight, production, written, want)
+	for _, attempt := range []string{"1", "2", "10", ""} {
+		for _, preflight := range outcomes {
+			for _, production := range outcomes {
+				output := filepath.Join(t.TempDir(), "output")
+				if err := os.WriteFile(output, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.Command("bash", "-euo", "pipefail", "-c", productionOutcomeScript)
+				cmd.Env = []string{
+					"PATH=" + os.Getenv("PATH"),
+					"PREFLIGHT_OUTCOME=" + preflight,
+					"PRODUCTION_OUTCOME=" + production,
+					"GITHUB_OUTPUT=" + output,
+					"GITHUB_RUN_ATTEMPT=" + attempt,
+				}
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("attempt=%q preflight=%q production=%q: %v\n%s", attempt, preflight, production, err, out)
+				}
+				written, err := os.ReadFile(output)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := ""
+				if attempt == "1" && preflight == "failure" && production == "skipped" {
+					want = "stopped_before_production=true\n"
+				}
+				if string(written) != want {
+					t.Errorf("attempt=%q preflight=%q production=%q wrote %q, want %q", attempt, preflight, production, written, want)
+				}
 			}
 		}
 	}
@@ -72,8 +77,10 @@ func TestProductionOutcomeMutations(t *testing.T) {
 		{"suppressed", "        id: production-outcome\n", "        id: production-outcome\n        continue-on-error: true\n"},
 		{"reads the wrong composite", "${{ steps.production-deploy.outcome }}", "${{ steps.queue-preflight.outcome }}"},
 		{"reads a conclusion", "${{ steps.queue-preflight.outcome }}\n          PRODUCTION", "${{ steps.queue-preflight.conclusion }}\n          PRODUCTION"},
-		{"vouches for any preflight", `[[ "${PREFLIGHT_OUTCOME}" == 'failure' && `, `[[ `},
+		{"vouches for any preflight", `"${PREFLIGHT_OUTCOME}" == 'failure' && `, ``},
 		{"vouches for a run composite", `"${PRODUCTION_OUTCOME}" == 'skipped'`, `"${PRODUCTION_OUTCOME}" != 'success'`},
+		{"any attempt", `[[ "${GITHUB_RUN_ATTEMPT}" == '1' && `, `[[ `},
+		{"step before the preflight", "      - name: 🧾 Refuse an evicted or replaced merge group\n", "      - run: echo earlier-production-step\n\n      - name: 🧾 Refuse an evicted or replaced merge group\n"},
 		{"unidentified composite", "        id: production-deploy\n", ""},
 		{"not last", outcomeStep, "      - run: echo later-production-step\n\n" + outcomeStep},
 		{"step after it", "            printf 'stopped_before_production=true\\n' >>\"${GITHUB_OUTPUT}\"\n          fi\n", "            printf 'stopped_before_production=true\\n' >>\"${GITHUB_OUTPUT}\"\n          fi\n\n      - uses: ./.github/actions/deploy-prod\n"},

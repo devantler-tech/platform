@@ -22,6 +22,8 @@ jobs:
     outputs:
       stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}
     steps:
+      - uses: actions/checkout@example
+      - uses: actions/setup-go@example
       - id: queue-preflight
         run: go run ./scripts/verify-merge-group-queued check
       - id: production-deploy
@@ -645,7 +647,7 @@ const productionOutcomeStep = `      - name: record whether production was left 
           PREFLIGHT_OUTCOME: ${{ steps.queue-preflight.outcome }}
           PRODUCTION_OUTCOME: ${{ steps.production-deploy.outcome }}
         run: |
-          if [[ "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
+          if [[ "${GITHUB_RUN_ATTEMPT}" == '1' && "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
             printf 'stopped_before_production=true\n' >>"${GITHUB_OUTPUT}"
           fi
 `

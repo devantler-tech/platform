@@ -3643,14 +3643,17 @@ jobs:
         # Must stay the last step, straight after the composite: it vouches only
         # for the steps before it. A refused preflight skips the composite, so
         # nothing reached production; any other combination (a cancelled
-        # preflight, a composite that ran, a missing step) writes nothing.
+        # preflight, a composite that ran, a missing step) writes nothing. Only a
+        # first attempt may report it: a re-run of a failed deploy is refused
+        # because the PR has left the queue, while the earlier attempt may have
+        # left its artifact in production for the heal to replace.
         id: production-outcome
         if: always()
         env:
           PREFLIGHT_OUTCOME: ${{ steps.queue-preflight.outcome }}
           PRODUCTION_OUTCOME: ${{ steps.production-deploy.outcome }}
         run: |
-          if [[ "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
+          if [[ "${GITHUB_RUN_ATTEMPT}" == '1' && "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
             printf 'stopped_before_production=true\n' >>"${GITHUB_OUTPUT}"
           fi
 

@@ -565,7 +565,8 @@ verify that deployment before treating the production lane as clean.
 The heal stays idle for one failed deploy: when the queue preflight refused an evicted or replaced
 entry and the shared composite never started, production was not touched and there is nothing to
 restore. `deploy-prod`'s last step reports exactly that pair; any other outcome, including a missing
-report, still heals.
+report or any re-run attempt, still heals: a re-run is refused because the PR has already left
+the queue, while its first attempt may have deployed.
 
 **Persistence retirement is always two-stage.** A merge-group artifact is speculative, but
 Kubernetes PVC deletion is irreversible once `deletionTimestamp` is set: queue eviction and the

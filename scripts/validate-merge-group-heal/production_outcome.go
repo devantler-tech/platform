@@ -11,14 +11,17 @@ import (
 // The heal skips its restore deploy only on this one output (#4937). It may
 // claim that production was untouched only when the queue preflight refused the
 // entry and the composite never started, so the step that writes it is pinned:
-// its position (straight after the composite, last in the job), its
-// unconditional run, the two outcomes it reads and its exact script. Anything
+// its position (straight after the composite, last in a job of exactly five
+// steps), its unconditional run, the two outcomes it reads and its exact
+// script, which also stands down only on a first attempt: a re-run of a failed
+// deploy finds the PR already out of the queue and refuses, while an earlier
+// attempt may have left its artifact in production. Anything
 // looser could tell the heal to stand down after a deploy that did run.
 const (
 	productionOutcomeStepID = "production-outcome"
 	productionDeployStepID  = "production-deploy"
 	productionOutcomeOutput = "${{ steps.production-outcome.outputs.stopped_before_production }}"
-	productionOutcomeScript = `if [[ "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
+	productionOutcomeScript = `if [[ "${GITHUB_RUN_ATTEMPT}" == '1' && "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
   printf 'stopped_before_production=true\n' >>"${GITHUB_OUTPUT}"
 fi`
 )
@@ -53,11 +56,16 @@ func validateProductionOutcome(workflow string) error {
 		return errors.New("deploy job must export only the stopped-before-production outcome step's answer")
 	}
 
+	// The report vouches for every step before it, so the job holds exactly the
+	// five it can vouch for: checkout, Go setup, preflight, composite, report. A
+	// step added anywhere could touch production before a refused preflight.
 	steps := deploy.Steps
-	if len(steps) < 3 {
-		return errors.New("deploy job is missing its preflight, composite or outcome step")
+	if len(steps) != 5 ||
+		!strings.HasPrefix(steps[0].Uses, "actions/checkout@") || steps[0].ID != "" || steps[0].If != nil ||
+		!strings.HasPrefix(steps[1].Uses, "actions/setup-go@") || steps[1].ID != "" || steps[1].If != nil {
+		return errors.New("deploy job must be exactly checkout, Go setup, queue preflight, production composite and outcome report")
 	}
-	outcome, composite, preflight := steps[len(steps)-1], steps[len(steps)-2], steps[len(steps)-3]
+	outcome, composite, preflight := steps[4], steps[3], steps[2]
 	if outcome.ID != productionOutcomeStepID {
 		return errors.New("the production-outcome step must be the deploy job's last step")
 	}
