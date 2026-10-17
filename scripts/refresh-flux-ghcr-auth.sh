@@ -6427,8 +6427,11 @@ wait_for_flux_policy_handoff_claimable() {
 pause_flux_policy_handoff() {
   local resource_version annotations_present attempt
   local stable_resource_version="" current_resource_version
+  local stable_parent_resource_version="" current_parent_resource_version
   local unreadable_observations=0 child_not_owned_observations=0
-  local parent_unstable_observations=0 resource_version_changes=0
+  local parent_not_owned_observations=0 parent_reconciling_observations=0
+  local parent_changed_observations=0
+  local resource_version_changes=0
   local claim_attempt reread_resource_version inspected_uid=""
   local max_claim_attempts="${FLUX_POLICY_HANDOFF_CLAIM_MAX_ATTEMPTS:-5}"
   # Separate stderr sink for the re-read, so a successful re-read cannot truncate
@@ -6565,41 +6568,62 @@ pause_flux_policy_handoff() {
 
   # A suspended reconciliation intentionally does not advance
   # status.observedGeneration and can leave its pre-suspension Reconciling=True
-  # condition behind. That status is therefore not a valid post-pause clock.
-  # Require the exact owned fence and its resourceVersion to remain unchanged
-  # across two fresh observations instead, while re-proving the parent in each
-  # polling pass. Any controller or competing API write resets the quiet proof.
+  # condition behind. That status is therefore not a valid post-pause clock for
+  # the child. Require both exact owned fences and both resourceVersions to
+  # remain unchanged across two fresh observations instead. Any controller or
+  # competing API write to either object resets the quiet proof.
+  # The parent must also stay quiescent. The restart's final proof above already
+  # refuses a parent that a retired execution left Reconciling=True, so a
+  # Reconciling=True seen here was written after that proof by an execution
+  # that is still running. Unchanged resourceVersions do not prove that it has
+  # finished (#4873).
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     sleep "${SYNC_INTERVAL}"
     if ! read_flux_policy_fences; then
       unreadable_observations=$((unreadable_observations + 1))
       stable_resource_version=""
+      stable_parent_resource_version=""
       continue
     fi
     if ! flux_policy_handoff_is_owned; then
       child_not_owned_observations=$((child_not_owned_observations + 1))
       stable_resource_version=""
-    elif ! flux_policy_parent_is_stable; then
-      parent_unstable_observations=$((parent_unstable_observations + 1))
+      stable_parent_resource_version=""
+    elif ! flux_policy_parent_is_owned; then
+      parent_not_owned_observations=$((parent_not_owned_observations + 1))
       stable_resource_version=""
+      stable_parent_resource_version=""
+    elif ! flux_policy_parent_is_quiescent; then
+      parent_reconciling_observations=$((parent_reconciling_observations + 1))
+      stable_resource_version=""
+      stable_parent_resource_version=""
     else
       current_resource_version="$(jq -er '.metadata.resourceVersion' \
         "${flux_policy_handoff_state_file}")"
+      current_parent_resource_version="$(jq -er '.metadata.resourceVersion' \
+        "${flux_policy_parent_state_file}")"
       if [[ -n "${stable_resource_version}" &&
-        "${current_resource_version}" == "${stable_resource_version}" ]]; then
+        "${current_resource_version}" == "${stable_resource_version}" &&
+        "${current_parent_resource_version}" == "${stable_parent_resource_version}" ]]; then
         return 0
       fi
-      if [[ -n "${stable_resource_version}" ]]; then
+      if [[ -n "${stable_resource_version}" &&
+        "${current_resource_version}" != "${stable_resource_version}" ]]; then
         resource_version_changes=$((resource_version_changes + 1))
       fi
+      if [[ -n "${stable_parent_resource_version}" &&
+        "${current_parent_resource_version}" != "${stable_parent_resource_version}" ]]; then
+        parent_changed_observations=$((parent_changed_observations + 1))
+      fi
       stable_resource_version="${current_resource_version}"
+      stable_parent_resource_version="${current_parent_resource_version}"
     fi
   done
 
   # Report only fixed predicate names and counts from the observations already
   # taken. Snapshots, owner identities, versions and controller messages can
   # carry private data; a diagnostic must neither expose them nor change proof.
-  echo "::error::Flux did not acknowledge a stable pause of the image-verification policy owner (observations=${SYNC_ATTEMPTS} unreadable=${unreadable_observations} child_not_owned=${child_not_owned_observations} parent_unstable=${parent_unstable_observations} version_changes=${resource_version_changes})."
+  echo "::error::Flux did not acknowledge a stable pause of the image-verification policy owner (observations=${SYNC_ATTEMPTS} unreadable=${unreadable_observations} child_not_owned=${child_not_owned_observations} parent_not_owned=${parent_not_owned_observations} parent_reconciling=${parent_reconciling_observations} parent_changed=${parent_changed_observations} version_changes=${resource_version_changes})."
   return 1
 }
 
