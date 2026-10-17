@@ -1,0 +1,44 @@
+# The audited listener, byte for byte as
+# k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml
+# ships it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-openbao-listener
+  namespace: openbao
+data:
+  listener.hcl: |
+    listener "tcp" {
+      address = "0.0.0.0:8204"
+      cluster_address = "127.0.0.1:8205"
+      tls_cert_file = "/openbao/arc-tls/tls.crt"
+      tls_key_file = "/openbao/arc-tls/tls.key"
+      tls_min_version = "tls12"
+      tls_disable_client_certs = true
+    }
+---
+# The same audited content outside openbao.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-openbao-listener
+  namespace: arc-runners
+data:
+  listener.hcl: |
+    listener "tcp" {
+      address = "0.0.0.0:8204"
+      cluster_address = "127.0.0.1:8205"
+      tls_cert_file = "/openbao/arc-tls/tls.crt"
+      tls_key_file = "/openbao/arc-tls/tls.key"
+      tls_min_version = "tls12"
+      tls_disable_client_certs = true
+    }
+---
+# Another name is not this rule's concern, whatever it holds.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openbao-config
+  namespace: openbao
+data:
+  extra.hcl: anything
