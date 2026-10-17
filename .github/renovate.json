@@ -321,6 +321,16 @@
       "automerge": false
     },
     {
+      "description": "Hold the Kyverno chart below 3.10.0, the chart line for Kyverno 1.20. Kyverno 1.20 removes the kyverno.io ClusterPolicy and Policy APIs that almost every admission, mutation and generation rule here still uses, so taking it before the migration would drop them in one deploy (#4994, epic #4984). Each Kyverno minor ships as its own chart minor (3.0 carries 1.10 through 3.9 carrying 1.19). Remove this rule, the CLI rule below and scripts/check-kyverno-1-20-cap.sh once no kyverno.io resource (ClusterPolicy, Policy or the legacy PolicyException) is left under k8s/; that check fails until then if the cap is removed or widened, and fails after then until it is removed.",
+      "matchPackageNames": ["kyverno"],
+      "allowedVersions": "<3.10.0"
+    },
+    {
+      "description": "Hold the Kyverno CI policy CLI below 1.20.0 for the same reason and with the same removal condition as the chart rule above (#4994).",
+      "matchPackageNames": ["kyverno/kyverno"],
+      "allowedVersions": "<1.20.0"
+    },
+    {
       "description": "This test-only parser witnesses the verified Coroot node-agent source, not the latest library. Keep proposals visible, but require the consumer regression and a verified deployed-source refresh before adopting a different parser (platform#4934).",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["github.com/coroot/logparser"],
