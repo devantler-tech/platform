@@ -225,6 +225,64 @@ func TestFluxOperatorVersionRemainsDiscoverable(t *testing.T) {
 	}
 }
 
+// ghcr.io gives Renovate no release date for the flux-operator chart, and an
+// undated release never clears the repository-wide minimumReleaseAge, so a
+// discoverable version is still never proposed without a 0-day exemption (#4985).
+// The exemption must not let an update merge unreviewed, so every update of the
+// chart, of any type, must resolve to both settings.
+func TestFluxOperatorUpdatesAreProposedAndReviewed(t *testing.T) {
+	config, dep := fluxOperatorRenovateConfig(t)
+	if err := checkUpdatePolicy(config.PackageRules, dep, fluxOperatorUpdatePolicy); err != nil {
+		t.Fatal(err)
+	}
+}
+
+var fluxOperatorUpdatePolicy = map[string]any{"automerge": false, "minimumReleaseAge": "0 days"}
+
+type renovateConfig struct {
+	CustomManagers []struct {
+		CustomType          string `json:"customType"`
+		DatasourceTemplate  string `json:"datasourceTemplate"`
+		DepNameTemplate     string `json:"depNameTemplate"`
+		PackageNameTemplate string `json:"packageNameTemplate"`
+	} `json:"customManagers"`
+	PackageRules []map[string]any `json:"packageRules"`
+}
+
+// fluxOperatorRenovateConfig reads the committed Renovate config and describes
+// the chart as its dedicated manager extracts it.
+func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependency) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/renovate.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config renovateConfig
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	dep := renovateDependency{
+		packageName: strings.TrimPrefix(chartSources[0].url, "oci://"),
+		packageFile: chartSources[0].directory + "/oci-repository.yaml",
+	}
+	count := 0
+	for _, manager := range config.CustomManagers {
+		// Renovate looks a dependency up by packageName, which defaults to depName.
+		name := manager.PackageNameTemplate
+		if name == "" {
+			name = manager.DepNameTemplate
+		}
+		if name == dep.packageName {
+			count++
+			dep.manager, dep.datasource = "custom."+manager.CustomType, manager.DatasourceTemplate
+		}
+	}
+	if count != 1 || dep.manager == "custom." || dep.datasource == "" {
+		t.Fatalf("expected one flux-operator manager naming its type and datasource, found %d", count)
+	}
+	return config, dep
+}
+
 func TestCIExecutesMigrationContract(t *testing.T) {
 	workflow := readDocument(t, filepath.Join(repositoryRoot(t), ".github/workflows/ci.yaml"))
 	steps, _ := object(object(workflow, "jobs"), "changes")["steps"].([]any)
