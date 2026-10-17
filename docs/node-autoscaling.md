@@ -115,9 +115,9 @@ spec:
 
 ### Cost guardrails
 
-- **Hard max per pool** — `pools[].max` caps each pool independently. Set to
-  `4` so any single CX type can serve a full burst instead of forcing larger
-  types; the `maxNodesTotal` total ceiling still caps the autoscaler at 3
+- **Hard max per pool** — `pools[].max` caps each pool independently. The two
+  general pools are set to `4` so any single CX type can serve a full burst
+  instead of forcing larger types, and the CI runner pool is capped at `1`; the `maxNodesTotal` total ceiling still caps the autoscaler at 3
   (`9 − 6` baseline), so this changes only the type distribution, never the
   node count.
 - **Total node ceiling** — `maxNodesTotal` caps the **total cluster node

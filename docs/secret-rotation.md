@@ -1,8 +1,12 @@
 # Secret Rotation Design
 
-Status: **proposal** (2026-05-27). Goal: automated rotation of platform secrets,
-preferring **OpenBao-native** mechanisms. This document is the design; each phase
-ships as its own reviewed PR.
+Status: **partly implemented**. Goal: automated rotation of platform secrets,
+preferring **OpenBao-native** mechanisms. The OpenBao Database secrets engine
+rotates the umami PostgreSQL credentials today (weekly blue/green handover by the
+`umami-db-rotation` CronJob in `k8s/bases/infrastructure/vault-db-rotation/`), and
+the fleetdm MySQL static role is configured but idle while fleetdm is disabled.
+This document is the design for the remaining phases; each ships as its own
+reviewed PR.
 
 > **Note (2026-06-03):** the fleetdm app — the flagship for Phases 1–2 — is
 > currently **disabled** (`k8s/bases/apps/kustomization.yaml`); its OpenBao
@@ -11,8 +15,10 @@ ships as its own reviewed PR.
 
 ## Current state
 
-- **OpenBao = KV v2 + Kubernetes auth only** (configured by the `vault-config`
-  Job). No Database secrets engine is enabled yet.
+- **OpenBao = KV v2, Kubernetes auth, OIDC (Dex) auth and the Database secrets
+  engine**, all configured by the `vault-config` Job. The engine holds static
+  roles `umami`, `umami-blue` and `umami-green` on the `umami-postgres`
+  connection, and `fleet` on the `fleetdm-mysql` connection.
 - **Two sourcing paths coexist (mid-migration):**
   - **OpenBao → ESO**: generators (the `password-*` files in `k8s/bases/infrastructure/vault-seed/`) seed OpenBao KV
     once; `ExternalSecret`s sync to consumer namespaces (1h refresh). Used by
@@ -59,7 +65,8 @@ unlike *dynamic* roles, which mint ephemeral users the app would have to re-fetc
      authenticating with the **root** credential already in KV
      (`apps/fleetdm/mysql` → `mysql-root-password`). Restrict `allowed_roles` to
      `fleet`.
-   - Create static role `fleet`: `username=fleet`, `rotation_period=720h` (30d).
+   - Create static role `fleet`: `username=fleet`,
+     `rotation_period=${fleetdm_mysql_rotation_period:=168h}` (7d).
      **Target the app user, never root** (OpenBao does not distinguish root when
      rotating).
 2. **Consume the rotated credential** — *not* a plain `ExternalSecret`. ESO's
