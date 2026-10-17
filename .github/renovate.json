@@ -356,6 +356,7 @@
   ],
   "ignorePaths": [
     "k8s/providers/hetzner/infrastructure/controllers/kubelet-serving-cert-approver/deployment.yaml",
-    "scripts/retire-backstage-stateless/poller-native/go.mod"
+    "scripts/retire-backstage-stateless/poller-native/go.mod",
+    "scripts/tests/fixtures/govulncheck-negative-control/go.mod"
   ]
 }

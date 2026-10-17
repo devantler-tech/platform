@@ -1,0 +1,149 @@
+name: Scan Go Vulnerabilities
+
+# Reports advisories the platform's Go modules actually reach (#4961). A pull request that changes
+# Go code, a module file or the inventory is scanned, and a daily run on main catches an advisory
+# published after merge, so an unchanged module that has become vulnerable turns main red.
+#
+# This workflow is not one of the checks the main ruleset requires: a red scan shows on the pull
+# request and on main, but does not stop a merge on its own.
+#
+# scripts/go-vulnerability-modules.tsv lists every tracked module once: scanned, a negative
+# control, test-only, or exempt with its reason. The inventory job fails on an unlisted module, and
+# every scan includes the negative control, which must report its known advisories. A scan that
+# reports nothing on a module known to be vulnerable is a broken scanner, never a clean result,
+# and a scan that analysed no package with Go code in its module fails as well.
+#
+# The scan itself is the organization's reviewed govulncheck action, the same scanner and
+# allowlist format the shared Go validation uses. Resolve a finding with
+# docs/go-vulnerability-scan.md.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "**/*.go"
+      - "**/go.mod"
+      - "**/go.sum"
+      - "**/.govulncheck-allow.txt"
+      - scripts/go-vulnerability-modules.tsv
+      - scripts/check-go-vulnerability-inventory.sh
+      - scripts/judge-go-vulnerability-scan.sh
+      - scripts/tests/test-check-go-vulnerability-inventory.sh
+      - scripts/tests/test-judge-go-vulnerability-scan.sh
+      - .github/workflows/scan-go-vulnerabilities.yaml
+  schedule:
+    - cron: "37 5 * * *" # Daily at 05:37 UTC
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scan-go-vulnerabilities-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  # A newer run of the same pull request, or of the same trigger on a branch, supersedes the older
+  # scan. A manual run never cancels the daily one.
+  cancel-in-progress: true
+
+jobs:
+  inventory:
+    name: 🧾 Check the Go module inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      modules: ${{ steps.matrix.outputs.modules }}
+    steps:
+      - name: 📄 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The judge's regressions read their throwaway modules with go list.
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧪 Test the inventory check and the scan judge
+        run: |
+          set -euo pipefail
+          shellcheck scripts/check-go-vulnerability-inventory.sh scripts/judge-go-vulnerability-scan.sh \
+            scripts/tests/test-check-go-vulnerability-inventory.sh scripts/tests/test-judge-go-vulnerability-scan.sh
+          bash scripts/tests/test-check-go-vulnerability-inventory.sh
+          bash scripts/tests/test-judge-go-vulnerability-scan.sh
+
+      - name: 🧾 Require a row for every tracked Go module
+        run: bash scripts/check-go-vulnerability-inventory.sh
+
+      - name: 🗂️ Build the scan matrix
+        id: matrix
+        run: |
+          set -euo pipefail
+          modules="$(bash scripts/check-go-vulnerability-inventory.sh --matrix)"
+          printf 'modules=%s\n' "$modules" >>"$GITHUB_OUTPUT"
+
+  scan:
+    name: 🛡️ Scan ${{ matrix.directory }}
+    needs: [inventory]
+    runs-on: ubuntu-latest
+    # One scan attempt with its own deadline, plus checkout and Go setup.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.inventory.outputs.modules) }}
+    env:
+      # govulncheck builds a whole-program call graph in memory. A soft heap limit under half of
+      # the public runner's 16 GB keeps a large module from getting the runner killed mid-scan.
+      GOMEMLIMIT: 8GiB
+      MODULE: ${{ matrix.directory }}
+      EXPECT: ${{ matrix.expect }}
+    steps:
+      - name: 📄 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The report goes under the runner's temporary directory, outside the checkout, so the judge
+      # can only read a report this job's scan wrote.
+      - name: 🔎 Prepare the scan
+        id: prepare
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/govulncheck-report.json"
+          rm -f -- "$report"
+          printf 'report=%s\n' "$report" >>"$GITHUB_OUTPUT"
+          if [ -f "$MODULE/.govulncheck-allow.txt" ]; then
+            printf 'allow=%s\n' "$MODULE/.govulncheck-allow.txt" >>"$GITHUB_OUTPUT"
+          else
+            printf 'allow=\n' >>"$GITHUB_OUTPUT"
+          fi
+
+      # continue-on-error lets the next step judge the outcome against the module's expectation;
+      # that step fails the job on anything else, so no finding or error passes through.
+      - name: 🛡️ Scan for reachable vulnerabilities
+        id: scan
+        continue-on-error: true
+        timeout-minutes: 30
+        uses: devantler-tech/.github/.github/actions/govulncheck@61693f6ef2740f113ecd2a4ae01840557abe44e8 # v7.12.3
+        with:
+          work-dir: ${{ matrix.directory }}
+          go-version-file: ${{ matrix.directory }}/go.mod
+          allow-file: ${{ steps.prepare.outputs.allow }}
+          output-file: ${{ steps.prepare.outputs.report }}
+
+      # A scan that analysed no Go code also reports no advisory, so the judge requires the report
+      # to name at least one analysed package of the module with Go code, and fails on any report
+      # or module it cannot read.
+      - name: ⚖️ Judge the scan against the module's expectation
+        env:
+          OUTCOME: ${{ steps.scan.outcome }}
+          VERDICT: ${{ steps.scan.outputs.verdict }}
+          REPORT: ${{ steps.prepare.outputs.report }}
+          # The Go release the scan set up for this module, never a downloaded one.
+          GOTOOLCHAIN: local
+        run: >-
+          bash scripts/judge-go-vulnerability-scan.sh --module "$MODULE" --expect "$EXPECT"
+          --outcome "$OUTCOME" --verdict "$VERDICT" --report "$REPORT"
