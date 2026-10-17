@@ -190,7 +190,7 @@ Guardrails (all in the `HelmRelease` values):
 - Evictions go through the **eviction API**, so PodDisruptionBudgets are always
   honored.
 - **PVC-backed pods are never evicted** (`PodsWithPVC` protection): CNPG
-  clusters, Longhorn-attached workloads, openbao, spire-server. Stateful moves
+  clusters, Longhorn-attached workloads and openbao. Stateful moves
   stay deliberate runbook operations (see `docs/dr/`).
 - All default protections stay on: DaemonSet, mirror/static, system-critical,
   terminating, local-storage, and failed bare pods are untouchable.

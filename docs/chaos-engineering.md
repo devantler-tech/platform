@@ -31,8 +31,9 @@ removed afterwards.
    (prod). The namespace is PSA `privileged` and pre-exempted in the Kyverno
    cluster-policies, so the daemon admits.
 
-2. **Pick a steady-state hypothesis** — e.g. *"killing one `whoami` replica never
-   drops the route, because the PDB + 2 replicas + spread keep one serving."*
+2. **Pick a steady-state hypothesis** — e.g. *"killing one `homepage` replica never
+   drops the route, because its PDB and minimum of 2 replicas keep one serving."*
+   (`whoami` runs a single replica in prod, so killing it does drop its route.)
    Watch it in Coroot (`observability.${domain}`) — request success-rate and
    latency are the SLIs that must hold.
 
@@ -72,16 +73,16 @@ Proves a single-replica loss is absorbed without dropping the service.
 apiVersion: chaos-mesh.org/v1alpha1
 kind: PodChaos
 metadata:
-  name: whoami-pod-kill
+  name: homepage-pod-kill
   namespace: chaos-mesh
 spec:
   action: pod-kill
   mode: one # kill exactly one matching pod
   selector:
     namespaces:
-      - whoami
+      - homepage
     labelSelectors:
-      app.kubernetes.io/name: whoami
+      app.kubernetes.io/instance: homepage
   duration: 30s
 ```
 
@@ -137,7 +138,7 @@ The node-roll / autoscaler-churn faults that strand Longhorn volumes
 watching Longhorn re-attach. Chaos Mesh's `StressChaos` (CPU/memory pressure)
 can reproduce the eviction pressure that triggers it; pair it with a manual
 `kubectl drain` of one Longhorn worker and confirm volumes re-attach and the
-SPIRE/ExternalSecrets chain stays healthy. Document findings on the relevant
+ExternalSecrets chain stays healthy. Document findings on the relevant
 Theme-1 issue.
 
 ## Reference

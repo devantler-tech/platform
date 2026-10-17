@@ -41,12 +41,14 @@ kubectl config set-credentials oidc-local \
   --exec-arg=--oidc-extra-scope=groups \
   --exec-arg=--oidc-extra-scope=audience:server:client_id:public-client \
   --exec-arg=--token-cache-storage=keyring \
-  --exec-arg=--certificate-authority-data=$(cat "$(mkcert -CAROOT)/rootCA.pem" | base64 | tr -d '\n')
+  --exec-arg=--certificate-authority-data=$(kubectl -n default get configmap platform-ca -o jsonpath='{.data.ca-certificates\.crt}' | base64 | tr -d '\n')
 ```
 
 > **Note:** The `--certificate-authority-data` flag is only needed for
-> local development where TLS is signed by mkcert.  You can find the CA at
-> `$(mkcert -CAROOT)/rootCA.pem`.
+> local development, where TLS is signed by the cluster's self-signed
+> cert-manager CA (`platform-ca`). trust-manager publishes that CA in the
+> `platform-ca` ConfigMap (key `ca-certificates.crt`) in every namespace;
+> read it with the admin context KSail created.
 
 ### Production cluster (`platform.devantler.tech`)
 
@@ -224,7 +226,7 @@ file under `~/.kube/cache`.
 | --- | --- | --- |
 | `error: You must be logged in to the server (Unauthorized)` | Token expired or wrong audience | Run `kubectl oidc-login setup --oidc-issuer-url=... --oidc-client-id=kubectl` to verify the flow |
 | Browser doesn't open | kubelogin not installed or not in `$PATH` | Verify `kubectl oidc-login --help` works |
-| `x509: certificate signed by unknown authority` (local) | mkcert CA not trusted | Pass `--certificate-authority-data` or install the mkcert root CA in your system trust store |
+| `x509: certificate signed by unknown authority` (local) | The local `platform-ca` is not trusted | Pass `--certificate-authority-data` from the `platform-ca` ConfigMap, or add that CA to your system trust store |
 | `Forbidden` on a **read** | Email not bound, or resource outside the read-only roles | Check `kubectl auth whoami`; confirm the email matches the `oidc-view.yaml` / `oidc-cluster-reader.yaml` subjects |
 | `Forbidden` on a **write** | Expected — OIDC is read-only | Use the [break-glass admin cert](#break-glass-admin-access) for writes |
 
