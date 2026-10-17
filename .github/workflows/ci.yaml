@@ -901,6 +901,10 @@ jobs:
               - 'scripts/report-cilium-rollout-gate-suppression.sh'
               - 'scripts/tests/test-cilium-rollout-gate-suppression-signal.sh'
               - 'scripts/wait-for-platform-flux-revision.sh'
+              # Both halves, so editing the prune check alone — or its test
+              # alone — still runs the check that covers it.
+              - 'scripts/check-flux-prune-failures.sh'
+              - 'scripts/tests/test-check-flux-prune-failures.sh'
               # Both halves, so editing the reconcile wrapper alone — or its
               # test alone — still runs the check that covers it.
               - 'scripts/reconcile-flux-workloads.sh'
@@ -2143,6 +2147,16 @@ jobs:
         # retries that self-inflicted failure exactly once — and, in the other
         # direction, that a genuine reconcile failure is still never retried.
         run: bash scripts/tests/test-flux-reconcile-control-plane-restart.sh
+
+      - name: 🧹 Validate the deploy fails on a failed Flux prune
+        if: needs.changes.outputs.k8s == 'true'
+        # Flux reports a refused delete as PruneFailed and still reports the
+        # layer reconciled (#4734). Pin that the deploy fails on one at its own
+        # revision, ignores an earlier deploy's, and fails rather than passes
+        # when it can read no event at that revision.
+        run: |
+          shellcheck scripts/check-flux-prune-failures.sh scripts/tests/test-check-flux-prune-failures.sh
+          bash scripts/tests/test-check-flux-prune-failures.sh
 
       - name: 🧢 Validate the DR rebuild caps Talos-bootstrapped CoreDNS
         if: needs.changes.outputs.k8s == 'true'
