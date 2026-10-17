@@ -140,9 +140,10 @@ jobs:
       - name: ⚖️ Judge the scan against the module's expectation
         env:
           OUTCOME: ${{ steps.scan.outcome }}
+          VERDICT: ${{ steps.scan.outputs.verdict }}
           REPORT: ${{ steps.prepare.outputs.report }}
           # The Go release the scan set up for this module, never a downloaded one.
           GOTOOLCHAIN: local
         run: >-
           bash scripts/judge-go-vulnerability-scan.sh --module "$MODULE" --expect "$EXPECT"
-          --outcome "$OUTCOME" --report "$REPORT"
+          --outcome "$OUTCOME" --verdict "$VERDICT" --report "$REPORT"
