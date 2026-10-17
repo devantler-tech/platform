@@ -79,6 +79,22 @@ expect_fail 'cap not a bound' "must have the form '<X.Y.Z'" "RENOVATE_CONFIG=${r
 override="$(renovate_with override '.packageRules += [{"matchPackageNames": ["kyverno*"], "allowedVersions": "<9.0.0"}]')"
 expect_fail 'later override' 'would override the cap' "RENOVATE_CONFIG=${override}"
 
+# 6b. Renovate matches package names without regard to case, so a later rule naming the
+# package in another case overrides the cap too.
+override_case="$(renovate_with override-case '.packageRules += [{"matchPackageNames": ["Kyverno"], "allowedVersions": "<9.0.0"}]')"
+expect_fail 'later override in another case' 'would override the cap' "RENOVATE_CONFIG=${override_case}"
+override_cli_case="$(renovate_with override-cli-case '.packageRules += [{"matchPackageNames": ["KYVERNO/Kyverno"], "allowedVersions": "<9.0.0"}]')"
+expect_fail 'later CLI override in another case' 'would override the cap' "RENOVATE_CONFIG=${override_cli_case}"
+
+# 6c. A cap that names the package in another case is not the literal cap, so none is found.
+cap_case="$(renovate_with cap-case '(.packageRules[] | select(.matchPackageNames == ["kyverno"]) | .matchPackageNames) = ["Kyverno"]')"
+expect_fail 'cap named in another case' 'exactly one allowedVersions rule, found 0' "RENOVATE_CONFIG=${cap_case}"
+
+# 6d. A root renovate.json comes before .github/renovate.json, so the cap would not apply.
+mkdir -p "${work}/root-config"
+printf '{}\n' >"${work}/root-config/renovate.json"
+expect_fail 'root renovate.json takes precedence' 'takes precedence over .github/renovate.json' "RENOVATE_ROOT_DIR=${work}/root-config"
+
 # 7. The cap is narrowed so it no longer holds every update.
 narrowed="$(renovate_with narrowed '(.packageRules[] | select(.matchPackageNames == ["kyverno"])) += {"matchUpdateTypes": ["major"]}')"
 expect_fail 'cap narrowed' 'must not be narrowed by matchUpdateTypes' "RENOVATE_CONFIG=${narrowed}"
@@ -166,6 +182,12 @@ flux_patches="$(mini_tree flux-patches)"
 printf '  patches:\n    - patch: "{}"\n' >>"${flux_patches}/clusters/test/flux-kustomization.yaml"
 expect_fail 'Flux Kustomization carries patches' \
   'Flux Kustomization root in clusters/test carries spec.patches' "RENDER_K8S_ROOT=${flux_patches}"
+
+# 9e2. Flux adds a Flux Kustomization's own components to the build, out of the render's sight.
+flux_components="$(mini_tree flux-components)"
+printf '  components:\n    - ../component\n' >>"${flux_components}/clusters/test/flux-kustomization.yaml"
+expect_fail 'Flux Kustomization carries components' \
+  'Flux Kustomization root in clusters/test carries spec.components' "RENDER_K8S_ROOT=${flux_components}"
 
 # 9f. A root that does not render is unknown, never clean.
 unrenderable="$(mini_tree unrenderable)"

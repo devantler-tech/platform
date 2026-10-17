@@ -46,6 +46,12 @@ fail() {
 }
 
 command -v jq >/dev/null 2>&1 || fail 'jq is required to inspect the Renovate policy'
+# Renovate reads the first config file it finds, and a root renovate.json or renovate.json5
+# comes before .github/renovate.json, so the cap would not be the policy Renovate runs.
+for preferred in renovate.json renovate.json5; do
+  [[ ! -e "${RENOVATE_ROOT_DIR:-${root_dir}}/${preferred}" ]] ||
+    fail "${preferred} at the repository root takes precedence over .github/renovate.json, so the Kyverno cap there is not the policy Renovate runs"
+done
 [[ -d "${k8s_root}" ]] || fail "manifest root ${k8s_root} does not exist"
 
 # version_lt A B: true when A sorts strictly before B.
@@ -110,6 +116,7 @@ read_cap() {
 
   # Renovate applies package rules in order and a later match wins. Only a later rule
   # that names other packages literally is provably unrelated; anything else may match.
+  # Renovate compares package names without regard to case, so this does too.
   index="$(jq -r '.[0].key' <<<"${rules}")"
   later="$(jq -r --arg package "${package}" --argjson at "${index}" '
     [.packageRules[$at + 1:][] |
@@ -117,7 +124,7 @@ read_cap() {
       select(
         ((.matchPackageNames // []) | length) == 0 or
         any(.matchPackageNames[];
-          . == $package or (test("^[A-Za-z0-9@][A-Za-z0-9._/@-]*$") | not))
+          ascii_downcase == ($package | ascii_downcase) or (test("^[A-Za-z0-9@][A-Za-z0-9._/@-]*$") | not))
       )] | length
   ' "${renovate_config}")" || fail "cannot inspect the rules after the ${package} cap"
   [[ "${later}" == '0' ]] ||
@@ -185,13 +192,15 @@ for overlay in "${render_root}"/clusters/*/; do
   flux_rows="$(yq -N -r '
     .. | select(type == "!!map" and .kind == "Kustomization" and
       ((.apiVersion // "") | test("^kustomize\\.toolkit\\.fluxcd\\.io/"))) |
-    [(.metadata.name // "-"), (((.spec.patches // []) | length) | tostring), (.spec.path // "")] |
+    [(.metadata.name // "-"), (((.spec.patches // []) | length) | tostring), (((.spec.components // []) | length) | tostring), (.spec.path // "")] |
     join("	")
   ' "${work}/render.yaml")" || fail "cannot read the Flux Kustomizations in ${overlay#"${render_root}"/}"
-  while IFS=$'\t' read -r name patch_count path; do
+  while IFS=$'\t' read -r name patch_count component_count path; do
     [[ -n "${name}" ]] || continue
     [[ "${patch_count}" == '0' ]] ||
       fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} carries spec.patches, which Flux applies after the build this check renders, so the Kyverno chart version it deploys is unknown"
+    [[ "${component_count}" == '0' ]] ||
+      fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} carries spec.components, which Flux adds to the build this check renders, so the Kyverno chart version it deploys is unknown"
     [[ -n "${path}" ]] || fail "Flux Kustomization ${name} in ${overlay#"${render_root}"/} names no spec.path"
     roots+=("${render_root}/${path#./}")
   done <<<"${flux_rows}"
