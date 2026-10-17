@@ -41,6 +41,80 @@ func TestMissingOrIneffectiveAdmissionCannotAuthorizeOwnerDeletion(t *testing.T)
 	}
 }
 
+func TestControllerCompletedRetirementDuringAdmissionIsObservedWithoutReplay(t *testing.T) {
+	retirementRunner(t)
+	f := retirementFixture(t)
+	completed := false
+	nativeDeletes := 0
+	execute := func(c context.Context, p string, a ...string) ([]byte, error) {
+		args := strings.Join(a, " ")
+		if p == "kubectl" && strings.Contains(args, " delete ") && strings.Contains(args, "?dryRun=All") && strings.Contains(args, "/helmreleases/backstage?dryRun=All") && !completed {
+			completed = true
+			f.deleted = true
+			f.historyStatus = "uninstalled"
+			return nil, fmt.Errorf("target disappeared during dry-run")
+		}
+		if p == "kubectl" && strings.Contains(args, " delete ") && !strings.Contains(args, "?dryRun=All") {
+			nativeDeletes++
+			return nil, fmt.Errorf("duplicate lifecycle submission")
+		}
+		return f.execute(c, p, a...)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, execute); code != 0 || !completed || !f.deleted || nativeDeletes != 0 || !strings.Contains(out.String(), "RETIRED_STATELESS") {
+		t.Fatalf("controller-completed retirement was replayed or rejected: code=%d completed=%t deleted=%t nativeDeletes=%d output=%s", code, completed, f.deleted, nativeDeletes, &out)
+	}
+}
+
+func TestPartialControllerRetirementDuringAdmissionIsNeverReplayed(t *testing.T) {
+	retirementRunner(t)
+	f := retirementFixture(t)
+	started := false
+	nativeDeletes := 0
+	execute := func(c context.Context, p string, a ...string) ([]byte, error) {
+		args := strings.Join(a, " ")
+		if p == "kubectl" && strings.Contains(args, " delete ") && strings.Contains(args, "?dryRun=All") && strings.Contains(args, "/helmreleases/backstage?dryRun=All") && !started {
+			started = true
+			f.deleted = true
+			return nil, fmt.Errorf("target disappeared during dry-run")
+		}
+		if p == "kubectl" && strings.Contains(args, " delete ") && !strings.Contains(args, "?dryRun=All") {
+			nativeDeletes++
+			return nil, fmt.Errorf("duplicate lifecycle submission")
+		}
+		return f.execute(c, p, a...)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, execute); code != 2 || !started || nativeDeletes != 0 || !strings.Contains(out.String(), "HOLD_POSTCONDITION") {
+		t.Fatalf("partial controller retirement was replayed or accepted: code=%d started=%t nativeDeletes=%d output=%s", code, started, nativeDeletes, &out)
+	}
+}
+
+func TestForeignControllerLifecycleDuringAdmissionIsNeverAdopted(t *testing.T) {
+	retirementRunner(t)
+	f := retirementFixture(t)
+	replaced := false
+	nativeDeletes := 0
+	execute := func(c context.Context, p string, a ...string) ([]byte, error) {
+		args := strings.Join(a, " ")
+		if p == "kubectl" && strings.Contains(args, " delete ") && strings.Contains(args, "?dryRun=All") && strings.Contains(args, "/helmreleases/backstage?dryRun=All") && !replaced {
+			replaced = true
+			object(f.hr["metadata"])["uid"] = "replacement-release-uid"
+			object(f.hr["metadata"])["deletionTimestamp"] = "2026-10-17T21:30:00Z"
+			return nil, fmt.Errorf("target changed during dry-run")
+		}
+		if p == "kubectl" && strings.Contains(args, " delete ") && !strings.Contains(args, "?dryRun=All") {
+			nativeDeletes++
+			return nil, fmt.Errorf("duplicate lifecycle submission")
+		}
+		return f.execute(c, p, a...)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, execute); code != 2 || !replaced || nativeDeletes != 0 || !strings.Contains(out.String(), "HOLD_ADMISSION") {
+		t.Fatalf("foreign controller lifecycle was adopted or replayed: code=%d replaced=%t nativeDeletes=%d output=%s", code, replaced, nativeDeletes, &out)
+	}
+}
+
 func TestAPIDefaultedFenceMustMatchTheReviewedGetMethod(t *testing.T) {
 	for _, method := range []string{"GET", "POST"} {
 		t.Run(method, func(t *testing.T) {

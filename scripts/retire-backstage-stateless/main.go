@@ -807,6 +807,23 @@ func unchangedOwner(a, b, chart map[string]any) bool {
 	}
 	return true
 }
+
+func (e engine) controllerLifecycleStarted(before, after snapshot) bool {
+	if !sameStoredContent(before.release, after.release) {
+		return false
+	}
+	if after.owner != nil {
+		if !identityComplete(after.owner) || identity(after.owner) != identity(before.owner) || field(after.owner, "metadata", "uid") != field(before.owner, "metadata", "uid") || field(after.owner, "metadata", "generation") != field(before.owner, "metadata", "generation") || !reflect.DeepEqual(after.owner["spec"], before.owner["spec"]) || text(field(after.owner, "metadata", "deletionTimestamp")) == "" {
+			return false
+		}
+	}
+	if after.chart != nil {
+		if !identityComplete(after.chart) || identity(after.chart) != identity(before.chart) || field(after.chart, "metadata", "uid") != field(before.chart, "metadata", "uid") || !reflect.DeepEqual(after.chart["spec"], before.chart["spec"]) || e.chartOwned(after) != nil {
+			return false
+		}
+	}
+	return true
+}
 func targetResource(r map[string]any) bool {
 	name := text(field(r, "metadata", "name"))
 	kind := text(r["kind"])
@@ -1070,13 +1087,26 @@ func run(args []string, out io.Writer, execute command) int {
 	if err != nil || !reflect.DeepEqual(before, kept) {
 		return hold("HOLD_MUTATION")
 	}
+	controllerLifecycle := false
 	if e.admissionControls(ctx, current) != nil {
-		return hold("HOLD_ADMISSION")
-	}
-	// Kubernetes owns the ongoing finalizer once DELETE may have been submitted.
-	// A workflow error, timeout or process stop cannot cancel its retries.
-	if nativeSubmitted, err = e.remove(ctx, current.owner, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage"); err != nil {
-		return hold("HOLD_MUTATION")
+		// The GitOps deletion can reach the Helm controller immediately after the
+		// durable journal unlocks the fence. If that happens while the admission
+		// probes run, observe the already-started exact lifecycle; never replay it.
+		observed, observeErr := e.collect(ctx)
+		if observeErr != nil || !e.controllerLifecycleStarted(current, observed) || e.deployed(observed) != nil {
+			return hold("HOLD_ADMISSION")
+		}
+		kept, observeErr = preserved(observed)
+		if observeErr != nil || !reflect.DeepEqual(before, kept) {
+			return hold("HOLD_ADMISSION")
+		}
+		controllerLifecycle = true
+	} else {
+		// Kubernetes owns the ongoing finalizer once DELETE may have been submitted.
+		// A workflow error, timeout or process stop cannot cancel its retries.
+		if nativeSubmitted, err = e.remove(ctx, current.owner, "/apis/helm.toolkit.fluxcd.io/v2/namespaces/backstage/helmreleases/backstage"); err != nil {
+			return hold("HOLD_MUTATION")
+		}
 	}
 	var after snapshot
 	// The native uninstall is allowed five minutes. A two-minute observation
@@ -1105,6 +1135,9 @@ func run(args []string, out io.Writer, execute command) int {
 			return hold("HOLD_POSTCONDITION")
 		}
 		if field(after.chart, "metadata", "deletionTimestamp") == nil {
+			if controllerLifecycle {
+				return hold("HOLD_POSTCONDITION")
+			}
 			if _, err = e.remove(ctx, after.chart, "/apis/source.toolkit.fluxcd.io/v1/namespaces/backstage/helmcharts/backstage-backstage"); err != nil {
 				return hold("HOLD_MUTATION")
 			}
