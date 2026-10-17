@@ -379,6 +379,17 @@ runs:
         PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       run: ./scripts/wait-for-platform-flux-revision.sh "${PLATFORM_MANIFEST_DIGEST}"
 
+    - name: 🧹 Fail when Flux could not prune a removed resource
+      # Flux reports a refused delete as a PruneFailed event and still
+      # reports the layer reconciled, so the two steps above pass while the
+      # removed object keeps running unmanaged (#4734). Read only the events
+      # carrying this deploy's exact revision; an empty or unreadable read
+      # fails rather than passes.
+      shell: bash
+      env:
+        PLATFORM_MANIFEST_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
+      run: ./scripts/check-flux-prune-failures.sh "${PLATFORM_MANIFEST_DIGEST}"
+
     - name: 💾 Verify restored database redundancy and retained storage
       shell: bash
       run: go run ./scripts/maintain-longhorn-clients verify
