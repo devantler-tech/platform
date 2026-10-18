@@ -104,8 +104,8 @@ func TestRepositoryGuardsRequiredResult(t *testing.T) {
 		if guard != nil {
 			t.Fatal("duplicate repository result guard")
 		}
-		copy := step
-		guard = &copy
+		resultGuard := step
+		guard = &resultGuard
 	}
 	if guard == nil || guard.If != "" || guard.Continue != nil || strings.TrimSpace(guard.Run) == "" {
 		t.Fatal("missing unconditional repository result guard")

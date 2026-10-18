@@ -690,9 +690,9 @@ jobs:
               - 'scripts/tests/test-crossview-login-alerter-runtime.sh'
               - '.github/workflows/ci.yaml'
 
-  # The full offline fixture suite runs alongside changes, which retains the real production
-  # render and ShellCheck. Both deployment and the required gate wait for these regressions.
-  # Like changes, this uses kubectl, yq and jq supplied by the ubuntu-latest runner.
+  # Repository-wide guards run unconditionally alongside changes, render production and run
+  # ShellCheck. Deployment and the required gate both wait for this job's success.
+  # kubectl is pinned and checksum-verified; yq and jq come from the ubuntu-latest runner.
   validate-repository-guards:
     name: 🛡️ Validate Repository Guards
     runs-on: ubuntu-latest
