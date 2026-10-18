@@ -234,7 +234,7 @@ func TestDeploymentHandoffRejectsAnyOtherAppsFailure(t *testing.T) {
 		map[string]any{"type": "Ready", "status": "False", "observedGeneration": 1, "reason": "ReconciliationFailed", "message": "another application failed"},
 	}
 	var out bytes.Buffer
-	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 {
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=evidence-first\n" {
 		t.Fatalf("unrelated applications failure was admitted: code=%d patches=%d output=%s", code, f.patches, &out)
 	}
 }
@@ -244,7 +244,7 @@ func TestDeploymentHandoffRejectsApplicationChangesAfterTheRetirementSource(t *t
 	deploymentHandoffRunner(t)
 	f.handoffPaths = []string{"k8s/providers/hetzner/apps/kustomization.yaml"}
 	var out bytes.Buffer
-	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 {
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=source-diff\n" {
 		t.Fatalf("application drift was admitted before terminal completion: code=%d patches=%d output=%s", code, f.patches, &out)
 	}
 }
@@ -254,7 +254,7 @@ func TestDeploymentHandoffRequiresCurrentMainCD(t *testing.T) {
 	deploymentHandoffRunner(t)
 	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main")
 	var out bytes.Buffer
-	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 {
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=admission\n" {
 		t.Fatalf("non-CD workflow admitted the handoff: code=%d patches=%d output=%s", code, f.patches, &out)
 	}
 }
