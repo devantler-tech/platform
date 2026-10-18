@@ -16,6 +16,7 @@ import (
 
 const completionWorkflow = "devantler-tech/platform/.github/workflows/complete-backstage-retirement.yaml@refs/heads/main"
 const deploymentWorkflow = "devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main"
+const mergeGroupDeploymentWorkflow = "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main"
 
 var platformRoots = map[string]bool{
 	"apps": true, "bootstrap": true, "flux-system": true,
@@ -38,6 +39,13 @@ var deploymentHandoffPaths = map[string]bool{
 	"scripts/retire-backstage-stateless/native_test.go":            true,
 	"scripts/tests/test-flux-reconcile-control-plane-restart.sh":   true,
 	"scripts/tests/test-talos-render-kernel-args.sh":               true,
+}
+
+func deploymentHandoffContext() (admitted, currentMain bool) {
+	event, ref, workflow := os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_REF"), os.Getenv("GITHUB_WORKFLOW_REF")
+	currentMain = event == "workflow_dispatch" && ref == "refs/heads/main" && workflow == deploymentWorkflow
+	mergeGroup := event == "merge_group" && workflow == mergeGroupDeploymentWorkflow && regexp.MustCompile(`^refs/heads/gh-readonly-queue/main/pr-[1-9][0-9]*-[a-f0-9]{40}$`).MatchString(ref)
+	return currentMain || mergeGroup, currentMain
 }
 
 type completionRecord struct {
@@ -361,13 +369,14 @@ func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
 		_, _ = fmt.Fprintln(out, "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage="+stage)
 		return 2
 	}
-	if len(args) != 1 || args[0] != "--admit-deployment-handoff" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_WORKFLOW_REF") != deploymentWorkflow || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
+	admitted, currentMain := deploymentHandoffContext()
+	if len(args) != 1 || args[0] != "--admit-deployment-handoff" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || !admitted || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
 		return hold("admission")
 	}
 	e := engine{execute: execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), readOnly: true}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	if e.sourceCurrent(ctx) != nil {
+	if currentMain && e.sourceCurrent(ctx) != nil {
 		return hold("source")
 	}
 	namespace, err := e.read(ctx, "get", "namespace", "backstage", "--output=json")
@@ -406,7 +415,7 @@ func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
 		return hold("preservation-second")
 	}
 	secondReceipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
-	if err != nil || !reflect.DeepEqual(receipt, secondReceipt) || e.sourceCurrent(ctx) != nil {
+	if err != nil || !reflect.DeepEqual(receipt, secondReceipt) || deploymentHandoffSourceSafe(ctx, e, record) != nil || currentMain && e.sourceCurrent(ctx) != nil {
 		return hold("closing-source")
 	}
 	const result = "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n"

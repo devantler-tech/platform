@@ -15,6 +15,7 @@ type completionFixture struct {
 	record       string
 	receipt      map[string]any
 	handoffPaths []string
+	sourceChecks int
 	cleared      bool
 	patches      int
 	postMutation func()
@@ -116,6 +117,17 @@ func deploymentHandoffRunner(t *testing.T) {
 	t.Setenv("PORTAL_RETIREMENT_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
 }
 
+func deploymentMergeGroupHandoffRunner(t *testing.T) {
+	t.Helper()
+	t.Setenv("GITHUB_EVENT_NAME", "merge_group")
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main")
+	t.Setenv("GITHUB_REF", "refs/heads/gh-readonly-queue/main/pr-5048-"+strings.Repeat("d", 40))
+	t.Setenv("GITHUB_RUN_ID", "999")
+	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
+	t.Setenv("GITHUB_SHA", strings.Repeat("a", 40))
+	t.Setenv("PORTAL_RETIREMENT_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
+}
+
 func readyConditions() []any {
 	return []any{
 		map[string]any{"type": "Reconciling", "status": "False", "observedGeneration": 1},
@@ -132,6 +144,10 @@ func journalBlockedConditions() []any {
 
 func (f *completionFixture) execute(ctx context.Context, program string, args ...string) ([]byte, error) {
 	joined := strings.Join(args, " ")
+	if program == "bash" && strings.Contains(joined, "scripts/verify-prod-recovery-source.sh") {
+		f.sourceChecks++
+		return []byte("PROD_RECOVERY_SOURCE=PASS\n"), nil
+	}
 	if program == "git" {
 		switch {
 		case strings.Contains(joined, "merge-base --is-ancestor"):
@@ -215,7 +231,7 @@ func TestDeploymentHandoffAcceptsOnlyExactTerminalJournalBlock(t *testing.T) {
 	f := completedRetirementFixture(t)
 	deploymentHandoffRunner(t)
 	var out bytes.Buffer
-	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sourceChecks != 2 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
 		e := engine{execute: f.execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), readOnly: true}
 		namespace, namespaceErr := e.read(context.Background(), "get", "namespace", "backstage", "--output=json")
 		record, recordErr := parseCompletionRecord(text(field(namespace, "metadata", "annotations", fenceAnnotation)), namespace)
@@ -223,6 +239,15 @@ func TestDeploymentHandoffAcceptsOnlyExactTerminalJournalBlock(t *testing.T) {
 		fenceErr := e.requireFence(context.Background())
 		observed, collectErr := e.collect(context.Background())
 		t.Fatalf("exact terminal journal block was not admitted read-only: code=%d patches=%d output=%s namespace=%v record=%v fence=%v collect=%v completed=%v roots=%v", code, f.patches, &out, namespaceErr, recordErr, fenceErr, collectErr, completedState(observed, record, true), platformRootState(observed, record, e.revision, false))
+	}
+}
+
+func TestDeploymentHandoffAcceptsExactMainMergeGroupTerminalJournalBlock(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentMergeGroupHandoffRunner(t)
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sourceChecks != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		t.Fatalf("exact main merge-group terminal journal block was not admitted read-only: code=%d patches=%d sourceChecks=%d output=%s", code, f.patches, f.sourceChecks, &out)
 	}
 }
 
@@ -249,13 +274,23 @@ func TestDeploymentHandoffRejectsApplicationChangesAfterTheRetirementSource(t *t
 	}
 }
 
-func TestDeploymentHandoffRequiresCurrentMainCD(t *testing.T) {
+func TestDeploymentHandoffRejectsNonDeploymentWorkflow(t *testing.T) {
 	f := completedRetirementFixture(t)
 	deploymentHandoffRunner(t)
 	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main")
 	var out bytes.Buffer
 	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=admission\n" {
 		t.Fatalf("non-CD workflow admitted the handoff: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestDeploymentHandoffRejectsForeignMergeGroupRef(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentMergeGroupHandoffRunner(t)
+	t.Setenv("GITHUB_REF", "refs/heads/feature/backstage-retirement")
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=admission\n" {
+		t.Fatalf("foreign merge-group ref was admitted: code=%d patches=%d output=%s", code, f.patches, &out)
 	}
 }
 
