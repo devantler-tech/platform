@@ -72,6 +72,12 @@ type completionRecord struct {
 	retiring                                                                   map[string]string
 }
 
+type completionDeployment struct {
+	ID          json.Number `json:"id"`
+	SHA         string      `json:"sha"`
+	Environment string      `json:"environment"`
+}
+
 type completionAttestationRecord struct {
 	VerificationResult struct {
 		Signature struct {
@@ -117,14 +123,14 @@ func completionAccepted(ctx context.Context, e engine, deploymentRun string) err
 		return errors.New("deployment run identity unverified")
 	}
 	b, err = completionAPI(ctx, e.execute, "repos/devantler-tech/platform/deployments?sha="+e.sha+"&environment=prod&per_page=100")
-	var deployments []map[string]any
+	var deployments []completionDeployment
 	if err != nil || json.Unmarshal(b, &deployments) != nil || len(deployments) == 0 || len(deployments) >= 100 {
 		return errors.New("deployment census unavailable")
 	}
 	accepted := false
 	for _, deployment := range deployments {
-		id := fmt.Sprint(deployment["id"])
-		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || deployment["sha"] != e.sha || deployment["environment"] != "prod" {
+		id := deployment.ID.String()
+		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || deployment.SHA != e.sha || deployment.Environment != "prod" {
 			return errors.New("deployment identity unverified")
 		}
 		b, err = completionAPI(ctx, e.execute, "repos/devantler-tech/platform/deployments/"+id+"/statuses?per_page=100")
