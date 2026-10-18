@@ -434,3 +434,81 @@ func nativeSecretRequest(r *http.Request) (map[string]any, error) {
 	}
 	return map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]any{"name": "sh.helm.release.v1.backstage.v4", "namespace": "backstage", "labels": labels}, "type": string(secret[3][0]), "data": data}, nil
 }
+
+// Exercise the complete guarded entrypoint with a real kubectl journal PATCH.
+// All other lifecycle requests stay inside the existing offline fixture.
+func TestNativeJournalWriterKeepsItsManagerAndIdentityPreconditions(t *testing.T) {
+	bin, err := exec.LookPath("kubectl")
+	if err != nil {
+		if os.Getenv("PORTAL_REQUIRE_NATIVE_CONTROL") == "1" {
+			t.Fatal("required journal writer control needs kubectl")
+		}
+		t.Skip("native journal writer control requires kubectl")
+	}
+	retirementRunner(t)
+	f := retirementFixture(t)
+	initial := encode(t, f.namespace)
+	var mu sync.Mutex
+	patches := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api":
+			_, _ = io.WriteString(w, `{"kind":"APIVersions","apiVersion":"v1","versions":["v1"],"serverAddressByClientCIDRs":[]}`)
+		case "/apis":
+			_, _ = io.WriteString(w, `{"kind":"APIGroupList","apiVersion":"v1","groups":[]}`)
+		case "/api/v1":
+			_, _ = io.WriteString(w, `{"kind":"APIResourceList","apiVersion":"v1","groupVersion":"v1","resources":[{"name":"namespaces","singularName":"namespace","namespaced":false,"kind":"Namespace","verbs":["get","patch"]}]}`)
+		case "/api/v1/namespaces/backstage":
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(initial)
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			patches++
+			var ops []map[string]any
+			if r.Method != http.MethodPatch || r.URL.Query().Get("fieldManager") != "backstage-retirement" || r.Header.Get("Content-Type") != "application/json-patch+json" || json.NewDecoder(r.Body).Decode(&ops) != nil || len(ops) != 3 || ops[0]["op"] != "test" || ops[0]["path"] != "/metadata/uid" || ops[0]["value"] != "namespace-uid" || ops[1]["op"] != "test" || ops[1]["path"] != "/metadata/resourceVersion" || ops[1]["value"] != "12" || ops[2]["op"] != "add" || ops[2]["path"] != "/metadata/annotations/platform.devantler.tech~1backstage-retirement" {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = io.WriteString(w, `{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Forbidden","code":403}`)
+				return
+			}
+			journal, decodeErr := decode([]byte(text(ops[2]["value"])))
+			if decodeErr != nil || journal["namespaceUID"] != "namespace-uid" || journal["run"] != "42" || journal["phase"] != "fenced" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			namespace, _ := decode(initial)
+			object(field(namespace, "metadata", "annotations"))[fenceAnnotation] = ops[2]["value"]
+			object(namespace["metadata"])["resourceVersion"] = "13"
+			_ = json.NewEncoder(w).Encode(namespace)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	cfg := filepath.Join(t.TempDir(), "kubeconfig")
+	body := "apiVersion: v1\nkind: Config\nclusters:\n- name: fixture\n  cluster:\n    server: " + server.URL + "\ncontexts:\n- name: admin@prod\n  context:\n    cluster: fixture\n    user: fixture\ncurrent-context: admin@prod\nusers:\n- name: fixture\n  user: {}\n"
+	if err := os.WriteFile(cfg, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", cfg)
+	execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if program == "kubectl" && strings.Contains(strings.Join(args, " "), "patch namespace backstage") {
+			data, err := capture(ctx, bin, args...)
+			if err == nil {
+				f.namespace, err = decode(data)
+				f.fenceInstalled = err == nil
+			}
+			return data, err
+		}
+		return f.execute(ctx, program, args...)
+	}
+	var out bytes.Buffer
+	code := run([]string{"--execute"}, &out, execute)
+	mu.Lock()
+	defer mu.Unlock()
+	if code != 0 || patches != 1 || !f.fenceInstalled {
+		t.Fatalf("native journal writer lost its field manager or identity: code=%d patches=%d %s", code, patches, &out)
+	}
+}
