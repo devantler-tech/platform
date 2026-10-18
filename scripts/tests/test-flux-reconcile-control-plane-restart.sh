@@ -98,7 +98,15 @@ chmod +x "${fake_reconcile}"
 cat >"${fake_handoff}" <<'FAKE_HANDOFF'
 #!/usr/bin/env bash
 set -euo pipefail
-exit "${HANDOFF_EXIT:-1}"
+attempt=1
+if [[ -f "${HANDOFF_COUNT}" ]]; then
+  attempt="$(cat "${HANDOFF_COUNT}")"
+  attempt=$((attempt + 1))
+fi
+printf '%s\n' "${attempt}" >"${HANDOFF_COUNT}"
+status="$(printf '%s\n' ${HANDOFF_EXITS:-1} | sed -n "${attempt}p")"
+[[ -n "${status}" ]] || status=1
+exit "${status}"
 FAKE_HANDOFF
 chmod +x "${fake_handoff}"
 
@@ -107,10 +115,10 @@ run_case() {
   local gen_read_fails="${5:-0}"
   local gen_fail_only_call="${6:-}"
   local baseline_file="${7:-}"
-  local handoff_exit="${8:-1}"
+  local handoff_exits="${8:-1}"
   : >"${call_log}"
   : >"${handoff_output}"
-  rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount"
+  rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount" "${tmp_dir}/handoffcount"
   set +e
   GEN_STATE="${tmp_dir}/genstate" \
     GEN_READ_FAILS="${gen_read_fails:-0}" \
@@ -123,7 +131,8 @@ run_case() {
     KUBECTL="${fake_kubectl}" \
     RECONCILE_BIN="${fake_reconcile}" \
     RETIREMENT_HANDOFF_BIN="${fake_handoff}" \
-    HANDOFF_EXIT="${handoff_exit}" \
+    HANDOFF_COUNT="${tmp_dir}/handoffcount" \
+    HANDOFF_EXITS="${handoff_exits}" \
     GITHUB_OUTPUT="${handoff_output}" \
     FLUX_CONTROL_PLANE_BASELINE_FILE="${baseline_file}" \
     FLUX_CONTROL_PLANE_ROLLOUT_TIMEOUT=1s \
@@ -173,6 +182,17 @@ run_case persistent 1 2 "1 1"
   fail 'a failure persisting through the retry must still fail the deploy'
 [[ "${case_calls}" -eq 2 ]] ||
   fail "the retry must be granted exactly once (ran ${case_calls})"
+
+# 4b. The handoff verifier is repeated after the one evidence-backed retry. A
+# terminal journal state that settles only after that retry must admit the
+# deployment and publish the same scoped output as an immediate handoff.
+run_case retirement_handoff_after_retry 1 2 "1 1" 0 "" "" "1 0"
+[[ "${case_status}" -eq 0 ]] ||
+  fail 'a terminal retirement handoff admitted after the retry must let the deployment continue'
+[[ "${case_calls}" -eq 2 ]] ||
+  fail "a retirement handoff after the retry must reconcile exactly twice (ran ${case_calls})"
+[[ "$(cat "${handoff_output}")" == 'backstage_retirement_handoff=true' ]] ||
+  fail 'the retirement handoff admitted after the retry must publish its scoped step output'
 
 # 5. Asymmetric snapshot: the FIRST read succeeds and the second fails, so the
 #    two snapshots differ only because one is missing. That is not evidence of a
