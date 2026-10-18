@@ -150,7 +150,8 @@ consumer_fixture_wiring() {
       and ((.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
         | index($job) != null)
       and any(.jobs["ci-required-checks"].steps[];
-        (.["with"]["job-results"] // "") | contains("needs." + $job + ".result"))
+        ((.uses // "") | startswith("devantler-tech/actions/aggregate-job-checks@"))
+        and ((.["with"]["job-results"] // "") | contains("needs." + $job + ".result")))
       and any(.jobs["validate-repository-guards"].steps[];
         .run == $production_run
         and (has("if") | not)
@@ -200,7 +201,9 @@ ablate_wiring "removing the deployment dependency is refused" \
 ablate_wiring "removing the required-check dependency is refused" \
   '.jobs["ci-required-checks"].needs -= ["validate-consumer-discovery"]'
 ablate_wiring "removing the aggregated fixture result is refused" \
-  '.jobs["ci-required-checks"].steps[0].with["job-results"] |= sub("needs.validate-consumer-discovery.result", "needs.changes.result")'
+  '(.jobs["ci-required-checks"].steps[] | select((.uses // "") | test("^devantler-tech/actions/aggregate-job-checks@")).with["job-results"]) |= sub("needs.validate-consumer-discovery.result", "needs.changes.result")'
+ablate_wiring "an unrelated action cannot mask a missing aggregated fixture result" \
+  '(.jobs["ci-required-checks"].steps[] | select((.uses // "") | test("^devantler-tech/actions/aggregate-job-checks@")).with["job-results"]) |= sub("needs.validate-consumer-discovery.result", "needs.changes.result") | .jobs["ci-required-checks"].steps += [{"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": {"job-results": "needs.validate-consumer-discovery.result"}}]'
 ablate_wiring "removing both dependencies cannot hide the fixture job" \
   '.jobs["deploy-prod"].needs -= ["validate-consumer-discovery"] | .jobs["ci-required-checks"].needs -= ["validate-consumer-discovery"]'
 ablate_wiring "replacing the full fixture command with success is refused" \
