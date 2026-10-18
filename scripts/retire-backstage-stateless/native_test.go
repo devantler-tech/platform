@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -164,7 +165,7 @@ func TestNativeKubectlRawDryRunPreservesServerQueryAndBoundIdentity(t *testing.T
 		requests++
 		w.Header().Set("Content-Type", "application/json")
 		var opts map[string]any
-		ordinaryDelete = r.Method != "DELETE" || r.URL.Path != "/apis/apps/v1/namespaces/backstage/deployments/backstage" || r.URL.Query().Get("dryRun") != "All" || json.NewDecoder(r.Body).Decode(&opts) != nil || field(opts, "preconditions", "uid") != "native-deployment-uid" || field(opts, "preconditions", "resourceVersion") != "17"
+		ordinaryDelete = r.Method != "DELETE" || r.URL.Path != "/apis/apps/v1/namespaces/backstage/deployments/backstage" || r.URL.Query().Get("dryRun") != "All" || json.NewDecoder(r.Body).Decode(&opts) != nil || !reflect.DeepEqual(opts["dryRun"], []any{"All"}) || field(opts, "preconditions", "uid") != "native-deployment-uid" || field(opts, "preconditions", "resourceVersion") != "17"
 		if ordinaryDelete {
 			w.WriteHeader(http.StatusForbidden)
 			return
@@ -192,7 +193,7 @@ func TestNativeKubectlRawDryRunPreservesServerQueryAndBoundIdentity(t *testing.T
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	response, err := e.write(ctx, deleteOptions(resource), "delete", "--raw", path+"?dryRun=All", "-f", "REQUEST")
+	response, err := e.write(ctx, dryRunDeleteOptions(resource), "delete", "--raw", path+"?dryRun=All", "-f", "REQUEST")
 	mu.Lock()
 	defer mu.Unlock()
 	if err != nil || requests != 1 || ordinaryDelete || response["status"] != "Success" {
@@ -227,7 +228,7 @@ func TestNativeKubectlSendsBoundDeleteOptionsAndRejectsReplacement(t *testing.T)
 					w.WriteHeader(400)
 					return
 				}
-				bound = opts["apiVersion"] == "v1" && opts["kind"] == "DeleteOptions" && opts["propagationPolicy"] == "Orphan" && field(opts, "preconditions", "uid") == "native-release-uid" && field(opts, "preconditions", "resourceVersion") == "17"
+				bound = opts["apiVersion"] == "v1" && opts["kind"] == "DeleteOptions" && opts["propagationPolicy"] == "Orphan" && opts["dryRun"] == nil && field(opts, "preconditions", "uid") == "native-release-uid" && field(opts, "preconditions", "resourceVersion") == "17"
 				if !bound || replaced {
 					w.WriteHeader(409)
 					_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": "Conflict", "code": 409})

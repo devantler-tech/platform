@@ -1,0 +1,249 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+)
+
+type completionFixture struct {
+	portal       *portalFixture
+	record       string
+	receipt      map[string]any
+	cleared      bool
+	patches      int
+	postMutation func()
+}
+
+func completedRetirementFixture(t *testing.T) *completionFixture {
+	t.Helper()
+	completionRunner(t)
+	f := retirementFixture(t)
+	f.deleted = true
+	f.historyStatus = "uninstalled"
+	f.fenceInstalled = true
+	db := item(f.live, 2)
+	object(db["spec"])["instances"] = 2
+	object(db["status"])["readyInstances"] = 2
+	object(db["status"])["currentPrimary"] = "backstage-db-4"
+	object(db["status"])["targetPrimary"] = "backstage-db-4"
+	object(db["status"])["conditions"] = []any{
+		map[string]any{"type": "Ready", "status": "True"},
+		map[string]any{"type": "ContinuousArchiving", "status": "True", "reason": "ContinuousArchivingSuccess"},
+	}
+	claim2, _ := decode(encode(t, item(f.live, 3)))
+	object(claim2["metadata"])["name"] = "backstage-db-4"
+	object(claim2["metadata"])["uid"] = "claim-uid-4"
+	object(claim2["spec"])["volumeName"] = "retained-volume-4"
+	object(claim2["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db", "role": "primary", "cnpg.io/instanceRole": "primary"}
+	object(item(f.live, 3)["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db", "role": "replica", "cnpg.io/instanceRole": "replica"}
+	pod2, _ := decode(encode(t, item(f.live, 4)))
+	object(pod2["metadata"])["name"] = "backstage-db-4"
+	object(pod2["metadata"])["uid"] = "database-pod-uid-4"
+	object(pod2["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db", "role": "primary", "cnpg.io/instanceRole": "primary"}
+	object(item(f.live, 4)["metadata"])["labels"] = map[string]any{"cnpg.io/cluster": "backstage-db", "role": "replica", "cnpg.io/instanceRole": "replica"}
+	f.live["items"] = append(f.live["items"].([]any), claim2, pod2)
+	pv2, _ := decode(encode(t, item(f.volumes, 0)))
+	object(pv2["metadata"])["name"] = "retained-volume-4"
+	object(pv2["metadata"])["uid"] = "volume-uid-4"
+	object(field(pv2, "spec", "claimRef"))["name"] = "backstage-db-4"
+	object(field(pv2, "spec", "claimRef"))["uid"] = "claim-uid-4"
+	f.volumes["items"] = append(f.volumes["items"].([]any), pv2)
+
+	originalRevision := "latest@sha256:" + strings.Repeat("d", 64)
+	currentRevision := os.Getenv("PORTAL_RETIREMENT_REVISION")
+	apps := item(f.layers, 0)
+	object(apps["status"])["lastAppliedRevision"] = originalRevision
+	object(apps["status"])["lastAttemptedRevision"] = currentRevision
+	object(apps["status"])["conditions"] = journalBlockedConditions()
+	for _, name := range []string{"bootstrap", "flux-system", "infrastructure", "infrastructure-controllers"} {
+		root, _ := decode(encode(t, apps))
+		object(root["metadata"])["name"] = name
+		object(root["metadata"])["uid"] = name + "-uid"
+		object(root["status"])["lastAppliedRevision"] = currentRevision
+		object(root["status"])["lastAttemptedRevision"] = currentRevision
+		object(root["status"])["conditions"] = readyConditions()
+		f.layers["items"] = append(f.layers["items"].([]any), root)
+	}
+
+	record := map[string]any{
+		"version": 1, "phase": "fenced", "namespaceUID": "namespace-uid",
+		"sourceSHA": strings.Repeat("c", 40), "revision": originalRevision, "run": "42",
+		"targets": []any{
+			map[string]any{"kind": "HelmRelease", "name": "backstage", "uid": "release-uid"},
+			map[string]any{"kind": "HelmChart", "name": "backstage-backstage", "uid": "chart-uid"},
+			map[string]any{"kind": "Deployment", "name": "backstage", "uid": "deployment-uid"},
+			map[string]any{"kind": "Service", "name": "backstage", "uid": "service-uid"},
+			map[string]any{"kind": "ConfigMap", "name": "backstage-app-config", "uid": "configmap-uid"},
+		},
+		"retiringUIDs": []any{"chart-uid", "configmap-uid", "deployment-uid", "release-uid", "service-uid"},
+		"retained":     []any{}, "latestHistoryUID": "history-uid", "helmWriterUID": "helm-writer-uid", "cnpgWriterUID": "cnpg-controller-uid",
+	}
+	b, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object(field(f.namespace, "metadata", "annotations"))[fenceAnnotation] = string(b)
+	receipt := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "backstage-retirement-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "data": map[string]any{"source": strings.Repeat("c", 40), "revision": originalRevision, "run": "42", "attempt": "1", "scope": "stateless-only", "releaseUID": "release-uid", "chartUID": "chart-uid", "dataRetirement": "UNASSESSED"}}
+	return &completionFixture{portal: f, record: string(b), receipt: receipt}
+}
+
+func completionRunner(t *testing.T) {
+	t.Helper()
+	protectedRunner(t)
+	t.Setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/complete-backstage-retirement.yaml@refs/heads/main")
+	t.Setenv("GITHUB_RUN_ID", "999")
+	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
+	t.Setenv("GITHUB_SHA", strings.Repeat("a", 40))
+	t.Setenv("PORTAL_RETIREMENT_CONFIRM", "COMPLETE BACKSTAGE RETIREMENT JOURNAL ONLY")
+	t.Setenv("PORTAL_RETIREMENT_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
+	t.Setenv("PORTAL_RETIREMENT_DEPLOYMENT_RUN", "456")
+}
+
+func readyConditions() []any {
+	return []any{
+		map[string]any{"type": "Reconciling", "status": "False", "observedGeneration": 1},
+		map[string]any{"type": "Ready", "status": "True", "observedGeneration": 1},
+	}
+}
+
+func journalBlockedConditions() []any {
+	return []any{
+		map[string]any{"type": "Reconciling", "status": "True", "observedGeneration": 1, "reason": "ProgressingWithRetry", "message": "Detecting drift"},
+		map[string]any{"type": "Ready", "status": "False", "observedGeneration": 1, "reason": "ReconciliationFailed", "message": "Namespace/backstage dry-run failed: restrict-backstage-retirement preserve-retirement-journal"},
+	}
+}
+
+func (f *completionFixture) execute(ctx context.Context, program string, args ...string) ([]byte, error) {
+	joined := strings.Join(args, " ")
+	if program == "gh" {
+		switch {
+		case strings.Contains(joined, "actions/runs/456"):
+			return encode(f.portal.t, map[string]any{"id": 456, "run_attempt": 1, "head_branch": "main", "path": ".github/workflows/cd.yaml", "event": "workflow_dispatch", "head_sha": strings.Repeat("a", 40), "status": "completed", "conclusion": "success", "repository": map[string]any{"full_name": "devantler-tech/platform"}}), nil
+		case strings.Contains(joined, "deployments?sha="):
+			return encode(f.portal.t, []any{map[string]any{"id": 789, "sha": strings.Repeat("a", 40), "environment": "prod"}}), nil
+		case strings.Contains(joined, "deployments/789/statuses"):
+			return encode(f.portal.t, []any{map[string]any{"state": "success", "environment": "prod", "log_url": "https://github.com/devantler-tech/platform/actions/runs/456/job/777"}}), nil
+		case strings.Contains(joined, "attestation verify"):
+			return completionAttestation(f.portal.t), nil
+		}
+	}
+	if program == "kubectl" && strings.Contains(joined, "get configmap backstage-retirement-42") {
+		return encode(f.portal.t, f.receipt), nil
+	}
+	if program == "kubectl" && strings.Contains(joined, "patch namespace backstage") {
+		f.patches++
+		path := ""
+		for _, arg := range args {
+			if strings.HasPrefix(arg, "--patch-file=") {
+				path = strings.TrimPrefix(arg, "--patch-file=")
+			}
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		var ops []map[string]any
+		if json.Unmarshal(data, &ops) != nil || len(ops) != 4 || ops[0]["path"] != "/metadata/uid" || ops[0]["value"] != "namespace-uid" || ops[1]["path"] != "/metadata/resourceVersion" || ops[2]["path"] != "/metadata/annotations/platform.devantler.tech~1backstage-retirement" || ops[2]["value"] != f.record || ops[3]["op"] != "remove" || ops[3]["path"] != "/metadata/annotations/platform.devantler.tech~1backstage-retirement" {
+			return nil, fmt.Errorf("completion patch escaped its exact journal")
+		}
+		delete(object(field(f.portal.namespace, "metadata", "annotations")), fenceAnnotation)
+		object(f.portal.namespace["metadata"])["resourceVersion"] = "14"
+		for _, raw := range array(f.portal.layers["items"]) {
+			root := object(raw)
+			if field(root, "metadata", "name") == "apps" {
+				object(root["status"])["lastAppliedRevision"] = os.Getenv("PORTAL_RETIREMENT_REVISION")
+				object(root["status"])["lastAttemptedRevision"] = os.Getenv("PORTAL_RETIREMENT_REVISION")
+				object(root["status"])["conditions"] = readyConditions()
+			}
+		}
+		f.cleared = true
+		if f.postMutation != nil {
+			f.postMutation()
+		}
+		return encode(f.portal.t, f.portal.namespace), nil
+	}
+	return f.portal.execute(ctx, program, args...)
+}
+
+func completionAttestation(t *testing.T) []byte {
+	t.Helper()
+	digest := strings.Repeat("b", 64)
+	return encode(t, []any{map[string]any{"verificationResult": map[string]any{
+		"signature": map[string]any{"certificate": map[string]any{
+			"issuer": "https://token.actions.githubusercontent.com", "subjectAlternativeName": "https://github.com/devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main",
+			"sourceRepositoryURI": "https://github.com/devantler-tech/platform", "sourceRepositoryDigest": strings.Repeat("a", 40), "sourceRepositoryRef": "refs/heads/main",
+			"runInvocationURI": "https://github.com/devantler-tech/platform/actions/runs/456/attempts/1",
+		}},
+		"statement": map[string]any{"predicateType": "https://slsa.dev/provenance/v1", "subject": []any{map[string]any{"name": "ghcr.io/devantler-tech/platform/manifests", "digest": map[string]any{"sha256": digest}}}},
+	}}})
+}
+
+func TestCompletionClearsOnlyExactTerminalJournal(t *testing.T) {
+	f := completedRetirementFixture(t)
+	var out bytes.Buffer
+	if code := complete([]string{"--complete"}, &out, f.execute); code != 0 || !f.cleared || f.patches != 1 || out.String() != "PORTAL-RETIREMENT=COMPLETED journal=REMOVED preservationSamples=2 flux=READY dataRetirement=UNASSESSED\n" {
+		t.Fatalf("terminal retirement was not completed exactly once: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestCompletionRejectsForeignJournalTarget(t *testing.T) {
+	f := completedRetirementFixture(t)
+	var record map[string]any
+	if json.Unmarshal([]byte(f.record), &record) != nil {
+		t.Fatal("invalid fixture journal")
+	}
+	object(array(record["targets"])[0])["uid"] = "foreign-release-uid"
+	b, _ := json.Marshal(record)
+	f.record = string(b)
+	object(field(f.portal.namespace, "metadata", "annotations"))[fenceAnnotation] = f.record
+	var out bytes.Buffer
+	if code := complete([]string{"--complete"}, &out, f.execute); code != 2 || f.patches != 0 {
+		t.Fatalf("foreign journal target authorized completion: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestCompletionRequiresContinuousArchiving(t *testing.T) {
+	f := completedRetirementFixture(t)
+	for _, condition := range array(field(item(f.portal.live, 2), "status", "conditions")) {
+		if field(object(condition), "type") == "ContinuousArchiving" {
+			object(condition)["status"] = "False"
+		}
+	}
+	var out bytes.Buffer
+	if code := complete([]string{"--complete"}, &out, f.execute); code != 2 || f.patches != 0 {
+		t.Fatalf("failed archiving authorized completion: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestCompletionRequiresTheAcceptedRevisionLive(t *testing.T) {
+	f := completedRetirementFixture(t)
+	object(f.portal.sources["status"])["artifact"] = map[string]any{"revision": "latest@sha256:" + strings.Repeat("e", 64)}
+	var out bytes.Buffer
+	if code := complete([]string{"--complete"}, &out, f.execute); code != 2 || f.patches != 0 {
+		t.Fatalf("unaccepted live source authorized completion: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestCompletionHoldsWhenRetainedStorageChangesAfterPatch(t *testing.T) {
+	f := completedRetirementFixture(t)
+	f.postMutation = func() { object(item(f.portal.volumes, 0)["spec"])["persistentVolumeReclaimPolicy"] = "Delete" }
+	var out bytes.Buffer
+	if code := complete([]string{"--complete"}, &out, f.execute); code != 2 || f.patches != 1 || !f.cleared {
+		t.Fatalf("post-clear storage drift was accepted: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestCompletionNeverTreatsAlreadyClearedJournalAsSuccess(t *testing.T) {
+	f := completedRetirementFixture(t)
+	delete(object(field(f.portal.namespace, "metadata", "annotations")), fenceAnnotation)
+	var out bytes.Buffer
+	if code := complete([]string{"--complete"}, &out, f.execute); code != 2 || f.patches != 0 {
+		t.Fatalf("already-cleared state was accepted or mutated: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
