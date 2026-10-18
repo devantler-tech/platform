@@ -256,12 +256,22 @@ func archivingHealthy(s snapshot) bool {
 	return clusters == 1 && claims == 2 && pods == 2
 }
 
-func completedState(s snapshot, record completionRecord, fenced bool) error {
+func terminalRetirementIntact(s snapshot, record completionRecord, fenced bool) error {
 	if field(s.namespace, "metadata", "uid") != record.namespaceUID || fenced && field(s.namespace, "metadata", "annotations", fenceAnnotation) != record.raw || !fenced && field(s.namespace, "metadata", "annotations", fenceAnnotation) != nil {
 		return errors.New("namespace journal state unverified")
 	}
-	if s.owner != nil || s.chart != nil || field(s.release, "name") != "backstage" || field(s.release, "namespace") != "backstage" || field(s.release, "info", "status") != "uninstalled" || !absent(s) || !archivingHealthy(s) {
+	if s.owner != nil || s.chart != nil || field(s.release, "name") != "backstage" || field(s.release, "namespace") != "backstage" || field(s.release, "info", "status") != "uninstalled" || !absent(s) {
 		return errors.New("terminal retirement state unverified")
+	}
+	return nil
+}
+
+func completedState(s snapshot, record completionRecord, fenced bool) error {
+	if err := terminalRetirementIntact(s, record, fenced); err != nil {
+		return err
+	}
+	if !archivingHealthy(s) {
+		return errors.New("retained database health unverified")
 	}
 	return nil
 }
@@ -362,12 +372,17 @@ func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completio
 // waitForDeploymentHandoffRoots allows Flux's ordinary retry loop to replace a
 // transient dependency/build status with the one exact journal-only block that
 // can authorize the handoff. The wait is read-only and bounded inside the
-// caller's ten-minute context; every sample must keep the terminal retirement
-// state intact, and no other final applications failure is ever accepted.
+// caller's ten-minute context. Every complete sample must keep the terminal
+// retirement identities intact. Database health and the exact journal-only
+// root state may settle during the wait, but both must pass before admission;
+// no other final applications failure is ever accepted.
 func waitForDeploymentHandoffRoots(ctx context.Context, e engine, record completionRecord, observed snapshot) (snapshot, error) {
 	const attempts = 50
 	for attempt := 0; attempt < attempts; attempt++ {
-		if platformRootState(observed, record, e.revision, false) == nil {
+		if err := terminalRetirementIntact(observed, record, true); err != nil {
+			return observed, err
+		}
+		if completedState(observed, record, true) == nil && platformRootState(observed, record, e.revision, false) == nil {
 			return observed, nil
 		}
 		if attempt == attempts-1 {
@@ -380,7 +395,7 @@ func waitForDeploymentHandoffRoots(ctx context.Context, e engine, record complet
 		if err != nil {
 			return observed, err
 		}
-		if err := completedState(next, record, true); err != nil {
+		if err := terminalRetirementIntact(next, record, true); err != nil {
 			return observed, err
 		}
 		observed = next
@@ -425,7 +440,7 @@ func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
 		return hold("receipt")
 	}
 	first, err := e.collect(ctx)
-	if err != nil || completedState(first, record, true) != nil {
+	if err != nil || terminalRetirementIntact(first, record, true) != nil {
 		return hold("evidence-first")
 	}
 	first, err = waitForDeploymentHandoffRoots(ctx, e, record, first)

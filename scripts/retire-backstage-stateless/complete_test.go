@@ -267,6 +267,18 @@ func TestDeploymentHandoffWaitsForTheExactJournalOnlyRetry(t *testing.T) {
 	}
 }
 
+func TestDeploymentHandoffWaitsForTransientDatabaseHealth(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	db := item(f.portal.live, 2)
+	object(db["status"])["readyInstances"] = 1
+	f.onSleep = func() { object(db["status"])["readyInstances"] = 2 }
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sleeps != 2 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		t.Fatalf("bounded wait did not admit restored database health: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
+	}
+}
+
 func TestDeploymentHandoffAcceptsExactMainMergeGroupTerminalJournalBlock(t *testing.T) {
 	f := completedRetirementFixture(t)
 	deploymentMergeGroupHandoffRunner(t)
