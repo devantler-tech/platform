@@ -49,6 +49,10 @@ spec:
       #     installed by the flagger HelmRelease at runtime and are not in the
       #     catalog, so the MetricTemplates and the onboarded Canaries (umami,
       #     homepage) can't be schema-checked offline.
+      #   - ResourceGraphDefinition (kro.run/v1alpha1): the catalog schema still
+      #     predates KRO 0.9.2 and rejects its required `spec.schema.scope`.
+      #     scripts/tests/test-rgd-template-static-scan.sh instead pins each
+      #     complete RGD spec, requires Namespaced scope, and scans every child.
       #   - Tenant (kro.run/v1alpha1): the CRD is generated at runtime by the
       #     KRO controller from the tenant ResourceGraphDefinition (#1932), so
       #     no static schema exists in any catalog (same class as the Flagger
@@ -57,4 +61,5 @@ spec:
         - Coroot
         - MetricTemplate
         - Canary
+        - ResourceGraphDefinition
         - Tenant

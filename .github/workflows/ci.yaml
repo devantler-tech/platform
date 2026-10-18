@@ -3667,6 +3667,11 @@ jobs:
       attestations: write # write SBOM + SLSA provenance attestations (see deploy-prod action)
       actions: read # read a prior run attempt status, to prove an orphaned fence holder is dead (deploy-prod recover-orphaned-fence)
       pull-requests: read # verify the same queue entry before production access
+    # `true` only when the queue preflight refused this entry and the production
+    # composite never ran; the heal below then has nothing to restore (#4937).
+    # Every other outcome leaves it empty, which keeps the heal's normal path.
+    outputs:
+      stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}
     steps:
       - name: 📑 Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -3688,6 +3693,7 @@ jobs:
         run: go run ./scripts/verify-merge-group-queued check
 
       - name: 🚀 Deploy to Production
+        id: production-deploy
         # Shared with cd.yaml's manual deploy via this composite action so the
         # merge-queue and manual paths can never drift. Secrets are passed as
         # inputs because composite actions cannot read `secrets` directly.
@@ -3705,6 +3711,24 @@ jobs:
           # other fence is held, the heartbeat has stopped, and the holder's run
           # attempt is proven terminal via the API (#3343).
           recover-orphaned-fence: "true"
+
+      - name: 🧾 Record whether production was left untouched
+        # Must stay the last step, straight after the composite: it vouches only
+        # for the steps before it. A refused preflight skips the composite, so
+        # nothing reached production; any other combination (a cancelled
+        # preflight, a composite that ran, a missing step) writes nothing. Only a
+        # first attempt may report it: a re-run of a failed deploy is refused
+        # because the PR has left the queue, while the earlier attempt may have
+        # left its artifact in production for the heal to replace.
+        id: production-outcome
+        if: always()
+        env:
+          PREFLIGHT_OUTCOME: ${{ steps.queue-preflight.outcome }}
+          PRODUCTION_OUTCOME: ${{ steps.production-deploy.outcome }}
+        run: |
+          if [[ "${GITHUB_RUN_ATTEMPT}" == '1' && "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
+            printf 'stopped_before_production=true\n' >>"${GITHUB_OUTPUT}"
+          fi
 
   merge-group-queue-membership:
     name: 🧾 Check the deployed PR is still queued
@@ -3767,11 +3791,15 @@ jobs:
     # that aggregation — it is best-effort cleanup, not a merge gate. It also
     # fires after a SUCCESSFUL deploy whose PR had already left the queue, which
     # leaves prod on the same unmerged artifact (#3091); the membership job above
-    # decides that case.
+    # decides that case. It does NOT fire when the queue preflight refused the
+    # entry before the composite ran: production was never touched, so a
+    # restore deploy would only hold the lock and a runner (#4937). An empty or
+    # missing output keeps every other case on the heal path.
     if: >-
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
+      needs.deploy-prod.outputs.stopped_before_production != 'true' &&
       (needs.deploy-prod.result == 'failure' ||
        needs.deploy-prod.result == 'cancelled' ||
        (needs.deploy-prod.result == 'success' &&

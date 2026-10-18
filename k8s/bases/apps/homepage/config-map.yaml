@@ -106,6 +106,8 @@ data:
         icon: si-umami
       Business:
         icon: mdi-briefcase
+      Products:
+        icon: mdi-book-open-page-variant
       Clients:
         icon: mdi-briefcase-account
       Personal:
@@ -183,14 +185,26 @@ data:
             icon: mdi-water-boiler
             href: https://stokercloud.dk/v3/
             description: NBE pellet boiler monitoring and control.
-    # devantler.tech is not deployed from this cluster, so it
-    # is listed statically under Business. Client and personal sites are
-    # discovered from gethomepage.dev annotations on tenant HTTPRoutes.
+    # The business site and the product documentation sites are served by
+    # GitHub Pages, not this cluster, so they are listed statically. Business is
+    # the company site; Products holds one documentation site per product. Client
+    # and personal sites are discovered from gethomepage.dev annotations on tenant
+    # HTTPRoutes. The KSail operator running in this cluster stays under
+    # Kubernetes, from its own route.
     - Business:
         - devantler.tech:
             icon: mdi-web
             href: https://devantler.tech
             description: Business site — products, services, guides and documentation.
+    - Products:
+        - KSail Docs:
+            icon: https://ksail.devantler.tech/favicon.svg
+            href: https://ksail.devantler.tech
+            description: One CLI to spin up Kubernetes clusters and run them with GitOps.
+        - KHoist Docs:
+            icon: https://khoist.devantler.tech/brand/khoist-mark.svg
+            href: https://khoist.devantler.tech
+            description: Publish, discover and compose reusable data products through standard APIs.
     # Analytics is populated dynamically from the gethomepage.dev annotations on
     # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
     # spec.service.apex.annotations).
@@ -272,9 +286,6 @@ data:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
     - Learning & Reference:
-        - KHoist Docs:
-            - icon: mdi-crane
-              href: https://khoist.devantler.tech/
         - KodeKloud:
             - icon: mdi-school-outline
               href: https://kodekloud.com

@@ -44,6 +44,9 @@ func Validate(data []byte, canonical map[string][]string) error {
 			for decoder.More() {
 				token, err := decoder.Token()
 				key, ok := token.(string)
+				if err != nil && endsInput(err, len(data)) {
+					return errors.New("incomplete evidence")
+				}
 				if err != nil || !ok || seen[key] {
 					return errors.New("ambiguous evidence fields")
 				}
@@ -83,4 +86,15 @@ func Validate(data []byte, canonical map[string][]string) error {
 		return errors.New("trailing evidence")
 	}
 	return nil
+}
+
+// endsInput reports whether err says the document stopped before a value was
+// complete. Go releases disagree on how a decoder reports that: some return
+// io.EOF, others a syntax error positioned at the end of the input.
+func endsInput(err error, length int) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var syntax *json.SyntaxError
+	return errors.As(err, &syntax) && syntax.Offset >= int64(length)
 }
