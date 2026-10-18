@@ -15,6 +15,7 @@ type completionFixture struct {
 	record       string
 	receipt      map[string]any
 	handoffPaths []string
+	handoffFiles map[string][]byte
 	sourceChecks int
 	cleared      bool
 	patches      int
@@ -94,7 +95,7 @@ func completedRetirementFixture(t *testing.T) *completionFixture {
 	}
 	object(field(f.namespace, "metadata", "annotations"))[fenceAnnotation] = string(b)
 	receipt := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "backstage-retirement-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "data": map[string]any{"source": strings.Repeat("c", 40), "revision": originalRevision, "run": "42", "attempt": "1", "scope": "stateless-only", "releaseUID": "release-uid", "chartUID": "chart-uid", "dataRetirement": "UNASSESSED"}}
-	return &completionFixture{portal: f, record: string(b), receipt: receipt, handoffPaths: []string{"scripts/retire-backstage-stateless/complete.go"}}
+	return &completionFixture{portal: f, record: string(b), receipt: receipt, handoffPaths: []string{"scripts/retire-backstage-stateless/complete.go"}, handoffFiles: map[string][]byte{}}
 }
 
 func completionRunner(t *testing.T) {
@@ -170,6 +171,16 @@ func (f *completionFixture) execute(ctx context.Context, program string, args ..
 			return nil, nil
 		case strings.Contains(joined, "diff --no-ext-diff --no-renames --name-only"):
 			return []byte(strings.Join(f.handoffPaths, "\n") + "\n"), nil
+		case strings.Contains(joined, "show --no-ext-diff --no-textconv"):
+			parts := strings.Split(args[len(args)-1], ":")
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("invalid git show target")
+			}
+			content, ok := f.handoffFiles[parts[1]]
+			if !ok {
+				return nil, fmt.Errorf("missing handoff content")
+			}
+			return content, nil
 		}
 	}
 	if program == "gh" {
@@ -333,6 +344,63 @@ func TestDeploymentHandoffAcceptsExactMainMergeGroupTerminalJournalBlock(t *test
 	var out bytes.Buffer
 	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sourceChecks != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
 		t.Fatalf("exact main merge-group terminal journal block was not admitted read-only: code=%d patches=%d sourceChecks=%d output=%s", code, f.patches, f.sourceChecks, &out)
+	}
+}
+
+func TestDeploymentHandoffAcceptsCurrentReviewedRecoveryDiff(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentMergeGroupHandoffRunner(t)
+	f.handoffPaths = []string{
+		".github/actions/deploy-prod/action.yml",
+		".github/workflows/complete-backstage-retirement.yaml",
+		"k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml",
+		"k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml",
+		"ksail.prod.yaml",
+		"ksail.yaml",
+		"scripts/reconcile-flux-workloads.sh",
+		"scripts/reconcile-talos-kernel-args/main.go",
+		"scripts/reconcile-talos-kernel-args/main_test.go",
+		"scripts/retire-backstage-stateless/README.md",
+		"scripts/retire-backstage-stateless/complete.go",
+		"scripts/retire-backstage-stateless/complete_test.go",
+		"scripts/retire-backstage-stateless/complete_workflow_test.go",
+		"scripts/retire-backstage-stateless/fence.go",
+		"scripts/retire-backstage-stateless/fence_test.go",
+		"scripts/retire-backstage-stateless/main.go",
+		"scripts/retire-backstage-stateless/native_test.go",
+		"scripts/rgd-template-static-scan-baseline.tsv",
+		"scripts/tests/test-flux-reconcile-control-plane-restart.sh",
+		"scripts/tests/test-rgd-template-static-scan.sh",
+		"scripts/tests/test-talos-render-kernel-args.sh",
+		"scripts/validate-eks-ci-role-policy/approved-surface.txt",
+		"scripts/validate-eks-ci-role-policy/main.go",
+	}
+	for _, path := range f.handoffPaths {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.handoffFiles[path] = content
+	}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		t.Fatalf("reviewed recovery diff was not admitted read-only: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestDeploymentHandoffRejectsChangedPinnedRecoveryFile(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentMergeGroupHandoffRunner(t)
+	path := "ksail.prod.yaml"
+	f.handoffPaths = []string{path}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.handoffFiles[path] = append(content, []byte("\n# unrelated later edit\n")...)
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || f.sleeps != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=source-diff\n" {
+		t.Fatalf("changed pinned recovery file was admitted: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
 	}
 }
 
