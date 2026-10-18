@@ -3607,5 +3607,5 @@ The matcher withdraws the superseded `devantler-tech/.github` publisher at
 `9ff2ad68306cc73df6814861c7804a11a25e0788` after production publication moved
 to `e1681322e671f8e277c5e230a57fe66cdf1a612d`. The retained legacy
 `devantler-tech/actions` revisions are unchanged. No issuer, artifact URL,
-identity count, RBAC, IAM policy, credential or permission grant changes. The
-set of accepted identities shrinks by one.
+RBAC, IAM policy, credential or permission grant changes. The set of accepted
+identities shrinks by one.
