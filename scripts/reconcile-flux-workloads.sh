@@ -85,6 +85,19 @@ reconcile() {
   "${reconcile_bin}" workload reconcile
 }
 
+admit_retirement_handoff() {
+  if [[ -n "${RETIREMENT_HANDOFF_BIN:-}" ]]; then
+    "${RETIREMENT_HANDOFF_BIN}"
+    return
+  fi
+  go run ./scripts/retire-backstage-stateless --admit-deployment-handoff
+}
+
+record_retirement_handoff() {
+  [[ -n "${GITHUB_OUTPUT:-}" ]] || return 0
+  printf 'backstage_retirement_handoff=true\n' >>"${GITHUB_OUTPUT}"
+}
+
 # `--snapshot-baseline` prints the snapshot and exits, so the deploy can capture
 # a baseline BEFORE it publishes the mutable tag. It deliberately reuses the same
 # producer rather than a second implementation: the comparison below is textual,
@@ -129,6 +142,16 @@ if [[ "${reconcile_status}" -eq 0 ]]; then
   exit 0
 fi
 
+# One current-main manual deployment is needed to supply the attested receipt
+# for a separately reviewed terminal-retirement completion. Admit that handoff
+# only when the read-only retirement verifier proves two unchanged samples of
+# the exact journal-blocked state. Every other reconcile failure continues down
+# the existing fail-closed restart classification.
+if admit_retirement_handoff; then
+  record_retirement_handoff
+  exit 0
+fi
+
 after=""
 if ! after="$(control_plane_generations)"; then
   after=""
@@ -153,4 +176,15 @@ printf 'Waiting for the control plane to settle, then retrying the reconcile onc
 
 wait_for_control_plane_rollout "${after}"
 
+set +e
 reconcile
+reconcile_status=$?
+set -e
+if [[ "${reconcile_status}" -eq 0 ]]; then
+  exit 0
+fi
+if admit_retirement_handoff; then
+  record_retirement_handoff
+  exit 0
+fi
+exit "${reconcile_status}"

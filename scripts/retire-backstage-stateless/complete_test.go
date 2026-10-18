@@ -14,6 +14,7 @@ type completionFixture struct {
 	portal       *portalFixture
 	record       string
 	receipt      map[string]any
+	handoffPaths []string
 	cleared      bool
 	patches      int
 	postMutation func()
@@ -89,7 +90,7 @@ func completedRetirementFixture(t *testing.T) *completionFixture {
 	}
 	object(field(f.namespace, "metadata", "annotations"))[fenceAnnotation] = string(b)
 	receipt := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "backstage-retirement-42", "namespace": "flux-system", "uid": "receipt-uid", "resourceVersion": "1"}, "data": map[string]any{"source": strings.Repeat("c", 40), "revision": originalRevision, "run": "42", "attempt": "1", "scope": "stateless-only", "releaseUID": "release-uid", "chartUID": "chart-uid", "dataRetirement": "UNASSESSED"}}
-	return &completionFixture{portal: f, record: string(b), receipt: receipt}
+	return &completionFixture{portal: f, record: string(b), receipt: receipt, handoffPaths: []string{"scripts/retire-backstage-stateless/complete.go"}}
 }
 
 func completionRunner(t *testing.T) {
@@ -103,6 +104,16 @@ func completionRunner(t *testing.T) {
 	t.Setenv("PORTAL_RETIREMENT_CONFIRM", "COMPLETE BACKSTAGE RETIREMENT JOURNAL ONLY")
 	t.Setenv("PORTAL_RETIREMENT_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
 	t.Setenv("PORTAL_RETIREMENT_DEPLOYMENT_RUN", "456")
+}
+
+func deploymentHandoffRunner(t *testing.T) {
+	t.Helper()
+	t.Setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main")
+	t.Setenv("GITHUB_RUN_ID", "999")
+	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
+	t.Setenv("GITHUB_SHA", strings.Repeat("a", 40))
+	t.Setenv("PORTAL_RETIREMENT_REVISION", "latest@sha256:"+strings.Repeat("b", 64))
 }
 
 func readyConditions() []any {
@@ -121,6 +132,14 @@ func journalBlockedConditions() []any {
 
 func (f *completionFixture) execute(ctx context.Context, program string, args ...string) ([]byte, error) {
 	joined := strings.Join(args, " ")
+	if program == "git" {
+		switch {
+		case strings.Contains(joined, "merge-base --is-ancestor"):
+			return nil, nil
+		case strings.Contains(joined, "diff --no-ext-diff --no-renames --name-only"):
+			return []byte(strings.Join(f.handoffPaths, "\n") + "\n"), nil
+		}
+	}
 	if program == "gh" {
 		switch {
 		case strings.Contains(joined, "actions/runs/456"):
@@ -189,6 +208,54 @@ func TestCompletionClearsOnlyExactTerminalJournal(t *testing.T) {
 	var out bytes.Buffer
 	if code := complete([]string{"--complete"}, &out, f.execute); code != 0 || !f.cleared || f.patches != 1 || out.String() != "PORTAL-RETIREMENT=COMPLETED journal=REMOVED preservationSamples=2 flux=READY dataRetirement=UNASSESSED\n" {
 		t.Fatalf("terminal retirement was not completed exactly once: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestDeploymentHandoffAcceptsOnlyExactTerminalJournalBlock(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		e := engine{execute: f.execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), readOnly: true}
+		namespace, namespaceErr := e.read(context.Background(), "get", "namespace", "backstage", "--output=json")
+		record, recordErr := parseCompletionRecord(text(field(namespace, "metadata", "annotations", fenceAnnotation)), namespace)
+		e.fence, e.retiring, e.ownerUID = record.raw, record.retiring, record.releaseUID
+		fenceErr := e.requireFence(context.Background())
+		observed, collectErr := e.collect(context.Background())
+		t.Fatalf("exact terminal journal block was not admitted read-only: code=%d patches=%d output=%s namespace=%v record=%v fence=%v collect=%v completed=%v roots=%v", code, f.patches, &out, namespaceErr, recordErr, fenceErr, collectErr, completedState(observed, record, true), platformRootState(observed, record, e.revision, false))
+	}
+}
+
+func TestDeploymentHandoffRejectsAnyOtherAppsFailure(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	apps := item(f.portal.layers, 0)
+	object(apps["status"])["conditions"] = []any{
+		map[string]any{"type": "Ready", "status": "False", "observedGeneration": 1, "reason": "ReconciliationFailed", "message": "another application failed"},
+	}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 {
+		t.Fatalf("unrelated applications failure was admitted: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestDeploymentHandoffRejectsApplicationChangesAfterTheRetirementSource(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	f.handoffPaths = []string{"k8s/providers/hetzner/apps/kustomization.yaml"}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 {
+		t.Fatalf("application drift was admitted before terminal completion: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestDeploymentHandoffRequiresCurrentMainCD(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main")
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 {
+		t.Fatalf("non-CD workflow admitted the handoff: code=%d patches=%d output=%s", code, f.patches, &out)
 	}
 }
 

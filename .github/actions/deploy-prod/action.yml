@@ -350,6 +350,7 @@ runs:
         GITHUB_ACTOR: ${{ github.actor }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         FLUX_CONTROL_PLANE_BASELINE_FILE: ${{ runner.temp }}/flux-control-plane-baseline
+        PORTAL_RETIREMENT_REVISION: latest@${{ steps.publish_platform_manifest.outputs.digest }}
       # Through the wrapper, not the bare command: a deploy that changes the Flux
       # control plane restarts the controllers this reconcile runs through, which
       # cancels the reconcile the deploy itself triggered (#3478). The wrapper
@@ -652,6 +653,7 @@ runs:
       # Recovery reads this action from main's checkout with main's release pins.
       if: >-
         !cancelled() &&
+        steps.reconcile.outputs.backstage_retirement_handoff != 'true' &&
         steps.wait_flux_revision.outcome == 'success' &&
         (
           steps.cluster_update.outcome == 'skipped' ||

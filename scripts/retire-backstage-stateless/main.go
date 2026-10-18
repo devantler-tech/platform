@@ -1177,6 +1177,9 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--admit-deployment-handoff" {
+		os.Exit(admitDeploymentHandoff(os.Args[1:], os.Stdout, capture))
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--complete" {
 		os.Exit(complete(os.Args[1:], os.Stdout, capture))
 	}

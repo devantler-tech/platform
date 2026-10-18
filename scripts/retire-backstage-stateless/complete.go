@@ -15,10 +15,29 @@ import (
 )
 
 const completionWorkflow = "devantler-tech/platform/.github/workflows/complete-backstage-retirement.yaml@refs/heads/main"
+const deploymentWorkflow = "devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main"
 
 var platformRoots = map[string]bool{
 	"apps": true, "bootstrap": true, "flux-system": true,
 	"infrastructure": true, "infrastructure-controllers": true,
+}
+
+var deploymentHandoffPaths = map[string]bool{
+	".github/actions/deploy-prod/action.yml":                       true,
+	".github/workflows/complete-backstage-retirement.yaml":         true,
+	"scripts/reconcile-flux-workloads.sh":                          true,
+	"scripts/reconcile-talos-kernel-args/main.go":                  true,
+	"scripts/reconcile-talos-kernel-args/main_test.go":             true,
+	"scripts/retire-backstage-stateless/README.md":                 true,
+	"scripts/retire-backstage-stateless/complete.go":               true,
+	"scripts/retire-backstage-stateless/complete_test.go":          true,
+	"scripts/retire-backstage-stateless/complete_workflow_test.go": true,
+	"scripts/retire-backstage-stateless/fence.go":                  true,
+	"scripts/retire-backstage-stateless/fence_test.go":             true,
+	"scripts/retire-backstage-stateless/main.go":                   true,
+	"scripts/retire-backstage-stateless/native_test.go":            true,
+	"scripts/tests/test-flux-reconcile-control-plane-restart.sh":   true,
+	"scripts/tests/test-talos-render-kernel-args.sh":               true,
 }
 
 type completionRecord struct {
@@ -309,6 +328,92 @@ func stableCompletionProjection(s snapshot, record completionRecord) (map[string
 	}
 	s.layers = layers
 	return preserved(normalizedNamespace(s, record.raw))
+}
+
+func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completionRecord) error {
+	if _, err := e.execute(ctx, "git", "merge-base", "--is-ancestor", record.source, e.sha); err != nil {
+		return errors.New("retirement source is not an ancestor")
+	}
+	b, err := e.execute(ctx, "git", "diff", "--no-ext-diff", "--no-renames", "--name-only", record.source+".."+e.sha, "--")
+	if err != nil || len(b) > maxResponse {
+		return errors.New("retirement source diff unavailable")
+	}
+	seen := map[string]bool{}
+	for _, path := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if path == "" {
+			continue
+		}
+		if !deploymentHandoffPaths[path] || seen[path] {
+			return errors.New("retirement source diff is not maintenance-only")
+		}
+		seen[path] = true
+	}
+	return nil
+}
+
+// admitDeploymentHandoff lets a current-main CD run continue only when its
+// reconcile failed for the one terminal journal state that the separate
+// completion workflow is designed to clear. It is read-only: the successful CD
+// run supplies the independently attested deployment receipt, then the
+// completion workflow repeats this proof before removing the exact journal.
+func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
+	hold := func(stage string) int {
+		_, _ = fmt.Fprintln(out, "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage="+stage)
+		return 2
+	}
+	if len(args) != 1 || args[0] != "--admit-deployment-handoff" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || os.Getenv("GITHUB_EVENT_NAME") != "workflow_dispatch" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_WORKFLOW_REF") != deploymentWorkflow || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
+		return hold("admission")
+	}
+	e := engine{execute: execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), readOnly: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if e.sourceCurrent(ctx) != nil {
+		return hold("source")
+	}
+	namespace, err := e.read(ctx, "get", "namespace", "backstage", "--output=json")
+	if err != nil || !metadataValid(namespace) || namespace["kind"] != "Namespace" {
+		return hold("namespace")
+	}
+	record, err := parseCompletionRecord(text(field(namespace, "metadata", "annotations", fenceAnnotation)), namespace)
+	if err != nil {
+		return hold("journal")
+	}
+	if deploymentHandoffSourceSafe(ctx, e, record) != nil {
+		return hold("source-diff")
+	}
+	e.fence, e.retiring, e.ownerUID = record.raw, record.retiring, record.releaseUID
+	receipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
+	if err != nil || !completionReceiptValid(receipt, record) {
+		return hold("receipt")
+	}
+	first, err := e.collect(ctx)
+	if err != nil || completedState(first, record, true) != nil || platformRootState(first, record, e.revision, false) != nil {
+		return hold("evidence-first")
+	}
+	preservedFirst, err := stableCompletionProjection(first, record)
+	if err != nil {
+		return hold("preservation-first")
+	}
+	if _, err = execute(ctx, "sleep", "5"); err != nil {
+		return hold("sample-separation")
+	}
+	second, err := e.collect(ctx)
+	if err != nil || completedState(second, record, true) != nil || platformRootState(second, record, e.revision, false) != nil {
+		return hold("evidence-second")
+	}
+	preservedSecond, err := stableCompletionProjection(second, record)
+	if err != nil || !reflect.DeepEqual(preservedFirst, preservedSecond) {
+		return hold("preservation-second")
+	}
+	secondReceipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
+	if err != nil || !reflect.DeepEqual(receipt, secondReceipt) || e.sourceCurrent(ctx) != nil {
+		return hold("closing-source")
+	}
+	const result = "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n"
+	if n, err := io.WriteString(out, result); err != nil || n != len(result) {
+		return 2
+	}
+	return 0
 }
 
 func complete(args []string, out io.Writer, execute command) int {
