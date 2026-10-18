@@ -11,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestJournalWriterUsesItsOwnFieldManager checks that the complete guarded
+// entrypoint gives its namespace journal a dedicated field manager.
 func TestJournalWriterUsesItsOwnFieldManager(t *testing.T) {
 	retirementRunner(t)
 	f := retirementFixture(t)

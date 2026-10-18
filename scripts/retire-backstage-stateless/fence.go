@@ -154,6 +154,8 @@ func (e engine) fenceRecord(s snapshot, kept map[string]map[string]any) (string,
 	return string(b), nil
 }
 
+// installFence writes and confirms a retirement journal under its dedicated field
+// manager after verifying the controller, source, and namespace identity.
 func (e engine) installFence(ctx context.Context, s snapshot, kept map[string]map[string]any) (string, error) {
 	if err := e.requireFence(ctx); err != nil {
 		return "", err
