@@ -14,12 +14,28 @@ After the controller-owned lifecycle has completed, the separate protected
 `complete-backstage-retirement.yaml` workflow can remove the durable namespace
 journal. It is not a retry path. The completion command accepts only the exact
 terminal state: the captured stateless identities are absent, retained Helm
-history is uninstalled, the operation receipt and journal agree, both database
+history is uninstalled and is read from the exact Kubernetes Secret UID captured
+in the journal rather than depending on Helm to rediscover a terminal release,
+the operation receipt and journal agree, both database
 instances and continuous archiving are healthy, reciprocal Retain volumes are
 unchanged, and the production apps root is blocked by that journal alone. Its
 single JSON Patch tests the namespace UID, resourceVersion and exact journal
 value before removing only that annotation. It then waits for current Flux
 readiness and repeats the retained-data proof twice.
+
+The normal current-main CD and main merge-group deployment paths have one
+read-only handoff for this terminal state. If Flux reconciliation fails, either
+may continue only after the exact journal, receipt, absent stateless targets,
+healthy database, retained storage and journal-only `apps` block are stable
+across two samples. It additionally
+requires the journal's source to be an ancestor of current main and every change
+since then to belong to the fixed terminal-maintenance implementation; a
+deployable manifest change refuses the handoff. The handoff makes no cluster
+mutation and does not apply to any other Flux failure. Its successful, attested
+deployment receipt authorizes the separately protected
+completion workflow to repeat the proof and remove the journal. The normal CD
+path is run again after completion, when all application checks can bind to the
+newly applied revision.
 
 A completion refusal is always nonzero and names only its bounded stage:
 
