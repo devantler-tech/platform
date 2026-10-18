@@ -1209,4 +1209,9 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 
-func main() { os.Exit(run(os.Args[1:], os.Stdout, capture)) }
+func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--complete" {
+		os.Exit(complete(os.Args[1:], os.Stdout, capture))
+	}
+	os.Exit(run(os.Args[1:], os.Stdout, capture))
+}

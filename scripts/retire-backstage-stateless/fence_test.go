@@ -3,10 +3,46 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestAdmissionDeleteProbesCarryDryRunInRequestBody(t *testing.T) {
+	retirementRunner(t)
+	f := retirementFixture(t)
+	probes := 0
+	execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if program == "kubectl" && strings.Contains(strings.Join(args, " "), "?dryRun=All") {
+			probes++
+			var payload string
+			for i, arg := range args {
+				if arg == "-f" && i+1 < len(args) {
+					payload = args[i+1]
+				}
+			}
+			data, err := os.ReadFile(payload)
+			var options map[string]any
+			if err != nil || json.Unmarshal(data, &options) != nil {
+				t.Fatal("admission DELETE body is unreadable")
+			}
+			// Kubernetes ignores query options when a DELETE body is present.
+			// A query-only probe is therefore a real deletion, despite its URL.
+			if !reflect.DeepEqual(options["dryRun"], []any{"All"}) {
+				t.Error("admission DELETE would mutate: body does not request dryRun All")
+				return nil, fmt.Errorf("unsafe admission probe")
+			}
+		}
+		return f.execute(ctx, program, args...)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"--execute"}, &out, execute); code != 0 || probes == 0 || !f.deleted {
+		t.Fatalf("retirement did not pass safe admission probes: code=%d probes=%d %s", code, probes, &out)
+	}
+}
 
 func TestMissingOrIneffectiveAdmissionCannotAuthorizeOwnerDeletion(t *testing.T) {
 	for _, mode := range []string{"policy read fails", "policy missing", "negative control accepted", "positive control rejected"} {

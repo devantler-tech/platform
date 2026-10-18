@@ -249,6 +249,13 @@ func deleteOptions(r map[string]any) map[string]any {
 	return map[string]any{"apiVersion": "v1", "kind": "DeleteOptions", "propagationPolicy": "Orphan", "preconditions": map[string]any{"uid": field(r, "metadata", "uid"), "resourceVersion": field(r, "metadata", "resourceVersion")}}
 }
 
+func dryRunDeleteOptions(r map[string]any) map[string]any {
+	options := deleteOptions(r)
+	// Kubernetes decodes a nonempty DELETE body instead of query options.
+	options["dryRun"] = []string{"All"}
+	return options
+}
+
 // These are server-side dry runs, not deletions. A generic RBAC/network error
 // cannot impersonate the expected policy denial. No Secret payload is sent.
 func (e engine) admissionControls(ctx context.Context, s snapshot) error {
@@ -281,7 +288,7 @@ func (e engine) admissionControls(ctx context.Context, s snapshot) error {
 		if err != nil {
 			return err
 		}
-		response, err := e.write(ctx, deleteOptions(r), "delete", "--raw", path+"?dryRun=All", "-f", "REQUEST")
+		response, err := e.write(ctx, dryRunDeleteOptions(r), "delete", "--raw", path+"?dryRun=All", "-f", "REQUEST")
 		_, target := e.retiring[identity(r)]
 		if target {
 			confirmed := response["kind"] == "Status" && response["status"] == "Success" || identityComplete(response) && identity(response) == identity(r) && field(response, "metadata", "uid") == field(r, "metadata", "uid")
