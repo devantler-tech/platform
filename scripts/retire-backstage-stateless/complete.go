@@ -366,6 +366,10 @@ func stableCompletionProjection(s snapshot, record completionRecord) (map[string
 }
 
 func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completionRecord) error {
+	return deploymentHandoffSourceSafeWithPins(ctx, e, record, deploymentHandoffPinnedHashes)
+}
+
+func deploymentHandoffSourceSafeWithPins(ctx context.Context, e engine, record completionRecord, pinnedHashes map[string]string) error {
 	if _, err := e.execute(ctx, "git", "merge-base", "--is-ancestor", record.source, e.sha); err != nil {
 		return errors.New("retirement source is not an ancestor")
 	}
@@ -385,7 +389,7 @@ func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completio
 		if deploymentHandoffPaths[path] {
 			continue
 		}
-		expected, pinned := deploymentHandoffPinnedHashes[path]
+		expected, pinned := pinnedHashes[path]
 		if !pinned {
 			return errors.New("retirement source diff is not maintenance-only")
 		}

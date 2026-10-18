@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -347,9 +348,36 @@ func TestDeploymentHandoffAcceptsExactMainMergeGroupTerminalJournalBlock(t *test
 	}
 }
 
+var reviewedRecoveryPinnedFixtures = map[string]string{
+	"k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml": "reviewed tenant RGD fixture\n",
+	"k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml": "reviewed webapp RGD fixture\n",
+	"ksail.prod.yaml": "reviewed production validation fixture\n",
+	"ksail.yaml":      "reviewed local validation fixture\n",
+	"scripts/rgd-template-static-scan-baseline.tsv":            "reviewed RGD baseline fixture\n",
+	"scripts/tests/test-rgd-template-static-scan.sh":           "reviewed RGD gate fixture\n",
+	"scripts/validate-eks-ci-role-policy/approved-surface.txt": "reviewed authorization baseline fixture\n",
+	"scripts/validate-eks-ci-role-policy/main.go":              "reviewed authorization validator fixture\n",
+}
+
+func reviewedRecoveryPinnedHashes(t *testing.T, f *completionFixture) map[string]string {
+	t.Helper()
+	if len(reviewedRecoveryPinnedFixtures) != len(deploymentHandoffPinnedHashes) {
+		t.Fatal("reviewed recovery fixture path census differs from production")
+	}
+	hashes := make(map[string]string, len(reviewedRecoveryPinnedFixtures))
+	for path, fixture := range reviewedRecoveryPinnedFixtures {
+		if _, ok := deploymentHandoffPinnedHashes[path]; !ok {
+			t.Fatalf("reviewed recovery fixture is not production-pinned: %s", path)
+		}
+		content := []byte(fixture)
+		f.handoffFiles[path] = content
+		hashes[path] = fmt.Sprintf("%x", sha256.Sum256(content))
+	}
+	return hashes
+}
+
 func TestDeploymentHandoffAcceptsCurrentReviewedRecoveryDiff(t *testing.T) {
 	f := completedRetirementFixture(t)
-	deploymentMergeGroupHandoffRunner(t)
 	f.handoffPaths = []string{
 		".github/actions/deploy-prod/action.yml",
 		".github/workflows/complete-backstage-retirement.yaml",
@@ -375,32 +403,24 @@ func TestDeploymentHandoffAcceptsCurrentReviewedRecoveryDiff(t *testing.T) {
 		"scripts/validate-eks-ci-role-policy/approved-surface.txt",
 		"scripts/validate-eks-ci-role-policy/main.go",
 	}
-	for _, path := range f.handoffPaths {
-		content, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		f.handoffFiles[path] = content
-	}
-	var out bytes.Buffer
-	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
-		t.Fatalf("reviewed recovery diff was not admitted read-only: code=%d patches=%d output=%s", code, f.patches, &out)
+	pinnedHashes := reviewedRecoveryPinnedHashes(t, f)
+	record := completionRecord{source: strings.Repeat("c", 40)}
+	e := engine{execute: f.execute, sha: strings.Repeat("a", 40), readOnly: true}
+	if err := deploymentHandoffSourceSafeWithPins(context.Background(), e, record, pinnedHashes); err != nil {
+		t.Fatalf("reviewed recovery diff was not admitted: %v", err)
 	}
 }
 
 func TestDeploymentHandoffRejectsChangedPinnedRecoveryFile(t *testing.T) {
 	f := completedRetirementFixture(t)
-	deploymentMergeGroupHandoffRunner(t)
 	path := "ksail.prod.yaml"
 	f.handoffPaths = []string{path}
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.handoffFiles[path] = append(content, []byte("\n# unrelated later edit\n")...)
-	var out bytes.Buffer
-	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || f.sleeps != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=source-diff\n" {
-		t.Fatalf("changed pinned recovery file was admitted: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
+	pinnedHashes := reviewedRecoveryPinnedHashes(t, f)
+	f.handoffFiles[path] = append(f.handoffFiles[path], []byte("# unrelated later edit\n")...)
+	record := completionRecord{source: strings.Repeat("c", 40)}
+	e := engine{execute: f.execute, sha: strings.Repeat("a", 40), readOnly: true}
+	if err := deploymentHandoffSourceSafeWithPins(context.Background(), e, record, pinnedHashes); err == nil {
+		t.Fatal("changed pinned recovery file was admitted")
 	}
 }
 
