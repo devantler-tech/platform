@@ -1600,6 +1600,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-repository-guards,
+        validate-go-regressions,
         validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
@@ -1615,6 +1616,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-repository-guards,
+        validate-go-regressions,
         validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,

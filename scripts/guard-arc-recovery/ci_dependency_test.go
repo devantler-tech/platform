@@ -60,7 +60,7 @@ func TestNativeSuiteInstallsTheApprovedKubectlFirst(t *testing.T) {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatal(err)
 	}
-	steps := workflow.Jobs["changes"].Steps
+	steps := workflow.Jobs["validate-go-regressions"].Steps
 	authorization := workflow.Jobs["validate-eks-authorization"].Steps
 	if err := nativeKubectlDependency(steps, authorization); err != nil {
 		t.Fatal(err)
