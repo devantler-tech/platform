@@ -359,6 +359,35 @@ func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completio
 	return nil
 }
 
+// waitForDeploymentHandoffRoots allows Flux's ordinary retry loop to replace a
+// transient dependency/build status with the one exact journal-only block that
+// can authorize the handoff. The wait is read-only and bounded inside the
+// caller's ten-minute context; every sample must keep the terminal retirement
+// state intact, and no other final applications failure is ever accepted.
+func waitForDeploymentHandoffRoots(ctx context.Context, e engine, record completionRecord, observed snapshot) (snapshot, error) {
+	const attempts = 50
+	for attempt := 0; attempt < attempts; attempt++ {
+		if platformRootState(observed, record, e.revision, false) == nil {
+			return observed, nil
+		}
+		if attempt == attempts-1 {
+			break
+		}
+		if _, err := e.execute(ctx, "sleep", "10"); err != nil {
+			return observed, errors.New("platform root retry interrupted")
+		}
+		next, err := e.collect(ctx)
+		if err != nil {
+			return observed, err
+		}
+		if err := completedState(next, record, true); err != nil {
+			return observed, err
+		}
+		observed = next
+	}
+	return observed, errors.New("platform roots did not reach the journal-only block")
+}
+
 // admitDeploymentHandoff lets a current-main CD run continue only when its
 // reconcile failed for the one terminal journal state that the separate
 // completion workflow is designed to clear. It is read-only: the successful CD
@@ -396,7 +425,11 @@ func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
 		return hold("receipt")
 	}
 	first, err := e.collect(ctx)
-	if err != nil || completedState(first, record, true) != nil || platformRootState(first, record, e.revision, false) != nil {
+	if err != nil || completedState(first, record, true) != nil {
+		return hold("evidence-first")
+	}
+	first, err = waitForDeploymentHandoffRoots(ctx, e, record, first)
+	if err != nil {
 		return hold("evidence-first")
 	}
 	preservedFirst, err := stableCompletionProjection(first, record)

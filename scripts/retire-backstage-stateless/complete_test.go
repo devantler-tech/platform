@@ -18,6 +18,8 @@ type completionFixture struct {
 	sourceChecks int
 	cleared      bool
 	patches      int
+	sleeps       int
+	onSleep      func()
 	postMutation func()
 }
 
@@ -145,6 +147,14 @@ func journalBlockedConditions() []any {
 
 func (f *completionFixture) execute(ctx context.Context, program string, args ...string) ([]byte, error) {
 	joined := strings.Join(args, " ")
+	if program == "sleep" {
+		f.sleeps++
+		if f.onSleep != nil {
+			f.onSleep()
+			f.onSleep = nil
+		}
+		return nil, nil
+	}
 	if program == "bash" && strings.Contains(joined, "scripts/verify-prod-recovery-source.sh") {
 		f.sourceChecks++
 		return []byte("PROD_RECOVERY_SOURCE=PASS\n"), nil
@@ -240,6 +250,20 @@ func TestDeploymentHandoffAcceptsOnlyExactTerminalJournalBlock(t *testing.T) {
 		fenceErr := e.requireFence(context.Background())
 		observed, collectErr := e.collect(context.Background())
 		t.Fatalf("exact terminal journal block was not admitted read-only: code=%d patches=%d output=%s namespace=%v record=%v fence=%v collect=%v completed=%v roots=%v", code, f.patches, &out, namespaceErr, recordErr, fenceErr, collectErr, completedState(observed, record, true), platformRootState(observed, record, e.revision, false))
+	}
+}
+
+func TestDeploymentHandoffWaitsForTheExactJournalOnlyRetry(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	apps := item(f.portal.layers, 0)
+	object(apps["status"])["conditions"] = []any{
+		map[string]any{"type": "Ready", "status": "False", "observedGeneration": 1, "reason": "DependencyNotReady", "message": "Dependencies do not meet ready condition"},
+	}
+	f.onSleep = func() { object(apps["status"])["conditions"] = journalBlockedConditions() }
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sleeps != 2 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		t.Fatalf("bounded wait did not admit the later exact journal-only retry: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
 	}
 }
 
