@@ -10,22 +10,32 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type regressionRunDefaults struct {
+	Run struct {
+		WorkingDirectory string `yaml:"working-directory"`
+	} `yaml:"run"`
+}
+
 type regressionWorkflow struct {
-	Jobs map[string]struct {
-		If          string            `yaml:"if"`
-		Needs       []string          `yaml:"needs"`
-		Continue    any               `yaml:"continue-on-error"`
-		Permissions map[string]string `yaml:"permissions"`
+	Defaults regressionRunDefaults `yaml:"defaults"`
+	Jobs     map[string]struct {
+		Defaults    regressionRunDefaults `yaml:"defaults"`
+		If          string                `yaml:"if"`
+		Needs       []string              `yaml:"needs"`
+		Continue    any                   `yaml:"continue-on-error"`
+		Permissions map[string]string     `yaml:"permissions"`
 		Steps       []struct {
-			Name     string            `yaml:"name"`
-			If       string            `yaml:"if"`
-			Run      string            `yaml:"run"`
-			Continue any               `yaml:"continue-on-error"`
-			Env      map[string]string `yaml:"env"`
+			Name             string            `yaml:"name"`
+			If               string            `yaml:"if"`
+			Run              string            `yaml:"run"`
+			Continue         any               `yaml:"continue-on-error"`
+			Env              map[string]string `yaml:"env"`
+			WorkingDirectory string            `yaml:"working-directory"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
 
+// readRegressionWorkflow loads the actual CI workflow rather than a separate fixture.
 func readRegressionWorkflow(t *testing.T) regressionWorkflow {
 	t.Helper()
 	data, err := os.ReadFile("../../.github/workflows/ci.yaml")
@@ -65,6 +75,15 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 				}
 				if name != "validate-go-regressions" || step.If != "" || step.Continue != nil {
 					t.Fatalf("complete suite must run once, unconditionally in its independent job: %s", command)
+				}
+				for _, directory := range []string{
+					workflow.Defaults.Run.WorkingDirectory,
+					candidate.Defaults.Run.WorkingDirectory,
+					step.WorkingDirectory,
+				} {
+					if directory != "" && directory != "." && directory != "./" {
+						t.Fatalf("complete suite must run from repository root, not %q: %s", directory, command)
+					}
 				}
 				if found {
 					t.Fatalf("duplicate complete-suite invocation: %s", command)
