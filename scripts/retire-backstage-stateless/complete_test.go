@@ -347,6 +347,7 @@ func TestDeploymentHandoffDoesNotRetryAPositivelyObservedNonTerminalHistory(t *t
 	object(stored["info"])["status"] = "uninstalling"
 	history["data"] = nativeReleaseSecret(t, stored)["data"]
 	object(field(history, "metadata", "labels"))["status"] = "uninstalling"
+	f.readFailures = 1
 	f.onSleep = func() {
 		object(stored["info"])["status"] = "uninstalled"
 		history["data"] = nativeReleaseSecret(t, stored)["data"]

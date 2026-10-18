@@ -230,10 +230,6 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	}{
 		{&s.live, []string{"--namespace=backstage", "get", "deployment,pod,persistentvolumeclaim,clusters.postgresql.cnpg.io", "--output=json"}},
 		{&s.inventory, []string{"--namespace=backstage", "get", inventoryKinds, "--output=json"}},
-		{&s.namespace, []string{"get", "namespace", "backstage", "--output=json"}},
-		{&s.volumes, []string{"get", "persistentvolumes", "--output=json"}},
-		{&s.layers, []string{"get", "kustomizations.kustomize.toolkit.fluxcd.io", "--all-namespaces", "--output=json"}},
-		{&s.source, []string{"--namespace=flux-system", "get", "ocirepository", "flux-system", "--output=json"}},
 	}
 	for _, r := range reads {
 		*r.target, err = e.read(ctx, r.args...)
@@ -243,6 +239,21 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	}
 	if e.historyUID != "" {
 		if err := bindJournalHistory(&s, e.historyUID); err != nil {
+			return s, err
+		}
+	}
+	reads = []struct {
+		target *map[string]any
+		args   []string
+	}{
+		{&s.namespace, []string{"get", "namespace", "backstage", "--output=json"}},
+		{&s.volumes, []string{"get", "persistentvolumes", "--output=json"}},
+		{&s.layers, []string{"get", "kustomizations.kustomize.toolkit.fluxcd.io", "--all-namespaces", "--output=json"}},
+		{&s.source, []string{"--namespace=flux-system", "get", "ocirepository", "flux-system", "--output=json"}},
+	}
+	for _, r := range reads {
+		*r.target, err = e.read(ctx, r.args...)
+		if err != nil {
 			return s, err
 		}
 	}
