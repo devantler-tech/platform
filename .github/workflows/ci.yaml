@@ -67,532 +67,6 @@ jobs:
       - name: 🧪 Validate native retirement result classification
         run: go -C scripts/retire-backstage-stateless/poller-native test -race -mod=readonly -count=1 ./...
 
-      - name: 💾 Validate storage audit regressions
-        run: |
-          go test ./scripts/audit-storage-retention
-          shellcheck scripts/audit-storage-retention/capture.sh
-
-      - name: 💾 Require bounded OpenBao expansion transport controls
-        env:
-          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
-        run: go test -race -count=1 ./scripts/expand-openbao-audit
-
-      - name: 🧯 Validate private recovery field extraction
-        run: go test -race ./scripts/validate-break-glass
-
-      - name: 💾 Validate Flux replacement safety
-        run: |
-          go test ./scripts/validate-flux-force-safety
-          shellcheck scripts/tests/test-flux-force-safety.sh
-          bash scripts/tests/test-flux-force-safety.sh
-
-      - name: 🧭 Validate GitHub bootstrap isolation
-        run: |
-          shellcheck scripts/guard-github-bootstrap-isolation.sh scripts/tests/test-github-bootstrap-isolation.sh
-          bash scripts/tests/test-github-bootstrap-isolation.sh
-          bash scripts/tests/test-crossplane-sync-alerter.sh
-
-      - name: 🚩 Validate runtime flag definitions
-        run: |
-          go test ./scripts/validate-feature-flags
-          go run ./scripts/validate-feature-flags
-
-      - name: 🛡️ Validate preserved policy failure actions
-        run: |
-          go test ./scripts/validate-policy-actions
-          go run ./scripts/validate-policy-actions
-          policy_render="$(mktemp -d)"
-          trap 'rm -rf "$policy_render"' EXIT
-          kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
-          go run ./scripts/validate-policy-actions "$policy_render"
-
-      - name: 🩹 Validate merge-group heal contract
-        run: |
-          go test ./scripts/validate-merge-group-heal
-          go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
-          go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
-          shellcheck scripts/verify-prod-recovery-source.sh scripts/tests/test-prod-recovery-source.sh scripts/tests/test-prod-recovery-source-wiring.sh
-          bash scripts/tests/test-prod-recovery-source.sh
-          bash scripts/tests/test-prod-recovery-source-wiring.sh
-          shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
-          bash scripts/tests/test-merge-group-evicted.sh
-          shellcheck scripts/check-flux-orphaned-objects.sh scripts/tests/test-check-flux-orphaned-objects.sh
-          bash scripts/tests/test-check-flux-orphaned-objects.sh
-
-      # A merge-group validator that ci-required-checks enforces but deploy-prod does not
-      # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
-      - name: 🚦 Validate the deploy waits for every merge-group validator
-        run: |
-          shellcheck scripts/guard-deploy-waits-for-merge-group-validators.sh scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
-          bash scripts/guard-deploy-waits-for-merge-group-validators.sh .github/workflows/ci.yaml
-          bash scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
-
-      # Reports whether prod's published artifact is on main, from its signed
-      # provenance (#3846). Not wired into any deploy yet; its tests also read
-      # this workflow's k8s filter, so a filter it can no longer parse fails here.
-      - name: 🧭 Validate prod convergence resolver
-        run: go test ./scripts/resolve-prod-convergence
-
-      - name: 🧭 Validate live required-workflow resolution
-        run: |
-          shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
-          bash scripts/tests/test-required-merge-workflows.sh
-
-      - name: 🐚 Validate Bash local initialization
-        run: |
-          go test -v ./scripts/guard-bash-local-initialization
-          go run ./scripts/guard-bash-local-initialization scripts .github/scripts
-
-      - name: 🛟 Validate the DR Longhorn disk preflight
-        run: |
-          shellcheck scripts/tests/test-dr-longhorn-disk-preflight.sh
-          bash scripts/tests/test-dr-longhorn-disk-preflight.sh
-
-      # Run on merge groups too: the manifest job below is PR-only.
-      - name: 🔐 Validate Cilium SNI hostname coverage
-        run: |
-          go test ./scripts/guard-cilium-sni
-          go run ./scripts/guard-cilium-sni k8s
-
-      # validate-main.yaml runs the report after each push to main (#3848); test it on the
-      # pull request too, so a broken report is caught before it can turn main red.
-      - name: 🧭 Validate prod convergence report
-        run: |
-          shellcheck scripts/report-prod-convergence.sh
-          shellcheck scripts/tests/test-report-prod-convergence.sh
-          bash scripts/tests/test-report-prod-convergence.sh
-          shellcheck scripts/redeploy-main-when-behind.sh scripts/tests/test-redeploy-main-when-behind.sh
-          bash scripts/tests/test-redeploy-main-when-behind.sh
-          shellcheck scripts/prod-stranded-gate.sh scripts/tests/test-prod-stranded-gate.sh
-          bash scripts/tests/test-prod-stranded-gate.sh
-          shellcheck scripts/tests/test-restore-stranded-prod-workflow.sh
-          bash scripts/tests/test-restore-stranded-prod-workflow.sh
-
-      - name: 🧱 Validate the reviewed KSail kernel-argument fold
-        run: |
-          go test ./scripts/reconcile-talos-kernel-args
-          go run ./scripts/reconcile-talos-kernel-args --check-pins
-
-      # The read-only shared-catalogue coverage proof still uses this evaluator.
-      - name: 💒 Validate Wedding backup catalogue evaluator
-        run: go test ./scripts/mirror-wedding-backup-catalogue
-
-      - name: 💒 Validate isolated Wedding bootstrap proof
-        run: go test ./scripts/verify-wedding-backup-bootstrap
-
-      - name: 💾 Validate OpenBao snapshot fetch
-        run: go test ./scripts/tests/vault-snapshot-fetch
-
-      - name: 🔎 Validate finite runtime-log evidence
-        run: go test ./scripts/analyze-cri-logs
-
-      - name: 🛑 Validate inactive ARC staging boundaries
-        run: go test ./scripts/tests/arc-staging
-
-      - name: 🔐 Validate ARC transport proof boundaries
-        run: |
-          set -euo pipefail
-          native_hubble="$(mktemp -d)"
-          trap 'rm -rf "$native_hubble"' EXIT
-          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
-            https://github.com/cilium/hubble/releases/download/v1.20.2/hubble-linux-amd64.tar.gz \
-            --output "$native_hubble/hubble.tar.gz"
-          printf '%s  %s\n' 03f248a50cad11e728bf9383382392c57148fd6a19853ad359fb7598dae29312 "$native_hubble/hubble.tar.gz" \
-            | sha256sum --check
-          tar --extract --gzip --file "$native_hubble/hubble.tar.gz" --directory "$native_hubble"
-          export HUBBLE_TEST_BIN="$native_hubble/hubble"
-          go test -race ./scripts/verify-arc-transport
-          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
-          bash scripts/tests/test-verify-arc-transport.sh
-
-      - name: 🛑 Validate ARC recovery metadata proof
-        run: |
-          go test -race ./scripts/guard-arc-recovery ./scripts/retire-arc-pool
-          shellcheck scripts/retire-arc-pool.sh scripts/tests/test-retire-arc-pool.sh
-          bash scripts/tests/test-retire-arc-pool.sh
-
-      - name: 💾 Validate protected Longhorn client maintenance
-        run: go test -race ./scripts/maintain-longhorn-clients
-
-      - name: 🔎 Validate read-only portal retirement assessment
-        run: go test -race ./scripts/assess-backstage-retirement
-
-      - name: 💾 Validate retained portal storage protection
-        env:
-          PORTAL_STORAGE_REQUIRE_NATIVE_CONTROL: '1'
-        run: go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage
-
-      - name: 🛡️ Validate stateless portal retirement preservation
-        shell: bash
-        env:
-          HELM_VERSION: v4.2.0
-          HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
-          PORTAL_REQUIRE_NATIVE_CONTROL: '1'
-        run: |
-          set -euo pipefail
-          native_dir="$(mktemp -d)"
-          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
-          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
-          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
-          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
-          export PORTAL_HELM_TEST_BIN="$native_dir/linux-amd64/helm"
-          go test -race -count=1 ./scripts/retire-backstage-stateless
-          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$PORTAL_HELM_TEST_BIN" >> "$GITHUB_ENV"
-
-      - name: 📝 Validate Kyverno structured log severity
-        # Use the checksum-verified native Helm above, on PRs and merge groups.
-        # The consumer regression must never skip when Helm is unavailable.
-        env:
-          KYVERNO_LOG_REQUIRE_NATIVE: '1'
-        run: go test -race -count=1 ./scripts/tests/kyverno-logs
-
-      - name: 🗃️ Validate Fleet preparation and server images
-        env:
-          FLEETDM_REQUIRE_NATIVE: '1'
-        run: |
-          FLEETDM_HELM_BIN="$KYVERNO_LOG_HELM_BIN"
-          export FLEETDM_HELM_BIN
-          go test -race -count=1 ./scripts/tests/fleetdm
-
-      # Shared Wedding backup access is retired on this proof's word, so it must
-      # pass only on an AccessDenied for every access, after a positive control
-      # and against an object the shared credential showed exists. These cases
-      # keep an accepted access, a wrong bucket or a network failure from passing
-      # as isolation. The runtime test also runs them in the pinned images and
-      # feeds the pinned mc's own output for a refused request through the proof.
-      - name: 💒 Validate Wedding backup denial proof
-        run: |
-          shellcheck scripts/verify-wedding-backup-denial.sh scripts/verify-wedding-backup-denial-pod.sh scripts/tests/test-verify-wedding-backup-denial.sh
-          bash scripts/tests/test-verify-wedding-backup-denial.sh
-          shellcheck scripts/tests/test-wedding-backup-denial-runtime.sh
-          bash scripts/tests/test-wedding-backup-denial-runtime.sh
-
-      # The stale shared copy of the Wedding catalogue is removed on this proof's
-      # word, and that cannot be undone. These cases keep a missing object,
-      # different bytes, a live writer or an unreviewed bucket from passing as
-      # covered, and pin the pod script to commands that only read.
-      - name: 💒 Validate Wedding shared backup coverage proof
-        run: |
-          shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
-          bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
-
-      - name: 💾 Validate two-stage PVC retirement
-        # A merge-group artifact is speculative, but a PVC deletion is not: its
-        # deletionTimestamp survives queue eviction and main cannot undo it.
-        # Run in the shared changes job so both PR and merge-group refs compare
-        # against their exact base even when the full manifest job is skipped.
-        env:
-          PVC_PRUNE_BASE_SHA: >-
-            ${{ github.event.pull_request.base.sha ||
-            github.event.merge_group.base_sha }}
-        run: |
-          shellcheck scripts/tests/test-pvc-prune-safety.sh
-          bash scripts/tests/test-pvc-prune-safety.sh
-
-      - name: ✂️ Validate every Flux Kustomization prunes
-        # Flux defaults spec.prune to false, so an omitted field silently opts a
-        # whole tree out of deletion (#3373). The unifi tree prunes too and keeps
-        # its live network objects at the resource layer instead; the test renders
-        # that patch so a target that matches nothing cannot pass.
-        run: |
-          shellcheck scripts/tests/test-flux-kustomization-prune.sh
-          bash scripts/tests/test-flux-kustomization-prune.sh
-
-      - name: 🔐 Validate directly-invoked scripts are tracked executable
-        # A script a workflow runs as ./scripts/<name> must be tracked 100755, because
-        # CI clones from git and the tracked mode is what the runner gets. Caught live on
-        # #3530, where a promotion gate was committed 100644 and died "permission denied"
-        # BEFORE verifying anything — present, reviewed green, and inert. Nothing that runs
-        # could see it: shellcheck was clean, bash <file> passed, and the script own suite
-        # passed, because none of them exec the file. The class has been introduced three
-        # times, twice via an awk-into-tmp-and-mv idiom that drops the bit while leaving the
-        # content byte-correct. The guard derives the requirement from the invocation, so a
-        # script that moves behind an interpreter stops needing the bit, and finding NO
-        # direct invocation is cannot-check rather than a clean pass.
-        #
-        # Run in the shared changes job, unconditionally, for the same reason the PVC
-        # check above does: the manifest job is pull_request-only, so hosting the guard
-        # there left the merge group — the event that actually gates main — running none
-        # of it. Unconditional also removes the path filter as a way to skip the check,
-        # which is the failure mode the guard exists to catch, one level up.
-        run: |
-          shellcheck scripts/guard-tracked-exec-bit.sh
-          shellcheck scripts/tests/test-guard-tracked-exec-bit.sh
-          bash scripts/guard-tracked-exec-bit.sh .
-          bash scripts/tests/test-guard-tracked-exec-bit.sh
-          shellcheck scripts/guard-test-script-exec-bit.sh scripts/tests/test-guard-test-script-exec-bit.sh
-          bash scripts/guard-test-script-exec-bit.sh .
-          bash scripts/tests/test-guard-test-script-exec-bit.sh
-
-      - name: 🔐 Validate the documentation tenant scope
-        run: |
-          shellcheck scripts/tests/test-khoist-documentation-tenant.sh
-          bash scripts/tests/test-khoist-documentation-tenant.sh
-
-      # The DR contract runs in its own dedicated job (below). This checks that
-      # the verify block is in effect at all: it ran at spec.cluster.verify for
-      # ~3 weeks, where KSail discards it, and every text-based check passed
-      # throughout (#2920). It also refuses any FluxInstance kustomize patch whose
-      # target selects no operator-generated resource, which flux-operator
-      # would otherwise drop silently (#2996).
-      - name: 🔐 Validate Flux verification is in effect
-        run: |
-          go test ./scripts/validate-flux-verify
-          go run ./scripts/validate-flux-verify \
-            ksail.prod.yaml \
-            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
-
-      # The step above covers the ROOT source. These are the other eight cosign
-      # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
-      # Talos image config — which trust the SHARED actions publish workflows and
-      # must therefore pin a fixed revision. #2816 set that by hand in eight places;
-      # this is what keeps it set (#2818).
-      - name: 🔐 Validate shared publish workflows are pinned
-        run: ./scripts/guard-shared-publish-workflow-pin.sh
-
-      # The rules in talos/cluster/verify-first-party-images.yaml decide which images a node
-      # will REFUSE once verification enforces, so a change to their order or their identities
-      # silently changes the blast radius. This is the inventory tool's own hermetic suite —
-      # no cluster, no registry, no credential — and it lives here rather than in the dormant
-      # liveness workflow because a checker whose job is noticing a silent condition must not
-      # itself regress silently (#3334, under #3101).
-      - name: 🔐 Validate the first-party image signature inventory
-        run: |
-          # -x: the inventory script now sources scripts/registry-auth-lib.sh, and without it
-          # SC1091 is reported and the run exits 1 on a script that is otherwise clean.
-          shellcheck -x scripts/inventory-first-party-image-signatures.sh
-          shellcheck scripts/tests/test-inventory-first-party-image-signatures.sh
-          bash scripts/tests/test-inventory-first-party-image-signatures.sh
-          # The credential lookup the probe uses to tell "unreadable" from "unsigned" apart. Pure
-          # file parsing against fixtures — no registry and no credential of ours is involved.
-          shellcheck -x scripts/registry-auth-lib.sh
-          shellcheck -x scripts/tests/test-registry-auth-lib.sh
-          bash scripts/tests/test-registry-auth-lib.sh
-
-      # The enforcement probe's negative control only proves anything while it stays unsigned.
-      # One added signing step would silently turn a refusal test into a no-op, so this runs
-      # unconditionally, on every PR and merge group, like the checks above (#3336). The
-      # verification script both the publisher and the probe call is tested here too: a
-      # fake curl stands in for the registry, so no credential or network is involved.
-      - name: 🔐 Validate the unsigned probe image stays unsigned
-        run: |
-          shellcheck scripts/guard-unsigned-probe-image-publisher.sh
-          shellcheck scripts/tests/test-guard-unsigned-probe-image-publisher.sh
-          shellcheck scripts/verify-image-unsigned.sh
-          shellcheck scripts/tests/test-verify-image-unsigned.sh
-          bash scripts/guard-unsigned-probe-image-publisher.sh .
-          bash scripts/tests/test-guard-unsigned-probe-image-publisher.sh
-          bash scripts/tests/test-verify-image-unsigned.sh
-
-      - name: 🔐 Validate proposed Crossplane package signature checks
-        run: |
-          go test ./scripts/collect-first-party-packages
-          shellcheck scripts/check-first-party-package-signatures.sh
-          shellcheck scripts/tests/test-check-first-party-package-signatures.sh
-          bash scripts/tests/test-check-first-party-package-signatures.sh
-          shellcheck scripts/check-upbound-package-signatures.sh
-          shellcheck scripts/tests/test-check-upbound-package-signatures.sh
-          bash scripts/tests/test-check-upbound-package-signatures.sh
-
-      - name: 🔐 Validate the scoped package-access experiment
-        # Always run, including workflow-only changes. The real registry proof
-        # is manual and uses credentials only after this code reaches main.
-        run: go test ./scripts/prove-scoped-package-access
-
-      # The guard above proves every matcher pins A revision. It cannot say WHICH, and
-      # narrowing them to approved revisions (#2818) needs that fact for each consumer.
-      # This runs the hermetic half of the report that computes it: the network resolver
-      # is stubbed, so nothing here depends on another repository's release cadence.
-      - name: 🔐 Validate the publish-revision report
-        run: |
-          shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
-          shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
-          bash scripts/tests/test-publish-workflow-signing-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
-          bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
-
-      # The report above discovers its consumers with a raw FILE SCAN, while production is
-      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
-      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
-      # a consumer in a file the scan never opens — or when the render cannot be judged
-      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
-      # of what it compares lives under scripts/, outside the k8s paths.
-      - name: 🔐 Validate consumer discovery against the production render
-        run: |
-          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
-          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
-          ./scripts/guard-consumer-discovery-conservation.sh
-
-      # The report names the two revisions per consumer; the generator (#3550) turns them
-      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
-      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
-      # shape — an unresolved consumer writes nothing — not any particular revision.
-      - name: 🔐 Validate the approved-revisions generator
-        run: |
-          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
-          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
-          bash scripts/tests/test-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
-          bash scripts/tests/test-tenant-publication-binding.sh
-          bash scripts/tests/test-bootstrap-tenant-source.sh
-          shellcheck scripts/tests/test-canonical-publisher-regeneration.sh
-          bash scripts/tests/test-canonical-publisher-regeneration.sh
-
-      # The pin guard above proves each matcher pins a FIXED revision; this one proves each
-      # per-consumer matcher pins the revision PAIR the committed approved set names for that
-      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
-      # the same reason as the pin guard: the subjects live in four different trees.
-      # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
-      - name: 🔐 Validate the approved-revisions guard
-        env:
-          APPROVED_REVISIONS_ENFORCE: '1'
-        run: |
-          shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
-          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/write-publish-workflow-matchers.sh
-          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
-          shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
-          shellcheck scripts/tests/test-publish-workflow-canonical-approvals.sh
-          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
-          bash scripts/tests/test-write-publish-workflow-matchers.sh
-          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
-
-      - name: 🔐 Enforce approved publication signers
-        env:
-          APPROVED_REVISIONS_ENFORCE: '1'
-        run: ./scripts/guard-publish-workflow-approved-revisions.sh
-
-      # The scheduled regeneration (#3552, third child of #3308) runs the generator and
-      # writer and guard above against prod and turns a moved set into ONE draft pull request.
-      # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
-      # commit, least-privilege token grants, and generator → writer → guard → pull request with
-      # no continue-on-error — none of which any script it calls can enforce, so the
-      # test below pins each with an ablation. Unconditional for the same reason as
-      # the two steps above: the workflow lives outside the k8s paths.
-      - name: 🔐 Validate the approved-revisions regeneration workflow
-        run: |
-          shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
-          bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
-
-      # The release watcher (#3960) dispatches that regeneration when devantler-tech/actions
-      # publishes a release the committed candidate does not yet name. Its test stubs `gh` and
-      # pins that every failed read is UNKNOWN and dispatches nothing.
-      - name: 🔐 Validate the actions release watcher
-        run: |
-          shellcheck scripts/watch-actions-release-candidate.sh scripts/tests/test-watch-actions-release-candidate.sh
-          bash scripts/tests/test-watch-actions-release-candidate.sh
-
-      # The authorization gate's verdict and its moved-entry diagnostics are two
-      # commands in one step, and a real aggregate mismatch fails BOTH — so a step
-      # that stopped at the first never ran the diagnostics on the one failure they
-      # exist to explain (#3879). That is a property of the STEP's shape, which no
-      # script it calls can enforce, so the test executes the step against stub
-      # binaries and ablates each assertion. It also refuses an `if:` or a tolerated
-      # failure on that step, which would let the gate run without deciding
-      # anything — the Go coverage guards cannot read this compound step (#4361).
-      # Unconditional for the same reason as the steps above: its subjects are
-      # ci.yaml and cd.yaml themselves, which sit outside the k8s paths.
-      - name: 🔐 Validate the authorization gate reports its diagnostics
-        run: |
-          shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
-          bash scripts/tests/test-authorization-gate-diagnostics.sh
-
-      - name: 🔐 Validate OCI chart source readiness contracts
-        run: go test ./scripts/tests/oci-chart-sources
-
-      # Both subject guards above examine a file only when it already carries a
-      # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
-      # artifact with NO spec.verify at all is invisible to them — and refused by nothing
-      # else. This one discovers OCIRepositories by KIND and URL, at any nesting depth,
-      # and requires cosign with exactly one identity on every devantler-tech GHCR
-      # artifact (#3558). Unconditional, like the guards above.
-      - name: 🔐 Validate every devantler-tech OCIRepository verifies
-        run: |
-          shellcheck scripts/guard-oci-repository-verify.sh
-          shellcheck scripts/tests/test-guard-oci-repository-verify.sh
-          bash scripts/tests/test-guard-oci-repository-verify.sh
-          ./scripts/guard-oci-repository-verify.sh
-
-      # Dropping a framework from the Kubescape gate REMOVES findings, so the
-      # compliance score RISES and every check stays green — a coverage
-      # regression that looks like an improvement. That is what un-gated 59
-      # excepted controls for weeks (#2823). Unconditional, like the guard
-      # above: the property it protects is not confined to the k8s paths.
-      - name: 🔐 Validate the Kubescape gate's framework coverage
-        run: |
-          go test ./scripts/validate-kubescape-frameworks
-          go run ./scripts/validate-kubescape-frameworks
-
-      # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
-      # for concurrency.queue, which also removes its enum check. This restores it.
-      - name: 🚦 Validate concurrency queue values
-        run: |
-          # BOTH extensions: the actionlint ignore covers .github/workflows/**, so
-          # a .yml workflow left out here would have the "unexpected key"
-          # diagnostic suppressed with nothing restoring the enum check.
-          shopt -s nullglob
-          workflows=(.github/workflows/*.yaml .github/workflows/*.yml)
-          # Fail closed rather than pass vacuously if the glob ever matches nothing.
-          if [ ${#workflows[@]} -eq 0 ]; then
-            echo "::error::no workflow files matched; nothing was validated"
-            exit 1
-          fi
-          go test ./scripts/validate-concurrency-queue
-          go run ./scripts/validate-concurrency-queue "${workflows[@]}"
-
-      # This guard spans the HelmRelease and Renovate policy, so it must run
-      # without routing policy-only changes into the production k8s deploy path.
-      - name: 🔐 Validate Headlamp OIDC version gate
-        run: |
-          shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
-          bash scripts/tests/test-headlamp-oidc-version-gate.sh
-
-      # The renderer's Helm SDK follows the deployed controller, not Helm's own
-      # releases. This spans the build guard and the Renovate policy, so it runs
-      # here for the same reason as the Headlamp gate above (#4738).
-      - name: 📌 Validate the controller Helm SDK Renovate pin
-        run: |
-          shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
-          bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
-
-      # Kyverno 1.20 removes the kyverno.io ClusterPolicy API most policies here still use.
-      # This spans the Renovate policy, the CLI pin and the manifests, so it runs here for
-      # the same reason as the gates above; its first case checks the tree as committed (#4994).
-      - name: 📌 Validate the Kyverno 1.20 cap
-        run: |
-          shellcheck scripts/check-kyverno-1-20-cap.sh scripts/tests/test-kyverno-1-20-cap.sh
-          bash scripts/tests/test-kyverno-1-20-cap.sh
-
-      # Renovate moves only the source commit of the vendored origin-ca-issuer CRDs, and
-      # the bytes do not change with it, so nothing but the updater's own record can tell
-      # a bump from a refresh (#4136). The test runs a copy of the updater against stub
-      # binaries: no network, no Checkov. Its first case validates the tree as committed,
-      # so this step is also what fails on a pull request that moves only the pin, and it
-      # fails in the merge group too, where the pull-request-only manifest job never runs.
-      # Unconditional, like the gate above: one half of its subject is the Renovate
-      # policy, which sits outside the k8s paths.
-      - name: 🔐 Validate the origin-ca-issuer CRD source pin
-        run: |
-          shellcheck scripts/tests/test-origin-ca-issuer-crd-source-pin.sh
-          bash scripts/tests/test-origin-ca-issuer-crd-source-pin.sh
-
-      # Independent of the conditional validate job whose nested-RGD steps this protects. If those
-      # steps are removed, this unconditional job must still fail the PR and merge-group revision.
-      - name: 🔬 Validate nested RGD workflow wiring
-        run: |
-          shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
-          bash scripts/tests/test-rgd-template-static-scan-wiring.sh
-
-      - name: Validate dedicated wedding backup staging
-        run: |
-          node --version
-          yq --version
-          node --test tests/wedding-backup-staging/*.test.mjs
-          shellcheck scripts/verify-wedding-backup-cutover.sh scripts/tests/test-verify-wedding-backup-cutover.sh
-          bash scripts/tests/test-verify-wedding-backup-cutover.sh
-          go test ./scripts/verify-wedding-dedicated-restore
-
       - name: 🔍 Filter paths
         uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
         id: filter
@@ -1179,6 +653,568 @@ jobs:
   # The full offline fixture suite runs alongside changes, which retains the real production
   # render and ShellCheck. Both deployment and the required gate wait for these regressions.
   # Like changes, this uses kubectl, yq and jq supplied by the ubuntu-latest runner.
+  validate-repository-guards:
+    name: 🛡️ Validate Repository Guards
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Initialize the approved kubectl for native regressions
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      - name: 💾 Validate storage audit regressions
+        run: |
+          go test ./scripts/audit-storage-retention
+          shellcheck scripts/audit-storage-retention/capture.sh
+
+      - name: 💾 Require bounded OpenBao expansion transport controls
+        env:
+          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
+        run: go test -race -count=1 ./scripts/expand-openbao-audit
+
+      - name: 🧯 Validate private recovery field extraction
+        run: go test -race ./scripts/validate-break-glass
+
+      - name: 💾 Validate Flux replacement safety
+        run: |
+          go test ./scripts/validate-flux-force-safety
+          shellcheck scripts/tests/test-flux-force-safety.sh
+          bash scripts/tests/test-flux-force-safety.sh
+
+      - name: 🧭 Validate GitHub bootstrap isolation
+        run: |
+          shellcheck scripts/guard-github-bootstrap-isolation.sh scripts/tests/test-github-bootstrap-isolation.sh
+          bash scripts/tests/test-github-bootstrap-isolation.sh
+          bash scripts/tests/test-crossplane-sync-alerter.sh
+
+      - name: 🚩 Validate runtime flag definitions
+        run: |
+          go test ./scripts/validate-feature-flags
+          go run ./scripts/validate-feature-flags
+
+      - name: 🛡️ Validate preserved policy failure actions
+        run: |
+          go test ./scripts/validate-policy-actions
+          go run ./scripts/validate-policy-actions
+          policy_render="$(mktemp -d)"
+          trap 'rm -rf "$policy_render"' EXIT
+          kubectl kustomize k8s/providers/hetzner/infrastructure > "$policy_render/production.yaml"
+          go run ./scripts/validate-policy-actions "$policy_render"
+
+      - name: 🩹 Validate merge-group heal contract
+        run: |
+          go test ./scripts/validate-merge-group-heal
+          go run ./scripts/validate-merge-group-heal .github/workflows/ci.yaml
+          go run ./scripts/validate-merge-group-heal --deploy-only .github/workflows/cd.yaml
+          shellcheck scripts/verify-prod-recovery-source.sh scripts/tests/test-prod-recovery-source.sh scripts/tests/test-prod-recovery-source-wiring.sh
+          bash scripts/tests/test-prod-recovery-source.sh
+          bash scripts/tests/test-prod-recovery-source-wiring.sh
+          shellcheck scripts/merge-group-evicted.sh scripts/tests/test-merge-group-evicted.sh
+          bash scripts/tests/test-merge-group-evicted.sh
+          shellcheck scripts/check-flux-orphaned-objects.sh scripts/tests/test-check-flux-orphaned-objects.sh
+          bash scripts/tests/test-check-flux-orphaned-objects.sh
+
+      # A merge-group validator that ci-required-checks enforces but deploy-prod does not
+      # need runs in parallel with the deploy, so prod can receive a revision it rejects (#4148).
+      - name: 🚦 Validate the deploy waits for every merge-group validator
+        run: |
+          shellcheck scripts/guard-deploy-waits-for-merge-group-validators.sh scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
+          bash scripts/guard-deploy-waits-for-merge-group-validators.sh .github/workflows/ci.yaml
+          bash scripts/tests/test-guard-deploy-waits-for-merge-group-validators.sh
+
+      # Reports whether prod's published artifact is on main, from its signed
+      # provenance (#3846). Not wired into any deploy yet; its tests also read
+      # this workflow's k8s filter, so a filter it can no longer parse fails here.
+      - name: 🧭 Validate prod convergence resolver
+        run: go test ./scripts/resolve-prod-convergence
+
+      - name: 🧭 Validate live required-workflow resolution
+        run: |
+          shellcheck scripts/required-merge-workflows.sh scripts/tests/test-required-merge-workflows.sh
+          bash scripts/tests/test-required-merge-workflows.sh
+
+      - name: 🐚 Validate Bash local initialization
+        run: |
+          go test -v ./scripts/guard-bash-local-initialization
+          go run ./scripts/guard-bash-local-initialization scripts .github/scripts
+
+      - name: 🛟 Validate the DR Longhorn disk preflight
+        run: |
+          shellcheck scripts/tests/test-dr-longhorn-disk-preflight.sh
+          bash scripts/tests/test-dr-longhorn-disk-preflight.sh
+
+      # Run on merge groups too: the manifest job below is PR-only.
+      - name: 🔐 Validate Cilium SNI hostname coverage
+        run: |
+          go test ./scripts/guard-cilium-sni
+          go run ./scripts/guard-cilium-sni k8s
+
+      # validate-main.yaml runs the report after each push to main (#3848); test it on the
+      # pull request too, so a broken report is caught before it can turn main red.
+      - name: 🧭 Validate prod convergence report
+        run: |
+          shellcheck scripts/report-prod-convergence.sh
+          shellcheck scripts/tests/test-report-prod-convergence.sh
+          bash scripts/tests/test-report-prod-convergence.sh
+          shellcheck scripts/redeploy-main-when-behind.sh scripts/tests/test-redeploy-main-when-behind.sh
+          bash scripts/tests/test-redeploy-main-when-behind.sh
+          shellcheck scripts/prod-stranded-gate.sh scripts/tests/test-prod-stranded-gate.sh
+          bash scripts/tests/test-prod-stranded-gate.sh
+          shellcheck scripts/tests/test-restore-stranded-prod-workflow.sh
+          bash scripts/tests/test-restore-stranded-prod-workflow.sh
+
+      - name: 🧱 Validate the reviewed KSail kernel-argument fold
+        run: |
+          go test ./scripts/reconcile-talos-kernel-args
+          go run ./scripts/reconcile-talos-kernel-args --check-pins
+
+      # The read-only shared-catalogue coverage proof still uses this evaluator.
+      - name: 💒 Validate Wedding backup catalogue evaluator
+        run: go test ./scripts/mirror-wedding-backup-catalogue
+
+      - name: 💒 Validate isolated Wedding bootstrap proof
+        run: go test ./scripts/verify-wedding-backup-bootstrap
+
+      - name: 💾 Validate OpenBao snapshot fetch
+        run: go test ./scripts/tests/vault-snapshot-fetch
+
+      - name: 🔎 Validate finite runtime-log evidence
+        run: go test ./scripts/analyze-cri-logs
+
+      - name: 🛑 Validate inactive ARC staging boundaries
+        run: go test ./scripts/tests/arc-staging
+
+      - name: 🔐 Validate ARC transport proof boundaries
+        run: |
+          set -euo pipefail
+          native_hubble="$(mktemp -d)"
+          trap 'rm -rf "$native_hubble"' EXIT
+          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+            https://github.com/cilium/hubble/releases/download/v1.20.2/hubble-linux-amd64.tar.gz \
+            --output "$native_hubble/hubble.tar.gz"
+          printf '%s  %s\n' 03f248a50cad11e728bf9383382392c57148fd6a19853ad359fb7598dae29312 "$native_hubble/hubble.tar.gz" \
+            | sha256sum --check
+          tar --extract --gzip --file "$native_hubble/hubble.tar.gz" --directory "$native_hubble"
+          export HUBBLE_TEST_BIN="$native_hubble/hubble"
+          go test -race ./scripts/verify-arc-transport
+          shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
+          bash scripts/tests/test-verify-arc-transport.sh
+
+      - name: 🛑 Validate ARC recovery metadata proof
+        run: |
+          go test -race ./scripts/guard-arc-recovery ./scripts/retire-arc-pool
+          shellcheck scripts/retire-arc-pool.sh scripts/tests/test-retire-arc-pool.sh
+          bash scripts/tests/test-retire-arc-pool.sh
+
+      - name: 💾 Validate protected Longhorn client maintenance
+        run: go test -race ./scripts/maintain-longhorn-clients
+
+      - name: 🔎 Validate read-only portal retirement assessment
+        run: go test -race ./scripts/assess-backstage-retirement
+
+      - name: 💾 Validate retained portal storage protection
+        env:
+          PORTAL_STORAGE_REQUIRE_NATIVE_CONTROL: '1'
+        run: go test -race -count=1 ./internal/portalstorage ./scripts/protect-backstage-storage
+
+      - name: 🛡️ Validate stateless portal retirement preservation
+        shell: bash
+        env:
+          HELM_VERSION: v4.2.0
+          HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
+          PORTAL_REQUIRE_NATIVE_CONTROL: '1'
+        run: |
+          set -euo pipefail
+          native_dir="$(mktemp -d)"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
+          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
+          export PORTAL_HELM_TEST_BIN="$native_dir/linux-amd64/helm"
+          go test -race -count=1 ./scripts/retire-backstage-stateless
+          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$PORTAL_HELM_TEST_BIN" >> "$GITHUB_ENV"
+
+      - name: 📝 Validate Kyverno structured log severity
+        # Use the checksum-verified native Helm above, on PRs and merge groups.
+        # The consumer regression must never skip when Helm is unavailable.
+        env:
+          KYVERNO_LOG_REQUIRE_NATIVE: '1'
+        run: go test -race -count=1 ./scripts/tests/kyverno-logs
+
+      - name: 🗃️ Validate Fleet preparation and server images
+        env:
+          FLEETDM_REQUIRE_NATIVE: '1'
+        run: |
+          FLEETDM_HELM_BIN="$KYVERNO_LOG_HELM_BIN"
+          export FLEETDM_HELM_BIN
+          go test -race -count=1 ./scripts/tests/fleetdm
+
+      # Shared Wedding backup access is retired on this proof's word, so it must
+      # pass only on an AccessDenied for every access, after a positive control
+      # and against an object the shared credential showed exists. These cases
+      # keep an accepted access, a wrong bucket or a network failure from passing
+      # as isolation. The runtime test also runs them in the pinned images and
+      # feeds the pinned mc's own output for a refused request through the proof.
+      - name: 💒 Validate Wedding backup denial proof
+        run: |
+          shellcheck scripts/verify-wedding-backup-denial.sh scripts/verify-wedding-backup-denial-pod.sh scripts/tests/test-verify-wedding-backup-denial.sh
+          bash scripts/tests/test-verify-wedding-backup-denial.sh
+          shellcheck scripts/tests/test-wedding-backup-denial-runtime.sh
+          bash scripts/tests/test-wedding-backup-denial-runtime.sh
+
+      # The stale shared copy of the Wedding catalogue is removed on this proof's
+      # word, and that cannot be undone. These cases keep a missing object,
+      # different bytes, a live writer or an unreviewed bucket from passing as
+      # covered, and pin the pod script to commands that only read.
+      - name: 💒 Validate Wedding shared backup coverage proof
+        run: |
+          shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
+          bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
+
+      - name: 💾 Validate two-stage PVC retirement
+        # A merge-group artifact is speculative, but a PVC deletion is not: its
+        # deletionTimestamp survives queue eviction and main cannot undo it.
+        # Run in the repository guards job so both PR and merge-group refs compare
+        # against their exact base even when the full manifest job is skipped.
+        env:
+          PVC_PRUNE_BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-pvc-prune-safety.sh
+          bash scripts/tests/test-pvc-prune-safety.sh
+
+      - name: ✂️ Validate every Flux Kustomization prunes
+        # Flux defaults spec.prune to false, so an omitted field silently opts a
+        # whole tree out of deletion (#3373). The unifi tree prunes too and keeps
+        # its live network objects at the resource layer instead; the test renders
+        # that patch so a target that matches nothing cannot pass.
+        run: |
+          shellcheck scripts/tests/test-flux-kustomization-prune.sh
+          bash scripts/tests/test-flux-kustomization-prune.sh
+
+      - name: 🔐 Validate directly-invoked scripts are tracked executable
+        # A script a workflow runs as ./scripts/<name> must be tracked 100755, because
+        # CI clones from git and the tracked mode is what the runner gets. Caught live on
+        # #3530, where a promotion gate was committed 100644 and died "permission denied"
+        # BEFORE verifying anything — present, reviewed green, and inert. Nothing that runs
+        # could see it: shellcheck was clean, bash <file> passed, and the script own suite
+        # passed, because none of them exec the file. The class has been introduced three
+        # times, twice via an awk-into-tmp-and-mv idiom that drops the bit while leaving the
+        # content byte-correct. The guard derives the requirement from the invocation, so a
+        # script that moves behind an interpreter stops needing the bit, and finding NO
+        # direct invocation is cannot-check rather than a clean pass.
+        #
+        # Run in the repository guards job, unconditionally, for the same reason the PVC
+        # check above does: the manifest job is pull_request-only, so hosting the guard
+        # there left the merge group — the event that actually gates main — running none
+        # of it. Unconditional also removes the path filter as a way to skip the check,
+        # which is the failure mode the guard exists to catch, one level up.
+        run: |
+          shellcheck scripts/guard-tracked-exec-bit.sh
+          shellcheck scripts/tests/test-guard-tracked-exec-bit.sh
+          bash scripts/guard-tracked-exec-bit.sh .
+          bash scripts/tests/test-guard-tracked-exec-bit.sh
+          shellcheck scripts/guard-test-script-exec-bit.sh scripts/tests/test-guard-test-script-exec-bit.sh
+          bash scripts/guard-test-script-exec-bit.sh .
+          bash scripts/tests/test-guard-test-script-exec-bit.sh
+
+      - name: 🔐 Validate the documentation tenant scope
+        run: |
+          shellcheck scripts/tests/test-khoist-documentation-tenant.sh
+          bash scripts/tests/test-khoist-documentation-tenant.sh
+
+      # The DR contract runs in its own dedicated job (below). This checks that
+      # the verify block is in effect at all: it ran at spec.cluster.verify for
+      # ~3 weeks, where KSail discards it, and every text-based check passed
+      # throughout (#2920). It also refuses any FluxInstance kustomize patch whose
+      # target selects no operator-generated resource, which flux-operator
+      # would otherwise drop silently (#2996).
+      - name: 🔐 Validate Flux verification is in effect
+        run: |
+          go test ./scripts/validate-flux-verify
+          go run ./scripts/validate-flux-verify \
+            ksail.prod.yaml \
+            k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml
+
+      # The step above covers the ROOT source. These are the other eight cosign
+      # subjects — app OCIRepositories, the tenant RGD, the Kyverno policy and the
+      # Talos image config — which trust the SHARED actions publish workflows and
+      # must therefore pin a fixed revision. #2816 set that by hand in eight places;
+      # this is what keeps it set (#2818).
+      - name: 🔐 Validate shared publish workflows are pinned
+        run: ./scripts/guard-shared-publish-workflow-pin.sh
+
+      # The rules in talos/cluster/verify-first-party-images.yaml decide which images a node
+      # will REFUSE once verification enforces, so a change to their order or their identities
+      # silently changes the blast radius. This is the inventory tool's own hermetic suite —
+      # no cluster, no registry, no credential — and it lives here rather than in the dormant
+      # liveness workflow because a checker whose job is noticing a silent condition must not
+      # itself regress silently (#3334, under #3101).
+      - name: 🔐 Validate the first-party image signature inventory
+        run: |
+          # -x: the inventory script now sources scripts/registry-auth-lib.sh, and without it
+          # SC1091 is reported and the run exits 1 on a script that is otherwise clean.
+          shellcheck -x scripts/inventory-first-party-image-signatures.sh
+          shellcheck scripts/tests/test-inventory-first-party-image-signatures.sh
+          bash scripts/tests/test-inventory-first-party-image-signatures.sh
+          # The credential lookup the probe uses to tell "unreadable" from "unsigned" apart. Pure
+          # file parsing against fixtures — no registry and no credential of ours is involved.
+          shellcheck -x scripts/registry-auth-lib.sh
+          shellcheck -x scripts/tests/test-registry-auth-lib.sh
+          bash scripts/tests/test-registry-auth-lib.sh
+
+      # The enforcement probe's negative control only proves anything while it stays unsigned.
+      # One added signing step would silently turn a refusal test into a no-op, so this runs
+      # unconditionally, on every PR and merge group, like the checks above (#3336). The
+      # verification script both the publisher and the probe call is tested here too: a
+      # fake curl stands in for the registry, so no credential or network is involved.
+      - name: 🔐 Validate the unsigned probe image stays unsigned
+        run: |
+          shellcheck scripts/guard-unsigned-probe-image-publisher.sh
+          shellcheck scripts/tests/test-guard-unsigned-probe-image-publisher.sh
+          shellcheck scripts/verify-image-unsigned.sh
+          shellcheck scripts/tests/test-verify-image-unsigned.sh
+          bash scripts/guard-unsigned-probe-image-publisher.sh .
+          bash scripts/tests/test-guard-unsigned-probe-image-publisher.sh
+          bash scripts/tests/test-verify-image-unsigned.sh
+
+      - name: 🔐 Validate proposed Crossplane package signature checks
+        run: |
+          go test ./scripts/collect-first-party-packages
+          shellcheck scripts/check-first-party-package-signatures.sh
+          shellcheck scripts/tests/test-check-first-party-package-signatures.sh
+          bash scripts/tests/test-check-first-party-package-signatures.sh
+          shellcheck scripts/check-upbound-package-signatures.sh
+          shellcheck scripts/tests/test-check-upbound-package-signatures.sh
+          bash scripts/tests/test-check-upbound-package-signatures.sh
+
+      - name: 🔐 Validate the scoped package-access experiment
+        # Always run, including workflow-only changes. The real registry proof
+        # is manual and uses credentials only after this code reaches main.
+        run: go test ./scripts/prove-scoped-package-access
+
+      # The guard above proves every matcher pins A revision. It cannot say WHICH, and
+      # narrowing them to approved revisions (#2818) needs that fact for each consumer.
+      # This runs the hermetic half of the report that computes it: the network resolver
+      # is stubbed, so nothing here depends on another repository's release cadence.
+      - name: 🔐 Validate the publish-revision report
+        run: |
+          shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
+          shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
+          bash scripts/tests/test-publish-workflow-signing-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
+          bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
+
+      # The report above discovers its consumers with a raw FILE SCAN, while production is
+      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
+      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
+      # a consumer in a file the scan never opens — or when the render cannot be judged
+      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
+      # of what it compares lives under scripts/, outside the k8s paths.
+      - name: 🔐 Validate consumer discovery against the production render
+        run: |
+          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
+          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
+          ./scripts/guard-consumer-discovery-conservation.sh
+
+      # The report names the two revisions per consumer; the generator (#3550) turns them
+      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
+      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
+      # shape — an unresolved consumer writes nothing — not any particular revision.
+      - name: 🔐 Validate the approved-revisions generator
+        run: |
+          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
+          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
+          bash scripts/tests/test-tenant-publication-binding.sh
+          bash scripts/tests/test-bootstrap-tenant-source.sh
+          shellcheck scripts/tests/test-canonical-publisher-regeneration.sh
+          bash scripts/tests/test-canonical-publisher-regeneration.sh
+
+      # The pin guard above proves each matcher pins a FIXED revision; this one proves each
+      # per-consumer matcher pins the revision PAIR the committed approved set names for that
+      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
+      # the same reason as the pin guard: the subjects live in four different trees.
+      # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
+      - name: 🔐 Validate the approved-revisions guard
+        env:
+          APPROVED_REVISIONS_ENFORCE: '1'
+        run: |
+          shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
+          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/write-publish-workflow-matchers.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
+          shellcheck scripts/tests/test-publish-workflow-canonical-approvals.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          bash scripts/tests/test-write-publish-workflow-matchers.sh
+          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
+
+      - name: 🔐 Enforce approved publication signers
+        env:
+          APPROVED_REVISIONS_ENFORCE: '1'
+        run: ./scripts/guard-publish-workflow-approved-revisions.sh
+
+      # The scheduled regeneration (#3552, third child of #3308) runs the generator and
+      # writer and guard above against prod and turns a moved set into ONE draft pull request.
+      # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
+      # commit, least-privilege token grants, and generator → writer → guard → pull request with
+      # no continue-on-error — none of which any script it calls can enforce, so the
+      # test below pins each with an ablation. Unconditional for the same reason as
+      # the two steps above: the workflow lives outside the k8s paths.
+      - name: 🔐 Validate the approved-revisions regeneration workflow
+        run: |
+          shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
+
+      # The release watcher (#3960) dispatches that regeneration when devantler-tech/actions
+      # publishes a release the committed candidate does not yet name. Its test stubs `gh` and
+      # pins that every failed read is UNKNOWN and dispatches nothing.
+      - name: 🔐 Validate the actions release watcher
+        run: |
+          shellcheck scripts/watch-actions-release-candidate.sh scripts/tests/test-watch-actions-release-candidate.sh
+          bash scripts/tests/test-watch-actions-release-candidate.sh
+
+      # The authorization gate's verdict and its moved-entry diagnostics are two
+      # commands in one step, and a real aggregate mismatch fails BOTH — so a step
+      # that stopped at the first never ran the diagnostics on the one failure they
+      # exist to explain (#3879). That is a property of the STEP's shape, which no
+      # script it calls can enforce, so the test executes the step against stub
+      # binaries and ablates each assertion. It also refuses an `if:` or a tolerated
+      # failure on that step, which would let the gate run without deciding
+      # anything — the Go coverage guards cannot read this compound step (#4361).
+      # Unconditional for the same reason as the steps above: its subjects are
+      # ci.yaml and cd.yaml themselves, which sit outside the k8s paths.
+      - name: 🔐 Validate the authorization gate reports its diagnostics
+        run: |
+          shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
+          bash scripts/tests/test-authorization-gate-diagnostics.sh
+
+      - name: 🔐 Validate OCI chart source readiness contracts
+        run: go test ./scripts/tests/oci-chart-sources
+
+      # Both subject guards above examine a file only when it already carries a
+      # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
+      # artifact with NO spec.verify at all is invisible to them — and refused by nothing
+      # else. This one discovers OCIRepositories by KIND and URL, at any nesting depth,
+      # and requires cosign with exactly one identity on every devantler-tech GHCR
+      # artifact (#3558). Unconditional, like the guards above.
+      - name: 🔐 Validate every devantler-tech OCIRepository verifies
+        run: |
+          shellcheck scripts/guard-oci-repository-verify.sh
+          shellcheck scripts/tests/test-guard-oci-repository-verify.sh
+          bash scripts/tests/test-guard-oci-repository-verify.sh
+          ./scripts/guard-oci-repository-verify.sh
+
+      # Dropping a framework from the Kubescape gate REMOVES findings, so the
+      # compliance score RISES and every check stays green — a coverage
+      # regression that looks like an improvement. That is what un-gated 59
+      # excepted controls for weeks (#2823). Unconditional, like the guard
+      # above: the property it protects is not confined to the k8s paths.
+      - name: 🔐 Validate the Kubescape gate's framework coverage
+        run: |
+          go test ./scripts/validate-kubescape-frameworks
+          go run ./scripts/validate-kubescape-frameworks
+
+      # .github/actionlint.yaml silences actionlint's "unexpected key" diagnostic
+      # for concurrency.queue, which also removes its enum check. This restores it.
+      - name: 🚦 Validate concurrency queue values
+        run: |
+          # BOTH extensions: the actionlint ignore covers .github/workflows/**, so
+          # a .yml workflow left out here would have the "unexpected key"
+          # diagnostic suppressed with nothing restoring the enum check.
+          shopt -s nullglob
+          workflows=(.github/workflows/*.yaml .github/workflows/*.yml)
+          # Fail closed rather than pass vacuously if the glob ever matches nothing.
+          if [ ${#workflows[@]} -eq 0 ]; then
+            echo "::error::no workflow files matched; nothing was validated"
+            exit 1
+          fi
+          go test ./scripts/validate-concurrency-queue
+          go run ./scripts/validate-concurrency-queue "${workflows[@]}"
+
+      # This guard spans the HelmRelease and Renovate policy, so it must run
+      # without routing policy-only changes into the production k8s deploy path.
+      - name: 🔐 Validate Headlamp OIDC version gate
+        run: |
+          shellcheck scripts/tests/test-headlamp-oidc-version-gate.sh
+          bash scripts/tests/test-headlamp-oidc-version-gate.sh
+
+      # The renderer's Helm SDK follows the deployed controller, not Helm's own
+      # releases. This spans the build guard and the Renovate policy, so it runs
+      # here for the same reason as the Headlamp gate above (#4738).
+      - name: 📌 Validate the controller Helm SDK Renovate pin
+        run: |
+          shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
+          bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
+
+      # Kyverno 1.20 removes the kyverno.io ClusterPolicy API most policies here still use.
+      # This spans the Renovate policy, the CLI pin and the manifests, so it runs here for
+      # the same reason as the gates above; its first case checks the tree as committed (#4994).
+      - name: 📌 Validate the Kyverno 1.20 cap
+        run: |
+          shellcheck scripts/check-kyverno-1-20-cap.sh scripts/tests/test-kyverno-1-20-cap.sh
+          bash scripts/tests/test-kyverno-1-20-cap.sh
+
+      # Renovate moves only the source commit of the vendored origin-ca-issuer CRDs, and
+      # the bytes do not change with it, so nothing but the updater's own record can tell
+      # a bump from a refresh (#4136). The test runs a copy of the updater against stub
+      # binaries: no network, no Checkov. Its first case validates the tree as committed,
+      # so this step is also what fails on a pull request that moves only the pin, and it
+      # fails in the merge group too, where the pull-request-only manifest job never runs.
+      # Unconditional, like the gate above: one half of its subject is the Renovate
+      # policy, which sits outside the k8s paths.
+      - name: 🔐 Validate the origin-ca-issuer CRD source pin
+        run: |
+          shellcheck scripts/tests/test-origin-ca-issuer-crd-source-pin.sh
+          bash scripts/tests/test-origin-ca-issuer-crd-source-pin.sh
+
+      # Independent of the conditional validate job whose nested-RGD steps this protects. If those
+      # steps are removed, this unconditional job must still fail the PR and merge-group revision.
+      - name: 🔬 Validate nested RGD workflow wiring
+        run: |
+          shellcheck scripts/tests/test-rgd-template-static-scan-wiring.sh
+          bash scripts/tests/test-rgd-template-static-scan-wiring.sh
+
+      - name: Validate dedicated wedding backup staging
+        run: |
+          node --version
+          yq --version
+          node --test tests/wedding-backup-staging/*.test.mjs
+          shellcheck scripts/verify-wedding-backup-cutover.sh scripts/tests/test-verify-wedding-backup-cutover.sh
+          bash scripts/tests/test-verify-wedding-backup-cutover.sh
+          go test ./scripts/verify-wedding-dedicated-restore
+
   validate-consumer-discovery:
     name: 🔐 Validate Consumer Discovery Regressions
     runs-on: ubuntu-latest
@@ -3564,6 +3600,7 @@ jobs:
     needs:
       [
         changes,
+        validate-repository-guards,
         validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
@@ -3873,7 +3910,7 @@ jobs:
         # re-deploy restored, after its reconcile waited for every flux-system
         # Kustomization to apply main. During this PR's own merge-group run, main
         # still predates the check; keep that one legacy heal path working, as
-        # the root source repair above does. The changes job keeps it unreachable
+        # the root source repair above does. The repository guards job keeps it unreachable
         # once the check is on main, and the heal contract pins this script.
         shell: bash
         env:
@@ -3894,6 +3931,7 @@ jobs:
     needs:
       [
         changes,
+        validate-repository-guards,
         validate-consumer-discovery,
         validate-publication-contract,
         validate-matcher-efficacy,
@@ -3917,6 +3955,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.changes.result }}
+            ${{ needs.validate-repository-guards.result }}
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-matcher-efficacy.result }}
@@ -3931,3 +3970,12 @@ jobs:
             ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.deploy-prod.result }}
+
+      - name: 🛡️ Require successful repository guards
+        env:
+          REPOSITORY_GUARDS_RESULT: ${{ needs.validate-repository-guards.result }}
+        run: |
+          if [ "$REPOSITORY_GUARDS_RESULT" != success ]; then
+            echo "::error::Repository guards did not succeed ($REPOSITORY_GUARDS_RESULT)"
+            exit 1
+          fi

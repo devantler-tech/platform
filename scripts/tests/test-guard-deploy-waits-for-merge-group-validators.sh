@@ -151,11 +151,11 @@ consumer_fixture_wiring() {
         | index($job) != null)
       and any(.jobs["ci-required-checks"].steps[];
         (.["with"]["job-results"] // "") | contains("needs." + $job + ".result"))
-      and any(.jobs.changes.steps[];
+      and any(.jobs["validate-repository-guards"].steps[];
         .run == $production_run
         and (has("if") | not)
         and ((.["continue-on-error"] // false) == false))
-      and all(.jobs.changes.steps[];
+      and all(.jobs["validate-repository-guards"].steps[];
         ((.run // "") | contains("bash scripts/tests/test-guard-consumer-discovery-conservation.sh") | not))
     ' <<<"$workflow_json" >/dev/null || {
     printf 'consumer fixtures must run independently and gate deployment plus required checks\n' >&2
@@ -223,10 +223,10 @@ ablate_wiring "focusing fixtures through workflow environment is refused" \
   '.env.CONSUMER_CONSERVATION_REGRESSION = "templates"'
 ablate_wiring "focusing the fixture command itself is refused" \
   '.jobs["validate-consumer-discovery"].steps[1].run = "CONSUMER_CONSERVATION_REGRESSION=templates bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
-ablate_wiring "putting the full fixtures back on the changes critical path is refused" \
-  '(.jobs.changes.steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) += "bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
-ablate_wiring "removing the real production guard from changes is refused" \
-  '(.jobs.changes.steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) |= sub("./scripts/guard-consumer-discovery-conservation.sh", "true")'
+ablate_wiring "putting the full fixtures back on the repository guard path is refused" \
+  '(.jobs["validate-repository-guards"].steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) += "bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
+ablate_wiring "removing the real production guard is refused" \
+  '(.jobs["validate-repository-guards"].steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) |= sub("./scripts/guard-consumer-discovery-conservation.sh", "true")'
 
 yq '.jobs["unrelated-validator"] = {"runs-on": "ubuntu-latest", "if": "false", "steps": [{"run": "true"}]}' \
   "$ci_workflow" >"$scratch/unrelated-job.yaml"

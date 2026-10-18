@@ -115,7 +115,7 @@ func TestStorageNativeControlsAreRequiredInCIAndBeforeCredentials(t *testing.T) 
 			}
 			job := "protect"
 			if file == "ci.yaml" {
-				job = "changes"
+				job = "validate-repository-guards"
 			}
 			checked := false
 			for _, value := range array(field(w, "jobs", job, "steps")) {

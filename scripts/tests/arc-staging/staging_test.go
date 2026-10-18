@@ -302,11 +302,11 @@ func TestStagingGuardRunsUnconditionallyOnPullRequestsAndMergeGroups(t *testing.
 			t.Fatalf("missing %s trigger", event)
 		}
 	}
-	changes := field(t, workflow, "jobs", "changes")
-	if _, conditional := changes.(map[string]any)["if"]; conditional {
+	guards := field(t, workflow, "jobs", "validate-repository-guards")
+	if _, conditional := guards.(map[string]any)["if"]; conditional {
 		t.Fatal("staging guard must run even when no deployment path changes")
 	}
-	for _, step := range field(t, changes, "steps").([]any) {
+	for _, step := range field(t, guards, "steps").([]any) {
 		mapping := step.(map[string]any)
 		if mapping["run"] == "go test ./scripts/tests/arc-staging" {
 			if _, conditional := mapping["if"]; conditional {

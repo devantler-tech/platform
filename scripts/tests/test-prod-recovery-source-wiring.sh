@@ -42,7 +42,7 @@ violation() {
   [[ "$promote" == "set -euo pipefail
 $guard
 "* ]] || { echo late-guard; return; }
-  ci_runs="$(yq -r '.jobs.changes.steps[].run // ""' "$ci")"
+  ci_runs="$(yq -r '.jobs."validate-repository-guards".steps[].run // ""' "$ci")"
   grep -Fxq 'bash scripts/tests/test-prod-recovery-source.sh' <<< "$ci_runs" || { echo behavioral-ci; return; }
   grep -Fxq 'bash scripts/tests/test-prod-recovery-source-wiring.sh' <<< "$ci_runs" || { echo wiring-ci; return; }
 }

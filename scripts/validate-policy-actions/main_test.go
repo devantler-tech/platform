@@ -69,8 +69,12 @@ func TestRequiredCIWiring(t *testing.T) {
 	if !found || changes.If != "" {
 		t.Fatal("changes must run unconditionally")
 	}
+	guards, found := workflow.Jobs["validate-repository-guards"]
+	if !found || guards.If != "" {
+		t.Fatal("repository guards must run unconditionally")
+	}
 	foundGuard, foundPaths := false, false
-	for _, step := range changes.Steps {
+	for _, step := range guards.Steps {
 		const guardRun = `go test ./scripts/validate-policy-actions
 go run ./scripts/validate-policy-actions
 policy_render="$(mktemp -d)"
@@ -81,6 +85,8 @@ go run ./scripts/validate-policy-actions "$policy_render"
 		if step.Run == guardRun && step.If == "" && !step.Continue {
 			foundGuard = true
 		}
+	}
+	for _, step := range changes.Steps {
 		filter := step.With["filters"]
 		if strings.Contains(filter, "'scripts/validate-policy-actions/**'") && strings.Contains(filter, "'tests/policy-failure-actions.json'") {
 			foundPaths = true
@@ -90,7 +96,7 @@ go run ./scripts/validate-policy-actions "$policy_render"
 		t.Fatalf("required guard=%t, manifest path coverage=%t", foundGuard, foundPaths)
 	}
 	for _, dependency := range workflow.Jobs["ci-required-checks"].Needs {
-		if dependency == "changes" {
+		if dependency == "validate-repository-guards" {
 			return
 		}
 	}
