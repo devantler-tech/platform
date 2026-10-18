@@ -1535,8 +1535,8 @@ func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	requiredChecks, _ := jobs["ci-required-checks"].(map[string]any)
 	steps, _ := requiredChecks["steps"].([]any)
 	aggregators := 0
-	for _, raw := range steps {
-		step, _ := raw.(map[string]any)
+	for _, value := range steps {
+		step, _ := value.(map[string]any)
 		if !strings.HasPrefix(fmt.Sprint(step["uses"]), "devantler-tech/actions/aggregate-job-checks@") {
 			continue
 		}
