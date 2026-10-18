@@ -38,6 +38,7 @@ var deploymentHandoffPaths = map[string]bool{
 	"scripts/retire-backstage-stateless/fence_test.go":             true,
 	"scripts/retire-backstage-stateless/main.go":                   true,
 	"scripts/retire-backstage-stateless/native_test.go":            true,
+	"scripts/retire-backstage-stateless/status_chart.go":           true,
 	"scripts/tests/test-flux-reconcile-control-plane-restart.sh":   true,
 	"scripts/tests/test-talos-render-kernel-args.sh":               true,
 }

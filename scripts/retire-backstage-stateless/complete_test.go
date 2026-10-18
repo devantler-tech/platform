@@ -485,6 +485,7 @@ func TestDeploymentHandoffAcceptsCurrentReviewedRecoveryDiff(t *testing.T) {
 		"scripts/retire-backstage-stateless/fence_test.go",
 		"scripts/retire-backstage-stateless/main.go",
 		"scripts/retire-backstage-stateless/native_test.go",
+		"scripts/retire-backstage-stateless/status_chart.go",
 		"scripts/rgd-template-static-scan-baseline.tsv",
 		"scripts/tests/test-flux-reconcile-control-plane-restart.sh",
 		"scripts/tests/test-rgd-template-static-scan.sh",
