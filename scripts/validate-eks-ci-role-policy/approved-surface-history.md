@@ -3592,3 +3592,20 @@ The ClusterRole grants read-only `get` and `list` on
 subject, the `observability/crossplane-provider-unhealthy-alert`
 ServiceAccount, which the new alert CronJob runs as. No other RBAC, admission
 scope, AWS identity, credential or permission grant changes.
+
+## 2026-10-19 — Withdraw the superseded canonical github-config publisher
+
+For #5072, the approved kubectl v1.36.2 / Kustomize v5.8.1 renderer measures
+exactly one changed authorization entry against `dedc6033`, and nothing added
+or removed:
+
+- OCIRepository github-config/github-config moves from
+  `bf3464bff0f9831481f64d03dbea9c4aa7093a6293c4e8aec6291310e44c42b9` to
+  `4f6bdc88a1f7996fbbb8bd141db306ff0875c4e4818f0bf34e6a18cbd322ddc6`.
+
+The matcher withdraws the superseded `devantler-tech/.github` publisher at
+`9ff2ad68306cc73df6814861c7804a11a25e0788` after production publication moved
+to `e1681322e671f8e277c5e230a57fe66cdf1a612d`. The retained legacy
+`devantler-tech/actions` revisions are unchanged. No issuer, artifact URL,
+identity count, RBAC, IAM policy, credential or permission grant changes. The
+set of accepted identities shrinks by one.
