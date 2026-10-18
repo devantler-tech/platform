@@ -14,10 +14,10 @@ fail() {
 }
 
 command -v jq >/dev/null 2>&1 || fail 'jq is required to inspect the Renovate policy'
-changes_job="$(awk '
-  /^  changes:$/ { in_changes = 1 }
-  in_changes && /^  [[:alnum:]_-]+:$/ && $0 != "  changes:" { exit }
-  in_changes { print }
+guards_job="$(awk '
+  /^  validate-repository-guards:$/ { in_guards = 1 }
+  in_guards && /^  [[:alnum:]_-]+:$/ && $0 != "  validate-repository-guards:" { exit }
+  in_guards { print }
 ' "${ci_workflow}")"
 k8s_filter="$(awk '
   $0 == "            k8s:" { in_k8s = 1; next }
@@ -25,8 +25,8 @@ k8s_filter="$(awk '
   in_k8s { print }
 ' "${ci_workflow}")"
 
-grep -Fq 'name: 🔐 Validate Headlamp OIDC version gate' <<<"${changes_job}" ||
-  fail 'the Headlamp version gate must run unconditionally in the changes job'
+grep -Fq 'name: 🔐 Validate Headlamp OIDC version gate' <<<"${guards_job}" ||
+  fail 'the Headlamp version gate must run unconditionally in the repository guards job'
 
 if grep -Fq '.github/renovate.json' <<<"${k8s_filter}" ||
   grep -Fq 'scripts/tests/test-headlamp-oidc-version-gate.sh' <<<"${k8s_filter}"; then

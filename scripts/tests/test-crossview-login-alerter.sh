@@ -122,7 +122,7 @@ if [ "${cache_rc}" = 0 ] || [ -s "${cache_dir}/calls" ]; then
 fi
 pass 'hosted registry cache preserves configuration and fails closed without changing local daemons'
 
-# The earlier changes-job fixture builds a pinned Docker Hub toolbox too. Its
+# The independent Wedding fixture builds a pinned Docker Hub toolbox too. Its
 # hosted setup must finish before any build; failed setup must stop the fixture.
 cache_runtime_run() {
   cache_rc=0

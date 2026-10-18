@@ -117,7 +117,7 @@ expect "unparseable YAML cannot be checked" 2 "$broken"
 expect "a missing file cannot be checked" 2 "$scratch/does-not-exist.yaml"
 
 # The full consumer fixture suite must start independently of changes, yet both deployment and
-# merge admission must wait for it. Keep this check in changes: a removed or focused fixture job
+# merge admission must wait for it. Keep this check in the unconditional repository guards: a removed or focused fixture job
 # cannot be relied on to test its own wiring. A skipped deploy alone is accepted by the aggregate.
 consumer_fixture_wiring() {
   local file="$1" workflow_json
