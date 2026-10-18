@@ -1,0 +1,255 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: three-replicas
+  namespace: apps
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: three-replicas
+  template:
+    metadata:
+      labels:
+        app: three-replicas
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unset-replicas
+  namespace: apps
+spec:
+  selector:
+    matchLabels:
+      app: unset-replicas
+  template:
+    metadata:
+      labels:
+        app: unset-replicas
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: four-replicas
+  namespace: apps
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: four-replicas
+  template:
+    metadata:
+      labels:
+        app: four-replicas
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: four-replicas-statefulset
+  namespace: apps
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: four-replicas
+  template:
+    metadata:
+      labels:
+        app: four-replicas
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: four-replicas-exempt
+  namespace: apps
+  labels:
+    platform.devantler.tech/replica-ceiling: exempt
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: four-replicas-exempt
+  template:
+    metadata:
+      labels:
+        app: four-replicas-exempt
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: four-replicas-template-exempt
+  namespace: apps
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: four-replicas-template-exempt
+  template:
+    metadata:
+      labels:
+        app: four-replicas-template-exempt
+        platform.devantler.tech/replica-ceiling: exempt
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-max-three
+  namespace: apps
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: three-replicas
+  minReplicas: 1
+  maxReplicas: 3
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-max-ten
+  namespace: apps
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: three-replicas
+  minReplicas: 1
+  maxReplicas: 10
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-max-ten-exempt
+  namespace: apps
+  labels:
+    platform.devantler.tech/replica-ceiling: exempt
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: three-replicas
+  minReplicas: 1
+  maxReplicas: 10
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scaledobject-max-three
+  namespace: apps
+spec:
+  scaleTargetRef:
+    name: three-replicas
+  maxReplicaCount: 3
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "80"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scaledobject-max-ten
+  namespace: apps
+spec:
+  scaleTargetRef:
+    name: three-replicas
+  maxReplicaCount: 10
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "80"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scaledobject-unset-max
+  namespace: apps
+spec:
+  scaleTargetRef:
+    name: three-replicas
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "80"
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: scaledobject-max-ten-exempt
+  namespace: apps
+  labels:
+    platform.devantler.tech/replica-ceiling: exempt
+spec:
+  scaleTargetRef:
+    name: three-replicas
+  maxReplicaCount: 10
+  triggers:
+    - type: cpu
+      metricType: Utilization
+      metadata:
+        value: "80"
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: three-replicas-replicaset
+  namespace: apps
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: three-replicas-replicaset
+  template:
+    metadata:
+      labels:
+        app: three-replicas-replicaset
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: four-replicas-replicaset
+  namespace: apps
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: four-replicas-replicaset
+  template:
+    metadata:
+      labels:
+        app: four-replicas-replicaset
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3

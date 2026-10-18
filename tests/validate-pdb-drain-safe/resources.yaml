@@ -1,0 +1,78 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: max-unavailable
+  namespace: apps
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: max-unavailable
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: min-available
+  namespace: apps
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: min-available
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: instance-manager-outside-longhorn
+  namespace: apps
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: instance-manager-outside-longhorn
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cnpg-cluster
+  namespace: apps
+  labels:
+    cnpg.io/cluster: db
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cnpg-cluster
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: cert-manager
+  namespace: cert-manager
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: cert-manager
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: instance-manager-abc123
+  namespace: longhorn-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: instance-manager-abc123
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: csi-attacher
+  namespace: longhorn-system
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: csi-attacher
