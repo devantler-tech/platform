@@ -19,11 +19,21 @@ jobs:
 
   deploy-prod:
     runs-on: ubuntu-latest
+    outputs:
+      stopped_before_production: ${{ steps.production-outcome.outputs.stopped_before_production }}
     steps:
-      - uses: ./.github/actions/deploy-prod
+      - uses: actions/checkout@example
+      - uses: actions/setup-go@example
+      - id: queue-preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_RECEIPT: ${{ needs.changes.outputs.queue_receipt }}
+        run: go run ./scripts/verify-merge-group-queued check
+      - id: production-deploy
+        uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"
-
+` + productionOutcomeStep + `
   merge-group-queue-membership:
     needs: [changes, deploy-prod]
     if: github.event_name == 'merge_group' && needs.changes.outputs.k8s == 'true' && needs.deploy-prod.result == 'success'
@@ -50,6 +60,7 @@ jobs:
       always() &&
       github.event_name == 'merge_group' &&
       needs.changes.outputs.k8s == 'true' &&
+      needs.deploy-prod.outputs.stopped_before_production != 'true' &&
       (needs.deploy-prod.result == 'failure' ||
        needs.deploy-prod.result == 'cancelled' ||
        (needs.deploy-prod.result == 'success' &&
@@ -354,6 +365,14 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			wantError:   "queue-membership job is missing pull-request read permission",
 		},
 		{
+			// Without the clause a preflight that refused the entry before production
+			// was touched still queues a full restore deploy (#4937).
+			name:        "condition heals a deploy that never reached production",
+			old:         "      needs.deploy-prod.outputs.stopped_before_production != 'true' &&\n",
+			replacement: "",
+			wantError:   "must cover exactly failed, cancelled, and evicted-after-success deploys",
+		},
+		{
 			name:        "condition drops cancellation",
 			old:         "needs.deploy-prod.result == 'cancelled'",
 			replacement: "needs.deploy-prod.result == 'failure'",
@@ -378,27 +397,21 @@ func TestValidateWorkflowContractRejectsBrokenHealContracts(t *testing.T) {
 			// A job that no longer calls the composite at all is a different break
 			// from one that calls it without the opt-in, so they get separate cases.
 			name: "deploy job does not reach the deploy composite",
-			old: `  deploy-prod:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: ./.github/actions/deploy-prod
+			old: `      - id: production-deploy
+        uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"`,
-			replacement: "  deploy-prod:\n    runs-on: ubuntu-latest",
+			replacement: "      - id: production-deploy\n        run: echo nothing",
 			wantError:   "deploy job does not reach the shared deploy composite",
 		},
 		{
 			name: "deploy job drops orphaned-fence recovery",
-			old: `  deploy-prod:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: ./.github/actions/deploy-prod
+			old: `      - id: production-deploy
+        uses: ./.github/actions/deploy-prod
         with:
           recover-orphaned-fence: "true"`,
-			replacement: `  deploy-prod:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: ./.github/actions/deploy-prod
+			replacement: `      - id: production-deploy
+        uses: ./.github/actions/deploy-prod
         with:
           sops-age-key: placeholder`,
 			wantError: "deploy job is missing orphaned-fence recovery",
@@ -627,3 +640,17 @@ func TestRunCLIRequiresOneWorkflowPath(t *testing.T) {
 		})
 	}
 }
+
+// productionOutcomeStep is the deploy job's final step: the only writer of
+// the output that lets the heal stand down (#4937).
+const productionOutcomeStep = `      - name: record whether production was left untouched
+        id: production-outcome
+        if: always()
+        env:
+          PREFLIGHT_OUTCOME: ${{ steps.queue-preflight.outcome }}
+          PRODUCTION_OUTCOME: ${{ steps.production-deploy.outcome }}
+        run: |
+          if [[ "${GITHUB_RUN_ATTEMPT}" == '1' && "${PREFLIGHT_OUTCOME}" == 'failure' && "${PRODUCTION_OUTCOME}" == 'skipped' ]]; then
+            printf 'stopped_before_production=true\n' >>"${GITHUB_OUTPUT}"
+          fi
+`
