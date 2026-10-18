@@ -127,7 +127,9 @@ consumer_fixture_wiring() {
     --arg checkout 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' \
     --arg suite_run $'bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n' \
     --arg production_run $'shellcheck -x scripts/guard-consumer-discovery-conservation.sh\nshellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh\n./scripts/guard-consumer-discovery-conservation.sh\n' '
-      .jobs[$job] as $suite
+      [.jobs["ci-required-checks"].steps[]
+        | select((.uses // "") | startswith("devantler-tech/actions/aggregate-job-checks@"))] as $aggregates
+      | .jobs[$job] as $suite
       | (($suite | type) == "object")
       and ($suite["runs-on"] == "ubuntu-latest")
       and ($suite.permissions == {"contents": "read"})
@@ -149,9 +151,8 @@ consumer_fixture_wiring() {
         | index($job) != null)
       and ((.jobs["ci-required-checks"].needs | if type == "array" then . else [.] end)
         | index($job) != null)
-      and any(.jobs["ci-required-checks"].steps[];
-        ((.uses // "") | startswith("devantler-tech/actions/aggregate-job-checks@"))
-        and ((.["with"]["job-results"] // "") | contains("needs." + $job + ".result")))
+      and any($aggregates[];
+        (.["with"]["job-results"] // "") | contains("needs." + $job + ".result"))
       and any(.jobs.changes.steps[];
         .run == $production_run
         and (has("if") | not)
