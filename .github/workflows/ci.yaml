@@ -11,6 +11,50 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Full suites produce no path outputs. Run them independently, but require
+  # their success before production access and the final merge verdict.
+  validate-go-regressions:
+    name: 🧪 Validate Complete Go Regressions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Initialize the approved kubectl for native regressions
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      - name: 🧪 Validate the complete Go helper regression suite
+        run: go test ./...
+
+      - name: 🧪 Validate native retirement result classification
+        run: go -C scripts/retire-backstage-stateless/poller-native test -race -mod=readonly -count=1 ./...
+
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
@@ -60,12 +104,6 @@ jobs:
           echo /usr/local/bin >> "$GITHUB_PATH"
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
-
-      - name: 🧪 Validate the complete Go helper regression suite
-        run: go test ./...
-
-      - name: 🧪 Validate native retirement result classification
-        run: go -C scripts/retire-backstage-stateless/poller-native test -race -mod=readonly -count=1 ./...
 
       - name: 💾 Validate storage audit regressions
         run: |
@@ -3564,6 +3602,7 @@ jobs:
     needs:
       [
         changes,
+        validate-go-regressions,
         validate-consumer-discovery,
         validate-floating-image-tags,
         validate-helm-post-renderers,
@@ -3894,6 +3933,7 @@ jobs:
     needs:
       [
         changes,
+        validate-go-regressions,
         validate-consumer-discovery,
         validate-publication-contract,
         validate-matcher-efficacy,
@@ -3917,6 +3957,7 @@ jobs:
         with:
           job-results: >-
             ${{ needs.changes.result }}
+            ${{ needs.validate-go-regressions.result }}
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-matcher-efficacy.result }}
@@ -3931,3 +3972,12 @@ jobs:
             ${{ needs.validate-rgd-templates-merge-group.result }}
             ${{ needs.validate-ghcr-fanout-merge-group.result }}
             ${{ needs.deploy-prod.result }}
+
+      - name: 🧪 Require complete Go regressions
+        env:
+          REGRESSION_RESULT: ${{ needs.validate-go-regressions.result }}
+        run: |
+          if [[ "$REGRESSION_RESULT" != success ]]; then
+            echo "The unconditional Go regression job must succeed, got: $REGRESSION_RESULT" >&2
+            exit 1
+          fi
