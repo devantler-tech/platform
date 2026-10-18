@@ -327,6 +327,37 @@ func TestDeploymentHandoffRejectsHistoryNotMatchingTheJournalUID(t *testing.T) {
 	}
 }
 
+func TestDeploymentHandoffDoesNotRetryAPositivelyObservedNonTerminalHistory(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	var history map[string]any
+	for _, raw := range array(f.portal.inventory["items"]) {
+		candidate := object(raw)
+		if field(candidate, "metadata", "uid") == "history-uid" {
+			history = candidate
+		}
+	}
+	if history == nil {
+		t.Fatal("synthetic journal-bound history absent")
+	}
+	stored, err := storedRelease(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object(stored["info"])["status"] = "uninstalling"
+	history["data"] = nativeReleaseSecret(t, stored)["data"]
+	object(field(history, "metadata", "labels"))["status"] = "uninstalling"
+	f.onSleep = func() {
+		object(stored["info"])["status"] = "uninstalled"
+		history["data"] = nativeReleaseSecret(t, stored)["data"]
+		object(field(history, "metadata", "labels"))["status"] = "uninstalled"
+	}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || f.sleeps != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=evidence-first\n" {
+		t.Fatalf("positively observed non-terminal history was retried or admitted: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
+	}
+}
+
 func TestDeploymentHandoffWaitsForTheExactJournalOnlyRetry(t *testing.T) {
 	f := completedRetirementFixture(t)
 	deploymentHandoffRunner(t)

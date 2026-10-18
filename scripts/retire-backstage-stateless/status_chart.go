@@ -18,27 +18,36 @@ func bindJournalHistory(s *snapshot, historyUID string) error {
 		return failure
 	}
 	var stored map[string]any
+	found := false
+	reject := func() error {
+		s.historyViolation = true
+		return failure
+	}
 	for _, secret := range items {
 		if field(secret, "metadata", "uid") != historyUID {
 			continue
 		}
+		if found {
+			return reject()
+		}
+		found = true
 		owners, ownerErr := ownerReferences(secret)
-		if stored != nil || ownerErr != nil || len(owners) != 0 || !metadataValid(secret) || secret["apiVersion"] != "v1" || secret["kind"] != "Secret" || field(secret, "metadata", "namespace") != "backstage" || secret["type"] != "helm.sh/release.v1" || field(secret, "metadata", "labels", "owner") != "helm" || field(secret, "metadata", "labels", "name") != "backstage" || field(secret, "metadata", "labels", "status") != "uninstalled" {
-			return failure
+		if ownerErr != nil || len(owners) != 0 || !metadataValid(secret) || secret["apiVersion"] != "v1" || secret["kind"] != "Secret" || field(secret, "metadata", "namespace") != "backstage" || secret["type"] != "helm.sh/release.v1" || field(secret, "metadata", "labels", "owner") != "helm" || field(secret, "metadata", "labels", "name") != "backstage" {
+			return reject()
 		}
 		stored, err = storedRelease(secret)
 		if err != nil {
-			return failure
+			return reject()
 		}
+		s.release = stored
 		version := fmt.Sprint(stored["version"])
-		if stored["name"] != "backstage" || stored["namespace"] != "backstage" || integer(stored["version"]) < 1 || field(stored, "info", "status") != "uninstalled" || field(secret, "metadata", "name") != "sh.helm.release.v1.backstage.v"+version || field(secret, "metadata", "labels", "version") != version || text(field(stored, "chart", "metadata", "name")) == "" || text(field(stored, "chart", "metadata", "version")) == "" {
-			return failure
+		if stored["name"] != "backstage" || stored["namespace"] != "backstage" || integer(stored["version"]) < 1 || field(stored, "info", "status") != "uninstalled" || field(secret, "metadata", "labels", "status") != field(stored, "info", "status") || field(secret, "metadata", "name") != "sh.helm.release.v1.backstage.v"+version || field(secret, "metadata", "labels", "version") != version || text(field(stored, "chart", "metadata", "name")) == "" || text(field(stored, "chart", "metadata", "version")) == "" {
+			return reject()
 		}
 	}
-	if stored == nil {
+	if !found {
 		return failure
 	}
-	s.release = stored
 	return nil
 }
 

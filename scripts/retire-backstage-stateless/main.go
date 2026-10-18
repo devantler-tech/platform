@@ -170,6 +170,7 @@ type snapshot struct {
 	releases                                                                   []map[string]any
 	retiring                                                                   map[string]string
 	fence                                                                      string
+	historyViolation                                                           bool
 	writers                                                                    map[string]map[string]any
 	layerSources                                                               map[string]map[string]any
 	bundle, monitoring                                                         map[string]any

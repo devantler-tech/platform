@@ -407,6 +407,9 @@ func deploymentHandoffSourceSafeWithPins(ctx context.Context, e engine, record c
 // positive target, release or journal observation is terminal even when a later
 // collection step fails; it must never be hidden by a subsequent clean sample.
 func observedTerminalRetirementViolation(s snapshot, record completionRecord) bool {
+	if s.historyViolation {
+		return true
+	}
 	if s.release != nil && (s.release["name"] != "backstage" || s.release["namespace"] != "backstage" || field(s.release, "info", "status") != "uninstalled") {
 		return true
 	}
