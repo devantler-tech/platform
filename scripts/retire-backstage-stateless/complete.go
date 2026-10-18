@@ -369,17 +369,49 @@ func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completio
 	return nil
 }
 
+// observedTerminalRetirementViolation distinguishes a partial read that already
+// proves the retirement state changed from one that is merely incomplete. A
+// positive target, release or journal observation is terminal even when a later
+// collection step fails; it must never be hidden by a subsequent clean sample.
+func observedTerminalRetirementViolation(s snapshot, record completionRecord) bool {
+	if s.release != nil && (s.release["name"] != "backstage" || s.release["namespace"] != "backstage" || field(s.release, "info", "status") != "uninstalled") {
+		return true
+	}
+	if metadataValid(s.namespace) && (field(s.namespace, "metadata", "uid") != record.namespaceUID || field(s.namespace, "metadata", "annotations", fenceAnnotation) != record.raw) {
+		return true
+	}
+	if s.owner != nil || s.chart != nil {
+		return true
+	}
+	for _, list := range []map[string]any{s.live, s.inventory} {
+		resources, err := members(list)
+		if err != nil {
+			continue
+		}
+		for _, resource := range resources {
+			if _, retiring := s.retiring[identity(resource)]; retiring || targetResource(resource) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // waitForDeploymentHandoffEvidence allows transiently incomplete API reads,
 // database health and Flux's ordinary retry loop to settle before admitting
 // the one exact journal-only block. The wait is read-only and bounded inside
 // the caller's ten-minute context. Every complete sample must keep the terminal
-// retirement identities intact; a changed journal or reappeared target fails
-// immediately, and no other final applications failure is ever accepted.
+// retirement identities intact, and any partially collected positive evidence
+// of a changed journal or reappeared target also fails immediately. No other
+// final applications failure is ever accepted.
 func waitForDeploymentHandoffEvidence(ctx context.Context, e engine, record completionRecord) (snapshot, error) {
 	const attempts = 50
 	var observed snapshot
 	for attempt := 0; attempt < attempts; attempt++ {
 		next, err := e.collect(ctx)
+		if observedTerminalRetirementViolation(next, record) {
+			return observed, errors.New("terminal retirement state changed")
+		}
 		if err == nil {
 			if err := terminalRetirementIntact(next, record, true); err != nil {
 				return observed, err

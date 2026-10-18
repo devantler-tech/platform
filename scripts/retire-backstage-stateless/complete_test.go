@@ -304,6 +304,29 @@ func TestDeploymentHandoffDoesNotWaitWhenARetiredTargetReappears(t *testing.T) {
 	}
 }
 
+func TestDeploymentHandoffDoesNotRetryAPartiallyCollectedRetirementTarget(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	owner, err := decode(encode(t, f.portal.hr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	object(owner["metadata"])["uid"] = "recreated-release-uid"
+	delete(object(owner["status"]), "helmChart")
+	present := true
+	f.onSleep = func() { present = false }
+	execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if present && program == "kubectl" && strings.Contains(strings.Join(args, " "), "get helmreleases") {
+			return encode(t, map[string]any{"apiVersion": "v1", "kind": "List", "items": []any{owner}}), nil
+		}
+		return f.execute(ctx, program, args...)
+	}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, execute); code == 0 || f.patches != 0 || f.sleeps != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=evidence-first\n" {
+		t.Fatalf("partially collected replacement was retried or admitted: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
+	}
+}
+
 func TestDeploymentHandoffAcceptsExactMainMergeGroupTerminalJournalBlock(t *testing.T) {
 	f := completedRetirementFixture(t)
 	deploymentMergeGroupHandoffRunner(t)
