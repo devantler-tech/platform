@@ -1534,13 +1534,20 @@ func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	}
 	requiredChecks, _ := jobs["ci-required-checks"].(map[string]any)
 	steps, _ := requiredChecks["steps"].([]any)
-	if len(steps) != 1 {
-		t.Fatalf("ci-required-checks steps = %d, want 1", len(steps))
+	aggregators := 0
+	for _, value := range steps {
+		step, _ := value.(map[string]any)
+		if !strings.HasPrefix(fmt.Sprint(step["uses"]), "devantler-tech/actions/aggregate-job-checks@") {
+			continue
+		}
+		aggregators++
+		with, _ := step["with"].(map[string]any)
+		if !strings.Contains(fmt.Sprint(with["job-results"]), "needs.validate-eks-authorization.result") {
+			t.Fatal("required-check aggregation omits validate-eks-authorization result")
+		}
 	}
-	step, _ := steps[0].(map[string]any)
-	with, _ := step["with"].(map[string]any)
-	if !strings.Contains(fmt.Sprint(with["job-results"]), "needs.validate-eks-authorization.result") {
-		t.Fatal("required-check aggregation omits validate-eks-authorization result")
+	if aggregators != 1 {
+		t.Fatalf("ci-required-checks aggregators = %d, want 1", aggregators)
 	}
 }
 
