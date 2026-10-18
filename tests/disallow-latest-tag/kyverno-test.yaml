@@ -17,6 +17,7 @@ results:
       - default/versioned-tag
       - default/tag-and-digest
       - default/latest-tag
+      - default/latest-tag-init-container
     kind: Pod
     result: pass
   - policy: disallow-latest-tag
@@ -32,6 +33,7 @@ results:
       - default/versioned-tag
       - default/tag-and-digest
       - default/tagless
+      - default/tagless-init-container
     kind: Pod
     result: pass
   - policy: disallow-latest-tag

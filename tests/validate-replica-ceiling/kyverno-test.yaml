@@ -34,6 +34,18 @@ results:
   - policy: validate-replica-ceiling
     rule: cap-workload-replicas
     resources:
+      - apps/three-replicas-replicaset
+    kind: ReplicaSet
+    result: pass
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/four-replicas-replicaset
+    kind: ReplicaSet
+    result: fail
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
       - apps/four-replicas-exempt
       - apps/four-replicas-template-exempt
     kind: Deployment

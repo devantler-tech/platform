@@ -215,3 +215,41 @@ spec:
       metricType: Utilization
       metadata:
         value: "80"
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: three-replicas-replicaset
+  namespace: apps
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: three-replicas-replicaset
+  template:
+    metadata:
+      labels:
+        app: three-replicas-replicaset
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: four-replicas-replicaset
+  namespace: apps
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: four-replicas-replicaset
+  template:
+    metadata:
+      labels:
+        app: four-replicas-replicaset
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
