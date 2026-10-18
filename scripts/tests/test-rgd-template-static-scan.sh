@@ -27,6 +27,12 @@ for rgd in "$TENANT_RGD" "$WEBAPP_RGD"; do
     fail "ResourceGraphDefinition must explicitly preserve its namespaced API scope: $rgd"
 done
 
+for config in ksail.yaml ksail.prod.yaml; do
+  yq -e '.spec.workload.validation.skipKinds | any_c(. == "ResourceGraphDefinition")' \
+    "$REPO_ROOT/$config" >/dev/null ||
+    fail "KSail must defer the stale catalog's outer RGD schema to the reviewed RGD gate: $config"
+done
+
 # shellcheck disable=SC2016 # These are literal source invariants, not test-shell arithmetic.
 grep -Fq 'semantic_start_line=$((finding_start_line - leading_blank_lines - 1))' "$GATE" ||
   fail "Trivy one-based start lines are not converted to yq zero-based lines"
