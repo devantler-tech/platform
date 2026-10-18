@@ -30,6 +30,9 @@ func TestValidate(t *testing.T) {
 		{"duplicate inside an array element", `{"items":[{"name":"a","name":"b"}]}`, "ambiguous evidence fields"},
 		{"trailing document", `{"sealed":false} {}`, "trailing evidence"},
 		{"truncated document", `{"sealed":false`, "incomplete evidence"},
+		{"truncated after a member separator", `{"sealed":false,`, "incomplete evidence"},
+		{"truncated after a member name", `{"sealed"`, "incomplete evidence"},
+		{"non-string member name", `{1:2}`, "ambiguous evidence fields"},
 		{"empty input", ``, "incomplete evidence"},
 		{"nesting beyond the bound", strings.Repeat("[", MaxDepth+2) + strings.Repeat("]", MaxDepth+2), "evidence nesting exceeds bound"},
 	} {
