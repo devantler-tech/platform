@@ -1699,35 +1699,6 @@ jobs:
           /usr/local/bin/syft scan dir:. --output cyclonedx-json=tool-integrity.cdx.json
           jq -e '.bomFormat == "CycloneDX" and (.components | length > 0)' tool-integrity.cdx.json
 
-      - name: 🔐 Validate Flux GHCR credential bridge
-        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
-        # registry credential, cluster access, or network is used.
-        run: |
-          bash -n \
-            scripts/ghcr-auth-lib.sh \
-            scripts/refresh-flux-ghcr-auth-safety.sh \
-            scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh \
-            scripts/use-prod-stable-api-endpoint.sh \
-            scripts/wait-for-prod-api-stability.sh \
-            scripts/tests/test-use-prod-stable-api-endpoint.sh \
-            scripts/tests/test-wait-for-prod-api-stability.sh \
-            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          shellcheck \
-            scripts/ghcr-auth-lib.sh \
-            scripts/refresh-flux-ghcr-auth-safety.sh \
-            scripts/refresh-flux-ghcr-auth.sh \
-            scripts/run-ksail-prod-with-pull-auth.sh \
-            scripts/use-prod-stable-api-endpoint.sh \
-            scripts/wait-for-prod-api-stability.sh \
-            scripts/tests/test-use-prod-stable-api-endpoint.sh \
-            scripts/tests/test-wait-for-prod-api-stability.sh \
-            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          bash scripts/tests/test-use-prod-stable-api-endpoint.sh
-          bash scripts/tests/test-wait-for-prod-api-stability.sh
-          bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
-
       - name: 🚦 Validate the gateway route-application check
         # Local test with a fake kubectl: no cluster access. The deploy runs
         # this check last, so a gateway that stopped applying routes fails the
@@ -3093,6 +3064,67 @@ jobs:
           shellcheck scripts/summarize-sarif-findings.sh
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
 
+  validate-flux-bridge:
+    name: 🔐 Validate Flux Credential Bridge
+    needs: [changes]
+    if: >-
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.k8s == 'true' ||
+      needs.changes.outputs.bridge_validation == 'true')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        # Runs the complete offline credential-bridge regression family.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 📌 Install the reviewed YAML parser
+        if: needs.changes.outputs.k8s == 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/platform-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
+
+      - name: 🔐 Validate Flux GHCR credential bridge
+        # Pure local tests with fake ksail/docker/kubectl commands: no SOPS key,
+        # registry credential, cluster access, or network is used.
+        run: |
+          bash -n \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth-safety.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/use-prod-stable-api-endpoint.sh \
+            scripts/wait-for-prod-api-stability.sh \
+            scripts/tests/test-use-prod-stable-api-endpoint.sh \
+            scripts/tests/test-wait-for-prod-api-stability.sh \
+            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          shellcheck \
+            scripts/ghcr-auth-lib.sh \
+            scripts/refresh-flux-ghcr-auth-safety.sh \
+            scripts/refresh-flux-ghcr-auth.sh \
+            scripts/run-ksail-prod-with-pull-auth.sh \
+            scripts/use-prod-stable-api-endpoint.sh \
+            scripts/wait-for-prod-api-stability.sh \
+            scripts/tests/test-use-prod-stable-api-endpoint.sh \
+            scripts/tests/test-wait-for-prod-api-stability.sh \
+            scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          bash scripts/tests/test-use-prod-stable-api-endpoint.sh
+          bash scripts/tests/test-wait-for-prod-api-stability.sh
+          bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
+          go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+
   naming:
     name: 🏷️ Validate Naming Conventions
     needs: [changes]
@@ -3968,6 +4000,7 @@ jobs:
         changes,
         validate-consumer-discovery,
         validate-publication-contract,
+        validate-flux-bridge,
         validate-matcher-efficacy,
         validate-eks-authorization,
         validate,
@@ -3985,6 +4018,34 @@ jobs:
     if: always()
     permissions: {}
     steps:
+      - name: 🔐 Require complete selected Flux bridge validation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          K8S_CHANGED: ${{ needs.changes.outputs.k8s }}
+          BRIDGE_CHANGED: ${{ needs.changes.outputs.bridge_validation }}
+          FLUX_BRIDGE_RESULT: ${{ needs.validate-flux-bridge.result }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              for selected in "$K8S_CHANGED" "$BRIDGE_CHANGED"; do
+                if [ "$selected" != true ] && [ "$selected" != false ]; then
+                  echo '::error::Cannot determine Flux bridge validation selection'
+                  exit 1
+                fi
+              done
+              expected=skipped
+              if [ "$K8S_CHANGED" = true ] || [ "$BRIDGE_CHANGED" = true ]; then
+                expected=success
+              fi
+              ;;
+            merge_group) expected=skipped ;;
+            *) echo '::error::Unknown Flux bridge validation event'; exit 1 ;;
+          esac
+          if [ "$FLUX_BRIDGE_RESULT" != "$expected" ]; then
+            echo "::error::Flux bridge result was $FLUX_BRIDGE_RESULT; expected $expected"
+            exit 1
+          fi
+
       - name: 📊 Evaluate job results
         uses: devantler-tech/actions/aggregate-job-checks@ea4df9004d4ab43b6c9af5b0c5f55712f7211328 # v13.10.12
         with:
@@ -3992,6 +4053,7 @@ jobs:
             ${{ needs.changes.result }}
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
+            ${{ needs.validate-flux-bridge.result }}
             ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
