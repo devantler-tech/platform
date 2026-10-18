@@ -82,3 +82,53 @@ func TestCompletionWorkflowIsProtectedAndLeastPrivilege(t *testing.T) {
 		t.Fatal("credentials or terminal mutation precede current-main and regression proof")
 	}
 }
+
+func TestDeploymentDefersOnlyTheApplicationRevisionCheckDuringTheHandoff(t *testing.T) {
+	b, err := os.ReadFile("../../.github/actions/deploy-prod/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action map[string]any
+	if yaml.Unmarshal(b, &action) != nil {
+		t.Fatal("deployment action is invalid")
+	}
+	matched := 0
+	for _, rawStep := range array(field(action, "runs", "steps")) {
+		step := object(rawStep)
+		condition := text(step["if"])
+		if strings.Contains(condition, "backstage_retirement_handoff") {
+			matched++
+			if step["name"] != "Verify the deployed data product UI release" || !strings.Contains(condition, "steps.reconcile.outputs.backstage_retirement_handoff != 'true'") {
+				t.Fatalf("retirement handoff deferred an unrelated deployment check: %v", step["name"])
+			}
+		}
+	}
+	if matched != 1 {
+		t.Fatalf("retirement handoff must defer exactly one revision-bound application check, found %d", matched)
+	}
+}
+
+func TestDeploymentHandoffCarriesGitHubTokenForCurrentMainSourceProof(t *testing.T) {
+	b, err := os.ReadFile("../../.github/actions/deploy-prod/action.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var action map[string]any
+	if yaml.Unmarshal(b, &action) != nil {
+		t.Fatal("deployment action is invalid")
+	}
+	matched := 0
+	for _, rawStep := range array(field(action, "runs", "steps")) {
+		step := object(rawStep)
+		if text(step["run"]) != "./scripts/reconcile-flux-workloads.sh" {
+			continue
+		}
+		matched++
+		if field(step, "env", "GH_TOKEN") != "${{ github.token }}" {
+			t.Fatal("the retirement handoff cannot verify the current-main source without the GitHub token")
+		}
+	}
+	if matched != 1 {
+		t.Fatalf("expected exactly one Flux reconcile step, found %d", matched)
+	}
+}
