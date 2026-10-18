@@ -54,6 +54,7 @@ var deploymentHandoffPinnedHashes = map[string]string{
 	"ksail.prod.yaml": "054176e8769671390372bf63c963991de1cb9773e328aeaa3a3ed5afa5ea515d",
 	"ksail.yaml":      "d22a0a5000c03b78b4ec47ee49e287c8ff7098074ec65a58a6206103aa76950c",
 	"scripts/rgd-template-static-scan-baseline.tsv":            "b88125decc406b9f82e231e6418ef09919dbab41ab726e1cfe860feb604c739d",
+	"scripts/tests/kyverno-auth-reviews/api/admission_test.go": "5185a01fe18535b593a9f45dc8753476faee10c3220aadd32cd450f377111ad6",
 	"scripts/tests/test-rgd-template-static-scan.sh":           "3b36a61e63372256ac6173beceba293d3a7af70a75b9b1ffe752c6eed675c7cf",
 	"scripts/validate-eks-ci-role-policy/approved-surface.txt": "5f041f8b217af84cd7fe95716508b4187528151fcd831ccfe56f8b23524e4833",
 	"scripts/validate-eks-ci-role-policy/main.go":              "077a4a742fed6324a72afd613e53a6f10860d2bc4d7363c5b73deed83a1222bd",
