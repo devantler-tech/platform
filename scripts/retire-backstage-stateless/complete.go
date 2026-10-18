@@ -16,7 +16,7 @@ import (
 
 const completionWorkflow = "devantler-tech/platform/.github/workflows/complete-backstage-retirement.yaml@refs/heads/main"
 const deploymentWorkflow = "devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main"
-const mergeGroupDeploymentWorkflow = "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main"
+const mergeGroupDeploymentWorkflow = "devantler-tech/platform/.github/workflows/ci.yaml@"
 
 var platformRoots = map[string]bool{
 	"apps": true, "bootstrap": true, "flux-system": true,
@@ -44,7 +44,7 @@ var deploymentHandoffPaths = map[string]bool{
 func deploymentHandoffContext() (admitted, currentMain bool) {
 	event, ref, workflow := os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_REF"), os.Getenv("GITHUB_WORKFLOW_REF")
 	currentMain = event == "workflow_dispatch" && ref == "refs/heads/main" && workflow == deploymentWorkflow
-	mergeGroup := event == "merge_group" && workflow == mergeGroupDeploymentWorkflow && regexp.MustCompile(`^refs/heads/gh-readonly-queue/main/pr-[1-9][0-9]*-[a-f0-9]{40}$`).MatchString(ref)
+	mergeGroup := event == "merge_group" && workflow == mergeGroupDeploymentWorkflow+ref && regexp.MustCompile(`^refs/heads/gh-readonly-queue/main/pr-[1-9][0-9]*-[a-f0-9]{40}$`).MatchString(ref)
 	return currentMain || mergeGroup, currentMain
 }
 

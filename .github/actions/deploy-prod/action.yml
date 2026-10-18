@@ -348,6 +348,7 @@ runs:
       shell: bash
       env:
         GITHUB_ACTOR: ${{ github.actor }}
+        GH_TOKEN: ${{ github.token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         FLUX_CONTROL_PLANE_BASELINE_FILE: ${{ runner.temp }}/flux-control-plane-baseline
         PORTAL_RETIREMENT_REVISION: latest@${{ steps.publish_platform_manifest.outputs.digest }}

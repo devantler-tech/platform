@@ -119,9 +119,10 @@ func deploymentHandoffRunner(t *testing.T) {
 
 func deploymentMergeGroupHandoffRunner(t *testing.T) {
 	t.Helper()
+	queueRef := "refs/heads/gh-readonly-queue/main/pr-5048-" + strings.Repeat("d", 40)
 	t.Setenv("GITHUB_EVENT_NAME", "merge_group")
-	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/main")
-	t.Setenv("GITHUB_REF", "refs/heads/gh-readonly-queue/main/pr-5048-"+strings.Repeat("d", 40))
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@"+queueRef)
+	t.Setenv("GITHUB_REF", queueRef)
 	t.Setenv("GITHUB_RUN_ID", "999")
 	t.Setenv("GITHUB_RUN_ATTEMPT", "1")
 	t.Setenv("GITHUB_SHA", strings.Repeat("a", 40))
@@ -291,6 +292,16 @@ func TestDeploymentHandoffRejectsForeignMergeGroupRef(t *testing.T) {
 	var out bytes.Buffer
 	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=admission\n" {
 		t.Fatalf("foreign merge-group ref was admitted: code=%d patches=%d output=%s", code, f.patches, &out)
+	}
+}
+
+func TestDeploymentHandoffRejectsMismatchedMergeGroupWorkflowRef(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentMergeGroupHandoffRunner(t)
+	t.Setenv("GITHUB_WORKFLOW_REF", "devantler-tech/platform/.github/workflows/ci.yaml@refs/heads/gh-readonly-queue/main/pr-5049-"+strings.Repeat("e", 40))
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=admission\n" {
+		t.Fatalf("mismatched merge-group workflow ref was admitted: code=%d patches=%d output=%s", code, f.patches, &out)
 	}
 }
 
