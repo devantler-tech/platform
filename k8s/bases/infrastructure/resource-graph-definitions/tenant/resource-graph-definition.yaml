@@ -59,6 +59,7 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: Tenant
+    scope: Namespaced
     # Nested types for the optional multi-tenancy guardrails (#2522). Each
     # carries its own `enabled` toggle rather than relying on CEL `has()`
     # presence-detection on the parent object — this mirrors the RGD's own

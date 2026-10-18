@@ -5,6 +5,52 @@ import (
 	"fmt"
 )
 
+// bindJournalHistory reads the exact retained Helm revision captured by the
+// durable retirement journal. Once native uninstall has completed, Helm status
+// is not a stable terminal-state API across Helm storage drivers and versions;
+// the immutable Kubernetes Secret identity is the stronger source of truth.
+// This path is enabled only by a parsed journal UID and keeps the complete
+// stored-content and preservation checks that run after collection.
+func bindJournalHistory(s *snapshot, historyUID string) error {
+	failure := errors.New("journal-bound release history unverified")
+	items, err := members(s.inventory)
+	if err != nil || historyUID == "" {
+		return failure
+	}
+	var stored map[string]any
+	found := false
+	reject := func() error {
+		s.historyViolation = true
+		return failure
+	}
+	for _, secret := range items {
+		if field(secret, "metadata", "uid") != historyUID {
+			continue
+		}
+		if found {
+			return reject()
+		}
+		found = true
+		owners, ownerErr := ownerReferences(secret)
+		if ownerErr != nil || len(owners) != 0 || !metadataValid(secret) || secret["apiVersion"] != "v1" || secret["kind"] != "Secret" || field(secret, "metadata", "namespace") != "backstage" || secret["type"] != "helm.sh/release.v1" || field(secret, "metadata", "labels", "owner") != "helm" || field(secret, "metadata", "labels", "name") != "backstage" {
+			return reject()
+		}
+		stored, err = storedRelease(secret)
+		if err != nil {
+			return reject()
+		}
+		s.release = stored
+		version := fmt.Sprint(stored["version"])
+		if stored["name"] != "backstage" || stored["namespace"] != "backstage" || integer(stored["version"]) < 1 || field(stored, "info", "status") != "uninstalled" || field(secret, "metadata", "labels", "status") != field(stored, "info", "status") || field(secret, "metadata", "name") != "sh.helm.release.v1.backstage.v"+version || field(secret, "metadata", "labels", "version") != version || text(field(stored, "chart", "metadata", "name")) == "" || text(field(stored, "chart", "metadata", "version")) == "" {
+			return reject()
+		}
+	}
+	if !found {
+		return failure
+	}
+	return nil
+}
+
 // Helm v4.2.0 status deliberately omits Chart. Recover it only from the exact
 // retained revision already in this snapshot; never infer it from desired state
 // or controller history. All existing eligibility and preservation checks still

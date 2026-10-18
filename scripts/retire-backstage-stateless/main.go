@@ -170,6 +170,7 @@ type snapshot struct {
 	releases                                                                   []map[string]any
 	retiring                                                                   map[string]string
 	fence                                                                      string
+	historyViolation                                                           bool
 	writers                                                                    map[string]map[string]any
 	layerSources                                                               map[string]map[string]any
 	bundle, monitoring                                                         map[string]any
@@ -178,7 +179,7 @@ type engine struct {
 	execute              command
 	revision, sha, runID string
 	retiring             map[string]string
-	ownerUID             string
+	ownerUID, historyUID string
 	fence                string
 	readOnly             bool
 }
@@ -212,13 +213,16 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	if e.fence != "" && e.requireFence(ctx) != nil {
 		return s, errors.New("durable admission fence unverified")
 	}
-	b, err := e.execute(ctx, "helm", "status", "backstage", "--namespace=backstage", "--kube-context=admin@prod", "--output=json")
-	if err != nil {
-		return s, errors.New("release read failed")
-	}
-	s.release, err = decode(b)
-	if err != nil {
-		return s, err
+	var err error
+	if e.historyUID == "" {
+		b, statusErr := e.execute(ctx, "helm", "status", "backstage", "--namespace=backstage", "--kube-context=admin@prod", "--output=json")
+		if statusErr != nil {
+			return s, errors.New("release read failed")
+		}
+		s.release, err = decode(b)
+		if err != nil {
+			return s, err
+		}
 	}
 	reads := []struct {
 		target *map[string]any
@@ -226,6 +230,22 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	}{
 		{&s.live, []string{"--namespace=backstage", "get", "deployment,pod,persistentvolumeclaim,clusters.postgresql.cnpg.io", "--output=json"}},
 		{&s.inventory, []string{"--namespace=backstage", "get", inventoryKinds, "--output=json"}},
+	}
+	for _, r := range reads {
+		*r.target, err = e.read(ctx, r.args...)
+		if err != nil {
+			return s, err
+		}
+	}
+	if e.historyUID != "" {
+		if err := bindJournalHistory(&s, e.historyUID); err != nil {
+			return s, err
+		}
+	}
+	reads = []struct {
+		target *map[string]any
+		args   []string
+	}{
 		{&s.namespace, []string{"get", "namespace", "backstage", "--output=json"}},
 		{&s.volumes, []string{"get", "persistentvolumes", "--output=json"}},
 		{&s.layers, []string{"get", "kustomizations.kustomize.toolkit.fluxcd.io", "--all-namespaces", "--output=json"}},
@@ -1177,6 +1197,9 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--admit-deployment-handoff" {
+		os.Exit(admitDeploymentHandoff(os.Args[1:], os.Stdout, capture))
+	}
 	if len(os.Args) == 2 && os.Args[1] == "--complete" {
 		os.Exit(complete(os.Args[1:], os.Stdout, capture))
 	}

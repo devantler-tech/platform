@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,15 +16,66 @@ import (
 )
 
 const completionWorkflow = "devantler-tech/platform/.github/workflows/complete-backstage-retirement.yaml@refs/heads/main"
+const deploymentWorkflow = "devantler-tech/platform/.github/workflows/cd.yaml@refs/heads/main"
+const mergeGroupDeploymentWorkflow = "devantler-tech/platform/.github/workflows/ci.yaml@"
 
 var platformRoots = map[string]bool{
 	"apps": true, "bootstrap": true, "flux-system": true,
 	"infrastructure": true, "infrastructure-controllers": true,
 }
 
+var deploymentHandoffPaths = map[string]bool{
+	".github/actions/deploy-prod/action.yml":                       true,
+	".github/workflows/complete-backstage-retirement.yaml":         true,
+	"scripts/reconcile-flux-workloads.sh":                          true,
+	"scripts/reconcile-talos-kernel-args/main.go":                  true,
+	"scripts/reconcile-talos-kernel-args/main_test.go":             true,
+	"scripts/retire-backstage-stateless/README.md":                 true,
+	"scripts/retire-backstage-stateless/complete.go":               true,
+	"scripts/retire-backstage-stateless/complete_test.go":          true,
+	"scripts/retire-backstage-stateless/complete_workflow_test.go": true,
+	"scripts/retire-backstage-stateless/fence.go":                  true,
+	"scripts/retire-backstage-stateless/fence_test.go":             true,
+	"scripts/retire-backstage-stateless/main.go":                   true,
+	"scripts/retire-backstage-stateless/native_test.go":            true,
+	"scripts/retire-backstage-stateless/status_chart.go":           true,
+	"scripts/tests/test-flux-reconcile-control-plane-restart.sh":   true,
+	"scripts/tests/test-talos-render-kernel-args.sh":               true,
+}
+
+// These files repair the validators that run before the terminal retirement
+// handoff. They are not general maintenance surfaces: only the reviewed blob
+// at each path may cross the retirement source boundary. Any later edit holds
+// the deployment until the journal has been completed through the protected
+// workflow or this exact-content set is reviewed again.
+var deploymentHandoffPinnedHashes = map[string]string{
+	"k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml": "764b2ca4ac72cbbbe95ad3828376becf7e9fdee088c84402564c23bccc629535",
+	"k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml": "e30775cf0292b6590bd9013e427c713363ff5403d33ffef7b6905cdfbfa10ca5",
+	"ksail.prod.yaml": "054176e8769671390372bf63c963991de1cb9773e328aeaa3a3ed5afa5ea515d",
+	"ksail.yaml":      "d22a0a5000c03b78b4ec47ee49e287c8ff7098074ec65a58a6206103aa76950c",
+	"scripts/rgd-template-static-scan-baseline.tsv":            "b88125decc406b9f82e231e6418ef09919dbab41ab726e1cfe860feb604c739d",
+	"scripts/tests/kyverno-auth-reviews/api/admission_test.go": "5185a01fe18535b593a9f45dc8753476faee10c3220aadd32cd450f377111ad6",
+	"scripts/tests/test-rgd-template-static-scan.sh":           "3b36a61e63372256ac6173beceba293d3a7af70a75b9b1ffe752c6eed675c7cf",
+	"scripts/validate-eks-ci-role-policy/approved-surface.txt": "5f041f8b217af84cd7fe95716508b4187528151fcd831ccfe56f8b23524e4833",
+	"scripts/validate-eks-ci-role-policy/main.go":              "077a4a742fed6324a72afd613e53a6f10860d2bc4d7363c5b73deed83a1222bd",
+}
+
+func deploymentHandoffContext() (admitted, currentMain bool) {
+	event, ref, workflow := os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_REF"), os.Getenv("GITHUB_WORKFLOW_REF")
+	currentMain = event == "workflow_dispatch" && ref == "refs/heads/main" && workflow == deploymentWorkflow
+	mergeGroup := event == "merge_group" && workflow == mergeGroupDeploymentWorkflow+ref && regexp.MustCompile(`^refs/heads/gh-readonly-queue/main/pr-[1-9][0-9]*-[a-f0-9]{40}$`).MatchString(ref)
+	return currentMain || mergeGroup, currentMain
+}
+
 type completionRecord struct {
-	raw, source, revision, run, namespaceUID, releaseUID, chartUID string
-	retiring                                                       map[string]string
+	raw, source, revision, run, namespaceUID, releaseUID, chartUID, historyUID string
+	retiring                                                                   map[string]string
+}
+
+type completionDeployment struct {
+	ID          json.Number `json:"id"`
+	SHA         string      `json:"sha"`
+	Environment string      `json:"environment"`
 }
 
 type completionAttestationRecord struct {
@@ -71,14 +123,14 @@ func completionAccepted(ctx context.Context, e engine, deploymentRun string) err
 		return errors.New("deployment run identity unverified")
 	}
 	b, err = completionAPI(ctx, e.execute, "repos/devantler-tech/platform/deployments?sha="+e.sha+"&environment=prod&per_page=100")
-	var deployments []map[string]any
+	var deployments []completionDeployment
 	if err != nil || json.Unmarshal(b, &deployments) != nil || len(deployments) == 0 || len(deployments) >= 100 {
 		return errors.New("deployment census unavailable")
 	}
 	accepted := false
 	for _, deployment := range deployments {
-		id := fmt.Sprint(deployment["id"])
-		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || deployment["sha"] != e.sha || deployment["environment"] != "prod" {
+		id := deployment.ID.String()
+		if !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(id) || deployment.SHA != e.sha || deployment.Environment != "prod" {
 			return errors.New("deployment identity unverified")
 		}
 		b, err = completionAPI(ctx, e.execute, "repos/devantler-tech/platform/deployments/"+id+"/statuses?per_page=100")
@@ -144,7 +196,8 @@ func parseCompletionRecord(raw string, namespace map[string]any) (completionReco
 	}
 	record.source, record.revision, record.run = text(value["sourceSHA"]), text(value["revision"]), text(value["run"])
 	record.namespaceUID = text(value["namespaceUID"])
-	if integer(value["version"]) != 1 || value["phase"] != "fenced" || record.namespaceUID == "" || record.namespaceUID != field(namespace, "metadata", "uid") || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(record.source) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(record.revision) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(record.run) || text(value["latestHistoryUID"]) == "" || text(value["helmWriterUID"]) == "" || text(value["cnpgWriterUID"]) == "" {
+	record.historyUID = text(value["latestHistoryUID"])
+	if integer(value["version"]) != 1 || value["phase"] != "fenced" || record.namespaceUID == "" || record.namespaceUID != field(namespace, "metadata", "uid") || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(record.source) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(record.revision) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(record.run) || record.historyUID == "" || text(value["helmWriterUID"]) == "" || text(value["cnpgWriterUID"]) == "" {
 		return record, errors.New("journal identity unverified")
 	}
 	if _, ok := value["retained"].([]any); !ok || len(array(value["retained"])) > 512 {
@@ -229,12 +282,22 @@ func archivingHealthy(s snapshot) bool {
 	return clusters == 1 && claims == 2 && pods == 2
 }
 
-func completedState(s snapshot, record completionRecord, fenced bool) error {
+func terminalRetirementIntact(s snapshot, record completionRecord, fenced bool) error {
 	if field(s.namespace, "metadata", "uid") != record.namespaceUID || fenced && field(s.namespace, "metadata", "annotations", fenceAnnotation) != record.raw || !fenced && field(s.namespace, "metadata", "annotations", fenceAnnotation) != nil {
 		return errors.New("namespace journal state unverified")
 	}
-	if s.owner != nil || s.chart != nil || field(s.release, "name") != "backstage" || field(s.release, "namespace") != "backstage" || field(s.release, "info", "status") != "uninstalled" || !absent(s) || !archivingHealthy(s) {
+	if s.owner != nil || s.chart != nil || field(s.release, "name") != "backstage" || field(s.release, "namespace") != "backstage" || field(s.release, "info", "status") != "uninstalled" || !absent(s) {
 		return errors.New("terminal retirement state unverified")
+	}
+	return nil
+}
+
+func completedState(s snapshot, record completionRecord, fenced bool) error {
+	if err := terminalRetirementIntact(s, record, fenced); err != nil {
+		return err
+	}
+	if !archivingHealthy(s) {
+		return errors.New("retained database health unverified")
 	}
 	return nil
 }
@@ -311,6 +374,173 @@ func stableCompletionProjection(s snapshot, record completionRecord) (map[string
 	return preserved(normalizedNamespace(s, record.raw))
 }
 
+func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completionRecord) error {
+	return deploymentHandoffSourceSafeWithPins(ctx, e, record, deploymentHandoffPinnedHashes)
+}
+
+func deploymentHandoffSourceSafeWithPins(ctx context.Context, e engine, record completionRecord, pinnedHashes map[string]string) error {
+	if _, err := e.execute(ctx, "git", "merge-base", "--is-ancestor", record.source, e.sha); err != nil {
+		return errors.New("retirement source is not an ancestor")
+	}
+	b, err := e.execute(ctx, "git", "diff", "--no-ext-diff", "--no-renames", "--name-only", record.source+".."+e.sha, "--")
+	if err != nil || len(b) > maxResponse {
+		return errors.New("retirement source diff unavailable")
+	}
+	seen := map[string]bool{}
+	for _, path := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if path == "" {
+			continue
+		}
+		if seen[path] {
+			return errors.New("retirement source diff is not maintenance-only")
+		}
+		seen[path] = true
+		if deploymentHandoffPaths[path] {
+			continue
+		}
+		expected, pinned := pinnedHashes[path]
+		if !pinned {
+			return errors.New("retirement source diff is not maintenance-only")
+		}
+		content, showErr := e.execute(ctx, "git", "show", "--no-ext-diff", "--no-textconv", e.sha+":"+path)
+		if showErr != nil || len(content) > maxResponse || fmt.Sprintf("%x", sha256.Sum256(content)) != expected {
+			return errors.New("retirement source diff is not maintenance-only")
+		}
+	}
+	return nil
+}
+
+// observedTerminalRetirementViolation distinguishes a partial read that already
+// proves the retirement state changed from one that is merely incomplete. A
+// positive target, release or journal observation is terminal even when a later
+// collection step fails; it must never be hidden by a subsequent clean sample.
+func observedTerminalRetirementViolation(s snapshot, record completionRecord) bool {
+	if s.historyViolation {
+		return true
+	}
+	if s.release != nil && (s.release["name"] != "backstage" || s.release["namespace"] != "backstage" || field(s.release, "info", "status") != "uninstalled") {
+		return true
+	}
+	if metadataValid(s.namespace) && (field(s.namespace, "metadata", "uid") != record.namespaceUID || field(s.namespace, "metadata", "annotations", fenceAnnotation) != record.raw) {
+		return true
+	}
+	if s.owner != nil || s.chart != nil {
+		return true
+	}
+	for _, list := range []map[string]any{s.live, s.inventory} {
+		resources, err := members(list)
+		if err != nil {
+			continue
+		}
+		for _, resource := range resources {
+			if _, retiring := s.retiring[identity(resource)]; retiring || targetResource(resource) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// waitForDeploymentHandoffEvidence allows transiently incomplete API reads,
+// database health and Flux's ordinary retry loop to settle before admitting
+// the one exact journal-only block. The wait is read-only and bounded inside
+// the caller's ten-minute context. Every complete sample must keep the terminal
+// retirement identities intact, and any partially collected positive evidence
+// of a changed journal or reappeared target also fails immediately. No other
+// final applications failure is ever accepted.
+func waitForDeploymentHandoffEvidence(ctx context.Context, e engine, record completionRecord) (snapshot, error) {
+	const attempts = 50
+	var observed snapshot
+	for attempt := 0; attempt < attempts; attempt++ {
+		next, err := e.collect(ctx)
+		if observedTerminalRetirementViolation(next, record) {
+			return observed, errors.New("terminal retirement state changed")
+		}
+		if err == nil {
+			if err := terminalRetirementIntact(next, record, true); err != nil {
+				return observed, err
+			}
+			observed = next
+			if completedState(observed, record, true) == nil && platformRootState(observed, record, e.revision, false) == nil {
+				return observed, nil
+			}
+		}
+		if attempt == attempts-1 {
+			break
+		}
+		if _, err := e.execute(ctx, "sleep", "10"); err != nil {
+			return observed, errors.New("platform root retry interrupted")
+		}
+	}
+	return observed, errors.New("deployment handoff evidence did not settle")
+}
+
+// admitDeploymentHandoff lets a current-main CD run continue only when its
+// reconcile failed for the one terminal journal state that the separate
+// completion workflow is designed to clear. It is read-only: the successful CD
+// run supplies the independently attested deployment receipt, then the
+// completion workflow repeats this proof before removing the exact journal.
+func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
+	hold := func(stage string) int {
+		_, _ = fmt.Fprintln(out, "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage="+stage)
+		return 2
+	}
+	admitted, currentMain := deploymentHandoffContext()
+	if len(args) != 1 || args[0] != "--admit-deployment-handoff" || os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REPOSITORY") != "devantler-tech/platform" || !admitted || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(os.Getenv("GITHUB_SHA")) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(os.Getenv("GITHUB_RUN_ID")) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(os.Getenv("PORTAL_RETIREMENT_REVISION")) {
+		return hold("admission")
+	}
+	e := engine{execute: execute, revision: os.Getenv("PORTAL_RETIREMENT_REVISION"), sha: os.Getenv("GITHUB_SHA"), readOnly: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if currentMain && e.sourceCurrent(ctx) != nil {
+		return hold("source")
+	}
+	namespace, err := e.read(ctx, "get", "namespace", "backstage", "--output=json")
+	if err != nil || !metadataValid(namespace) || namespace["kind"] != "Namespace" {
+		return hold("namespace")
+	}
+	record, err := parseCompletionRecord(text(field(namespace, "metadata", "annotations", fenceAnnotation)), namespace)
+	if err != nil {
+		return hold("journal")
+	}
+	if deploymentHandoffSourceSafe(ctx, e, record) != nil {
+		return hold("source-diff")
+	}
+	e.fence, e.retiring, e.ownerUID, e.historyUID = record.raw, record.retiring, record.releaseUID, record.historyUID
+	receipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
+	if err != nil || !completionReceiptValid(receipt, record) {
+		return hold("receipt")
+	}
+	first, err := waitForDeploymentHandoffEvidence(ctx, e, record)
+	if err != nil {
+		return hold("evidence-first")
+	}
+	preservedFirst, err := stableCompletionProjection(first, record)
+	if err != nil {
+		return hold("preservation-first")
+	}
+	if _, err = execute(ctx, "sleep", "5"); err != nil {
+		return hold("sample-separation")
+	}
+	second, err := e.collect(ctx)
+	if err != nil || completedState(second, record, true) != nil || platformRootState(second, record, e.revision, false) != nil {
+		return hold("evidence-second")
+	}
+	preservedSecond, err := stableCompletionProjection(second, record)
+	if err != nil || !reflect.DeepEqual(preservedFirst, preservedSecond) {
+		return hold("preservation-second")
+	}
+	secondReceipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
+	if err != nil || !reflect.DeepEqual(receipt, secondReceipt) || deploymentHandoffSourceSafe(ctx, e, record) != nil || currentMain && e.sourceCurrent(ctx) != nil {
+		return hold("closing-source")
+	}
+	const result = "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n"
+	if n, err := io.WriteString(out, result); err != nil || n != len(result) {
+		return 2
+	}
+	return 0
+}
+
 func complete(args []string, out io.Writer, execute command) int {
 	hold := func(stage string) int {
 		_, _ = fmt.Fprintln(out, "PORTAL-RETIREMENT=HOLD_COMPLETION stage="+stage)
@@ -334,7 +564,7 @@ func complete(args []string, out io.Writer, execute command) int {
 	if err != nil {
 		return hold("journal")
 	}
-	e.fence, e.retiring, e.ownerUID = record.raw, record.retiring, record.releaseUID
+	e.fence, e.retiring, e.ownerUID, e.historyUID = record.raw, record.retiring, record.releaseUID, record.historyUID
 	receipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
 	if err != nil || !completionReceiptValid(receipt, record) {
 		return hold("receipt")
