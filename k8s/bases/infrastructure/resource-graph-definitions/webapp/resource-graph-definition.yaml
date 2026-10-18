@@ -71,6 +71,7 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: WebApp
+    scope: Namespaced
     spec:
       # App name — used verbatim as the Deployment/Service/HTTPRoute name AND as
       # the target namespace (the tenant namespace the Tenant archetype created).
