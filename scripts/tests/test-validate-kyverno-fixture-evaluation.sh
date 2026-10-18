@@ -18,10 +18,23 @@ fail() {
   failures=$((failures + 1))
 }
 
-# copy <name>: a copy of the fixtures and the policies they load.
+# copy <name> <fixture|--all>: keep fixture paths and all their policy inputs,
+# but do not rerun unrelated fixtures for each single-fixture mutation. The
+# committed-tree and path-with-spaces controls still exercise the full census.
 copy() {
-  mkdir -p "${work}/$1"
-  cp -R "${repo_root}/tests" "${repo_root}/k8s" "${work}/$1/"
+  [ "$#" -eq 2 ] || return 2
+  case "$2" in
+    --all) ;;
+    '' | . | .. | */*) return 2 ;;
+    *) [ -f "${repo_root}/tests/$2/kyverno-test.yaml" ] || return 2 ;;
+  esac
+  mkdir -p "${work}/$1/tests" || return 2
+  cp -R "${repo_root}/k8s" "${work}/$1/" || return 2
+  if [ "$2" = --all ]; then
+    cp -R "${repo_root}/tests/." "${work}/$1/tests/" || return 2
+  else
+    cp -R "${repo_root}/tests/$2" "${work}/$1/tests/" || return 2
+  fi
   printf '%s\n' "${work}/$1"
 }
 
@@ -62,8 +75,17 @@ kyverno_passes() {
 
 expect_pass "the committed fixtures" "${repo_root}"
 
+# A misspelled scope must never turn a mutation control into an unrelated pass.
+rc=0
+copy missing-fixture no-such-fixture >"${work}/missing-selection" 2>&1 || rc=$?
+if [ "${rc}" -ne 2 ]; then
+  fail "a missing selected fixture: expected exit 2, got ${rc}"
+else
+  echo "ok: a missing selected fixture"
+fi
+
 # #3145: kubectl's shorthand kind makes every rule match nothing.
-root="$(copy shorthand-kinds)"
+root="$(copy shorthand-kinds restrict-github-team-management)"
 sed -i.bak -E 's#team\.github\.m\.upbound\.io/\*/(Team|TeamMembership|TeamRepository)$#\1.team.github.m.upbound.io#' \
   "${root}/${policies}/restrict-github-team-management.yaml"
 if kyverno_passes "shorthand kinds" "${root}"; then
@@ -71,7 +93,7 @@ if kyverno_passes "shorthand kinds" "${root}"; then
 fi
 
 # #3152: a deleted rule leaves its rows Excluded.
-root="$(copy deleted-rule)"
+root="$(copy deleted-rule restrict-tenant-secret-stores)"
 yq -i 'del(.spec.rules[] | select(.name == "secretstore-no-shared-vault-role"))' \
   "${root}/${policies}/restrict-tenant-secret-stores.yaml"
 if kyverno_passes "deleted rule" "${root}"; then
@@ -79,7 +101,7 @@ if kyverno_passes "deleted rule" "${root}"; then
 fi
 
 # #3152: a renamed rule is the same break under another name.
-root="$(copy renamed-rule)"
+root="$(copy renamed-rule restrict-tenant-secret-stores)"
 yq -i '(.spec.rules[] | select(.name == "secretstore-no-shared-vault-role") | .name) = "secretstore-vault-role"' \
   "${root}/${policies}/restrict-tenant-secret-stores.yaml"
 if kyverno_passes "renamed rule" "${root}"; then
@@ -88,7 +110,7 @@ fi
 
 # A rule named only by `skip` rows passes the Excluded check, so only the
 # existence check can catch its removal.
-root="$(copy skip-only)"
+root="$(copy skip-only restrict-tenant-issuer-refs)"
 mkdir -p "${root}/skip-only"
 mv "${root}/tests/restrict-tenant-issuer-refs" "${root}/skip-only/"
 yq -i '.results |= map(select(.result == "skip"))' "${root}/skip-only/restrict-tenant-issuer-refs/kyverno-test.yaml"
@@ -100,7 +122,7 @@ if kyverno_passes "skip-only rule removed" "${root}" skip-only; then
 fi
 
 # #3392: a results entry naming a resource the test never loads gets no row at all.
-root="$(copy renamed-resource)"
+root="$(copy renamed-resource restrict-tenant-network-policies)"
 yq -i '(.results[].resources[] | select(. == "tenant-ns/attack-toservices-foreign-named")) = "tenant-ns/attack-toservices-foreign-renamed"' \
   "${root}/tests/restrict-tenant-network-policies/kyverno-test.yaml"
 if kyverno_passes "renamed resource" "${root}"; then
@@ -108,7 +130,7 @@ if kyverno_passes "renamed resource" "${root}"; then
 fi
 
 # A generate row names the object it generates, which need not share its trigger's name.
-root="$(copy generated-name)"
+root="$(copy generated-name auto-vpa)"
 yq -i '(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .generate.name) = "{{request.object.metadata.name}}-vpa"' \
   "${root}/${policies}/auto-vpa.yaml"
 for expected in "${root}"/tests/auto-vpa/deployment-owner-expected.yaml "${root}"/tests/auto-vpa/recreated/*expected*.yaml; do
@@ -122,7 +144,7 @@ fi
 # A generate row names only the object it generates, so the triggers of one entry that all
 # generate the same fixed-name object share its name, and kyverno drops a misspelled one
 # without a row or a failure.
-root="$(copy generated-fixed-name)"
+root="${work}/generated-fixed-name"
 fixture="${root}/tests/generated-fixed-name"
 mkdir -p "${fixture}"
 cat >"${fixture}/policy.yaml" <<'EOF'
@@ -201,7 +223,7 @@ if kyverno_passes "a misspelled trigger of a fixed-name generated object" "${roo
 fi
 
 # A fixture whose results were all removed asserts nothing while kyverno stays green.
-root="$(copy no-results)"
+root="$(copy no-results restrict-tenant-issuer-refs)"
 yq -i '.results = []' "${root}/tests/restrict-tenant-issuer-refs/kyverno-test.yaml"
 if kyverno_passes "no results" "${root}"; then
   expect_fail "no results" "${root}" 1 "declares no results"
@@ -209,7 +231,7 @@ fi
 
 # An autogen rule Kyverno never generates (the policy sets autogen-controllers: none) reads
 # as Excluded, so a skip row naming one passes kyverno and the Excluded check alike.
-root="$(copy autogen-disabled)"
+root="$(copy autogen-disabled prioritise-hcloud-volume-pods)"
 yq -i '.results += [{"policy": "prioritise-hcloud-volume-pods", "rule": "autogen-prioritise-hcloud-claims", "kind": "Pod", "resources": ["observability/no-volumes"], "result": "skip"}]' \
   "${root}/tests/prioritise-hcloud-volume-pods/kyverno-test.yaml"
 if kyverno_passes "autogen rule the policy never generates" "${root}"; then
@@ -219,7 +241,7 @@ fi
 # Kyverno generates no autogen rule for any rule of a policy where one rule filters by
 # selector or mutates with a JSON patch, as add-security-context does both, even for a base
 # rule that matches plain Pods.
-root="$(copy autogen-policy-filtered)"
+root="$(copy autogen-policy-filtered add-baseline-context)"
 yq -i '.results += [{"policy": "add-security-context", "rule": "autogen-add-baseline-context-optin-namespaces", "kind": "Deployment", "resources": ["observability/operator-deploy"], "result": "skip"}]' \
   "${root}/tests/add-baseline-context/kyverno-test.yaml"
 if kyverno_passes "autogen rule of a policy that filters by selector" "${root}"; then
@@ -283,7 +305,7 @@ fi
 
 # #4530: a policy kyverno loads but refuses to evaluate has every row skipped as
 # "Invalid Policy" and counted as passing. A bare JSON literal is not a variable kyverno accepts.
-root="$(copy invalid-policy)"
+root="$(copy invalid-policy restrict-github-team-management)"
 # shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
 yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ `true` }}"' \
   "${root}/${policies}/restrict-github-team-management.yaml"
@@ -293,14 +315,14 @@ fi
 
 # The control: the same edit with an expression kyverno accepts is evaluated, and the
 # rows judge it (the allow-list now refuses the approved teams as well).
-root="$(copy valid-constant-policy)"
+root="$(copy valid-constant-policy restrict-github-team-management)"
 # shellcheck disable=SC2016 # the braces and backticks are kyverno syntax, not shell
 yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ request.object.metadata.name == `\"\"` }}"' \
   "${root}/${policies}/restrict-github-team-management.yaml"
 expect_fail "an evaluated policy with the same edit" "${root}" 1 "Want pass, got fail"
 
 # A fixture whose expectation is wrong still fails through kyverno itself.
-root="$(copy wrong-expectation)"
+root="$(copy wrong-expectation restrict-tenant-issuer-refs)"
 yq -i '(.results[] | select(.result == "fail") | .result) = "pass"' \
   "${root}/tests/restrict-tenant-issuer-refs/kyverno-test.yaml"
 expect_fail "a failing kyverno test" "${root}" 1 "kyverno test tests failed"
@@ -322,7 +344,7 @@ exit 46
 EOF
 chmod +x "${work}/listing-bin/sort"
 PATH="${work}/listing-bin:${PATH}" expect_fail "a failed fixture sort" "${repo_root}" 2 "could not sort kyverno fixtures"
-root="$(copy 'paths with spaces')"
+root="$(copy 'paths with spaces' --all)"
 expect_pass "fixture paths containing spaces" "${root}"
 
 if [ "${failures}" -gt 0 ]; then
