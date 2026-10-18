@@ -59,9 +59,17 @@ spec:
     volumes:
       - name: tmp
         emptyDir: {}
+      - name: theme
+        configMap:
+          name: dex-theme
     volumeMounts:
       - name: tmp
         mountPath: /tmp
+      # The Devantler Tech theme (config-map.yaml), as a directory beside the
+      # image's own light and dark themes. config.frontend selects it.
+      - name: theme
+        mountPath: /srv/dex/web/themes/devantler-tech
+        readOnly: true
     ingress:
       enabled: false
     # Gateway API HTTPRoute rendered by the chart (replaces the former hand-rolled
@@ -107,6 +115,16 @@ spec:
             key: client-secret
     config:
       issuer: https://dex.${domain}
+      # The sign-in pages carry the Devantler Tech look. Dex reads the theme
+      # from <dir>/themes/<theme>: /srv/dex/web is where the image ships its
+      # templates, and the theme directory is mounted from config-map.yaml. The
+      # header logo is the theme's favicon.png, so it is served in-cluster.
+      # scripts/tests/test-dex-theme-mount.sh keeps these and the mount in step.
+      frontend:
+        issuer: Devantler Tech
+        dir: /srv/dex/web
+        theme: devantler-tech
+        logoURL: theme/favicon.png
       oauth2:
         skipApprovalScreen: true
       storage:
