@@ -71,6 +71,9 @@ spec:
   schema:
     apiVersion: v1alpha1
     kind: WebApp
+    # Instances live in tenant namespaces. KRO requires the scope to be explicit and
+    # immutable, and Namespaced matches what the cluster already records.
+    scope: Namespaced
     spec:
       # App name — used verbatim as the Deployment/Service/HTTPRoute name AND as
       # the target namespace (the tenant namespace the Tenant archetype created).
