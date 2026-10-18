@@ -369,21 +369,25 @@ func deploymentHandoffSourceSafe(ctx context.Context, e engine, record completio
 	return nil
 }
 
-// waitForDeploymentHandoffRoots allows Flux's ordinary retry loop to replace a
-// transient dependency/build status with the one exact journal-only block that
-// can authorize the handoff. The wait is read-only and bounded inside the
-// caller's ten-minute context. Every complete sample must keep the terminal
-// retirement identities intact. Database health and the exact journal-only
-// root state may settle during the wait, but both must pass before admission;
-// no other final applications failure is ever accepted.
-func waitForDeploymentHandoffRoots(ctx context.Context, e engine, record completionRecord, observed snapshot) (snapshot, error) {
+// waitForDeploymentHandoffEvidence allows transiently incomplete API reads,
+// database health and Flux's ordinary retry loop to settle before admitting
+// the one exact journal-only block. The wait is read-only and bounded inside
+// the caller's ten-minute context. Every complete sample must keep the terminal
+// retirement identities intact; a changed journal or reappeared target fails
+// immediately, and no other final applications failure is ever accepted.
+func waitForDeploymentHandoffEvidence(ctx context.Context, e engine, record completionRecord) (snapshot, error) {
 	const attempts = 50
+	var observed snapshot
 	for attempt := 0; attempt < attempts; attempt++ {
-		if err := terminalRetirementIntact(observed, record, true); err != nil {
-			return observed, err
-		}
-		if completedState(observed, record, true) == nil && platformRootState(observed, record, e.revision, false) == nil {
-			return observed, nil
+		next, err := e.collect(ctx)
+		if err == nil {
+			if err := terminalRetirementIntact(next, record, true); err != nil {
+				return observed, err
+			}
+			observed = next
+			if completedState(observed, record, true) == nil && platformRootState(observed, record, e.revision, false) == nil {
+				return observed, nil
+			}
 		}
 		if attempt == attempts-1 {
 			break
@@ -391,16 +395,8 @@ func waitForDeploymentHandoffRoots(ctx context.Context, e engine, record complet
 		if _, err := e.execute(ctx, "sleep", "10"); err != nil {
 			return observed, errors.New("platform root retry interrupted")
 		}
-		next, err := e.collect(ctx)
-		if err != nil {
-			return observed, err
-		}
-		if err := terminalRetirementIntact(next, record, true); err != nil {
-			return observed, err
-		}
-		observed = next
 	}
-	return observed, errors.New("platform roots did not reach the journal-only block")
+	return observed, errors.New("deployment handoff evidence did not settle")
 }
 
 // admitDeploymentHandoff lets a current-main CD run continue only when its
@@ -439,11 +435,7 @@ func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
 	if err != nil || !completionReceiptValid(receipt, record) {
 		return hold("receipt")
 	}
-	first, err := e.collect(ctx)
-	if err != nil || terminalRetirementIntact(first, record, true) != nil {
-		return hold("evidence-first")
-	}
-	first, err = waitForDeploymentHandoffRoots(ctx, e, record, first)
+	first, err := waitForDeploymentHandoffEvidence(ctx, e, record)
 	if err != nil {
 		return hold("evidence-first")
 	}

@@ -19,6 +19,7 @@ type completionFixture struct {
 	cleared      bool
 	patches      int
 	sleeps       int
+	readFailures int
 	onSleep      func()
 	postMutation func()
 }
@@ -147,6 +148,10 @@ func journalBlockedConditions() []any {
 
 func (f *completionFixture) execute(ctx context.Context, program string, args ...string) ([]byte, error) {
 	joined := strings.Join(args, " ")
+	if program == "kubectl" && strings.Contains(joined, "get persistentvolumes") && f.readFailures > 0 {
+		f.readFailures--
+		return nil, fmt.Errorf("transient evidence read failure")
+	}
 	if program == "sleep" {
 		f.sleeps++
 		if f.onSleep != nil {
@@ -276,6 +281,26 @@ func TestDeploymentHandoffWaitsForTransientDatabaseHealth(t *testing.T) {
 	var out bytes.Buffer
 	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sleeps != 2 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
 		t.Fatalf("bounded wait did not admit restored database health: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
+	}
+}
+
+func TestDeploymentHandoffRetriesAnIncompleteEvidenceRead(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	f.readFailures = 1
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code != 0 || f.patches != 0 || f.sleeps != 2 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		t.Fatalf("bounded wait did not recover an incomplete evidence read: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
+	}
+}
+
+func TestDeploymentHandoffDoesNotWaitWhenARetiredTargetReappears(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	f.portal.deleted = false
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, f.execute); code == 0 || f.patches != 0 || f.sleeps != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=evidence-first\n" {
+		t.Fatalf("changed terminal state was retried or admitted: code=%d patches=%d sleeps=%d output=%s", code, f.patches, f.sleeps, &out)
 	}
 }
 
