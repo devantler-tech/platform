@@ -201,8 +201,8 @@ func (f *completionFixture) execute(ctx context.Context, program string, args ..
 		case strings.Contains(joined, "actions/runs/456"):
 			return encode(f.portal.t, map[string]any{"id": 456, "run_attempt": 1, "head_branch": "main", "path": ".github/workflows/cd.yaml", "event": "workflow_dispatch", "head_sha": strings.Repeat("a", 40), "status": "completed", "conclusion": "success", "repository": map[string]any{"full_name": "devantler-tech/platform"}}), nil
 		case strings.Contains(joined, "deployments?sha="):
-			return encode(f.portal.t, []any{map[string]any{"id": 789, "sha": strings.Repeat("a", 40), "environment": "prod"}}), nil
-		case strings.Contains(joined, "deployments/789/statuses"):
+			return encode(f.portal.t, []any{map[string]any{"id": 7158788245, "sha": strings.Repeat("a", 40), "environment": "prod"}}), nil
+		case strings.Contains(joined, "deployments/7158788245/statuses"):
 			return encode(f.portal.t, []any{map[string]any{"state": "success", "environment": "prod", "log_url": "https://github.com/devantler-tech/platform/actions/runs/456/job/777"}}), nil
 		case strings.Contains(joined, "attestation verify"):
 			return completionAttestation(f.portal.t), nil
