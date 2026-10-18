@@ -649,6 +649,7 @@ jobs:
               - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
+              - 'scripts/tests/test-dex-theme-mount.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
               - 'scripts/verify-umami-tracking.sh'
@@ -1841,6 +1842,15 @@ jobs:
           go test ./scripts/validate-homepage-bookmarks
           bash scripts/tests/test-validate-homepage-bookmarks.sh
           bash scripts/validate-homepage-bookmarks.sh
+
+      - name: 🎨 Validate the Dex theme mount
+        if: needs.changes.outputs.k8s == 'true'
+        # Dex never checks that its theme directory exists: a theme name the
+        # mount does not provide serves every sign-in page unstyled, and both
+        # halves pass schema validation on their own.
+        run: |
+          shellcheck scripts/tests/test-dex-theme-mount.sh
+          bash scripts/tests/test-dex-theme-mount.sh
 
       - name: 🔐 Validate vault snapshots stay group-readable
         if: needs.changes.outputs.k8s == 'true'
