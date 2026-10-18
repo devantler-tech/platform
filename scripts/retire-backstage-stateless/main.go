@@ -178,7 +178,7 @@ type engine struct {
 	execute              command
 	revision, sha, runID string
 	retiring             map[string]string
-	ownerUID             string
+	ownerUID, historyUID string
 	fence                string
 	readOnly             bool
 }
@@ -212,13 +212,16 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	if e.fence != "" && e.requireFence(ctx) != nil {
 		return s, errors.New("durable admission fence unverified")
 	}
-	b, err := e.execute(ctx, "helm", "status", "backstage", "--namespace=backstage", "--kube-context=admin@prod", "--output=json")
-	if err != nil {
-		return s, errors.New("release read failed")
-	}
-	s.release, err = decode(b)
-	if err != nil {
-		return s, err
+	var err error
+	if e.historyUID == "" {
+		b, statusErr := e.execute(ctx, "helm", "status", "backstage", "--namespace=backstage", "--kube-context=admin@prod", "--output=json")
+		if statusErr != nil {
+			return s, errors.New("release read failed")
+		}
+		s.release, err = decode(b)
+		if err != nil {
+			return s, err
+		}
 	}
 	reads := []struct {
 		target *map[string]any
@@ -234,6 +237,11 @@ func (e engine) collect(ctx context.Context) (snapshot, error) {
 	for _, r := range reads {
 		*r.target, err = e.read(ctx, r.args...)
 		if err != nil {
+			return s, err
+		}
+	}
+	if e.historyUID != "" {
+		if err := bindJournalHistory(&s, e.historyUID); err != nil {
 			return s, err
 		}
 	}

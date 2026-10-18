@@ -66,8 +66,8 @@ func deploymentHandoffContext() (admitted, currentMain bool) {
 }
 
 type completionRecord struct {
-	raw, source, revision, run, namespaceUID, releaseUID, chartUID string
-	retiring                                                       map[string]string
+	raw, source, revision, run, namespaceUID, releaseUID, chartUID, historyUID string
+	retiring                                                                   map[string]string
 }
 
 type completionAttestationRecord struct {
@@ -188,7 +188,8 @@ func parseCompletionRecord(raw string, namespace map[string]any) (completionReco
 	}
 	record.source, record.revision, record.run = text(value["sourceSHA"]), text(value["revision"]), text(value["run"])
 	record.namespaceUID = text(value["namespaceUID"])
-	if integer(value["version"]) != 1 || value["phase"] != "fenced" || record.namespaceUID == "" || record.namespaceUID != field(namespace, "metadata", "uid") || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(record.source) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(record.revision) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(record.run) || text(value["latestHistoryUID"]) == "" || text(value["helmWriterUID"]) == "" || text(value["cnpgWriterUID"]) == "" {
+	record.historyUID = text(value["latestHistoryUID"])
+	if integer(value["version"]) != 1 || value["phase"] != "fenced" || record.namespaceUID == "" || record.namespaceUID != field(namespace, "metadata", "uid") || !regexp.MustCompile(`^[a-f0-9]{40}$`).MatchString(record.source) || !regexp.MustCompile(`^latest@sha256:[a-f0-9]{64}$`).MatchString(record.revision) || !regexp.MustCompile(`^[1-9][0-9]{0,19}$`).MatchString(record.run) || record.historyUID == "" || text(value["helmWriterUID"]) == "" || text(value["cnpgWriterUID"]) == "" {
 		return record, errors.New("journal identity unverified")
 	}
 	if _, ok := value["retained"].([]any); !ok || len(array(value["retained"])) > 512 {
@@ -494,7 +495,7 @@ func admitDeploymentHandoff(args []string, out io.Writer, execute command) int {
 	if deploymentHandoffSourceSafe(ctx, e, record) != nil {
 		return hold("source-diff")
 	}
-	e.fence, e.retiring, e.ownerUID = record.raw, record.retiring, record.releaseUID
+	e.fence, e.retiring, e.ownerUID, e.historyUID = record.raw, record.retiring, record.releaseUID, record.historyUID
 	receipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
 	if err != nil || !completionReceiptValid(receipt, record) {
 		return hold("receipt")
@@ -552,7 +553,7 @@ func complete(args []string, out io.Writer, execute command) int {
 	if err != nil {
 		return hold("journal")
 	}
-	e.fence, e.retiring, e.ownerUID = record.raw, record.retiring, record.releaseUID
+	e.fence, e.retiring, e.ownerUID, e.historyUID = record.raw, record.retiring, record.releaseUID, record.historyUID
 	receipt, err := e.optional(ctx, "--namespace=flux-system", "get", "configmap", "backstage-retirement-"+record.run, "--ignore-not-found", "--output=json")
 	if err != nil || !completionReceiptValid(receipt, record) {
 		return hold("receipt")

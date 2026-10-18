@@ -33,6 +33,18 @@ func completedRetirementFixture(t *testing.T) *completionFixture {
 	f.deleted = true
 	f.historyStatus = "uninstalled"
 	f.fenceInstalled = true
+	terminalRelease, err := decode(encode(t, f.release))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminalRelease["info"] = map[string]any{"status": "uninstalled"}
+	for _, raw := range array(f.inventory["items"]) {
+		history := object(raw)
+		if field(history, "metadata", "name") == "sh.helm.release.v1.backstage.v4" {
+			history["data"] = nativeReleaseSecret(t, terminalRelease)["data"]
+			object(field(history, "metadata", "labels"))["status"] = "uninstalled"
+		}
+	}
 	db := item(f.live, 2)
 	object(db["spec"])["instances"] = 2
 	object(db["status"])["readyInstances"] = 2
@@ -267,6 +279,51 @@ func TestDeploymentHandoffAcceptsOnlyExactTerminalJournalBlock(t *testing.T) {
 		fenceErr := e.requireFence(context.Background())
 		observed, collectErr := e.collect(context.Background())
 		t.Fatalf("exact terminal journal block was not admitted read-only: code=%d patches=%d output=%s namespace=%v record=%v fence=%v collect=%v completed=%v roots=%v", code, f.patches, &out, namespaceErr, recordErr, fenceErr, collectErr, completedState(observed, record, true), platformRootState(observed, record, e.revision, false))
+	}
+}
+
+func TestDeploymentHandoffUsesTheJournalBoundRetainedHistory(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	helmCalls := 0
+	execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if program == "helm" {
+			helmCalls++
+			return nil, fmt.Errorf("terminal release is no longer queryable")
+		}
+		return f.execute(ctx, program, args...)
+	}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, execute); code != 0 || f.patches != 0 || helmCalls != 0 || out.String() != "PORTAL-RETIREMENT=DEPLOYMENT_HANDOFF preservationSamples=2 mutation=NONE\n" {
+		t.Fatalf("journal-bound terminal history was not used directly: code=%d patches=%d helmCalls=%d output=%s", code, f.patches, helmCalls, &out)
+	}
+}
+
+func TestDeploymentHandoffRejectsHistoryNotMatchingTheJournalUID(t *testing.T) {
+	f := completedRetirementFixture(t)
+	deploymentHandoffRunner(t)
+	journal, err := decode([]byte(f.record))
+	if err != nil {
+		t.Fatal(err)
+	}
+	journal["latestHistoryUID"] = "different-history-uid"
+	changed, err := json.Marshal(journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.record = string(changed)
+	object(field(f.portal.namespace, "metadata", "annotations"))[fenceAnnotation] = f.record
+	helmCalls := 0
+	execute := func(ctx context.Context, program string, args ...string) ([]byte, error) {
+		if program == "helm" {
+			helmCalls++
+			return encode(t, f.portal.release), nil
+		}
+		return f.execute(ctx, program, args...)
+	}
+	var out bytes.Buffer
+	if code := admitDeploymentHandoff([]string{"--admit-deployment-handoff"}, &out, execute); code == 0 || f.patches != 0 || helmCalls != 0 || out.String() != "PORTAL-RETIREMENT=HOLD_DEPLOYMENT_HANDOFF stage=evidence-first\n" {
+		t.Fatalf("foreign retained history was admitted or Helm status bypassed the journal: code=%d patches=%d helmCalls=%d output=%s", code, f.patches, helmCalls, &out)
 	}
 }
 
