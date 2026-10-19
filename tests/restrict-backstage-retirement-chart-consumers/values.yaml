@@ -47,6 +47,9 @@ policies:
                 kind: HelmChart
                 name: backstage-backstage
                 namespace: backstage
+              # kyverno test overlays this map on the resource, so an absent
+              # field would inherit the new value; null makes it absent here.
+              uninstall: null
       - name: chart-consumer
         values:
           request.operation: CREATE
@@ -142,3 +145,34 @@ policies:
                 kind: HelmChart
                 name: backstage-backstage
                 namespace: backstage
+      - name: local-chart
+        values:
+          retirement: *bound
+          request.oldObject:
+            apiVersion: helm.toolkit.fluxcd.io/v2
+            kind: HelmRelease
+            metadata:
+              name: local-chart
+              namespace: apps
+              uid: 00000000-0000-4000-8000-000000000045
+            spec:
+              interval: 1h
+              chartRef:
+                kind: HelmChart
+                name: backstage-backstage
+      - name: switching-consumer
+        values:
+          retirement: *bound
+          request.oldObject:
+            apiVersion: helm.toolkit.fluxcd.io/v2
+            kind: HelmRelease
+            metadata:
+              name: switching-consumer
+              namespace: apps
+              uid: 00000000-0000-4000-8000-000000000046
+            spec:
+              interval: 1h
+              chartRef:
+                kind: HelmChart
+                name: other-chart
+                namespace: apps

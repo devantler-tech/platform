@@ -30,6 +30,7 @@ results:
       - apps/status-consumer
       - backstage/backstage-replaced
       - backstage/backstage-pending
+      - apps/switching-consumer
     kind: HelmRelease
     result: fail
   - policy: restrict-backstage-retirement
@@ -37,5 +38,6 @@ results:
     resources:
       - apps/unrelated
       - apps/absent-consumer
+      - apps/local-chart
     kind: HelmRelease
     result: skip

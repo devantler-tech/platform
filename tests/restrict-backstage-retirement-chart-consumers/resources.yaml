@@ -1,4 +1,5 @@
-# Captured HelmRelease, recorded identity, consuming the captured chart: allowed.
+# Captured HelmRelease, recorded identity, consuming the captured chart, given
+# the uninstall options the retirement driver adds: allowed.
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
@@ -11,6 +12,12 @@ spec:
     kind: HelmChart
     name: backstage-backstage
     namespace: backstage
+  uninstall:
+    keepHistory: true
+    disableHooks: true
+    disableWait: false
+    deletionPropagation: foreground
+    timeout: 5m
 ---
 # New HelmRelease in another namespace that references the captured chart: denied.
 apiVersion: helm.toolkit.fluxcd.io/v2
@@ -91,6 +98,36 @@ metadata:
   name: absent-consumer
   namespace: apps
   uid: 00000000-0000-4000-8000-000000000044
+spec:
+  interval: 1h
+  chartRef:
+    kind: HelmChart
+    name: backstage-backstage
+    namespace: backstage
+---
+# HelmRelease in another namespace referencing its own local chart of the same
+# name (chartRef namespace omitted): out of scope, because the captured chart
+# is identified by namespace as well as kind and name.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: local-chart
+  namespace: apps
+  uid: 00000000-0000-4000-8000-000000000045
+spec:
+  interval: 1h
+  chartRef:
+    kind: HelmChart
+    name: backstage-backstage
+---
+# Existing HelmRelease switched from another chart to the captured chart:
+# denied, because the new object decides whether it consumes the chart.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: switching-consumer
+  namespace: apps
+  uid: 00000000-0000-4000-8000-000000000046
 spec:
   interval: 1h
   chartRef:
