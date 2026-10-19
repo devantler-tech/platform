@@ -1,0 +1,42 @@
+# Pins every condition of the controller-writer exceptions of the
+# preserve-retained-identities rule (#4996), together with
+# restrict-backstage-retirement-writer-conjuncts-2. Each case here is a refresh
+# the matching exception allows, with exactly one of its conditions broken:
+# the recorded profile, the writer's account name or UID, the number of data
+# keys, the allowed roles, or the annotations it may change. Every one is
+# denied, so a rewrite that drops any single condition fails this suite.
+# values.yaml supplies the parsed retirement journal, the request identity and
+# the previous object per resource.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-writer-conjuncts
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-ca
+      - backstage/backstage-db-server
+      - backstage/backstage-db-replication
+    kind: Secret
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-1
+      - backstage/backstage-db-2
+    kind: PersistentVolumeClaim
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/kube-root-ca.crt
+      - backstage/cloudflare-origin-ca
+      - backstage/cnpg-default-monitoring
+    kind: ConfigMap
+    result: fail

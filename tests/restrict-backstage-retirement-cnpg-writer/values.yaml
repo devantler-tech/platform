@@ -1,0 +1,132 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: restrict-backstage-retirement
+    resources:
+      - name: backstage-db-ca
+        values:
+          request.userInfo: &cnpg
+            username: system:serviceaccount:cnpg-system:cloudnative-pg
+            uid: 00000000-0000-4000-8000-000000000041
+          retirement: &bound
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000020
+              cnpgWriterUID: 00000000-0000-4000-8000-000000000041
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: backstage-db-ca, uid: 00000000-0000-4000-8000-000000000051, renewCertificate: ca}
+                - {kind: Secret, name: backstage-db-server, uid: 00000000-0000-4000-8000-000000000052, renewCertificate: leaf}
+                - {kind: Secret, name: backstage-db-replication, uid: 00000000-0000-4000-8000-000000000053, renewCertificate: leaf}
+                - {kind: PersistentVolumeClaim, name: backstage-db-1, uid: 00000000-0000-4000-8000-000000000021, controllerProfile: cnpg-role}
+                - {kind: PersistentVolumeClaim, name: backstage-db-2, uid: 00000000-0000-4000-8000-000000000022, controllerProfile: cnpg-role}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: backstage-db-ca
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000051
+            type: Opaque
+            data:
+              ca.crt: b2xkLWNh
+              ca.key: Y2Eta2V5
+      - name: backstage-db-server
+        values:
+          request.userInfo: *cnpg
+          retirement: *bound
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: backstage-db-server
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000052
+            type: kubernetes.io/tls
+            data:
+              tls.crt: b2xkLXNlcnZlcg==
+              tls.key: c2VydmVyLWtleQ==
+      - name: backstage-db-replication
+        values:
+          request.userInfo: *cnpg
+          retirement: *bound
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: backstage-db-replication
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000053
+            type: kubernetes.io/tls
+            data:
+              tls.crt: b2xkLXJlcGxpY2F0aW9u
+              tls.key: cmVwbGljYXRpb24ta2V5
+      - name: backstage-db-1
+        values:
+          request.userInfo: *cnpg
+          retirement: *bound
+          request.oldObject:
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: backstage-db-1
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000021
+              labels:
+                cnpg.io/cluster: backstage-db
+                role: primary
+                cnpg.io/instanceRole: primary
+              finalizers:
+                - kubernetes.io/pvc-protection
+            spec:
+              accessModes: [ReadWriteOnce]
+              resources:
+                requests:
+                  storage: 10Gi
+              storageClassName: hcloud-volumes
+      - name: backstage-db-2
+        values:
+          request.userInfo: *cnpg
+          retirement: *bound
+          request.oldObject:
+            apiVersion: v1
+            kind: PersistentVolumeClaim
+            metadata:
+              name: backstage-db-2
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000022
+              labels:
+                cnpg.io/cluster: backstage-db
+                role: replica
+                cnpg.io/instanceRole: replica
+              finalizers:
+                - kubernetes.io/pvc-protection
+            spec:
+              accessModes: [ReadWriteOnce]
+              resources:
+                requests:
+                  storage: 10Gi
+              storageClassName: hcloud-volumes

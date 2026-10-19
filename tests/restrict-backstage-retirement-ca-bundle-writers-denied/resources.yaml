@@ -1,0 +1,38 @@
+# A root CA refresh written by the trust-manager instead of the recorded root
+# CA publisher: denied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kube-root-ca.crt
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000061
+  annotations:
+    kubernetes.io/description: Contains a CA bundle that can be used to verify the kube-apiserver when using internal endpoints such as the internal service IP or kubernetes.default.svc. No other usage is guaranteed across distributions of Kubernetes clusters.
+data:
+  ca.crt: new-root-ca
+---
+# The recorded trust-manager refreshes the retained trust bundle, but the hash
+# annotation still names the previous content: denied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflare-origin-ca
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000062
+  annotations:
+    trust.cert-manager.io/hash: 5d9328b9535bb0316313c6db4e5a6a23d924d6bf4a4d08673da01afa5893ec0c
+data:
+  ca-certificates.crt: new-bundle
+---
+# The recorded CNPG operator rewrites its retained monitoring queries under an
+# operator version the journal does not expect: denied.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cnpg-default-monitoring
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000063
+  annotations:
+    cnpg.io/operatorVersion: "1.29.0"
+data:
+  queries: new-queries

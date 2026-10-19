@@ -1,0 +1,46 @@
+# Continues restrict-backstage-retirement-writer-conjuncts (#4996): each case
+# is an allowed controller write with exactly one condition broken, the
+# writer's account name (root CA, trust bundle), a data change (monitoring),
+# the CA Secret type, or a non-empty leaf certificate. Every one is denied.
+# values.yaml supplies the parsed retirement journal, the request identity and
+# the previous object per resource.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-writer-conjuncts-3
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/kube-root-ca.crt
+    kind: ConfigMap
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/cloudflare-origin-ca
+    kind: ConfigMap
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/cnpg-default-monitoring
+    kind: ConfigMap
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-ca
+    kind: Secret
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-server
+    kind: Secret
+    result: fail
