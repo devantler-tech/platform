@@ -43,14 +43,15 @@ const (
 var serverNames = []string{"openbao-0", "openbao-1", "openbao-2"}
 
 type server struct {
-	name        string
-	apiAddr     string
-	clusterAddr string
-	root        string
-	generation  int
-	command     *exec.Cmd
-	exited      chan struct{}
-	log         *os.File
+	name         string
+	apiAddr      string
+	clusterAddr  string
+	root         string
+	generation   int
+	command      *exec.Cmd
+	exited       chan struct{}
+	log          *os.File
+	reservations []net.Listener
 }
 
 type cluster struct {
@@ -195,6 +196,8 @@ func TestJudgeVerdictsAgainstNativeServers(t *testing.T) {
 	})
 }
 
+// newCluster prepares three disposable servers and reserves each initial API/peer
+// pair until its owning process starts.
 func newCluster(t *testing.T, binary string) *cluster {
 	t.Helper()
 	root := t.TempDir()
@@ -213,7 +216,9 @@ func newCluster(t *testing.T, binary string) *cluster {
 		client:   &http.Client{Timeout: 30 * time.Second},
 	}
 	for _, name := range serverNames {
-		c.servers[name] = &server{name: name, apiAddr: freeAddr(t), clusterAddr: freeAddr(t)}
+		api, peer := reserveAddr(t), reserveAddr(t)
+		c.servers[name] = &server{name: name, apiAddr: api.Addr().String(), clusterAddr: peer.Addr().String(),
+			reservations: []net.Listener{api, peer}}
 	}
 	t.Cleanup(func() {
 		for _, name := range serverNames {
@@ -249,17 +254,22 @@ func declaredRaftConfig(t *testing.T) string {
 	return document.Spec.Values.Server.HA.Raft.Config
 }
 
-func freeAddr(t *testing.T) string {
+// reserveAddr keeps an initial endpoint unavailable until its server starts.
+// Cleanup also releases listeners when setup fails before a server can start.
+func reserveAddr(t *testing.T) net.Listener {
 	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	addr := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return addr
+	t.Cleanup(func() {
+		if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("closing native listener reservation: %v", err)
+		}
+	})
+	return listener
 }
 
 var retryJoin = regexp.MustCompile(`(?m)^[ \t]*retry_join \{[^}\n]*\}[ \t]*\n`)
@@ -299,6 +309,8 @@ func (c *cluster) config(s *server, join bool) string {
 	return rendered + fmt.Sprintf("\napi_addr = %q\ncluster_addr = %q\n", "http://"+s.apiAddr, "https://"+s.clusterAddr)
 }
 
+// start releases only this server's initial reservations before launching its
+// native process. Restarts retain the server's assigned addresses.
 func (c *cluster) start(name string, join bool) {
 	c.t.Helper()
 	s := c.servers[name]
@@ -313,6 +325,14 @@ func (c *cluster) start(name string, join bool) {
 	if err := os.WriteFile(path, []byte(c.config(s, join)), 0o600); err != nil {
 		c.t.Fatal(err)
 	}
+	// Release only this server's pair. Every not-yet-started peer keeps its
+	// addresses reserved, preventing API and Raft listeners from sharing one.
+	for _, reservation := range s.reservations {
+		if err := reservation.Close(); err != nil {
+			c.t.Fatal(err)
+		}
+	}
+	s.reservations = nil
 	log, err := os.OpenFile(filepath.Join(s.root, "server.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		c.t.Fatal(err)

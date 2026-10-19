@@ -57,18 +57,28 @@ jq -e --argjson required_inputs '[
   fail "ci.yaml does not route every RGD gate input through k8s validation"
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
-  .jobs.validate as $gate
+  .jobs["validate-rgd-templates"] as $gate
   | (($gate.if // "") ==
-      "github.event_name == '\''pull_request'\'' && (needs.changes.outputs.k8s == '\''true'\'' || needs.changes.outputs.bridge_validation == '\''true'\'')")
+      "github.event_name == '\''pull_request'\'' && needs.changes.outputs.k8s == '\''true'\''")
   and (($gate["continue-on-error"] // false) == false)
+  and ($gate.needs == ["changes"])
+  and ($gate.permissions == {"contents": "read"})
   and any($gate.steps[];
-      (.uses // "") == $setup and .with.version == "v0.74.0")
+      (.uses // "") == $setup and .with.version == "v0.74.0"
+      and .with.cache == true
+      and ((.["continue-on-error"] // false) == false)
+      and (has("if") | not))
   and any($gate.steps[];
       (.run // "") == $behavior_run
       and ((.["continue-on-error"] // false) == false)
-      and ((.if // "") == "needs.changes.outputs.k8s == '\''true'\''"))
+      and (has("if") | not))
+  and (.jobs.validate.needs | index("validate-rgd-templates") == null)
+  and (.jobs["deploy-prod"].needs | index("validate-rgd-templates") == null)
+  and (.jobs["ci-required-checks"].needs | index("validate-rgd-templates") != null)
+  and any(.jobs["ci-required-checks"].steps[];
+    (.with["job-results"] // "") | contains("${{ needs.validate-rgd-templates.result }}"))
 ' <<<"$ci_workflow_json" >/dev/null ||
-  fail "the pull-request validate job does not run the pinned RGD behavioral gate"
+  fail "the independent pull-request job does not retain the required pinned RGD behavioral gate"
 
 jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" '
   .jobs["validate-rgd-templates-merge-group"] as $gate
@@ -187,6 +197,28 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" \
 if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   ablation_work="$(mktemp -d)"
   trap 'rm -rf "$ablation_work"' EXIT
+
+  # Prove the independent PR route and required aggregate cannot lose the scan.
+  pr_ablation_index=0
+  # shellcheck disable=SC2016 # GitHub expressions are literal workflow fixture data.
+  for mutation in \
+    'del(.jobs."validate-rgd-templates")' \
+    '.jobs."validate-rgd-templates".needs += ["validate"]' \
+    '.jobs."validate-rgd-templates".permissions.contents = "write"' \
+    '.jobs."validate-rgd-templates".if = false' \
+    '(.jobs."validate-rgd-templates".steps[] | select(.uses == "aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567")).if = false' \
+    '(.jobs."validate-rgd-templates".steps[] | select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan.sh"))).continue-on-error = true' \
+    '.jobs."ci-required-checks".needs |= map(select(. != "validate-rgd-templates"))' \
+    '(.jobs."ci-required-checks".steps[] | select(has("with"))).with."job-results" = "${{ needs.validate.result }}"'; do
+    pr_ablation_index=$((pr_ablation_index + 1))
+    pr_workflow="${ablation_work}/ci-pr-${pr_ablation_index}.yaml"
+    cp "$CI_WORKFLOW" "$pr_workflow"
+    yq -i "$mutation" "$pr_workflow"
+    if RGD_WIRING_CI_WORKFLOW="$pr_workflow" \
+      RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/pr-${pr_ablation_index}.log" 2>&1; then
+      fail "the wiring validator accepted unsafe PR scan mutation ${pr_ablation_index}"
+    fi
+  done
 
   suppressed_wiring_step_workflow="${ablation_work}/ci-wiring-step-continue-on-error.yaml"
   cp "$CI_WORKFLOW" "$suppressed_wiring_step_workflow"
