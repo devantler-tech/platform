@@ -34,3 +34,35 @@ results:
       - platform-ns/platform-secret-store
     kind: SecretStore
     result: skip
+  - policy: restrict-tenant-secret-stores
+    rule: externalsecret-no-clustersecretstore
+    resources:
+      - tenant-ns/cluster-store-ref
+      - tenant-ns/data-source-cluster-store
+      - tenant-ns/datafrom-source-cluster-store
+    kind: ExternalSecret
+    result: fail
+  - policy: restrict-tenant-secret-stores
+    rule: externalsecret-no-clustersecretstore
+    resources:
+      - tenant-ns/namespaced-store-ref
+    kind: ExternalSecret
+    result: pass
+  - policy: restrict-tenant-secret-stores
+    rule: pushsecret-no-clustersecretstore
+    resources:
+      - tenant-ns/push-cluster-store
+    kind: PushSecret
+    result: fail
+  - policy: restrict-tenant-secret-stores
+    rule: pushsecret-no-clustersecretstore
+    resources:
+      - tenant-ns/push-namespaced-store
+    kind: PushSecret
+    result: pass
+  - policy: restrict-tenant-secret-stores
+    rule: externalsecret-no-clustersecretstore
+    resources:
+      - platform-ns/platform-cluster-store-ref
+    kind: ExternalSecret
+    result: skip

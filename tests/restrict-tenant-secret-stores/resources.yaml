@@ -104,3 +104,115 @@ spec:
         kubernetes:
           mountPath: kubernetes
           role: external-secrets
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: cluster-store-ref
+  namespace: tenant-ns
+spec:
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  data:
+    - secretKey: token
+      remoteRef:
+        key: apps/tenant-ns/app
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: data-source-cluster-store
+  namespace: tenant-ns
+spec:
+  secretStoreRef:
+    kind: SecretStore
+    name: tenant
+  data:
+    - secretKey: token
+      remoteRef:
+        key: apps/tenant-ns/app
+      sourceRef:
+        storeRef:
+          kind: ClusterSecretStore
+          name: openbao
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: datafrom-source-cluster-store
+  namespace: tenant-ns
+spec:
+  secretStoreRef:
+    kind: SecretStore
+    name: tenant
+  dataFrom:
+    - extract:
+        key: apps/tenant-ns/app
+      sourceRef:
+        storeRef:
+          kind: ClusterSecretStore
+          name: openbao
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: namespaced-store-ref
+  namespace: tenant-ns
+spec:
+  secretStoreRef:
+    kind: SecretStore
+    name: tenant
+  data:
+    - secretKey: token
+      remoteRef:
+        key: apps/tenant-ns/app
+      sourceRef:
+        storeRef:
+          kind: SecretStore
+          name: tenant
+  dataFrom:
+    - extract:
+        key: apps/tenant-ns/app
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: platform-cluster-store-ref
+  namespace: platform-ns
+spec:
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  data:
+    - secretKey: token
+      remoteRef:
+        key: infrastructure/app
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: push-cluster-store
+  namespace: tenant-ns
+spec:
+  secretStoreRefs:
+    - kind: SecretStore
+      name: tenant
+    - kind: ClusterSecretStore
+      name: openbao
+  selector:
+    secret:
+      name: app
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: push-namespaced-store
+  namespace: tenant-ns
+spec:
+  secretStoreRefs:
+    - kind: SecretStore
+      name: tenant
+  selector:
+    secret:
+      name: app

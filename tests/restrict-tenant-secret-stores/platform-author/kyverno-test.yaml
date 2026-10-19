@@ -19,3 +19,15 @@ results:
       - tenant-ns/platform-applied-secret-store
     kind: SecretStore
     result: skip
+  - policy: restrict-tenant-secret-stores
+    rule: externalsecret-no-clustersecretstore
+    resources:
+      - tenant-ns/ghcr-auth
+    kind: ExternalSecret
+    result: skip
+  - policy: restrict-tenant-secret-stores
+    rule: pushsecret-no-clustersecretstore
+    resources:
+      - tenant-ns/platform-push
+    kind: PushSecret
+    result: skip

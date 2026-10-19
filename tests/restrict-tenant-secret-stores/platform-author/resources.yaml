@@ -14,3 +14,30 @@ spec:
         kubernetes:
           mountPath: kubernetes
           role: external-secrets
+---
+apiVersion: external-secrets.io/v1
+kind: ExternalSecret
+metadata:
+  name: ghcr-auth
+  namespace: tenant-ns
+spec:
+  secretStoreRef:
+    kind: ClusterSecretStore
+    name: openbao
+  data:
+    - secretKey: auth
+      remoteRef:
+        key: infrastructure/ghcr/auth
+---
+apiVersion: external-secrets.io/v1alpha1
+kind: PushSecret
+metadata:
+  name: platform-push
+  namespace: tenant-ns
+spec:
+  secretStoreRefs:
+    - kind: ClusterSecretStore
+      name: openbao
+  selector:
+    secret:
+      name: app
