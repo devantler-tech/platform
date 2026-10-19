@@ -196,6 +196,8 @@ func TestJudgeVerdictsAgainstNativeServers(t *testing.T) {
 	})
 }
 
+// newCluster prepares three disposable servers and reserves each initial API/peer
+// pair until its owning process starts.
 func newCluster(t *testing.T, binary string) *cluster {
 	t.Helper()
 	root := t.TempDir()
@@ -307,6 +309,8 @@ func (c *cluster) config(s *server, join bool) string {
 	return rendered + fmt.Sprintf("\napi_addr = %q\ncluster_addr = %q\n", "http://"+s.apiAddr, "https://"+s.clusterAddr)
 }
 
+// start releases only this server's initial reservations before launching its
+// native process. Restarts retain the server's assigned addresses.
 func (c *cluster) start(name string, join bool) {
 	c.t.Helper()
 	s := c.servers[name]
