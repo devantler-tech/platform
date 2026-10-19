@@ -1,0 +1,79 @@
+# Unchanged retained PersistentVolumeClaim: allowed.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backstage-db-1
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000021
+  labels:
+    cnpg.io/cluster: backstage-db
+  finalizers:
+    - kubernetes.io/pvc-protection
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: hcloud-volumes
+---
+# Retained PersistentVolumeClaim whose label value changes, with no
+# controller writer: denied.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backstage-db-2
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000022
+  labels:
+    cnpg.io/cluster: another-cluster
+  finalizers:
+    - kubernetes.io/pvc-protection
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: hcloud-volumes
+---
+# Retained Secret whose data value changes, with no controller writer: denied.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: backstage-db-app
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000024
+type: kubernetes.io/basic-auth
+data:
+  username: YmFja3N0YWdl
+  password: bmV3LXBhc3N3b3Jk
+---
+# Unchanged retained PersistentVolumeClaim under a journal that is not bound:
+# denied.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backstage-db-3
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000023
+  labels:
+    cnpg.io/cluster: backstage-db
+  finalizers:
+    - kubernetes.io/pvc-protection
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: hcloud-volumes
+---
+# A Secret the bound journal does not retain and that is not Helm history:
+# outside the rule.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: unrelated-settings
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000031
+type: Opaque
+data:
+  setting: bmV3
