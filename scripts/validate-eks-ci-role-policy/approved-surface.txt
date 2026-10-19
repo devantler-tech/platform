@@ -96,7 +96,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|umami|umami 48aba6bd6e4a546aedfb74464daca5
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|velero|velero 654607a03bfc0bb996bc8f1edc8a46ced2a880d49284a3a93b7003811835ab0a
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autoscaler f7fc1201beae0d8d4745dbba45c672d5eeb4c3949c5613b1aff7affa20579423
+helm.toolkit.fluxcd.io/v2|HelmRelease|vertical-pod-autoscaler|vertical-pod-autoscaler 23835cd0d04d63338821c86b92b0de43d41715bef66210538d22f5c75215788d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|whoami|whoami daa7d5894e48ee981cc577597042cb89a089818efd700c41997d2b23034f2b7c
 
