@@ -1690,6 +1690,46 @@ jobs:
           shellcheck scripts/admit-coroot-baseline-context.sh scripts/tests/test-admit-coroot-baseline-context.sh
           bash scripts/tests/test-admit-coroot-baseline-context.sh
 
+  validate-rgd-templates:
+    name: 🔬 Validate Nested RGD Templates
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 📌 Install the reviewed YAML parser
+        env:
+          GOBIN: ${{ runner.temp }}/platform-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
+
+      - name: ⚙️ Setup Trivy for nested RGD templates
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+
+      - name: 🔬 Validate nested RGD workload templates
+        # Extract every nested template, scan without the repository ignorefile,
+        # and retain the complete findings ratchet and behavioral controls.
+        run: |
+          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
+          bash scripts/tests/test-rgd-template-static-scan.sh
+
   validate:
     name: 🧪 Validate Manifests
     needs: [changes]
@@ -1873,23 +1913,6 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-configmap-content-boundary.sh
           bash scripts/tests/test-trivyignore-configmap-content-boundary.sh
-
-      - name: ⚙️ Setup Trivy for nested RGD templates
-        if: needs.changes.outputs.k8s == 'true'
-        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
-        with:
-          version: v0.74.0
-          cache: true
-
-      - name: 🔬 Validate nested RGD workload templates
-        if: needs.changes.outputs.k8s == 'true'
-        # Trivy does not descend through a ResourceGraphDefinition custom resource. Extract every
-        # nested template, scan without the repository ignorefile, and compare complete findings,
-        # resource-graph controls, and committed substitution inputs to the explicit ratchet. The
-        # behavioral test also applies registry, placement, and policy-regression probes.
-        run: |
-          shellcheck scripts/scan-rgd-templates.sh scripts/tests/test-rgd-template-static-scan.sh
-          bash scripts/tests/test-rgd-template-static-scan.sh
 
       - name: 🔢 Validate scanner version-drift guard
         if: needs.changes.outputs.k8s == 'true'
@@ -4065,6 +4088,7 @@ jobs:
         validate-consumer-discovery,
         validate-publication-contract,
         validate-flux-bridge,
+        validate-rgd-templates,
         validate-matcher-efficacy,
         validate-eks-authorization,
         validate,
@@ -4082,6 +4106,28 @@ jobs:
     if: always()
     permissions: {}
     steps:
+      - name: 🔐 Require complete selected nested-template validation
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          K8S_CHANGED: ${{ needs.changes.outputs.k8s }}
+          RGD_RESULT: ${{ needs.validate-rgd-templates.result }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              case "$K8S_CHANGED" in
+                true) expected=success ;;
+                false) expected=skipped ;;
+                *) echo '::error::Cannot determine nested-template validation selection'; exit 1 ;;
+              esac
+              ;;
+            merge_group) expected=skipped ;;
+            *) echo '::error::Unknown nested-template validation event'; exit 1 ;;
+          esac
+          if [ "$RGD_RESULT" != "$expected" ]; then
+            echo "::error::Nested-template result was $RGD_RESULT; expected $expected"
+            exit 1
+          fi
+
       - name: 🔐 Require complete selected Flux bridge validation
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -4120,6 +4166,7 @@ jobs:
             ${{ needs.validate-consumer-discovery.result }}
             ${{ needs.validate-publication-contract.result }}
             ${{ needs.validate-flux-bridge.result }}
+            ${{ needs.validate-rgd-templates.result }}
             ${{ needs.validate-matcher-efficacy.result }}
             ${{ needs.validate-eks-authorization.result }}
             ${{ needs.validate.result }}
