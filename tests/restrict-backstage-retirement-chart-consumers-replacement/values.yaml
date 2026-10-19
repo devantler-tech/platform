@@ -1,0 +1,49 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: restrict-backstage-retirement
+    resources:
+      - name: backstage
+        values:
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000020
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: PersistentVolumeClaim, name: backstage-db-1, uid: 00000000-0000-4000-8000-000000000021}
+          request.oldObject:
+            apiVersion: helm.toolkit.fluxcd.io/v2
+            kind: HelmRelease
+            metadata:
+              name: backstage
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000050
+            spec:
+              interval: 1h
+              chartRef:
+                kind: HelmChart
+                name: backstage-backstage
+                namespace: backstage

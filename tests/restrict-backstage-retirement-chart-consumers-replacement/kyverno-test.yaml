@@ -1,0 +1,23 @@
+# Pins the identity half of the fence-chart-consumers rule (#4996). The
+# captured release is recognised by its recorded UID, not only by its name:
+# a backstage/backstage HelmRelease recreated with a different UID, consuming
+# the captured chart under a bound journal, is denied. It lives apart from
+# restrict-backstage-retirement-chart-consumers because that suite's allowed
+# row already uses the backstage/backstage name, and kyverno test keys
+# per-resource values by name.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-chart-consumers-replacement
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: fence-chart-consumers
+    resources:
+      - backstage/backstage
+    kind: HelmRelease
+    result: fail

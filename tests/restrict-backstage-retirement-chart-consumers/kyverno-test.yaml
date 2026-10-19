@@ -1,0 +1,43 @@
+# Pins the fence-chart-consumers rule before the ValidatingPolicy rewrite
+# (#4996). The retirement journal is read from the backstage Namespace through
+# an API call, which kyverno test cannot make, so values.yaml supplies the
+# parsed journal and the previous object per resource. Under a bound journal,
+# only the captured backstage HelmRelease, with its recorded identity, may be
+# updated while it consumes the captured chart; any other consumer, created or
+# updated, is denied, and so is every consumer while the journal is present
+# but not bound. A HelmRelease that does not consume the captured chart, or
+# any consumer while no journal is present, is out of scope.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-chart-consumers
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: fence-chart-consumers
+    resources:
+      - backstage/backstage
+    kind: HelmRelease
+    result: pass
+  - policy: restrict-backstage-retirement
+    rule: fence-chart-consumers
+    resources:
+      - apps/chart-consumer
+      - apps/status-consumer
+      - backstage/backstage-replaced
+      - backstage/backstage-pending
+      - apps/switching-consumer
+    kind: HelmRelease
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: fence-chart-consumers
+    resources:
+      - apps/unrelated
+      - apps/absent-consumer
+      - apps/local-chart
+    kind: HelmRelease
+    result: skip
