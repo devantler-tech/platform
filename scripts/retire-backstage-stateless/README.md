@@ -79,3 +79,10 @@ This identifies the current refusing boundary, not the cause of a historical
 attempt, and does not authorize a retry. Output contains no raw command errors,
 resource payloads or credentials. All existing checks and post-submission
 lifecycle results remain in force.
+
+New namespace journals are written with the dedicated `backstage-retirement`
+field manager so application reconciliation does not own their lifecycle. This
+writer change does not transfer an existing journal or authorize its removal;
+existing terminal maintenance remains separately guarded. The native kubectl
+regression exercises the full guarded entrypoint and checks the real PATCH
+manager, unchanged journal binding, and namespace UID/resource-version tests.

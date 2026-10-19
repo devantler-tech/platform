@@ -1,0 +1,75 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: versioned-tag
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tag-and-digest
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3@sha256:0000000000000000000000000000000000000000000000000000000000000000
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latest-tag
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/example/app:latest
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagless
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/example/app
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagless-init-container
+  namespace: default
+spec:
+  initContainers:
+    - name: init
+      image: ghcr.io/example/init
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latest-tag-init-container
+  namespace: default
+spec:
+  initContainers:
+    - name: init
+      image: ghcr.io/example/init:latest
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagless
+  namespace: kube-system
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/example/app

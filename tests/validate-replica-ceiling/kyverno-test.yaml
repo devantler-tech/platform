@@ -1,0 +1,89 @@
+# Pins the ClusterPolicy's behaviour before its ValidatingPolicy rewrite (#4996).
+# Each of the three rules passes at the ceiling of 3 and fails above it. An unset
+# Deployment replica count passes (it defaults to 1); an unset ScaledObject
+# ceiling fails (KEDA defaults it to 100). The exempt label opts a workload out
+# on the workload itself or on its pod template, and opts autoscalers out.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: validate-replica-ceiling
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-replica-ceiling.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/three-replicas
+      - apps/unset-replicas
+    kind: Deployment
+    result: pass
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/four-replicas
+    kind: Deployment
+    result: fail
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/four-replicas-statefulset
+    kind: StatefulSet
+    result: fail
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/three-replicas-replicaset
+    kind: ReplicaSet
+    result: pass
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/four-replicas-replicaset
+    kind: ReplicaSet
+    result: fail
+  - policy: validate-replica-ceiling
+    rule: cap-workload-replicas
+    resources:
+      - apps/four-replicas-exempt
+      - apps/four-replicas-template-exempt
+    kind: Deployment
+    result: skip
+  - policy: validate-replica-ceiling
+    rule: cap-hpa-max-replicas
+    resources:
+      - apps/hpa-max-three
+    kind: HorizontalPodAutoscaler
+    result: pass
+  - policy: validate-replica-ceiling
+    rule: cap-hpa-max-replicas
+    resources:
+      - apps/hpa-max-ten
+    kind: HorizontalPodAutoscaler
+    result: fail
+  - policy: validate-replica-ceiling
+    rule: cap-hpa-max-replicas
+    resources:
+      - apps/hpa-max-ten-exempt
+    kind: HorizontalPodAutoscaler
+    result: skip
+  - policy: validate-replica-ceiling
+    rule: cap-scaledobject-max-replicas
+    resources:
+      - apps/scaledobject-max-three
+    kind: ScaledObject
+    result: pass
+  - policy: validate-replica-ceiling
+    rule: cap-scaledobject-max-replicas
+    resources:
+      - apps/scaledobject-max-ten
+      - apps/scaledobject-unset-max
+    kind: ScaledObject
+    result: fail
+  - policy: validate-replica-ceiling
+    rule: cap-scaledobject-max-replicas
+    resources:
+      - apps/scaledobject-max-ten-exempt
+    kind: ScaledObject
+    result: skip
