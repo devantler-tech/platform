@@ -93,19 +93,19 @@ if kyverno_passes "shorthand kinds" "${root}"; then
 fi
 
 # #3152: a deleted rule leaves its rows Excluded.
-root="$(copy deleted-rule restrict-tenant-secret-stores)"
-yq -i 'del(.spec.rules[] | select(.name == "secretstore-no-shared-vault-role"))' \
-  "${root}/${policies}/restrict-tenant-secret-stores.yaml"
+root="$(copy deleted-rule restrict-tenant-network-policies)"
+yq -i 'del(.spec.rules[] | select(.name == "cnp-ingress-sources-must-be-constrained"))' \
+  "${root}/${policies}/restrict-tenant-network-policies.yaml"
 if kyverno_passes "deleted rule" "${root}"; then
-  expect_fail "deleted rule" "${root}" 1 "names rule secretstore-no-shared-vault-role of policy restrict-tenant-secret-stores, which the policies it loads do not define"
+  expect_fail "deleted rule" "${root}" 1 "names rule cnp-ingress-sources-must-be-constrained of policy restrict-tenant-network-policies, which the policies it loads do not define"
 fi
 
 # #3152: a renamed rule is the same break under another name.
-root="$(copy renamed-rule restrict-tenant-secret-stores)"
-yq -i '(.spec.rules[] | select(.name == "secretstore-no-shared-vault-role") | .name) = "secretstore-vault-role"' \
-  "${root}/${policies}/restrict-tenant-secret-stores.yaml"
+root="$(copy renamed-rule restrict-tenant-network-policies)"
+yq -i '(.spec.rules[] | select(.name == "cnp-ingress-sources-must-be-constrained") | .name) = "cnp-ingress-sources"' \
+  "${root}/${policies}/restrict-tenant-network-policies.yaml"
 if kyverno_passes "renamed rule" "${root}"; then
-  expect_fail "renamed rule" "${root}" 1 "names rule secretstore-no-shared-vault-role"
+  expect_fail "renamed rule" "${root}" 1 "names rule cnp-ingress-sources-must-be-constrained"
 fi
 
 # A rule named only by `skip` rows passes the Excluded check, so only the
