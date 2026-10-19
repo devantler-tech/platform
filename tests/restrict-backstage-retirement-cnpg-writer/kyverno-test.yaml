@@ -1,0 +1,46 @@
+# Pins the CNPG operator exceptions of the preserve-retained-identities rule
+# before the ValidatingPolicy rewrite (#4996). values.yaml supplies the parsed
+# retirement journal, the request identity and the previous object per
+# resource; a changed field differs by value, never by a key only one side
+# has. Under a bound journal the recorded CNPG operator may renew the public
+# certificate of a retained CA or leaf Secret while its private key stays, and
+# may move a retained volume claim between primary and replica while its two
+# role labels agree. A replaced private key or disagreeing role labels are
+# denied. The cases that deny the same changes for another writer, the wrong
+# certificate profile or another label change are in
+# restrict-backstage-retirement-cnpg-writer-denied.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-cnpg-writer
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-ca
+      - backstage/backstage-db-server
+    kind: Secret
+    result: pass
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-replication
+    kind: Secret
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-1
+    kind: PersistentVolumeClaim
+    result: pass
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-2
+    kind: PersistentVolumeClaim
+    result: fail
