@@ -3609,3 +3609,36 @@ to `e1681322e671f8e277c5e230a57fe66cdf1a612d`. The retained legacy
 `devantler-tech/actions` revisions are unchanged. No issuer, artifact URL,
 RBAC, IAM policy, credential or permission grant changes. The set of accepted
 identities shrinks by one.
+
+## 2026-10-19 — Accept the reviewed v7.16.2 github-config publisher
+
+For #5092, PR #5093 adds the canonical manifest publisher at
+`devantler-tech/.github@8d2203af130a8c27b8b98b3d7146f76b5ade7a98`
+(v7.16.2) alongside the current
+`e1681322e671f8e277c5e230a57fe66cdf1a612d` signer. The publishing workflow
+at both revisions is byte-identical, with SHA-256
+`2858f387b7b7587d871940af0ac26ff88e6a73c6242e39e38f8e9919b601ca1e`.
+This source parity does not make the new revision the same certificate
+identity; it requires its own explicit consumer approval.
+
+Against base `77e6916022ecc65de1ec094c9af6dedc1271f5fc`, the authorization
+ledger changes exactly one entry, with nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `4f6bdc88a1f7996fbbb8bd141db306ff0875c4e4818f0bf34e6a18cbd322ddc6` to
+  `d26055f2d4b80751c249d58fa2a1062d5d504842b3ac1afd4feb9d5812ef1a9b`.
+
+At source `85188abf7dd1ca59f91f7021686d39eadc42872d`, the
+[production-authorization job](https://github.com/devantler-tech/platform/actions/runs/39230855625/job/117988481227)
+verified the kubectl download checksum, reported kubectl v1.36.2 / Kustomize
+v5.8.1, and passed both the Go authorization regressions and the rendered
+authorization contract. The matcher retains the current signer and both
+legacy `devantler-tech/actions` revisions; only the reviewed replacement
+identity is added. No issuer, artifact URL, RBAC, IAM policy, credential or
+permission grant changes.
+
+Deploy this acceptance before advancing the publisher caller in
+devantler-tech/.github#649. Retain the current signer until the first
+publication by the replacement is independently verified. Offline checks and
+this historical evidence do not establish deployed acceptance or successful
+publication by the new signer.
