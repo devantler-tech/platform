@@ -87,6 +87,6 @@ policies:
               namespace: backstage
               uid: 00000000-0000-4000-8000-000000000063
               annotations:
-                cnpg.io/operatorVersion: "1.30.0"
+                cnpg.io/operatorVersion: "1.29.1"
             data:
               queries: old-queries

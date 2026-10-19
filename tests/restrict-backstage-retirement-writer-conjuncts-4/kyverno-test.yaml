@@ -1,0 +1,39 @@
+# Continues restrict-backstage-retirement-writer-conjuncts (#4996): the root
+# CA publisher's UID, and a non-empty trust bundle, monitoring queries and CA
+# certificate, each broken alone. Every one is denied. values.yaml supplies the
+# parsed retirement journal, the request identity and the previous object per
+# resource.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-writer-conjuncts-4
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/kube-root-ca.crt
+    kind: ConfigMap
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/cloudflare-origin-ca
+    kind: ConfigMap
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/cnpg-default-monitoring
+    kind: ConfigMap
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-ca
+    kind: Secret
+    result: fail
