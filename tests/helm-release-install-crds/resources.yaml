@@ -1,0 +1,66 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crds-enabled
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/crds: "enabled"
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crds-enabled-with-install
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/crds: "enabled"
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install:
+    crds: Skip
+    remediation:
+      retries: 3
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: unlabelled
+  namespace: controllers
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: crds-disabled
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/crds: "disabled"
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example

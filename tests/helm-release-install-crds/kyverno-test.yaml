@@ -1,0 +1,26 @@
+# Pins the policy's behaviour across its MutatingPolicy rewrite (#4997). A
+# HelmRelease labelled `helm.toolkit.fluxcd.io/crds: enabled` gets CreateReplace
+# for CRDs on install and upgrade, overriding any value it set itself and
+# keeping its other install settings. Any other HelmRelease is left alone.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: helm-release-install-crds
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/flux/helm-release-install-crds.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: helm-release-install-crds
+    resources:
+      - controllers/crds-enabled
+      - controllers/crds-enabled-with-install
+    kind: HelmRelease
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: helm-release-install-crds
+    resources:
+      - controllers/unlabelled
+      - controllers/crds-disabled
+    kind: HelmRelease
+    result: skip

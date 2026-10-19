@@ -1,6 +1,9 @@
 # TODO: Upstream `helm-release-install-crds.yaml` to Kyverno policies repository.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Applying it twice gives the same object: it only ever sets both fields to
+# CreateReplace, so the moment during deploy when the old and new policy can
+# both act on one request changes nothing.
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: helm-release-install-crds
   annotations:
@@ -13,19 +16,34 @@ metadata:
       to CreateReplace. This ensures that if a HelmRelease is installed or upgraded,
       the CRDs will be created or replaced as needed.
 spec:
-  rules:
-    - name: set-helm-release-install-crds
-      match:
-        resources:
-          kinds:
-            - HelmRelease
-          selector:
-            matchLabels:
-              helm.toolkit.fluxcd.io/crds: "enabled"
-      mutate:
-        patchStrategicMerge:
-          spec:
-            install:
-              crds: CreateReplace
-            upgrade:
-              crds: CreateReplace
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        helm.toolkit.fluxcd.io/crds: "enabled"
+    resourceRules:
+      - apiGroups: ["helm.toolkit.fluxcd.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["helmreleases"]
+  # On an UPDATE the objectSelector also matches when only the OLD object
+  # carries the label, so a release that drops or disables it would still be
+  # rewritten. This condition reads the incoming object alone; the selector
+  # stays to keep other HelmReleases from reaching the policy at all.
+  matchConditions:
+    - name: crds-enabled-on-incoming-object
+      expression: >-
+        has(object.metadata.labels) &&
+        'helm.toolkit.fluxcd.io/crds' in object.metadata.labels &&
+        object.metadata.labels['helm.toolkit.fluxcd.io/crds'] == 'enabled'
+  # JSON patches, not an apply configuration: applying one needs the
+  # HelmRelease schema, and the patch needs nothing but the object itself.
+  # `add` replaces a value that is already there, so an explicit value is
+  # overridden exactly as the strategic merge patch did.
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec.install) ? [] : [JSONPatch{op: "add", path: "/spec/install", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/install/crds", value: "CreateReplace"}] +
+          (has(object.spec.upgrade) ? [] : [JSONPatch{op: "add", path: "/spec/upgrade", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/upgrade/crds", value: "CreateReplace"}]
