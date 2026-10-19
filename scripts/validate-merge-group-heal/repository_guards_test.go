@@ -1,10 +1,13 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -120,6 +123,77 @@ func TestRepositoryGuardsRequiredResult(t *testing.T) {
 			}
 			if result != "success" && err == nil {
 				t.Fatalf("accepted incomplete repository guards: %q", result)
+			}
+		})
+	}
+}
+
+// TestChangeDetectionAvoidsUnneededToolDownloads exercises detection's actual
+// shell steps while tool-download boundaries fail and queue capture stays usable.
+func TestChangeDetectionAvoidsUnneededToolDownloads(t *testing.T) {
+	workflow := readRepositoryGuardWorkflow(t)
+	for _, event := range []string{"pull_request", "merge_group"} {
+		t.Run(event, func(t *testing.T) {
+			work := t.TempDir()
+			bin := filepath.Join(work, "bin")
+			if err := os.Mkdir(bin, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, tool := range []string{"curl", "kubectl", "sudo"} {
+				if err := os.WriteFile(filepath.Join(bin, tool), []byte("#!/bin/sh\nprintf 'unneeded tool call\\n' >> \"$NETWORK_LOG\"\nexit 71\n"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			capture := "#!/bin/sh\nset -eu\n[ \"$*\" = 'run ./scripts/verify-merge-group-queued capture' ] || exit 72\nprintf '%s\\n' \"$*\" >> \"$CAPTURE_LOG\"\n"
+			if err := os.WriteFile(filepath.Join(bin, "go"), []byte(capture), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, step := range workflow.Jobs["changes"].Steps {
+				if strings.TrimSpace(step.Run) == "" {
+					continue
+				}
+				if step.If != "" {
+					if step.If != "github.event_name == 'merge_group'" {
+						t.Fatalf("cannot evaluate detection condition %q", step.If)
+					}
+					if event != "merge_group" {
+						continue
+					}
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+				command := exec.CommandContext(ctx, "bash", "-e", "-o", "pipefail", "-c", step.Run)
+				command.Dir = filepath.Join("..", "..")
+				command.Env = []string{
+					"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+					"HOME=" + work,
+					"RUNNER_TEMP=" + work,
+					"GITHUB_OUTPUT=" + filepath.Join(work, "outputs"),
+					"NETWORK_LOG=" + filepath.Join(work, "network"),
+					"CAPTURE_LOG=" + filepath.Join(work, "capture"),
+				}
+				for key, value := range step.Env {
+					switch key {
+					case "PATH", "HOME", "RUNNER_TEMP", "GITHUB_OUTPUT", "NETWORK_LOG", "CAPTURE_LOG":
+						t.Fatalf("detection overrides protected fixture environment %q", key)
+					}
+					command.Env = append(command.Env, key+"="+value)
+				}
+				output, err := command.CombinedOutput()
+				cancel()
+				if err != nil {
+					t.Fatalf("detection step %q requires unnecessary tooling: %v\n%s", step.Name, err, output)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(work, "network")); !os.IsNotExist(err) {
+				t.Fatalf("detection reached an unnecessary tool boundary: %v", err)
+			}
+			got, err := os.ReadFile(filepath.Join(work, "capture"))
+			if event == "merge_group" {
+				if err != nil || string(got) != "run ./scripts/verify-merge-group-queued capture\n" {
+					t.Fatalf("merge-group detection did not capture its queue receipt: %q, %v", got, err)
+				}
+			} else if !os.IsNotExist(err) {
+				t.Fatalf("pull-request detection must not capture a queue entry: %q, %v", got, err)
 			}
 		})
 	}
