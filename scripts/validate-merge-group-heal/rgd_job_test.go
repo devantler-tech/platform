@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// rgdJobBoundary checks the read-only scan's independent scheduling and required result binding.
 func rgdJobBoundary(jobs map[string]fluxBridgeJob) error {
 	job, exists := jobs["validate-rgd-templates"]
 	if !exists {
@@ -32,12 +33,14 @@ func rgdJobBoundary(jobs map[string]fluxBridgeJob) error {
 	return nil
 }
 
+// TestRGDJobIndependent accepts the production workflow's independent PR scan.
 func TestRGDJobIndependent(t *testing.T) {
 	if err := rgdJobBoundary(readFluxBridgeJobs(t)); err != nil {
 		t.Fatal(err)
 	}
 }
 
+// TestRGDJobBoundaryRejectsBypasses rejects each unsafe graph or authority mutation.
 func TestRGDJobBoundaryRejectsBypasses(t *testing.T) {
 	for _, name := range []string{"missing", "serialized", "write", "suppressed", "unselected", "manifest dependency", "deploy dependency", "required dependency", "required condition"} {
 		t.Run(name, func(t *testing.T) {
@@ -84,6 +87,7 @@ func TestRGDJobBoundaryRejectsBypasses(t *testing.T) {
 	}
 }
 
+// TestRGDJobRequiredResult exercises the actual Bash guard for every selection and result.
 func TestRGDJobRequiredResult(t *testing.T) {
 	jobs := readFluxBridgeJobs(t)
 	var guard *fluxBridgeStep
@@ -92,8 +96,8 @@ func TestRGDJobRequiredResult(t *testing.T) {
 			if guard != nil {
 				t.Fatal("duplicate nested-template result guard")
 			}
-			copy := step
-			guard = &copy
+			guardStep := step
+			guard = &guardStep
 		}
 	}
 	if guard == nil || guard.If != "" || guard.Continue != nil ||
