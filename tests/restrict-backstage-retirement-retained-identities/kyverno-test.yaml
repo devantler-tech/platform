@@ -7,10 +7,10 @@
 # be updated only without changing its identity, content or metadata; an
 # update while the journal is not bound is denied, and an object the journal
 # does not retain (other than Backstage Helm history) is out of scope. The Helm
-# history exception is pinned beside this test, and the CNPG certificate and
-# role exceptions in restrict-backstage-retirement-cnpg-writer and
-# restrict-backstage-retirement-cnpg-writer-denied; the CA bundle writer
-# exceptions still need their own cases.
+# history exception is pinned beside this test, the CNPG certificate and role
+# exceptions in restrict-backstage-retirement-cnpg-writer(-denied), and the CA
+# bundle writer exceptions in restrict-backstage-retirement-ca-bundle-writers
+# (-denied).
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:

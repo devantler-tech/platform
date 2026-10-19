@@ -1,0 +1,27 @@
+# Pins the limits of the CA bundle writer exceptions of the
+# preserve-retained-identities rule before the ValidatingPolicy rewrite
+# (#4996). Each refresh here is one allowed in
+# restrict-backstage-retirement-ca-bundle-writers, except for one difference:
+# the root CA bundle is written by another recorded controller, the trust
+# bundle's hash annotation still names the previous content, or the monitoring
+# queries carry another operator version. Every one is denied. values.yaml
+# supplies the parsed retirement journal, the request identity and the
+# previous object per resource.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-ca-bundle-writers-denied
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/kube-root-ca.crt
+      - backstage/cloudflare-origin-ca
+      - backstage/cnpg-default-monitoring
+    kind: ConfigMap
+    result: fail
