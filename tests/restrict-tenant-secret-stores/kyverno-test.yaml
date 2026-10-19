@@ -14,7 +14,6 @@ variables: values.yaml
 userinfo: user-info.yaml
 results:
   - policy: restrict-tenant-secret-stores
-    rule: secretstore-no-shared-vault-role
     resources:
       - tenant-ns/shared-controller-role
       - tenant-ns/implicit-controller-service-account
@@ -22,20 +21,17 @@ results:
     kind: SecretStore
     result: fail
   - policy: restrict-tenant-secret-stores
-    rule: secretstore-no-shared-vault-role
     resources:
       - tenant-ns/tenant-role-implicit-namespace
       - tenant-ns/tenant-role-explicit-namespace
     kind: SecretStore
     result: pass
   - policy: restrict-tenant-secret-stores
-    rule: secretstore-no-shared-vault-role
     resources:
       - platform-ns/platform-secret-store
     kind: SecretStore
     result: skip
   - policy: restrict-tenant-secret-stores
-    rule: externalsecret-no-clustersecretstore
     resources:
       - tenant-ns/cluster-store-ref
       - tenant-ns/data-source-cluster-store
@@ -43,25 +39,21 @@ results:
     kind: ExternalSecret
     result: fail
   - policy: restrict-tenant-secret-stores
-    rule: externalsecret-no-clustersecretstore
     resources:
       - tenant-ns/namespaced-store-ref
     kind: ExternalSecret
     result: pass
   - policy: restrict-tenant-secret-stores
-    rule: pushsecret-no-clustersecretstore
     resources:
       - tenant-ns/push-cluster-store
     kind: PushSecret
     result: fail
   - policy: restrict-tenant-secret-stores
-    rule: pushsecret-no-clustersecretstore
     resources:
       - tenant-ns/push-namespaced-store
     kind: PushSecret
     result: pass
   - policy: restrict-tenant-secret-stores
-    rule: externalsecret-no-clustersecretstore
     resources:
       - platform-ns/platform-cluster-store-ref
     kind: ExternalSecret

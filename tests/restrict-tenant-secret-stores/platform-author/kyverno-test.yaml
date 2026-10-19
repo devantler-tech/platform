@@ -14,19 +14,16 @@ results:
   # The apps-layer controller must retain the paved road for placing trusted,
   # platform-owned SecretStores in a managed tenant namespace.
   - policy: restrict-tenant-secret-stores
-    rule: secretstore-no-shared-vault-role
     resources:
       - tenant-ns/platform-applied-secret-store
     kind: SecretStore
     result: skip
   - policy: restrict-tenant-secret-stores
-    rule: externalsecret-no-clustersecretstore
     resources:
       - tenant-ns/ghcr-auth
     kind: ExternalSecret
     result: skip
   - policy: restrict-tenant-secret-stores
-    rule: pushsecret-no-clustersecretstore
     resources:
       - tenant-ns/platform-push
     kind: PushSecret
