@@ -1,0 +1,93 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: restrict-backstage-retirement
+    resources:
+      - name: kube-root-ca.crt
+        values:
+          request.userInfo:
+            username: system:serviceaccount:kube-system:root-ca-cert-publisher
+            uid: 00000000-0000-4000-8000-000000000042
+          retirement: &bound
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000020
+              cnpgWriterUID: 00000000-0000-4000-8000-000000000041
+              rootCAWriterUID: 00000000-0000-4000-8000-000000000042
+              trustWriterUID: 00000000-0000-4000-8000-000000000043
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                # Recorded with the trust-bundle profile instead of root-ca.
+                - {kind: ConfigMap, name: kube-root-ca.crt, uid: 00000000-0000-4000-8000-000000000061, controllerProfile: trust-bundle}
+                # Recorded with no controller profile.
+                - {kind: ConfigMap, name: cloudflare-origin-ca, uid: 00000000-0000-4000-8000-000000000062}
+                # Recorded with the root-ca profile instead of cnpg-monitoring.
+                - {kind: ConfigMap, name: cnpg-default-monitoring, uid: 00000000-0000-4000-8000-000000000063, controllerProfile: root-ca}
+          request.oldObject:
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: kube-root-ca.crt
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000061
+              annotations:
+                kubernetes.io/description: Contains a CA bundle that can be used to verify the kube-apiserver when using internal endpoints such as the internal service IP or kubernetes.default.svc. No other usage is guaranteed across distributions of Kubernetes clusters.
+            data:
+              ca.crt: old-root-ca
+      - name: cloudflare-origin-ca
+        values:
+          request.userInfo:
+            username: system:serviceaccount:cert-manager:trust-manager
+            uid: 00000000-0000-4000-8000-000000000043
+          retirement: *bound
+          request.oldObject:
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: cloudflare-origin-ca
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000062
+              annotations:
+                trust.cert-manager.io/hash: 5d9328b9535bb0316313c6db4e5a6a23d924d6bf4a4d08673da01afa5893ec0c
+            data:
+              ca-certificates.crt: old-bundle
+      - name: cnpg-default-monitoring
+        values:
+          request.userInfo:
+            username: system:serviceaccount:cnpg-system:cloudnative-pg
+            uid: 00000000-0000-4000-8000-000000000041
+          retirement: *bound
+          request.oldObject:
+            apiVersion: v1
+            kind: ConfigMap
+            metadata:
+              name: cnpg-default-monitoring
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000063
+              annotations:
+                cnpg.io/operatorVersion: "1.30.0"
+            data:
+              queries: old-queries

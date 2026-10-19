@@ -1,0 +1,25 @@
+# Pins that each CA bundle writer exception of the preserve-retained-identities
+# rule holds only for the ConfigMap the journal records with that writer's
+# profile (#4996). Each refresh here is exactly one allowed in
+# restrict-backstage-retirement-ca-bundle-writers, by the same recorded
+# writer, but the journal records the ConfigMap with another profile or none,
+# so every one is denied. values.yaml supplies the parsed retirement journal,
+# the request identity and the previous object per resource.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-ca-bundle-writers-unprofiled
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/kube-root-ca.crt
+      - backstage/cloudflare-origin-ca
+      - backstage/cnpg-default-monitoring
+    kind: ConfigMap
+    result: fail

@@ -8,7 +8,9 @@
 # annotation naming the new content, and the CNPG operator its monitoring
 # queries stamped with the expected operator version. The cases that deny the
 # same refreshes for the wrong writer, a stale hash or another operator version
-# are in restrict-backstage-retirement-ca-bundle-writers-denied.
+# are in restrict-backstage-retirement-ca-bundle-writers-denied, and those for a
+# ConfigMap recorded with another profile or none in
+# restrict-backstage-retirement-ca-bundle-writers-unprofiled.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
