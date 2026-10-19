@@ -1,0 +1,21 @@
+# Pins the preserve-retirement-journal rule before the ValidatingPolicy rewrite
+# (#4996): deleting the backstage Namespace is allowed when it carries no
+# retirement journal annotation. kyverno test presents the resource as both the
+# request object and the previous object; values.yaml sets the operation to
+# DELETE. The denied case is the annotated -journal-delete fixture.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-journal-delete-unannotated
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retirement-journal
+    resources:
+      - backstage
+    kind: Namespace
+    result: pass
