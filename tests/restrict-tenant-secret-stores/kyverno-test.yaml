@@ -24,6 +24,7 @@ results:
     resources:
       - tenant-ns/tenant-role-implicit-namespace
       - tenant-ns/tenant-role-explicit-namespace
+      - tenant-ns/tenant-role-empty-namespace
     kind: SecretStore
     result: pass
   - policy: restrict-tenant-secret-stores

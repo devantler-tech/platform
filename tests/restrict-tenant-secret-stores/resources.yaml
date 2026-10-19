@@ -216,3 +216,22 @@ spec:
   selector:
     secret:
       name: app
+---
+apiVersion: external-secrets.io/v1
+kind: SecretStore
+metadata:
+  name: tenant-role-empty-namespace
+  namespace: tenant-ns
+spec:
+  provider:
+    vault:
+      server: http://openbao.openbao.svc.cluster.local:8200
+      path: secret
+      version: v2
+      auth:
+        kubernetes:
+          mountPath: kubernetes
+          role: tenant
+          serviceAccountRef:
+            name: tenant
+            namespace: ""
