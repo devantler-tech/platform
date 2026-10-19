@@ -12,7 +12,6 @@ resources:
   - resources.yaml
 results:
   - policy: helm-release-install-crds
-    rule: set-helm-release-install-crds
     resources:
       - controllers/crds-enabled
       - controllers/crds-enabled-with-install
@@ -20,7 +19,6 @@ results:
     result: pass
     patchedResources: patched-resources.yaml
   - policy: helm-release-install-crds
-    rule: set-helm-release-install-crds
     resources:
       - controllers/unlabelled
       - controllers/crds-disabled
