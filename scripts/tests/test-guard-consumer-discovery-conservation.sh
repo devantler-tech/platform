@@ -1107,6 +1107,56 @@ YAML
   printf '  - mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'a literal Pod-only mutation does not alter consumers' "$root" '2 consumer(s)'
 
+  # #5096: the one reviewed CEL mutation shape passes; each variant widens
+  # exactly one thing and must be refused again.
+  root="$(fixture reviewed-cel-mutation)"
+  cat >"$root/k8s/providers/prod/apps/cel-mutation.yaml" <<'YAML'
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: helm-release-install-crds
+spec:
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        helm.toolkit.fluxcd.io/crds: "enabled"
+    resourceRules:
+      - apiGroups: ["helm.toolkit.fluxcd.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["helmreleases"]
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec.install) ? [] : [JSONPatch{op: "add", path: "/spec/install", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/install/crds", value: "CreateReplace"}] +
+          (has(object.spec.upgrade) ? [] : [JSONPatch{op: "add", path: "/spec/upgrade", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/upgrade/crds", value: "CreateReplace"}]
+YAML
+  printf '  - cel-mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'the reviewed HelmRelease CRD-strategy MutatingPolicy does not alter consumers' "$root" '2 consumer(s)'
+  for target in source-kind extra-group wildcard-resource values-path computed-path move-op apply-configuration mutate-existing target-constraints foreign-group; do
+    root="$(fixture "reviewed-cel-mutation-$target")"
+    cp "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml"
+    case "$target" in
+      source-kind) yq -i '.spec.matchConstraints.resourceRules[0] |= (.apiGroups = ["source.toolkit.fluxcd.io"] | .resources = ["ocirepositories"])' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      extra-group) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups += ["source.toolkit.fluxcd.io"]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      wildcard-resource) yq -i '.spec.matchConstraints.resourceRules[0].resources = ["*"]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      values-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("/spec/upgrade/crds", "/spec/values/url")' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      computed-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("path: \"/spec/install/crds\"", "path: \"/spec/install\" + \"/crds\"")' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      move-op) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("op: \"add\", path: \"/spec/install\", value: \\{\\}", "op: \"move\", from: \"/spec/values\", path: \"/spec/install\"")' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      apply-configuration) yq -i '.spec.mutations[0].patchType = "ApplyConfiguration"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      mutate-existing) yq -i '.spec.evaluation.mutateExisting.enabled = true' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      target-constraints) yq -i '.spec.targetMatchConstraints.resourceRules = [{"apiGroups":["source.toolkit.fluxcd.io"],"apiVersions":["v1"],"operations":["UPDATE"],"resources":["ocirepositories"]}]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      foreign-group) yq -i '.apiVersion = "policies.example.test/v1"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+    esac
+    cmp -s "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml" &&
+      { printf 'FAIL: the %s variant did not change the reviewed MutatingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
+    printf '  - cel-mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a $target MutatingPolicy is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
+  done
+
   for placement in resources steps; do
     root="$(fixture "nested-kustomization-$placement")"
     cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'

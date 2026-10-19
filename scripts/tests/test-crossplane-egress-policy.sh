@@ -868,6 +868,87 @@ assert_helm_rules_reject \
   'a wildcard resource must void the report-prune exception' \
   'reject-cel-policy-producers'
 
+# The reviewed MutatingPolicy shape (#5096): only Flux HelmReleases, and only
+# their CRD strategy. Each reject below widens exactly one thing.
+helm_release_crds_mutation_fixture="$(
+  cat <<'YAML'
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
+metadata:
+  name: helm-release-install-crds
+spec:
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [helm.toolkit.fluxcd.io]
+      apiVersions: ["*"]
+      operations: [CREATE, UPDATE]
+      resources: [helmreleases]
+  mutations:
+  - patchType: JSONPatch
+    jsonPatch:
+      expression: >-
+        (has(object.spec.install) ? [] : [JSONPatch{op: "add", path: "/spec/install", value: {}}]) +
+        [JSONPatch{op: "add", path: "/spec/install/crds", value: "CreateReplace"}] +
+        (has(object.spec.upgrade) ? [] : [JSONPatch{op: "add", path: "/spec/upgrade", value: {}}]) +
+        [JSONPatch{op: "add", path: "/spec/upgrade/crds", value: "CreateReplace"}]
+YAML
+)"
+assert_helm_rules_accept \
+  'helm-release-crds-mutating-policy' \
+  "${helm_release_crds_mutation_fixture}" \
+  'a MutatingPolicy that sets only the HelmRelease CRD strategy is the reviewed exception'
+
+assert_reviewed_mutation_variant_rejected() {
+  local fixture_name="$1"
+  local fixture_body="$2"
+  local failure_message="$3"
+
+  [ "${fixture_body}" != "${helm_release_crds_mutation_fixture}" ] ||
+    fail "${fixture_name}: the variant must differ from the reviewed MutatingPolicy"
+  assert_helm_rules_reject \
+    "${fixture_name}" \
+    "${fixture_body}" \
+    "${failure_message}" \
+    'reject-cel-policy-producers'
+}
+
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-network-policy-kind' \
+  "${helm_release_crds_mutation_fixture/resources: \[helmreleases\]/resources: [ciliumnetworkpolicies]}" \
+  'a MutatingPolicy on network policies must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-second-group' \
+  "${helm_release_crds_mutation_fixture/apiGroups: \[helm.toolkit.fluxcd.io\]/apiGroups: [helm.toolkit.fluxcd.io, cilium.io]}" \
+  'a second API group must void the reviewed MutatingPolicy shape'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-wildcard-resource' \
+  "${helm_release_crds_mutation_fixture/resources: \[helmreleases\]/resources: [\"*\"]}" \
+  'a wildcard resource must void the reviewed MutatingPolicy shape'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-values-path' \
+  "${helm_release_crds_mutation_fixture/\/spec\/upgrade\/crds/\/spec\/values\/networkPolicy}" \
+  'a patch that reaches HelmRelease values must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-computed-path' \
+  "${helm_release_crds_mutation_fixture/path: \"\/spec\/install\/crds\"/path: \"\/spec\/install\" + \"\/crds\"}" \
+  'a computed patch path must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-move-op' \
+  "${helm_release_crds_mutation_fixture/op: \"add\", path: \"\/spec\/install\", value: \{\}/op: \"move\", from: \"\/spec\/values\", path: \"\/spec\/install\"}" \
+  'a move patch must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-apply-configuration' \
+  "${helm_release_crds_mutation_fixture/patchType: JSONPatch/patchType: ApplyConfiguration}" \
+  'an apply-configuration mutation must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-target-constraints' \
+  "${helm_release_crds_mutation_fixture}"$'\n  targetMatchConstraints:\n    resourceRules:\n    - apiGroups: [cilium.io]\n      apiVersions: [v2]\n      operations: [UPDATE]\n      resources: [ciliumnetworkpolicies]' \
+  'a MutatingPolicy that mutates existing objects must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-mutate-existing' \
+  "${helm_release_crds_mutation_fixture}"$'\n  evaluation:\n    mutateExisting:\n      enabled: true' \
+  'a mutate-existing MutatingPolicy must stay rejected'
+
 helm_admin_network_policy_fixture=$'apiVersion: policy.networking.k8s.io/v1alpha1\nkind: AdminNetworkPolicy\nmetadata:\n  name: crossplane-world-egress\nspec:\n  priority: 10\n  subject:\n    namespaces:\n      matchLabels:\n        kubernetes.io/metadata.name: crossplane-system\n  egress:\n  - name: allow-world\n    action: Allow\n    to:\n    - networks: [0.0.0.0/0]'
 assert_helm_rules_reject \
   'helm-crossplane-admin-network-policy' \
