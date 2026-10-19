@@ -720,9 +720,40 @@ while IFS=$'\t' read -r file label; do
   done <<<"$generated"
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
+  # The one reviewed shape (#5096) is a Kyverno MutatingPolicy whose every
+  # resource rule names only Flux HelmReleases, that mutates no existing
+  # object, and whose every mutation is a JSON patch adding or replacing only
+  # the CRD strategy (/spec/install, /spec/upgrade and their crds fields). A
+  # HelmRelease carries no consumer, and those paths cannot reach its values.
+  # The patch text is read literally: each "path" and "op" must be followed by
+  # an approved string literal; the leading "#" keeps the text before the
+  # first one from ever matching. Everything else stays refused.
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
-        or .kind == "GeneratingPolicy"))] | length' "$file" 2>"$work/yq.err")"; then
+        or .kind == "GeneratingPolicy"))
+      | select((.kind == "MutatingPolicy"
+        and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
+        and (.spec | type) == "!!map"
+        and (.spec | has("targetMatchConstraints") | not)
+        and ((.spec.evaluation // {}) | has("mutateExisting") | not)
+        and (.spec.matchConstraints.resourceRules | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules | length) > 0
+        and ([.spec.matchConstraints.resourceRules[] | select(type != "!!map"
+          or (.apiGroups | type) != "!!seq" or (.apiGroups | length) != 1
+          or .apiGroups[0] != "helm.toolkit.fluxcd.io"
+          or (.resources | type) != "!!seq" or (.resources | length) != 1
+          or .resources[0] != "helmreleases")] | length) == 0
+        and (.spec.mutations | type) == "!!seq"
+        and (.spec.mutations | length) > 0
+        and ([.spec.mutations[] | select(type != "!!map"
+          or .patchType != "JSONPatch" or has("applyConfiguration")
+          or (.jsonPatch.expression | type) != "!!str"
+          or (("#" + .jsonPatch.expression) | split("path")
+            | ((length < 2)
+              or (([.[] | select(test("^\\s*:\\s*\"/spec/(install|upgrade)(/crds)?\"\\s*[,}]") | not)] | length) != 1)))
+          or (("#" + .jsonPatch.expression) | split("op")
+            | (([.[] | select(test("^\\s*:\\s*\"(add|replace)\"\\s*[,}]") | not)] | length) != 1)))] | length) == 0)
+        | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
   while IFS= read -r count; do

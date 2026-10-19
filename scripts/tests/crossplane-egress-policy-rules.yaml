@@ -620,11 +620,24 @@ rules:
       before deployment
     severity: error
 
-  # The one reviewed exception (#2573): a DeletingPolicy whose every resource
-  # rule names only the wgpolicyk8s.io group and only policy-report resources.
-  # Kyverno report objects cannot carry or restore network egress, so such a
-  # policy cannot delete allow-crossplane. Any other group, a wildcard, or a
-  # rule missing either list keeps the policy rejected.
+  # Two reviewed exceptions; every other GeneratingPolicy, MutatingPolicy and
+  # DeletingPolicy stays rejected.
+  #
+  # #2573: a DeletingPolicy whose every resource rule names only the
+  # wgpolicyk8s.io group and only policy-report resources. Kyverno report
+  # objects cannot carry or restore network egress, so such a policy cannot
+  # delete allow-crossplane. Any other group, a wildcard, or a rule missing
+  # either list keeps the policy rejected.
+  #
+  # #5096: a MutatingPolicy whose every resource rule names only Flux
+  # HelmReleases, that mutates no existing object, and whose every mutation is
+  # a JSON patch that adds or replaces only the HelmRelease CRD strategy
+  # (/spec/install, /spec/upgrade and their crds fields). A HelmRelease is not
+  # a network policy, and those paths cannot reach its chart values. The
+  # patch expression is read as text: each `path` and `op` must be followed
+  # by one of those string literals, so a computed path, another field, or a
+  # move/copy/remove keeps the policy rejected. A leading '#' keeps the text
+  # before the first match from ever reading as an approved literal.
   - name: reject-cel-policy-producers
     expression: >-
       !has(object.apiVersion) ||
@@ -641,7 +654,32 @@ rules:
          has(rule.apiGroups) && rule.apiGroups == ['wgpolicyk8s.io'] &&
          has(rule.resources) && rule.resources.size() > 0 &&
          rule.resources.all(resource,
-           resource in ['policyreports', 'clusterpolicyreports'])))
+           resource in ['policyreports', 'clusterpolicyreports']))) ||
+      (object.kind == 'MutatingPolicy' &&
+       has(object.spec) &&
+       !has(object.spec.targetMatchConstraints) &&
+       (!has(object.spec.evaluation) ||
+        !has(object.spec.evaluation.mutateExisting)) &&
+       has(object.spec.matchConstraints) &&
+       has(object.spec.matchConstraints.resourceRules) &&
+       object.spec.matchConstraints.resourceRules.size() > 0 &&
+       object.spec.matchConstraints.resourceRules.all(rule,
+         has(rule.apiGroups) && rule.apiGroups == ['helm.toolkit.fluxcd.io'] &&
+         has(rule.resources) && rule.resources == ['helmreleases']) &&
+       has(object.spec.mutations) &&
+       object.spec.mutations.size() > 0 &&
+       object.spec.mutations.all(mutation,
+         has(mutation.patchType) && mutation.patchType == 'JSONPatch' &&
+         !has(mutation.applyConfiguration) &&
+         has(mutation.jsonPatch) && has(mutation.jsonPatch.expression) &&
+         ('#' + mutation.jsonPatch.expression).split('path').size() > 1 &&
+         ('#' + mutation.jsonPatch.expression).split('path').filter(part,
+           !part.matches(
+             '^\\s*:\\s*"/spec/(install|upgrade)(/crds)?"\\s*[,}]')
+         ).size() == 1 &&
+         ('#' + mutation.jsonPatch.expression).split('op').filter(part,
+           !part.matches('^\\s*:\\s*"(add|replace)"\\s*[,}]')
+         ).size() == 1))
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
       review before deployment
