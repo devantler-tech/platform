@@ -6,7 +6,7 @@
 # that controller starts a watch on every resource kind a background policy
 # matches, and it can only watch the kinds the bundled view roles already cover.
 #
-# The validate-replica-ceiling ClusterPolicy (cluster-policies, the next Flux
+# The validate-replica-ceiling policy (cluster-policies, the next Flux
 # layer) matches KEDA ScaledObjects. Without a grant the reports controller's
 # resource-report-controller fails to list/watch keda.sh ScaledObjects and
 # retries in a tight loop ("scaledobjects.keda.sh is forbidden"), pegging a full
