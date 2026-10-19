@@ -25,6 +25,16 @@ spec:
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
         resources: ["helmreleases"]
+  # On an UPDATE the objectSelector also matches when only the OLD object
+  # carries the label, so a release that drops or disables it would still be
+  # rewritten. This condition reads the incoming object alone; the selector
+  # stays to keep other HelmReleases from reaching the policy at all.
+  matchConditions:
+    - name: crds-enabled-on-incoming-object
+      expression: >-
+        has(object.metadata.labels) &&
+        'helm.toolkit.fluxcd.io/crds' in object.metadata.labels &&
+        object.metadata.labels['helm.toolkit.fluxcd.io/crds'] == 'enabled'
   # JSON patches, not an apply configuration: applying one needs the
   # HelmRelease schema, and the patch needs nothing but the object itself.
   # `add` replaces a value that is already there, so an explicit value is
