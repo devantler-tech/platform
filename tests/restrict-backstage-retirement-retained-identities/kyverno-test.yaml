@@ -1,0 +1,51 @@
+# Pins the preserve-retained-identities rule before the ValidatingPolicy
+# rewrite (#4996). The retirement journal is read from the backstage Namespace
+# through an API call, which kyverno test cannot make, so values.yaml supplies
+# the parsed journal and the previous object per resource. kyverno test merges
+# that previous object into the resource, so a changed field differs by value,
+# never by a key only one side has. Under a bound journal a retained object may
+# be updated only without changing its identity, content or metadata; an
+# update while the journal is not bound is denied, and an object the journal
+# does not retain (other than Backstage Helm history) is out of scope. The
+# controller-writer exceptions (Helm history, CNPG certificates and roles, CA
+# bundles) still need their own cases before the rewrite.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-backstage-retirement-retained-identities
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-backstage-retirement.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-1
+    kind: PersistentVolumeClaim
+    result: pass
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-2
+    kind: PersistentVolumeClaim
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-app
+    kind: Secret
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/backstage-db-3
+    kind: PersistentVolumeClaim
+    result: fail
+  - policy: restrict-backstage-retirement
+    rule: preserve-retained-identities
+    resources:
+      - backstage/unrelated-settings
+    kind: Secret
+    result: skip
