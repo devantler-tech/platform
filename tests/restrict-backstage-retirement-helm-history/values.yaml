@@ -1,0 +1,297 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: values
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: restrict-backstage-retirement
+    resources:
+      - name: sh.helm.release.v1.backstage.v3
+        values:
+          request.userInfo:
+            username: system:serviceaccount:flux-system:helm-controller
+            uid: 00000000-0000-4000-8000-000000000040
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000201
+              helmWriterUID: 00000000-0000-4000-8000-000000000040
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v9, uid: 00000000-0000-4000-8000-000000000299}
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v3, uid: 00000000-0000-4000-8000-000000000201}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: sh.helm.release.v1.backstage.v3
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000201
+              labels:
+                owner: helm
+                name: backstage
+                status: deployed
+                version: "3"
+                modifiedAt: "1760000000"
+            type: helm.sh/release.v1
+            data:
+              release: b2xkLXJlbGVhc2U=
+      - name: sh.helm.release.v1.backstage.v4
+        values:
+          request.userInfo:
+            username: system:serviceaccount:flux-system:helm-controller
+            uid: 00000000-0000-4000-8000-000000000040
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000202
+              helmWriterUID: 00000000-0000-4000-8000-000000000040
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v9, uid: 00000000-0000-4000-8000-000000000299}
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v4, uid: 00000000-0000-4000-8000-000000000202}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: sh.helm.release.v1.backstage.v4
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000202
+              labels:
+                owner: helm
+                name: backstage
+                status: uninstalling
+                version: "4"
+                modifiedAt: "1760000000"
+            type: helm.sh/release.v1
+            data:
+              release: b2xkLXJlbGVhc2U=
+      - name: sh.helm.release.v1.backstage.v5
+        values:
+          request.userInfo:
+            username: system:serviceaccount:flux-system:helm-controller
+            uid: 00000000-0000-4000-8000-000000000041
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000203
+              helmWriterUID: 00000000-0000-4000-8000-000000000040
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v9, uid: 00000000-0000-4000-8000-000000000299}
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v5, uid: 00000000-0000-4000-8000-000000000203}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: sh.helm.release.v1.backstage.v5
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000203
+              labels:
+                owner: helm
+                name: backstage
+                status: deployed
+                version: "5"
+                modifiedAt: "1760000000"
+            type: helm.sh/release.v1
+            data:
+              release: b2xkLXJlbGVhc2U=
+      - name: sh.helm.release.v1.backstage.v6
+        values:
+          request.userInfo:
+            username: system:serviceaccount:flux-system:helm-controller
+            uid: 00000000-0000-4000-8000-000000000040
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000204
+              helmWriterUID: 00000000-0000-4000-8000-000000000040
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v9, uid: 00000000-0000-4000-8000-000000000299}
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v6, uid: 00000000-0000-4000-8000-000000000204}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: sh.helm.release.v1.backstage.v6
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000204
+              labels:
+                owner: helm
+                name: backstage
+                status: uninstalled
+                version: "6"
+                modifiedAt: "1760000000"
+            type: helm.sh/release.v1
+            data:
+              release: b2xkLXJlbGVhc2U=
+      - name: sh.helm.release.v1.backstage.v7
+        values:
+          request.userInfo:
+            username: system:serviceaccount:flux-system:helm-controller
+            uid: 00000000-0000-4000-8000-000000000040
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000205
+              helmWriterUID: 00000000-0000-4000-8000-000000000040
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v9, uid: 00000000-0000-4000-8000-000000000299}
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v7, uid: 00000000-0000-4000-8000-000000000205}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: sh.helm.release.v1.backstage.v7
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000205
+              labels:
+                owner: helm
+                name: backstage
+                status: uninstalling
+                version: "7"
+                modifiedAt: "1760000000"
+            type: helm.sh/release.v1
+            data:
+              release: b2xkLXJlbGVhc2U=
+      - name: sh.helm.release.v1.backstage.v2
+        values:
+          request.userInfo:
+            username: system:serviceaccount:flux-system:helm-controller
+            uid: 00000000-0000-4000-8000-000000000040
+          retirement:
+            present: true
+            namespaceUID: 00000000-0000-4000-8000-000000000001
+            record:
+              version: 1
+              phase: fenced
+              namespaceUID: 00000000-0000-4000-8000-000000000001
+              sourceSHA: 0123456789abcdef0123456789abcdef01234567
+              revision: latest@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+              run: "123"
+              latestHistoryUID: 00000000-0000-4000-8000-000000000299
+              helmWriterUID: 00000000-0000-4000-8000-000000000040
+              targets:
+                - {kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+                - {kind: Service, name: backstage, uid: 00000000-0000-4000-8000-000000000012}
+                - {kind: ConfigMap, name: backstage-app-config, uid: 00000000-0000-4000-8000-000000000013}
+                - {kind: HelmRelease, name: backstage, uid: 00000000-0000-4000-8000-000000000014}
+                - {kind: HelmChart, name: backstage-backstage, uid: 00000000-0000-4000-8000-000000000015}
+              retiringUIDs:
+                - 00000000-0000-4000-8000-000000000011
+                - 00000000-0000-4000-8000-000000000012
+                - 00000000-0000-4000-8000-000000000013
+                - 00000000-0000-4000-8000-000000000014
+                - 00000000-0000-4000-8000-000000000015
+              retained:
+                - {kind: Secret, name: sh.helm.release.v1.backstage.v9, uid: 00000000-0000-4000-8000-000000000299}
+          request.oldObject:
+            apiVersion: v1
+            kind: Secret
+            metadata:
+              name: sh.helm.release.v1.backstage.v2
+              namespace: backstage
+              uid: 00000000-0000-4000-8000-000000000206
+              labels:
+                owner: helm
+                name: backstage
+                status: deployed
+                version: "2"
+                modifiedAt: "1760000000"
+            type: helm.sh/release.v1
+            data:
+              release: b2xkLXJlbGVhc2U=

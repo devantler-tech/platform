@@ -6,9 +6,9 @@
 # never by a key only one side has. Under a bound journal a retained object may
 # be updated only without changing its identity, content or metadata; an
 # update while the journal is not bound is denied, and an object the journal
-# does not retain (other than Backstage Helm history) is out of scope. The
-# controller-writer exceptions (Helm history, CNPG certificates and roles, CA
-# bundles) still need their own cases before the rewrite.
+# does not retain (other than Backstage Helm history) is out of scope. The Helm
+# history exception is pinned beside this test; the CNPG certificate, CNPG role
+# and CA bundle writer exceptions still need their own cases.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
