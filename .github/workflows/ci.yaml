@@ -3210,7 +3210,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@e1681322e671f8e277c5e230a57fe66cdf1a612d # v7.12.0
+        uses: devantler-tech/.github/actions/validate-naming@8d2203af130a8c27b8b98b3d7146f76b5ade7a98 # v7.16.2
 
       - name: Confirm naming validation completed
         env:
