@@ -130,8 +130,6 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin 9c3f822
 
 kyverno.io/v1|ClusterPolicy||helm-release-enable-tests b901c17066f33c909b144581a8fc6303bb47ee923f13f2b8b0d18d4f7a9f2f46
 
-kyverno.io/v1|ClusterPolicy||helm-release-install-crds e4c29179bab5e1dfa761a7f77df91e8114c97f6f651055b06b310708f6c497f6
-
 kyverno.io/v1|ClusterPolicy||helm-release-remediation-retries 7b66f9deebbae96d866d80a780f251ab2a5fd8427337f4f215a6ca709af70d6b
 
 pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-aws-iam 48e8bcc2257a1affdbdf936c4b871becc6f0fdc02bb40e27665d265f00c465b3
@@ -149,6 +147,8 @@ pkg.crossplane.io/v1|Provider||provider-upjet-github 4f11a8519c6713e95c23cefaa75
 pkg.crossplane.io/v1|Provider||provider-upjet-unifi d85c9714e797838b3a1c88bb25434442e1666f1036042a127347aaf21ef9d71b
 
 pkg.crossplane.io/v1|Provider||upbound-provider-family-aws 64c7d602bf7460b7a38657a49539f5fa945ef8216be5e4296dddd04f69a944f8
+
+policies.kyverno.io/v1|MutatingPolicy||helm-release-install-crds 7bb30ea8ce9d9b47488b72ace49441a03c18e58b3906fa414c1f61d672281828
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 2aac6fc040557b155131fdc2ad9261f6ad2b337835915d7dcb50a3704e032478
 
