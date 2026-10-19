@@ -255,3 +255,55 @@ func TestRetirementFenceApprovedActions(t *testing.T) {
 		t.Run(key, func(t *testing.T) { check(t, key) })
 	}
 }
+
+func TestValidatingPolicyActions(t *testing.T) {
+	for _, tt := range []struct{ name, actions, baseline, want string }{
+		{"audit", "[Audit]", "Audit", ""},
+		{"deny-is-enforce", "[Deny]", "Enforce", ""},
+		{"downgrade", "[Audit]", "Enforce", "expected Enforce"},
+		{"upgrade-unreviewed", "[Deny]", "Audit", "expected Audit"},
+		{"warn", "[Warn]", "Audit", "exactly one of [Audit] or [Deny]"},
+		{"combined", "[Deny, Audit]", "Enforce", "exactly one of [Audit] or [Deny]"},
+		{"empty", "[]", "Audit", "exactly one of [Audit] or [Deny]"},
+		{"implicit", "", "Audit", "exactly one of [Audit] or [Deny]"},
+		{"scalar", "Audit", "Audit", "exactly one of [Audit] or [Deny]"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			body := "kind: ValidatingPolicy\nmetadata: {name: boundary}\nspec:\n  validations: []\n"
+			if tt.actions != "" {
+				body += "  validationActions: " + tt.actions + "\n"
+			}
+			if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte(body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := verify(dir, map[string]string{"boundary": tt.baseline})
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("wanted %q, got %v", tt.want, err)
+			}
+		})
+	}
+	t.Run("unreviewed", func(t *testing.T) {
+		dir := t.TempDir()
+		body := "kind: ValidatingPolicy\nmetadata: {name: extra}\nspec: {validationActions: [Audit]}\n"
+		if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verify(dir, map[string]string{"other/rule": "Audit"}); err == nil || !strings.Contains(err.Error(), "unreviewed validation policy") {
+			t.Fatalf("wanted unreviewed validation policy, got %v", err)
+		}
+	})
+	t.Run("removed", func(t *testing.T) {
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte("kind: ConfigMap\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := verify(dir, map[string]string{"boundary": "Audit"}); err == nil || !strings.Contains(err.Error(), "missing baseline rule") {
+			t.Fatalf("wanted missing baseline rule, got %v", err)
+		}
+	})
+}
