@@ -71,7 +71,7 @@ func collect(node *yaml.Node, expected, actual map[string]string, ancestors map[
 	if err := node.Decode(&header); err != nil {
 		return err
 	}
-	if header.Kind == "List" || header.Kind == "ClusterPolicyList" {
+	if header.Kind == "List" || header.Kind == "ClusterPolicyList" || header.Kind == "ValidatingPolicyList" {
 		var list struct {
 			Items yaml.Node `yaml:"items"`
 		}
@@ -91,6 +91,9 @@ func collect(node *yaml.Node, expected, actual map[string]string, ancestors map[
 			}
 		}
 		return nil
+	}
+	if header.Kind == "ValidatingPolicy" {
+		return collectValidatingPolicy(node, expected, actual)
 	}
 	if header.Kind != "ClusterPolicy" {
 		return nil
@@ -136,6 +139,72 @@ func collect(node *yaml.Node, expected, actual map[string]string, ancestors map[
 		if action != want {
 			return fmt.Errorf("%s: expected %s, found %s", key, want, action)
 		}
+	}
+	return nil
+}
+
+// collectValidatingPolicy records a ValidatingPolicy's action under its name:
+// the kind has no rules, so the whole policy carries one action. Only a single
+// explicit Audit or Deny is a reviewed action; Deny is recorded as Enforce so the
+// baseline keeps one vocabulary across the legacy and CEL kinds.
+func collectValidatingPolicy(node *yaml.Node, expected, actual map[string]string) error {
+	var policy struct {
+		Metadata struct {
+			Name string `yaml:"name"`
+		} `yaml:"metadata"`
+		Spec struct {
+			Actions    yaml.Node `yaml:"validationActions"`
+			Evaluation struct {
+				Admission struct {
+					Enabled *bool `yaml:"enabled"`
+				} `yaml:"admission"`
+			} `yaml:"evaluation"`
+		} `yaml:"spec"`
+	}
+	if err := node.Decode(&policy); err != nil {
+		return err
+	}
+	key := policy.Metadata.Name
+	if key == "" {
+		return errors.New("ValidatingPolicy without a name")
+	}
+	actions, err := unalias(&policy.Spec.Actions)
+	if err != nil {
+		return err
+	}
+	var action string
+	if actions.Kind == yaml.SequenceNode && len(actions.Content) == 1 {
+		entry, err := unalias(actions.Content[0])
+		if err != nil {
+			return err
+		}
+		if entry.Kind == yaml.ScalarNode && entry.Tag == "!!str" {
+			switch entry.Value {
+			case "Audit":
+				action = "Audit"
+			case "Deny":
+				action = "Enforce"
+			}
+		}
+	}
+	if action == "" {
+		return fmt.Errorf("%s: validationActions must be exactly one of [Audit] or [Deny]", key)
+	}
+	// Deny only blocks when the policy runs at admission; an admission-disabled
+	// policy reports in background scans and must not pass as Enforce.
+	if action == "Enforce" && policy.Spec.Evaluation.Admission.Enabled != nil && !*policy.Spec.Evaluation.Admission.Enabled {
+		return fmt.Errorf("%s: validationActions [Deny] with evaluation.admission.enabled false never blocks", key)
+	}
+	if _, exists := actual[key]; exists {
+		return fmt.Errorf("%s: duplicate validation policy", key)
+	}
+	actual[key] = action
+	want, exists := expected[key]
+	if !exists {
+		return fmt.Errorf("%s: unreviewed validation policy; add its approved action to the baseline", key)
+	}
+	if action != want {
+		return fmt.Errorf("%s: expected %s, found %s", key, want, action)
 	}
 	return nil
 }
