@@ -1,5 +1,6 @@
-# Captured retiring ReplicaSet, owned by the captured Deployment, updated with
-# the same identity and owner references: allowed.
+# Captured retiring ReplicaSet, owned by the captured Deployment, scaled down
+# and stripped of a finalizer with the same identity and owner references:
+# allowed, because cleanup must still be able to change everything else.
 apiVersion: apps/v1
 kind: ReplicaSet
 metadata:
@@ -84,3 +85,32 @@ metadata:
   uid: 00000000-0000-4000-8000-000000000033
 data:
   key: value
+---
+# ConfigMap owned by the captured Deployment but outside the backstage
+# namespace, changed while the journal is present and unbound: out of scope,
+# so a rewrite cannot widen the fence to unrelated namespaces.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apps-dependent
+  namespace: apps
+  uid: 00000000-0000-4000-8000-000000000034
+  ownerReferences:
+    - {apiVersion: apps/v1, kind: Deployment, name: backstage, uid: 00000000-0000-4000-8000-000000000011}
+data:
+  key: value
+---
+# Deletion of a captured descendant under a bound journal: out of scope, so
+# the retirement cleanup itself is never fenced.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backstage-5d8f9-captured
+  namespace: backstage
+  uid: 00000000-0000-4000-8000-000000000018
+  ownerReferences:
+    - {apiVersion: apps/v1, kind: ReplicaSet, name: backstage-5d8f9, uid: 00000000-0000-4000-8000-000000000016, controller: true}
+spec:
+  containers:
+    - name: backstage
+      image: ghcr.io/example/backstage@sha256:0000000000000000000000000000000000000000000000000000000000000000

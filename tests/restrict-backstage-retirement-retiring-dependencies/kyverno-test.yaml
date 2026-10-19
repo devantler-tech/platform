@@ -50,3 +50,15 @@ results:
       - backstage/backstage-absent
     kind: ConfigMap
     result: skip
+  - policy: restrict-backstage-retirement
+    rule: fence-retiring-dependencies
+    resources:
+      - apps/apps-dependent
+    kind: ConfigMap
+    result: skip
+  - policy: restrict-backstage-retirement
+    rule: fence-retiring-dependencies
+    resources:
+      - backstage/backstage-5d8f9-captured
+    kind: Pod
+    result: skip
