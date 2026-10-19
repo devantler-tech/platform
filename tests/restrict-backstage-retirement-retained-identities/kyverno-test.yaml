@@ -10,7 +10,8 @@
 # history exception is pinned beside this test, the CNPG certificate and role
 # exceptions in restrict-backstage-retirement-cnpg-writer(-denied), and the CA
 # bundle writer exceptions in restrict-backstage-retirement-ca-bundle-writers
-# (-denied, -unprofiled).
+# (-denied, -unprofiled), with one case per condition of every writer exception
+# in restrict-backstage-retirement-writer-conjuncts(-2).
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
