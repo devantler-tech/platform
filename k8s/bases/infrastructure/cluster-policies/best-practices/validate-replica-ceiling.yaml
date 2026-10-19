@@ -58,12 +58,14 @@ spec:
     - name: not-exempt
       expression: >-
         object.metadata.?labels[?'platform.devantler.tech/replica-ceiling'].orValue('') != 'exempt'
-    # Durable opt-out on the pod template (charts expose podLabels more widely
-    # than top-level workload labels).
-    - name: pod-template-not-exempt
-      expression: >-
-        object.?spec.?template.?metadata.?labels[?'platform.devantler.tech/replica-ceiling'].orValue('') != 'exempt'
   variables:
+    # Durable opt-out on the pod template (charts expose podLabels more widely
+    # than top-level workload labels). It is checked inside the validation, not
+    # as a matchCondition, so a newly exempted workload gets a current passing
+    # result instead of keeping its old failure (docs/policy-reports.md).
+    - name: templateExempt
+      expression: >-
+        object.?spec.?template.?metadata.?labels[?'platform.devantler.tech/replica-ceiling'].orValue('') == 'exempt'
     - name: isWorkload
       expression: object.kind in ['Deployment', 'StatefulSet', 'ReplicaSet']
     - name: replicas
@@ -73,7 +75,7 @@ spec:
     - name: scaledObjectCeiling
       expression: object.spec.?maxReplicaCount.orValue(100)
   validations:
-    - expression: "!variables.isWorkload || variables.replicas <= 3"
+    - expression: "!variables.isWorkload || variables.templateExempt || variables.replicas <= 3"
       messageExpression: >-
         object.kind + " '" + object.metadata.name + "' declares " +
         string(variables.replicas) + " replicas; the platform ceiling is 3 pods

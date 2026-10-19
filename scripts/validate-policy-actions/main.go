@@ -71,7 +71,7 @@ func collect(node *yaml.Node, expected, actual map[string]string, ancestors map[
 	if err := node.Decode(&header); err != nil {
 		return err
 	}
-	if header.Kind == "List" || header.Kind == "ClusterPolicyList" {
+	if header.Kind == "List" || header.Kind == "ClusterPolicyList" || header.Kind == "ValidatingPolicyList" {
 		var list struct {
 			Items yaml.Node `yaml:"items"`
 		}
@@ -153,7 +153,12 @@ func collectValidatingPolicy(node *yaml.Node, expected, actual map[string]string
 			Name string `yaml:"name"`
 		} `yaml:"metadata"`
 		Spec struct {
-			Actions yaml.Node `yaml:"validationActions"`
+			Actions    yaml.Node `yaml:"validationActions"`
+			Evaluation struct {
+				Admission struct {
+					Enabled *bool `yaml:"enabled"`
+				} `yaml:"admission"`
+			} `yaml:"evaluation"`
 		} `yaml:"spec"`
 	}
 	if err := node.Decode(&policy); err != nil {
@@ -184,6 +189,11 @@ func collectValidatingPolicy(node *yaml.Node, expected, actual map[string]string
 	}
 	if action == "" {
 		return fmt.Errorf("%s: validationActions must be exactly one of [Audit] or [Deny]", key)
+	}
+	// Deny only blocks when the policy runs at admission; an admission-disabled
+	// policy reports in background scans and must not pass as Enforce.
+	if action == "Enforce" && policy.Spec.Evaluation.Admission.Enabled != nil && !*policy.Spec.Evaluation.Admission.Enabled {
+		return fmt.Errorf("%s: validationActions [Deny] with evaluation.admission.enabled false never blocks", key)
 	}
 	if _, exists := actual[key]; exists {
 		return fmt.Errorf("%s: duplicate validation policy", key)

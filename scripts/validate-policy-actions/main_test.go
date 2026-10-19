@@ -307,3 +307,28 @@ func TestValidatingPolicyActions(t *testing.T) {
 		}
 	})
 }
+
+func TestValidatingPolicyAdmissionAndList(t *testing.T) {
+	for _, tt := range []struct{ name, body, baseline, want string }{
+		{"deny-admission-disabled", "kind: ValidatingPolicy\nmetadata: {name: boundary}\nspec: {validationActions: [Deny], evaluation: {admission: {enabled: false}}}\n", "Enforce", "never blocks"},
+		{"deny-admission-enabled", "kind: ValidatingPolicy\nmetadata: {name: boundary}\nspec: {validationActions: [Deny], evaluation: {admission: {enabled: true}}}\n", "Enforce", ""},
+		{"audit-admission-disabled", "kind: ValidatingPolicy\nmetadata: {name: boundary}\nspec: {validationActions: [Audit], evaluation: {admission: {enabled: false}}}\n", "Audit", ""},
+		{"list-reviewed", "kind: ValidatingPolicyList\nitems:\n  - kind: ValidatingPolicy\n    metadata: {name: boundary}\n    spec: {validationActions: [Audit]}\n", "Audit", ""},
+		{"list-changed-action", "kind: ValidatingPolicyList\nitems:\n  - kind: ValidatingPolicy\n    metadata: {name: boundary}\n    spec: {validationActions: [Deny]}\n", "Audit", "expected Audit"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "policy.yaml"), []byte(tt.body), 0600); err != nil {
+				t.Fatal(err)
+			}
+			err := verify(dir, map[string]string{"boundary": tt.baseline})
+			if tt.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("wanted %q, got %v", tt.want, err)
+			}
+		})
+	}
+}
