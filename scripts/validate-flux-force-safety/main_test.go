@@ -134,12 +134,12 @@ func TestRequiredGuard(t *testing.T) {
 			t.Fatalf("missing %s trigger", event)
 		}
 	}
-	changes := workflow.Jobs["changes"]
-	if changes.If != "" {
+	guards := workflow.Jobs["validate-repository-guards"]
+	if guards.If != "" {
 		t.Fatal("replacement guard job cannot be conditional")
 	}
 	guarded := false
-	for _, step := range changes.Steps {
+	for _, step := range guards.Steps {
 		if step.If == "" && !step.Continue && strings.Contains(step.Run, "bash scripts/tests/test-flux-force-safety.sh") {
 			guarded = true
 		}
@@ -148,7 +148,7 @@ func TestRequiredGuard(t *testing.T) {
 		t.Fatal("missing unconditional rendered replacement guard")
 	}
 	for _, need := range workflow.Jobs["ci-required-checks"].Needs {
-		if need == "changes" {
+		if need == "validate-repository-guards" {
 			return
 		}
 	}

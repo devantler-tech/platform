@@ -21,7 +21,7 @@ func TestTransportCIRequiresThePinnedNativeHubbleParser(t *testing.T) {
 	t.Parallel()
 
 	workflow := readYAML(t, ".github/workflows/ci.yaml")
-	steps := field(t, workflow, "jobs", "changes", "steps").([]any)
+	steps := field(t, workflow, "jobs", "validate-repository-guards", "steps").([]any)
 	count := 0
 	for _, value := range steps {
 		step := value.(map[string]any)

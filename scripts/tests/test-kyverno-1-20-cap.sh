@@ -48,13 +48,13 @@ renovate_with() {
 }
 
 # The CI step must run unconditionally, outside the k8s deploy filter.
-changes_job="$(awk '
-  /^  changes:$/ { in_changes = 1 }
-  in_changes && /^  [[:alnum:]_-]+:$/ && $0 != "  changes:" { exit }
-  in_changes { print }
+guards_job="$(awk '
+  /^  validate-repository-guards:$/ { in_guards = 1 }
+  in_guards && /^  [[:alnum:]_-]+:$/ && $0 != "  validate-repository-guards:" { exit }
+  in_guards { print }
 ' "${ci_workflow}")"
-grep -Fq 'bash scripts/tests/test-kyverno-1-20-cap.sh' <<<"${changes_job}" ||
-  fail 'the Kyverno 1.20 cap test must run unconditionally in the changes job'
+grep -Fq 'bash scripts/tests/test-kyverno-1-20-cap.sh' <<<"${guards_job}" ||
+  fail 'the Kyverno 1.20 cap test must run unconditionally in the repository guards job'
 
 # 1. As committed: kyverno.io policies remain and the cap holds.
 expect_pass 'committed tree'

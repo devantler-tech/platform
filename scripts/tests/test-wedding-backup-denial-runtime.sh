@@ -6,8 +6,8 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-# This fixture runs in the changes job, before the Crossview runtime fixture
-# in a separate job. Configure that hosted daemon before its own pinned build.
+# This fixture and the Crossview runtime fixture use separate hosted daemons.
+# Configure this daemon before its own pinned build.
 if [ "${GITHUB_ACTIONS:-}" = true ] &&
   [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
   [ "${RUNNER_OS:-}" = Linux ]; then

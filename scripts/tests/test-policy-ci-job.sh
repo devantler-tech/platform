@@ -9,6 +9,13 @@ work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
 gate="$(yq -o=json '.jobs.ci-required-checks' "${workflow}")"
+policy="$(yq -o=json '.jobs.validate-cluster-policies' "${workflow}")"
+if ! jq -e --arg selection "github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'" '
+  .needs == ["changes"] and .if == $selection
+' <<<"${policy}" >/dev/null; then
+  echo 'FAIL: independent policy job scheduling changed' >&2
+  exit 1
+fi
 if ! jq -e '.needs | index("validate-cluster-policies") != null' <<<"${gate}" >/dev/null; then
   echo 'FAIL: required aggregate must wait for the independent policy job' >&2
   exit 1

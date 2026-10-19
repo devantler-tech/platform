@@ -144,6 +144,14 @@ The scan is a **hard gate**: it fails the PR if the combined compliance score dr
 - **52 of the 76 excepted controls are in neither framework, so the gate still cannot see them.** NSA-CISA covers 17 of the 76; adding MITRE ATT&CK brings 7 more under the gate — C-0007, C-0015, C-0031, C-0037, C-0045, C-0048, C-0053 (measured 2026-08-10, ksail 7.178.20). The residue is tracked on [#2823](https://github.com/devantler-tech/platform/issues/2823). Two consequences: an exception naming a control outside both frameworks is inert **here** whether or not it is correct, so never read "the score did not move" as "the exception is broken"; and a finding on such a control reaches neither the gate nor Code Scanning.
 - **The threshold is a regression floor, not the actual score — and the scan runs WITH the platform's justified exceptions applied.** The `ClusterSecurityException` CRs (`k8s/bases/infrastructure/cluster-security-exceptions/`) are the single source of truth, and are converted at scan time into Kubescape's native exceptions format by [`scripts/generate-kubescape-exceptions`](scripts/generate-kubescape-exceptions) (fail-closed: an unrecognised CR shape aborts the scan step rather than silently dropping or widening an exception; Go unit tests alongside it), so runtime-enforced (Kyverno mutation, `CiliumNetworkPolicy`) and except-only findings (e.g. **C-0002**, the KubeVirt operator's `pods/exec` RBAC) no longer depress the score and the floor gates the residual REAL posture (#2264). The score has historically been **environment-dependent** (Linux CI runner vs macOS — a gap that is *not* the render mode, the framework cache, or PR-merge content, all ruled out) and shifts with the ksail render, so **CI is the source of truth** (re-baseline the floor after a ksail bump, from the combined and per-framework scores the scan step prints in its log and job summary); the observed CI reference with exceptions applied is **≈98.9%** (2026-07-11, ksail 7.165.2), with the floor a few points under it. Only **two** surfaces apply these exceptions: this scan, and the Headlamp view via the generated `headlamp-exceptions` ConfigMap. The kubescape-operator's stored scan resources (`workloadconfigurationscans` and the two summary kinds) do **not** — their `appliedIgnoreRules` is empty — so a posture number read off those says nothing about whether an exception works. They also outlive the objects they describe for every non-workload kind, so a stored result is not proof that its object still exists either; `scripts/report-kubescape-scan-orphans.sh` classifies them against the live cluster (#3697, [`docs/kubescape-result-coverage.md`](docs/kubescape-result-coverage.md)). A new justified exception is added as a CSE CR (kind+name-scoped, minimal — see the existing CRs' conventions), never by lowering the floor: **ratchet up** as genuine gaps close; never lower it.
 
+Repository-wide shell and source guards run unconditionally in
+`validate-repository-guards` on both pull requests and merge groups. This job
+starts independently of `changes`, so path classification and downstream
+validation do not wait for those guards. Production deployment and the required
+CI aggregate both depend on it; the aggregate accepts only a successful result,
+never a skipped or cancelled guard. Queue-receipt capture and path-filter outputs
+remain in `changes`.
+
 ### Updating Vendored Operator Bundles
 
 The CDI, KubeVirt and kubelet-serving-cert-approver operator resources, plus the origin-ca-issuer
@@ -216,7 +224,7 @@ branch and commit what it changes. If the refresh stops on a CRD digest, the ups
 review that change, then record the digest the refresh printed and run it again. Never edit the
 record by hand; a record that is missing or malformed is a failed check, not a match.
 `scripts/tests/test-origin-ca-issuer-crd-source-pin.sh` pins both halves offline and runs
-unconditionally in the `changes` job: its first case validates the tree as committed, so it is the
+unconditionally in the `validate-repository-guards` job: its first case validates the tree as committed, so it is the
 step that fails on a commit-only bump, on pull requests and in the merge group alike.
 
 That Renovate rule sets `minimumReleaseAge` to `0 days` for this source. The age of a branch

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Assert every event and deployment route invokes the nested-RGD behavioral gate. This script is
-# run from the unconditional changes job, independently of the PR validation step it protects.
+# run from the unconditional repository guards job, independently of the PR validation step it protects.
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -31,7 +31,7 @@ k8s_filter_json="$(yq -o=json -I=0 '
 ' "$CI_WORKFLOW")"
 
 jq -e --arg wiring_run "$WIRING_RUN" '
-  .jobs.changes as $wiring_job
+  .jobs["validate-repository-guards"] as $wiring_job
   | (($wiring_job["continue-on-error"] // false) == false)
   and ($wiring_job | has("if") | not)
   and any($wiring_job.steps[];
@@ -39,7 +39,7 @@ jq -e --arg wiring_run "$WIRING_RUN" '
     and ((.["continue-on-error"] // false) == false)
     and (has("if") | not))
 ' <<<"$ci_workflow_json" >/dev/null ||
-  fail "the unconditional changes job does not independently validate RGD workflow wiring"
+  fail "the unconditional repository guards job does not independently validate RGD workflow wiring"
 
 jq -e --argjson required_inputs '[
     ".trivy/data/**",
@@ -190,7 +190,7 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
 
   suppressed_wiring_step_workflow="${ablation_work}/ci-wiring-step-continue-on-error.yaml"
   cp "$CI_WORKFLOW" "$suppressed_wiring_step_workflow"
-  yq -i '(.jobs.changes.steps[] |
+  yq -i '(.jobs."validate-repository-guards".steps[] |
     select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan-wiring.sh"))).continue-on-error = true' \
     "$suppressed_wiring_step_workflow"
   if RGD_WIRING_CI_WORKFLOW="$suppressed_wiring_step_workflow" \
@@ -201,7 +201,7 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
 
   conditional_wiring_step_workflow="${ablation_work}/ci-wiring-step-false-condition.yaml"
   cp "$CI_WORKFLOW" "$conditional_wiring_step_workflow"
-  yq -i '(.jobs.changes.steps[] |
+  yq -i '(.jobs."validate-repository-guards".steps[] |
     select((.run // "") | contains("bash scripts/tests/test-rgd-template-static-scan-wiring.sh"))).if = false' \
     "$conditional_wiring_step_workflow"
   if RGD_WIRING_CI_WORKFLOW="$conditional_wiring_step_workflow" \
@@ -212,7 +212,7 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
 
   suppressed_wiring_job_workflow="${ablation_work}/ci-wiring-job-continue-on-error.yaml"
   cp "$CI_WORKFLOW" "$suppressed_wiring_job_workflow"
-  yq -i '.jobs.changes.continue-on-error = true' "$suppressed_wiring_job_workflow"
+  yq -i '.jobs."validate-repository-guards".continue-on-error = true' "$suppressed_wiring_job_workflow"
   if RGD_WIRING_CI_WORKFLOW="$suppressed_wiring_job_workflow" \
     RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-job-continue-on-error.log" 2>&1; then
@@ -221,7 +221,7 @@ if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
 
   conditional_wiring_job_workflow="${ablation_work}/ci-wiring-job-false-condition.yaml"
   cp "$CI_WORKFLOW" "$conditional_wiring_job_workflow"
-  yq -i '.jobs.changes.if = false' "$conditional_wiring_job_workflow"
+  yq -i '.jobs."validate-repository-guards".if = false' "$conditional_wiring_job_workflow"
   if RGD_WIRING_CI_WORKFLOW="$conditional_wiring_job_workflow" \
     RGD_WIRING_MAIN_WORKFLOW="$MAIN_WORKFLOW" \
     RGD_WIRING_SKIP_ABLATIONS=true "$0" >"${ablation_work}/wiring-job-false-condition.log" 2>&1; then

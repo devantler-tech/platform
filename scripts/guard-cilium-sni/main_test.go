@@ -93,7 +93,7 @@ func verifyWiring(data []byte) error {
 		return fmt.Errorf("missing enforcing SNI validation step")
 	}
 	mergeGroupCovered := false
-	for _, s := range workflow.Jobs["changes"].Steps {
+	for _, s := range workflow.Jobs["validate-repository-guards"].Steps {
 		if strings.TrimSpace(s.Run) == "go test ./scripts/guard-cilium-sni\ngo run ./scripts/guard-cilium-sni k8s" && s.If == "" && s.Continue.Kind == 0 {
 			mergeGroupCovered = true
 		}

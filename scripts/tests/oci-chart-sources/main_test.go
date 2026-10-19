@@ -285,7 +285,7 @@ func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependenc
 
 func TestCIExecutesMigrationContract(t *testing.T) {
 	workflow := readDocument(t, filepath.Join(repositoryRoot(t), ".github/workflows/ci.yaml"))
-	steps, _ := object(object(workflow, "jobs"), "changes")["steps"].([]any)
+	steps, _ := object(object(workflow, "jobs"), "validate-repository-guards")["steps"].([]any)
 	count := 0
 	for _, raw := range steps {
 		step, _ := raw.(map[string]any)

@@ -70,7 +70,7 @@ func TestWorkflowKeepsExpansionManualProtectedAndScoped(t *testing.T) {
 
 func TestCIRequiresRealTransportControl(t *testing.T) {
 	w := workflow(t, "ci.yaml")
-	for _, v := range array(field(w, "jobs", "changes", "steps")) {
+	for _, v := range array(field(w, "jobs", "validate-repository-guards", "steps")) {
 		s := obj(v)
 		if strings.Contains(str(s["run"]), "go test -race -count=1 ./scripts/expand-openbao-audit") && field(s, "env", "AUDIT_REQUIRE_NATIVE_CONTROL") == "1" {
 			return

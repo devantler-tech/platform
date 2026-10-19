@@ -63,7 +63,7 @@ const (
           [[ "${recovery_sha}" =~ ^[0-9a-f]{40}$ ]]
           printf 'sha=%s\n' "${recovery_sha}" >>"${GITHUB_OUTPUT}"`
 	// The whole script of the step. Its only early exit is the legacy branch for
-	// a main that predates the check, which the changes job keeps unreachable
+	// a main that predates the check, which the repository guards keep unreachable
 	// once the check is on main: it fails when the check's script is missing.
 	// Pinning the script whole stops any other early exit, and a missing
 	// boundary from silently failing every older orphan.
