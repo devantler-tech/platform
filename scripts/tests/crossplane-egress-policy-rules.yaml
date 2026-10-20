@@ -648,7 +648,10 @@ rules:
   # it reads the workload only as string(object.metadata.name|namespace); it
   # concatenates only the workload name with its kind suffix; every "kind" is
   # the VerticalPodAutoscaler or its apps target kind and every "apiVersion"
-  # is autoscaling.k8s.io/v1 or apps/v1; and it contains no backslash escape.
+  # is autoscaling.k8s.io/v1 or apps/v1; every apps/v1 and apps kind literal
+  # sits in the literal head of a "targetRef" block, so the generated object
+  # itself can only be a VerticalPodAutoscaler; and it contains no backslash
+  # escape.
   # A leading '#' and a trailing '~' keep the text at either end from reading
   # as an approved literal.
   - name: reject-cel-policy-producers
@@ -736,7 +739,17 @@ rules:
          ('#' + generation.expression).split('"apiVersion"').filter(part,
            !part.matches(
              '^\\s*:\\s*(dyn\\(\\s*"autoscaling[.]k8s[.]io/v1"\\s*\\)|"apps/v1")\\s*[,}]')
-         ).size() == 1))
+         ).size() == 1 &&
+         ('#' + generation.expression).split('"targetRef"').filter(part,
+           !part.matches(
+             '^\\s*:\\s*dyn\\(\\s*\\{\\s*"apiVersion"\\s*:\\s*"apps/v1"\\s*,\\s*"kind"\\s*:\\s*"(Deployment|DaemonSet|StatefulSet)"\\s*,')
+         ).size() == 1 &&
+         generation.expression.split('"apps/v1"').size() ==
+           generation.expression.split('"targetRef"').size() &&
+         generation.expression.split('"Deployment"').size() +
+           generation.expression.split('"DaemonSet"').size() +
+           generation.expression.split('"StatefulSet"').size() - 2 ==
+           generation.expression.split('"targetRef"').size()))
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
       review before deployment

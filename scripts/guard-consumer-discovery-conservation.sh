@@ -736,7 +736,9 @@ while IFS=$'\t' read -r file label; do
   # only to generator.Apply, string and dyn; string-literal map keys; the
   # workload read only as string(object.metadata.name|namespace); concatenation
   # only of the workload name with its kind suffix; approved "kind" and
-  # "apiVersion" literals; no backslash escape. A leading "#" and trailing "~"
+  # "apiVersion" literals, the apps ones only in the literal head of a
+  # "targetRef" block so the generated object can only be a
+  # VerticalPodAutoscaler; no backslash escape. A leading "#" and trailing "~"
   # keep the text at either end from matching. Everything else stays refused.
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
@@ -795,7 +797,14 @@ while IFS=$'\t' read -r file label; do
             | ((length < 2)
               or (([.[] | select(test("^\\s*:\\s*(dyn\\(\\s*\"VerticalPodAutoscaler\"\\s*\\)|\"(Deployment|DaemonSet|StatefulSet)\")\\s*[,}]") | not)] | length) != 1)))
           or (("#" + .expression) | split("\"apiVersion\"")
-            | (([.[] | select(test("^\\s*:\\s*(dyn\\(\\s*\"autoscaling[.]k8s[.]io/v1\"\\s*\\)|\"apps/v1\")\\s*[,}]") | not)] | length) != 1)))] | length) == 0))
+            | (([.[] | select(test("^\\s*:\\s*(dyn\\(\\s*\"autoscaling[.]k8s[.]io/v1\"\\s*\\)|\"apps/v1\")\\s*[,}]") | not)] | length) != 1))
+          or (("#" + .expression) | split("\"targetRef\"")
+            | (([.[] | select(test("^\\s*:\\s*dyn\\(\\s*\\{\\s*\"apiVersion\"\\s*:\\s*\"apps/v1\"\\s*,\\s*\"kind\"\\s*:\\s*\"(Deployment|DaemonSet|StatefulSet)\"\\s*,") | not)] | length) != 1))
+          or ((.expression | split("\"apps/v1\"") | length) != (.expression | split("\"targetRef\"") | length))
+          or (((.expression | split("\"Deployment\"") | length)
+              + (.expression | split("\"DaemonSet\"") | length)
+              + (.expression | split("\"StatefulSet\"") | length) - 2)
+            != (.expression | split("\"targetRef\"") | length)))] | length) == 0))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi

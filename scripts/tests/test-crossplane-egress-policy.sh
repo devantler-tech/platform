@@ -1056,13 +1056,13 @@ assert_reviewed_generation_variant_rejected \
   'generating-policy-resource-clone' \
   "${auto_vpa_generating_policy_fixture/          \[
             \{/          [resource.Get(\"cilium.io/v2\", \"ciliumnetworkpolicies\", \"default\", \"x\"),
-            \{}" \
+            {}" \
   'a GeneratingPolicy that clones an existing object must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-workload-clone' \
   "${auto_vpa_generating_policy_fixture/          \[
             \{/          [object,
-            \{}" \
+            {}" \
   'a GeneratingPolicy that copies the workload must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-computed-key' \
@@ -1078,6 +1078,16 @@ assert_reviewed_generation_variant_rejected \
               \}/\"namespace\": string(object.metadata.labels.target)
               \}}" \
   'a GeneratingPolicy that reads workload data beyond its name and namespace must stay rejected'
+generated_deployment_variant="${auto_vpa_generating_policy_fixture/\"kind\": dyn(\"VerticalPodAutoscaler\")/\"kind\": \"Deployment\"}"
+generated_deployment_variant="${generated_deployment_variant/\"apiVersion\": dyn(\"autoscaling.k8s.io\/v1\")/\"apiVersion\": \"apps/v1\"}"
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-generated-deployment' \
+  "${generated_deployment_variant}" \
+  'a GeneratingPolicy that builds an apps workload instead of a VerticalPodAutoscaler must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-unbound-apps-kind' \
+  "${auto_vpa_generating_policy_fixture/\"updateMode\": \"InPlaceOrRecreate\"/\"updateMode\": \"InPlaceOrRecreate\", \"kind\": \"Deployment\"}" \
+  'an apps kind literal outside the targetRef head must stay rejected'
 
 helm_admin_network_policy_fixture=$'apiVersion: policy.networking.k8s.io/v1alpha1\nkind: AdminNetworkPolicy\nmetadata:\n  name: crossplane-world-egress\nspec:\n  priority: 10\n  subject:\n    namespaces:\n      matchLabels:\n        kubernetes.io/metadata.name: crossplane-system\n  egress:\n  - name: allow-world\n    action: Allow\n    to:\n    - networks: [0.0.0.0/0]'
 assert_helm_rules_reject \
