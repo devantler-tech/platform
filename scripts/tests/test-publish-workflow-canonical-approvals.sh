@@ -202,11 +202,15 @@ expect_refusal 'a second recorded commit the matcher does not carry is refused, 
 
 root="$(build_tree record-app-consumer)"
 write_record "$root" "$(record_row "$app_consumer" "$SHA_K")"
-expect_refusal 'an application-image consumer cannot accept the canonical publisher' "$root" "$app_consumer" 'publish-app'
+expect_refusal 'an application consumer cannot approve the manifest workflow' "$root" "$app_consumer" 'publish-app'
 
 root="$(build_tree record-app-workflow)"
 write_record "$root" "$(printf '%s\tpublish-app\t%s\t%s' "$manifest_consumer" "$CANONICAL_REPOSITORY" "$SHA_K")"
-expect_refusal 'the canonical application workflow is not approved' "$root" 'is not the canonical manifest workflow'
+expect_refusal 'a manifest consumer cannot approve the application workflow' "$root" "$manifest_consumer" 'publishes with publish-manifests'
+
+root="$(build_tree record-unknown-workflow)"
+write_record "$root" "$(printf '%s\tpublish-other\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_K")"
+expect_refusal 'an unknown canonical workflow is refused' "$root" 'not a supported canonical workflow'
 
 root="$(build_tree record-unregistered)"
 write_record "$root" "$(record_row nobody "$SHA_K")"
@@ -239,6 +243,25 @@ root="$(build_tree family-agrees)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")"
 write_consumer "$root" "$manifest_consumer" "$(family_subject publish-manifests "$LEGACY_SET" "$SHA_K")"
 expect_pass 'a two-family matcher naming the recorded commit and the legacy set passes' "$root"
+
+# Application approvals use the same strict record and one anchored identity;
+# supporting the family does not approve any application until a record names it.
+app_row="$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_K")"
+root="$(build_tree app-family-agrees)"
+write_record "$root" "$app_row"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$SHA_K")"
+expect_pass 'an application accepts only its matching recorded publisher' "$root"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$SHA_X")"
+expect_refusal 'an application refuses an unapproved canonical commit' "$root" "$app_consumer" "$SHA_X" "$SHA_K"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "$PATTERN")"
+expect_refusal 'an application refuses a wildcard canonical revision' "$root" 'not one 40-hex commit'
+
+root="$(build_tree app-family-moving)"
+write_record "$root" "$app_row" "$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_X")"
+write_consumer "$root" "$app_consumer" "$(family_subject publish-app "$LEGACY_SET" "($SHA_K|$SHA_X)")"
+expect_pass 'an application may overlap exactly two reviewed canonical commits' "$root"
+write_record "$root" "$app_row" "$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_X")" "$(printf '%s\tpublish-app\t%s\t%s' "$app_consumer" "$CANONICAL_REPOSITORY" "$SHA_A")"
+expect_refusal 'an application may not approve a third canonical commit' "$root" 'at most two canonical commits'
 
 root="$(build_tree family-both)"
 write_record "$root" "$(record_row "$manifest_consumer" "$SHA_K")" "$(record_row "$other_manifest_consumer" "$SHA_X")"
@@ -404,6 +427,28 @@ ENFORCE=1
 
 # ── the writer ────────────────────────────────────────────────────────────────────────────
 subject_in() { yq eval -r 'select(.kind == "OCIRepository") | .spec.verify.matchOIDCIdentity[0].subject' "$1"; }
+
+root="$(build_tree writer-app)"
+write_record "$root" "$app_row"
+cp "$root/$(manifest_path "$manifest_consumer")" "$WORK/writer-app.other"
+want="$(family_subject publish-app "$LEGACY_SET" "$SHA_K")"
+if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$app_consumer")")" = "$want" ]; then
+  pass 'writer: renders the approved application family without widening revisions'
+else
+  fail 'writer: did not render the approved application family'; printf '%s\n' "$out" >&2
+fi
+expect_pass 'writer: its application output passes the enforcing guard' "$root"
+if cmp -s "$root/$(manifest_path "$manifest_consumer")" "$WORK/writer-app.other"; then
+  pass 'writer: an application approval leaves the unapproved manifest consumer unchanged'
+else
+  fail 'writer: an application approval changed another consumer'
+fi
+write_record "$root"
+if out="$(run_in "$root" "$WRITER")" && [ "$(subject_in "$root/$(manifest_path "$app_consumer")")" = "$(legacy_subject publish-app "$LEGACY_SET")" ]; then
+  pass 'writer: withdrawing an application approval restores its exact legacy identity'
+else
+  fail 'writer: retained a withdrawn application approval'; printf '%s\n' "$out" >&2
+fi
 
 root="$(build_tree writer-legacy)"
 cp -R "$root" "$WORK/writer-legacy.before"

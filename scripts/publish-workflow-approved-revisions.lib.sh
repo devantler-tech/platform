@@ -37,7 +37,7 @@ readonly SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/wo
 readonly PATTERN_REF='[0-9a-f]{40}'
 
 # ── Publisher families (#4502) ──────────────────────────────────────────────────────────
-# A manifest artifact may additionally accept a reviewed commit of the canonical manifest
+# A registered consumer may additionally accept a reviewed commit of its canonical publisher
 # workflow, which lives in a second repository: ONE in the steady state, and TWO only while its
 # publisher moves from the first to the second (#4713), so the artifact signed at the old
 # commit and the one signed at the new are both accepted across the move. That approval is a
@@ -49,7 +49,6 @@ readonly PATTERN_REF='[0-9a-f]{40}'
 readonly CANONICAL_SET="${CANONICAL_APPROVALS_FILE:-$REPO_ROOT/scripts/publish-workflow-canonical-approvals.tsv}"
 readonly CANONICAL_HEADER=$'consumer\tworkflow\trepository\tcommit'
 readonly CANONICAL_REPOSITORY='devantler-tech/.github'
-readonly CANONICAL_WORKFLOW='publish-manifests'
 readonly FAMILY_PREFIX='^https://github\.com/devantler-tech/('
 readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
 readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
@@ -203,7 +202,7 @@ while IFS=$'\t' read -r consumer _rest; do
 done <<<"$approved"
 
 # ── 1b. The canonical approvals, read strictly ──────────────────────────────────────────
-# One row approves one reviewed commit of the canonical manifest workflow for one manifest
+# One row approves one reviewed commit of the matching canonical workflow for one registered
 # consumer. A consumer may hold two rows, never more: the commit its publisher is moving from
 # and the one it is moving to (#4713). The first row is dropped once the move has landed.
 # Anything this reader cannot place exactly is refused: an approval it skipped would
@@ -229,13 +228,15 @@ while IFS= read -r row || [ -n "$row" ]; do
   plausible_repo "$consumer" || refuse "canonical approvals line $line_no names an implausible consumer '$consumer'"
   [ "$repository" = "$CANONICAL_REPOSITORY" ] ||
     refuse "canonical approvals line $line_no ($consumer): '$repository' is not a known publisher family; only $CANONICAL_REPOSITORY is"
-  [ "$workflow" = "$CANONICAL_WORKFLOW" ] ||
-    refuse "canonical approvals line $line_no ($consumer): '$workflow' is not the canonical manifest workflow; only $CANONICAL_WORKFLOW is"
+  case "$workflow" in
+    publish-app | publish-manifests) ;;
+    *) refuse "canonical approvals line $line_no ($consumer): '$workflow' is not a supported canonical workflow" ;;
+  esac
   is_sha "$commit" || refuse "canonical approvals line $line_no ($consumer): commit '$commit' is not a 40-hex commit"
   set_record="$(lookup "$approved" "$consumer")"
   [ -n "$set_record" ] || refuse "canonical approvals line $line_no names $consumer, which is not a registered consumer"
-  [ "${set_record%%$'\t'*}" = "$CANONICAL_WORKFLOW" ] ||
-    refuse "canonical approvals line $line_no: $consumer publishes with ${set_record%%$'\t'*}, and only $CANONICAL_WORKFLOW consumers may accept the canonical publisher"
+  [ "${set_record%%$'\t'*}" = "$workflow" ] ||
+    refuse "canonical approvals line $line_no: $consumer publishes with ${set_record%%$'\t'*}, not the approved workflow $workflow"
   held="$(lookup "$canonical" "$consumer")"
   case "$held" in
     '') canonical="${canonical}${consumer}"$'\t'"${commit}"$'\n' ;;
