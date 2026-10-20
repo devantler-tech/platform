@@ -17,9 +17,10 @@ resource still gets a current result when it may already have one:
 - `exclude`, a changed `match` or a narrower `matchConstraints` emits no
   replacement result.
 
-A shape that writes no result can leave an older result visible even after hourly background
-scans. Issue #2573 reproduced this with `validate-replica-floor`: eleven June
-failures remained while unrelated results in the same reports kept refreshing.
+A shape that writes no result can leave an older result visible even after
+hourly background scans. Issue #2573 reproduced this with
+`validate-replica-floor`: eleven June failures remained while unrelated
+results in the same reports kept refreshing.
 The policy's committed Kyverno test pins the supported exemption shape:
 
 ```bash
