@@ -11,8 +11,8 @@
 # ../../kustomization.yaml, and that patch remains what actually hardens the
 # workload. The mutate rule is a no-op here either way.
 #
-# What the label adds is the ENFORCE RATCHET — the `disallow-host-users`
-# validate rule in validate-host-restrictions.yaml, which is scoped by this
+# What the label adds is the ENFORCE RATCHET — the hostUsers validation in
+# validate-host-restrictions.yaml, which is scoped by this
 # same label. Without it headlamp was the one user-namespaced workload whose
 # isolation rested on a single line of kustomize config: drop that values
 # patch in a chart bump, a bad conflict resolution or an overshooting revert,
@@ -22,9 +22,9 @@
 # admission instead.
 #
 # Safe to apply now: the pilot (#2651) is verified and closed, the running pod
-# already sets hostUsers: false explicitly and so passes =(hostUsers): false
+# already sets hostUsers: false explicitly and so passes the hostUsers check
 # unchanged, headlamp is the only workload in the namespace, and it holds no
-# CNPG pods, so the rules' cnpg.io/cluster exclude is moot here. Runtime plugin
+# CNPG pods, so the policies' cnpg.io/cluster exclusion is moot here. Runtime plugin
 # downloads and their Longhorn PVC have since been removed; the disposable
 # userns-longhorn-smoke Job retains the storage proof independently (#2619).
 #

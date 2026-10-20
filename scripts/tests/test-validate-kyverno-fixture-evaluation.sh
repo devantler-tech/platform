@@ -337,14 +337,15 @@ yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.c
 expect_fail "an evaluated policy with the same edit" "${root}" 1 "Want pass, got fail"
 
 # #5133: the host-access baseline must reject a permission broadening in each
-# general rule. Keep the rule and scope intact so this proves that the denial
-# resources are evaluated, rather than merely detecting a missing rule name.
-for host_rule in disallow-host-path disallow-host-namespaces; do
-  root="$(copy "weaken-${host_rule}" validate-host-restrictions)"
-  HOST_RULE="${host_rule}" yq -i \
-    '(.spec.rules[] | select(.name == strenv(HOST_RULE)) | .validate.pattern) = {"spec": {}}' \
+# check (0 host paths, 1 host namespaces, 2 hostUsers). Each check in turn is
+# replaced with one that allows everything, so this proves that the fixture's
+# denial cases are evaluated against that check, not merely present.
+for host_check in 0 1 2; do
+  root="$(copy "weaken-host-check-${host_check}" validate-host-restrictions)"
+  HOST_CHECK="${host_check}" yq -i \
+    '.spec.validations[env(HOST_CHECK)].expression = "true"' \
     "${root}/${policies}/validate-host-restrictions.yaml"
-  expect_fail "weakened ${host_rule}" "${root}" 1 "kyverno test tests failed"
+  expect_fail "weakened host check ${host_check}" "${root}" 1 "kyverno test tests failed"
 done
 
 # A fixture whose expectation is wrong still fails through kyverno itself.
