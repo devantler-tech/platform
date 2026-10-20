@@ -1,0 +1,14 @@
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: missing-claim-unguarded
+  namespace: observability
+spec:
+  containers:
+    - name: app
+      image: busybox
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: data-missing-claim-unguarded
