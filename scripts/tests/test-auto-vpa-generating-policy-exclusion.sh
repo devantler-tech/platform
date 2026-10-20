@@ -12,7 +12,7 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
-policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-generating-policy.yaml"
+policies="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices"
 static_vpas="${repo_root}/k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers"
 
 work="$(mktemp -d)"
@@ -34,6 +34,7 @@ fi
 checked=0
 for kind in deployment statefulset daemonset; do
   name="auto-vpa-${kind}"
+  policy="${policies}/${name}.yaml"
   fixtures="${repo_root}/tests/auto-vpa-generating-policy-${kind}"
   excluded="$(yq -N "select(.metadata.name == \"${name}\")
     | .spec.matchConstraints.namespaceSelector.matchExpressions[]

@@ -13,7 +13,9 @@ resources:
   # form, is deliberately NOT registered: it stays, still tested, as the
   # rollback form. Never register both, because they name their VPAs
   # differently and every workload would get two.
-  - best-practices/auto-vpa-generating-policy.yaml
+  - best-practices/auto-vpa-daemonset.yaml
+  - best-practices/auto-vpa-deployment.yaml
+  - best-practices/auto-vpa-statefulset.yaml
   - best-practices/audit-privileged-rbac.yaml
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml

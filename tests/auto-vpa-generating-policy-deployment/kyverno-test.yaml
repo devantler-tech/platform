@@ -10,7 +10,7 @@ kind: Test
 metadata:
   name: auto-vpa-generating-policy-deployment
 policies:
-  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-generating-policy.yaml
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-deployment.yaml
 resources:
   - resources.yaml
 variables: values.yaml
