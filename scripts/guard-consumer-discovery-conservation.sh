@@ -749,7 +749,10 @@ while IFS=$'\t' read -r file label; do
   # The second reviewed shape (#5102) is the shared catalog's auto-vpa: a
   # Kyverno GeneratingPolicy whose spec holds only evaluation settings, one
   # apps resource rule (apiGroups, apiVersions, operations, resources) naming
-  # one deployments, daemonsets or statefulsets resource, and one generate
+  # one deployments, daemonsets or statefulsets resource, optionally a
+  # namespaceSelector that only excludes named namespaces (#5125: matchExpressions
+  # alone, each kubernetes.io/metadata.name NotIn a list of strings; a label
+  # selector is not CEL and can only narrow what triggers), and one generate
   # expression equal, whitespace aside, to the reviewed one for that resource
   # (REVIEWED_AUTO_VPA_*). That expression builds only a
   # VerticalPodAutoscaler for the triggering workload, in its own namespace,
@@ -791,7 +794,19 @@ while IFS=$'\t' read -r file label; do
           and ([.spec.evaluation | keys | .[] | select((. == "admission" or . == "generateExisting"
             or . == "synchronize" or . == "orphanDownstreamOnPolicyDelete") | not)] | length) == 0))
         and (.spec.matchConstraints | type) == "!!map"
-        and ([.spec.matchConstraints | keys | .[] | select(. != "resourceRules")] | length) == 0
+        and ([.spec.matchConstraints | keys | .[] | select((. == "resourceRules"
+          or . == "namespaceSelector") | not)] | length) == 0
+        and ((.spec.matchConstraints | has("namespaceSelector") | not)
+          or ((.spec.matchConstraints.namespaceSelector | type) == "!!map"
+            and ([.spec.matchConstraints.namespaceSelector | keys | .[] | select(. != "matchExpressions")] | length) == 0
+            and (.spec.matchConstraints.namespaceSelector.matchExpressions | type) == "!!seq"
+            and (.spec.matchConstraints.namespaceSelector.matchExpressions | length) > 0
+            and ([.spec.matchConstraints.namespaceSelector.matchExpressions[] | select(type != "!!map"
+              or ([keys | .[] | select((. == "key" or . == "operator" or . == "values") | not)] | length) != 0
+              or (.key | type) != "!!str" or .key != "kubernetes.io/metadata.name"
+              or (.operator | type) != "!!str" or .operator != "NotIn"
+              or (.values | type) != "!!seq" or (.values | length) == 0
+              or ([.values[] | select(type != "!!str")] | length) != 0)] | length) == 0))
         and (.spec.matchConstraints.resourceRules | type) == "!!seq"
         and (.spec.matchConstraints.resourceRules | length) == 1
         and (.spec.matchConstraints.resourceRules[0] | type) == "!!map"

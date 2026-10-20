@@ -644,7 +644,10 @@ rules:
   # policies/best-practices/auto-vpa-generating-policy.yaml): a
   # GeneratingPolicy whose spec holds only evaluation settings, one apps
   # resource rule (apiGroups, apiVersions, operations, resources) naming one
-  # deployments, daemonsets or statefulsets resource, and one generate
+  # deployments, daemonsets or statefulsets resource, optionally (#5125) a
+  # namespaceSelector whose only field is matchExpressions, each
+  # kubernetes.io/metadata.name NotIn a list of names (a label selector is not
+  # CEL and can only narrow which workloads trigger it), and one generate
   # expression that equals the catalog's expression for that resource once
   # spaces, tabs and line breaks are removed from both. Every other spec field
   # is refused, because variables and matchConditions are CEL that can read or
@@ -707,7 +710,20 @@ rules:
           'admission', 'generateExisting', 'synchronize',
           'orphanDownstreamOnPolicyDelete'])) &&
        has(object.spec.matchConstraints) &&
-       object.spec.matchConstraints.all(key, key == 'resourceRules') &&
+       object.spec.matchConstraints.all(key,
+         key in ['resourceRules', 'namespaceSelector']) &&
+       (!has(object.spec.matchConstraints.namespaceSelector) ||
+        (object.spec.matchConstraints.namespaceSelector.all(key,
+           key == 'matchExpressions') &&
+         has(object.spec.matchConstraints.namespaceSelector.matchExpressions) &&
+         object.spec.matchConstraints.namespaceSelector.matchExpressions.size() > 0 &&
+         object.spec.matchConstraints.namespaceSelector.matchExpressions.all(expression,
+           expression.all(key, key in ['key', 'operator', 'values']) &&
+           has(expression.key) &&
+           expression.key == 'kubernetes.io/metadata.name' &&
+           has(expression.operator) && expression.operator == 'NotIn' &&
+           has(expression.values) && expression.values.size() > 0 &&
+           expression.values.all(value, type(value) == string)))) &&
        has(object.spec.matchConstraints.resourceRules) &&
        object.spec.matchConstraints.resourceRules.size() == 1 &&
        object.spec.matchConstraints.resourceRules[0].all(key, key in [

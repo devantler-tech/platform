@@ -1175,6 +1175,54 @@ assert_helm_rules_accept \
   "${auto_vpa_one_line_fixture}" \
   'a reviewed GeneratingPolicy that differs only in whitespace is the reviewed exception'
 
+# #5125: a namespaceSelector that only excludes named namespaces keeps the
+# reviewed shape; every other selector form voids it.
+auto_vpa_namespace_exclusion_fixture="${auto_vpa_generating_policy_fixture/  matchConstraints:
+/  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values: [\"kube-system\", \"kube-public\", \"kube-node-lease\", \"kyverno\"]
+}"
+[ "${auto_vpa_namespace_exclusion_fixture}" != "${auto_vpa_generating_policy_fixture}" ] ||
+  fail 'the namespace-excluded GeneratingPolicy must differ from the reviewed one'
+assert_helm_rules_accept \
+  'auto-vpa-generating-policy-namespace-exclusion' \
+  "${auto_vpa_namespace_exclusion_fixture}" \
+  'a reviewed GeneratingPolicy that excludes named namespaces is the reviewed exception'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-namespace-match-labels' \
+  "${auto_vpa_namespace_exclusion_fixture/      matchExpressions:/      matchLabels:
+        team: platform
+      matchExpressions:}" \
+  'a namespaceSelector with matchLabels must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-namespace-in-operator' \
+  "${auto_vpa_namespace_exclusion_fixture/operator: NotIn/operator: In}" \
+  'a namespaceSelector that selects namespaces must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-namespace-exists-operator' \
+  "${auto_vpa_namespace_exclusion_fixture/operator: NotIn/operator: Exists}" \
+  'an Exists namespaceSelector must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-namespace-other-key' \
+  "${auto_vpa_namespace_exclusion_fixture/key: kubernetes.io\/metadata.name/key: team}" \
+  'a namespaceSelector on another label must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-namespace-empty-values' \
+  "${auto_vpa_namespace_exclusion_fixture/values: \[\"kube-system\", \"kube-public\", \"kube-node-lease\", \"kyverno\"\]/values: []}" \
+  'a namespaceSelector with no values must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-object-selector' \
+  "${auto_vpa_generating_policy_fixture/  matchConstraints:
+/  matchConstraints:
+    objectSelector:
+      matchLabels:
+        app: x
+}" \
+  'an objectSelector must void the reviewed GeneratingPolicy shape'
+
 helm_admin_network_policy_fixture=$'apiVersion: policy.networking.k8s.io/v1alpha1\nkind: AdminNetworkPolicy\nmetadata:\n  name: crossplane-world-egress\nspec:\n  priority: 10\n  subject:\n    namespaces:\n      matchLabels:\n        kubernetes.io/metadata.name: crossplane-system\n  egress:\n  - name: allow-world\n    action: Allow\n    to:\n    - networks: [0.0.0.0/0]'
 assert_helm_rules_reject \
   'helm-crossplane-admin-network-policy' \

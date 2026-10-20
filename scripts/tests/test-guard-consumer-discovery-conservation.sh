@@ -1221,6 +1221,32 @@ YAML
     { printf 'FAIL: the one-line variant did not change the reviewed GeneratingPolicy\n' >&2; failures=$((failures + 1)); }
   printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed auto-vpa GeneratingPolicy on one line does not alter consumers' "$root" '2 consumer(s)'
+  # #5125: a NotIn exclusion of named namespaces passes too; a label selector
+  # only narrows which workloads the policy reacts to.
+  root="$(fixture reviewed-cel-generation-namespace-exclusion)"
+  yq '.spec.matchConstraints.namespaceSelector = {"matchExpressions": [{"key": "kubernetes.io/metadata.name", "operator": "NotIn", "values": ["kube-system", "kube-public", "kube-node-lease", "kyverno"]}]}' \
+    "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" >"$root/k8s/providers/prod/apps/cel-generation.yaml"
+  printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'the reviewed auto-vpa GeneratingPolicy with a namespace exclusion does not alter consumers' "$root" '2 consumer(s)'
+  for target in match-labels in-operator exists-operator other-key object-selector empty-expressions empty-values non-string-value extra-expression-key; do
+    root="$(fixture "reviewed-cel-generation-namespace-exclusion-$target")"
+    cp "$WORK/reviewed-cel-generation-namespace-exclusion/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml"
+    case "$target" in
+      match-labels) yq -i '.spec.matchConstraints.namespaceSelector.matchLabels = {"team": "platform"}' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      in-operator) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0].operator = "In"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      exists-operator) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0] |= (.operator = "Exists" | del(.values))' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      other-key) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0].key = "team"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      object-selector) yq -i '.spec.matchConstraints.objectSelector = {"matchLabels": {"app": "x"}}' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      empty-expressions) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions = []' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      empty-values) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0].values = []' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      non-string-value) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0].values += [{"name": "x"}]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      extra-expression-key) yq -i '.spec.matchConstraints.namespaceSelector.matchExpressions[0].extra = "x"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+    esac
+    cmp -s "$WORK/reviewed-cel-generation-namespace-exclusion/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&
+      { printf 'FAIL: the %s variant did not change the namespace-excluded GeneratingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
+    printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a $target namespace selector is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
+  done
   for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind unbound-target-ref other-target-name literal-apply-namespace literal-object-namespace mismatched-trigger second-generation match-conditions foreign-group split-literal delete-operation any-version; do
     root="$(fixture "reviewed-cel-generation-$target")"
     cp "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml"
