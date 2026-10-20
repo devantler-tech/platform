@@ -141,6 +141,21 @@ if kyverno_passes "generated object named apart from its trigger" "${root}"; the
   expect_pass "generated object named apart from its trigger" "${root}"
 fi
 
+# #5130: a GeneratingPolicy has no spec.rules; kyverno names its one rule after the policy.
+# A row naming any other rule must still fail check 1, and a row expecting an object the
+# policy never generates must still fail.
+root="$(copy generating-policy-rule auto-vpa-generating-policy-deployment)"
+yq -i '.results[0].rule = "generate-vpa-for-deployment"' \
+  "${root}/tests/auto-vpa-generating-policy-deployment/kyverno-test.yaml"
+expect_fail "GeneratingPolicy row naming a rule it does not define" "${root}" 1 \
+  "names rule generate-vpa-for-deployment of policy auto-vpa-deployment"
+root="$(copy generating-policy-missing auto-vpa-generating-policy-deployment)"
+yq -i '.metadata.namespace = "other-ns"' "${root}/tests/auto-vpa-generating-policy-deployment/resources.yaml"
+yq -i '.namespaceSelector[0].name = "other-ns" | .namespaceSelector[0].labels."kubernetes.io/metadata.name" = "other-ns"' \
+  "${root}/tests/auto-vpa-generating-policy-deployment/values.yaml"
+yq -i '.metadata.name = "absent-deployment"' "${root}/tests/auto-vpa-generating-policy-deployment/generated-vpa.yaml"
+expect_fail "GeneratingPolicy expecting an object it never generates" "${root}" 1 "kyverno test"
+
 # A generate row names only the object it generates, so the triggers of one entry that all
 # generate the same fixed-name object share its name, and kyverno drops a misspelled one
 # without a row or a failure.

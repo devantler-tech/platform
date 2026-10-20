@@ -101,6 +101,11 @@ for test_file in "${test_files[@]}"; do
       | .spec.rules[]
       | [$p, .name, ([.match.resources.kinds[]?, .match.any[]?.resources.kinds[]?, .match.all[]?.resources.kinds[]?] | join(",")), $c, $generates, $patches, $filters]
       | join("|")' "${dir}/${policy_path}" >>"${work}/rules"
+    # A GeneratingPolicy has no spec.rules: kyverno reports its one generate as a rule named
+    # after the policy, and generates no autogen rules for it (#5130).
+    yq -r 'select(.kind == "GeneratingPolicy" and .metadata.name != null)
+      | [.metadata.name, .metadata.name, "", "", "true", "false", "false"] | join("|")' \
+      "${dir}/${policy_path}" >>"${work}/rules"
   done < <(yq -r '.policies[]' "${test_file}")
 
   while IFS=$'\t' read -r policy rule; do

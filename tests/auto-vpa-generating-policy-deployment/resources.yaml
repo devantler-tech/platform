@@ -1,0 +1,18 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shared
+  namespace: apps-ns
+spec:
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      containers:
+        - name: web
+          image: registry.k8s.io/pause:3.10

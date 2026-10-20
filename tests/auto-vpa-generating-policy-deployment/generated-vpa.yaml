@@ -1,0 +1,26 @@
+---
+apiVersion: autoscaling.k8s.io/v1
+kind: VerticalPodAutoscaler
+metadata:
+  name: shared-deployment
+  namespace: apps-ns
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: shared
+  updatePolicy:
+    updateMode: InPlaceOrRecreate
+  resourcePolicy:
+    containerPolicies:
+      - containerName: "*"
+        controlledResources:
+          - cpu
+          - memory
+        controlledValues: RequestsAndLimits
+        minAllowed:
+          cpu: 50m
+          memory: 64Mi
+        maxAllowed:
+          cpu: "3"
+          memory: 6Gi
