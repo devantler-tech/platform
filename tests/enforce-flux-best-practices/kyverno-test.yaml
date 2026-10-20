@@ -1,0 +1,57 @@
+# Pins the policy's behaviour across its ValidatingPolicy rewrite (#5128).
+# A Kustomization needs a non-empty interval, timeout and retry interval,
+# prune: true, wait: true and a named source; a HelmRelease needs an interval,
+# a timeout, install and upgrade remediation retries (at least 1, or -1 for
+# unlimited) and upgrade remediateLastFailure: true. The base policy has no
+# UniFi exemption (the Hetzner overlay adds it), and the flux-system bootstrap
+# exclusion covers only the Kustomization, never a HelmRelease of that name.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: enforce-flux-best-practices
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/flux/enforce-flux-best-practices.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: enforce-flux-best-practices
+    rule: kustomization-recommended-settings
+    resources:
+      - tenant/ks-compliant
+    kind: Kustomization
+    result: pass
+  - policy: enforce-flux-best-practices
+    rule: kustomization-recommended-settings
+    resources:
+      - tenant/ks-missing-interval
+      - tenant/ks-missing-timeout
+      - tenant/ks-missing-retry-interval
+      - tenant/ks-prune-disabled
+      - tenant/ks-missing-prune
+      - tenant/ks-missing-wait
+      - tenant/ks-missing-source-name
+      - tenant/ks-empty-interval
+      - unifi/unifi
+    kind: Kustomization
+    result: fail
+  - policy: enforce-flux-best-practices
+    rule: helmrelease-recommended-settings
+    resources:
+      - tenant/hr-compliant
+      - tenant/hr-unlimited-retries
+    kind: HelmRelease
+    result: pass
+  - policy: enforce-flux-best-practices
+    rule: helmrelease-recommended-settings
+    resources:
+      - tenant/hr-missing-interval
+      - tenant/hr-missing-timeout
+      - tenant/hr-missing-install-remediation
+      - tenant/hr-zero-install-retries
+      - tenant/hr-missing-upgrade-remediation
+      - tenant/hr-zero-upgrade-retries
+      - tenant/hr-no-remediate-last-failure
+      - tenant/hr-missing-remediate-last-failure
+      - flux-system/flux-system
+    kind: HelmRelease
+    result: fail
