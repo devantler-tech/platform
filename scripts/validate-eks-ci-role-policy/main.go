@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -184,72 +185,95 @@ func validateUnifiSigningKey(documents []map[string]any) error {
 	return nil
 }
 
+// errUnifiPruneExemption is the single diagnostic for every shape the UniFi
+// prune exemption must not take.
+var errUnifiPruneExemption = errors.New(
+	"enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement",
+)
+
+// fluxPolicyMatchConstraints is the only scope enforce-flux-best-practices may
+// render with: an added resourceNames, a dropped operation or rule, or any
+// exclude or selector field would take objects out of scope without a
+// matchCondition.
+func fluxPolicyMatchConstraints() map[string]any {
+	return map[string]any{"resourceRules": []any{
+		map[string]any{
+			"apiGroups":   []any{"kustomize.toolkit.fluxcd.io"},
+			"apiVersions": []any{"v1"},
+			"operations":  []any{"CREATE", "UPDATE"},
+			"resources":   []any{"kustomizations"},
+		},
+		map[string]any{
+			"apiGroups":   []any{"helm.toolkit.fluxcd.io"},
+			"apiVersions": []any{"v2"},
+			"operations":  []any{"CREATE", "UPDATE"},
+			"resources":   []any{"helmreleases"},
+		},
+	}}
+}
+
+// fluxPolicyExclusionExpression is the matchCondition expression that leaves
+// exactly one namespaced Kustomization out of enforce-flux-best-practices.
+func fluxPolicyExclusionExpression(namespace, name string) string {
+	return fmt.Sprintf(
+		"!(object.kind == 'Kustomization' && "+
+			"object.metadata.?namespace.orValue('') == '%s' && "+
+			"object.metadata.name == '%s')",
+		namespace, name,
+	)
+}
+
 // validateUnifiPruneExemption keeps the deliberate non-pruning reconciler
 // deployable while requiring the admission-policy exception to remain scoped
-// to exactly one namespaced Kustomization.
+// to exactly one namespaced Kustomization. The policy's exclusions are its
+// matchConditions, so the rendered policy must carry exactly the bootstrap and
+// UniFi conditions and no other way to narrow its scope.
 func validateUnifiPruneExemption(document map[string]any, identity resourceIdentity) error {
 	wantIdentity := resourceIdentity{
-		apiVersion: "kyverno.io/v1",
-		kind:       "ClusterPolicy",
+		apiVersion: "policies.kyverno.io/v1",
+		kind:       "ValidatingPolicy",
 		name:       "enforce-flux-best-practices",
 	}
 	if identity != wantIdentity {
 		return nil
 	}
 
-	exactSingleton := func(value any, want string) bool {
-		values, ok := value.([]any)
-		return ok && len(values) == 1 && values[0] == want
-	}
 	spec, ok := document["spec"].(map[string]any)
 	if !ok {
-		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+		return errUnifiPruneExemption
 	}
-	rules, ok := spec["rules"].([]any)
+	constraints, ok := spec["matchConstraints"].(map[string]any)
 	if !ok {
-		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+		return errUnifiPruneExemption
 	}
-	for _, ruleValue := range rules {
-		rule, ok := ruleValue.(map[string]any)
-		if !ok || rule["name"] != "kustomization-recommended-settings" {
-			continue
-		}
-		exclude, ok := rule["exclude"].(map[string]any)
-		if !ok {
-			break
-		}
-		exclusions, ok := exclude["any"].([]any)
-		if !ok {
-			break
-		}
-		seenFluxSystem := false
-		seenUnifi := false
-		for _, exclusionValue := range exclusions {
-			exclusion, ok := exclusionValue.(map[string]any)
-			if !ok {
-				break
-			}
-			resources, ok := exclusion["resources"].(map[string]any)
-			if !ok {
-				break
-			}
-			switch {
-			case exactSingleton(resources["namespaces"], "flux-system") &&
-				exactSingleton(resources["names"], "flux-system") && !seenFluxSystem:
-				seenFluxSystem = true
-			case exactSingleton(resources["namespaces"], "unifi") &&
-				exactSingleton(resources["names"], "unifi") && !seenUnifi:
-				seenUnifi = true
-			default:
-				return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
-			}
-		}
-		if seenFluxSystem && seenUnifi && len(exclusions) == 2 {
-			return nil
-		}
-		break
+	if !reflect.DeepEqual(constraints, fluxPolicyMatchConstraints()) {
+		return errUnifiPruneExemption
 	}
-	return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+	conditions, ok := spec["matchConditions"].([]any)
+	if !ok || len(conditions) != 2 {
+		return errUnifiPruneExemption
+	}
+	want := map[string]string{
+		"not-flux-bootstrap-kustomization": fluxPolicyExclusionExpression("flux-system", "flux-system"),
+		"not-unifi-kustomization":          fluxPolicyExclusionExpression("unifi", "unifi"),
+	}
+	for _, conditionValue := range conditions {
+		condition, ok := conditionValue.(map[string]any)
+		if !ok || len(condition) != 2 {
+			return errUnifiPruneExemption
+		}
+		name, _ := condition["name"].(string)
+		expression, _ := condition["expression"].(string)
+		wantExpression, known := want[name]
+		if !known || strings.Join(strings.Fields(expression), " ") != wantExpression {
+			return errUnifiPruneExemption
+		}
+		delete(want, name)
+	}
+	if len(want) != 0 {
+		return errUnifiPruneExemption
+	}
+	return nil
 }
 
 // expectedRenderedHashes preserves object-specific diagnostics for the core

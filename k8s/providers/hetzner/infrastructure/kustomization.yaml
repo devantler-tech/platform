@@ -214,19 +214,19 @@ patches:
   # remains strict for every other environment. The authorization validator pins
   # the rendered exception set and the reconciler's immutable source/delete bounds.
   - target:
-      group: kyverno.io
+      group: policies.kyverno.io
       version: v1
-      kind: ClusterPolicy
+      kind: ValidatingPolicy
       name: enforce-flux-best-practices
     patch: |
       - op: add
-        path: /spec/rules/0/exclude/any/-
+        path: /spec/matchConditions/-
         value:
-          resources:
-            namespaces:
-              - unifi
-            names:
-              - unifi
+          name: not-unifi-kustomization
+          expression: >-
+            !(object.kind == 'Kustomization' &&
+            object.metadata.?namespace.orValue('') == 'unifi' &&
+            object.metadata.name == 'unifi')
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: patches/attach-hcloud-load-balancer.yaml

@@ -1,0 +1,388 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-compliant
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-missing-interval
+  namespace: tenant
+spec:
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-missing-timeout
+  namespace: tenant
+spec:
+  interval: 1m
+  retryInterval: 2m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-missing-retry-interval
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-prune-disabled
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: false
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-missing-prune
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-missing-wait
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-missing-source-name
+  namespace: tenant
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: ks-empty-interval
+  namespace: tenant
+spec:
+  interval: ""
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: unifi
+  namespace: unifi
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: false
+  wait: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-compliant
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-unlimited-retries
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: -1
+  upgrade:
+    remediation:
+      retries: -1
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-missing-interval
+  namespace: tenant
+spec:
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-missing-timeout
+  namespace: tenant
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-missing-install-remediation
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-zero-install-retries
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 0
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-missing-upgrade-remediation
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-zero-upgrade-retries
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 0
+      remediateLastFailure: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-no-remediate-last-failure
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: false
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: hr-missing-remediate-last-failure
+  namespace: tenant
+spec:
+  interval: 1h
+  timeout: 10m
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: flux-system
+  namespace: flux-system
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: app
+      sourceRef:
+        kind: HelmRepository
+        name: app
+  install:
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+      remediateLastFailure: true
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: github-config
+  namespace: github-config
+spec:
+  interval: 1m
+  timeout: 5m
+  retryInterval: 2m
+  prune: true
+  sourceRef:
+    kind: OCIRepository
+    name: platform
