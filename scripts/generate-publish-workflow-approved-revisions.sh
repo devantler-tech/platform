@@ -224,7 +224,7 @@ signer_for_tag() {
        | .referenced_workflows[]?
        | select((.sha | type) == "string" and (.sha | test("^[0-9a-f]{40}$")))
        | select(.path == ("devantler-tech/actions/.github/workflows/" + $w + ".yaml@" + .sha)
-           or ($w == "publish-manifests" and .path == ("devantler-tech/.github/.github/workflows/" + $w + ".yaml@" + .sha)))
+           or .path == ("devantler-tech/.github/.github/workflows/" + $w + ".yaml@" + .sha))
        | .path] | unique | .[]' 2>/dev/null)" || {
       refuse "$repo: the Actions runs listing for $tag was not parseable"
       return 1
