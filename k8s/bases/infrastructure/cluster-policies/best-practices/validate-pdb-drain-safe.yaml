@@ -20,8 +20,8 @@
 # PolicyReports for a human to assess. After the chart-PDB sweep this policy
 # ships with, the cluster reports zero violations -- so any future violation is a
 # new chart or operator reintroducing the landmine.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: validate-pdb-drain-safe
   annotations:
@@ -29,73 +29,62 @@ metadata:
     policies.kyverno.io/category: Best Practices
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: PodDisruptionBudget
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Flags PodDisruptionBudgets that set spec.minAvailable. The platform
       standard is spec.maxUnavailable, which keeps nodes drainable at any
       replica count; a minAvailable PDB over a low-replica workload can make its
       node undrainable. CloudNativePG-managed PDBs are excluded.
 spec:
-  background: true
-  rules:
-    - name: require-maxunavailable
-      match:
-        any:
-          - resources:
-              kinds:
-                - PodDisruptionBudget
-      exclude:
-        any:
-          # CloudNativePG owns drain-safety for its clusters via switchover and
-          # scales minAvailable to (instances - 1); don't flag operator-managed
-          # PDBs (labelled cnpg.io/cluster).
-          - resources:
-              selector:
-                matchExpressions:
-                  - key: cnpg.io/cluster
-                    operator: Exists
-          # ksail bootstrap-installs cert-manager, metrics-server and kyverno
-          # (ksail.yaml certManager/metricsServer/policyEngine) with their
-          # default minAvailable PDBs BEFORE Flux. Flipping those to
-          # maxUnavailable conflicts at server-side apply with ksail's field
-          # manager, so they intentionally stay minAvailable: 1 -- drain-safe at
-          # their 2-replica floors. Don't flag them.
-          - resources:
-              names:
-                - cert-manager
-                - cert-manager-webhook
-                - cert-manager-cainjector
-                - metrics-server
-                - kyverno-admission-controller
-                # hcloud-csi-controller is also ksail-installed (Hetzner CSI) and
-                # keeps minAvailable: 1; its drain-safety comes from the HA PR's
-                # replica bump to 2, not maxUnavailable.
-                - hcloud-csi-controller
-          # Longhorn manages these PDBs itself: longhorn-manager creates a
-          # minAvailable: 1 PDB per instance-manager that still hosts replicas
-          # or engines (and deletes it once the node is safe to drain), plus
-          # PDBs for its csi-attacher/csi-provisioner deployments. The
-          # minAvailable shape IS the operator's eviction interlock — not a
-          # chart value anyone can flip — so flagging them is permanent Audit
-          # noise (15 objects on prod). They carry no labels or ownerReferences,
-          # so exclude by namespace + the operator's fixed names.
-          - resources:
-              namespaces:
-                - longhorn-system
-              names:
-                - instance-manager-?*
-                - csi-attacher
-                - csi-provisioner
-      validate:
-        failureAction: Audit
-        message: >-
-          PodDisruptionBudget '{{ request.object.metadata.name }}' sets
-          spec.minAvailable. Use spec.maxUnavailable instead (e.g.
-          maxUnavailable: 1) so node drains are never deadlocked at low replica
-          counts -- see issues #1880 and #1882.
-        deny:
-          conditions:
-            any:
-              - key: "{{ request.object.spec.minAvailable || '' }}"
-                operator: NotEquals
-                value: ""
+  validationActions:
+    - Audit
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["policy"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["poddisruptionbudgets"]
+  matchConditions:
+    # CloudNativePG owns drain-safety for its clusters via switchover and
+    # scales minAvailable to (instances - 1); don't flag operator-managed
+    # PDBs (labelled cnpg.io/cluster).
+    - name: not-cnpg-managed
+      expression: >-
+        !('cnpg.io/cluster' in object.metadata.?labels.orValue({}))
+    # ksail bootstrap-installs cert-manager, metrics-server and kyverno
+    # (ksail.yaml certManager/metricsServer/policyEngine) with their
+    # default minAvailable PDBs BEFORE Flux. Flipping those to
+    # maxUnavailable conflicts at server-side apply with ksail's field
+    # manager, so they intentionally stay minAvailable: 1 -- drain-safe at
+    # their 2-replica floors. hcloud-csi-controller is also ksail-installed
+    # (Hetzner CSI) and keeps minAvailable: 1; its drain-safety comes from the
+    # HA PR's replica bump to 2, not maxUnavailable. Don't flag them.
+    - name: not-ksail-installed
+      expression: >-
+        !(object.metadata.name in [
+          'cert-manager', 'cert-manager-webhook', 'cert-manager-cainjector',
+          'metrics-server', 'kyverno-admission-controller',
+          'hcloud-csi-controller'])
+    # Longhorn manages these PDBs itself: longhorn-manager creates a
+    # minAvailable: 1 PDB per instance-manager that still hosts replicas
+    # or engines (and deletes it once the node is safe to drain), plus
+    # PDBs for its csi-attacher/csi-provisioner deployments. The
+    # minAvailable shape IS the operator's eviction interlock — not a
+    # chart value anyone can flip — so flagging them is permanent Audit
+    # noise (15 objects on prod). They carry no labels or ownerReferences,
+    # so exclude by namespace + the operator's fixed names.
+    - name: not-longhorn-managed
+      expression: >-
+        !(object.metadata.?namespace.orValue('') == 'longhorn-system' &&
+          (object.metadata.name.matches('^instance-manager-.+$') ||
+           object.metadata.name in ['csi-attacher', 'csi-provisioner']))
+  validations:
+    - expression: "!has(object.spec.minAvailable)"
+      messageExpression: >-
+        "PodDisruptionBudget '" + object.metadata.name + "' sets
+        spec.minAvailable. Use spec.maxUnavailable instead (e.g.
+        maxUnavailable: 1) so node drains are never deadlocked at low replica
+        counts -- see issues #1880 and #1882."
