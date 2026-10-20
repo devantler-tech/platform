@@ -5,6 +5,8 @@
 # unlimited) and upgrade remediateLastFailure: true. The base policy has no
 # UniFi exemption (the Hetzner overlay adds it), and the flux-system bootstrap
 # exclusion covers only the Kustomization, never a HelmRelease of that name.
+# The github-config health-gating alternative still needs wait set to false:
+# omitting it fails.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -30,6 +32,7 @@ results:
       - tenant/ks-missing-source-name
       - tenant/ks-empty-interval
       - unifi/unifi
+      - github-config/github-config
     kind: Kustomization
     result: fail
   - policy: enforce-flux-best-practices

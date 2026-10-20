@@ -449,9 +449,19 @@ func TestValidateUnifiPruneExemption(t *testing.T) {
 	}
 	bootstrap := condition("not-flux-bootstrap-kustomization", "flux-system", "flux-system")
 	unifi := condition("not-unifi-kustomization", "unifi", "unifi")
+	withConstraint := func(change func(map[string]any)) map[string]any {
+		constraints := fluxPolicyMatchConstraints()
+		change(constraints)
+		return constraints
+	}
+	kustomizationRule := func(constraints map[string]any) map[string]any {
+		rules, _ := constraints["resourceRules"].([]any)
+		rule, _ := rules[0].(map[string]any)
+		return rule
+	}
 	policy := func(constraints map[string]any, conditions ...any) map[string]any {
 		if constraints == nil {
-			constraints = map[string]any{"resourceRules": []any{}}
+			constraints = fluxPolicyMatchConstraints()
 		}
 		return map[string]any{
 			"spec": map[string]any{
@@ -512,19 +522,42 @@ func TestValidateUnifiPruneExemption(t *testing.T) {
 		{
 			name:     "exclude resource rules are rejected",
 			identity: targetIdentity,
-			document: policy(map[string]any{
-				"resourceRules":        []any{},
-				"excludeResourceRules": []any{map[string]any{"resourceNames": []any{"apps"}}},
-			}, bootstrap, unifi),
+			document: policy(withConstraint(func(c map[string]any) {
+				c["excludeResourceRules"] = []any{map[string]any{"resourceNames": []any{"apps"}}}
+			}), bootstrap, unifi),
 			wantError: true,
 		},
 		{
 			name:     "namespace selector is rejected",
 			identity: targetIdentity,
-			document: policy(map[string]any{
-				"resourceRules":     []any{},
-				"namespaceSelector": map[string]any{},
-			}, bootstrap, unifi),
+			document: policy(withConstraint(func(c map[string]any) {
+				c["namespaceSelector"] = map[string]any{}
+			}), bootstrap, unifi),
+			wantError: true,
+		},
+		{
+			name:     "resource names narrow the Kustomization rule",
+			identity: targetIdentity,
+			document: policy(withConstraint(func(c map[string]any) {
+				kustomizationRule(c)["resourceNames"] = []any{"apps"}
+			}), bootstrap, unifi),
+			wantError: true,
+		},
+		{
+			name:     "a dropped UPDATE operation narrows the scope",
+			identity: targetIdentity,
+			document: policy(withConstraint(func(c map[string]any) {
+				kustomizationRule(c)["operations"] = []any{"CREATE"}
+			}), bootstrap, unifi),
+			wantError: true,
+		},
+		{
+			name:     "a dropped Kustomization rule narrows the scope",
+			identity: targetIdentity,
+			document: policy(withConstraint(func(c map[string]any) {
+				rules, _ := c["resourceRules"].([]any)
+				c["resourceRules"] = rules[1:]
+			}), bootstrap, unifi),
 			wantError: true,
 		},
 		{

@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -184,11 +185,32 @@ func validateUnifiSigningKey(documents []map[string]any) error {
 	return nil
 }
 
-// unifiPruneExemptionError is the single diagnostic for every shape the UniFi
+// errUnifiPruneExemption is the single diagnostic for every shape the UniFi
 // prune exemption must not take.
-var unifiPruneExemptionError = errors.New(
+var errUnifiPruneExemption = errors.New(
 	"enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement",
 )
+
+// fluxPolicyMatchConstraints is the only scope enforce-flux-best-practices may
+// render with: an added resourceNames, a dropped operation or rule, or any
+// exclude or selector field would take objects out of scope without a
+// matchCondition.
+func fluxPolicyMatchConstraints() map[string]any {
+	return map[string]any{"resourceRules": []any{
+		map[string]any{
+			"apiGroups":   []any{"kustomize.toolkit.fluxcd.io"},
+			"apiVersions": []any{"v1"},
+			"operations":  []any{"CREATE", "UPDATE"},
+			"resources":   []any{"kustomizations"},
+		},
+		map[string]any{
+			"apiGroups":   []any{"helm.toolkit.fluxcd.io"},
+			"apiVersions": []any{"v2"},
+			"operations":  []any{"CREATE", "UPDATE"},
+			"resources":   []any{"helmreleases"},
+		},
+	}}
+}
 
 // fluxPolicyExclusionExpression is the matchCondition expression that leaves
 // exactly one namespaced Kustomization out of enforce-flux-best-practices.
@@ -218,20 +240,18 @@ func validateUnifiPruneExemption(document map[string]any, identity resourceIdent
 
 	spec, ok := document["spec"].(map[string]any)
 	if !ok {
-		return unifiPruneExemptionError
+		return errUnifiPruneExemption
 	}
 	constraints, ok := spec["matchConstraints"].(map[string]any)
 	if !ok {
-		return unifiPruneExemptionError
+		return errUnifiPruneExemption
 	}
-	for _, field := range []string{"excludeResourceRules", "namespaceSelector", "objectSelector"} {
-		if _, present := constraints[field]; present {
-			return unifiPruneExemptionError
-		}
+	if !reflect.DeepEqual(constraints, fluxPolicyMatchConstraints()) {
+		return errUnifiPruneExemption
 	}
 	conditions, ok := spec["matchConditions"].([]any)
 	if !ok || len(conditions) != 2 {
-		return unifiPruneExemptionError
+		return errUnifiPruneExemption
 	}
 	want := map[string]string{
 		"not-flux-bootstrap-kustomization": fluxPolicyExclusionExpression("flux-system", "flux-system"),
@@ -240,18 +260,18 @@ func validateUnifiPruneExemption(document map[string]any, identity resourceIdent
 	for _, conditionValue := range conditions {
 		condition, ok := conditionValue.(map[string]any)
 		if !ok || len(condition) != 2 {
-			return unifiPruneExemptionError
+			return errUnifiPruneExemption
 		}
 		name, _ := condition["name"].(string)
 		expression, _ := condition["expression"].(string)
 		wantExpression, known := want[name]
 		if !known || strings.Join(strings.Fields(expression), " ") != wantExpression {
-			return unifiPruneExemptionError
+			return errUnifiPruneExemption
 		}
 		delete(want, name)
 	}
 	if len(want) != 0 {
-		return unifiPruneExemptionError
+		return errUnifiPruneExemption
 	}
 	return nil
 }
