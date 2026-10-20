@@ -48,6 +48,11 @@ Application publisher activation still requires source review, tenant pin-guard
 preparation, deployment and actual publication verification. Do not hand-edit the
 generated matchers or infer an approval from a successful parser test.
 
+The independent shared-publisher pin guard accepts the same strict two-family
+form for both workflows. Authorization fingerprinting projects only the generated
+legacy signer revisions; the maintained repository, workflow and exact canonical
+commit or pair remain fingerprinted, so an approval change still requires review.
+
 To move a consumer's canonical publisher to a newer commit, review the workflow
 at that commit, add it as a second row for the consumer in
 `scripts/publish-workflow-canonical-approvals.tsv` below the current one, and run

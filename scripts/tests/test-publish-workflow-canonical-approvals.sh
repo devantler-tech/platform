@@ -438,6 +438,23 @@ else
   fail 'writer: did not render the approved application family'; printf '%s\n' "$out" >&2
 fi
 expect_pass 'writer: its application output passes the enforcing guard' "$root"
+# The independent repository-wide shape guard must accept the actual writer
+# output too, not only handcrafted family examples in its own suite.
+cp "$REPO_ROOT/scripts/guard-shared-publish-workflow-pin.sh" "$root/scripts/pin-guard.sh"
+# This fixture deliberately places every consumer under its synthetic apps
+# tree. Bind the floor to those intended fixture paths, not production paths.
+{
+  while IFS=$'\t' read -r fixture_consumer _; do
+    [ -n "$fixture_consumer" ] || continue
+    printf '1\t%s\n' "$(manifest_path "$fixture_consumer")"
+  done <<<"$consumers"
+  for fixture_generic in "${GENERICS[@]}"; do printf '1\t%s\n' "$fixture_generic"; done
+} >"$root/scripts/shared-publish-workflow-matchers.tsv"
+if out="$(bash "$root/scripts/pin-guard.sh" 2>&1)"; then
+  pass 'writer: its application output passes the independent publisher pin guard'
+else
+  fail 'writer: application output rejected by independent publisher pin guard'; printf '%s\n' "$out" >&2
+fi
 if cmp -s "$root/$(manifest_path "$manifest_consumer")" "$WORK/writer-app.other"; then
   pass 'writer: an application approval leaves the unapproved manifest consumer unchanged'
 else

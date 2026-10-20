@@ -54,8 +54,8 @@
 # revision outside it — is guard-publish-workflow-approved-revisions.sh's question (#3551).
 #
 # TWO PUBLISHER FAMILIES (#4502)
-# A manifest matcher may accept the canonical manifest workflow in devantler-tech/.github
-# beside the legacy one, as ONE subject holding one group:
+# A registered application or manifest matcher may accept its canonical workflow
+# in devantler-tech/.github beside the legacy one, as ONE subject holding one group:
 #
 #   ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-<w>\.yaml@<ref>|\.github/\.github/workflows/publish-<w>\.yaml@<commit>)$
 #
