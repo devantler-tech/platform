@@ -1191,25 +1191,47 @@ assert_helm_rules_accept \
   'auto-vpa-generating-policy-namespace-exclusion' \
   "${auto_vpa_namespace_exclusion_fixture}" \
   'a reviewed GeneratingPolicy that excludes named namespaces is the reviewed exception'
-assert_reviewed_generation_variant_rejected \
+
+assert_namespace_exclusion_variant_rejected() {
+  local fixture_name="$1"
+  local fixture_body="$2"
+  local failure_message="$3"
+
+  [ "${fixture_body}" != "${auto_vpa_namespace_exclusion_fixture}" ] ||
+    fail "${fixture_name}: the variant must differ from the namespace-excluded GeneratingPolicy"
+  assert_helm_rules_reject \
+    "${fixture_name}" \
+    "${fixture_body}" \
+    "${failure_message}" \
+    'reject-cel-policy-producers'
+}
+
+assert_namespace_exclusion_variant_rejected \
+  'generating-policy-namespace-empty-expressions' \
+  "${auto_vpa_namespace_exclusion_fixture/      matchExpressions:
+        - key: kubernetes.io\/metadata.name
+          operator: NotIn
+          values: \[\"kube-system\", \"kube-public\", \"kube-node-lease\", \"kyverno\"\]/      matchExpressions: []}" \
+  'a namespaceSelector with no expressions must void the reviewed GeneratingPolicy shape'
+assert_namespace_exclusion_variant_rejected \
   'generating-policy-namespace-match-labels' \
   "${auto_vpa_namespace_exclusion_fixture/      matchExpressions:/      matchLabels:
         team: platform
       matchExpressions:}" \
   'a namespaceSelector with matchLabels must void the reviewed GeneratingPolicy shape'
-assert_reviewed_generation_variant_rejected \
+assert_namespace_exclusion_variant_rejected \
   'generating-policy-namespace-in-operator' \
   "${auto_vpa_namespace_exclusion_fixture/operator: NotIn/operator: In}" \
   'a namespaceSelector that selects namespaces must void the reviewed GeneratingPolicy shape'
-assert_reviewed_generation_variant_rejected \
+assert_namespace_exclusion_variant_rejected \
   'generating-policy-namespace-exists-operator' \
   "${auto_vpa_namespace_exclusion_fixture/operator: NotIn/operator: Exists}" \
   'an Exists namespaceSelector must void the reviewed GeneratingPolicy shape'
-assert_reviewed_generation_variant_rejected \
+assert_namespace_exclusion_variant_rejected \
   'generating-policy-namespace-other-key' \
   "${auto_vpa_namespace_exclusion_fixture/key: kubernetes.io\/metadata.name/key: team}" \
   'a namespaceSelector on another label must void the reviewed GeneratingPolicy shape'
-assert_reviewed_generation_variant_rejected \
+assert_namespace_exclusion_variant_rejected \
   'generating-policy-namespace-empty-values' \
   "${auto_vpa_namespace_exclusion_fixture/values: \[\"kube-system\", \"kube-public\", \"kube-node-lease\", \"kyverno\"\]/values: []}" \
   'a namespaceSelector with no values must void the reviewed GeneratingPolicy shape'
