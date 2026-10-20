@@ -692,10 +692,22 @@ assert_line_rejected "a two-family subject with unescaped dots" \
   "        subject: ${Q}^https://github.com/devantler-tech/(actions/.github/workflows/publish-manifests.yaml@${CONCRETE_SHA}|.github/.github/workflows/publish-manifests.yaml@${CONCRETE_SHA_2})\$${Q}" \
   family-bare-dots 'opens a publisher group but is not exactly'
 
-# Only the manifest workflow has a canonical publisher.
-assert_line_rejected "a two-family subject for the application workflow" \
+# Both registered publisher workflows use the same strict two-family grammar.
+assert_line_accepted "a two-family subject for the application workflow" \
   "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|\\.github/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA_2})\$${Q}" \
-  family-app 'names a workflow other than publish-manifests'
+  family-app
+
+app_family_line() {
+  family_line "$1" "$2" | sed 's/publish-manifests/publish-app/g'
+}
+assert_line_accepted "application publisher with two reviewed canonical commits" \
+  "$(app_family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA_2})")" family-app-pair
+assert_line_rejected "application canonical publisher cannot use a pattern" \
+  "$(app_family_line "${CONCRETE_SHA}" "${SHA_PATTERN}")" family-app-pattern 'does not pin one concrete 40-hex commit'
+assert_line_rejected "application canonical publisher cannot use a branch" \
+  "$(app_family_line "${CONCRETE_SHA}" 'refs/heads/main')" family-app-branch 'does not pin one concrete 40-hex commit'
+assert_line_rejected "application canonical publisher cannot repeat a commit" \
+  "$(app_family_line "${CONCRETE_SHA}" "(${CONCRETE_SHA}|${CONCRETE_SHA})")" family-app-repeat 'names the same commit twice'
 
 assert_line_rejected "two families naming different workflows" \
   "        subject: ${Q}${FAMILY_OPEN}actions/\\.github/workflows/publish-app\\.yaml@${CONCRETE_SHA}|${CANONICAL_ID}${CONCRETE_SHA_2})\$${Q}" \

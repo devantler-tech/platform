@@ -101,9 +101,8 @@ readonly LEGACY_FAMILY='actions/\.github/workflows/publish-'
 # The exact opening of a single-family subject, up to the workflow name.
 readonly LEGACY_SUBJECT_PREFIX='^https://github\.com/devantler-tech/actions/\.github/workflows/publish-'
 readonly CANONICAL_FAMILY='\.github/\.github/workflows/publish-'
-# Only the manifest workflow has a canonical family today; the application workflow and
-# the three generic subjects stay legacy-only.
-readonly CANONICAL_WORKFLOW_NAME='manifests'
+# Both registered workflows support exact canonical approvals. Generic subjects
+# remain legacy-only unless separately changed and authorized.
 
 # THE FLOOR NAMES WHAT MUST BE FOUND (#4558).
 # An empty result from a filtered read is a claim about the FILTER. If a refactor moves
@@ -317,7 +316,7 @@ judge_ref() {
 # The split is on the literal text that opens the canonical family, never on `|` or `@`
 # alone: the legacy ref is itself an alternation, so both characters occur inside it.
 judge_family_subject() {
-  local location="$1" subject="$2" inner boundary legacy_part canonical_part legacy_ref canonical_ref at_count
+  local location="$1" subject="$2" inner boundary legacy_part canonical_part legacy_ref canonical_ref at_count workflow
 
   case "$subject" in
     "$FAMILY_PREFIX"*')$') ;;
@@ -361,14 +360,18 @@ judge_family_subject() {
   # further identity, without a check of its own: the subject carries two in all, the
   # canonical side must be `<workflow>\.yaml@` followed by 40 hex characters and nothing
   # else, and the legacy side must open with `<workflow>\.yaml@`.
-  canonical_ref="${canonical_part#"$CANONICAL_WORKFLOW_NAME"'\.yaml@'}"
-  if [ "$canonical_ref" = "$canonical_part" ]; then
-    printf '%s: the canonical family names a workflow other than publish-%s, the only one with a canonical publisher (subject: %s)\n' \
-      "$location" "$CANONICAL_WORKFLOW_NAME" "$subject" >&2
-    return 1
-  fi
+  case "$canonical_part" in
+    'app\.yaml@'*) workflow=app ;;
+    'manifests\.yaml@'*) workflow=manifests ;;
+    *)
+      printf '%s: the canonical family names an unsupported publisher workflow (subject: %s)\n' \
+        "$location" "$subject" >&2
+      return 1
+      ;;
+  esac
+  canonical_ref="${canonical_part#"$workflow"'\.yaml@'}"
   case "$legacy_part" in
-    "$CANONICAL_WORKFLOW_NAME"'\.yaml@'*) ;;
+    "$workflow"'\.yaml@'*) ;;
     *)
       printf '%s: the two publisher families name different workflows (subject: %s)\n' \
         "$location" "$subject" >&2
