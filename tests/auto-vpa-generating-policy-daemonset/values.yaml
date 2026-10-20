@@ -1,0 +1,7 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+namespaceSelector:
+  - name: apps-ns
+    labels:
+      kubernetes.io/metadata.name: apps-ns

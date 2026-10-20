@@ -75,3 +75,189 @@ spec:
   containers:
     - name: app
       image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ordinary-pod
+  namespace: userns-absent
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: scratch
+      emptyDir: {}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: explicit-false
+  namespace: userns-absent
+spec:
+  hostNetwork: false
+  hostPID: false
+  hostIPC: false
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-path
+  namespace: userns-absent
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: host
+      hostPath:
+        path: /fixture
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-network
+  namespace: userns-absent
+spec:
+  hostNetwork: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-pid
+  namespace: userns-absent
+spec:
+  hostPID: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: host-ipc
+  namespace: userns-absent
+spec:
+  hostIPC: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+# A familiar provisioner Pod name must not exempt another namespace.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: helper-pod-create-pvc
+  namespace: userns-absent
+spec:
+  hostNetwork: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: host
+      hostPath:
+        path: /fixture
+---
+# The infrastructure namespace exclusion is exact, not a prefix match.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: namespace-lookalike
+  namespace: observability-app
+spec:
+  hostNetwork: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: host
+      hostPath:
+        path: /fixture
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: infrastructure-pod
+  namespace: observability
+spec:
+  hostNetwork: true
+  hostPID: true
+  hostIPC: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+  volumes:
+    - name: host
+      hostPath:
+        path: /fixture
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ordinary-deployment
+  namespace: userns-absent
+spec:
+  selector:
+    matchLabels:
+      app: ordinary
+  template:
+    metadata:
+      labels:
+        app: ordinary
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: host-access-deployment
+  namespace: userns-absent
+spec:
+  selector:
+    matchLabels:
+      app: host-access
+  template:
+    metadata:
+      labels:
+        app: host-access
+    spec:
+      hostNetwork: true
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+      volumes:
+        - name: host
+          hostPath:
+            path: /fixture
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infrastructure-deployment
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: infrastructure
+  template:
+    metadata:
+      labels:
+        app: infrastructure
+    spec:
+      hostNetwork: true
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+      volumes:
+        - name: host
+          hostPath:
+            path: /fixture

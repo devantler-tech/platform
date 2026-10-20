@@ -8,7 +8,14 @@ resources:
   - best-practices/add-recommended-labels.yaml
   - best-practices/add-resource-defaults.yaml
   - best-practices/add-security-context.yaml
-  - best-practices/auto-vpa.yaml
+  # The shared catalog's GeneratingPolicy form of auto-vpa (#5130,
+  # devantler-tech/kyverno-policies#1). best-practices/auto-vpa.yaml, the classic
+  # form, is deliberately NOT registered: it stays, still tested, as the
+  # rollback form. Never register both, because they name their VPAs
+  # differently and every workload would get two.
+  - best-practices/auto-vpa-daemonset.yaml
+  - best-practices/auto-vpa-deployment.yaml
+  - best-practices/auto-vpa-statefulset.yaml
   - best-practices/audit-privileged-rbac.yaml
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml

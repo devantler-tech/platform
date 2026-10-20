@@ -217,6 +217,10 @@ jobs:
               - 'tests/require-baseline-workers-for-hcloud-volumes/**'
               - 'tests/audit-privileged-rbac/**'
               - 'tests/auto-vpa/**'
+              # The platform's copy of the catalog auto-vpa GeneratingPolicy: its
+              # fixtures and its system-namespace exclusion test (#5130).
+              - 'tests/auto-vpa-generating-policy-*/**'
+              - 'scripts/tests/test-auto-vpa-generating-policy-exclusion.sh'
               - 'scripts/tests/test-audit-privileged-rbac.sh'
               # Renders the charts whose roles that policy excludes and applies the
               # policy to their RBAC, so a chart bump fails its own PR (#3792).
@@ -1628,6 +1632,8 @@ jobs:
           bash scripts/tests/test-tetragon-agent-priority.sh
           shellcheck scripts/tests/test-audit-privileged-rbac.sh
           bash scripts/tests/test-audit-privileged-rbac.sh
+          shellcheck scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
+          bash scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
           shellcheck scripts/tests/test-arc-controller-availability.sh
           bash scripts/tests/test-arc-controller-availability.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh

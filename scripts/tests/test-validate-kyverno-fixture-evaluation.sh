@@ -141,6 +141,21 @@ if kyverno_passes "generated object named apart from its trigger" "${root}"; the
   expect_pass "generated object named apart from its trigger" "${root}"
 fi
 
+# #5130: a GeneratingPolicy has no spec.rules; kyverno names its one rule after the policy.
+# A row naming any other rule must still fail check 1, and a row expecting an object the
+# policy never generates must still fail.
+root="$(copy generating-policy-rule auto-vpa-generating-policy-deployment)"
+yq -i '.results[0].rule = "generate-vpa-for-deployment"' \
+  "${root}/tests/auto-vpa-generating-policy-deployment/kyverno-test.yaml"
+expect_fail "GeneratingPolicy row naming a rule it does not define" "${root}" 1 \
+  "names rule generate-vpa-for-deployment of policy auto-vpa-deployment"
+root="$(copy generating-policy-missing auto-vpa-generating-policy-deployment)"
+yq -i '.metadata.namespace = "other-ns"' "${root}/tests/auto-vpa-generating-policy-deployment/resources.yaml"
+yq -i '.namespaceSelector[0].name = "other-ns" | .namespaceSelector[0].labels."kubernetes.io/metadata.name" = "other-ns"' \
+  "${root}/tests/auto-vpa-generating-policy-deployment/values.yaml"
+yq -i '.metadata.name = "absent-deployment"' "${root}/tests/auto-vpa-generating-policy-deployment/generated-vpa.yaml"
+expect_fail "GeneratingPolicy expecting an object it never generates" "${root}" 1 "kyverno test"
+
 # A generate row names only the object it generates, so the triggers of one entry that all
 # generate the same fixed-name object share its name, and kyverno drops a misspelled one
 # without a row or a failure.
@@ -320,6 +335,17 @@ root="$(copy valid-constant-policy restrict-github-team-management)"
 yq -i '(.spec.rules[] | select(.name == "teams-allow-listed") | .validate.deny.conditions.all[0].key) = "{{ request.object.metadata.name == `\"\"` }}"' \
   "${root}/${policies}/restrict-github-team-management.yaml"
 expect_fail "an evaluated policy with the same edit" "${root}" 1 "Want pass, got fail"
+
+# #5133: the host-access baseline must reject a permission broadening in each
+# general rule. Keep the rule and scope intact so this proves that the denial
+# resources are evaluated, rather than merely detecting a missing rule name.
+for host_rule in disallow-host-path disallow-host-namespaces; do
+  root="$(copy "weaken-${host_rule}" validate-host-restrictions)"
+  HOST_RULE="${host_rule}" yq -i \
+    '(.spec.rules[] | select(.name == strenv(HOST_RULE)) | .validate.pattern) = {"spec": {}}' \
+    "${root}/${policies}/validate-host-restrictions.yaml"
+  expect_fail "weakened ${host_rule}" "${root}" 1 "kyverno test tests failed"
+done
 
 # A fixture whose expectation is wrong still fails through kyverno itself.
 root="$(copy wrong-expectation restrict-tenant-issuer-refs)"
