@@ -4,18 +4,22 @@
 #
 # Addresses kubescape controls: C-0045, C-0048, C-0041, C-0038
 #
-# Infrastructure namespaces are excluded because CNI (Cilium), storage
-# (Longhorn), node telemetry (Coroot), identity (SPIRE), and backup (Velero)
-# require host-level access by design.
+# Infrastructure namespaces are excluded from the host-access checks because
+# CNI (Cilium), storage (Longhorn), node telemetry (Coroot), identity (SPIRE),
+# and backup (Velero) require host-level access by design.
 #
 # Exclusions are namespace-scoped only. Local-path-provisioner helper pods run
 # in the provisioner's own namespace — `local-path-storage` under kind, or
-# `kube-system` under k3s — and both are already excluded above, so they need
-# no name-based entry. A name-only exclusion would be spoofable by any pod that
+# `kube-system` under k3s — and both are already excluded, so they need no
+# name-based entry. A name-only exclusion would be spoofable by any pod that
 # adopts the same name in any namespace.
+#
+# The policy checks Pods only. Controllers (Deployments, StatefulSets, …) are
+# not checked directly: autogen is off, so a controller is judged by the Pods it
+# creates.
 
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: validate-host-restrictions
   annotations:
@@ -23,116 +27,72 @@ metadata:
     policies.kyverno.io/category: Pod Security, Best Practices
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Pod
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Blocks host-level access (hostPath, hostNetwork, hostPID, hostIPC)
       in non-infrastructure namespaces to prevent container escape.
 spec:
-  background: true
-  rules:
-    - name: disallow-host-path
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - flux-system
-                - longhorn-system
-                - local-path-storage
-                - kubescape
-                - kubevirt
-                - cdi
-                - observability
-                - velero
-                - chaos-mesh
-      validate:
-        failureAction: Enforce
-        message: "hostPath volumes are not allowed."
-        pattern:
-          spec:
-            =(volumes):
-              - X(hostPath): {}
-    - name: disallow-host-namespaces
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - flux-system
-                - longhorn-system
-                - local-path-storage
-                - kubescape
-                - kubevirt
-                - cdi
-                - observability
-                - velero
-                - chaos-mesh
-      validate:
-        failureAction: Enforce
-        message: "hostNetwork, hostPID, and hostIPC are not allowed."
-        pattern:
-          spec:
-            =(hostNetwork): false
-            =(hostPID): false
-            =(hostIPC): false
+  validationActions:
+    - Deny
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods"]
+  variables:
+    - name: namespace
+      expression: object.metadata.?namespace.orValue('')
+    # Scope of the host-path and host-namespace checks.
+    - name: hostAccessScoped
+      expression: >-
+        !(variables.namespace in [
+          'kube-system', 'kube-public', 'kube-node-lease', 'flux-system',
+          'longhorn-system', 'local-path-storage', 'kubescape', 'kubevirt',
+          'cdi', 'observability', 'velero', 'chaos-mesh'])
     # The user-namespace rollout (#1807) is delivered by the add-user-namespaces
     # MUTATE rule in add-security-context.yaml, which injects hostUsers: false
     # through a +(hostUsers) conditional anchor. A conditional anchor only fills
     # in an ABSENT value, so a workload that explicitly sets hostUsers: true
     # keeps it — silently, with no admission error and no policy report, in a
     # namespace that still carries the opt-in label and still looks hardened.
-    # This rule closes that gap: it is the enforce ratchet for the same control.
+    # The hostUsers validation below closes that gap: it is the enforce ratchet
+    # for the same control.
     #
     # Scope mirrors the mutate rule exactly, on purpose:
-    # - the same namespaceSelector, so only namespaces that have graduated
+    # - the same namespace label, so only namespaces that have graduated
     #   through a userns pilot are held to it;
-    # - the same cnpg.io/cluster exclude, so the validate rule can never block a
+    # - the same cnpg.io/cluster exclusion, so this check can never block a
     #   workload the mutate rule deliberately skipped. CNPG pods stay on host
     #   user namespaces pending their own per-app pilot, and leave hostUsers
     #   absent; excluding them keeps that true even if CNPG later sets the field
     #   explicitly.
-    #
-    # =(hostUsers) is validate-if-present, matching the hostNetwork/hostPID/
-    # hostIPC idiom above: an absent value passes (and the mutate rule supplies
-    # the default), while an explicit true is rejected.
-    - name: disallow-host-users
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-              namespaceSelector:
-                matchLabels:
-                  pod-security.devantler.tech/user-namespaces: enabled
-      exclude:
-        any:
-          - resources:
-              kinds:
-                - Pod
-              selector:
-                matchExpressions:
-                  - key: cnpg.io/cluster
-                    operator: Exists
-      validate:
-        failureAction: Enforce
-        message: >-
-          hostUsers: true is not allowed in a namespace opted into user
-          namespaces. Remove the field to inherit hostUsers: false, or drop the
-          pod-security.devantler.tech/user-namespaces label from the namespace.
-        pattern:
-          spec:
-            =(hostUsers): false
+    - name: hostUsersScoped
+      expression: >-
+        namespaceObject.?metadata.?labels[?'pod-security.devantler.tech/user-namespaces'].orValue('') == 'enabled' &&
+        !('cnpg.io/cluster' in object.metadata.?labels.orValue({}))
+  validations:
+    - expression: >-
+        !variables.hostAccessScoped ||
+        object.spec.?volumes.orValue([]).all(v, !has(v.hostPath))
+      message: "hostPath volumes are not allowed."
+    - expression: >-
+        !variables.hostAccessScoped ||
+        (!object.spec.?hostNetwork.orValue(false) &&
+        !object.spec.?hostPID.orValue(false) &&
+        !object.spec.?hostIPC.orValue(false))
+      message: "hostNetwork, hostPID, and hostIPC are not allowed."
+    # An absent hostUsers passes (the mutate rule supplies the default), while
+    # an explicit true is rejected.
+    - expression: >-
+        !variables.hostUsersScoped || !object.spec.?hostUsers.orValue(false)
+      message: >-
+        hostUsers: true is not allowed in a namespace opted into user
+        namespaces. Remove the field to inherit hostUsers: false, or drop the
+        pod-security.devantler.tech/user-namespaces label from the namespace.

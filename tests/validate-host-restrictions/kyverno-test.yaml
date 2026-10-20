@@ -1,4 +1,8 @@
 ---
+# Pins the policy's behaviour across its ValidatingPolicy rewrite (#4996).
+# A ValidatingPolicy reports one result per resource, so each case below is the
+# combined outcome of the three checks: host paths, host namespaces, and
+# hostUsers in a namespace opted into user namespaces.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -8,41 +12,29 @@ policies:
     ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-host-restrictions.yaml
 resources:
   - resources.yaml
-# Declares the namespace labels the namespaceSelector matches on. Without it the
-# CLI reports every resource "Excluded" and the fixture passes vacuously.
+# Declares the namespace labels the hostUsers check reads. Without it the
+# opted-in namespace looks unlabelled and the hostUsers fail case would pass.
 variables: values.yaml
 results:
+  # No host access, and hostUsers absent or explicitly false. CNPG pods and
+  # namespaces without the opt-in label are out of the hostUsers check's scope,
+  # and infrastructure namespaces are out of the host-access checks' scope.
   - policy: validate-host-restrictions
-    rule: disallow-host-path
     resources:
       - userns-absent/ordinary-pod
       - userns-absent/explicit-false
-    kind: Pod
-    result: pass
-  - policy: validate-host-restrictions
-    rule: disallow-host-path
-    resources:
-      - userns-absent/host-path
-      - userns-absent/helper-pod-create-pvc
-      - observability-app/namespace-lookalike
-    kind: Pod
-    result: fail
-  - policy: validate-host-restrictions
-    rule: disallow-host-path
-    resources:
+      - userns-absent/unscoped-host-users
+      - userns-enabled/explicit-unshared
+      - userns-enabled/host-users-absent
+      - userns-enabled/cnpg-instance
       - observability/infrastructure-pod
     kind: Pod
-    result: skip
-  - policy: validate-host-restrictions
-    rule: disallow-host-namespaces
-    resources:
-      - userns-absent/ordinary-pod
-      - userns-absent/explicit-false
-    kind: Pod
     result: pass
+  # Host access outside the infrastructure namespaces, including a namespace
+  # whose name only starts like an infrastructure one.
   - policy: validate-host-restrictions
-    rule: disallow-host-namespaces
     resources:
+      - userns-absent/host-path
       - userns-absent/host-network
       - userns-absent/host-pid
       - userns-absent/host-ipc
@@ -50,51 +42,9 @@ results:
       - observability-app/namespace-lookalike
     kind: Pod
     result: fail
-  - policy: validate-host-restrictions
-    rule: disallow-host-namespaces
-    resources:
-      - observability/infrastructure-pod
-    kind: Pod
-    result: skip
-  # The cnpg label selector disables autogen for the entire current policy.
-  # These are genuine exclusions of the declared Pod rules, not invented
-  # autogen-* rows (which the CLI can misleadingly count as passing).
-  - policy: validate-host-restrictions
-    rule: disallow-host-path
-    resources:
-      - userns-absent/ordinary-deployment
-      - userns-absent/host-access-deployment
-      - observability/infrastructure-deployment
-    kind: Deployment
-    result: skip
-  - policy: validate-host-restrictions
-    rule: disallow-host-namespaces
-    resources:
-      - userns-absent/ordinary-deployment
-      - userns-absent/host-access-deployment
-      - observability/infrastructure-deployment
-    kind: Deployment
-    result: skip
   # The regression the mutate rule's conditional anchor cannot catch.
   - policy: validate-host-restrictions
-    rule: disallow-host-users
     resources:
       - userns-enabled/explicit-host-users
     kind: Pod
     result: fail
-  # Absent inherits the mutated default; explicit false is already correct.
-  - policy: validate-host-restrictions
-    rule: disallow-host-users
-    resources:
-      - userns-enabled/explicit-unshared
-      - userns-enabled/host-users-absent
-    kind: Pod
-    result: pass
-  # CNPG pods are excluded, and namespaces without the opt-in label are out of scope.
-  - policy: validate-host-restrictions
-    rule: disallow-host-users
-    resources:
-      - userns-enabled/cnpg-instance
-      - userns-absent/unscoped-host-users
-    kind: Pod
-    result: skip
