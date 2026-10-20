@@ -26,7 +26,7 @@ readonly GENERIC_SUBJECT_FILES=(
 
 # Every registered consumer, application tenants included, is narrowed to its approved revision
 # set: the revision that signed the running artifact, the revision its default branch pins, and,
-# the latest released devantler-tech/actions revision (#3960, #4416). A tenant
+# the verified final legacy catalogue revision (#5146). A tenant
 # cannot move its pin ahead of that set: each app tenant runs a required check that refuses a pin
 # the committed approved set does not contain (#3961), so a new shared-workflow revision holds the
 # tenant's dependency PR rather than failing its release.
