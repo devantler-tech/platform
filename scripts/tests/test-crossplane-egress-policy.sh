@@ -949,6 +949,232 @@ assert_reviewed_mutation_variant_rejected \
   "${helm_release_crds_mutation_fixture}"$'\n  evaluation:\n    mutateExisting:\n      enabled: true' \
   'a mutate-existing MutatingPolicy must stay rejected'
 
+# The reviewed GeneratingPolicy shape (#5102): the catalog's auto-vpa, which
+# builds only a VerticalPodAutoscaler for an apps workload. Each reject below
+# widens exactly one thing.
+auto_vpa_generating_policy_fixture="$(
+  cat <<'YAML'
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: auto-vpa-deployment
+spec:
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+  generate:
+    - expression: >-
+        generator.Apply(
+          string(object.metadata.namespace),
+          [
+            {
+              "apiVersion": dyn("autoscaling.k8s.io/v1"),
+              "kind": dyn("VerticalPodAutoscaler"),
+              "metadata": dyn({
+                "name": string(object.metadata.name) + "-deployment",
+                "namespace": string(object.metadata.namespace)
+              }),
+              "spec": dyn({
+                "targetRef": dyn({
+                  "apiVersion": "apps/v1",
+                  "kind": "Deployment",
+                  "name": string(object.metadata.name)
+                }),
+                "updatePolicy": dyn({"updateMode": "InPlaceOrRecreate"}),
+                "resourcePolicy": dyn({
+                  "containerPolicies": [
+                    {
+                      "containerName": dyn("*"),
+                      "controlledResources": dyn(["cpu", "memory"]),
+                      "controlledValues": dyn("RequestsAndLimits"),
+                      "minAllowed": dyn({"cpu": "50m", "memory": "64Mi"}),
+                      "maxAllowed": dyn({"cpu": "3", "memory": "6Gi"})
+                    }
+                  ]
+                })
+              })
+            }
+          ]
+        )
+YAML
+)"
+assert_helm_rules_accept \
+  'auto-vpa-generating-policy' \
+  "${auto_vpa_generating_policy_fixture}" \
+  'a GeneratingPolicy that builds only a VerticalPodAutoscaler for an apps workload is the reviewed exception'
+
+assert_reviewed_generation_variant_rejected() {
+  local fixture_name="$1"
+  local fixture_body="$2"
+  local failure_message="$3"
+
+  [ "${fixture_body}" != "${auto_vpa_generating_policy_fixture}" ] ||
+    fail "${fixture_name}: the variant must differ from the reviewed GeneratingPolicy"
+  assert_helm_rules_reject \
+    "${fixture_name}" \
+    "${fixture_body}" \
+    "${failure_message}" \
+    'reject-cel-policy-producers'
+}
+
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-network-policy-kind' \
+  "${auto_vpa_generating_policy_fixture/dyn(\"VerticalPodAutoscaler\")/dyn(\"CiliumNetworkPolicy\")}" \
+  'a GeneratingPolicy that builds a network policy must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-network-policy-api-version' \
+  "${auto_vpa_generating_policy_fixture/autoscaling.k8s.io\/v1/cilium.io\/v2}" \
+  'a GeneratingPolicy that builds a cilium.io object must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-namespace-trigger' \
+  "${auto_vpa_generating_policy_fixture/resources: \[\"deployments\"\]/resources: [\"namespaces\"]}" \
+  'a GeneratingPolicy triggered by another resource must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-second-group' \
+  "${auto_vpa_generating_policy_fixture/apiGroups: \[\"apps\"\]/apiGroups: [\"apps\", \"cilium.io\"]}" \
+  'a second API group must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-wildcard-resource' \
+  "${auto_vpa_generating_policy_fixture/resources: \[\"deployments\"\]/resources: [\"*\"]}" \
+  'a wildcard resource must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-variables' \
+  "${auto_vpa_generating_policy_fixture/  generate:/  variables:
+    - name: source
+      expression: resource.Get(\"v1\", \"configmaps\", \"default\", \"x\")
+  generate:}" \
+  'a GeneratingPolicy with variables must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-resource-clone' \
+  "${auto_vpa_generating_policy_fixture/          \[
+            \{/          [resource.Get(\"cilium.io/v2\", \"ciliumnetworkpolicies\", \"default\", \"x\"),
+            {}" \
+  'a GeneratingPolicy that clones an existing object must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-workload-clone' \
+  "${auto_vpa_generating_policy_fixture/          \[
+            \{/          [object,
+            {}" \
+  'a GeneratingPolicy that copies the workload must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-computed-key' \
+  "${auto_vpa_generating_policy_fixture/\"kind\": dyn(\"VerticalPodAutoscaler\")/\"ki\" + \"nd\": dyn(\"NetworkPolicy\")}" \
+  'a computed map key must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-escaped-key' \
+  "${auto_vpa_generating_policy_fixture/\"kind\": dyn(\"VerticalPodAutoscaler\")/\"\\x6bind\": dyn(\"NetworkPolicy\")}" \
+  'an escaped map key must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-label-read' \
+  "${auto_vpa_generating_policy_fixture/\"namespace\": string(object.metadata.namespace)
+              \}/\"namespace\": string(object.metadata.labels.target)
+              \}}" \
+  'a GeneratingPolicy that reads workload data beyond its name and namespace must stay rejected'
+generated_deployment_variant="${auto_vpa_generating_policy_fixture/\"kind\": dyn(\"VerticalPodAutoscaler\")/\"kind\": \"Deployment\"}"
+generated_deployment_variant="${generated_deployment_variant/\"apiVersion\": dyn(\"autoscaling.k8s.io\/v1\")/\"apiVersion\": \"apps/v1\"}"
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-generated-deployment' \
+  "${generated_deployment_variant}" \
+  'a GeneratingPolicy that builds an apps workload instead of a VerticalPodAutoscaler must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-unbound-apps-kind' \
+  "${auto_vpa_generating_policy_fixture/\"updateMode\": \"InPlaceOrRecreate\"/\"updateMode\": \"InPlaceOrRecreate\", \"kind\": \"Deployment\"}" \
+  'an apps kind literal outside the targetRef head must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-unbound-target-ref' \
+  "${auto_vpa_generating_policy_fixture/\"apiVersion\": \"apps\/v1\",
+                  \"kind\": \"Deployment\",/\"kind\": \"Deployment\",
+                  \"apiVersion\": \"apps/v1\",}" \
+  'a targetRef that does not open with its apps apiVersion and kind literals must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-other-target-name' \
+  "${auto_vpa_generating_policy_fixture/\"kind\": \"Deployment\",
+                  \"name\": string(object.metadata.name)/\"kind\": \"Deployment\",
+                  \"name\": \"cilium-operator\"}" \
+  'a VerticalPodAutoscaler aimed at another workload must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-literal-apply-namespace' \
+  "${auto_vpa_generating_policy_fixture/generator.Apply(
+          string(object.metadata.namespace),/generator.Apply(
+          \"kube-system\",}" \
+  'a GeneratingPolicy that applies into a fixed namespace must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-literal-object-namespace' \
+  "${auto_vpa_generating_policy_fixture/\"namespace\": string(object.metadata.namespace)/\"namespace\": \"kube-system\"}" \
+  'a VerticalPodAutoscaler placed in a fixed namespace must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-mismatched-trigger' \
+  "${auto_vpa_generating_policy_fixture/resources: \[\"deployments\"\]/resources: [\"statefulsets\"]}" \
+  'a Deployment expression triggered by StatefulSets must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-second-generation' \
+  "${auto_vpa_generating_policy_fixture}"$'\n    - expression: >-\n        generator.Apply(string(object.metadata.namespace), [])' \
+  'a second generate expression must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-match-conditions' \
+  "${auto_vpa_generating_policy_fixture/  generate:/  matchConditions:
+    - name: create-policy
+      expression: resource.Post(\"cilium.io/v2\", \"ciliumnetworkpolicies\", \"kube-system\", dyn(1)) != null
+  generate:}" \
+  'a GeneratingPolicy whose match conditions can create objects must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-rule-extra-key' \
+  "${auto_vpa_generating_policy_fixture/resources: \[\"deployments\"\]/resources: [\"deployments\"]
+        resourceNames: [\"x\"]
+        scope: \"*\"}" \
+  'a resource rule field outside the reviewed set must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-split-literal' \
+  "${auto_vpa_generating_policy_fixture/\"updatePolicy\"/\"update Policy\"}" \
+  'whitespace inside a string literal must not be stripped into a reviewed key'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-delete-operation' \
+  "${auto_vpa_generating_policy_fixture/operations: \[\"CREATE\", \"UPDATE\"\]/operations: [\"CREATE\", \"UPDATE\", \"DELETE\"]}" \
+  'an operation outside the reviewed set must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-any-version' \
+  "${auto_vpa_generating_policy_fixture/apiVersions: \[\"v1\"\]/apiVersions: [\"*\"]}" \
+  'an API version outside the reviewed set must void the reviewed GeneratingPolicy shape'
+
+# The other two catalog policies, and the reviewed one written on one line,
+# pass: only whitespace may differ from the catalog.
+auto_vpa_statefulset_fixture="${auto_vpa_generating_policy_fixture/auto-vpa-deployment/auto-vpa-statefulset}"
+auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/resources: \[\"deployments\"\]/resources: [\"statefulsets\"]}"
+auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/\"-deployment\"/\"-statefulset\"}"
+auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/\"kind\": \"Deployment\"/\"kind\": \"StatefulSet\"}"
+auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/InPlaceOrRecreate/Initial}"
+assert_helm_rules_accept \
+  'auto-vpa-generating-policy-statefulset' \
+  "${auto_vpa_statefulset_fixture}" \
+  'the catalog StatefulSet auto-vpa GeneratingPolicy is the reviewed exception'
+auto_vpa_daemonset_fixture="${auto_vpa_generating_policy_fixture/auto-vpa-deployment/auto-vpa-daemonset}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/resources: \[\"deployments\"\]/resources: [\"daemonsets\"]}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"-deployment\"/\"-daemonset\"}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"kind\": \"Deployment\"/\"kind\": \"DaemonSet\"}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\[\"cpu\", \"memory\"\]/[\"cpu\"]}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"cpu\": \"50m\", \"memory\": \"64Mi\"/\"cpu\": \"50m\"}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"cpu\": \"3\", \"memory\": \"6Gi\"/\"cpu\": \"1\"}"
+assert_helm_rules_accept \
+  'auto-vpa-generating-policy-daemonset' \
+  "${auto_vpa_daemonset_fixture}" \
+  'the catalog DaemonSet auto-vpa GeneratingPolicy is the reviewed exception'
+auto_vpa_one_line_fixture="$(yq '.spec.generate[0].expression |= sub("\n *"; "")' <<<"${auto_vpa_generating_policy_fixture}")" ||
+  fail 'could not rewrite the reviewed GeneratingPolicy on one line'
+[ "${auto_vpa_one_line_fixture}" != "${auto_vpa_generating_policy_fixture}" ] ||
+  fail 'the one-line GeneratingPolicy must differ from the reviewed one'
+assert_helm_rules_accept \
+  'auto-vpa-generating-policy-one-line' \
+  "${auto_vpa_one_line_fixture}" \
+  'a reviewed GeneratingPolicy that differs only in whitespace is the reviewed exception'
+
 helm_admin_network_policy_fixture=$'apiVersion: policy.networking.k8s.io/v1alpha1\nkind: AdminNetworkPolicy\nmetadata:\n  name: crossplane-world-egress\nspec:\n  priority: 10\n  subject:\n    namespaces:\n      matchLabels:\n        kubernetes.io/metadata.name: crossplane-system\n  egress:\n  - name: allow-world\n    action: Allow\n    to:\n    - networks: [0.0.0.0/0]'
 assert_helm_rules_reject \
   'helm-crossplane-admin-network-policy' \

@@ -133,6 +133,24 @@ readonly CONSUMER_CARRIER_KINDS='OCIRepository|Kustomization|FluxInstance|Resour
 readonly CONSUMER_LITERAL_KIND='^[A-Za-z][A-Za-z0-9]*$'
 readonly CONSUMER_LITERAL_API_VERSION='^([a-z0-9]([a-z0-9.-]*[a-z0-9])?/)?[A-Za-z0-9]+$'
 export CONSUMER_CARRIER_KINDS CONSUMER_LITERAL_KIND CONSUMER_LITERAL_API_VERSION
+# The reviewed auto-vpa GeneratingPolicy expressions (#5102), one per workload
+# kind, exactly as the shared catalog registers them
+# (devantler-tech/kyverno-policies policies/best-practices/
+# auto-vpa-generating-policy.yaml) with spaces, tabs and line breaks removed.
+# A policy passes only when its expression, stripped the same way, equals the
+# one for its single trigger resource. Whitespace is removed only to tolerate
+# formatting between tokens: the expression must also hold no backslash and no
+# double-quoted literal containing whitespace, so removing it can never turn a
+# different key or value (`"update Policy"`) into a reviewed one.
+# These are data for yq strenv(), never expanded or parsed by the shell.
+# shellcheck disable=SC2089
+readonly REVIEWED_AUTO_VPA_DEPLOYMENT='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-deployment","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
+# shellcheck disable=SC2089
+readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-daemonset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])'
+# shellcheck disable=SC2089
+readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
+# shellcheck disable=SC2090
+export REVIEWED_AUTO_VPA_DEPLOYMENT REVIEWED_AUTO_VPA_DAEMONSET REVIEWED_AUTO_VPA_STATEFULSET
 if ! artifact_contract="$(yq -N -r '[
     (.apiVersion == "ksail.io/v1alpha1"), (.kind == "Cluster"),
     (.spec.cluster.gitOpsEngine == "Flux"),
@@ -727,11 +745,22 @@ while IFS=$'\t' read -r file label; do
   # HelmRelease carries no consumer, and those paths cannot reach its values.
   # The patch text is read literally: each "path" and "op" must be followed by
   # an approved string literal; the leading "#" keeps the text before the
-  # first one from ever matching. Everything else stays refused.
+  # first one from ever matching.
+  # The second reviewed shape (#5102) is the shared catalog's auto-vpa: a
+  # Kyverno GeneratingPolicy whose spec holds only evaluation settings, one
+  # apps resource rule (apiGroups, apiVersions, operations, resources) naming
+  # one deployments, daemonsets or statefulsets resource, and one generate
+  # expression equal, whitespace aside, to the reviewed one for that resource
+  # (REVIEWED_AUTO_VPA_*). That expression builds only a
+  # VerticalPodAutoscaler for the triggering workload, in its own namespace,
+  # and a VerticalPodAutoscaler carries no consumer. Every other spec field is
+  # refused, because variables and matchConditions are CEL that can read or
+  # write the cluster. Everything else stays refused.
+  # shellcheck disable=SC2016 # $generation is a yq variable
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
         or .kind == "GeneratingPolicy"))
-      | select((.kind == "MutatingPolicy"
+      | select(((.kind == "MutatingPolicy"
         and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
         and (.spec | type) == "!!map"
         and (.spec | has("targetMatchConstraints") | not)
@@ -753,6 +782,45 @@ while IFS=$'\t' read -r file label; do
               or (([.[] | select(test("^\\s*:\\s*\"/spec/(install|upgrade)(/crds)?\"\\s*[,}]") | not)] | length) != 1)))
           or (("#" + .jsonPatch.expression) | split("op")
             | (([.[] | select(test("^\\s*:\\s*\"(add|replace)\"\\s*[,}]") | not)] | length) != 1)))] | length) == 0)
+        or (.kind == "GeneratingPolicy"
+        and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
+        and (.spec | type) == "!!map"
+        and ([.spec | keys | .[] | select((. == "evaluation" or . == "matchConstraints"
+          or . == "generate") | not)] | length) == 0
+        and ((.spec | has("evaluation") | not) or ((.spec.evaluation | type) == "!!map"
+          and ([.spec.evaluation | keys | .[] | select((. == "admission" or . == "generateExisting"
+            or . == "synchronize" or . == "orphanDownstreamOnPolicyDelete") | not)] | length) == 0))
+        and (.spec.matchConstraints | type) == "!!map"
+        and ([.spec.matchConstraints | keys | .[] | select(. != "resourceRules")] | length) == 0
+        and (.spec.matchConstraints.resourceRules | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules | length) == 1
+        and (.spec.matchConstraints.resourceRules[0] | type) == "!!map"
+        and ([.spec.matchConstraints.resourceRules[0] | keys | .[] | select((. == "apiGroups"
+          or . == "apiVersions" or . == "operations" or . == "resources") | not)] | length) == 0
+        and (.spec.matchConstraints.resourceRules[0].apiGroups | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules[0].apiGroups | length) == 1
+        and (.spec.matchConstraints.resourceRules[0].apiGroups[0] | tostring) == "apps"
+        and (.spec.matchConstraints.resourceRules[0].apiVersions | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules[0].apiVersions | length) == 1
+        and (.spec.matchConstraints.resourceRules[0].apiVersions[0] | tostring) == "v1"
+        and (.spec.matchConstraints.resourceRules[0].operations | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules[0].operations | length) == 2
+        and (.spec.matchConstraints.resourceRules[0].operations[0] | tostring) == "CREATE"
+        and (.spec.matchConstraints.resourceRules[0].operations[1] | tostring) == "UPDATE"
+        and (.spec.matchConstraints.resourceRules[0].resources | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules[0].resources | length) == 1
+        and (.spec.generate | type) == "!!seq"
+        and (.spec.generate | length) == 1
+        and (.spec.generate[0] | type) == "!!map"
+        and ([.spec.generate[0] | keys | .[] | select(. != "expression")] | length) == 0
+        and (.spec.generate[0].expression | type) == "!!str"
+        and (.spec.generate[0].expression | test("^[^\"\\x5c]*(\"[^\"\\x5c\\s]*\"[^\"\\x5c]*)*$"))
+        and (((.spec.matchConstraints.resourceRules[0].resources[0] | tostring) + "="
+            + (.spec.generate[0].expression | tostring | sub("[ \t\r\n]"; ""))) as $generation
+          | [("deployments=" + strenv(REVIEWED_AUTO_VPA_DEPLOYMENT)),
+            ("daemonsets=" + strenv(REVIEWED_AUTO_VPA_DAEMONSET)),
+            ("statefulsets=" + strenv(REVIEWED_AUTO_VPA_STATEFULSET))]
+          | any_c(. == $generation))))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
