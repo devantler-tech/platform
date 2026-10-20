@@ -1,0 +1,274 @@
+---
+# Pins what validate-pod-security decides today, rule by rule, so the policy's
+# rewrite for #4996 must keep every decision. Resources are in resources.yaml;
+# each one's comment there says what it exercises.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: validate-pod-security
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: validate-pod-security
+    rule: autogen-cronjob-deny-container-seccomp-unconfined
+    kind: CronJob
+    result: pass
+    resources:
+      - insecure-cronjob
+  - policy: validate-pod-security
+    rule: autogen-cronjob-require-seccomp-profile
+    kind: CronJob
+    result: fail
+    resources:
+      - insecure-cronjob
+  - policy: validate-pod-security
+    rule: autogen-cronjob-validate-container-security
+    kind: CronJob
+    result: fail
+    resources:
+      - insecure-cronjob
+  - policy: validate-pod-security
+    rule: autogen-deny-container-seccomp-unconfined
+    kind: DaemonSet
+    result: pass
+    resources:
+      - insecure-daemonset
+  - policy: validate-pod-security
+    rule: autogen-deny-container-seccomp-unconfined
+    kind: Deployment
+    result: pass
+    resources:
+      - insecure-deployment
+  - policy: validate-pod-security
+    rule: autogen-deny-container-seccomp-unconfined
+    kind: Job
+    result: pass
+    resources:
+      - insecure-job
+  - policy: validate-pod-security
+    rule: autogen-deny-container-seccomp-unconfined
+    kind: ReplicaSet
+    result: pass
+    resources:
+      - insecure-replicaset
+  - policy: validate-pod-security
+    rule: autogen-deny-container-seccomp-unconfined
+    kind: StatefulSet
+    result: pass
+    resources:
+      - insecure-statefulset
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    kind: DaemonSet
+    result: fail
+    resources:
+      - insecure-daemonset
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    kind: Deployment
+    result: fail
+    resources:
+      - insecure-deployment
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    kind: Job
+    result: fail
+    resources:
+      - insecure-job
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    kind: ReplicaSet
+    result: fail
+    resources:
+      - insecure-replicaset
+  - policy: validate-pod-security
+    rule: autogen-require-seccomp-profile
+    kind: StatefulSet
+    result: fail
+    resources:
+      - insecure-statefulset
+  - policy: validate-pod-security
+    rule: autogen-validate-container-security
+    kind: DaemonSet
+    result: fail
+    resources:
+      - insecure-daemonset
+  - policy: validate-pod-security
+    rule: autogen-validate-container-security
+    kind: Deployment
+    result: fail
+    resources:
+      - insecure-deployment
+  - policy: validate-pod-security
+    rule: autogen-validate-container-security
+    kind: Job
+    result: fail
+    resources:
+      - insecure-job
+  - policy: validate-pod-security
+    rule: autogen-validate-container-security
+    kind: ReplicaSet
+    result: fail
+    resources:
+      - insecure-replicaset
+  - policy: validate-pod-security
+    rule: autogen-validate-container-security
+    kind: StatefulSet
+    result: fail
+    resources:
+      - insecure-statefulset
+  - policy: validate-pod-security
+    rule: deny-container-seccomp-unconfined
+    kind: Pod
+    result: fail
+    resources:
+      - container-seccomp-unconfined
+      - ephemeral-container-seccomp-unconfined
+      - init-container-seccomp-unconfined
+      - insecure
+      - lookalike-namespace
+  - policy: validate-pod-security
+    rule: deny-container-seccomp-unconfined
+    kind: Pod
+    result: pass
+    resources:
+      - compliant
+      - compliant-localhost
+      - container-seccomp-localhost
+      - container-seccomp-only
+      - drop-all-and-net-raw
+      - drop-net-raw-only
+      - insecure-ephemeral-container
+      - insecure-init-container
+      - missing-privilege-escalation
+      - no-pod-seccomp
+      - no-security-context
+      - non-root-at-pod-level-only
+      - pod-seccomp-unconfined
+      - privilege-escalation
+      - privileged
+      - privileged-false
+      - second-container-insecure
+      - secure-init-container
+  - policy: validate-pod-security
+    rule: require-seccomp-profile
+    kind: Pod
+    result: fail
+    resources:
+      - container-seccomp-only
+      - insecure
+      - lookalike-namespace
+      - no-pod-seccomp
+      - pod-seccomp-unconfined
+  - policy: validate-pod-security
+    rule: require-seccomp-profile
+    kind: Pod
+    result: pass
+    resources:
+      - compliant
+      - compliant-localhost
+      - container-seccomp-localhost
+      - container-seccomp-unconfined
+      - drop-all-and-net-raw
+      - drop-net-raw-only
+      - ephemeral-container-seccomp-unconfined
+      - init-container-seccomp-unconfined
+      - insecure-ephemeral-container
+      - insecure-init-container
+      - missing-privilege-escalation
+      - no-security-context
+      - non-root-at-pod-level-only
+      - privilege-escalation
+      - privileged
+      - privileged-false
+      - second-container-insecure
+      - secure-init-container
+  - policy: validate-pod-security
+    rule: validate-container-security
+    kind: Pod
+    result: fail
+    resources:
+      - drop-all-and-net-raw
+      - drop-net-raw-only
+      - insecure
+      - insecure-ephemeral-container
+      - insecure-init-container
+      - lookalike-namespace
+      - missing-privilege-escalation
+      - no-security-context
+      - non-root-at-pod-level-only
+      - privilege-escalation
+      - privileged
+      - second-container-insecure
+  - policy: validate-pod-security
+    rule: validate-container-security
+    kind: Pod
+    result: pass
+    resources:
+      - compliant
+      - compliant-localhost
+      - container-seccomp-localhost
+      - container-seccomp-only
+      - container-seccomp-unconfined
+      - ephemeral-container-seccomp-unconfined
+      - init-container-seccomp-unconfined
+      - no-pod-seccomp
+      - pod-seccomp-unconfined
+      - privileged-false
+      - secure-init-container
+  # The namespace exemptions: the same Pod that fails every rule above as
+  # `insecure` is not judged at all in an exempt namespace.
+  - policy: validate-pod-security
+    rule: validate-container-security
+    kind: Pod
+    result: skip
+    resources:
+      - exempt-kube-system
+      - exempt-kube-public
+      - exempt-kube-node-lease
+      - exempt-flux-system
+      - exempt-longhorn-system
+      - exempt-local-path-storage
+      - exempt-kubescape
+      - exempt-kubevirt
+      - exempt-cdi
+      - exempt-observability
+      - exempt-velero
+      - exempt-chaos-mesh
+  - policy: validate-pod-security
+    rule: require-seccomp-profile
+    kind: Pod
+    result: skip
+    resources:
+      - exempt-kube-system
+      - exempt-kube-public
+      - exempt-kube-node-lease
+      - exempt-flux-system
+      - exempt-longhorn-system
+      - exempt-local-path-storage
+      - exempt-kubescape
+      - exempt-kubevirt
+      - exempt-cdi
+      - exempt-observability
+      - exempt-velero
+      - exempt-chaos-mesh
+  - policy: validate-pod-security
+    rule: deny-container-seccomp-unconfined
+    kind: Pod
+    result: skip
+    resources:
+      - exempt-kube-system
+      - exempt-kube-public
+      - exempt-kube-node-lease
+      - exempt-flux-system
+      - exempt-longhorn-system
+      - exempt-local-path-storage
+      - exempt-kubescape
+      - exempt-kubevirt
+      - exempt-cdi
+      - exempt-observability
+      - exempt-velero
+      - exempt-chaos-mesh

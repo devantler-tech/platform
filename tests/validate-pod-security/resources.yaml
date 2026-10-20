@@ -1,0 +1,803 @@
+# Fixtures for validate-pod-security. They pin what the policy decides today, so
+# a rewrite of the policy (#4996) has to keep every decision below.
+---
+# Every check satisfied: pod-level RuntimeDefault, hardened container.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: compliant
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# A Localhost pod-level profile is accepted as well as RuntimeDefault.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: compliant-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: Localhost
+      localhostProfile: profiles/app.json
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# privileged may be set, but only to false.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+---
+# privileged: true is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privileged
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+---
+# allowPrivilegeEscalation must be set to false, not left out.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: missing-privilege-escalation
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# allowPrivilegeEscalation: true is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: privilege-escalation
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# runAsNonRoot is required on each container; the pod-level value does not count.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: non-root-at-pod-level-only
+  namespace: workloads
+spec:
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# A container with no securityContext at all is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+---
+# Dropping a single capability instead of ALL is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: drop-net-raw-only
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+---
+# ALL listed together with another capability.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+---
+# Every container is checked, not only the first.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: second-container-insecure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: sidecar
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Init containers are held to the same rules.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: insecure-init-container
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# A hardened init container passes.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-init-container
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Ephemeral (debug) containers are held to the same rules.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: insecure-ephemeral-container
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+---
+# A pod with no pod-level seccomp profile is refused, even with hardened containers.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-pod-seccomp
+  namespace: workloads
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# A container-level profile does not stand in for the pod-level one.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-seccomp-only
+  namespace: workloads
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+# An Unconfined pod-level profile is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: Unconfined
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# A container may not override the pod profile with Unconfined.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# A container may override the pod profile with Localhost.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+---
+# The container profile override check covers init containers.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-container-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# The container profile override check covers ephemeral containers.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-container-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# Fails every check. Its twins below sit in exempt namespaces.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: insecure
+  namespace: workloads
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kube-system: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kube-system
+  namespace: kube-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kube-public: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kube-public
+  namespace: kube-public
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kube-node-lease: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kube-node-lease
+  namespace: kube-node-lease
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace flux-system: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-flux-system
+  namespace: flux-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace longhorn-system: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-longhorn-system
+  namespace: longhorn-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace local-path-storage: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-local-path-storage
+  namespace: local-path-storage
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kubescape: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kubescape
+  namespace: kubescape
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kubevirt: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kubevirt
+  namespace: kubevirt
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace cdi: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-cdi
+  namespace: cdi
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace observability: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-observability
+  namespace: observability
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace velero: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-velero
+  namespace: velero
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace chaos-mesh: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-chaos-mesh
+  namespace: chaos-mesh
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# A namespace whose name only starts like an exempt one is still checked.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lookalike-namespace
+  namespace: observability-apps
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# An insecure Deployment template is refused when the Deployment itself is applied.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-deployment
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure StatefulSet template is refused when the StatefulSet itself is applied.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: insecure-statefulset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure DaemonSet template is refused when the DaemonSet itself is applied.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: insecure-daemonset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure ReplicaSet template is refused when the ReplicaSet itself is applied.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: insecure-replicaset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure Job template is refused when the Job itself is applied.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: insecure-job
+  namespace: workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure CronJob job template is refused when the CronJob is applied.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: insecure-cronjob
+  namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: true
