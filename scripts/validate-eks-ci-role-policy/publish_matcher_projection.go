@@ -109,9 +109,6 @@ const (
 	publishSubjectHost     = `^https://github\.com/devantler-tech/`
 	legacyPublishFamily    = `actions/\.github/workflows/`
 	canonicalPublishFamily = `\.github/\.github/workflows/`
-	// canonicalPublishWorkflow is the only workflow whose artifacts may also accept the
-	// canonical publisher; application-image publishers stay legacy-only (#4502).
-	canonicalPublishWorkflow = "publish-manifests"
 )
 
 // projectPublishSubject replaces the generated legacy signer set with the shared pattern
@@ -128,7 +125,7 @@ func projectPublishSubject(subject, workflow string) (string, bool) {
 		}
 		return publishSubjectHost + legacy + `[0-9a-f]{40}$`, true
 	}
-	if workflow != canonicalPublishWorkflow {
+	if workflow != "publish-manifests" && workflow != "publish-app" {
 		return "", false
 	}
 	inner, ok := strings.CutPrefix(subject, publishSubjectHost+"("+legacy)

@@ -1082,8 +1082,7 @@ deployed_tag() {
 report_publisher_at_ref() {
   local repo="$1" workflow="$2" ref="$3" body calls pattern
   case "$workflow" in
-    publish-manifests) pattern='(actions|[.]github)' ;;
-    publish-app) pattern='actions' ;;
+    publish-manifests | publish-app) pattern='(actions|[.]github)' ;;
     *) return 1 ;;
   esac
   body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml" \
@@ -1107,8 +1106,7 @@ report_publisher_at_ref() {
 report_publisher_identity() {
   local answer="$1" workflow="$2" pattern
   case "$workflow" in
-    publish-manifests) pattern='(actions|[.]github)' ;;
-    publish-app) pattern='actions' ;;
+    publish-manifests | publish-app) pattern='(actions|[.]github)' ;;
     *) return 1 ;;
   esac
   if is_sha "$answer"; then

@@ -40,6 +40,19 @@ canonical publisher. A canonical observation must match one of that consumer's
 fixed reviewed approvals; daily regeneration cannot approve a new canonical
 revision.
 
+The framework supports `publish-manifests` and `publish-app`, but an approval
+must match the registered consumer's publishing workflow. Family support alone
+grants no signer authority: a separately reviewed record must name the consumer,
+maintained repository and exact commit before the writer can render that identity.
+Application publisher activation still requires source review, tenant pin-guard
+preparation, deployment and actual publication verification. Do not hand-edit the
+generated matchers or infer an approval from a successful parser test.
+
+The independent shared-publisher pin guard accepts the same strict two-family
+form for both workflows. Authorization fingerprinting projects only the generated
+legacy signer revisions; the maintained repository, workflow and exact canonical
+commit or pair remain fingerprinted, so an approval change still requires review.
+
 To move a consumer's canonical publisher to a newer commit, review the workflow
 at that commit, add it as a second row for the consumer in
 `scripts/publish-workflow-canonical-approvals.tsv` below the current one, and run

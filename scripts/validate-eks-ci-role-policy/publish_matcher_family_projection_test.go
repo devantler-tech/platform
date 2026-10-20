@@ -9,6 +9,18 @@ import (
 // accepting the canonical publisher keeps that family and its commit in the approval
 // fingerprint, while the generated legacy set inside it may still rotate (#4502).
 func TestPublishMatcherProjectionRetainsThePublisherFamily(t *testing.T) {
+	for _, family := range []struct{ workflow, consumer, other string }{
+		{"publish-manifests", "github-config", "publish-app"},
+		{"publish-app", "wedding-app", "publish-manifests"},
+	} {
+		t.Run(family.workflow, func(t *testing.T) {
+			testPublishMatcherProjectionFamily(t, family.workflow, family.consumer, family.other)
+		})
+	}
+}
+
+func testPublishMatcherProjectionFamily(t *testing.T, workflow, consumer, otherWorkflow string) {
+	t.Helper()
 	const legacySubject = `^https://github\.com/devantler-tech/actions/\.github/workflows/publish-manifests\.yaml@LEGACY$`
 	const familySubject = `^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-manifests\.yaml@LEGACY|\.github/\.github/workflows/publish-manifests\.yaml@CANONICAL)$`
 	const manifest = `apiVersion: source.toolkit.fluxcd.io/v1
@@ -28,7 +40,8 @@ spec:
 `
 	entry := func(subject string) string {
 		t.Helper()
-		documents, err := decodeDocuments([]byte(strings.Replace(manifest, "SUBJECT", subject, 1)))
+		input := strings.Replace(manifest, "github-config", consumer, 1)
+		documents, err := decodeDocuments([]byte(strings.Replace(input, "SUBJECT", subject, 1)))
 		if err != nil || len(documents) != 1 {
 			t.Fatalf("decode OCIRepository: documents=%d error=%v", len(documents), err)
 		}
@@ -41,9 +54,11 @@ spec:
 	a, b, c := strings.Repeat("1", 40), strings.Repeat("2", 40), strings.Repeat("3", 40)
 	k, x := strings.Repeat("6", 40), strings.Repeat("7", 40)
 	const pattern = "[0-9a-f]{40}"
-	legacy := func(ref string) string { return strings.Replace(legacySubject, "LEGACY", ref, 1) }
+	legacy := func(ref string) string {
+		return strings.ReplaceAll(strings.Replace(legacySubject, "LEGACY", ref, 1), "publish-manifests", workflow)
+	}
 	family := func(ref, commit string) string {
-		return strings.Replace(strings.Replace(familySubject, "LEGACY", ref, 1), "CANONICAL", commit, 1)
+		return strings.ReplaceAll(strings.Replace(strings.Replace(familySubject, "LEGACY", ref, 1), "CANONICAL", commit, 1), "publish-manifests", workflow)
 	}
 
 	legacyBaseline := entry(legacy(pattern))
@@ -88,7 +103,7 @@ spec:
 		{"bare extra alternative", strings.Replace(narrowed, k+")$", k+"|.*)$", 1)},
 		{"different canonical repository", strings.Replace(narrowed, `|\.github/\.github/`, `|elsewhere/\.github/`, 1)},
 		{"different canonical organization", strings.Replace(narrowed, `|\.github/\.github/`, `|.*/\.github/`, 1)},
-		{"different canonical workflow", strings.Replace(narrowed, `publish-manifests\.yaml@`+k, `publish-app\.yaml@`+k, 1)},
+		{"different canonical workflow", strings.Replace(narrowed, workflow+`\.yaml@`+k, otherWorkflow+`\.yaml@`+k, 1)},
 		{"legacy regex injection", family("("+a+"|.*)", k)},
 		{"too many legacy signers", family("("+a+"|"+b+"|"+c+"|"+x+")", k)},
 		{"unanchored suffix", strings.TrimSuffix(narrowed, "$")},
@@ -110,31 +125,12 @@ spec:
 	t.Run("canonical-first order", func(t *testing.T) {
 		reversed := `^https://github\.com/devantler-tech/(\.github/\.github/workflows/publish-manifests\.yaml@` + k +
 			`|actions/\.github/workflows/publish-manifests\.yaml@` + a + `)$`
+		reversed = strings.ReplaceAll(reversed, "publish-manifests", workflow)
 		if actual := entry(reversed); actual == familyBaseline || actual == legacyBaseline {
 			t.Fatal("a canonical-first matcher escaped the approval fingerprint")
 		}
 	})
 
-	// Application-image publishers stay legacy-only: a two-family application matcher is
-	// never normalised, so even its legacy set stays in the fingerprint.
-	t.Run("application publisher stays legacy-only", func(t *testing.T) {
-		app := func(ref string) string {
-			subject := strings.ReplaceAll(family(ref, k), "publish-manifests", "publish-app")
-			documents, err := decodeDocuments([]byte(strings.Replace(
-				strings.Replace(manifest, "github-config", "wedding-app", 1), "SUBJECT", subject, 1)))
-			if err != nil || len(documents) != 1 {
-				t.Fatalf("decode OCIRepository: documents=%d error=%v", len(documents), err)
-			}
-			actual, err := authorizationSurfaceEntry(identityOf(documents[0]), documents[0])
-			if err != nil {
-				t.Fatal(err)
-			}
-			return actual
-		}
-		if app(a) == app(b) {
-			t.Fatal("a two-family application matcher was normalised")
-		}
-	})
 }
 
 // TestProjectPublishSubjectRefusesWhatItCannotPlace pins the refusals directly: a subject
@@ -170,7 +166,13 @@ func TestProjectPublishSubjectRefusesWhatItCannotPlace(t *testing.T) {
 		}
 	}
 	appSubject := strings.ReplaceAll(host+"("+legacy+a+canonical+k+")$", "publish-manifests", "publish-app")
-	if projected, ok := projectPublishSubject(appSubject, "publish-app"); ok {
-		t.Errorf("a two-family application subject was projected to %q", projected)
+	if _, ok := projectPublishSubject(appSubject, "publish-app"); !ok {
+		t.Error("the rendered two-family application subject was not recognised")
+	}
+	for name, subject := range refused {
+		subject = strings.ReplaceAll(subject, "publish-manifests", "publish-app")
+		if projected, ok := projectPublishSubject(subject, "publish-app"); ok {
+			t.Errorf("application %s was projected to %q", name, projected)
+		}
 	}
 }
