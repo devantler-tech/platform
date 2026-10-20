@@ -642,15 +642,18 @@ rules:
   # #5102: the shared catalog's auto-vpa
   # (devantler-tech/kyverno-policies
   # policies/best-practices/auto-vpa-generating-policy.yaml): a
-  # GeneratingPolicy with no variables, one apps resource rule naming one
+  # GeneratingPolicy whose spec holds only evaluation settings, one apps
+  # resource rule (apiGroups, apiVersions, operations, resources) naming one
   # deployments, daemonsets or statefulsets resource, and one generate
   # expression that equals the catalog's expression for that resource once
-  # spaces, tabs and line breaks are removed from both. That expression builds
-  # only a VerticalPodAutoscaler for the triggering workload, in its own
-  # namespace; a VerticalPodAutoscaler is not a network policy. Whitespace that
-  # differs from the catalog can only split a token, which does not compile, or
-  # sit inside a string literal, which then names no real kind, version, field,
-  # workload or quantity. The same three expressions are pinned in
+  # spaces, tabs and line breaks are removed from both. Every other spec field
+  # is refused, because variables and matchConditions are CEL that can read or
+  # write the cluster. That expression builds only a VerticalPodAutoscaler for
+  # the triggering workload, in its own namespace; a VerticalPodAutoscaler is
+  # not a network policy. Whitespace that differs from the catalog can only
+  # split a token, which does not compile, or sit inside a string literal,
+  # which then names no real kind, version, field, workload or quantity. The
+  # same three expressions are pinned in
   # scripts/guard-consumer-discovery-conservation.sh; a catalog change is
   # refused by both until it is reviewed here.
   - name: reject-cel-policy-producers
@@ -697,16 +700,24 @@ rules:
          ).size() == 1)) ||
       (object.kind == 'GeneratingPolicy' &&
        has(object.spec) &&
-       !has(object.spec.variables) &&
+       object.spec.all(key, key in ['evaluation', 'matchConstraints', 'generate']) &&
+       (!has(object.spec.evaluation) ||
+        object.spec.evaluation.all(key, key in [
+          'admission', 'generateExisting', 'synchronize',
+          'orphanDownstreamOnPolicyDelete'])) &&
        has(object.spec.matchConstraints) &&
+       object.spec.matchConstraints.all(key, key == 'resourceRules') &&
        has(object.spec.matchConstraints.resourceRules) &&
        object.spec.matchConstraints.resourceRules.size() == 1 &&
+       object.spec.matchConstraints.resourceRules[0].all(key, key in [
+         'apiGroups', 'apiVersions', 'operations', 'resources']) &&
        has(object.spec.matchConstraints.resourceRules[0].apiGroups) &&
        object.spec.matchConstraints.resourceRules[0].apiGroups == ['apps'] &&
        has(object.spec.matchConstraints.resourceRules[0].resources) &&
        object.spec.matchConstraints.resourceRules[0].resources.size() == 1 &&
        has(object.spec.generate) &&
        object.spec.generate.size() == 1 &&
+       object.spec.generate[0].all(key, key == 'expression') &&
        has(object.spec.generate[0].expression) &&
        ((object.spec.matchConstraints.resourceRules[0].resources == ['deployments'] &&
          object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==

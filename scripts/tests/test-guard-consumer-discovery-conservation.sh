@@ -1221,7 +1221,7 @@ YAML
     { printf 'FAIL: the one-line variant did not change the reviewed GeneratingPolicy\n' >&2; failures=$((failures + 1)); }
   printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed auto-vpa GeneratingPolicy on one line does not alter consumers' "$root" '2 consumer(s)'
-  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind unbound-target-ref other-target-name literal-apply-namespace literal-object-namespace mismatched-trigger second-generation foreign-group; do
+  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind unbound-target-ref other-target-name literal-apply-namespace literal-object-namespace mismatched-trigger second-generation match-conditions foreign-group; do
     root="$(fixture "reviewed-cel-generation-$target")"
     cp "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml"
     case "$target" in
@@ -1243,6 +1243,7 @@ YAML
       literal-object-namespace) yq -i '.spec.generate[0].expression |= sub("\"namespace\": string[(]object[.]metadata[.]namespace[)]", "\"namespace\": \"kube-system\"")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       mismatched-trigger) yq -i '.spec.matchConstraints.resourceRules[0].resources = ["deployments"]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       second-generation) yq -i '.spec.generate += [{"expression": "generator.Apply(string(object.metadata.namespace), [])"}]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      match-conditions) yq -i '.spec.matchConditions = [{"name": "create-policy", "expression": "resource.Post(\"cilium.io/v2\", \"ciliumnetworkpolicies\", \"kube-system\", {}) != null"}]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       foreign-group) yq -i '.apiVersion = "policies.example.test/v1"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&

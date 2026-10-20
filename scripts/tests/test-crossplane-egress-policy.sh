@@ -1118,6 +1118,19 @@ assert_reviewed_generation_variant_rejected \
   'generating-policy-second-generation' \
   "${auto_vpa_generating_policy_fixture}"$'\n    - expression: >-\n        generator.Apply(string(object.metadata.namespace), [])' \
   'a second generate expression must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-match-conditions' \
+  "${auto_vpa_generating_policy_fixture/  generate:/  matchConditions:
+    - name: create-policy
+      expression: resource.Post(\"cilium.io/v2\", \"ciliumnetworkpolicies\", \"kube-system\", dyn(1)) != null
+  generate:}" \
+  'a GeneratingPolicy whose match conditions can create objects must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-rule-extra-key' \
+  "${auto_vpa_generating_policy_fixture/resources: \[\"deployments\"\]/resources: [\"deployments\"]
+        resourceNames: [\"x\"]
+        scope: \"*\"}" \
+  'a resource rule field outside the reviewed set must void the reviewed GeneratingPolicy shape'
 
 # The other two catalog policies, and the reviewed one written on one line,
 # pass: only whitespace may differ from the catalog.
