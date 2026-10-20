@@ -13,12 +13,11 @@
 # workloads in Kyverno's PolicyReports for a human to raise (or exempt)
 # deliberately.
 #
-# Exemptions (a replica floor is *wrong*, not missing, for these) are expressed
-# as preconditions rather than rule excludes. A false precondition emits a
-# current `skip` PolicyReport result; an exclude emits no replacement result and
-# can leave an older `fail` result behind after the exemption is added (#2573).
-# This keeps Policy Reporter current without deleting or patching shared
-# reports. See docs/policy-reports.md for the regression test and rollout check.
+# Exemptions (a replica floor is *wrong*, not missing, for these) are part of the
+# validation expression, so an exempt workload gets a current `pass` result.
+# Neither a narrower match scope nor a false matchCondition writes a result,
+# so either could leave an older `fail` in place after the exemption is added
+# (#2573). See docs/policy-reports.md for the regression test and rollout check.
 #
 # Exemption categories:
 #   * the opt-out label platform.devantler.tech/replica-floor: exempt on the
@@ -44,8 +43,8 @@
 # The other leader-election controllers that USED to be exempt (cloudnative-pg,
 # reloader, trust-manager, hcloud CCM/CSI, snapshot-controller, kyverno
 # background, flagger) opt in to 2+ replicas for HA instead of opting out.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: validate-replica-floor
   annotations:
@@ -53,106 +52,86 @@ metadata:
     policies.kyverno.io/category: Best Practices, High Availability
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Deployment, StatefulSet
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Flags Deployments and StatefulSets running fewer than 2 replicas so their
       drain-safe PDBs actually preserve availability. Workloads that are
       intentionally singleton, scale-to-zero or controller-managed opt out with
       the platform.devantler.tech/replica-floor: exempt label.
 spec:
-  background: true
-  rules:
-    - name: require-replica-floor
-      match:
-        any:
-          - resources:
-              kinds:
-                - Deployment
-                - StatefulSet
-      preconditions:
-        all:
-          # Durable opt-out on the workload itself. Keep exemptions here, not in
-          # rule.exclude, so a background scan records a fresh `skip` result.
-          - key: >-
-              {{ request.object.metadata.labels."platform.devantler.tech/replica-floor"
-              || '' }}
-            operator: NotEquals
-            value: exempt
-          # Durable opt-out on the pod template (charts expose podLabels more
-          # widely than top-level workload labels).
-          - key: >-
-              {{ request.object.spec.template.metadata.labels."platform.devantler.tech/replica-floor"
-              || '' }}
-            operator: NotEquals
-            value: exempt
-          # Whole namespaces whose controllers are intentionally singleton or
-          # controller-managed: Velero has no leader election; Flux, Coroot and
-          # Kubescape controllers sit off serving paths; Crossplane reconcilers
-          # are external-state single writers. Crossplane is exempt by namespace
-          # because provider Deployment names include a changing revision hash.
-          - key: "{{ request.object.metadata.namespace || '' }}"
-            operator: AnyNotIn
-            value:
-              - velero
-              - flux-system
-              - observability
-              - kubescape
-              - crossplane-system
-          # Flagger owns replica counts for generated *-primary Deployments.
-          - key: "{{ request.object.metadata.name || '' }}"
-            operator: NotEquals
-            value: "?*-primary"
-          # Stable-name exemptions documented above. A false precondition emits
-          # `skip`, which supersedes any older failure for this policy and rule.
-          - key: "{{ request.object.metadata.name || '' }}"
-            operator: AnyNotIn
-            value:
-              # Single-replica apps/UIs and paused Flagger canary sources.
-              - actual-budget-actualbudget
-              - fleet
-              - headlamp
-              - whoami
-              - hubble-ui
-              - longhorn-ui
-              - homepage
-              - umami-umami
-              # Single-writer or ephemeral controllers with no useful second
-              # replica: DNS, disabled issuer and the canary load generator.
-              - external-dns
-              - origin-ca-issuer
-              - flagger-loadtester
-              # Lean leader-election controllers whose outage delays only an
-              # idempotent control loop. Production may still opt them into HA.
-              - vertical-pod-autoscaler-vpa-recommender
-              - vertical-pod-autoscaler-vpa-updater
-              - kyverno-reports-controller
-              - kyverno-cleanup-controller
-              # Controller-owned or single-by-design components triaged in the
-              # June 2026 HA sweep. SPIRE needs an external datastore for real
-              # HA.
-              - cluster-autoscaler-hetzner-cluster-autoscaler
-              - keda-operator-metrics-apiserver
-              - longhorn-driver-deployer
-              - spire-server
-              # CNPG-I exposes its gRPC readiness endpoint only on the elected
-              # leader, so a second replica can never become Ready.
-              - plugin-barman-cloud
-              # Crossview and its ephemeral bundled Postgres intentionally form
-              # one non-HA unit until the datastore is replaced.
-              - crossview
-              - crossview-postgres
-      validate:
-        failureAction: Audit
-        message: >-
-          {{ request.object.kind }} '{{ request.object.metadata.name }}' runs
-          {{ request.object.spec.replicas || `1` }} replica(s); the platform HA
-          floor is 2 so its maxUnavailable: 1 PDB keeps it available through a
-          node drain (see #1882). If it is intentionally singleton, scale-to-zero
-          or controller-managed, add the label
-          'platform.devantler.tech/replica-floor: exempt'.
-        deny:
-          conditions:
-            all:
-              - key: "{{ request.object.spec.replicas || `1` }}"
-                operator: LessThan
-                value: 2
+  validationActions:
+    - Audit
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets"]
+  variables:
+    # Durable opt-out on the workload itself.
+    - name: workloadExempt
+      expression: >-
+        object.metadata.?labels[?'platform.devantler.tech/replica-floor'].orValue('') == 'exempt'
+    # Durable opt-out on the pod template (charts expose podLabels more
+    # widely than top-level workload labels).
+    - name: templateExempt
+      expression: >-
+        object.spec.?template.?metadata.?labels[?'platform.devantler.tech/replica-floor'].orValue('') == 'exempt'
+    # Whole namespaces whose controllers are intentionally singleton or
+    # controller-managed: Velero has no leader election; Flux, Coroot and
+    # Kubescape controllers sit off serving paths; Crossplane reconcilers
+    # are external-state single writers. Crossplane is exempt by namespace
+    # because provider Deployment names include a changing revision hash.
+    - name: namespaceExempt
+      expression: >-
+        object.metadata.?namespace.orValue('') in [
+          'velero', 'flux-system', 'observability', 'kubescape',
+          'crossplane-system']
+    # Flagger owns replica counts for generated *-primary Deployments.
+    - name: flaggerPrimary
+      expression: >-
+        object.metadata.name.matches('^.+-primary$')
+    # Named exemptions, one list per reason: single-replica apps/UIs and paused
+    # Flagger canary sources; single-writer or ephemeral controllers (DNS,
+    # disabled issuer, canary load generator); lean leader-election controllers
+    # whose outage delays only an idempotent loop (production may still opt
+    # them into HA); and components single by design from the June 2026 HA
+    # sweep -- SPIRE needs an external datastore for real HA, CNPG-I exposes
+    # its gRPC readiness endpoint only on the elected leader, and Crossview with
+    # its bundled Postgres is one non-HA unit until the datastore is replaced.
+    - name: namedExempt
+      expression: >-
+        object.metadata.name in [
+          'actual-budget-actualbudget', 'fleet', 'headlamp', 'whoami',
+          'hubble-ui', 'longhorn-ui', 'homepage', 'umami-umami'] ||
+        object.metadata.name in [
+          'external-dns', 'origin-ca-issuer', 'flagger-loadtester'] ||
+        object.metadata.name in [
+          'vertical-pod-autoscaler-vpa-recommender',
+          'vertical-pod-autoscaler-vpa-updater',
+          'kyverno-reports-controller', 'kyverno-cleanup-controller'] ||
+        object.metadata.name in [
+          'cluster-autoscaler-hetzner-cluster-autoscaler',
+          'keda-operator-metrics-apiserver', 'longhorn-driver-deployer',
+          'spire-server', 'plugin-barman-cloud', 'crossview',
+          'crossview-postgres']
+    - name: exempt
+      expression: >-
+        variables.workloadExempt || variables.templateExempt ||
+        variables.namespaceExempt || variables.flaggerPrimary ||
+        variables.namedExempt
+    # An unset replica count defaults to 1; an explicit 0 stays 0.
+    - name: replicas
+      expression: object.spec.?replicas.orValue(1)
+  validations:
+    - expression: "variables.exempt || variables.replicas >= 2"
+      messageExpression: >-
+        object.kind + " '" + object.metadata.name + "' runs " +
+        string(variables.replicas) + " replica(s); the platform HA floor is 2
+        so its maxUnavailable: 1 PDB keeps it available through a node drain
+        (see #1882). If it is intentionally singleton, scale-to-zero or
+        controller-managed, add the label
+        'platform.devantler.tech/replica-floor: exempt'."

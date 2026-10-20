@@ -6,26 +6,31 @@ that property for the Policy Reporter compliance dashboard.
 
 ## Exemptions must produce a current result
 
-For report-backed validation policies, prefer a false `preconditions` entry for
-an exemption instead of `rule.exclude` when the exempt resource may already have
-a result:
+For report-backed validation policies, express an exemption so that the exempt
+resource still gets a current result when it may already have one:
 
-- a false precondition emits `result: skip` for the same policy, rule and
-  resource;
-- `exclude` or a changed `match` emits no replacement result.
+- in a `ClusterPolicy`, a false `preconditions` entry emits `result: skip` for
+  the same policy, rule and resource;
+- in a `ValidatingPolicy`, fold the exemption into the validation expression
+  (`variables.exempt || <check>`), which emits `result: pass`. A false
+  `matchConditions` entry writes no result to the report;
+- `exclude`, a changed `match` or a narrower `matchConstraints` emits no
+  replacement result.
 
-The second shape can leave an older result visible even after hourly background
-scans. Issue #2573 reproduced this with `validate-replica-floor`: eleven June
-failures remained while unrelated results in the same reports kept refreshing.
+A shape that writes no result can leave an older result visible even after
+hourly background scans. Issue #2573 reproduced this with
+`validate-replica-floor`: eleven June failures remained while unrelated
+results in the same reports kept refreshing.
 The policy's committed Kyverno test pins the supported exemption shape:
 
 ```bash
 kyverno test tests/validate-replica-floor --require-tests
 ```
 
-The test requires a normal singleton to fail, two replicas to pass, and every
-supported exemption form (workload label, pod-template label, namespace, exact
-name and wildcard primary name) to emit `skip`.
+The test requires a normal singleton, an unset replica count, a scaled-to-zero
+workload and a single-replica StatefulSet to fail, two or more replicas to pass,
+and every supported exemption form (workload label, pod-template label,
+namespace, exact name and wildcard primary name) to emit `pass`.
 
 `kyverno test` counts a fixture row as passing when its rule never evaluated
 the resource (`REASON=Excluded`), whatever the row declared, and it drops a
@@ -43,8 +48,9 @@ which a static rule-evaluation test cannot establish.
 
 ## Safe rollout and verification
 
-1. Express a new replica-floor exemption as a precondition in
-   `validate-replica-floor.yaml`. Do not add a new `exclude` entry.
+1. Express a new replica-floor exemption in the `exempt` variables of
+   `validate-replica-floor.yaml`. Do not add a `matchConditions` entry or
+   narrow its match scope.
 2. Run the Kyverno test above and the normal local/prod static validation.
 3. Let Flux deploy the policy change. Do not patch or delete PolicyReports by
    hand and do not restart the reports controller.
@@ -58,7 +64,7 @@ which a static rule-evaluation test cannot establish.
        | map({result: .[0].result, count: length})'
    ```
 
-The precondition changes only the target policy/rule result. Other results in
+The exemption changes only the target policy result. Other results in
 the same per-resource report remain controller-owned and untouched.
 
 ## Automatic pruning of stale failures
@@ -86,8 +92,8 @@ What operators should expect:
   two hours old; in those first two hours a report can still be deleted, and it
   stays missing until the controller recovers and rescans.
 - A result left behind by an `exclude` on a resource that no other rule still
-  evaluates is not pruned either. Use a precondition for the exemption (see
-  above) so the scan rewrites it as a current `skip`.
+  evaluates is not pruned either. Express the exemption as described above so the
+  scan rewrites it as a current result.
 - Cluster-scoped `ClusterPolicyReport` objects are not covered.
 
 ## Authorization review dispatch

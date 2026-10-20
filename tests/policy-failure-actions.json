@@ -40,7 +40,7 @@
   "validate-pod-security/require-seccomp-profile": "Enforce",
   "validate-pod-security/deny-container-seccomp-unconfined": "Enforce",
   "validate-replica-ceiling": "Audit",
-  "validate-replica-floor/require-replica-floor": "Audit",
+  "validate-replica-floor": "Audit",
   "enforce-flux-best-practices/kustomization-recommended-settings": "Enforce",
   "enforce-flux-best-practices/helmrelease-recommended-settings": "Enforce",
   "restrict-arc-retirement/fence-pool-retirement": "Enforce",
