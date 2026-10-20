@@ -255,6 +255,18 @@ roles with the pinned Talos client. This adoption retains the intended productio
 schematic and strict node-image readback; retries share the original deadline
 and do not accept permanent registration failures.
 
+**7.202.59**, commit `f03d751da4a857622b3f8791b5482c2f372ddda4`, is audited
+against 7.202.56 for the golangci-lint v2.14.0 pass. The Talos generator, chart,
+`go.mod` and `go.sum` are byte-identical. Only two files change. The
+configuration manager's `readConfig` now matches a missing config file with
+`errors.AsType[viper.ConfigFileNotFoundError]` instead of `errors.As`, which
+behaves the same. The cluster API change is limited to one test assertion that now
+uses `reflect.TypeAssert`. The Talos fold in `talos/configs.go` and the
+distribution caller are byte-identical, so extension activation, the argument
+union and reconciliation for both roles, and explicit schematic-ID precedence are
+unchanged. The extension and schematic-ID fields, types and defaults are
+unchanged, and Talos machinery is unchanged.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
