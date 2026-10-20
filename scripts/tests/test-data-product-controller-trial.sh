@@ -85,8 +85,20 @@ jq -e '[.[] | select(.kind == "HTTPRoute" and .spec.hostnames == ["data-products
   ($routes[0].spec.rules | length) == 1 and
   $routes[0].spec.rules[0].matches == [{"path":{"type":"PathPrefix","value":"/"}}] and
   $routes[0].spec.rules[0].backendRefs == [{"name":"oauth2-proxy","namespace":"oauth2-proxy","port":80}] and
-  $routes[0].metadata.annotations["gethomepage.dev/enabled"] == "true"' \
-  "${scratch}/apps.json" >/dev/null || fail "${provider}: every registry path must pass through SSO and appear on Homepage"
+  $routes[0].metadata.annotations["gethomepage.dev/enabled"] == "true" and
+  $routes[0].metadata.annotations["gethomepage.dev/group"] == "Data"' \
+  "${scratch}/apps.json" >/dev/null || fail "${provider}: every registry path must pass through SSO and appear under Data on Homepage"
+
+# Keep the documentation discoverable once, in Products, rather than alongside
+# the analytics tools. Check the rendered Homepage payload, not source spelling.
+yq -r 'select(.kind == "ConfigMap" and .metadata.namespace == "homepage" and .metadata.name == "homepage") |
+  .data."services.yaml"' "${scratch}/apps.yaml" |
+  yq -o=json '.' >"${scratch}/homepage-services.json"
+jq -e '[.[] | to_entries[] | .key as $group | .value[] | to_entries[]
+  | select(.value.href == "https://khoist.devantler.tech")
+  | {group: $group, name: .key}] == [{group: "Products", name: "KHoist Docs"}]' \
+  "${scratch}/homepage-services.json" >/dev/null ||
+  fail "${provider}: KHoist documentation must appear exactly once under Products"
 
 jq -e '[.[] | select(.kind == "HTTPRoute" and .spec.hostnames == ["harbour-data.${domain}"])] as $routes |
   ($routes | length) == 1 and
