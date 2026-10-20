@@ -44,14 +44,20 @@ spec:
         variables.oldLabels[?'kro.run/instance-kind'].orValue('') == 'WebApp'
     - name: node
       expression: "object.kind == 'Deployment' ? 'deployment' : object.kind == 'Service' ? 'service' : 'httpRoute'"
-    - name: sameOwnership
+    - name: sameReservedLabels
       expression: >-
         variables.labels.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
           k in variables.oldLabels && variables.labels[k] == variables.oldLabels[k]) &&
         variables.oldLabels.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
           k in variables.labels && variables.labels[k] == variables.oldLabels[k])
+    - name: sameOwnership
+      expression: >-
+        ['kro.run/instance-id', 'kro.run/instance-name', 'kro.run/instance-namespace',
+        'kro.run/instance-group', 'kro.run/instance-version', 'kro.run/instance-kind',
+        'kro.run/node-id', 'applyset.kubernetes.io/part-of'].all(k,
+          k in variables.labels && k in variables.oldLabels && variables.labels[k] == variables.oldLabels[k])
   validations:
-    - expression: "variables.kro || variables.sameOwnership"
+    - expression: "variables.kro || variables.sameReservedLabels"
       message: Non-controller writers must preserve reserved KRO and ApplySet ownership labels.
     - expression: >-
         !variables.kro || !variables.webApp ||

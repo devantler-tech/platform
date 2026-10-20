@@ -31,6 +31,7 @@
   "restrict-tenant-secret-stores": "Enforce",
   "restrict-tenant-webapps": "Enforce",
   "restrict-webapp-child-ownership": "Enforce",
+  "restrict-webapp-child-deletion": "Enforce",
   "restrict-unifi-management-policies/apply-without-delete": "Enforce",
   "restrict-unifi-management-policies/observe-only-is-observe": "Enforce",
   "restrict-unifi-management-policies/prune-only-without-delete": "Enforce",

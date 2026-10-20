@@ -37,6 +37,10 @@ spec:
       expression: "object.metadata.?annotations.orValue({})"
     - name: oldAnnotations
       expression: "oldObject == null ? {} : oldObject.?metadata.?annotations.orValue({})"
+    - name: finalizers
+      expression: "object.metadata.?finalizers.orValue([]).filter(f, f.startsWith('kro.run/'))"
+    - name: oldFinalizers
+      expression: "oldObject == null ? [] : oldObject.?metadata.?finalizers.orValue([]).filter(f, f.startsWith('kro.run/'))"
   validations:
     # The single explicit platform pilot predates tenant-owned WebApps. It is
     # not a wildcard platform/KRO exception for future cross-namespace apps.
@@ -61,3 +65,5 @@ spec:
         variables.oldAnnotations.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
           k in variables.annotations && variables.annotations[k] == variables.oldAnnotations[k]))
       message: Only the KRO controller may establish or change WebApp controller ownership metadata.
+    - expression: "variables.kro || variables.finalizers == variables.oldFinalizers"
+      message: Only KRO may establish or remove its parent cleanup finalizer.

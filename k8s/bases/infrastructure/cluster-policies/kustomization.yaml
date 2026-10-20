@@ -32,6 +32,7 @@ resources:
   - best-practices/restrict-tenant-secret-stores.yaml
   - best-practices/restrict-tenant-webapps.yaml
   - best-practices/restrict-webapp-child-ownership.yaml
+  - best-practices/restrict-webapp-child-deletion.yaml
   - best-practices/restrict-unifi-management-policies.yaml
   - best-practices/set-observability-dns-ndots.yaml
   - best-practices/validate-host-restrictions.yaml
