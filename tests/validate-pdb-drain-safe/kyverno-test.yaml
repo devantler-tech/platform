@@ -1,4 +1,4 @@
-# Pins the ClusterPolicy's behaviour before its ValidatingPolicy rewrite (#4996).
+# Pins the policy's behaviour across its ValidatingPolicy rewrite (#4996).
 # A maxUnavailable PDB passes and a minAvailable PDB fails. Each exclusion is
 # pinned: a CloudNativePG-labelled PDB, a KSail-installed PDB by name, and a
 # Longhorn-managed PDB, which is exempt only inside longhorn-system.
@@ -12,20 +12,17 @@ resources:
   - resources.yaml
 results:
   - policy: validate-pdb-drain-safe
-    rule: require-maxunavailable
     resources:
       - apps/max-unavailable
     kind: PodDisruptionBudget
     result: pass
   - policy: validate-pdb-drain-safe
-    rule: require-maxunavailable
     resources:
       - apps/min-available
       - apps/instance-manager-outside-longhorn
     kind: PodDisruptionBudget
     result: fail
   - policy: validate-pdb-drain-safe
-    rule: require-maxunavailable
     resources:
       - apps/cnpg-cluster
       - cert-manager/cert-manager
