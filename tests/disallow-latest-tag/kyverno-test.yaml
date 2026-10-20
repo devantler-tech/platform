@@ -1,7 +1,8 @@
-# Pins the ClusterPolicy's behaviour before its ValidatingPolicy rewrite (#4996).
-# A versioned tag and a tag+digest pass both rules; ':latest' fails only the
-# latest-tag rule; a tagless image fails only the tag-required rule; the same
-# tagless image in an excluded infrastructure namespace is out of scope.
+# Pins the policy's behaviour across its ValidatingPolicy rewrite (#4996).
+# A versioned tag, a tag+digest and a digest alone pass, with or without a
+# registry port; a registry port is not a tag; ':latest' fails, as does a tagless
+# image, in a regular, init or ephemeral container; the same tagless image in an
+# excluded infrastructure namespace is out of scope.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -12,45 +13,25 @@ resources:
   - resources.yaml
 results:
   - policy: disallow-latest-tag
-    rule: require-image-tag
     resources:
       - default/versioned-tag
       - default/tag-and-digest
-      - default/latest-tag
-      - default/latest-tag-init-container
+      - default/digest-only
+      - default/registry-port-versioned-tag
     kind: Pod
     result: pass
   - policy: disallow-latest-tag
-    rule: require-image-tag
     resources:
       - default/tagless
       - default/tagless-init-container
-    kind: Pod
-    result: fail
-  - policy: disallow-latest-tag
-    rule: validate-image-tag
-    resources:
-      - default/versioned-tag
-      - default/tag-and-digest
-      - default/tagless
-      - default/tagless-init-container
-    kind: Pod
-    result: pass
-  - policy: disallow-latest-tag
-    rule: validate-image-tag
-    resources:
       - default/latest-tag
       - default/latest-tag-init-container
+      - default/latest-tag-ephemeral-container
+      - default/tagless-ephemeral-container
+      - default/registry-port-tagless
     kind: Pod
     result: fail
   - policy: disallow-latest-tag
-    rule: require-image-tag
-    resources:
-      - kube-system/tagless
-    kind: Pod
-    result: skip
-  - policy: disallow-latest-tag
-    rule: validate-image-tag
     resources:
       - kube-system/tagless
     kind: Pod

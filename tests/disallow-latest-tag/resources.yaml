@@ -73,3 +73,59 @@ spec:
   containers:
     - name: app
       image: ghcr.io/example/app
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latest-tag-ephemeral-container
+  namespace: default
+spec:
+  ephemeralContainers:
+    - name: debug
+      image: ghcr.io/example/debug:latest
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagless-ephemeral-container
+  namespace: default
+spec:
+  ephemeralContainers:
+    - name: debug
+      image: ghcr.io/example/debug
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: registry-port-tagless
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: registry.example.com:5000/example/app
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: registry-port-versioned-tag
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: registry.example.com:5000/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: digest-only
+  namespace: default
+spec:
+  containers:
+    - name: app
+      image: ghcr.io/example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000
