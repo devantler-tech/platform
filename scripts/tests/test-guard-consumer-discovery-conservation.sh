@@ -1203,7 +1203,7 @@ spec:
 YAML
   printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed auto-vpa GeneratingPolicy does not alter consumers' "$root" '2 consumer(s)'
-  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind foreign-group; do
+  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind unbound-target-ref foreign-group; do
     root="$(fixture "reviewed-cel-generation-$target")"
     cp "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml"
     case "$target" in
@@ -1219,6 +1219,7 @@ YAML
       label-read) yq -i '.spec.generate[0].expression |= sub("\"namespace\": string[(]object[.]metadata[.]namespace[)]\n", "\"namespace\": string(object.metadata.labels.target)\n")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       generated-deployment) yq -i '.spec.generate[0].expression |= (sub("\"kind\": dyn[(]\"VerticalPodAutoscaler\"[)]", "\"kind\": \"Deployment\"") | sub("\"apiVersion\": dyn[(]\"autoscaling[.]k8s[.]io/v1\"[)]", "\"apiVersion\": \"apps/v1\""))' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       unbound-apps-kind) yq -i '.spec.generate[0].expression |= sub("\"updateMode\": \"Initial\"", "\"updateMode\": \"Initial\", \"kind\": \"Deployment\"")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      unbound-target-ref) yq -i '.spec.generate[0].expression |= sub("\"apiVersion\": \"apps/v1\",\n( *)\"kind\": \"StatefulSet\",", "\"kind\": \"StatefulSet\",\n${1}\"apiVersion\": \"apps/v1\",")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       foreign-group) yq -i '.apiVersion = "policies.example.test/v1"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&

@@ -1088,6 +1088,12 @@ assert_reviewed_generation_variant_rejected \
   'generating-policy-unbound-apps-kind' \
   "${auto_vpa_generating_policy_fixture/\"updateMode\": \"InPlaceOrRecreate\"/\"updateMode\": \"InPlaceOrRecreate\", \"kind\": \"Deployment\"}" \
   'an apps kind literal outside the targetRef head must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-unbound-target-ref' \
+  "${auto_vpa_generating_policy_fixture/\"apiVersion\": \"apps\/v1\",
+                  \"kind\": \"Deployment\",/\"kind\": \"Deployment\",
+                  \"apiVersion\": \"apps/v1\",}" \
+  'a targetRef that does not open with its apps apiVersion and kind literals must stay rejected'
 
 helm_admin_network_policy_fixture=$'apiVersion: policy.networking.k8s.io/v1alpha1\nkind: AdminNetworkPolicy\nmetadata:\n  name: crossplane-world-egress\nspec:\n  priority: 10\n  subject:\n    namespaces:\n      matchLabels:\n        kubernetes.io/metadata.name: crossplane-system\n  egress:\n  - name: allow-world\n    action: Allow\n    to:\n    - networks: [0.0.0.0/0]'
 assert_helm_rules_reject \
