@@ -6,6 +6,8 @@ metadata:
 policies:
   - >-
     ../../../k8s/providers/hetzner/infrastructure/cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+  - >-
+    ../../../k8s/providers/hetzner/infrastructure/cluster-policies/report-hcloud-claim-lookup-failure.yaml
 resources:
   - resources.yaml
 # The mounted claim is not in its namespace's claim list. The Deny policy

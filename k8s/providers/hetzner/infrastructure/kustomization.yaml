@@ -83,6 +83,8 @@ resources:
   # on an autoscaler node unnoticed (#3287). Checks the Pod spec only, so it
   # never waits on the label above.
   - cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+  # Its audit-only companion reports a mounted claim that policy could not find.
+  - cluster-policies/report-hcloud-claim-lookup-failure.yaml
   # Prod-only: give those same hcloud-volume Pods a priority one step above
   # normal workloads, so they can preempt a stateless Pod on a full baseline
   # worker instead of staying Pending (#4031). The PriorityClass lives in the

@@ -6,6 +6,8 @@ metadata:
 policies:
   - >-
     ../../k8s/providers/hetzner/infrastructure/cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+  - >-
+    ../../k8s/providers/hetzner/infrastructure/cluster-policies/report-hcloud-claim-lookup-failure.yaml
 resources:
   - resources.yaml
 # Every claim in this fixture uses storage class hcloud. The CLI cannot reach
