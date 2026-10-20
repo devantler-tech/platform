@@ -643,6 +643,20 @@ jq -e '.ids | sort == ["flux-build-canceled", "flux-dryrun-canceled", "flux-heal
 }
 pass "exact lifecycle exemptions hold while retired and replacement VPA policy warnings stay visible"
 
+retired_event_dir="$(setup_scenario retired-suppressed-events false)"
+jq '.data.alerts |= (map(.suppressed = true)
+    | . + [(.[] | select(.id == "auto-vpa-write-conflict")
+      | .id = "resolved-retired-vpa" | .resolved_at = 1)])' \
+  "${event_dir}/alerts.json" >"${retired_event_dir}/alerts.json"
+run_scenario "${retired_event_dir}" >/dev/null
+[ -f "${retired_event_dir}/reopened.json" ] ||
+  fail "an already-suppressed retired VPA conflict stayed hidden"
+jq -e '.ids == ["auto-vpa-write-conflict"]' "${retired_event_dir}/reopened.json" >/dev/null ||
+  fail "retirement reopened a resolved event, a near match, or a different exemption"
+[ ! -e "${retired_event_dir}/suppressed.json" ] ||
+  fail "an already-suppressed retired VPA conflict was suppressed again"
+pass "retired VPA conflicts reopen while resolved events and unrelated suppressions stay untouched"
+
 controlled_dir="$(setup_scenario controlled-platform-lifecycle false)"
 cat >"${controlled_dir}/alerts.json" <<'JSON'
 {"data":{"alerts":[

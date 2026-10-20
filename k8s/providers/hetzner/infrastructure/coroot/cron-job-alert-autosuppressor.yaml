@@ -56,6 +56,7 @@
 #   3. Retired after the classic auto-vpa policy was replaced by GeneratingPolicy.
 #      VPA policy warnings remain visible, including write conflicts. A new
 #      exemption needs its own observed retry and recovery evidence.
+#      Existing suppressions matching the retired exemption are reopened.
 #
 #   4. flux-status-context-canceled - the production image-verification handoff
 #      intentionally restarts kustomize-controller after suspending reconciliation,
@@ -307,6 +308,28 @@ spec:
                     else
                       log_info "keep kubelet TCP alert visible; active upstreams: $active"
                     fi
+                  done
+
+                  # Retirement 3 - reopen alerts previously hidden by the exact
+                  # classic auto-vpa conflict exemption. Removing a selector
+                  # alone leaves Coroot's existing suppression state unchanged.
+                  for id in $(printf '%s' "$ALERTS" | jq -r '
+                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
+                      def labels($d): ($d.Labels | split("\n") | map(capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
+                      .data.alerts[]
+                      | select(.suppressed==true and .resolved_at==null and .rule_id=="kubernetes-events")
+                      | details as $d
+                      | labels($d) as $l
+                      | select(($l | keys | sort) == ["cluster","kind","name","reason"]
+                               and $l.cluster=="platform"
+                               and $l.kind=="ClusterPolicy"
+                               and $l.name=="auto-vpa"
+                               and $l.reason=="PolicyError"
+                               and ($d["Event message"] | startswith("policy auto-vpa/generate-vpa-for-"))
+                               and ($d["Event message"] | contains("Operation cannot be fulfilled on verticalpodautoscalers.autoscaling.k8s.io"))
+                               and ($d["Event message"] | endswith("the object has been modified; please apply your changes to the latest version and try again")))
+                      | .id'); do
+                    reopen_ids="$reopen_ids $id"; log_info "reopen retired auto-vpa conflict: $id"
                   done
 
                   # Exemption 4 - canceled Flux Kustomization operations from
