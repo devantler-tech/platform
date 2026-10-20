@@ -132,9 +132,39 @@ run_generator() {
   APPROVED_REVISION_RELEASE_RESOLVER="$test_work/release" \
     bash "$test_root/scripts/generate-publish-workflow-approved-revisions.sh"
 }
+assert_identity_row() {
+  local file="$1" pinned_sha="$2"
+  awk -F'\t' -v consumer="$CANONICAL_TEST_CONSUMER" -v workflow="$CANONICAL_TEST_WORKFLOW" \
+    -v applied="$expected_identity" \
+    -v pinned="devantler-tech/.github/.github/workflows/$CANONICAL_TEST_WORKFLOW.yaml@$pinned_sha" \
+    -v header=$'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_publisher_identity\tmain_publisher_identity\tobserved_on' '
+      NR==1 {if ($0!=header) bad=1; next}
+      $1==consumer && $2==workflow {rows++; if (NF!=7 || $5!=applied || $6!=pinned) bad=1}
+      END {exit (bad || rows!=1)}' "$file" || {
+    echo 'Canonical identity row mismatch' >&2; return 1;
+  }
+}
 run_generator
 cmp "$test_work/seed.tsv" "$test_work/approved.tsv"
-grep -qF "devantler-tech/.github/.github/workflows/$CANONICAL_TEST_WORKFLOW.yaml@$CANONICAL_TEST_SHA" "$test_work/approved.identities.tsv"
+assert_identity_row "$test_work/approved.identities.tsv" "$CANONICAL_TEST_SHA"
+# Each corrupted output still satisfies the old whole-file grep. The real
+# row-bound assertion must reject it for this consumer and both identity fields.
+for mutation in consumer applied pinned duplicate; do
+  awk -F'\t' -v OFS='\t' -v consumer="$CANONICAL_TEST_CONSUMER" \
+    -v workflow="$CANONICAL_TEST_WORKFLOW" -v mutation="$mutation" '
+      NR>1 && $1==consumer && $2==workflow {
+        if (mutation=="consumer") $1="wrong-consumer-fixture"
+        if (mutation=="applied") $5="unapproved-applied"
+        if (mutation=="pinned") $6="unapproved-pin"
+        if (mutation=="duplicate") print
+      }
+      {print}' "$test_work/approved.identities.tsv" >"$test_work/wrong-row.tsv"
+  grep -qF "$expected_identity" "$test_work/wrong-row.tsv"
+  if assert_identity_row "$test_work/wrong-row.tsv" "$CANONICAL_TEST_SHA" >"$test_work/row-refusal" 2>&1; then
+    echo "Incorrect identity row was admitted: $mutation" >&2; exit 1
+  fi
+  grep -qF 'Canonical identity row mismatch' "$test_work/row-refusal"
+done
 cp "$test_work/approved.identities.tsv" "$test_work/identities-before"
 run_generator
 cmp "$test_work/identities-before" "$test_work/approved.identities.tsv"
@@ -148,7 +178,7 @@ while IFS= read -r approved_commit; do
   if ! run_generator >"$test_work/admitted" 2>&1; then
     echo "Approved canonical pin $approved_commit was refused" >&2; cat "$test_work/admitted" >&2; exit 1
   fi
-  grep -qF "devantler-tech/.github/.github/workflows/$CANONICAL_TEST_WORKFLOW.yaml@$approved_commit" "$test_work/approved.identities.tsv"
+  assert_identity_row "$test_work/approved.identities.tsv" "$approved_commit"
   cp "$test_work/seed.tsv" "$test_work/approved.tsv"
   cp "$test_work/identities-before" "$test_work/approved.identities.tsv"
 done <<<"$approved_commits"
