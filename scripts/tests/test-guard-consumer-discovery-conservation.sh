@@ -1221,7 +1221,7 @@ YAML
     { printf 'FAIL: the one-line variant did not change the reviewed GeneratingPolicy\n' >&2; failures=$((failures + 1)); }
   printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed auto-vpa GeneratingPolicy on one line does not alter consumers' "$root" '2 consumer(s)'
-  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind unbound-target-ref other-target-name literal-apply-namespace literal-object-namespace mismatched-trigger second-generation match-conditions foreign-group; do
+  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read generated-deployment unbound-apps-kind unbound-target-ref other-target-name literal-apply-namespace literal-object-namespace mismatched-trigger second-generation match-conditions foreign-group split-literal delete-operation any-version; do
     root="$(fixture "reviewed-cel-generation-$target")"
     cp "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml"
     case "$target" in
@@ -1245,6 +1245,9 @@ YAML
       second-generation) yq -i '.spec.generate += [{"expression": "generator.Apply(string(object.metadata.namespace), [])"}]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       match-conditions) yq -i '.spec.matchConditions = [{"name": "create-policy", "expression": "resource.Post(\"cilium.io/v2\", \"ciliumnetworkpolicies\", \"kube-system\", {}) != null"}]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
       foreign-group) yq -i '.apiVersion = "policies.example.test/v1"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      split-literal) yq -i '.spec.generate[0].expression |= sub("\"updatePolicy\""; "\"update Policy\"")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      delete-operation) yq -i '.spec.matchConstraints.resourceRules[0].operations += ["DELETE"]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      any-version) yq -i '.spec.matchConstraints.resourceRules[0].apiVersions = ["*"]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&
       { printf 'FAIL: the %s variant did not change the reviewed GeneratingPolicy\n' "$target" >&2; failures=$((failures + 1)); }

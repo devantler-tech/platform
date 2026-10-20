@@ -1131,6 +1131,18 @@ assert_reviewed_generation_variant_rejected \
         resourceNames: [\"x\"]
         scope: \"*\"}" \
   'a resource rule field outside the reviewed set must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-split-literal' \
+  "${auto_vpa_generating_policy_fixture/\"updatePolicy\"/\"update Policy\"}" \
+  'whitespace inside a string literal must not be stripped into a reviewed key'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-delete-operation' \
+  "${auto_vpa_generating_policy_fixture/operations: \[\"CREATE\", \"UPDATE\"\]/operations: [\"CREATE\", \"UPDATE\", \"DELETE\"]}" \
+  'an operation outside the reviewed set must void the reviewed GeneratingPolicy shape'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-any-version' \
+  "${auto_vpa_generating_policy_fixture/apiVersions: \[\"v1\"\]/apiVersions: [\"*\"]}" \
+  'an API version outside the reviewed set must void the reviewed GeneratingPolicy shape'
 
 # The other two catalog policies, and the reviewed one written on one line,
 # pass: only whitespace may differ from the catalog.

@@ -138,9 +138,10 @@ export CONSUMER_CARRIER_KINDS CONSUMER_LITERAL_KIND CONSUMER_LITERAL_API_VERSION
 # (devantler-tech/kyverno-policies policies/best-practices/
 # auto-vpa-generating-policy.yaml) with spaces, tabs and line breaks removed.
 # A policy passes only when its expression, stripped the same way, equals the
-# one for its single trigger resource. Whitespace that differs from these can
-# only split a token, which does not compile, or sit inside a string literal,
-# which then names no real kind, version, field, workload or quantity.
+# one for its single trigger resource. Whitespace is removed only to tolerate
+# formatting between tokens: the expression must also hold no backslash and no
+# double-quoted literal containing whitespace, so removing it can never turn a
+# different key or value (`"update Policy"`) into a reviewed one.
 # These are data for yq strenv(), never expanded or parsed by the shell.
 # shellcheck disable=SC2089
 readonly REVIEWED_AUTO_VPA_DEPLOYMENT='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-deployment","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
@@ -799,6 +800,13 @@ while IFS=$'\t' read -r file label; do
         and (.spec.matchConstraints.resourceRules[0].apiGroups | type) == "!!seq"
         and (.spec.matchConstraints.resourceRules[0].apiGroups | length) == 1
         and (.spec.matchConstraints.resourceRules[0].apiGroups[0] | tostring) == "apps"
+        and (.spec.matchConstraints.resourceRules[0].apiVersions | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules[0].apiVersions | length) == 1
+        and (.spec.matchConstraints.resourceRules[0].apiVersions[0] | tostring) == "v1"
+        and (.spec.matchConstraints.resourceRules[0].operations | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules[0].operations | length) == 2
+        and (.spec.matchConstraints.resourceRules[0].operations[0] | tostring) == "CREATE"
+        and (.spec.matchConstraints.resourceRules[0].operations[1] | tostring) == "UPDATE"
         and (.spec.matchConstraints.resourceRules[0].resources | type) == "!!seq"
         and (.spec.matchConstraints.resourceRules[0].resources | length) == 1
         and (.spec.generate | type) == "!!seq"
@@ -806,6 +814,7 @@ while IFS=$'\t' read -r file label; do
         and (.spec.generate[0] | type) == "!!map"
         and ([.spec.generate[0] | keys | .[] | select(. != "expression")] | length) == 0
         and (.spec.generate[0].expression | type) == "!!str"
+        and (.spec.generate[0].expression | test("^[^\"\\x5c]*(\"[^\"\\x5c\\s]*\"[^\"\\x5c]*)*$"))
         and (((.spec.matchConstraints.resourceRules[0].resources[0] | tostring) + "="
             + (.spec.generate[0].expression | tostring | sub("[ \t\r\n]"; ""))) as $generation
           | [("deployments=" + strenv(REVIEWED_AUTO_VPA_DEPLOYMENT)),
