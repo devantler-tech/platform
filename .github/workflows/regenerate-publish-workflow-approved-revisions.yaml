@@ -80,7 +80,7 @@ jobs:
             .github
             ascoachingogvaner
             aws
-            data-product-controller
+            khoist
             wedding-app
           permission-contents: read
           permission-actions: read
