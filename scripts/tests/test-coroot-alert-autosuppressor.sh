@@ -368,6 +368,39 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
+    "id":"generating-vpa-deployment-conflict",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:_:Unknown:auto-vpa-deployment",
+    "details":[
+      {"name":"Event message","value":"policy auto-vpa-deployment fail: Operation cannot be fulfilled on verticalpodautoscalers.autoscaling.k8s.io \"example\": the object has been modified; please apply your changes to the latest version and try again"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"GeneratingPolicy\"\nname=\"auto-vpa-deployment\"\nreason=\"PolicyError\""}
+    ]
+  },
+  {
+    "id":"generating-vpa-statefulset-conflict",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:_:Unknown:auto-vpa-statefulset",
+    "details":[
+      {"name":"Event message","value":"policy auto-vpa-statefulset fail: Operation cannot be fulfilled on verticalpodautoscalers.autoscaling.k8s.io \"example\": the object has been modified; please apply your changes to the latest version and try again"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"GeneratingPolicy\"\nname=\"auto-vpa-statefulset\"\nreason=\"PolicyError\""}
+    ]
+  },
+  {
+    "id":"generating-vpa-daemonset-conflict",
+    "suppressed":false,
+    "resolved_at":null,
+    "rule_id":"kubernetes-events",
+    "application_id":"95rsc5yp:_:Unknown:auto-vpa-daemonset",
+    "details":[
+      {"name":"Event message","value":"policy auto-vpa-daemonset fail: Operation cannot be fulfilled on verticalpodautoscalers.autoscaling.k8s.io \"example\": the object has been modified; please apply your changes to the latest version and try again"},
+      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"GeneratingPolicy\"\nname=\"auto-vpa-daemonset\"\nreason=\"PolicyError\""}
+    ]
+  },
+  {
     "id":"flux-status-canceled",
     "suppressed":false,
     "resolved_at":null,
@@ -603,12 +636,12 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["auto-vpa-write-conflict", "flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-health-canceled-milliseconds", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "monitor-secret-race", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
+jq -e '.ids | sort == ["flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-health-canceled-milliseconds", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "monitor-secret-race", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
   "${event_dir}/suppressed.json" >/dev/null || {
   jq -c '.ids | sort' "${event_dir}/suppressed.json" >&2
   fail "the event exemptions were broader than their exact label and message contracts"
 }
-pass "exact self-healing lifecycle events are suppressed while near matches stay visible"
+pass "exact lifecycle exemptions hold while retired and replacement VPA policy warnings stay visible"
 
 controlled_dir="$(setup_scenario controlled-platform-lifecycle false)"
 cat >"${controlled_dir}/alerts.json" <<'JSON'
