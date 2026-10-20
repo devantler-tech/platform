@@ -101,10 +101,13 @@ jq -e --arg server "https://$host:8204" '.spec.provider.vault.server == $server 
  .spec.provider.vault.auth.kubernetes == {mountPath:"kubernetes",role:"arc-secret-reader",serviceAccountRef:{name:"arc-secret-reader"}}' "$scratch/store.json" >/dev/null
 kc -n "$namespace" get configmap arc-openbao-ca -o json >"$scratch/ca.json"
 jq -er '.data["ca.crt"] | select(startswith("-----BEGIN CERTIFICATE-----"))' "$scratch/ca.json" >"$scratch/ca.pem"
-kc get clusterpolicy restrict-arc-openbao-certificate -o json >"$scratch/policy.json"
-policy_spec k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml >"$scratch/issuance-spec.json"
+# The issuance restriction is a ValidatingPolicy: its CRD adds no spec
+# defaults, so the live spec must equal the source spec exactly, and its
+# readiness lives in status.conditionStatus.ready.
+kc get validatingpolicies.policies.kyverno.io restrict-arc-openbao-certificate -o json >"$scratch/policy.json"
+yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml >"$scratch/issuance-spec.json"
 jq -e --slurpfile expected "$scratch/issuance-spec.json" '.spec == $expected[0] and
- any(.status.conditions[]; .type == "Ready" and .status == "True")' "$scratch/policy.json" >/dev/null
+ .status.conditionStatus.ready == true' "$scratch/policy.json" >/dev/null
 for layer in infrastructure infrastructure-controllers; do
   kc -n flux-system get kustomization "$layer" -o json | jq -ce 'select(.status.observedGeneration == .metadata.generation and
     any(.status.conditions[]; .type == "Ready" and .status == "True")) | .status.lastAppliedRevision | select(test("^latest@sha256:[0-9a-f]{64}$"))' >"$scratch/$layer-revision"
@@ -299,7 +302,7 @@ for object in 'secretstore openbao' 'configmap arc-openbao-ca'; do
   jq -Sc '{uid:.metadata.uid,spec:.spec,data:.data}' "$scratch/$original.json" >"$scratch/before"
   cmp -s "$scratch/before" "$scratch/after" || fail transport-churn
 done
-kc get clusterpolicy restrict-arc-openbao-certificate -o json | jq -Sc '{uid:.metadata.uid,spec:.spec}' >"$scratch/after"
+kc get validatingpolicies.policies.kyverno.io restrict-arc-openbao-certificate -o json | jq -Sc '{uid:.metadata.uid,spec:.spec}' >"$scratch/after"
 jq -Sc '{uid:.metadata.uid,spec:.spec}' "$scratch/policy.json" >"$scratch/before"
 cmp -s "$scratch/before" "$scratch/after" || fail issuance-policy-churn
 kc -n external-secrets get pods -l app.kubernetes.io/name=external-secrets -o json | jq -Sc '[.items[]|{uid:.metadata.uid,ip:.status.podIP,node:.spec.nodeName,containers:.status.containerStatuses}] | sort_by(.uid)' >"$scratch/after"
