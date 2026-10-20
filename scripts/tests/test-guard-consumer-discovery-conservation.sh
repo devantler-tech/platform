@@ -1157,6 +1157,74 @@ YAML
     expect_refusal "a $target MutatingPolicy is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
   done
 
+  # #5102: the reviewed auto-vpa GeneratingPolicy shape passes; each variant
+  # widens exactly one thing and must be refused again.
+  root="$(fixture reviewed-cel-generation)"
+  cat >"$root/k8s/providers/prod/apps/cel-generation.yaml" <<'YAML'
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: auto-vpa-statefulset
+spec:
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["statefulsets"]
+  generate:
+    - expression: >-
+        generator.Apply(
+          string(object.metadata.namespace),
+          [
+            {
+              "apiVersion": dyn("autoscaling.k8s.io/v1"),
+              "kind": dyn("VerticalPodAutoscaler"),
+              "metadata": dyn({
+                "name": string(object.metadata.name) + "-statefulset",
+                "namespace": string(object.metadata.namespace)
+              }),
+              "spec": dyn({
+                "targetRef": dyn({
+                  "apiVersion": "apps/v1",
+                  "kind": "StatefulSet",
+                  "name": string(object.metadata.name)
+                }),
+                "updatePolicy": dyn({"updateMode": "Initial"})
+              })
+            }
+          ]
+        )
+YAML
+  printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'the reviewed auto-vpa GeneratingPolicy does not alter consumers' "$root" '2 consumer(s)'
+  for target in network-policy-kind source-api-version namespace-trigger extra-group variables resource-clone workload-clone computed-key escaped-key label-read foreign-group; do
+    root="$(fixture "reviewed-cel-generation-$target")"
+    cp "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml"
+    case "$target" in
+      network-policy-kind) yq -i '.spec.generate[0].expression |= sub("dyn[(]\"VerticalPodAutoscaler\"[)]", "dyn(\"NetworkPolicy\")")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      source-api-version) yq -i '.spec.generate[0].expression |= sub("autoscaling[.]k8s[.]io/v1", "source.toolkit.fluxcd.io/v1")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      namespace-trigger) yq -i '.spec.matchConstraints.resourceRules[0] |= (.apiGroups = [""] | .resources = ["namespaces"])' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      extra-group) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups += ["source.toolkit.fluxcd.io"]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      variables) yq -i '.spec.variables = [{"name": "source", "expression": "resource.Get(\"source.toolkit.fluxcd.io/v1\", \"ocirepositories\", \"flux-system\", \"platform\")"}]' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      resource-clone) yq -i '.spec.generate[0].expression |= sub("\\[\n", "[resource.Get(\"source.toolkit.fluxcd.io/v1\", \"ocirepositories\", \"flux-system\", \"platform\"),\n")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      workload-clone) yq -i '.spec.generate[0].expression |= sub("\\[\n", "[object,\n")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      computed-key) yq -i '.spec.generate[0].expression |= sub("\"kind\": dyn", "\"ki\" + \"nd\": dyn")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      escaped-key) yq -i '.spec.generate[0].expression |= sub("\"kind\": dyn", "\"\\x6bind\": dyn")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      label-read) yq -i '.spec.generate[0].expression |= sub("\"namespace\": string[(]object[.]metadata[.]namespace[)]\n", "\"namespace\": string(object.metadata.labels.target)\n")' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+      foreign-group) yq -i '.apiVersion = "policies.example.test/v1"' "$root/k8s/providers/prod/apps/cel-generation.yaml" ;;
+    esac
+    cmp -s "$WORK/reviewed-cel-generation/k8s/providers/prod/apps/cel-generation.yaml" "$root/k8s/providers/prod/apps/cel-generation.yaml" &&
+      { printf 'FAIL: the %s variant did not change the reviewed GeneratingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
+    printf '  - cel-generation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "a $target GeneratingPolicy is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
+  done
+
   for placement in resources steps; do
     root="$(fixture "nested-kustomization-$placement")"
     cat >"$root/k8s/providers/prod/apps/resource-set.yaml" <<'YAML'

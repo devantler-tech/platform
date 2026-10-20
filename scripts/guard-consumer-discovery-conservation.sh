@@ -727,11 +727,21 @@ while IFS=$'\t' read -r file label; do
   # HelmRelease carries no consumer, and those paths cannot reach its values.
   # The patch text is read literally: each "path" and "op" must be followed by
   # an approved string literal; the leading "#" keeps the text before the
-  # first one from ever matching. Everything else stays refused.
+  # first one from ever matching.
+  # The second reviewed shape (#5102) is a Kyverno GeneratingPolicy with no
+  # variables whose every resource rule names one apps Deployment, DaemonSet or
+  # StatefulSet resource, and whose generate expressions can only build a
+  # VerticalPodAutoscaler for that workload; a VerticalPodAutoscaler carries no
+  # consumer. The expression is read literally against an allowed form: calls
+  # only to generator.Apply, string and dyn; string-literal map keys; the
+  # workload read only as string(object.metadata.name|namespace); concatenation
+  # only of the workload name with its kind suffix; approved "kind" and
+  # "apiVersion" literals; no backslash escape. A leading "#" and trailing "~"
+  # keep the text at either end from matching. Everything else stays refused.
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
         or .kind == "GeneratingPolicy"))
-      | select((.kind == "MutatingPolicy"
+      | select(((.kind == "MutatingPolicy"
         and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
         and (.spec | type) == "!!map"
         and (.spec | has("targetMatchConstraints") | not)
@@ -753,6 +763,39 @@ while IFS=$'\t' read -r file label; do
               or (([.[] | select(test("^\\s*:\\s*\"/spec/(install|upgrade)(/crds)?\"\\s*[,}]") | not)] | length) != 1)))
           or (("#" + .jsonPatch.expression) | split("op")
             | (([.[] | select(test("^\\s*:\\s*\"(add|replace)\"\\s*[,}]") | not)] | length) != 1)))] | length) == 0)
+        or (.kind == "GeneratingPolicy"
+        and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
+        and (.spec | type) == "!!map"
+        and (.spec | has("variables") | not)
+        and (.spec.matchConstraints.resourceRules | type) == "!!seq"
+        and (.spec.matchConstraints.resourceRules | length) > 0
+        and ([.spec.matchConstraints.resourceRules[] | select(type != "!!map"
+          or (.apiGroups | type) != "!!seq" or (.apiGroups | length) != 1
+          or .apiGroups[0] != "apps"
+          or (.resources | type) != "!!seq" or (.resources | length) != 1
+          or ((.resources[0] | tostring | test("^(deployments|daemonsets|statefulsets)$")) | not))] | length) == 0
+        and (.spec.generate | type) == "!!seq"
+        and (.spec.generate | length) > 0
+        and ([.spec.generate[] | select(type != "!!map"
+          or (.expression | type) != "!!str"
+          or (.expression | test("\\x5c"))
+          or ((.expression + "~") | split(":")
+            | (([.[] | select(test("\"\\s*$") | not)] | length) != 1))
+          or (("#" + .expression + "~") | split("(")
+            | (([.[] | select(test("((^|[^A-Za-z0-9_.])(generator[.]Apply|string|dyn)|(^|[\\[(,{:+#]))\\s*$") | not)] | length) != 1))
+          or (("#" + .expression) | split("+")
+            | (([.[] | select(test("^\\s*\"-(deployment|daemonset|statefulset)\"") | not)] | length) != 1))
+          or ((.expression + "~") | split("+")
+            | (([.[] | select(test("(^|[^A-Za-z0-9_.])string\\(object[.]metadata[.]name\\)\\s*$") | not)] | length) != 1))
+          or (("#" + (.expression | downcase)) | split("object")
+            | (([.[] | select(test("^[.]metadata[.](name|namespace)\\)") | not)] | length) != 1))
+          or (((.expression | downcase) + "~") | split("object")
+            | (([.[] | select(test("(^|[^A-Za-z0-9_.])string\\($") | not)] | length) != 1))
+          or (("#" + .expression) | split("\"kind\"")
+            | ((length < 2)
+              or (([.[] | select(test("^\\s*:\\s*(dyn\\(\\s*\"VerticalPodAutoscaler\"\\s*\\)|\"(Deployment|DaemonSet|StatefulSet)\")\\s*[,}]") | not)] | length) != 1)))
+          or (("#" + .expression) | split("\"apiVersion\"")
+            | (([.[] | select(test("^\\s*:\\s*(dyn\\(\\s*\"autoscaling[.]k8s[.]io/v1\"\\s*\\)|\"apps/v1\")\\s*[,}]") | not)] | length) != 1)))] | length) == 0))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
