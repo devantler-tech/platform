@@ -1,35 +1,39 @@
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# The arc-openbao-ca ClusterIssuer signs OpenBao's transport (server)
+# certificate. As a ClusterIssuer it is reachable from every namespace, so only
+# Certificates and CertificateRequests in the openbao namespace may use it; a
+# certificate it issued anywhere else could impersonate OpenBao.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-arc-openbao-certificate
   annotations:
     policies.kyverno.io/title: Restrict ARC OpenBao Certificate Issuance
     policies.kyverno.io/category: Security
     policies.kyverno.io/severity: high
+    policies.kyverno.io/minversion: 1.17.0
 spec:
-  background: true
-  rules:
-    - name: only-openbao-may-use-credential-ca
-      match:
-        any:
-          - resources:
-              kinds:
-                - cert-manager.io/v1/Certificate
-                - cert-manager.io/v1/CertificateRequest
-      preconditions:
-        all:
-          - key: "{{ request.object.spec.issuerRef.name || '' }}"
-            operator: Equals
-            value: arc-openbao-ca
-          - key: "{{ request.object.spec.issuerRef.kind || 'Issuer' }}"
-            operator: Equals
-            value: ClusterIssuer
-      validate:
-        failureAction: Enforce
-        message: The dedicated credential-service CA may issue only in OpenBao.
-        deny:
-          conditions:
-            any:
-              - key: "{{ request.object.metadata.namespace || '' }}"
-                operator: NotEquals
-                value: openbao
+  validationActions:
+    - Deny
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["cert-manager.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["certificates", "certificaterequests"]
+  variables:
+    # Only requests for the dedicated credential-service CA are restricted. An
+    # unset issuerRef.kind means a namespaced Issuer, which is a different CA.
+    # This is part of the validation rather than a matchCondition so every
+    # certificate keeps a current report result (docs/policy-reports.md).
+    - name: usesCredentialCA
+      expression: >-
+        object.spec.?issuerRef.?name.orValue('') == 'arc-openbao-ca' &&
+        object.spec.?issuerRef.?kind.orValue('Issuer') == 'ClusterIssuer'
+  validations:
+    - expression: >-
+        !variables.usesCredentialCA ||
+        object.metadata.?namespace.orValue('') == 'openbao'
+      message: The dedicated credential-service CA may issue only in OpenBao.

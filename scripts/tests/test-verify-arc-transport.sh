@@ -11,12 +11,13 @@ go build -o "$scratch/evidence" ./scripts/verify-arc-transport
 export PROOF_TEST_ROOT="$scratch"
 readonly head=1111111111111111111111111111111111111111
 export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=refs/heads/main GITHUB_SHA="$head" GITHUB_RUN_ID=12345 GITHUB_RUN_ATTEMPT=1
-# Native Kyverno v1.19.1 admission adds both rule defaults. Keep the fixture
-# independent of the verifier's expected-spec construction.
+# The issuance restriction is a ValidatingPolicy: its CRD adds no spec defaults
+# and it reports readiness in status.conditionStatus (as Kyverno v1.19.1 does).
 yq -o=json '.spec' k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
-  | jq '.rules |= map(.skipBackgroundRequests=true | .validate.allowExistingViolations=true) |
-      {spec:(. + {admission:true,emitWarning:false,validationFailureAction:"Audit"}),
-      status:{conditions:[{type:"Ready",status:"True"}]}}' >"$scratch/policy.json"
+  | jq '{metadata:{uid:"issuance-policy-uid"},spec:.,status:{conditionStatus:{ready:true}}}' >"$scratch/policy.json"
+# Native Kyverno v1.19.1 admission adds both rule defaults to the listener
+# ClusterPolicy. Keep the fixture independent of the verifier's expected-spec
+# construction.
 yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
   | jq '.rules |= map(.skipBackgroundRequests=true | .validate.allowExistingViolations=true) |
       {metadata:{uid:"policy-uid"},spec:(. + {admission:true,emitWarning:false,validationFailureAction:"Audit"}),
@@ -29,14 +30,12 @@ for file in k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-o
   k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml; do
   mkdir -p "$scratch/source/$(dirname "$file")"
   cp "$file" "$scratch/source/$file"
-  if [[ "$file" == *cluster-policies* ]]; then
+  if [[ "$file" == *restrict-arc-openbao-listener* ]]; then
     yq -i '.spec.rules[].skipBackgroundRequests = false | .spec.rules[].validate.allowExistingViolations = false' "$scratch/source/$file"
   fi
 done
-for policy in policy listener-policy; do
-  jq '.spec.rules |= map(.skipBackgroundRequests=false | .validate.allowExistingViolations=false)' \
-    "$scratch/$policy.json" >"$scratch/explicit-$policy.json"
-done
+jq '.spec.rules |= map(.skipBackgroundRequests=false | .validate.allowExistingViolations=false)' \
+  "$scratch/listener-policy.json" >"$scratch/explicit-listener-policy.json"
 cat >"$scratch/bin/gh" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "${GITHUB_SHA}"
@@ -103,15 +102,14 @@ case "$args" in
     elif [[ "${PROOF_CASE:-}" == listener_failure_open ]]; then jq '.spec.failurePolicy="Ignore"' "$PROOF_TEST_ROOT/listener-policy.json"
     elif [[ "${PROOF_CASE:-}" == listener_override ]]; then jq '.spec.rules[0].validate.failureActionOverrides=[{action:"Audit",namespaces:["openbao"]}]' "$PROOF_TEST_ROOT/listener-policy.json"
     else cat "$PROOF_TEST_ROOT/listener-policy.json"; fi ;;
-  'get clusterpolicy '*)
-    if [[ "${PROOF_CASE:-}" == source_explicit_false ]]; then cat "$PROOF_TEST_ROOT/explicit-policy.json"
-    elif [[ "${PROOF_CASE:-}" == issuance_admission_disabled ]]; then jq '.spec.admission=false' "$PROOF_TEST_ROOT/policy.json"
-    elif [[ "${PROOF_CASE:-}" == issuance_background_drift ]]; then jq '.spec.rules[0].skipBackgroundRequests=false' "$PROOF_TEST_ROOT/policy.json"
-    elif [[ "${PROOF_CASE:-}" == issuance_existing_drift ]]; then jq '.spec.rules[0].validate.allowExistingViolations=false' "$PROOF_TEST_ROOT/policy.json"
-    elif [[ "${PROOF_CASE:-}" == issuance_unknown_field ]]; then jq '.spec.rules[0].unexpected=true' "$PROOF_TEST_ROOT/policy.json"
-    elif [[ "${PROOF_CASE:-}" == issuance_exclusion ]]; then jq '.spec.rules[0].exclude={any:[{resources:{namespaces:["arc-runners"]}}]}' "$PROOF_TEST_ROOT/policy.json"
+  'get validatingpolicies.policies.kyverno.io restrict-arc-openbao-certificate '*)
+    if [[ "${PROOF_CASE:-}" == issuance_admission_disabled ]]; then jq '.spec.evaluation.admission={enabled:false}' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_background_drift ]]; then jq '.spec.evaluation.background.enabled=false' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_not_ready ]]; then jq '.status.conditionStatus.ready=false' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_unknown_field ]]; then jq '.spec.unexpected=true' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_exclusion ]]; then jq '.spec.matchConditions=[{name:"not-arc-runners",expression:"object.metadata.namespace != \"arc-runners\""}]' "$PROOF_TEST_ROOT/policy.json"
     elif [[ "${PROOF_CASE:-}" == issuance_failure_open ]]; then jq '.spec.failurePolicy="Ignore"' "$PROOF_TEST_ROOT/policy.json"
-    elif [[ "${PROOF_CASE:-}" == issuance_override ]]; then jq '.spec.rules[0].validate.failureActionOverrides=[{action:"Audit",namespaces:["arc-runners"]}]' "$PROOF_TEST_ROOT/policy.json"
+    elif [[ "${PROOF_CASE:-}" == issuance_override ]]; then jq '.spec.validationActions=["Audit"]' "$PROOF_TEST_ROOT/policy.json"
     else cat "$PROOF_TEST_ROOT/policy.json"; fi ;;
   'get kustomization '*) printf '{"metadata":{"generation":1},"status":{"observedGeneration":1,"lastAppliedRevision":"latest@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","conditions":[{"type":"Ready","status":"True"}]}}' ;;
   'get service '*) printf '{"spec":{"selector":{"app.kubernetes.io/name":"openbao","app.kubernetes.io/instance":"openbao","statefulset.kubernetes.io/pod-name":"openbao-2"},"ports":[{"name":"arc-tls","port":8204,"targetPort":8204,"protocol":"TCP"}]}}' ;;
@@ -296,7 +294,7 @@ for name in sealed split_health stale_probe admit_privilege api_failure api_vali
   listener_content listener_churn listener_audit listener_admission_disabled listener_failure_open listener_override \
   listener_admit listener_api_error issuance_admission_disabled issuance_exclusion issuance_failure_open issuance_override \
   listener_background_drift listener_existing_drift listener_unknown_field \
-  issuance_background_drift issuance_existing_drift issuance_unknown_field \
+  issuance_background_drift issuance_not_ready issuance_unknown_field \
   identity_stale identity_ordinal_only; do run_case "$name" 1; done
 run_case replacement 4
 run_case cleanup_failure 4
