@@ -104,6 +104,8 @@ data:
         icon: mdi-finance
       Analytics:
         icon: si-umami
+      Data:
+        icon: mdi-database-search
       Business:
         icon: mdi-briefcase
       Products:

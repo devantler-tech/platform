@@ -7,7 +7,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: KHoist
     gethomepage.dev/description: Reusable data products and their APIs.
-    gethomepage.dev/group: Analytics
+    gethomepage.dev/group: Data
     gethomepage.dev/icon: mdi-database-search
     gethomepage.dev/href: https://data-products.${domain}
     gethomepage.dev/pod-selector: app.kubernetes.io/component=controller
