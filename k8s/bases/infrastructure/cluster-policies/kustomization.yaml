@@ -8,7 +8,13 @@ resources:
   - best-practices/add-recommended-labels.yaml
   - best-practices/add-resource-defaults.yaml
   - best-practices/add-security-context.yaml
-  - best-practices/auto-vpa.yaml
+  # best-practices/auto-vpa.yaml is deliberately NOT registered: it is step 1
+  # of the shared catalog's two-reconcile move to its GeneratingPolicy form
+  # (devantler-tech/kyverno-policies#1). Removing the classic policy deletes
+  # the VPAs it generated; the GeneratingPolicy form is registered in a later
+  # revision, once no `generate.kyverno.io/policy-name=auto-vpa` VPA remains,
+  # so the two forms never run at once. The file stays, still tested, as the
+  # rollback form until that move is complete.
   - best-practices/audit-privileged-rbac.yaml
   - best-practices/disable-default-sa-automount.yaml
   - best-practices/disallow-latest-tag.yaml
