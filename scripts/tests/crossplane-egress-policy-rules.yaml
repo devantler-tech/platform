@@ -639,21 +639,20 @@ rules:
   # move/copy/remove keeps the policy rejected. A leading '#' keeps the text
   # before the first match from ever reading as an approved literal.
   #
-  # #5102: a GeneratingPolicy that declares no variables, whose every resource
-  # rule names only one apps Deployment, DaemonSet or StatefulSet resource, and
-  # whose every generate expression can only build a VerticalPodAutoscaler for
-  # that workload. A VerticalPodAutoscaler is not a network policy. The
-  # expression is read as text and must stay inside an allowed form: it calls
-  # only generator.Apply, string and dyn; every map key is a string literal;
-  # it reads the workload only as string(object.metadata.name|namespace); it
-  # concatenates only the workload name with its kind suffix; every "kind" is
-  # the VerticalPodAutoscaler or its apps target kind and every "apiVersion"
-  # is autoscaling.k8s.io/v1 or apps/v1; every apps/v1 and apps kind literal
-  # sits in the literal head of a "targetRef" block, so the generated object
-  # itself can only be a VerticalPodAutoscaler; and it contains no backslash
-  # escape.
-  # A leading '#' and a trailing '~' keep the text at either end from reading
-  # as an approved literal.
+  # #5102: the shared catalog's auto-vpa
+  # (devantler-tech/kyverno-policies
+  # policies/best-practices/auto-vpa-generating-policy.yaml): a
+  # GeneratingPolicy with no variables, one apps resource rule naming one
+  # deployments, daemonsets or statefulsets resource, and one generate
+  # expression that equals the catalog's expression for that resource once
+  # spaces, tabs and line breaks are removed from both. That expression builds
+  # only a VerticalPodAutoscaler for the triggering workload, in its own
+  # namespace; a VerticalPodAutoscaler is not a network policy. Whitespace that
+  # differs from the catalog can only split a token, which does not compile, or
+  # sit inside a string literal, which then names no real kind, version, field,
+  # workload or quantity. The same three expressions are pinned in
+  # scripts/guard-consumer-discovery-conservation.sh; a catalog change is
+  # refused by both until it is reviewed here.
   - name: reject-cel-policy-producers
     expression: >-
       !has(object.apiVersion) ||
@@ -701,55 +700,23 @@ rules:
        !has(object.spec.variables) &&
        has(object.spec.matchConstraints) &&
        has(object.spec.matchConstraints.resourceRules) &&
-       object.spec.matchConstraints.resourceRules.size() > 0 &&
-       object.spec.matchConstraints.resourceRules.all(rule,
-         has(rule.apiGroups) && rule.apiGroups == ['apps'] &&
-         has(rule.resources) && rule.resources.size() == 1 &&
-         rule.resources[0] in ['deployments', 'daemonsets', 'statefulsets']) &&
+       object.spec.matchConstraints.resourceRules.size() == 1 &&
+       has(object.spec.matchConstraints.resourceRules[0].apiGroups) &&
+       object.spec.matchConstraints.resourceRules[0].apiGroups == ['apps'] &&
+       has(object.spec.matchConstraints.resourceRules[0].resources) &&
+       object.spec.matchConstraints.resourceRules[0].resources.size() == 1 &&
        has(object.spec.generate) &&
-       object.spec.generate.size() > 0 &&
-       object.spec.generate.all(generation,
-         has(generation.expression) &&
-         !generation.expression.contains('\\') &&
-         (generation.expression + '~').split(':').filter(part,
-           !part.matches('"\\s*$')
-         ).size() == 1 &&
-         ('#' + generation.expression + '~').split('(').filter(part,
-           !part.matches(
-             '((^|[^A-Za-z0-9_.])(generator[.]Apply|string|dyn)|(^|[\\[(,{:+#]))\\s*$')
-         ).size() == 1 &&
-         ('#' + generation.expression).split('+').filter(part,
-           !part.matches('^\\s*"-(deployment|daemonset|statefulset)"')
-         ).size() == 1 &&
-         (generation.expression + '~').split('+').filter(part,
-           !part.matches(
-             '(^|[^A-Za-z0-9_.])string\\(object[.]metadata[.]name\\)\\s*$')
-         ).size() == 1 &&
-         ('#' + generation.expression.lowerAscii()).split('object').filter(part,
-           !part.matches('^[.]metadata[.](name|namespace)\\)')
-         ).size() == 1 &&
-         (generation.expression.lowerAscii() + '~').split('object').filter(part,
-           !part.matches('(^|[^A-Za-z0-9_.])string\\($')
-         ).size() == 1 &&
-         ('#' + generation.expression).split('"kind"').size() > 1 &&
-         ('#' + generation.expression).split('"kind"').filter(part,
-           !part.matches(
-             '^\\s*:\\s*(dyn\\(\\s*"VerticalPodAutoscaler"\\s*\\)|"(Deployment|DaemonSet|StatefulSet)")\\s*[,}]')
-         ).size() == 1 &&
-         ('#' + generation.expression).split('"apiVersion"').filter(part,
-           !part.matches(
-             '^\\s*:\\s*(dyn\\(\\s*"autoscaling[.]k8s[.]io/v1"\\s*\\)|"apps/v1")\\s*[,}]')
-         ).size() == 1 &&
-         ('#' + generation.expression).split('"targetRef"').filter(part,
-           !part.matches(
-             '^\\s*:\\s*dyn\\(\\s*\\{\\s*"apiVersion"\\s*:\\s*"apps/v1"\\s*,\\s*"kind"\\s*:\\s*"(Deployment|DaemonSet|StatefulSet)"\\s*,')
-         ).size() == 1 &&
-         generation.expression.split('"apps/v1"').size() ==
-           generation.expression.split('"targetRef"').size() &&
-         generation.expression.split('"Deployment"').size() +
-           generation.expression.split('"DaemonSet"').size() +
-           generation.expression.split('"StatefulSet"').size() - 2 ==
-           generation.expression.split('"targetRef"').size()))
+       object.spec.generate.size() == 1 &&
+       has(object.spec.generate[0].expression) &&
+       ((object.spec.matchConstraints.resourceRules[0].resources == ['deployments'] &&
+         object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
+           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-deployment","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])') ||
+        (object.spec.matchConstraints.resourceRules[0].resources == ['daemonsets'] &&
+         object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
+           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-daemonset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])') ||
+        (object.spec.matchConstraints.resourceRules[0].resources == ['statefulsets'] &&
+         object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
+           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])')))
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
       review before deployment
