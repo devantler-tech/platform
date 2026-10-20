@@ -73,3 +73,29 @@ spec:
   containers:
     - name: app
       image: ghcr.io/example/app
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: latest-tag-ephemeral-container
+  namespace: default
+spec:
+  ephemeralContainers:
+    - name: debug
+      image: ghcr.io/example/debug:latest
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tagless-ephemeral-container
+  namespace: default
+spec:
+  ephemeralContainers:
+    - name: debug
+      image: ghcr.io/example/debug
+  containers:
+    - name: app
+      image: ghcr.io/example/app:1.2.3
