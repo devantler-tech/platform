@@ -140,7 +140,13 @@ SNAPSHOTTER_SUBSTITUTION="${snapshotter_substitution}" yq e -e \
   "${longhorn_release}" >/dev/null ||
   fail 'Longhorn must continue sourcing the snapshotter replica count from the production contract'
 
-if grep -Fxq '              - csi-snapshotter' "${replica_floor}"; then
+# The exemptions are CEL expressions; read them structurally so a format change
+# fails here instead of leaving a text match that can never fire.
+replica_floor_exemptions="$(yq e -e '.spec.variables[] | select(.name == "namedExempt") | .expression' "${replica_floor}")" ||
+  fail 'the replica floor must keep its named exemptions in the namedExempt variable'
+[[ "${replica_floor_exemptions}" == *"object.metadata.name in ["* ]] ||
+  fail 'the replica floor named exemptions must stay a name list this guard can read'
+if [[ "${replica_floor_exemptions}" == *csi-snapshotter* ]]; then
   fail 'the HA CSI snapshotter must not remain exempt from the replica floor'
 fi
 
