@@ -65,6 +65,17 @@ refuse() {
   exit 1
 }
 
+# The GitHub repository a registered consumer lives in today. A consumer keeps its
+# logical name (approval rows, namespace, package and signing identity) when its
+# repository is renamed. REST reads by the old name are redirected, but an App
+# installation token must name each repository as GitHub calls it now.
+consumer_github_repository() {
+  case "$1" in
+    data-product-controller) printf '%s\n' 'khoist' ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
+
 case "$ENFORCE" in
   0 | 1) ;;
   *) refuse "APPROVED_REVISIONS_ENFORCE must be 0 or 1, got '$ENFORCE'" ;;

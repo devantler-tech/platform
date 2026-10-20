@@ -339,10 +339,14 @@ discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
 actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
-approved_consumer_inventory="$(bash -c 'source "$1"; printf "%s" "$approved" | cut -f1 | sort -u' _ \
+# The token names repositories, which a rename moves away from the consumer's
+# logical name, so the inventory is resolved to each consumer's current repository.
+approved_consumer_inventory="$(bash -c 'set -o pipefail; source "$1"; printf "%s" "$approved" | cut -f1 | sort -u |
+  while IFS= read -r consumer; do consumer_github_repository "$consumer"; done' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" ||
   fail 'approved consumer inventory is unresolved'
 readonly approved_consumer_inventory
+[ -n "${approved_consumer_inventory}" ] || fail 'approved consumer inventory is empty'
 
 out="$(check "${workflow}")" || fail "the committed workflow violates its own contract: ${out}"
 [ "${out}" = 'ok' ] || fail "unexpected check output on the committed workflow: ${out}"
@@ -406,6 +410,7 @@ ablate A7 'checkout ref removed'             '(.jobs.regenerate.steps[] | select
 ablate A7 'checkout ref interpolated'        '(.jobs.regenerate.steps[] | select(.uses // "" | contains("actions/checkout")) | .with.ref) = "${{ github.ref_name }}"'
 ablate A10 'a consumer added to the WRITE token' '(.jobs.regenerate.steps[] | select(.id == "app-token") | .with.repositories) = "platform\nwedding-app\n"'
 ablate A10 'a consumer dropped from the READ token' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) = ".github\naws\nwedding-app\n"'
+ablate A10 'a renamed consumer named by its old repository' '(.jobs.regenerate.steps[] | select(.id == "consumer-token") | .with.repositories) |= sub("khoist"; "data-product-controller")'
 ablate A14 'pull-request step re-gated on moved' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .if) = "steps.moved.outputs.moved == '"'"'true'"'"'"'
 
 ablate A15 'writer removed' 'del(.jobs.regenerate.steps[] | select(.run // "" | contains("write-publish-workflow-matchers.sh")))'
