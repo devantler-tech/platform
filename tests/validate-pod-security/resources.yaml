@@ -226,11 +226,11 @@ spec:
           drop:
             - ALL
 ---
-# Init containers are held to the same rules.
+# Init containers are held to the same rules: here only allowPrivilegeEscalation is missing.
 apiVersion: v1
 kind: Pod
 metadata:
-  name: insecure-init-container
+  name: init-missing-privilege-escalation
   namespace: workloads
 spec:
   securityContext:
@@ -241,6 +241,39 @@ spec:
       image: registry.k8s.io/pause:3.10
       securityContext:
         runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# An otherwise hardened init container that is privileged is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-privileged
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
   containers:
     - name: app
       image: registry.k8s.io/pause:3.10
@@ -280,11 +313,11 @@ spec:
           drop:
             - ALL
 ---
-# Ephemeral (debug) containers are held to the same rules.
+# Ephemeral (debug) containers are held to the same rules: here only privilege escalation is allowed.
 apiVersion: v1
 kind: Pod
 metadata:
-  name: insecure-ephemeral-container
+  name: ephemeral-privilege-escalation
   namespace: workloads
 spec:
   securityContext:
@@ -303,7 +336,68 @@ spec:
     - name: debug
       image: registry.k8s.io/pause:3.10
       securityContext:
-        privileged: true
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# An ephemeral container without runAsNonRoot is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-missing-non-root
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# A hardened ephemeral container passes.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: secure-ephemeral-container
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
 ---
 # A pod with no pod-level seccomp profile is refused, even with hardened containers.
 apiVersion: v1
@@ -467,6 +561,99 @@ spec:
             - ALL
         seccompProfile:
           type: Unconfined
+---
+# The override check covers every container, not only the first.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: second-container-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: sidecar
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# An init container may override the pod profile with Localhost.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-container-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/init.json
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# An ephemeral container may set RuntimeDefault explicitly.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-container-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
 ---
 # Fails every check. Its twins below sit in exempt namespaces.
 apiVersion: v1
@@ -699,12 +886,173 @@ spec:
           securityContext:
             allowPrivilegeEscalation: true
 ---
+# A compliant Deployment template passes every check.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliant-deployment
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A Deployment template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unconfined-deployment
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure Deployment template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exempt-deployment
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
 # An insecure StatefulSet template is refused when the StatefulSet itself is applied.
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: insecure-statefulset
   namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant StatefulSet template passes every check.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: compliant-statefulset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A StatefulSet template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: unconfined-statefulset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure StatefulSet template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: exempt-statefulset
+  namespace: observability
 spec:
   selector:
     matchLabels:
@@ -742,6 +1090,85 @@ spec:
           securityContext:
             allowPrivilegeEscalation: true
 ---
+# A compliant DaemonSet template passes every check.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: compliant-daemonset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A DaemonSet template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: unconfined-daemonset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure DaemonSet template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: exempt-daemonset
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
 # An insecure ReplicaSet template is refused when the ReplicaSet itself is applied.
 apiVersion: apps/v1
 kind: ReplicaSet
@@ -752,6 +1179,181 @@ spec:
   selector:
     matchLabels:
       app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant ReplicaSet template passes every check.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: compliant-replicaset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A ReplicaSet template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: unconfined-replicaset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure ReplicaSet template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: exempt-replicaset
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure ReplicationController template is refused when the ReplicationController itself is applied.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: insecure-replicationcontroller
+  namespace: workloads
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant ReplicationController template passes every check.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: compliant-replicationcontroller
+  namespace: workloads
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A ReplicationController template whose container overrides seccomp with Unconfined is refused.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: unconfined-replicationcontroller
+  namespace: workloads
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure ReplicationController template in the exempt namespace observability: no check applies.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: exempt-replicationcontroller
+  namespace: observability
+spec:
+  selector:
+    app: demo
   template:
     metadata:
       labels:
@@ -781,12 +1383,161 @@ spec:
           securityContext:
             allowPrivilegeEscalation: true
 ---
-# An insecure CronJob job template is refused when the CronJob is applied.
+# A compliant Job template passes every check.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: compliant-job
+  namespace: workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A Job template whose container overrides seccomp with Unconfined is refused.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: unconfined-job
+  namespace: workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure Job template in the exempt namespace observability: no check applies.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: exempt-job
+  namespace: observability
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure CronJob template is refused when the CronJob itself is applied.
 apiVersion: batch/v1
 kind: CronJob
 metadata:
   name: insecure-cronjob
   namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: true
+---
+# A compliant CronJob template passes every check.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliant-cronjob
+  namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+---
+# A CronJob template whose container overrides seccomp with Unconfined is refused.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: unconfined-cronjob
+  namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: Unconfined
+---
+# The insecure CronJob template in the exempt namespace observability: no check applies.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: exempt-cronjob
+  namespace: observability
 spec:
   schedule: "0 * * * *"
   jobTemplate:
