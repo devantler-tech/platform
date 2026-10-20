@@ -23,13 +23,17 @@ spec:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["certificates", "certificaterequests"]
-  matchConditions:
-    # Only requests for the dedicated credential-service CA are in scope. An
+  variables:
+    # Only requests for the dedicated credential-service CA are restricted. An
     # unset issuerRef.kind means a namespaced Issuer, which is a different CA.
-    - name: uses-credential-ca
+    # This is part of the validation rather than a matchCondition so every
+    # certificate keeps a current report result (docs/policy-reports.md).
+    - name: usesCredentialCA
       expression: >-
         object.spec.?issuerRef.?name.orValue('') == 'arc-openbao-ca' &&
         object.spec.?issuerRef.?kind.orValue('Issuer') == 'ClusterIssuer'
   validations:
-    - expression: "object.metadata.?namespace.orValue('') == 'openbao'"
+    - expression: >-
+        !variables.usesCredentialCA ||
+        object.metadata.?namespace.orValue('') == 'openbao'
       message: The dedicated credential-service CA may issue only in OpenBao.

@@ -28,15 +28,15 @@ results:
     kind: CertificateRequest
     result: fail
   # Same issuer name, but a namespaced Issuer (explicit or by default) is a
-  # different CA and out of scope.
+  # different CA and not restricted.
   - policy: restrict-arc-openbao-certificate
     resources:
       - cert-manager/unrelated-ca
       - arc-runners/same-name-namespaced-issuer
     kind: Certificate
-    result: skip
+    result: pass
   - policy: restrict-arc-openbao-certificate
     resources:
       - arc-runners/same-name-default-kind
     kind: CertificateRequest
-    result: skip
+    result: pass
