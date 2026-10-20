@@ -437,27 +437,26 @@ func TestValidateUnifiSigningKey(t *testing.T) {
 // for any other Flux Kustomization.
 func TestValidateUnifiPruneExemption(t *testing.T) {
 	targetIdentity := resourceIdentity{
-		apiVersion: "kyverno.io/v1",
-		kind:       "ClusterPolicy",
+		apiVersion: "policies.kyverno.io/v1",
+		kind:       "ValidatingPolicy",
 		name:       "enforce-flux-best-practices",
 	}
-	policy := func(exclusions ...any) map[string]any {
+	condition := func(name, namespace, object string) map[string]any {
 		return map[string]any{
-			"spec": map[string]any{
-				"rules": []any{
-					map[string]any{
-						"name":    "kustomization-recommended-settings",
-						"exclude": map[string]any{"any": exclusions},
-					},
-				},
-			},
+			"name":       name,
+			"expression": fluxPolicyExclusionExpression(namespace, object),
 		}
 	}
-	resourceExclusion := func(namespace, name string) map[string]any {
+	bootstrap := condition("not-flux-bootstrap-kustomization", "flux-system", "flux-system")
+	unifi := condition("not-unifi-kustomization", "unifi", "unifi")
+	policy := func(constraints map[string]any, conditions ...any) map[string]any {
+		if constraints == nil {
+			constraints = map[string]any{"resourceRules": []any{}}
+		}
 		return map[string]any{
-			"resources": map[string]any{
-				"namespaces": []any{namespace},
-				"names":      []any{name},
+			"spec": map[string]any{
+				"matchConstraints": constraints,
+				"matchConditions":  conditions,
 			},
 		}
 	}
@@ -471,41 +470,71 @@ func TestValidateUnifiPruneExemption(t *testing.T) {
 		{
 			name:     "exact narrow exemption",
 			identity: targetIdentity,
-			document: policy(
-				resourceExclusion("flux-system", "flux-system"),
-				resourceExclusion("unifi", "unifi"),
-			),
+			document: policy(nil, bootstrap, unifi),
+		},
+		{
+			name:     "folded expression whitespace is accepted",
+			identity: targetIdentity,
+			document: policy(nil, bootstrap, map[string]any{
+				"name": "not-unifi-kustomization",
+				"expression": "!(object.kind == 'Kustomization' &&\n" +
+					"object.metadata.?namespace.orValue('') == 'unifi' &&\n" +
+					"object.metadata.name == 'unifi')",
+			}),
 		},
 		{
 			name:      "missing exemption",
 			identity:  targetIdentity,
-			document:  policy(resourceExclusion("flux-system", "flux-system")),
+			document:  policy(nil, bootstrap),
 			wantError: true,
 		},
 		{
-			name:      "namespace wildcard is not narrow",
-			identity:  targetIdentity,
-			document:  policy(resourceExclusion("*", "unifi")),
-			wantError: true,
-		},
-		{
-			name:     "additional broad exemption is rejected",
+			name:     "namespace wildcard is not narrow",
 			identity: targetIdentity,
-			document: policy(
-				resourceExclusion("flux-system", "flux-system"),
-				resourceExclusion("unifi", "unifi"),
-				resourceExclusion("*", "*"),
-			),
+			document: policy(nil, bootstrap, map[string]any{
+				"name":       "not-unifi-kustomization",
+				"expression": "!(object.kind == 'Kustomization' && object.metadata.name == 'unifi')",
+			}),
+			wantError: true,
+		},
+		{
+			name:      "additional broad exemption is rejected",
+			identity:  targetIdentity,
+			document:  policy(nil, bootstrap, unifi, map[string]any{"name": "everything", "expression": "false"}),
+			wantError: true,
+		},
+		{
+			name:      "duplicate exemption is rejected",
+			identity:  targetIdentity,
+			document:  policy(nil, unifi, unifi),
+			wantError: true,
+		},
+		{
+			name:     "exclude resource rules are rejected",
+			identity: targetIdentity,
+			document: policy(map[string]any{
+				"resourceRules":        []any{},
+				"excludeResourceRules": []any{map[string]any{"resourceNames": []any{"apps"}}},
+			}, bootstrap, unifi),
+			wantError: true,
+		},
+		{
+			name:     "namespace selector is rejected",
+			identity: targetIdentity,
+			document: policy(map[string]any{
+				"resourceRules":     []any{},
+				"namespaceSelector": map[string]any{},
+			}, bootstrap, unifi),
 			wantError: true,
 		},
 		{
 			name: "unrelated policy",
 			identity: resourceIdentity{
-				apiVersion: "kyverno.io/v1",
-				kind:       "ClusterPolicy",
+				apiVersion: "policies.kyverno.io/v1",
+				kind:       "ValidatingPolicy",
 				name:       "other",
 			},
-			document: policy(),
+			document: policy(nil),
 		},
 	}
 
@@ -564,8 +593,8 @@ func TestUnifiPruneExemptionIsHetznerScoped(t *testing.T) {
 	found := false
 	for _, document := range renderedDocuments {
 		identity := identityOf(document)
-		if identity.apiVersion != "kyverno.io/v1" ||
-			identity.kind != "ClusterPolicy" ||
+		if identity.apiVersion != "policies.kyverno.io/v1" ||
+			identity.kind != "ValidatingPolicy" ||
 			identity.name != "enforce-flux-best-practices" {
 			continue
 		}

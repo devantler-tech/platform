@@ -15,13 +15,11 @@ resources:
   - resources.yaml
 results:
   - policy: enforce-flux-best-practices
-    rule: kustomization-recommended-settings
     resources:
       - tenant/ks-compliant
     kind: Kustomization
     result: pass
   - policy: enforce-flux-best-practices
-    rule: kustomization-recommended-settings
     resources:
       - tenant/ks-missing-interval
       - tenant/ks-missing-timeout
@@ -35,14 +33,12 @@ results:
     kind: Kustomization
     result: fail
   - policy: enforce-flux-best-practices
-    rule: helmrelease-recommended-settings
     resources:
       - tenant/hr-compliant
       - tenant/hr-unlimited-retries
     kind: HelmRelease
     result: pass
   - policy: enforce-flux-best-practices
-    rule: helmrelease-recommended-settings
     resources:
       - tenant/hr-missing-interval
       - tenant/hr-missing-timeout

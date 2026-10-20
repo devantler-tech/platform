@@ -5,11 +5,15 @@
 #   https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings
 #   https://fluxcd.io/flux/components/helm/helmreleases/
 #
-# Runs in Enforce mode — non-compliant resources are denied at admission (and
-# at Flux's server-side dry-run), so new Flux resources must declare all the
+# Runs with Deny — non-compliant resources are refused at admission (and at
+# Flux's server-side dry-run), so new Flux resources must declare all the
 # recommended fields up front.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+#
+# Exclusions are matchConditions, so an excluded object is out of scope rather
+# than a pass. Each one names the Kustomization kind: a HelmRelease of the same
+# name is still validated. The Hetzner overlay appends the UniFi exclusion.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: enforce-flux-best-practices
   annotations:
@@ -17,7 +21,7 @@ metadata:
     policies.kyverno.io/category: Flux, Best Practices
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Kustomization, HelmRelease
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Validates that Flux Kustomization and HelmRelease resources declare the
       reliability-critical fields recommended by the Flux documentation:
@@ -26,83 +30,75 @@ metadata:
       misconfigured resources at admission instead of waiting for a runtime
       failure.
 spec:
-  background: true
-  rules:
-    - name: kustomization-recommended-settings
-      match:
-        any:
-          - resources:
-              kinds:
-                - kustomize.toolkit.fluxcd.io/v1/Kustomization
-      exclude:
-        any:
-          # The bootstrap flux-system Kustomization is created and managed by
-          # `flux bootstrap` / ksail and not by GitOps from this repo, so we
-          # cannot set the recommended fields on it. Exclude it from the policy.
-          - resources:
-              namespaces:
-                - flux-system
-              names:
-                - flux-system
-      validate:
-        failureAction: Enforce
-        message: >-
-          Flux Kustomization must set the recommended reliability fields:
-          `spec.interval`, `spec.timeout`, `spec.retryInterval`,
-          `spec.prune: true` (garbage collection), and `spec.sourceRef`.
-          `spec.wait: true` is required except for the platform-owned GitHub
-          configuration, whose asynchronous API operations do not gate delivery.
-          See https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings.
-        anyPattern:
-          - spec:
-              interval: "?*"
-              timeout: "?*"
-              retryInterval: "?*"
-              prune: true
-              wait: true
-              sourceRef:
-                kind: "?*"
-                name: "?*"
-          # Bound the alternative to this exact platform-owned identity. Keep
-          # every other reliability requirement; this is not a policy exclusion.
-          - metadata:
-              name: github-config
-              namespace: github-config
-            spec:
-              interval: "?*"
-              timeout: "?*"
-              retryInterval: "?*"
-              prune: true
-              wait: false
-              sourceRef:
-                kind: "?*"
-                name: "?*"
-    - name: helmrelease-recommended-settings
-      match:
-        any:
-          - resources:
-              kinds:
-                # v2 only: the v2beta1/v2beta2 APIs were removed from the
-                # cluster (Flux ≥ 2.6 serves only helm.toolkit.fluxcd.io/v2).
-                # Matching the dead versions makes Kyverno's GVK→GVR lookup
-                # fail on every admission review and background scan
-                # ("unable to convert GVK to GVR ... resource not found").
-                - helm.toolkit.fluxcd.io/v2/HelmRelease
-      validate:
-        failureAction: Enforce
-        message: >-
-          Flux HelmRelease must set the recommended reliability fields:
-          `spec.interval`, `spec.timeout`, install + upgrade remediation
-          retries, and `spec.upgrade.remediation.remediateLastFailure: true`.
-          See https://fluxcd.io/flux/components/helm/helmreleases/.
-        pattern:
-          spec:
-            interval: "?*"
-            timeout: "?*"
-            install:
-              remediation:
-                retries: ">=1 | -1"
-            upgrade:
-              remediation:
-                retries: ">=1 | -1"
-                remediateLastFailure: true
+  validationActions:
+    - Deny
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["kustomize.toolkit.fluxcd.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["kustomizations"]
+      # v2 only: the v2beta1/v2beta2 APIs were removed from the cluster
+      # (Flux ≥ 2.6 serves only helm.toolkit.fluxcd.io/v2). Matching the dead
+      # versions makes Kyverno's GVK→GVR lookup fail on every admission review
+      # and background scan ("unable to convert GVK to GVR ... resource not found").
+      - apiGroups: ["helm.toolkit.fluxcd.io"]
+        apiVersions: ["v2"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["helmreleases"]
+  matchConditions:
+    # The bootstrap flux-system Kustomization is created and managed by
+    # `flux bootstrap` / ksail and not by GitOps from this repo, so we cannot
+    # set the recommended fields on it.
+    - name: not-flux-bootstrap-kustomization
+      expression: >-
+        !(object.kind == 'Kustomization' &&
+        object.metadata.?namespace.orValue('') == 'flux-system' &&
+        object.metadata.name == 'flux-system')
+  variables:
+    - name: isKustomization
+      expression: object.kind == 'Kustomization'
+    # Bound the health-gating alternative to this exact platform-owned
+    # identity, whose asynchronous API operations do not gate delivery. It
+    # keeps every other reliability requirement; this is not an exclusion.
+    - name: isGitHubConfig
+      expression: >-
+        object.metadata.name == 'github-config' &&
+        object.metadata.?namespace.orValue('') == 'github-config'
+    - name: installRetries
+      expression: object.spec.?install.?remediation.?retries.orValue(0)
+    - name: upgradeRetries
+      expression: object.spec.?upgrade.?remediation.?retries.orValue(0)
+  validations:
+    - expression: >-
+        !variables.isKustomization || (
+        object.spec.?interval.orValue('') != '' &&
+        object.spec.?timeout.orValue('') != '' &&
+        object.spec.?retryInterval.orValue('') != '' &&
+        object.spec.?prune.orValue(false) == true &&
+        (object.spec.?wait.orValue(false) == true ||
+        (variables.isGitHubConfig && object.spec.?wait.orValue(true) == false)) &&
+        object.spec.?sourceRef.?kind.orValue('') != '' &&
+        object.spec.?sourceRef.?name.orValue('') != '')
+      message: >-
+        Flux Kustomization must set the recommended reliability fields:
+        `spec.interval`, `spec.timeout`, `spec.retryInterval`,
+        `spec.prune: true` (garbage collection), and `spec.sourceRef`.
+        `spec.wait: true` is required except for the platform-owned GitHub
+        configuration, whose asynchronous API operations do not gate delivery.
+        See https://fluxcd.io/flux/components/kustomize/kustomizations/#recommended-settings.
+    - expression: >-
+        variables.isKustomization || (
+        object.spec.?interval.orValue('') != '' &&
+        object.spec.?timeout.orValue('') != '' &&
+        (variables.installRetries >= 1 || variables.installRetries == -1) &&
+        (variables.upgradeRetries >= 1 || variables.upgradeRetries == -1) &&
+        object.spec.?upgrade.?remediation.?remediateLastFailure.orValue(false) == true)
+      message: >-
+        Flux HelmRelease must set the recommended reliability fields:
+        `spec.interval`, `spec.timeout`, install + upgrade remediation
+        retries, and `spec.upgrade.remediation.remediateLastFailure: true`.
+        See https://fluxcd.io/flux/components/helm/helmreleases/.
