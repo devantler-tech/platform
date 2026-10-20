@@ -1,0 +1,6 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: requester
+userInfo:
+  username: system:serviceaccount:tenant-a:tenant-a

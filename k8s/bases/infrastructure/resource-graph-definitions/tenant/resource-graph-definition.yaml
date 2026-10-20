@@ -100,6 +100,9 @@ spec:
       # tenant namespace, applied separately — secret material is NEVER inlined
       # into a Tenant spec.
       sops: boolean | default=false
+      # Opt-in own-namespace WebApp reconciliation. Admission also binds the
+      # parent and generated child ownership; no existing tenant opts in here.
+      webApp: boolean | default=false
       # Standard multi-tenancy guardrails (#1932 follow-up #2522): a
       # namespace-wide ResourceQuota and a per-container default LimitRange.
       # Both default to `enabled: false` — no behaviour change for existing
@@ -146,6 +149,25 @@ spec:
           # do not trip Kubescape C-0002. See cluster-roles/tenant-edit.yaml.
           kind: ClusterRole
           name: tenant-edit
+        subjects:
+          - kind: ServiceAccount
+            name: ${serviceAccount.metadata.name}
+            namespace: ${tenantNamespace.metadata.name}
+    - id: webAppBinding
+      includeWhen:
+        - ${schema.spec.webApp}
+      template:
+        apiVersion: rbac.authorization.k8s.io/v1
+        kind: RoleBinding
+        metadata:
+          name: tenant-webapp-edit
+          namespace: ${tenantNamespace.metadata.name}
+          labels:
+            app.kubernetes.io/managed-by: ksail
+        roleRef:
+          apiGroup: rbac.authorization.k8s.io
+          kind: ClusterRole
+          name: tenant-webapp-edit
         subjects:
           - kind: ServiceAccount
             name: ${serviceAccount.metadata.name}

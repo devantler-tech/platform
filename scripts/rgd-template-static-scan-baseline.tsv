@@ -12,7 +12,7 @@
 # change; a new finding is fixed, not baselined.
 # Measured with Trivy v0.74.0 and the policies embedded in that binary. CI pins the binary on pull
 # requests, merge groups, and direct main pushes; the gate rejects other versions and policy updates.
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	3c53e867adde31f3ddd9536e2918592db3de5b2867ba88201ebc6775c18e67e7
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	ce65ddc80e4d30ff855d6b48efc8a762500c59c40531d78fca3d2bbf007e8a46
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0039	LOW	CAUSE-SHA256:6246c5e7ede528806f1f84a2b466b1a22c061b7d7f2ad38e18dc4c722ea7b32b
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0040	LOW	CAUSE-SHA256:6246c5e7ede528806f1f84a2b466b1a22c061b7d7f2ad38e18dc4c722ea7b32b
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0039	LOW	CAUSE-SHA256:f3c7ced815c76aaba6407cf691461a7e46b0037f888f32d760286b0fde1bd286

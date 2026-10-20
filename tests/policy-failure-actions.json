@@ -29,6 +29,8 @@
   "restrict-tenant-route-hostnames/ascoachingogvaner-approved-hostnames": "Enforce",
   "restrict-tenant-route-hostnames/unlisted-tenant-namespace-has-no-approved-hostnames": "Enforce",
   "restrict-tenant-secret-stores": "Enforce",
+  "restrict-tenant-webapps": "Enforce",
+  "restrict-webapp-child-ownership": "Enforce",
   "restrict-unifi-management-policies/apply-without-delete": "Enforce",
   "restrict-unifi-management-policies/observe-only-is-observe": "Enforce",
   "restrict-unifi-management-policies/prune-only-without-delete": "Enforce",

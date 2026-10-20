@@ -84,6 +84,41 @@ needs**, not to reconsider the technology.
 
 ## Consequences
 
+### Tenant-owned WebApps: opt-in permission and ownership boundary
+
+`Tenant.spec.webApp` defaults to `false`. Setting it to `true` adds a namespaced
+RoleBinding to the dedicated, nonaggregated `tenant-webapp-edit` ClusterRole. It
+grants CRUD on `kro.run/webapps` only; it does not grant status, Tenant/RGD, RBAC,
+impersonation or exec access. Existing tenants are not opted in by this change.
+
+Tenant-owned WebApps must use their namespace as both parent name and
+`spec.name`, which selects the generated workload namespace. That target is
+immutable. Only KRO may establish/change reserved KRO/ApplySet metadata; its
+parent writes may maintain metadata/status but not change application spec.
+The existing platform-owned `flux-system/wedding-app` pilot is an exact
+exception, not a wildcard namespace exemption.
+
+KRO 0.9.2 identifies children through ApplySet and `kro.run/instance-*` labels,
+not WebApp owner references. Child admission therefore checks their complete
+placement/identity and refuses updates that would adopt an unlabelled or
+foreign-owned Deployment, Service or HTTPRoute. Non-controller writers must
+preserve reserved ownership labels. Existing hostname, secret-store and
+network admission remain in force; KRO has no hostname bypass.
+
+`scripts/tests/test-tenant-webapp-boundary.sh` tests the actual policies with
+the pinned Kyverno compiler/engine. Its request adapter supplies distinct
+old/new objects and explicit status subresources: CLI 1.19.1's CEL adapter
+copies the new object into the old one on UPDATE and drops subresources, so
+CLI UPDATE fixtures alone cannot establish these protections. The regular
+Kyverno fixture census is retained for CREATE selection and denial coverage.
+
+These are source/admission controls, not proof that a signed tenant artifact
+has reconciled through a live controller. Issue #4897 retains that runtime
+acceptance. No business-site Tenant, portal activation, database, hostname or
+customer-facing routing is introduced by this foundation. Private-input
+projection (#4854) and the business repository's signed manifest (#102 there)
+remain separate prerequisites.
+
 **Positive** — onboarding a tenant is one small typed CR; the drift is gone; the abstraction is typed
 and `kubectl`-native with CRD-schema validation; no Helm/overlay stacking; the isolation posture is
 templated verbatim.
