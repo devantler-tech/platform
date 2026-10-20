@@ -39,4 +39,4 @@ results:
       - keda-operator-metrics-apiserver
       - demo-primary
     kind: Deployment
-    result: skip
+    result: pass

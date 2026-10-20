@@ -13,12 +13,11 @@
 # workloads in Kyverno's PolicyReports for a human to raise (or exempt)
 # deliberately.
 #
-# Exemptions (a replica floor is *wrong*, not missing, for these) are expressed
-# as matchConditions, never as a narrower match scope: a false matchCondition
-# still evaluates the resource and reports `skip`, while a resource outside the
-# match scope gets no replacement result and can keep an older `fail` after the
-# exemption is added (#2573). See docs/policy-reports.md for the regression
-# test and rollout check.
+# Exemptions (a replica floor is *wrong*, not missing, for these) are part of the
+# validation expression, so an exempt workload gets a current `pass` result.
+# Neither a narrower match scope nor a false matchCondition writes a result,
+# so either could leave an older `fail` in place after the exemption is added
+# (#2573). See docs/policy-reports.md for the regression test and rollout check.
 #
 # Exemption categories:
 #   * the opt-out label platform.devantler.tech/replica-floor: exempt on the
@@ -71,69 +70,64 @@ spec:
         apiVersions: ["v1"]
         operations: ["CREATE", "UPDATE"]
         resources: ["deployments", "statefulsets"]
-  matchConditions:
+  variables:
     # Durable opt-out on the workload itself.
-    - name: workload-not-exempt
+    - name: workloadExempt
       expression: >-
-        object.metadata.?labels[?'platform.devantler.tech/replica-floor'].orValue('') != 'exempt'
+        object.metadata.?labels[?'platform.devantler.tech/replica-floor'].orValue('') == 'exempt'
     # Durable opt-out on the pod template (charts expose podLabels more
     # widely than top-level workload labels).
-    - name: pod-template-not-exempt
+    - name: templateExempt
       expression: >-
-        object.spec.?template.?metadata.?labels[?'platform.devantler.tech/replica-floor'].orValue('') != 'exempt'
+        object.spec.?template.?metadata.?labels[?'platform.devantler.tech/replica-floor'].orValue('') == 'exempt'
     # Whole namespaces whose controllers are intentionally singleton or
     # controller-managed: Velero has no leader election; Flux, Coroot and
     # Kubescape controllers sit off serving paths; Crossplane reconcilers
     # are external-state single writers. Crossplane is exempt by namespace
     # because provider Deployment names include a changing revision hash.
-    - name: not-exempt-namespace
+    - name: namespaceExempt
       expression: >-
-        !(object.metadata.?namespace.orValue('') in [
+        object.metadata.?namespace.orValue('') in [
           'velero', 'flux-system', 'observability', 'kubescape',
-          'crossplane-system'])
+          'crossplane-system']
     # Flagger owns replica counts for generated *-primary Deployments.
-    - name: not-flagger-primary
+    - name: flaggerPrimary
       expression: >-
-        !object.metadata.name.matches('^.+-primary$')
-    # Single-replica apps/UIs and paused Flagger canary sources.
-    - name: not-singleton-app
+        object.metadata.name.matches('^.+-primary$')
+    # Named exemptions, one list per reason: single-replica apps/UIs and paused
+    # Flagger canary sources; single-writer or ephemeral controllers (DNS,
+    # disabled issuer, canary load generator); lean leader-election controllers
+    # whose outage delays only an idempotent loop (production may still opt
+    # them into HA); and components single by design from the June 2026 HA
+    # sweep -- SPIRE needs an external datastore for real HA, CNPG-I exposes
+    # its gRPC readiness endpoint only on the elected leader, and Crossview with
+    # its bundled Postgres is one non-HA unit until the datastore is replaced.
+    - name: namedExempt
       expression: >-
-        !(object.metadata.name in [
+        object.metadata.name in [
           'actual-budget-actualbudget', 'fleet', 'headlamp', 'whoami',
-          'hubble-ui', 'longhorn-ui', 'homepage', 'umami-umami'])
-    # Single-writer or ephemeral controllers with no useful second replica:
-    # DNS, disabled issuer and the canary load generator.
-    - name: not-single-writer
-      expression: >-
-        !(object.metadata.name in [
-          'external-dns', 'origin-ca-issuer', 'flagger-loadtester'])
-    # Lean leader-election controllers whose outage delays only an idempotent
-    # control loop. Production may still opt them into HA.
-    - name: not-lean-controller
-      expression: >-
-        !(object.metadata.name in [
+          'hubble-ui', 'longhorn-ui', 'homepage', 'umami-umami'] ||
+        object.metadata.name in [
+          'external-dns', 'origin-ca-issuer', 'flagger-loadtester'] ||
+        object.metadata.name in [
           'vertical-pod-autoscaler-vpa-recommender',
           'vertical-pod-autoscaler-vpa-updater',
-          'kyverno-reports-controller', 'kyverno-cleanup-controller'])
-    # Controller-owned or single-by-design components triaged in the June 2026
-    # HA sweep. SPIRE needs an external datastore for real HA. CNPG-I exposes
-    # its gRPC readiness endpoint only on the elected leader, so a second
-    # replica can never become Ready. Crossview and its ephemeral bundled
-    # Postgres intentionally form one non-HA unit until the datastore is
-    # replaced.
-    - name: not-single-by-design
-      expression: >-
-        !(object.metadata.name in [
+          'kyverno-reports-controller', 'kyverno-cleanup-controller'] ||
+        object.metadata.name in [
           'cluster-autoscaler-hetzner-cluster-autoscaler',
           'keda-operator-metrics-apiserver', 'longhorn-driver-deployer',
           'spire-server', 'plugin-barman-cloud', 'crossview',
-          'crossview-postgres'])
-  variables:
+          'crossview-postgres']
+    - name: exempt
+      expression: >-
+        variables.workloadExempt || variables.templateExempt ||
+        variables.namespaceExempt || variables.flaggerPrimary ||
+        variables.namedExempt
     # An unset replica count defaults to 1; an explicit 0 stays 0.
     - name: replicas
       expression: object.spec.?replicas.orValue(1)
   validations:
-    - expression: "variables.replicas >= 2"
+    - expression: "variables.exempt || variables.replicas >= 2"
       messageExpression: >-
         object.kind + " '" + object.metadata.name + "' runs " +
         string(variables.replicas) + " replica(s); the platform HA floor is 2
