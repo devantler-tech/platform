@@ -511,7 +511,10 @@ jobs:
               # a continue-on-error) still runs the ablated test that refuses each of those.
               - '.github/workflows/regenerate-publish-workflow-approved-revisions.yaml'
               - 'scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh'
-              # The release watcher that dispatches it, and its test — both halves.
+              # The final legacy-release snapshot replaces live catalogue discovery.
+              - 'scripts/frozen-legacy-publisher-release.tsv'
+              - 'scripts/tests/test-frozen-legacy-publisher-release.sh'
+              # Retired paths still select the absence control if reintroduced.
               - '.github/workflows/watch-actions-release.yaml'
               - 'scripts/watch-actions-release-candidate.sh'
               - 'scripts/tests/test-watch-actions-release-candidate.sh'
@@ -1132,13 +1135,12 @@ jobs:
           shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
           bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
 
-      # The release watcher (#3960) dispatches that regeneration when devantler-tech/actions
-      # publishes a release the committed candidate does not yet name. Its test stubs `gh` and
-      # pins that every failed read is UNKNOWN and dispatches nothing.
-      - name: 🔐 Validate the actions release watcher
+      # Historical compatibility must remain available after deleting the catalogue;
+      # current observations and canonical approvals remain separately required.
+      - name: 🔐 Validate frozen legacy publisher evidence
         run: |
-          shellcheck scripts/watch-actions-release-candidate.sh scripts/tests/test-watch-actions-release-candidate.sh
-          bash scripts/tests/test-watch-actions-release-candidate.sh
+          shellcheck scripts/tests/test-frozen-legacy-publisher-release.sh
+          bash scripts/tests/test-frozen-legacy-publisher-release.sh
 
       # The authorization gate's verdict and its moved-entry diagnostics are two
       # commands in one step, and a real aggregate mismatch fails BOTH — so a step

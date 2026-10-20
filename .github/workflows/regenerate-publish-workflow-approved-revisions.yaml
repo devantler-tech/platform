@@ -203,8 +203,7 @@ jobs:
       # superseded set, still mergeable, after this workflow has established it is no
       # longer current. Running unconditionally lets the action reconcile that: with
       # nothing staged there is nothing to propose, and `delete-branch` retires the
-      # fixed branch. This is how devantler-tech/actions' own sync-cluster-policies
-      # workflow drives the same action at this same pinned revision — ungated.
+      # fixed branch rather than leaving a superseded draft standing.
       #
       # A failure still stops it: there is no `if: always()`, so a red generator or a
       # red guard means this step never runs, which the contract test pins.
@@ -231,9 +230,8 @@ jobs:
             ## Why
 
             The cluster only trusts releases signed by publishing-workflow revisions it
-            has approved. A consumer's deployed release or workflow pin, or the latest
-            publishing-workflow release candidate, has moved, so the approved list is
-            out of date.
+            has approved. A consumer's deployed release or workflow pin has moved,
+            so the approved list is out of date.
 
             ## What
 
