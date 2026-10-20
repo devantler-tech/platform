@@ -1,9 +1,15 @@
 ---
 # Pins what validate-pod-security decides today, rule by rule, so the policy's
 # rewrite for #4996 must keep every decision. Resources are in resources.yaml;
-# each one's comment there says what it exercises. Every controller kind the
-# generated rules judge has a compliant, an insecure and an Unconfined-override
-# template, so each generated rule is pinned in both directions.
+# each one's comment there says what it exercises.
+#
+# The container matrix applies each securityContext change to the first and a
+# later regular, init and ephemeral container, so a rewrite that checks only one
+# position or one collection fails here. Every controller kind the generated
+# rules judge has a compliant, an insecure and an Unconfined-override template.
+#
+# Recorded as today's behaviour, not as intent: an empty `capabilities.drop`
+# list passes (`*-drop-empty`). Tightening that is a separate policy change.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -292,40 +298,114 @@ results:
     kind: Pod
     result: fail
     resources:
-      - container-seccomp-unconfined
-      - ephemeral-container-seccomp-unconfined
-      - init-container-seccomp-unconfined
+      - container-0-seccomp-unconfined
+      - container-1-seccomp-unconfined
+      - ephemeral-0-seccomp-unconfined
+      - ephemeral-1-seccomp-unconfined
+      - init-0-seccomp-unconfined
+      - init-1-seccomp-unconfined
       - insecure
       - lookalike-namespace
-      - second-container-seccomp-unconfined
   - policy: validate-pod-security
     rule: deny-container-seccomp-unconfined
     kind: Pod
     result: pass
     resources:
-      - compliant
       - compliant-localhost
-      - container-seccomp-localhost
+      - container-0-ape-missing
+      - container-0-ape-true
+      - container-0-caps-missing
+      - container-0-drop-all-and-net-raw
+      - container-0-drop-empty
+      - container-0-drop-missing
+      - container-0-drop-net-raw
+      - container-0-no-security-context
+      - container-0-nonroot-false
+      - container-0-nonroot-missing
+      - container-0-privileged-false
+      - container-0-privileged-true
+      - container-0-seccomp-localhost
+      - container-0-seccomp-runtime-default
+      - container-0-secure
+      - container-1-ape-missing
+      - container-1-ape-true
+      - container-1-caps-missing
+      - container-1-drop-all-and-net-raw
+      - container-1-drop-empty
+      - container-1-drop-missing
+      - container-1-drop-net-raw
+      - container-1-no-security-context
+      - container-1-nonroot-false
+      - container-1-nonroot-missing
+      - container-1-privileged-false
+      - container-1-privileged-true
+      - container-1-seccomp-localhost
+      - container-1-seccomp-runtime-default
+      - container-1-secure
       - container-seccomp-only
-      - drop-all-and-net-raw
-      - drop-net-raw-only
-      - ephemeral-container-seccomp-runtime-default
-      - ephemeral-missing-non-root
-      - ephemeral-privilege-escalation
-      - init-container-seccomp-localhost
-      - init-missing-privilege-escalation
-      - init-privileged
-      - missing-privilege-escalation
+      - ephemeral-0-ape-missing
+      - ephemeral-0-ape-true
+      - ephemeral-0-caps-missing
+      - ephemeral-0-drop-all-and-net-raw
+      - ephemeral-0-drop-empty
+      - ephemeral-0-drop-missing
+      - ephemeral-0-drop-net-raw
+      - ephemeral-0-no-security-context
+      - ephemeral-0-nonroot-false
+      - ephemeral-0-nonroot-missing
+      - ephemeral-0-privileged-false
+      - ephemeral-0-privileged-true
+      - ephemeral-0-seccomp-localhost
+      - ephemeral-0-seccomp-runtime-default
+      - ephemeral-0-secure
+      - ephemeral-1-ape-missing
+      - ephemeral-1-ape-true
+      - ephemeral-1-caps-missing
+      - ephemeral-1-drop-all-and-net-raw
+      - ephemeral-1-drop-empty
+      - ephemeral-1-drop-missing
+      - ephemeral-1-drop-net-raw
+      - ephemeral-1-no-security-context
+      - ephemeral-1-nonroot-false
+      - ephemeral-1-nonroot-missing
+      - ephemeral-1-privileged-false
+      - ephemeral-1-privileged-true
+      - ephemeral-1-seccomp-localhost
+      - ephemeral-1-seccomp-runtime-default
+      - ephemeral-1-secure
+      - init-0-ape-missing
+      - init-0-ape-true
+      - init-0-caps-missing
+      - init-0-drop-all-and-net-raw
+      - init-0-drop-empty
+      - init-0-drop-missing
+      - init-0-drop-net-raw
+      - init-0-no-security-context
+      - init-0-nonroot-false
+      - init-0-nonroot-missing
+      - init-0-privileged-false
+      - init-0-privileged-true
+      - init-0-seccomp-localhost
+      - init-0-seccomp-runtime-default
+      - init-0-secure
+      - init-1-ape-missing
+      - init-1-ape-true
+      - init-1-caps-missing
+      - init-1-drop-all-and-net-raw
+      - init-1-drop-empty
+      - init-1-drop-missing
+      - init-1-drop-net-raw
+      - init-1-no-security-context
+      - init-1-nonroot-false
+      - init-1-nonroot-missing
+      - init-1-privileged-false
+      - init-1-privileged-true
+      - init-1-seccomp-localhost
+      - init-1-seccomp-runtime-default
+      - init-1-secure
       - no-pod-seccomp
-      - no-security-context
       - non-root-at-pod-level-only
       - pod-seccomp-unconfined
-      - privilege-escalation
-      - privileged
-      - privileged-false
-      - second-container-insecure
-      - secure-ephemeral-container
-      - secure-init-container
   - policy: validate-pod-security
     rule: require-seccomp-profile
     kind: Pod
@@ -341,69 +421,217 @@ results:
     kind: Pod
     result: pass
     resources:
-      - compliant
       - compliant-localhost
-      - container-seccomp-localhost
-      - container-seccomp-unconfined
-      - drop-all-and-net-raw
-      - drop-net-raw-only
-      - ephemeral-container-seccomp-runtime-default
-      - ephemeral-container-seccomp-unconfined
-      - ephemeral-missing-non-root
-      - ephemeral-privilege-escalation
-      - init-container-seccomp-localhost
-      - init-container-seccomp-unconfined
-      - init-missing-privilege-escalation
-      - init-privileged
-      - missing-privilege-escalation
-      - no-security-context
+      - container-0-ape-missing
+      - container-0-ape-true
+      - container-0-caps-missing
+      - container-0-drop-all-and-net-raw
+      - container-0-drop-empty
+      - container-0-drop-missing
+      - container-0-drop-net-raw
+      - container-0-no-security-context
+      - container-0-nonroot-false
+      - container-0-nonroot-missing
+      - container-0-privileged-false
+      - container-0-privileged-true
+      - container-0-seccomp-localhost
+      - container-0-seccomp-runtime-default
+      - container-0-seccomp-unconfined
+      - container-0-secure
+      - container-1-ape-missing
+      - container-1-ape-true
+      - container-1-caps-missing
+      - container-1-drop-all-and-net-raw
+      - container-1-drop-empty
+      - container-1-drop-missing
+      - container-1-drop-net-raw
+      - container-1-no-security-context
+      - container-1-nonroot-false
+      - container-1-nonroot-missing
+      - container-1-privileged-false
+      - container-1-privileged-true
+      - container-1-seccomp-localhost
+      - container-1-seccomp-runtime-default
+      - container-1-seccomp-unconfined
+      - container-1-secure
+      - ephemeral-0-ape-missing
+      - ephemeral-0-ape-true
+      - ephemeral-0-caps-missing
+      - ephemeral-0-drop-all-and-net-raw
+      - ephemeral-0-drop-empty
+      - ephemeral-0-drop-missing
+      - ephemeral-0-drop-net-raw
+      - ephemeral-0-no-security-context
+      - ephemeral-0-nonroot-false
+      - ephemeral-0-nonroot-missing
+      - ephemeral-0-privileged-false
+      - ephemeral-0-privileged-true
+      - ephemeral-0-seccomp-localhost
+      - ephemeral-0-seccomp-runtime-default
+      - ephemeral-0-seccomp-unconfined
+      - ephemeral-0-secure
+      - ephemeral-1-ape-missing
+      - ephemeral-1-ape-true
+      - ephemeral-1-caps-missing
+      - ephemeral-1-drop-all-and-net-raw
+      - ephemeral-1-drop-empty
+      - ephemeral-1-drop-missing
+      - ephemeral-1-drop-net-raw
+      - ephemeral-1-no-security-context
+      - ephemeral-1-nonroot-false
+      - ephemeral-1-nonroot-missing
+      - ephemeral-1-privileged-false
+      - ephemeral-1-privileged-true
+      - ephemeral-1-seccomp-localhost
+      - ephemeral-1-seccomp-runtime-default
+      - ephemeral-1-seccomp-unconfined
+      - ephemeral-1-secure
+      - init-0-ape-missing
+      - init-0-ape-true
+      - init-0-caps-missing
+      - init-0-drop-all-and-net-raw
+      - init-0-drop-empty
+      - init-0-drop-missing
+      - init-0-drop-net-raw
+      - init-0-no-security-context
+      - init-0-nonroot-false
+      - init-0-nonroot-missing
+      - init-0-privileged-false
+      - init-0-privileged-true
+      - init-0-seccomp-localhost
+      - init-0-seccomp-runtime-default
+      - init-0-seccomp-unconfined
+      - init-0-secure
+      - init-1-ape-missing
+      - init-1-ape-true
+      - init-1-caps-missing
+      - init-1-drop-all-and-net-raw
+      - init-1-drop-empty
+      - init-1-drop-missing
+      - init-1-drop-net-raw
+      - init-1-no-security-context
+      - init-1-nonroot-false
+      - init-1-nonroot-missing
+      - init-1-privileged-false
+      - init-1-privileged-true
+      - init-1-seccomp-localhost
+      - init-1-seccomp-runtime-default
+      - init-1-seccomp-unconfined
+      - init-1-secure
       - non-root-at-pod-level-only
-      - privilege-escalation
-      - privileged
-      - privileged-false
-      - second-container-insecure
-      - second-container-seccomp-unconfined
-      - secure-ephemeral-container
-      - secure-init-container
   - policy: validate-pod-security
     rule: validate-container-security
     kind: Pod
     result: fail
     resources:
-      - drop-all-and-net-raw
-      - drop-net-raw-only
-      - ephemeral-missing-non-root
-      - ephemeral-privilege-escalation
-      - init-missing-privilege-escalation
-      - init-privileged
+      - container-0-ape-missing
+      - container-0-ape-true
+      - container-0-caps-missing
+      - container-0-drop-all-and-net-raw
+      - container-0-drop-missing
+      - container-0-drop-net-raw
+      - container-0-no-security-context
+      - container-0-nonroot-false
+      - container-0-nonroot-missing
+      - container-0-privileged-true
+      - container-1-ape-missing
+      - container-1-ape-true
+      - container-1-caps-missing
+      - container-1-drop-all-and-net-raw
+      - container-1-drop-missing
+      - container-1-drop-net-raw
+      - container-1-no-security-context
+      - container-1-nonroot-false
+      - container-1-nonroot-missing
+      - container-1-privileged-true
+      - ephemeral-0-ape-missing
+      - ephemeral-0-ape-true
+      - ephemeral-0-caps-missing
+      - ephemeral-0-drop-all-and-net-raw
+      - ephemeral-0-drop-missing
+      - ephemeral-0-drop-net-raw
+      - ephemeral-0-no-security-context
+      - ephemeral-0-nonroot-false
+      - ephemeral-0-nonroot-missing
+      - ephemeral-0-privileged-true
+      - ephemeral-1-ape-missing
+      - ephemeral-1-ape-true
+      - ephemeral-1-caps-missing
+      - ephemeral-1-drop-all-and-net-raw
+      - ephemeral-1-drop-missing
+      - ephemeral-1-drop-net-raw
+      - ephemeral-1-no-security-context
+      - ephemeral-1-nonroot-false
+      - ephemeral-1-nonroot-missing
+      - ephemeral-1-privileged-true
+      - init-0-ape-missing
+      - init-0-ape-true
+      - init-0-caps-missing
+      - init-0-drop-all-and-net-raw
+      - init-0-drop-missing
+      - init-0-drop-net-raw
+      - init-0-no-security-context
+      - init-0-nonroot-false
+      - init-0-nonroot-missing
+      - init-0-privileged-true
+      - init-1-ape-missing
+      - init-1-ape-true
+      - init-1-caps-missing
+      - init-1-drop-all-and-net-raw
+      - init-1-drop-missing
+      - init-1-drop-net-raw
+      - init-1-no-security-context
+      - init-1-nonroot-false
+      - init-1-nonroot-missing
+      - init-1-privileged-true
       - insecure
       - lookalike-namespace
-      - missing-privilege-escalation
-      - no-security-context
       - non-root-at-pod-level-only
-      - privilege-escalation
-      - privileged
-      - second-container-insecure
   - policy: validate-pod-security
     rule: validate-container-security
     kind: Pod
     result: pass
     resources:
-      - compliant
       - compliant-localhost
-      - container-seccomp-localhost
+      - container-0-drop-empty
+      - container-0-privileged-false
+      - container-0-seccomp-localhost
+      - container-0-seccomp-runtime-default
+      - container-0-seccomp-unconfined
+      - container-0-secure
+      - container-1-drop-empty
+      - container-1-privileged-false
+      - container-1-seccomp-localhost
+      - container-1-seccomp-runtime-default
+      - container-1-seccomp-unconfined
+      - container-1-secure
       - container-seccomp-only
-      - container-seccomp-unconfined
-      - ephemeral-container-seccomp-runtime-default
-      - ephemeral-container-seccomp-unconfined
-      - init-container-seccomp-localhost
-      - init-container-seccomp-unconfined
+      - ephemeral-0-drop-empty
+      - ephemeral-0-privileged-false
+      - ephemeral-0-seccomp-localhost
+      - ephemeral-0-seccomp-runtime-default
+      - ephemeral-0-seccomp-unconfined
+      - ephemeral-0-secure
+      - ephemeral-1-drop-empty
+      - ephemeral-1-privileged-false
+      - ephemeral-1-seccomp-localhost
+      - ephemeral-1-seccomp-runtime-default
+      - ephemeral-1-seccomp-unconfined
+      - ephemeral-1-secure
+      - init-0-drop-empty
+      - init-0-privileged-false
+      - init-0-seccomp-localhost
+      - init-0-seccomp-runtime-default
+      - init-0-seccomp-unconfined
+      - init-0-secure
+      - init-1-drop-empty
+      - init-1-privileged-false
+      - init-1-seccomp-localhost
+      - init-1-seccomp-runtime-default
+      - init-1-seccomp-unconfined
+      - init-1-secure
       - no-pod-seccomp
       - pod-seccomp-unconfined
-      - privileged-false
-      - second-container-seccomp-unconfined
-      - secure-ephemeral-container
-      - secure-init-container
   # The namespace exemptions: the Pod `insecure` and the insecure controller
   # templates fail the rules above, but are not judged at all in an exempt
   # namespace.
