@@ -53,7 +53,11 @@ spec:
         object.spec.?initContainers.orValue([]).map(c, c.image) +
         object.spec.?ephemeralContainers.orValue([]).map(c, c.image)
   validations:
-    - expression: "variables.images.all(i, i.contains(':'))"
+    # The tag lives in the last path segment: a registry port (host:5000/app)
+    # is not a tag. A digest (app@sha256:…) pins the image, so it also passes.
+    - expression: >-
+        variables.images.all(i, i.contains('@') ||
+        i.substring(i.lastIndexOf('/') + 1).contains(':'))
       message: >-
         An explicit image tag is required — a tagless reference silently
         resolves to the mutable ':latest'.

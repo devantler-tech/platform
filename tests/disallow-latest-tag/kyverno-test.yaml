@@ -1,5 +1,6 @@
 # Pins the policy's behaviour across its ValidatingPolicy rewrite (#4996).
-# A versioned tag and a tag+digest pass; ':latest' fails, as does a tagless
+# A versioned tag, a tag+digest and a digest alone pass, with or without a
+# registry port; a registry port is not a tag; ':latest' fails, as does a tagless
 # image, in a regular, init or ephemeral container; the same tagless image in an
 # excluded infrastructure namespace is out of scope.
 apiVersion: cli.kyverno.io/v1alpha1
@@ -15,6 +16,8 @@ results:
     resources:
       - default/versioned-tag
       - default/tag-and-digest
+      - default/digest-only
+      - default/registry-port-versioned-tag
     kind: Pod
     result: pass
   - policy: disallow-latest-tag
@@ -25,6 +28,7 @@ results:
       - default/latest-tag-init-container
       - default/latest-tag-ephemeral-container
       - default/tagless-ephemeral-container
+      - default/registry-port-tagless
     kind: Pod
     result: fail
   - policy: disallow-latest-tag
