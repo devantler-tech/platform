@@ -10,19 +10,28 @@ resources:
   - resources.yaml
 results:
   - policy: validate-replica-floor
-    rule: require-replica-floor
     resources:
       - normal-singleton
+      - replicas-unset
+      - scaled-to-zero
     kind: Deployment
     result: fail
   - policy: validate-replica-floor
-    rule: require-replica-floor
+    resources:
+      - statefulset-singleton
+    kind: StatefulSet
+    result: fail
+  - policy: validate-replica-floor
     resources:
       - normal-ha
     kind: Deployment
     result: pass
   - policy: validate-replica-floor
-    rule: require-replica-floor
+    resources:
+      - statefulset-ha
+    kind: StatefulSet
+    result: pass
+  - policy: validate-replica-floor
     resources:
       - workload-label-exempt
       - pod-label-exempt

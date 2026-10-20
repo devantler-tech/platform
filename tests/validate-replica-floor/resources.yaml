@@ -134,3 +134,80 @@ spec:
       containers:
         - name: app
           image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: replicas-unset
+  namespace: test
+spec:
+  selector:
+    matchLabels:
+      app: replicas-unset
+  template:
+    metadata:
+      labels:
+        app: replicas-unset
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scaled-to-zero
+  namespace: test
+spec:
+  replicas: 0
+  selector:
+    matchLabels:
+      app: scaled-to-zero
+  template:
+    metadata:
+      labels:
+        app: scaled-to-zero
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: statefulset-singleton
+  namespace: test
+spec:
+  replicas: 1
+  serviceName: statefulset-singleton
+  selector:
+    matchLabels:
+      app: statefulset-singleton
+  template:
+    metadata:
+      labels:
+        app: statefulset-singleton
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: statefulset-ha
+  namespace: test
+spec:
+  replicas: 3
+  serviceName: statefulset-ha
+  selector:
+    matchLabels:
+      app: statefulset-ha
+  template:
+    metadata:
+      labels:
+        app: statefulset-ha
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.29.0
