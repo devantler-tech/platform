@@ -63,3 +63,28 @@ spec:
     name: unrelated-selfsigned
     kind: Issuer
     group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: same-name-namespaced-issuer
+  namespace: arc-runners
+spec:
+  secretName: synthetic-namespaced-tls
+  dnsNames:
+    - namespaced.arc-runners.svc.cluster.local
+  issuerRef:
+    name: arc-openbao-ca
+    kind: Issuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata:
+  name: same-name-default-kind
+  namespace: arc-runners
+spec:
+  request: dGVzdA==
+  issuerRef:
+    name: arc-openbao-ca
+    group: cert-manager.io

@@ -8,32 +8,35 @@ resources:
   - resources.yaml
 results:
   - policy: restrict-arc-openbao-certificate
-    rule: only-openbao-may-use-credential-ca
     resources:
       - openbao/server-certificate
     kind: Certificate
     result: pass
   - policy: restrict-arc-openbao-certificate
-    rule: only-openbao-may-use-credential-ca
     resources:
       - openbao/server-request
     kind: CertificateRequest
     result: pass
   - policy: restrict-arc-openbao-certificate
-    rule: only-openbao-may-use-credential-ca
     resources:
       - arc-runners/impersonated-server
     kind: Certificate
     result: fail
   - policy: restrict-arc-openbao-certificate
-    rule: only-openbao-may-use-credential-ca
     resources:
       - arc-runners/impersonated-request
     kind: CertificateRequest
     result: fail
+  # Same issuer name, but a namespaced Issuer (explicit or by default) is a
+  # different CA and out of scope.
   - policy: restrict-arc-openbao-certificate
-    rule: only-openbao-may-use-credential-ca
     resources:
       - cert-manager/unrelated-ca
+      - arc-runners/same-name-namespaced-issuer
     kind: Certificate
+    result: skip
+  - policy: restrict-arc-openbao-certificate
+    resources:
+      - arc-runners/same-name-default-kind
+    kind: CertificateRequest
     result: skip
