@@ -15,6 +15,8 @@
 #
 # The catalog's header follows. In this repository the classic file is the rollback
 # form, and "the root kustomization.yaml" means this folder's kustomization.yaml.
+# "Under the same name" below is not true here: the classic VPA is <name> and this
+# one is <name>-deployment, so running both forms gives every workload two VPAs.
 #
 # The catalog's auto-vpa: a port of the classic policies/best-practices/auto-vpa.yaml
 # ClusterPolicy rules to the GeneratingPolicy API, which Kyverno keeps after classic
