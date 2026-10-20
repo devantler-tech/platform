@@ -1,0 +1,89 @@
+---
+# ADOPTED from devantler-tech/kyverno-policies
+# policies/best-practices/auto-vpa-generating-policy.yaml at 44ed118 (#5130), which
+# registers three GeneratingPolicy objects in one file. The platform keeps one
+# resource per file, so it is split into auto-vpa-deployment.yaml (which also
+# carries the catalog's own header), auto-vpa-statefulset.yaml and
+# auto-vpa-daemonset.yaml. Each policy is copied verbatim except for one marked
+# PLATFORM ADDITION: a namespaceSelector that keeps it out of the system
+# namespaces, as the classic best-practices/auto-vpa.yaml did. The generate
+# expressions must stay byte-for-byte the catalog's (whitespace aside): both static
+# producer guards pin them (scripts/guard-consumer-discovery-conservation.sh and
+# scripts/tests/crossplane-egress-policy-rules.yaml). The classic VPAs are named
+# <name>, these are <name>-<kind>, so running both forms at once would put two VPAs
+# on every workload: register these only after the classic policy's VPAs are gone.
+apiVersion: policies.kyverno.io/v1
+kind: GeneratingPolicy
+metadata:
+  name: auto-vpa-statefulset
+  annotations:
+    policies.kyverno.io/title: Auto VPA for StatefulSets (GeneratingPolicy)
+    policies.kyverno.io/category: Autoscaling
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: StatefulSet
+    policies.kyverno.io/minversion: 1.19.0
+    policies.kyverno.io/description: >-
+      Generates a recommendation-bounded VerticalPodAutoscaler for each StatefulSet.
+      GeneratingPolicy form of the classic auto-vpa rule of the same name.
+spec:
+  # Parity with the classic rules' `synchronize: true` + `generateExisting: true`:
+  # on GeneratingPolicy both live under spec.evaluation and default to false, so
+  # omitting them would silently drop behavior the classic policy guarantees.
+  evaluation:
+    generateExisting:
+      enabled: true
+    synchronize:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["statefulsets"]
+    # PLATFORM ADDITION (the only change from the catalog file): prod ships
+    # static VPAs for the controllers in these namespaces
+    # (k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers/), so a
+    # generated one would put a second VPA on each of those pods.
+    namespaceSelector:
+      matchExpressions:
+        - key: kubernetes.io/metadata.name
+          operator: NotIn
+          values:
+            - kube-system
+            - kube-public
+            - kube-node-lease
+            - kyverno
+  generate:
+    - expression: >-
+        generator.Apply(
+          string(object.metadata.namespace),
+          [
+            {
+              "apiVersion": dyn("autoscaling.k8s.io/v1"),
+              "kind": dyn("VerticalPodAutoscaler"),
+              "metadata": dyn({
+                "name": string(object.metadata.name) + "-statefulset",
+                "namespace": string(object.metadata.namespace)
+              }),
+              "spec": dyn({
+                "targetRef": dyn({
+                  "apiVersion": "apps/v1",
+                  "kind": "StatefulSet",
+                  "name": string(object.metadata.name)
+                }),
+                "updatePolicy": dyn({"updateMode": "Initial"}),
+                "resourcePolicy": dyn({
+                  "containerPolicies": [
+                    {
+                      "containerName": dyn("*"),
+                      "controlledResources": dyn(["cpu", "memory"]),
+                      "controlledValues": dyn("RequestsAndLimits"),
+                      "minAllowed": dyn({"cpu": "50m", "memory": "64Mi"}),
+                      "maxAllowed": dyn({"cpu": "3", "memory": "6Gi"})
+                    }
+                  ]
+                })
+              })
+            }
+          ]
+        )

@@ -1,0 +1,24 @@
+---
+# The platform's copy of the catalog's auto-vpa-deployment GeneratingPolicy (#5130).
+# The expected VPA is the catalog's own fixture (tests/auto-vpa/generated-deployment-vpa.yaml
+# at 44ed118), moved to a non-system namespace: the platform copy must generate
+# exactly what the catalog does there. The system-namespace exclusion, which a
+# kyverno test cannot assert, is pinned by
+# scripts/tests/test-auto-vpa-generating-policy-exclusion.sh.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: auto-vpa-generating-policy-deployment
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-deployment.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: auto-vpa-deployment
+    rule: auto-vpa-deployment
+    resources:
+      - apps-ns/shared
+    generatedResource: generated-vpa.yaml
+    kind: Deployment
+    result: pass
