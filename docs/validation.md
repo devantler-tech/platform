@@ -40,7 +40,11 @@ After real OpenAPI publication, the KRO library compiles the repository's graph.
 The check requires its Deployment, Service, HTTPRoute and namespaced WebApp schema.
 Unknown references, wrong output types and disabled conditional omission are
 rejected. Empty or partial compiled graphs cannot count as complete coverage.
-API processes and temporary state are removed on completion.
+Execution is bound to all three verified binary paths, including when ambient
+`TEST_ASSET_*` overrides are present. API processes and temporary state are
+removed on completion, including a CRD-admission failure after process startup.
+Regression controls exercise the actual binaries and confirm both listeners
+have stopped before their backstop cleanup runs.
 
 The chart reference and compiler dependency must name the same version, without
 a module replacement. Keep the controller's configured feature gates intact;

@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -72,15 +74,8 @@ func TestCommittedWebApp(t *testing.T) {
 	if graphCRD.Name != "resourcegraphdefinitions.kro.run" {
 		t.Fatal("expected the pinned KRO graph admission schema")
 	}
-	existing := false
-	environment := &envtest.Environment{
-		UseExistingCluster:       &existing,
-		BinaryAssetsDirectory:    os.Getenv("KUBEBUILDER_ASSETS"),
-		ControlPlaneStartTimeout: time.Minute,
-		ControlPlaneStopTimeout:  time.Minute,
-		CRDs:                     []*extv1.CustomResourceDefinition{&route, &graphCRD},
-	}
-	config, err := environment.Start()
+	environment := newCompilerEnvironment(t, []*extv1.CustomResourceDefinition{&route, &graphCRD})
+	config, err := startCompilerEnvironment(environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,12 +140,15 @@ func TestCommittedWebApp(t *testing.T) {
 		if err := completeWebApp(got); err != nil {
 			t.Fatal(err)
 		}
+		if got.CRD.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["port"].Type != "integer" {
+			t.Fatal("the wrong-output-type control requires spec.port to be an integer")
+		}
 	})
 	for _, tc := range []struct {
 		name, expression, want string
 	}{
 		{"unknown instance field", "${schema.spec.compilerFixtureMissing}", "undefined field"},
-		{"wrong output type", "${schema.spec.port}", "type"},
+		{"wrong output type", "${schema.spec.port}", `expression "schema.spec.port" returns type "int" but expected "string"`},
 		{"disabled conditional omission", "${omit()}", "omit"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -183,6 +181,113 @@ func TestCommittedWebApp(t *testing.T) {
 			t.Fatal("a partial graph must never claim all three children")
 		}
 	})
+}
+
+func newCompilerEnvironment(t *testing.T, crds []*extv1.CustomResourceDefinition) *envtest.Environment {
+	t.Helper()
+	existing := false
+	assets := os.Getenv("KUBEBUILDER_ASSETS")
+	if !filepath.IsAbs(assets) {
+		t.Fatal("an absolute verified API-server asset directory is required")
+	}
+	return &envtest.Environment{
+		UseExistingCluster:    &existing,
+		BinaryAssetsDirectory: assets,
+		// Per-binary TEST_ASSET_* variables outrank BinaryAssetsDirectory in
+		// envtest. Explicit paths bind execution to the wrapper's verified archive.
+		ControlPlane: envtest.ControlPlane{
+			APIServer:   &envtest.APIServer{Path: filepath.Join(assets, "kube-apiserver")},
+			Etcd:        &envtest.Etcd{Path: filepath.Join(assets, "etcd")},
+			KubectlPath: filepath.Join(assets, "kubectl"),
+		},
+		ControlPlaneStartTimeout: time.Minute,
+		ControlPlaneStopTimeout:  time.Minute,
+		CRDs:                     crds,
+	}
+}
+
+func startCompilerEnvironment(environment *envtest.Environment) (*rest.Config, error) {
+	config, err := environment.Start()
+	if err != nil {
+		// Start can fail while installing CRDs after both processes are running.
+		// The caller's successful-start cleanup has not been registered yet.
+		return config, errors.Join(err, environment.Stop())
+	}
+	return config, nil
+}
+
+func TestVerifiedBinarySelection(t *testing.T) {
+	assets := os.Getenv("KUBEBUILDER_ASSETS")
+	if assets == "" {
+		t.Fatal("verified API-server assets are required")
+	}
+	for _, name := range []string{"TEST_ASSET_KUBE_APISERVER", "TEST_ASSET_ETCD", "TEST_ASSET_KUBECTL"} {
+		t.Setenv(name, filepath.Join(t.TempDir(), "unverified-override"))
+	}
+	environment := newCompilerEnvironment(t, nil)
+	// A regression must not leave its own processes behind, even on the RED path.
+	t.Cleanup(func() {
+		if err := environment.ControlPlane.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	_, err := startCompilerEnvironment(environment)
+	if err != nil {
+		t.Errorf("ambient overrides must not prevent verified assets from starting: %v", err)
+	}
+	for name, got := range map[string]string{
+		"kube-apiserver": environment.ControlPlane.GetAPIServer().Path,
+		"etcd":           environment.ControlPlane.Etcd.Path,
+		"kubectl":        environment.ControlPlane.KubectlPath,
+	} {
+		if want := filepath.Join(assets, name); got != want {
+			t.Errorf("%s selected %q, want verified asset %q", name, got, want)
+		}
+	}
+	if err == nil {
+		// Exercise kubectl as well as the two long-running binaries.
+		user, err := environment.AddUser(envtest.User{Name: "verified-asset-check"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		kubectl, err := user.Kubectl()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := kubectl.Run("version", "--client"); err != nil {
+			t.Errorf("verified kubectl did not run: %v", err)
+		}
+	}
+}
+
+func TestFailedStartupStopsControlPlane(t *testing.T) {
+	var invalid extv1.CustomResourceDefinition
+	readYAML(t, os.Getenv("GATEWAY_HTTPROUTE_CRD"), &invalid)
+	invalid.Spec.Scope = "NotAValidScope"
+	environment := newCompilerEnvironment(t, []*extv1.CustomResourceDefinition{&invalid})
+	// Backstop only: assertions run before this cleanup, so it cannot mask a leak.
+	t.Cleanup(func() {
+		if err := environment.ControlPlane.Stop(); err != nil {
+			t.Error(err)
+		}
+	})
+	config, err := startCompilerEnvironment(environment)
+	if err == nil || !strings.Contains(err.Error(), "unable to install CRDs") {
+		t.Fatalf("expected a real CRD admission failure after startup, got %v", err)
+	}
+	if config == nil || environment.ControlPlane.Etcd.URL == nil {
+		t.Fatal("failure must follow an actual control-plane startup")
+	}
+	for name, address := range map[string]string{
+		"kube-apiserver": environment.ControlPlane.GetAPIServer().SecureServing.URL("https", "/").Host,
+		"etcd":           environment.ControlPlane.Etcd.URL.Host,
+	} {
+		connection, dialErr := net.DialTimeout("tcp", address, time.Second)
+		if dialErr == nil {
+			_ = connection.Close()
+			t.Errorf("%s still accepts connections after failed startup", name)
+		}
+	}
 }
 
 func completeWebApp(got *graph.Graph) error {
@@ -240,7 +345,7 @@ func decodeGraph(data []byte) (*kroapi.ResourceGraphDefinition, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read WebApp graph: %w", err)
 	}
-	if _, err := reader.Read(); err != io.EOF {
+	if _, err := reader.Read(); !errors.Is(err, io.EOF) {
 		return nil, fmt.Errorf("WebApp graph must contain exactly one YAML document")
 	}
 	var definition kroapi.ResourceGraphDefinition
@@ -265,7 +370,7 @@ func TestDecodeGraph(t *testing.T) {
 		{"malformed YAML", "metadata: [", true},
 		{"unknown typed field", valid + "unexpected: true\n", true},
 		{"second document", valid + "---\nother: ignored\n", true},
-		{"duplicate field", valid + "kind: Unexpected\n", true},
+		{"duplicate field", valid + "kind: ResourceGraphDefinition\n", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := decodeGraph([]byte(tc.body))
