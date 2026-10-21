@@ -65,6 +65,9 @@ helm install kro oci://registry.k8s.io/kro/charts/kro@sha256:bafeda52939e319d231
   --set deployment.replicaCount=1 \
   --set-string image.tag=v0.9.2@sha256:4adde767d11163f3064a3431ab6bb87c8dc70498fdaac3109d9b9df7ffa494e3 \
   --wait --timeout 180s >"$work/helm.log"
+kubectl -n kro-system get deployment kro -o json | jq -e '
+  [.spec.template.spec.containers[].image] ==
+  ["registry.k8s.io/kro/kro:v0.9.2@sha256:4adde767d11163f3064a3431ab6bb87c8dc70498fdaac3109d9b9df7ffa494e3"]' >/dev/null || fail 'installed controller image differs from the reviewed pin'
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/cluster-role.yaml" >/dev/null
 kubectl apply -f "$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml" >/dev/null
 for _attempt in {1..60}; do
@@ -114,6 +117,10 @@ converged omitted
 kubectl apply --validate=strict -f "$work/enabled.json" >/dev/null
 converged enabled
 kubectl -n runtime-fixture rollout status deployment/runtime-fixture --timeout=180s
+for _attempt in {1..60}; do
+  if kubectl -n runtime-fixture get service/runtime-fixture httproute/runtime-fixture >/dev/null 2>&1; then break; fi
+  sleep 2
+done
 kubectl -n runtime-fixture get service/runtime-fixture httproute/runtime-fixture >/dev/null
 kubectl -n runtime-fixture get pods -l app.kubernetes.io/name=runtime-fixture -o json >"$work/pods.json"
 jq -e '[.items[] | select(.status.phase=="Running") | .status.containerStatuses[] |
