@@ -519,6 +519,7 @@ assert_contains 'shows the version the chart rendered for' 'kube=v1.34.0'
 echo "== post-renderers are applied before the labels are read =="
 relabel() {
   cat <<'EOF'
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
@@ -735,6 +736,7 @@ assert_contains 'says the values cannot be stood in for' 'HelmRelease demo/web c
 new_tree
 pdb demo web "$both"
 release demo web <<'EOF'
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
@@ -1403,11 +1405,24 @@ assert_contains 'says why preserveValues cannot be rendered' 'HelmRelease demo/w
 new_tree
 pdb demo web "$both"
 release demo web <<'EOT'
-  postRenderStrategy: Latest
+  postRenderStrategy: combined
 EOT
 run_guard "$TREE"
-assert_rc 'postRenderStrategy is not modelled' 2
-assert_contains 'says postRenderStrategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled)'
+assert_rc 'a strategy other than nohooks is not modelled' 2
+assert_contains 'says postRenderStrategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks))'
+
+new_tree
+pdb demo web "$both"
+release demo web <<'EOT'
+  postRenderers:
+    - kustomize:
+        images:
+          - name: example/web
+            newTag: patched
+EOT
+run_guard "$TREE"
+assert_rc 'a post-rendered release without a strategy (Flux 2.9 defaults to combined) is not modelled' 2
+assert_contains 'says the omitted strategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks))'
 
 new_tree
 pdb demo web "$both"

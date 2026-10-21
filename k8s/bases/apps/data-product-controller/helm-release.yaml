@@ -73,6 +73,7 @@ spec:
           memory: 24Mi
         limits:
           memory: 64Mi
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

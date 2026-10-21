@@ -30,6 +30,7 @@ spec:
   # seLinuxOptions object leaves SELinux type and MCS category selection to the
   # runtime. The chart renders no securityContext, so strategic merge adds only
   # these two fields.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

@@ -34,9 +34,11 @@
 # every release is checked instead.
 #
 # CONTROLLER PROFILE. --flux-version is an explicit, audited offline profile, not live version
-# discovery. Flux 2.8.8 embeds Helm 4.2.0 and post-renders regular manifests only (nohooks).
-# Its API has no postRenderStrategy field. Other profiles are UNKNOWN until audited. A matching
-# 2.8.x selector does not prove the running patch: production delivery still needs OIDC readback.
+# discovery. Flux 2.9.6 (helm-controller 1.6.5) embeds Helm 4.2.4. Its default postRenderStrategy
+# is `combined`, which also post-renders hooks; this guard renders regular manifests only, so every
+# post-rendered release must set `postRenderStrategy: nohooks` explicitly and any other value, or none,
+# is refused. Other profiles are UNKNOWN until audited. A matching
+# 2.9.x selector does not prove the running patch: production delivery still needs OIDC readback.
 #
 # ⚠️ WHAT THIS DOES NOT SEE. The chart renders without a cluster, so a template that branches on
 # `.Capabilities.APIVersions` or on a `lookup` renders as if those APIs and objects were absent.
@@ -51,14 +53,14 @@
 # kustomize `patches`/`images` renderer, a chart that fails to pull or render, or an unresolved
 # `${...}` in the chart source. Historical preserveValues and revision-dependent templates are
 # also UNKNOWN: helm template --is-upgrade still renders revision 1, not the deployed revision.
-# Rendering uses the unmodified Helm 4.2.0 command built with Go 1.26.3 and no version linker
+# Rendering uses the unmodified Helm 4.2.4 command built with Go 1.26.8 and no version linker
 # flags, matching the controller's complete embedded-SDK build metadata. The official release
-# CLI is used only to pull charts: it injects v4.2.0 rather than the controller's v4.2 capability.
+# CLI is used only to pull charts: it injects v4.2.4 rather than the controller's v4.2 capability.
 # No cluster overlay, or an overlay that names no Flux
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
 #
-# Usage: guard-helm-post-renderers.sh --flux-version 2.8.8 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
+# Usage: guard-helm-post-renderers.sh --flux-version 2.9.6 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
 #
 # Exit codes:
 #   0  every checked HelmRelease's post-renderers apply to its chart's rendered output
@@ -73,7 +75,7 @@ die() {
   exit 2
 }
 
-usage="usage: $0 --flux-version 2.8.8 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
+usage="usage: $0 --flux-version 2.9.6 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
 base=''
 kube_version=''
 base_kube_version=''
@@ -117,7 +119,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$#" -eq 1 ] || die "$usage"
-[ "$flux_version" = 2.8.8 ] || die "an audited --flux-version 2.8.8 profile is required"
+[ "$flux_version" = 2.9.6 ] || die "an audited --flux-version 2.9.6 profile is required"
 if [ -n "$base" ] && [ -n "$kube_version" ]; then
   [ -n "$base_kube_version" ] || die "--base-kube-version is required when comparing an explicit Kubernetes profile"
 fi
@@ -148,7 +150,7 @@ export HELM_CACHE_HOME="$scratch/helm/cache" HELM_CONFIG_HOME="$scratch/helm/con
   HELM_DATA_HOME="$scratch/helm/data" HELM_REGISTRY_CONFIG="$scratch/helm/registry.json" \
   DOCKER_CONFIG="$scratch/docker" HELM_PLUGINS="$scratch/helm/plugins"
 helm_version="$(helm version --template '{{.Version}}')" || die "cannot read the Helm version"
-[ "$helm_version" = v4.2.0 ] || die "Flux $flux_version requires Helm v4.2.0, not '$helm_version'"
+[ "$helm_version" = v4.2.4 ] || die "Flux $flux_version requires Helm v4.2.4, not '$helm_version'"
 
 controller_helm="${CONTROLLER_HELM:-}"
 controller_helm_checked=0
@@ -163,7 +165,7 @@ ensure_controller_renderer() {
   local metadata
   metadata="$("$controller_helm" version --template '{{ printf "%#v" . }}')" ||
     die 'cannot read the controller SDK renderer metadata'
-  [ "$metadata" = 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.3", KubeClientVersion:"v1.36"}' ] ||
+  [ "$metadata" = 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ] ||
     die 'the controller SDK renderer has unaudited capability metadata'
   controller_helm_checked=1
 }
@@ -371,7 +373,7 @@ collect() { # <k8s-root> <out> <kube-version>
       | if length == 1 then .[0] else error("missing or conflicting FluxInstance selectors") end' "$work/resolved.json")" ||
       die "cluster '$cluster' has no unique FluxInstance distribution selector"
     case $selector in
-      2.8.x | 2.8.8 | v2.8.8) ;;
+      2.9.x | 2.9.6 | v2.9.6) ;;
       *) die "cluster '$cluster' selector '$selector' does not admit audited Flux $flux_version" ;;
     esac
     profile="$(jq -n --arg flux "$flux_version" --arg helm "$helm_version" --arg kube "$kube_version" --arg selector "$selector" \
@@ -459,8 +461,8 @@ check_release() { # <record> <work>
       (((.kustomize // {}).patches // []) | all(.[]; keys - ["patch", "target"] | length == 0)))' \
     "$record" >/dev/null ||
     die "$label: a post-renderer is not a kustomize patches/images renderer, which is all Flux's Kustomize post-renderer applies — this guard cannot execute it"
-  jq -e '.release.spec.postRenderStrategy == null' "$record" >/dev/null ||
-    die "$label: spec.postRenderStrategy is unsupported by Flux $flux_version"
+  jq -e '.release.spec.postRenderStrategy == "nohooks"' "$record" >/dev/null ||
+    die "$label: spec.postRenderStrategy must be nohooks; Flux $flux_version otherwise post-renders hooks too, which this guard does not model"
   jq -e '.release.spec.upgrade.preserveValues != true' "$record" >/dev/null ||
     die "$label: spec.upgrade.preserveValues needs historical release values this offline guard cannot read"
   jq -e '((.release.spec.chart.spec.valuesFiles // []) | length == 0) and (.release.spec.chart.spec.valuesFile == null)' \

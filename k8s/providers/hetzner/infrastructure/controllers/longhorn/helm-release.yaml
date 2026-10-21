@@ -159,6 +159,7 @@ spec:
 
     longhornUI:
       replicas: ${longhorn_ui_replicas:=1}
+  postRenderStrategy: nohooks
   postRenderers:
     # Pin longhorn-ui's non-root identity in its own spec.
     #

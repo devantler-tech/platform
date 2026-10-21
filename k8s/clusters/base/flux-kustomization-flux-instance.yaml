@@ -1,0 +1,35 @@
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  # The flux-instance layer owns only the FluxInstance, which installs Flux
+  # itself, including its CRDs. It used to be part of infrastructure-controllers.
+  # A Flux upgrade that adds CRD fields then had to apply the new FluxInstance
+  # in the same server-side apply as the manifests using those fields. That
+  # apply builds its patches against the CRD schemas live at that moment, so
+  # one new field rejected the whole layer and the upgrade never ran
+  # (platform#5184, Flux 2.9 postRenderStrategy). With its own layer, the new
+  # Flux and its CRDs are Ready before any later layer is applied.
+  #
+  # The path is the directory the provider overlays always used, so every
+  # script that reads flux-instance.yaml keeps working. The FluxInstance carries
+  # kustomize.toolkit.fluxcd.io/prune: disabled, so neither the hand-over from
+  # infrastructure-controllers nor a later mistake here can delete it, which
+  # would uninstall Flux.
+  name: flux-instance
+  namespace: flux-system
+spec:
+  interval: 60m
+  # A Flux upgrade rolls every controller, kustomize-controller included.
+  timeout: 10m
+  retryInterval: 2m
+  path: providers/__PROVIDER__/infrastructure/controllers/flux-instance
+  sourceRef:
+    kind: OCIRepository
+    name: flux-system
+  dependsOn:
+    - name: bootstrap
+  wait: true
+  prune: true
+  # Immutable conflicts require an operator plan; individual Jobs opt into recreation.
+  force: false

@@ -115,6 +115,7 @@ spec:
   # ScheduleAnyway prefers separate nodes without ever blocking scheduling. The
   # recommender is left untouched here (not flagged by Coroot). Selectors come
   # from the chart's Deployment .spec.selector.matchLabels.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
