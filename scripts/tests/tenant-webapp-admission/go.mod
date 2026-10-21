@@ -3,9 +3,9 @@ module github.com/devantler-tech/platform/scripts/tests/tenant-webapp-admission
 go 1.26.10
 
 require (
-	github.com/kyverno/api v0.0.1-alpha.3.0.20260723090831-fb2785727f98
+	github.com/kyverno/api v0.0.1-alpha.5
 	github.com/kyverno/kyverno v1.19.1
-	golang.org/x/mod v0.41.0
+	golang.org/x/mod v0.42.0
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
 	sigs.k8s.io/yaml v1.6.0

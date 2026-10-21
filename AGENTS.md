@@ -159,6 +159,23 @@ CI aggregate both depend on it; the aggregate accepts only a successful result,
 never a skipped or cancelled guard. Queue-receipt capture and path-filter outputs
 remain in `changes`.
 
+### WebApp compiler fixture
+
+`bash scripts/tests/test-webapp-compiler.sh` checks the committed WebApp graph
+with the KRO library version selected by the controller chart pin. It uses
+checksum-verified local API-server assets and the pinned KRO/HTTPRoute CRDs,
+admits the graph to obtain real schema defaults, then compiles all three children.
+The fixture uses no ambient cluster, controller, scheduler, kubelet or credentials.
+It is an isolated API-server test, not a full local cluster.
+
+CI requires this check for selected PRs and merge groups before production
+deployment, and Validate Main runs it after merge. Run
+`bash scripts/tests/test-webapp-compiler-wiring.sh` for the required-result
+boundary. A KRO chart bump must update and review the test library pin together;
+conditional omission remains disabled unless a separate reviewed change enables it.
+Compiler/API proof does not establish controller convergence, Secret projection,
+workload readiness or portal activation. See [validation](docs/validation.md#webapp-compiler).
+
 ### Updating Vendored Operator Bundles
 
 The CDI, KubeVirt and kubelet-serving-cert-approver operator resources, plus the origin-ca-issuer

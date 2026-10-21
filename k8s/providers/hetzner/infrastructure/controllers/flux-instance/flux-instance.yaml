@@ -12,9 +12,9 @@ metadata:
   name: flux
   namespace: flux-system
   annotations:
-    # Never garbage-collect: deleting the FluxInstance uninstalls Flux. This also
-    # makes the hand-over from infrastructure-controllers to the flux-instance
-    # Flux Kustomization safe in either reconcile order.
+    # Never garbage-collect: deleting the FluxInstance uninstalls Flux. This was
+    # live one deployed revision before the FluxInstance moved to its own Flux
+    # Kustomization (platform#5184), so no layer could prune it in the hand-over.
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   distribution:
