@@ -1599,7 +1599,7 @@ func TestWorkflowValidatesAuthorizationBeforeMergeGroupDeploy(t *testing.T) {
 	aggregators := 0
 	for _, value := range steps {
 		step, _ := value.(map[string]any)
-		if !strings.HasPrefix(fmt.Sprint(step["uses"]), "devantler-tech/actions/aggregate-job-checks@") {
+		if !strings.HasPrefix(fmt.Sprint(step["uses"]), "devantler-tech/.github/actions/aggregate-job-checks@") {
 			continue
 		}
 		aggregators++
