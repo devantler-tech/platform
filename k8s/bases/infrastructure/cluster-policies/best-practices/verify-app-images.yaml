@@ -60,8 +60,9 @@ spec:
         keyless:
           # The legacy publisher retains its full-commit compatibility rule
           # (#3746). The maintained publisher accepts only the explicitly
-          # reviewed revision, not every commit in its repository. Mutable refs
-          # and tags satisfy neither location. Keep this to exactly ONE identity
+          # reviewed revisions during the v8 transition (#5213), not every
+          # commit in its repository. Mutable refs and tags satisfy neither
+          # location. Keep this to exactly ONE identity
           # entry: the IVPOL engine verifies cosign v3 bundles through
           # sigstore-go, which rejects more than one identity per verification
           # ("unsupported: multiple identities are not supported at this
@@ -72,7 +73,7 @@ spec:
           # form as an alternation inside this one regex.
           identities:
             - issuer: https://token.actions.githubusercontent.com
-              subjectRegExp: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b)$
+              subjectRegExp: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$
     # The Kubescape storage compatibility image is produced inside this
     # repository rather than through actions/publish-app.yaml: its publisher
     # checks out one immutable upstream storage commit, applies the reviewed
