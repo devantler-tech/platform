@@ -19,7 +19,8 @@ check_job() {
            else $job.if == $selection and $job.needs == ["changes"] end)
       and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-compiler.sh")) ]
            | length == 1 and (.[0] | has("if") | not)
-             and (.[0]["continue-on-error"] // false) == false)
+             and (.[0]["continue-on-error"] // false) == false
+             and .[0].run == "bash scripts/tests/test-webapp-compiler.sh")
   ' <<<"${input}" >/dev/null || fail 'compiler job is absent, bypassed or unbounded'
 }
 check_job "${ci}" "needs.changes.outputs.k8s == 'true'"
@@ -34,7 +35,8 @@ jq -e '
   and ([.jobs["validate-repository-guards"].steps[] |
     select((.run // "") | contains("bash scripts/tests/test-webapp-compiler-wiring.sh"))] |
     length == 1 and (.[0] | has("if") | not)
-      and (.[0]["continue-on-error"] // false) == false)
+      and (.[0]["continue-on-error"] // false) == false
+      and .[0].run == "shellcheck scripts/tests/test-webapp-compiler.sh scripts/tests/test-webapp-compiler-wiring.sh\nbash scripts/tests/test-webapp-compiler-wiring.sh\n")
 ' <<<"${ci}" >/dev/null || fail 'compiler result must gate deployment and required CI independently'
 filter="$(yq -o=json '.jobs.changes.steps[] | select(.id == "filter") | .with.filters | from_yaml | .k8s' "${root}/.github/workflows/ci.yaml")"
 jq -e '
@@ -68,4 +70,10 @@ for event in pull_request merge_group; do
   check "${event}" unexpected skipped 1
 done
 check push true success 1
+nonexecuting="$(jq '(.jobs["validate-webapp-compiler"].steps[] |
+  select((.run // "") | contains("test-webapp-compiler.sh"))).run =
+  "echo bash scripts/tests/test-webapp-compiler.sh"' <<<"${ci}")"
+if (check_job "${nonexecuting}" "needs.changes.outputs.k8s == 'true'") >"${work}/nonexecuting.log" 2>&1; then
+  fail 'printing the compiler command must not count as executing it'
+fi
 echo 'PASS: selected KRO compiler proof is required before merge and deploy'
