@@ -52,6 +52,17 @@
     },
     {
       "customType": "regex",
+      "description": "Track the KRO controller's OCI chart tag in its OCIRepository via the docker datasource. Without it nothing moved the controller, so every Renovate bump of the KRO Go module failed the web-app compiler check, which requires the two to match (#5204). Grouped with that Go module in packageRules below.",
+      "managerFilePatterns": [
+        "/^k8s/bases/infrastructure/controllers/kro/oci-repository\\.ya?ml$/"
+      ],
+      "matchStrings": ["tag:\\s*(?<currentValue>\\S+)"],
+      "datasourceTemplate": "docker",
+      "depNameTemplate": "registry.k8s.io/kro/charts/kro",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Track the ksail-operator OCI Helm chart version (the tag of its OCIRepository) via the devantler-tech/ksail GitHub *releases*, NOT the chart's own OCI registry tags. The chart is published per global monorepo version, so a release that builds no ksail binary (e.g. the copilot-plugin-only release v7.74.1) still publishes a ksail-operator chart at that version whose default image tag (v<appVersion>) points at a ghcr.io/devantler-tech/ksail:v<ver> image that was never built or cosign-signed. The verify-ksail-images ImageValidatingPolicy then denies the Pod (MANIFEST_UNKNOWN), hanging the Helm upgrade and stalling the whole infrastructure-controllers layer (and infrastructure -> apps behind it). Resolving from github-releases means the chart only bumps to versions that have a real ksail release — hence a built, tag-signed image. Mirrors the flux-operator manager above; the built-in flux manager is disabled for this chart in packageRules below so the two cannot open duplicate/registry-based PRs.",
       "managerFilePatterns": [
         "/^k8s/bases/infrastructure/controllers/ksail-operator/oci-repository\\.ya?ml$/"
@@ -177,6 +188,12 @@
       "enabled": false
     },
     {
+      "description": "The KRO chart is tracked by the dedicated regex customManager above. Disable the built-in `flux` manager for it so the two managers cannot open duplicate PRs if the flux manager starts reading this OCIRepository.",
+      "matchManagers": ["flux"],
+      "matchPackageNames": ["kro", "registry.k8s.io/kro/charts/kro"],
+      "enabled": false
+    },
+    {
       "description": "Group the ksail-release dependencies that Renovate manages — the CLI (KSAIL_VERSION custom manager, datasource github-releases, in .github/actions/deploy-prod/action.yml and dr-rebuild.yaml) and the ksail-operator OCI Helm chart (dedicated github-releases custom manager, oci-repository.yaml) — into one PR (groupName 'ksail'), so a single ksail release stops opening a separate PR for each. The devantler-tech/ksail GitHub Action is intentionally NOT included: github-actions is owned exclusively by Dependabot (.github/dependabot.yaml), so that bump stays a separate Dependabot PR. Both grouped deps now resolve via the same devantler-tech/ksail github-releases datasource, so they always move to the same real ksail release in lockstep (no more split CLI=7.74.0 / chart=7.74.1 bumps), while retaining the repository-wide minimumReleaseAge cooldown for privileged deployment tooling.",
       "matchPackageNames": [
         "devantler-tech/ksail",
@@ -237,6 +254,17 @@
     {
       "description": "The flux-operator chart (dedicated regex manager above) installs and upgrades Flux itself. Its chart lives on ghcr.io, which gives Renovate no release date for it, and a release with no date never clears the repository-wide wait, so no update was proposed after 0.50.0 (#4985, the same cause as #4754). minimumReleaseAge is therefore 0 days. Raising the PR adopts nothing: automerge is off whatever the update type, so every update is reviewed against the operator's release notes and the HelmRelease post-renderers before merge. Placed after the broad automerge rules so none of them can turn automerge back on.",
       "matchPackageNames": ["ghcr.io/controlplaneio-fluxcd/charts/flux-operator"],
+      "minimumReleaseAge": "0 days",
+      "automerge": false
+    },
+    {
+      "description": "KRO moves as one pull request: the controller chart (dedicated regex manager above) and the github.com/kubernetes-sigs/kro Go module the web-app compiler check builds against, which must match it (#5204). The chart registry gives Renovate no release date, so the repository-wide wait would hold the chart back forever while the module arrived alone and failed; minimumReleaseAge is 0 days for both so they arrive together, and minimumGroupSize 2 holds the PR until both have an update, so one never arrives alone. Automerge is off: a controller bump is reviewed against KRO's release notes. Placed after the broad automerge rules so none of them can turn automerge back on.",
+      "matchPackageNames": [
+        "registry.k8s.io/kro/charts/kro",
+        "github.com/kubernetes-sigs/kro"
+      ],
+      "groupName": "kro",
+      "minimumGroupSize": 2,
       "minimumReleaseAge": "0 days",
       "automerge": false
     },
