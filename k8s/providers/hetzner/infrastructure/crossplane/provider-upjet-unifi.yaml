@@ -13,6 +13,6 @@ kind: Provider
 metadata:
   name: provider-upjet-unifi
 spec:
-  package: ghcr.io/devantler-tech/provider-upjet-unifi:v1.1.2
+  package: ghcr.io/devantler-tech/provider-upjet-unifi:v1.1.3
   runtimeConfigRef:
     name: provider-upjet-unifi
