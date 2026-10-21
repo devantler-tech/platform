@@ -9,14 +9,3 @@ updates:
       # devantler-tech actions/workflows are our own code — bump now, no cooldown.
       exclude:
         - "devantler-tech/*"
-  # This anonymous conformance fixture follows the deployed controller, including
-  # its indirect graph. Keep security alerts/scans, but never independently
-  # replace its dependencies. Version-only limits/exclusions do not cover security.
-  - package-ecosystem: "gomod"
-    directory: "/scripts/retire-backstage-stateless/poller-native"
-    schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 0
-    ignore:
-      - dependency-name: "*"
-        versions: [">= 0"]

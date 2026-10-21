@@ -1,5 +1,9 @@
 # Backstage retirement lifecycle
 
+- **Status:** Completed. The stateless retirement finished on 18 October 2026 (#5042), and its
+  tooling and admission fence were removed in #5159. This record is kept for reference; the
+  retained database and its storage protection are unchanged (#5122).
+
 ## Decision
 
 Keep the unsuspended, published Flux HelmRelease finalizer and its native Helm

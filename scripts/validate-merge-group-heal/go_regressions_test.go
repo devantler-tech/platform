@@ -65,7 +65,6 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 	}
 	for _, command := range []string{
 		"go test ./...",
-		"go -C scripts/retire-backstage-stateless/poller-native test -race -mod=readonly -count=1 ./...",
 	} {
 		found := false
 		for name, candidate := range workflow.Jobs {
