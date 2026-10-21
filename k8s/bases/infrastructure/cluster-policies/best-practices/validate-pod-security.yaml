@@ -5,8 +5,9 @@
 # - This policy blocks explicitly insecure overrides at admission
 #
 # DELIBERATE ASYMMETRY — validated at the controller, mutated only at the pod
-# (#3160). Kyverno autogenerates this policy's rules for Deployment,
-# StatefulSet, DaemonSet, Job and CronJob pod templates, while
+# (#3160). This policy judges the pod templates of Deployment,
+# StatefulSet, DaemonSet, Job, CronJob, ReplicaSet and ReplicationController
+# as well as Pods, while
 # add-security-context matches Pod with CREATE only and generates no autogen
 # rules (except its opt-in controller counterparts). So a controller template
 # is VALIDATED as stored but NEVER MUTATED: the mutation fills empty fields in
@@ -19,10 +20,10 @@
 # the moment the live object becomes compliant (the 2026-08-15 merge-queue
 # wedge in #3160).
 # Why keep the split rather than close it:
-# - Autogen stays ON here so a non-compliant template is refused when Flux
-#   applies it, loudly, on the Kustomization. Validating only Pods would admit
-#   the controller and fail its pods inside the ReplicaSet/Job, where nothing
-#   reports the denial to the GitOps pipeline.
+# - Controllers stay matched here so a non-compliant template is refused when
+#   Flux applies it, loudly, on the Kustomization. Validating only Pods would
+#   admit the controller and fail its pods inside the ReplicaSet/Job, where
+#   nothing reports the denial to the GitOps pipeline.
 # - Autogen stays OFF on the mutation because the mutate rules are CREATE-only
 #   for pod-spec immutability (see add-security-context), and mutating a stored
 #   template changes its hash and rolls the workload at whatever moment its
@@ -41,9 +42,13 @@
 # `kube-system` under k3s — and both are already excluded below, so they need
 # no name-based entry. A name-only exclusion would be spoofable by any pod that
 # adopts the same name in any namespace.
+#
+# The controller kinds are matched directly rather than through Kyverno's
+# generated pod-controller rules, which at Kyverno 1.19 do not cover
+# ReplicationController. `podSpec` below picks the pod spec out of each kind.
 
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: validate-pod-security
   annotations:
@@ -51,137 +56,79 @@ metadata:
     policies.kyverno.io/category: Pod Security, Best Practices
     policies.kyverno.io/severity: medium
     policies.kyverno.io/subject: Pod
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
-      Validates that pods comply with Pod Security Standards restricted
-      profile. Blocks explicitly insecure overrides that the mutation
-      policy's conditional anchors would skip.
+      Validates that pods and the pod templates of workload controllers
+      comply with Pod Security Standards restricted profile. Blocks
+      explicitly insecure overrides that the mutation policy's conditional
+      anchors would skip.
 spec:
-  background: true
-  rules:
-    - name: validate-container-security
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - flux-system
-                - longhorn-system
-                - local-path-storage
-                - kubescape
-                - kubevirt
-                - cdi
-                - observability
-                - velero
-                - chaos-mesh
-      validate:
-        failureAction: Enforce
-        message: >-
-          All containers must set allowPrivilegeEscalation=false,
-          privileged=false (or unset), runAsNonRoot=true, and drop
-          ALL capabilities.
-        pattern:
-          spec:
-            containers:
-              - securityContext:
-                  allowPrivilegeEscalation: false
-                  =(privileged): false
-                  runAsNonRoot: true
-                  capabilities:
-                    drop:
-                      - ALL
-            =(initContainers):
-              - securityContext:
-                  allowPrivilegeEscalation: false
-                  =(privileged): false
-                  runAsNonRoot: true
-                  capabilities:
-                    drop:
-                      - ALL
-            =(ephemeralContainers):
-              - securityContext:
-                  allowPrivilegeEscalation: false
-                  =(privileged): false
-                  runAsNonRoot: true
-                  capabilities:
-                    drop:
-                      - ALL
-    - name: require-seccomp-profile
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - flux-system
-                - longhorn-system
-                - local-path-storage
-                - kubescape
-                - kubevirt
-                - cdi
-                - observability
-                - velero
-                - chaos-mesh
-      validate:
-        failureAction: Enforce
-        message: "Pod must use seccomp profile RuntimeDefault or Localhost."
-        pattern:
-          spec:
-            securityContext:
-              seccompProfile:
-                type: "RuntimeDefault | Localhost"
-    - name: deny-container-seccomp-unconfined
-      match:
-        any:
-          - resources:
-              kinds:
-                - Pod
-      exclude:
-        any:
-          - resources:
-              namespaces:
-                - kube-system
-                - kube-public
-                - kube-node-lease
-                - flux-system
-                - longhorn-system
-                - local-path-storage
-                - kubescape
-                - kubevirt
-                - cdi
-                - observability
-                - velero
-                - chaos-mesh
-      validate:
-        failureAction: Enforce
-        message: >-
-          Container seccomp profile must be RuntimeDefault or Localhost
-          when set. Containers inherit the pod-level seccomp profile
-          unless explicitly overridden.
-        pattern:
-          spec:
-            containers:
-              - =(securityContext):
-                  =(seccompProfile):
-                    type: "RuntimeDefault | Localhost"
-            =(initContainers):
-              - =(securityContext):
-                  =(seccompProfile):
-                    type: "RuntimeDefault | Localhost"
-            =(ephemeralContainers):
-              - =(securityContext):
-                  =(seccompProfile):
-                    type: "RuntimeDefault | Localhost"
+  validationActions:
+    - Deny
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["pods", "replicationcontrollers"]
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+      - apiGroups: ["batch"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["jobs", "cronjobs"]
+  matchConditions:
+    - name: not-infrastructure-namespace
+      expression: >-
+        !(object.metadata.?namespace.orValue('') in [
+          'kube-system', 'kube-public', 'kube-node-lease', 'flux-system',
+          'longhorn-system', 'local-path-storage', 'kubescape', 'kubevirt',
+          'cdi', 'observability', 'velero', 'chaos-mesh'])
+  variables:
+    - name: podSpec
+      expression: >-
+        object.kind == 'Pod' ? object.spec :
+        object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec :
+        object.spec.template.spec
+    # Every container the pod declares: regular, init and ephemeral.
+    - name: containers
+      expression: >-
+        variables.podSpec.containers +
+        variables.podSpec.?initContainers.orValue([]) +
+        variables.podSpec.?ephemeralContainers.orValue([])
+    - name: allowedSeccompTypes
+      expression: "['RuntimeDefault', 'Localhost']"
+  validations:
+    # Each drop entry must be ALL; an empty drop list passes today (#5149).
+    - expression: >-
+        variables.containers.all(c,
+          c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false &&
+          c.?securityContext.?privileged.orValue(false) == false &&
+          c.?securityContext.?runAsNonRoot.orValue(false) == true &&
+          c.?securityContext.?capabilities.?drop.hasValue() &&
+          c.securityContext.capabilities.drop.all(d, d == 'ALL'))
+      message: >-
+        All containers must set allowPrivilegeEscalation=false,
+        privileged=false (or unset), runAsNonRoot=true, and drop
+        ALL capabilities.
+    - expression: >-
+        variables.podSpec.?securityContext.?seccompProfile.?type.orValue('')
+        in variables.allowedSeccompTypes
+      message: "Pod must use seccomp profile RuntimeDefault or Localhost."
+    - expression: >-
+        variables.containers.all(c,
+          !c.?securityContext.?seccompProfile.hasValue() ||
+          c.securityContext.seccompProfile.?type.orValue('')
+          in variables.allowedSeccompTypes)
+      message: >-
+        Container seccomp profile must be RuntimeDefault or Localhost
+        when set. Containers inherit the pod-level seccomp profile
+        unless explicitly overridden.

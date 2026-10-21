@@ -348,16 +348,17 @@ for host_check in 0 1 2; do
   expect_fail "weakened host check ${host_check}" "${root}" 1 "kyverno test tests failed"
 done
 
-# #5143: the same proof for the pod-security baseline, one rule at a time. The copy
-# must pass before the edit, and the failure after it must be a denial the weakened
-# rule no longer produces, so no unrelated failing row can satisfy the assertion.
-for pss_rule in validate-container-security require-seccomp-profile deny-container-seccomp-unconfined; do
-  root="$(copy "weaken-${pss_rule}" validate-pod-security)"
-  expect_pass "unweakened ${pss_rule}" "${root}"
-  PSS_RULE="${pss_rule}" yq -i \
-    '(.spec.rules[] | select(.name == strenv(PSS_RULE)) | .validate.pattern) = {"spec": {}}' \
+# #5143: the same proof for the pod-security baseline, one check at a time (0 container
+# security, 1 pod seccomp profile, 2 container seccomp override). The copy must pass
+# before the edit, and the failure after it must be a denial the weakened check no
+# longer produces, so no unrelated failing row can satisfy the assertion.
+for pss_check in 0 1 2; do
+  root="$(copy "weaken-pss-check-${pss_check}" validate-pod-security)"
+  expect_pass "unweakened pss check ${pss_check}" "${root}"
+  PSS_CHECK="${pss_check}" yq -i \
+    '.spec.validations[env(PSS_CHECK)].expression = "true"' \
     "${root}/${policies}/validate-pod-security.yaml"
-  expect_fail "weakened ${pss_rule}" "${root}" 1 "Want fail, got pass"
+  expect_fail "weakened pss check ${pss_check}" "${root}" 1 "Want fail, got pass"
 done
 
 # A fixture whose expectation is wrong still fails through kyverno itself.
