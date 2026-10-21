@@ -275,6 +275,13 @@ OpenTelemetry log exporter v0.23.0 and log SDK v1.47.0, and `golang.org/x/sys`
 v0.49.0. The Go directive and the Talos machinery module are unchanged, so the
 mirrored fold still holds.
 
+**7.202.68**, commit `1d929389b8a8ede417d9421996e50268d4610f1d`, is audited
+against 7.202.66. The Talos generator, chart, configuration manager and cluster
+API are byte-identical. Only `go.mod` and `go.sum` change, through two
+dependency bumps outside the fold: the GitHub Copilot SDK v1.0.16 and
+`hcloud-go` v2.52.0. The Go directive and the Talos machinery module are
+unchanged, so the mirrored fold still holds.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
