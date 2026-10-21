@@ -62,4 +62,6 @@ expect invalid "$valid $enabled"
 expect invalid "$valid {PRIVATE-FIXTURE-VALUE"
 expect invalid '{PRIVATE-FIXTURE-VALUE'
 expect invalid "$(jq '.unexpected="PRIVATE-FIXTURE-VALUE"' <<<"$valid")"
+expect invalid "${valid%\}} ,\"spec\":{\"name\":\"fixture\",\"image\":\"registry.k8s.io/pause:3.10.2\",\"host\":\"fixture.invalid\"}}"
+expect invalid '{"apiVersion":"kro.run/v1alpha1","kind":"WebApp","metadata":{"name":"fixture"},"spec":{"name":"fixture","image":"registry.k8s.io/pause:3.10.2","host":"fixture.invalid","runAsUser":0,"runAsUser":65532}}'
 echo "WebApp strict source inputs: $passed actual boundary controls passed."

@@ -59,6 +59,7 @@ jq -e '
   and index("scripts/tests/test-webapp-runtime-hosted.sh") != null
   and index("scripts/tests/test-webapp-compiled-scan.sh") != null
   and index("scripts/validate-webapp-inputs.sh") != null
+  and index("scripts/validate-webapp-inputs/**") != null
   and index("scripts/webapp-inputs.jq") != null
   and index("scripts/tests/test-webapp-inputs.sh") != null
   and index("scripts/tests/test-webapp-inputs-wiring.sh") != null

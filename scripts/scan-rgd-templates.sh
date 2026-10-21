@@ -1191,10 +1191,6 @@ while IFS= read -r candidate; do
       fi
     done
     "$is_rgd_instance" || continue
-    if [ "$instance_kind" = WebApp ] && [ "$instance_api_version" = kro.run/v1alpha1 ]; then
-      bash "$REPO_ROOT/scripts/validate-webapp-inputs.sh" <<<"$instance_json" || fail \
-        "committed WebApp has invalid or unknown source inputs: $candidate"
-    fi
     committed_instance_count=$((committed_instance_count + 1))
     # SOPS encrypted_regex can cover any part of the document, so ciphertext outside .spec is just
     # as unreadable as ciphertext inside it. Scope the scan to the whole instance.
@@ -1204,6 +1200,12 @@ while IFS= read -r candidate; do
     ' <<<"$instance_json")"
     [ "$encrypted_instance" = "false" ] || fail \
       "SOPS-encrypted generated instances cannot be validated from ciphertext: $candidate"
+    if [ "$instance_kind" = WebApp ] && [ "$instance_api_version" = kro.run/v1alpha1 ]; then
+      GOWORK=off go -C "$REPO_ROOT" run ./scripts/validate-webapp-inputs yaml "$candidate" || fail \
+        "committed WebApp has ambiguous raw source: $candidate"
+      bash "$REPO_ROOT/scripts/validate-webapp-inputs.sh" <<<"$instance_json" || fail \
+        "committed WebApp has invalid or unknown source inputs: $candidate"
+    fi
     # Flux postBuild substitution envsubsts the WHOLE manifest, not just its spec, so a metadata
     # field such as metadata.namespace is replaced after the raw instance evidence is sealed exactly
     # as a spec field is. Scan every scalar path in the document.

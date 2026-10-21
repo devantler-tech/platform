@@ -163,7 +163,10 @@ root-owned projected file is readable by exactly its non-root application group.
 The public disclosure is an immutable startup snapshot: rotation requires a restart.
 
 The platform source scanner refuses unknown or malformed WebApp spec fields
-before sealing committed-instance evidence. This is the platform's committed
+before sealing committed-instance evidence. The existing strict JSON parser
+rejects duplicate members before jq can keep a last value; the maintained YAML
+decoder also checks the original source before conversion. Complete inputs are
+bounded to 1 MiB, with at most 1024 raw YAML documents. This is the platform's committed
 source gate, not proof of a future tenant publisher's input validation. The actual
 KRO 0.9.2 compiler/generated API tests admission, defaults, literal arguments and
 resolved children. Resolved deployments are separately scanned with Trivy 0.74.0;

@@ -150,6 +150,7 @@ jobs:
               - '.github/scripts/kyverno-version.sh'
               - 'scripts/tests/test-webapp-container-security.sh'
               - 'scripts/validate-webapp-inputs.sh'
+              - 'scripts/validate-webapp-inputs/**'
               - 'scripts/webapp-inputs.jq'
               - 'scripts/tests/test-webapp-inputs.sh'
               - 'scripts/tests/test-webapp-inputs-wiring.sh'

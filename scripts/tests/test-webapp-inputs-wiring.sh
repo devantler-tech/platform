@@ -28,4 +28,11 @@ for expression in \
   fi
   grep -Fq 'committed WebApp has invalid or unknown source inputs' "$work/refused.log" || { cat "$work/refused.log" >&2; exit 1; }
 done
+cp "$work/original.yaml" "$instance"
+printf '\n  runAsUser: 0\n  runAsUser: 65532\n' >>"$instance"
+if bash "$root/scripts/scan-rgd-templates.sh" "$work" >"$work/duplicate.log" 2>&1; then
+  echo 'FAIL: actual publication scanner accepted duplicate raw YAML fields' >&2
+  exit 1
+fi
+grep -Fq 'committed WebApp has ambiguous raw source' "$work/duplicate.log" || { cat "$work/duplicate.log" >&2; exit 1; }
 echo 'PASS: real publication scanner accepts committed inputs and refuses command, root, namespace and interpolation overrides.'
