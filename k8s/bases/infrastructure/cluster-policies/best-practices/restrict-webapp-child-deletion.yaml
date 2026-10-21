@@ -56,7 +56,8 @@ spec:
         resource.Get('kro.run/v1alpha1', 'webapps', variables.labels['kro.run/instance-namespace'], variables.labels['kro.run/instance-name']) : {}
   validations:
     - expression: >-
-        !variables.kro || (variables.owned &&
+        (!variables.kro && !variables.owned) ||
+        (variables.kro && variables.owned &&
         variables.parent.metadata.?uid.orValue('') == variables.labels['kro.run/instance-id'] &&
         variables.parent.metadata.?deletionTimestamp.orValue(null) != null)
       message: KRO may clean up only an owned WebApp child whose matching parent is being deleted.

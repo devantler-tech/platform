@@ -114,7 +114,9 @@ admission additionally requires complete old child ownership, a read of the
 labelled parent's matching UID, and that parent's deletion timestamp. This
 prevents failed collision/rollback from deleting an unowned workload or another
 active parent's child. The admission controller gains only `get` on WebApps for
-that check; missing/refused reads fail closed. The current graph has three
+that check; missing/refused reads fail closed. Non-controller writers may delete
+ordinary unowned workloads, while owned child cleanup remains controller-only.
+The current graph has three
 unconditional children; future pruning under an active parent requires a
 separately reviewed authorization change.
 

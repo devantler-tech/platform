@@ -150,7 +150,11 @@ for kind in Deployment Service HTTPRoute; do
   check "$kind-unowned-collision-rollback" "$deletion" null "$(jq 'del(.metadata.labels)' <<<"$object")" "$kro" DELETE fail '' "[$owner]"
   check "$kind-missing-owner" "$deletion" null "$object" "$kro" DELETE error
   check "$kind-forbidden-owner" "$deletion" null "$object" "$kro" DELETE error '' "[$owner]" forbidden
-  check "$kind-ordinary-deletion" "$deletion" null "$object" "$tenant" DELETE pass
+  check "$kind-tenant-owned-deletion" "$deletion" null "$object" "$tenant" DELETE fail '' "[$owner]"
+  check "$kind-flux-owned-deletion" "$deletion" null "$object" "$flux" DELETE fail '' "[$owner]"
+  unowned="$(jq 'del(.metadata.labels)' <<<"$object")"
+  check "$kind-tenant-unowned-deletion" "$deletion" null "$unowned" "$tenant" DELETE pass
+  check "$kind-flux-unowned-deletion" "$deletion" null "$unowned" "$flux" DELETE pass
 done
 pilot_child="$(jq '.metadata.name="wedding-app"|.metadata.namespace="wedding-app"|.metadata.labels["kro.run/instance-name"]="wedding-app"|.metadata.labels["kro.run/instance-namespace"]="flux-system"' <<<"$child")"
 pilot_owner="$(jq '.metadata.name="wedding-app"|.metadata.namespace="flux-system"' <<<"$owner")"
