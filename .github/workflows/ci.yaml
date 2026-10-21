@@ -1241,6 +1241,13 @@ jobs:
           shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
           bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
 
+      # The web-app compiler check requires the KRO Go module to match the
+      # controller's chart tag, so Renovate must move both together (#5204).
+      - name: 📌 Validate the KRO Renovate group
+        run: |
+          shellcheck scripts/tests/test-kro-renovate-group.sh
+          bash scripts/tests/test-kro-renovate-group.sh
+
       # Kyverno 1.20 removes the kyverno.io ClusterPolicy API most policies here still use.
       # This spans the Renovate policy, the CLI pin and the manifests, so it runs here for
       # the same reason as the gates above; its first case checks the tree as committed (#4994).
