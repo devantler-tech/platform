@@ -10,6 +10,7 @@ resources:
   - gateway-tenant-edit.yaml
   - tenant-base-edit.yaml
   - tenant-edit.yaml
+  - tenant-webapp-edit.yaml
   - tenant-external-dns.yaml
   - tenant-external-dns-global.yaml
   - kyverno-cleanup-policy-reports.yaml

@@ -1,0 +1,18 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-webapp-child-ownership
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-webapp-child-ownership.yaml
+resources:
+  - resources.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-webapp-child-ownership
+    resources: [tenant-a/tenant-a]
+    kind: Service
+    result: pass
+  - policy: restrict-webapp-child-ownership
+    resources: [foreign/foreign]
+    kind: Service
+    result: fail

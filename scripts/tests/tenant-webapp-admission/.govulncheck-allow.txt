@@ -1,0 +1,15 @@
+# Exact-ID database-range adjudication for Kyverno v1.19.1 ONLY; platform#5154
+# removes these after the Go records are corrected. The module remains scanned.
+# Primary repository-scoped upstream advisories re-read 2026-10-21:
+# GHSA-qr4g-8hrp-c4rw: patched_versions=1.18.0.
+# GHSA-cvq5-hhx3-f99p: patched_versions=1.17.2.
+# GHSA-459x-q9hg-4gpq: vulnerable_version_range=< v1.13.4 (no fixing-tag claim).
+# https://github.com/kyverno/kyverno/security/advisories/GHSA-qr4g-8hrp-c4rw
+# https://github.com/kyverno/kyverno/security/advisories/GHSA-cvq5-hhx3-f99p
+# https://github.com/kyverno/kyverno/security/advisories/GHSA-459x-q9hg-4gpq
+# Go's imported records instead classify all versions/symbols as affected.
+# This does not accept a vulnerable version, any other advisory or production
+# exposure. TestAdvisoryAcceptancePinsReviewedRelease fences dependency changes.
+GO-2026-5594
+GO-2026-5337
+GO-2025-3615

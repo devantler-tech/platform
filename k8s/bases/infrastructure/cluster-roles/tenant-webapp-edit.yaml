@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: tenant-webapp-edit
+  labels:
+    app.kubernetes.io/managed-by: ksail
+# Deliberately not aggregated into tenant-edit or the KRO controller. Only an
+# explicit Tenant capability binds it inside that tenant's own namespace.
+rules:
+  - apiGroups: ["kro.run"]
+    resources: ["webapps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

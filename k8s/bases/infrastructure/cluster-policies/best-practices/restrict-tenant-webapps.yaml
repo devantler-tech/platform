@@ -1,0 +1,69 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-tenant-webapps
+  annotations:
+    policies.kyverno.io/title: Confine Tenant WebApps and Parent Ownership
+    policies.kyverno.io/category: Security, Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: WebApp
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["kro.run"]
+        apiVersions: ["v1alpha1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["webapps", "webapps/status"]
+  variables:
+    - name: kro
+      expression: "request.userInfo.username == 'system:serviceaccount:kro-system:kro'"
+    - name: flux
+      expression: "request.userInfo.username == 'system:serviceaccount:flux-system:kustomize-controller'"
+    - name: pilot
+      expression: >-
+        object.metadata.namespace == 'flux-system' &&
+        object.metadata.name == 'wedding-app' && object.spec.?name.orValue('') == 'wedding-app'
+    - name: labels
+      expression: "object.metadata.?labels.orValue({})"
+    - name: oldLabels
+      expression: "oldObject == null ? {} : oldObject.?metadata.?labels.orValue({})"
+    - name: annotations
+      expression: "object.metadata.?annotations.orValue({})"
+    - name: oldAnnotations
+      expression: "oldObject == null ? {} : oldObject.?metadata.?annotations.orValue({})"
+    - name: finalizers
+      expression: "object.metadata.?finalizers.orValue([]).filter(f, f.startsWith('kro.run/'))"
+    - name: oldFinalizers
+      expression: "oldObject == null ? [] : oldObject.?metadata.?finalizers.orValue([]).filter(f, f.startsWith('kro.run/'))"
+  validations:
+    # The single explicit platform pilot predates tenant-owned WebApps. It is
+    # not a wildcard platform/KRO exception for future cross-namespace apps.
+    - expression: >-
+        (object.spec.?name.orValue('') != '' &&
+          object.spec.name == object.metadata.namespace && object.metadata.name == object.spec.name) ||
+        (variables.pilot && (variables.flux || (variables.kro && request.operation == 'UPDATE')))
+      message: WebApps must use their own namespace and name as the workload target; only the declared platform pilot may differ.
+    - expression: >-
+        request.operation == 'CREATE' || object.spec.?name.orValue('') == oldObject.?spec.?name.orValue('')
+      message: A WebApp workload target cannot be retargeted after creation.
+    - expression: "!variables.kro || (request.operation == 'UPDATE' && object.spec == oldObject.?spec.orValue({}))"
+      message: KRO may maintain WebApp metadata and status, not change its declared application spec.
+    - expression: >-
+        variables.kro ||
+        (variables.labels.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
+          k in variables.oldLabels && variables.labels[k] == variables.oldLabels[k]) &&
+        variables.oldLabels.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
+          k in variables.labels && variables.labels[k] == variables.oldLabels[k]) &&
+        variables.annotations.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
+          k in variables.oldAnnotations && variables.annotations[k] == variables.oldAnnotations[k]) &&
+        variables.oldAnnotations.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
+          k in variables.annotations && variables.annotations[k] == variables.oldAnnotations[k]))
+      message: Only the KRO controller may establish or change WebApp controller ownership metadata.
+    - expression: "variables.kro || variables.finalizers == variables.oldFinalizers"
+      message: Only KRO may establish or remove its parent cleanup finalizer.
