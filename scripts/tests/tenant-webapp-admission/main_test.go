@@ -1,12 +1,44 @@
 package main
 
 import (
+	"os"
 	"testing"
 
 	policiesv1beta1 "github.com/kyverno/api/api/policies.kyverno.io/v1beta1"
+	"golang.org/x/mod/modfile"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
 )
+
+// These acceptances adjudicate overbroad database ranges, not an unpatched
+// runtime. A dependency update must re-read the upstream ranges before carrying
+// them forward. Removing the acceptances after database correction is allowed.
+func TestAdvisoryAcceptancePinsReviewedRelease(t *testing.T) {
+	if _, err := os.Stat(".govulncheck-allow.txt"); os.IsNotExist(err) {
+		return
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := modfile.Parse("go.mod", data, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range m.Replace {
+		if r.Old.Path == "github.com/kyverno/kyverno" {
+			t.Fatal("re-read advisory ranges before replacing the reviewed Kyverno release")
+		}
+	}
+	for _, r := range m.Require {
+		if r.Mod.Path == "github.com/kyverno/kyverno" && r.Mod.Version == "v1.19.1" {
+			return
+		}
+	}
+	t.Fatal("re-read advisory ranges before carrying the acceptances to another Kyverno release; see platform#5154")
+}
 
 func TestAdapterPreservesOldObjectAndSubresource(t *testing.T) {
 	var policy policiesv1beta1.ValidatingPolicy

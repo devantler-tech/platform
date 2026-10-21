@@ -3642,3 +3642,28 @@ devantler-tech/.github#649. Retain the current signer until the first
 publication by the replacement is independently verified. Offline checks and
 this historical evidence do not establish deployed acceptance or successful
 publication by the new signer.
+
+## 2026-10-21 — Confine optional Tenant WebApp reconciliation
+
+For #4897, PR #5153 changes exactly three authorization ledger entries
+against `53f60460cf9bcb3583f49a5f0240cb541544038d`, with none added or removed:
+
+- HelmRelease kyverno/kyverno: `9d5bf8b9ff67800bfc3ad3e11ba48d9ba9f0237b2a0126c5de34f34056d3d98a`
+  to `96afd304ffb1fc5dfcbdca6a7e8a29006735e1ad40a992edd4cc3b03568208ee`.
+  Admission gains only `get` on WebApps to check the deleting parent's UID.
+  No Secret, mutation, list or watch authority is added.
+- ResourceGraphDefinition tenant.kro.run: `0675909e32853169d041305572122d0758ed8e380f4e14ac06849bf32130613a`
+  to `1cc312efc37984259e48c142ac5ebeccb605cb475616c5c4cd573666496e1777`.
+  A default-false opt-in creates one namespaced binding to a dedicated,
+  nonaggregated WebApp role. No committed Tenant enables it.
+- ClusterRole kro-tenant-rgd: `412caf635a5fc723cffab8c0c6f123164d808393cf4917b0df50d30ce363dbcc`
+  to `5afa77b476da22918e8605e65e2a3172409f18ae46270b280a4cd6aba9496fd0`.
+  The existing controller may bind only that additional named role.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 renderer reported these exact
+deltas in [CI at 13e5cdf2](https://github.com/devantler-tech/platform/actions/runs/39517564798/job/118953914243).
+The object diagnostics also change for the Tenant graph and controller role;
+their complete rendered documents remain pinned, not projected away. Separate
+real-engine controls cover parent identity, child adoption, reserved metadata
+and cleanup. This record approves the proposed source delta through review;
+it is not deployed runtime or portal-enablement evidence.
