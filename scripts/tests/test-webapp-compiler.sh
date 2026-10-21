@@ -8,13 +8,16 @@ trap 'rm -rf -- "${work}"' EXIT
 
 export GOWORK=off
 profile="$(go -C "${fixture}" list -mod=readonly -m -json github.com/kubernetes-sigs/kro)"
-kro="$(jq -er '.Dir' <<<"${profile}")"
 version="$(yq -er '.spec.ref.tag' "${root}/k8s/bases/infrastructure/controllers/kro/oci-repository.yaml")"
 jq -e --arg version "v${version}" '
   .Path == "github.com/kubernetes-sigs/kro" and .Version == $version and .Replace == null
 ' <<<"${profile}" >/dev/null || { echo 'FAIL: compiler dependency differs from the controller pin' >&2; exit 1; }
-gateway="$(go -C "${fixture}" list -mod=readonly -m -f '{{.Dir}}' sigs.k8s.io/gateway-api)"
-[[ -n "${gateway}" ]] || { echo 'FAIL: pinned HTTPRoute schema unavailable' >&2; exit 1; }
+# Module metadata exists before its source is downloaded on a clean runner.
+# Resolve the verified source explicitly rather than relying on a warm module cache.
+kro="$(go -C "${fixture}" mod download -json github.com/kubernetes-sigs/kro | jq -er '.Dir | select(type == "string" and length > 0)')"
+gateway_profile="$(go -C "${fixture}" list -mod=readonly -m -json sigs.k8s.io/gateway-api)"
+jq -e '.Replace == null' <<<"${gateway_profile}" >/dev/null || { echo 'FAIL: replaced HTTPRoute schema' >&2; exit 1; }
+gateway="$(go -C "${fixture}" mod download -json sigs.k8s.io/gateway-api | jq -er '.Dir | select(type == "string" and length > 0)')"
 
 # Same reviewed envtest assets as the existing Kyverno admission fixture.
 case "$(uname -s)/$(uname -m)" in
