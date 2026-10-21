@@ -1,0 +1,79 @@
+# KRO 0.9.2 uses ApplySet labels, not a WebApp ownerReference. Its apply path can
+# adopt an existing unlabelled object. Check admission oldObject, not a prior GET,
+# to refuse that collision and preserve ownership even across a stale read.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-webapp-child-ownership
+  annotations:
+    policies.kyverno.io/title: Preserve WebApp Child Placement and ApplySet Ownership
+    policies.kyverno.io/category: Security, Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Deployment, Service, HTTPRoute
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["deployments"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["services"]
+      - apiGroups: ["gateway.networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["httproutes"]
+  variables:
+    - name: kro
+      expression: "request.userInfo.username == 'system:serviceaccount:kro-system:kro'"
+    - name: labels
+      expression: "object.metadata.?labels.orValue({})"
+    - name: oldLabels
+      expression: "oldObject == null ? {} : oldObject.?metadata.?labels.orValue({})"
+    - name: webApp
+      expression: >-
+        variables.labels[?'kro.run/instance-kind'].orValue('') == 'WebApp' ||
+        variables.oldLabels[?'kro.run/instance-kind'].orValue('') == 'WebApp'
+    - name: node
+      expression: "object.kind == 'Deployment' ? 'deployment' : object.kind == 'Service' ? 'service' : 'httpRoute'"
+    - name: sameReservedLabels
+      expression: >-
+        variables.labels.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
+          k in variables.oldLabels && variables.labels[k] == variables.oldLabels[k]) &&
+        variables.oldLabels.filter(k, k.startsWith('kro.run/') || k.startsWith('applyset.kubernetes.io/')).all(k,
+          k in variables.labels && variables.labels[k] == variables.oldLabels[k])
+    - name: sameOwnership
+      expression: >-
+        ['kro.run/instance-id', 'kro.run/instance-name', 'kro.run/instance-namespace',
+        'kro.run/instance-group', 'kro.run/instance-version', 'kro.run/instance-kind',
+        'kro.run/node-id', 'applyset.kubernetes.io/part-of'].all(k,
+          k in variables.labels && k in variables.oldLabels && variables.labels[k] == variables.oldLabels[k])
+  validations:
+    - expression: "variables.kro || variables.sameReservedLabels"
+      message: Non-controller writers must preserve reserved KRO and ApplySet ownership labels.
+    - expression: >-
+        !variables.kro || !variables.webApp ||
+        (variables.labels[?'kro.run/instance-kind'].orValue('') == 'WebApp' &&
+        variables.labels[?'kro.run/instance-group'].orValue('') == 'kro.run' &&
+        variables.labels[?'kro.run/instance-version'].orValue('') == 'v1alpha1' &&
+        variables.labels[?'kro.run/instance-id'].orValue('').matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') &&
+        variables.labels[?'kro.run/node-id'].orValue('') == variables.node &&
+        variables.labels[?'applyset.kubernetes.io/part-of'].orValue('') != '' &&
+        variables.labels[?'kro.run/instance-name'].orValue('') == object.metadata.name &&
+        object.metadata.name == object.metadata.namespace &&
+        (variables.labels[?'kro.run/instance-namespace'].orValue('') == object.metadata.namespace ||
+        (variables.labels[?'kro.run/instance-namespace'].orValue('') == 'flux-system' &&
+        object.metadata.name == 'wedding-app' && object.metadata.namespace == 'wedding-app')))
+      message: WebApp children must retain complete controller identity, the declared node and their own workload namespace.
+    - expression: >-
+        !variables.kro || !variables.webApp || request.operation == 'CREATE' ||
+        (variables.oldLabels[?'kro.run/instance-kind'].orValue('') == 'WebApp' && variables.sameOwnership)
+      message: KRO cannot adopt an unowned or foreign-owned existing WebApp child.

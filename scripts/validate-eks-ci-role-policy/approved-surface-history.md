@@ -3684,3 +3684,47 @@ validation at `48140622a83e8bb0b3701b7ec00328cdc35e08bb`.
 Deploy and observe this policy before moving any caller. Verify the first
 maintained publication before retiring a compatibility approval. These static
 observations establish neither deployed acceptance nor a new publication.
+
+## 2026-10-21 — Confine optional Tenant WebApp reconciliation
+
+For #4897, PR #5153 changes exactly three authorization ledger entries
+against `53f60460cf9bcb3583f49a5f0240cb541544038d`, with none added or removed:
+
+- HelmRelease kyverno/kyverno: `9d5bf8b9ff67800bfc3ad3e11ba48d9ba9f0237b2a0126c5de34f34056d3d98a`
+  to `96afd304ffb1fc5dfcbdca6a7e8a29006735e1ad40a992edd4cc3b03568208ee`.
+  Admission gains only `get` on WebApps to check the deleting parent's UID.
+  No Secret, mutation, list or watch authority is added.
+- ResourceGraphDefinition tenant.kro.run: `0675909e32853169d041305572122d0758ed8e380f4e14ac06849bf32130613a`
+  to `1cc312efc37984259e48c142ac5ebeccb605cb475616c5c4cd573666496e1777`.
+  A default-false opt-in creates one namespaced binding to a dedicated,
+  nonaggregated WebApp role. No committed Tenant enables it.
+- ClusterRole kro-tenant-rgd: `412caf635a5fc723cffab8c0c6f123164d808393cf4917b0df50d30ce363dbcc`
+  to `5afa77b476da22918e8605e65e2a3172409f18ae46270b280a4cd6aba9496fd0`.
+  The existing controller may bind only that additional named role.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 renderer reported these exact
+deltas in [CI at 13e5cdf2](https://github.com/devantler-tech/platform/actions/runs/39517564798/job/118953914243).
+The object diagnostics also change for the Tenant graph and controller role;
+their complete rendered documents remain pinned, not projected away. Separate
+real-engine controls cover parent identity, child adoption, reserved metadata
+and cleanup. This record approves the proposed source delta through review;
+it is not deployed runtime or portal-enablement evidence.
+
+## 2026-10-21 — Combine the reviewed WebApp grant and publisher compatibility
+
+PR #5153 incorporates current main without discarding either reviewed change.
+The combined tenant graph retains the maintained publisher subject from main
+and the default-false WebApp schema and namespaced binding from this PR.
+An independent parsed-spec comparison proves removing just those two WebApp
+additions reproduces main exactly. No committed Tenant enables the grant.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 renderer rejected the old
+approval and reported only the tenant ledger delta, from
+`1cc312efc37984259e48c142ac5ebeccb605cb475616c5c4cd573666496e1777`
+to `9708bfc22af3dd7a4f24ac578bd153a921fdbbf400aed72b1feecfb08b8cbff4`.
+Its complete-object diagnostic fingerprint is
+`e07b4c08e4eb1138247969b5b92374f2da00e6e6e179e607c9a34999a322980c`.
+The independently canonicalized complete graph digest is
+`b196fbaff4273d0ec97cd0276f2e83ca9ce5f77653530864c2f7694c179e0a57`.
+Finding rows, cause digests, counts and severities remain unchanged. These
+approvals bind the combined source; they establish no deployed acceptance.

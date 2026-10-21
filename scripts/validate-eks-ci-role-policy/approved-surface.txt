@@ -74,7 +74,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 482f11c3431930cf3ddf2d9badd13cfff351097ef709d8ccac59e7ac1080ae2b
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 9d5bf8b9ff67800bfc3ad3e11ba48d9ba9f0237b2a0126c5de34f34056d3d98a
+helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 96afd304ffb1fc5dfcbdca6a7e8a29006735e1ad40a992edd4cc3b03568208ee
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
 
@@ -104,7 +104,7 @@ iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
-kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run c7e1d600011c766051d4a16970a1acc69008ee13ee49d7999ea747f2735a166d
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 9708bfc22af3dd7a4f24ac578bd153a921fdbbf400aed72b1feecfb08b8cbff4
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner ac00ca29c04de8d2c30a045d583570536a97fc305a1b06c4300da018ecdfb864
 
@@ -220,7 +220,7 @@ rbac.authorization.k8s.io/v1|ClusterRole||external-secrets-tenant-edit 0880321fd
 
 rbac.authorization.k8s.io/v1|ClusterRole||gateway-tenant-edit deb3a7675f72c5c79c121092b933ae775a4a30fc71278e6f843a1e3d4d35d98c
 
-rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 412caf635a5fc723cffab8c0c6f123164d808393cf4917b0df50d30ce363dbcc
+rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 5afa77b476da22918e8605e65e2a3172409f18ae46270b280a4cd6aba9496fd0
 
 rbac.authorization.k8s.io/v1|ClusterRole||kubescape-hostdata-cleanup b047f9796da7c8c6d7fa9ae09d559c701219e6ce308c2cc1a5fe155649c52f6f
 

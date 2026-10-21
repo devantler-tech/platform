@@ -1,0 +1,17 @@
+apiVersion: kro.run/v1alpha1
+kind: WebApp
+metadata:
+  name: tenant-a
+  namespace: tenant-a
+spec:
+  name: tenant-a
+  image: example.invalid/fixture:v1
+---
+apiVersion: kro.run/v1alpha1
+kind: WebApp
+metadata:
+  name: tenant-b
+  namespace: tenant-b
+spec:
+  name: tenant-a
+  image: example.invalid/fixture:v1

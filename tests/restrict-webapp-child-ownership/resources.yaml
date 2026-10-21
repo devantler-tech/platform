@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tenant-a
+  namespace: tenant-a
+  labels:
+    kro.run/instance-id: 11111111-1111-1111-1111-111111111111
+    kro.run/instance-name: tenant-a
+    kro.run/instance-namespace: tenant-a
+    kro.run/instance-group: kro.run
+    kro.run/instance-version: v1alpha1
+    kro.run/instance-kind: WebApp
+    kro.run/node-id: service
+    applyset.kubernetes.io/part-of: fixture-membership
+spec:
+  ports: [{port: 80}]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: foreign
+  namespace: foreign
+  labels:
+    kro.run/instance-id: 11111111-1111-1111-1111-111111111111
+    kro.run/instance-name: tenant-a
+    kro.run/instance-namespace: tenant-a
+    kro.run/instance-group: kro.run
+    kro.run/instance-version: v1alpha1
+    kro.run/instance-kind: WebApp
+    kro.run/node-id: service
+    applyset.kubernetes.io/part-of: fixture-membership
+spec:
+  ports: [{port: 80}]

@@ -58,6 +58,7 @@ rules:
       - edit
       - tenant-external-dns
       - tenant-external-dns-global
+      - tenant-webapp-edit
     verbs: ["bind"]
   # ghcr-auth pull secret.
   - apiGroups: ["external-secrets.io"]
