@@ -1,16 +1,21 @@
 # Overrides the KSail-bootstrapped FluxInstance to pin the distribution and
 # tune the controllers. KSail creates the initial FluxInstance during
 # `ksail cluster create`; this resource is reconciled by the
-# infrastructure-controllers Flux Kustomization post-bootstrap in the Hetzner
-# (prod) environment only. Tenant apps update via native OCIRepository semver
-# selection, so the image-reflector/image-automation controllers are not
-# installed.
+# flux-instance Flux Kustomization post-bootstrap, ahead of
+# infrastructure-controllers, in the Hetzner (prod) environment only. Tenant
+# apps update via native OCIRepository semver selection, so the
+# image-reflector/image-automation controllers are not installed.
 ---
 apiVersion: fluxcd.controlplane.io/v1
 kind: FluxInstance
 metadata:
   name: flux
   namespace: flux-system
+  annotations:
+    # Never garbage-collect: deleting the FluxInstance uninstalls Flux. This also
+    # makes the hand-over from infrastructure-controllers to the flux-instance
+    # Flux Kustomization safe in either reconcile order.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   distribution:
     version: "2.9.x"
