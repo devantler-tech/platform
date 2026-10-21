@@ -468,7 +468,8 @@
             "resourceNames": [
               "edit",
               "tenant-external-dns",
-              "tenant-external-dns-global"
+              "tenant-external-dns-global",
+              "tenant-webapp-edit"
             ],
             "resources": [
               "clusterroles"
