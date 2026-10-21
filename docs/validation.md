@@ -21,6 +21,38 @@ Start with [contributor guidance](../CONTRIBUTING.md#validation). The complete
 [validation contract](../AGENTS.md#validation) covers affected Go/Bash tests and
 CI path filters.
 
+## WebApp compiler
+
+Run the committed WebApp graph through the pinned KRO compiler:
+
+```bash
+bash scripts/tests/test-webapp-compiler.sh
+bash scripts/tests/test-webapp-compiler-wiring.sh
+```
+
+The fixture downloads checksum-verified Kubernetes 1.36.2 API-server assets and
+starts a disposable, loopback-only API server. It explicitly refuses an existing
+cluster. The KRO 0.9.2 CRD applies the actual graph-admission defaults; the Gateway
+API 1.4.1 HTTPRoute CRD supplies the fixture's route type. These are pinned test
+dependencies, not an assertion about every deployed gateway version.
+
+After real OpenAPI publication, the KRO library compiles the repository's graph.
+The check requires its Deployment, Service, HTTPRoute and namespaced WebApp schema.
+Unknown references, wrong output types and disabled conditional omission are
+rejected. Empty or partial compiled graphs cannot count as complete coverage.
+API processes and temporary state are removed on completion.
+
+The chart reference and compiler dependency must name the same version, without
+a module replacement. Keep the controller's configured feature gates intact;
+the fixture does not turn an alpha feature on to make a graph compile.
+Selected PR and merge-group checks fail when compilation does not succeed, and
+production deployment depends on that result. Validate Main checks the merged source.
+
+This observes admission and compilation, not controller reconciliation or running
+Pods. It supplies no proof of kubelet-projected files, application readiness,
+gateway reachability or private portal operation; those remain separate staging
+acceptance criteria.
+
 ## Consumer discovery conservation
 
 CI also checks that the publish-workflow signing-revision report discovers
