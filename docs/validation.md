@@ -48,6 +48,13 @@ Application publisher activation still requires source review, tenant pin-guard
 preparation, deployment and actual publication verification. Do not hand-edit the
 generated matchers or infer an approval from a successful parser test.
 
+Application acceptance spans three generic verification paths: admission, Talos
+node pulls and the KRO tenant source. They retain legacy full-commit compatibility
+but accept only the explicitly reviewed maintained revision, not its repository's
+entire history. The committed-profile controls exercise those paths and the three
+registered application matchers with accepted and rejected identities. A passing
+offline predicate check is not deployed-policy or publication evidence.
+
 The independent shared-publisher pin guard accepts the same strict two-family
 form for both workflows. Authorization fingerprinting projects only the generated
 legacy signer revisions; the maintained repository, workflow and exact canonical
