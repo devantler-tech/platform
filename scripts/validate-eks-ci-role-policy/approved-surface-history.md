@@ -3643,6 +3643,48 @@ publication by the replacement is independently verified. Offline checks and
 this historical evidence do not establish deployed acceptance or successful
 publication by the new signer.
 
+## 2026-10-21 — Prepare the maintained application publisher for repository retirement
+
+For #5152, the maintained application publisher at
+`devantler-tech/.github@0c7b6c3509b73adbc7537e030935bb01987e625b`
+is explicitly approved for the three registered application consumers. The
+review covers the complete app workflow and its two first-party publishing
+helpers at that revision. This is a different certificate identity from the
+legacy location, not an unchanged pin.
+
+The supported writer regenerates exactly the three specific consumer matchers.
+Their existing legacy acceptance remains intact. Admission, Talos node pulls
+and the generic KRO tenant source retain legacy full-commit compatibility and
+add only that exact maintained revision, inside one anchored subject each.
+Issuer requirements, image-class routing, artifact locations and caller pins
+are unchanged.
+
+Against `53f60460cf9bcb3583f49a5f0240cb541544038d`, the approved
+kubectl v1.36.2 / Kustomize v5.8.1 renderer changes four existing authorization
+ledger entries: the tenant definition and three application OCI sources.
+Nothing is added or removed, and every other ledger line is unchanged. The
+tenant definition's separate core fingerprint changes with the same reviewed
+subject. No RBAC, IAM, credential or permission grant changes.
+
+The nested-template scanner also binds the complete graph and each finding's
+semantic cause. Its ratchet changes only the graph digest and the existing OCI
+source's two whole-node cause digests. Independent canonical JSON hashing
+reproduces the old and new values. Finding counts, targets, IDs and severities
+are unchanged; no finding or scanner check is ignored or added to the baseline.
+
+Independent full-object comparisons verify that the six manifests change
+only their intended subject fields and the app-admission diagnostic wording;
+all other content is identical. The committed-profile controls reproduce six
+refusals before the approval and test 78 accepted/rejected identity cases
+after it. Existing safety controls remain required.
+
+The tenant compatibility prerequisite is merged in
+devantler-tech/platform-tenant-template#249, with successful native post-merge
+validation at `48140622a83e8bb0b3701b7ec00328cdc35e08bb`.
+Deploy and observe this policy before moving any caller. Verify the first
+maintained publication before retiring a compatibility approval. These static
+observations establish neither deployed acceptance nor a new publication.
+
 ## 2026-10-21 — Confine optional Tenant WebApp reconciliation
 
 For #4897, PR #5153 changes exactly three authorization ledger entries
@@ -3667,3 +3709,22 @@ their complete rendered documents remain pinned, not projected away. Separate
 real-engine controls cover parent identity, child adoption, reserved metadata
 and cleanup. This record approves the proposed source delta through review;
 it is not deployed runtime or portal-enablement evidence.
+
+## 2026-10-21 — Combine the reviewed WebApp grant and publisher compatibility
+
+PR #5153 incorporates current main without discarding either reviewed change.
+The combined tenant graph retains the maintained publisher subject from main
+and the default-false WebApp schema and namespaced binding from this PR.
+An independent parsed-spec comparison proves removing just those two WebApp
+additions reproduces main exactly. No committed Tenant enables the grant.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 renderer rejected the old
+approval and reported only the tenant ledger delta, from
+`1cc312efc37984259e48c142ac5ebeccb605cb475616c5c4cd573666496e1777`
+to `9708bfc22af3dd7a4f24ac578bd153a921fdbbf400aed72b1feecfb08b8cbff4`.
+Its complete-object diagnostic fingerprint is
+`e07b4c08e4eb1138247969b5b92374f2da00e6e6e179e607c9a34999a322980c`.
+The independently canonicalized complete graph digest is
+`b196fbaff4273d0ec97cd0276f2e83ca9ce5f77653530864c2f7694c179e0a57`.
+Finding rows, cause digests, counts and severities remain unchanged. These
+approvals bind the combined source; they establish no deployed acceptance.

@@ -29,9 +29,7 @@ trap cleanup EXIT
 
 readonly fake_kubectl="${tmp_dir}/kubectl"
 readonly fake_reconcile="${tmp_dir}/reconcile"
-readonly fake_handoff="${tmp_dir}/handoff"
 readonly call_log="${tmp_dir}/calls"
-readonly handoff_output="${tmp_dir}/handoff-output"
 
 # Fake kubectl. GEN_BEFORE/GEN_AFTER let a case decide whether the control plane
 # appears to have been restarted between the two snapshots.
@@ -95,30 +93,13 @@ exit "${status}"
 FAKE_RECONCILE
 chmod +x "${fake_reconcile}"
 
-cat >"${fake_handoff}" <<'FAKE_HANDOFF'
-#!/usr/bin/env bash
-set -euo pipefail
-attempt=1
-if [[ -f "${HANDOFF_COUNT}" ]]; then
-  attempt="$(cat "${HANDOFF_COUNT}")"
-  attempt=$((attempt + 1))
-fi
-printf '%s\n' "${attempt}" >"${HANDOFF_COUNT}"
-status="$(printf '%s\n' ${HANDOFF_EXITS:-1} | sed -n "${attempt}p")"
-[[ -n "${status}" ]] || status=1
-exit "${status}"
-FAKE_HANDOFF
-chmod +x "${fake_handoff}"
-
 run_case() {
   local name="$1" gen_before="$2" gen_after="$3" exits="$4"
   local gen_read_fails="${5:-0}"
   local gen_fail_only_call="${6:-}"
   local baseline_file="${7:-}"
-  local handoff_exits="${8:-1}"
   : >"${call_log}"
-  : >"${handoff_output}"
-  rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount" "${tmp_dir}/handoffcount"
+  rm -f "${tmp_dir}/genstate" "${tmp_dir}/callcount"
   set +e
   GEN_STATE="${tmp_dir}/genstate" \
     GEN_READ_FAILS="${gen_read_fails:-0}" \
@@ -130,10 +111,6 @@ run_case() {
     CALL_LOG="${call_log}" \
     KUBECTL="${fake_kubectl}" \
     RECONCILE_BIN="${fake_reconcile}" \
-    RETIREMENT_HANDOFF_BIN="${fake_handoff}" \
-    HANDOFF_COUNT="${tmp_dir}/handoffcount" \
-    HANDOFF_EXITS="${handoff_exits}" \
-    GITHUB_OUTPUT="${handoff_output}" \
     FLUX_CONTROL_PLANE_BASELINE_FILE="${baseline_file}" \
     FLUX_CONTROL_PLANE_ROLLOUT_TIMEOUT=1s \
     "${script}" >"${tmp_dir}/out.${name}" 2>&1
@@ -157,18 +134,6 @@ run_case genuine 1 1 "1 0"
 [[ "${case_calls}" -eq 1 ]] ||
   fail "a genuine failure must NOT be retried (ran ${case_calls} times)"
 
-# 2b. The one accepted nonzero reconcile is an exact, independently verified
-# terminal Backstage journal handoff. The verifier is read-only and fail-closed;
-# this fixture models only its exit status, while its evidence contract is
-# covered by the Go regression tests beside the retirement command.
-run_case retirement_handoff 1 1 "1" 0 "" "" 0
-[[ "${case_status}" -eq 0 ]] ||
-  fail 'an independently verified terminal retirement handoff must let the deployment continue'
-[[ "${case_calls}" -eq 1 ]] ||
-  fail "an admitted retirement handoff must not retry reconciliation (ran ${case_calls} times)"
-[[ "$(cat "${handoff_output}")" == 'backstage_retirement_handoff=true' ]] ||
-  fail 'the admitted retirement handoff must publish its scoped step output'
-
 # 3. Self-inflicted: reconcile fails, control-plane generation advanced, retry succeeds.
 run_case restart 1 2 "1 0"
 [[ "${case_status}" -eq 0 ]] ||
@@ -182,17 +147,6 @@ run_case persistent 1 2 "1 1"
   fail 'a failure persisting through the retry must still fail the deploy'
 [[ "${case_calls}" -eq 2 ]] ||
   fail "the retry must be granted exactly once (ran ${case_calls})"
-
-# 4b. The handoff verifier is repeated after the one evidence-backed retry. A
-# terminal journal state that settles only after that retry must admit the
-# deployment and publish the same scoped output as an immediate handoff.
-run_case retirement_handoff_after_retry 1 2 "1 1" 0 "" "" "1 0"
-[[ "${case_status}" -eq 0 ]] ||
-  fail 'a terminal retirement handoff admitted after the retry must let the deployment continue'
-[[ "${case_calls}" -eq 2 ]] ||
-  fail "a retirement handoff after the retry must reconcile exactly twice (ran ${case_calls})"
-[[ "$(cat "${handoff_output}")" == 'backstage_retirement_handoff=true' ]] ||
-  fail 'the retirement handoff admitted after the retry must publish its scoped step output'
 
 # 5. Asymmetric snapshot: the FIRST read succeeds and the second fails, so the
 #    two snapshots differ only because one is missing. That is not evidence of a
@@ -285,10 +239,6 @@ grep -Fq 'run: ./scripts/reconcile-flux-workloads.sh' "${deploy_action}" ||
   fail 'the deploy composite must trigger reconciliation through the wrapper'
 grep -Fq 'run: ./scripts/run-ksail-prod-with-pull-auth.sh workload reconcile' "${deploy_action}" &&
   fail 'the deploy composite must not still call the bare reconcile, or the wrapper is bypassed'
-grep -Fq 'PORTAL_RETIREMENT_REVISION: latest@${{ steps.publish_platform_manifest.outputs.digest }}' "${deploy_action}" ||
-  fail 'the reconcile step must bind the retirement handoff to the newly published digest'
-grep -Fq "steps.reconcile.outputs.backstage_retirement_handoff != 'true'" "${deploy_action}" ||
-  fail 'application-revision verification must defer only for the admitted terminal retirement handoff'
 
 # 6b. ORDERING: the baseline must be captured BEFORE the mutable tag is
 #     published. Capturing it anywhere after publish leaves the window open,

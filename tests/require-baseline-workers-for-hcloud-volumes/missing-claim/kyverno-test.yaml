@@ -1,0 +1,26 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: require-baseline-workers-for-hcloud-volumes-missing-claim
+policies:
+  - >-
+    ../../../k8s/providers/hetzner/infrastructure/cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+  - >-
+    ../../../k8s/providers/hetzner/infrastructure/cluster-policies/report-hcloud-claim-lookup-failure.yaml
+resources:
+  - resources.yaml
+# The mounted claim is not in its namespace's claim list. The Deny policy
+# cannot judge it and admits the Pod; the audit companion reports it.
+context: context.yaml
+results:
+  - policy: require-baseline-workers-for-hcloud-volumes
+    resources:
+      - observability/missing-claim-unguarded
+    kind: Pod
+    result: pass
+  - policy: report-hcloud-claim-lookup-failure
+    resources:
+      - observability/missing-claim-unguarded
+    kind: Pod
+    result: fail

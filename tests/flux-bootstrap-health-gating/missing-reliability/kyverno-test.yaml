@@ -8,7 +8,6 @@ resources:
   - resources.yaml
 results:
   - policy: enforce-flux-best-practices
-    rule: kustomization-recommended-settings
     resources:
       - github-config/github-config
     kind: Kustomization

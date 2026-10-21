@@ -35,8 +35,7 @@ kind: ClusterPolicy
 metadata:
   name: prioritise-hcloud-volume-pods
   annotations:
-    # Pod-only, no controller variants, for the same reason as
-    # require-baseline-workers-for-hcloud-volumes: autogen rewrites the claim
+    # Pod-only, no controller variants: autogen rewrites the claim
     # lookup's namespace to spec.template.metadata.namespace, which pod
     # templates never set.
     pod-policies.kyverno.io/autogen-controllers: none

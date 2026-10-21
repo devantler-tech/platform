@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -184,72 +185,95 @@ func validateUnifiSigningKey(documents []map[string]any) error {
 	return nil
 }
 
+// errUnifiPruneExemption is the single diagnostic for every shape the UniFi
+// prune exemption must not take.
+var errUnifiPruneExemption = errors.New(
+	"enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement",
+)
+
+// fluxPolicyMatchConstraints is the only scope enforce-flux-best-practices may
+// render with: an added resourceNames, a dropped operation or rule, or any
+// exclude or selector field would take objects out of scope without a
+// matchCondition.
+func fluxPolicyMatchConstraints() map[string]any {
+	return map[string]any{"resourceRules": []any{
+		map[string]any{
+			"apiGroups":   []any{"kustomize.toolkit.fluxcd.io"},
+			"apiVersions": []any{"v1"},
+			"operations":  []any{"CREATE", "UPDATE"},
+			"resources":   []any{"kustomizations"},
+		},
+		map[string]any{
+			"apiGroups":   []any{"helm.toolkit.fluxcd.io"},
+			"apiVersions": []any{"v2"},
+			"operations":  []any{"CREATE", "UPDATE"},
+			"resources":   []any{"helmreleases"},
+		},
+	}}
+}
+
+// fluxPolicyExclusionExpression is the matchCondition expression that leaves
+// exactly one namespaced Kustomization out of enforce-flux-best-practices.
+func fluxPolicyExclusionExpression(namespace, name string) string {
+	return fmt.Sprintf(
+		"!(object.kind == 'Kustomization' && "+
+			"object.metadata.?namespace.orValue('') == '%s' && "+
+			"object.metadata.name == '%s')",
+		namespace, name,
+	)
+}
+
 // validateUnifiPruneExemption keeps the deliberate non-pruning reconciler
 // deployable while requiring the admission-policy exception to remain scoped
-// to exactly one namespaced Kustomization.
+// to exactly one namespaced Kustomization. The policy's exclusions are its
+// matchConditions, so the rendered policy must carry exactly the bootstrap and
+// UniFi conditions and no other way to narrow its scope.
 func validateUnifiPruneExemption(document map[string]any, identity resourceIdentity) error {
 	wantIdentity := resourceIdentity{
-		apiVersion: "kyverno.io/v1",
-		kind:       "ClusterPolicy",
+		apiVersion: "policies.kyverno.io/v1",
+		kind:       "ValidatingPolicy",
 		name:       "enforce-flux-best-practices",
 	}
 	if identity != wantIdentity {
 		return nil
 	}
 
-	exactSingleton := func(value any, want string) bool {
-		values, ok := value.([]any)
-		return ok && len(values) == 1 && values[0] == want
-	}
 	spec, ok := document["spec"].(map[string]any)
 	if !ok {
-		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+		return errUnifiPruneExemption
 	}
-	rules, ok := spec["rules"].([]any)
+	constraints, ok := spec["matchConstraints"].(map[string]any)
 	if !ok {
-		return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+		return errUnifiPruneExemption
 	}
-	for _, ruleValue := range rules {
-		rule, ok := ruleValue.(map[string]any)
-		if !ok || rule["name"] != "kustomization-recommended-settings" {
-			continue
-		}
-		exclude, ok := rule["exclude"].(map[string]any)
-		if !ok {
-			break
-		}
-		exclusions, ok := exclude["any"].([]any)
-		if !ok {
-			break
-		}
-		seenFluxSystem := false
-		seenUnifi := false
-		for _, exclusionValue := range exclusions {
-			exclusion, ok := exclusionValue.(map[string]any)
-			if !ok {
-				break
-			}
-			resources, ok := exclusion["resources"].(map[string]any)
-			if !ok {
-				break
-			}
-			switch {
-			case exactSingleton(resources["namespaces"], "flux-system") &&
-				exactSingleton(resources["names"], "flux-system") && !seenFluxSystem:
-				seenFluxSystem = true
-			case exactSingleton(resources["namespaces"], "unifi") &&
-				exactSingleton(resources["names"], "unifi") && !seenUnifi:
-				seenUnifi = true
-			default:
-				return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
-			}
-		}
-		if seenFluxSystem && seenUnifi && len(exclusions) == 2 {
-			return nil
-		}
-		break
+	if !reflect.DeepEqual(constraints, fluxPolicyMatchConstraints()) {
+		return errUnifiPruneExemption
 	}
-	return errors.New("enforce-flux-best-practices must exempt only unifi/unifi from prune enforcement")
+	conditions, ok := spec["matchConditions"].([]any)
+	if !ok || len(conditions) != 2 {
+		return errUnifiPruneExemption
+	}
+	want := map[string]string{
+		"not-flux-bootstrap-kustomization": fluxPolicyExclusionExpression("flux-system", "flux-system"),
+		"not-unifi-kustomization":          fluxPolicyExclusionExpression("unifi", "unifi"),
+	}
+	for _, conditionValue := range conditions {
+		condition, ok := conditionValue.(map[string]any)
+		if !ok || len(condition) != 2 {
+			return errUnifiPruneExemption
+		}
+		name, _ := condition["name"].(string)
+		expression, _ := condition["expression"].(string)
+		wantExpression, known := want[name]
+		if !known || strings.Join(strings.Fields(expression), " ") != wantExpression {
+			return errUnifiPruneExemption
+		}
+		delete(want, name)
+	}
+	if len(want) != 0 {
+		return errUnifiPruneExemption
+	}
+	return nil
 }
 
 // expectedRenderedHashes preserves object-specific diagnostics for the core
@@ -265,7 +289,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                    "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-view"}:                                         "4d07ba3a995cfc139351b4227739efeba9348777f7fe47ac69b87d08e70bd45f",
-	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "9c4014ca71b538087a79b9896745ddc43083b199220593ed496a37239f4f9664",
+	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "e07b4c08e4eb1138247969b5b92374f2da00e6e6e179e607c9a34999a322980c",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "f921a4720a182b24f289c6a5e1ae684a174ed2f5a748c01cc6bc6bc14c644c03",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "b7dd0ad507a26f2ebd8ddf472a68a638b41dc2f2f1b476d0a6291f15332efe5d",

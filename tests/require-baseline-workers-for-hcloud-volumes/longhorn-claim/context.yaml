@@ -1,0 +1,15 @@
+---
+# The claim the Pod mounts uses the cluster default Longhorn class.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Context
+metadata:
+  name: context
+spec:
+  resources:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: data-longhorn-claim-unguarded
+        namespace: observability
+      spec:
+        storageClassName: longhorn-wffc

@@ -1,0 +1,53 @@
+# Audit-only companion: a mounted claim that is missing from its namespace's
+# claim list was not judged by require-baseline-workers-for-hcloud-volumes.
+# Report it so a lookup gap is visible.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: report-hcloud-claim-lookup-failure
+  annotations:
+    policies.kyverno.io/minversion: 1.17.0
+    policies.kyverno.io/title: Report hcloud Claim Lookup Failure
+    policies.kyverno.io/category: Scheduling, Storage
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Reports a Pod whose mounted claim could not be found in its namespace,
+      so require-baseline-workers-for-hcloud-volumes could not judge it.
+spec:
+  validationActions:
+    - Audit
+  failurePolicy: Ignore
+  evaluation:
+    background:
+      enabled: true
+  autogen:
+    podControllers:
+      controllers: []
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["CREATE"]
+        resources: ["pods"]
+  matchConditions:
+    - name: mounts-a-persistent-claim
+      expression: >-
+        object.spec.?volumes.orValue([]).exists(v, has(v.persistentVolumeClaim))
+  variables:
+    - name: claimNames
+      expression: >-
+        dyn(resource.List("v1", "persistentvolumeclaims",
+          object.metadata.?namespace.orValue('')).?items.orValue([]))
+          .map(c, c.metadata.name)
+  validations:
+    - expression: >-
+        object.spec.?volumes.orValue([]).all(v,
+          !has(v.persistentVolumeClaim) ||
+          v.persistentVolumeClaim.claimName in variables.claimNames)
+      messageExpression: >-
+        'The storage class of a claim mounted by Pod ' +
+        object.metadata.?namespace.orValue('') + '/' + object.metadata.name +
+        ' could not be read, so require-baseline-workers-for-hcloud-volumes' +
+        ' could not judge it. Check that Kyverno can list PersistentVolumeClaims' +
+        ' and that the claim exists. See platform#3287.'

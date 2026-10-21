@@ -4,13 +4,13 @@ go 1.26.10
 
 require (
 	cel.dev/cel-go v0.32.0
-	github.com/blang/semver/v4 v4.0.0
+	github.com/blang/semver/v4 v4.0.0 // indirect
 	// Test-only consumer: match the deployed node-agent source ee62018e73b9.
 	github.com/coroot/logparser v1.4.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/siderolabs/talos/pkg/machinery v1.14.2
 	go.yaml.in/yaml/v2 v2.4.4
-	google.golang.org/protobuf v1.36.12
+	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0
 	gopkg.in/evanphx/json-patch.v5 v5.9.11
 	gopkg.in/yaml.v3 v3.0.1
