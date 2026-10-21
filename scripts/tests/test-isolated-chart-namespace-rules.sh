@@ -888,14 +888,14 @@ fi
 # This exact summary format is a contract with the shared pinned Kyverno CLI
 # from .github/scripts/kyverno-version.sh. Review the assertion when upgrading
 # that CLI; unknown formats must not silently count unevaluated rules as green.
-grep -qF 'pass: 6, fail: 0, warn: 0, error: 0, skip: 0' "${test_root}/pod-security.log" || {
+grep -qF 'pass: 2, fail: 0, warn: 0, error: 0, skip: 0' "${test_root}/pod-security.log" || {
   cat "${test_root}/pod-security.log" >&2
-  printf 'FAIL: all three pod-security rules must evaluate both actual Deployments\n' >&2
+  printf 'FAIL: the pod-security policy must evaluate both actual Deployments\n' >&2
   exit 1
 }
 
 # Removing the container assertion from a real rendered child must fail the
-# named admission rule, even though its Pod still declares runAsNonRoot=true.
+# container security check, even though its Pod still declares runAsNonRoot=true.
 yq 'select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
   del(.spec.template.spec.containers[0].securityContext.runAsNonRoot)' \
   "${render_dir}/resources.yaml" >"${test_root}/pod-only-security.yaml"
@@ -906,10 +906,10 @@ if kyverno apply \
   printf 'FAIL: a real chart workload lost its required container security assertion\n' >&2
   exit 1
 fi
-grep -qF 'autogen-validate-container-security failed at path /spec/template/spec/containers/0/securityContext/runAsNonRoot/' \
+grep -qF 'All containers must set allowPrivilegeEscalation=false' \
   "${test_root}/pod-only-security.log" || {
   cat "${test_root}/pod-only-security.log" >&2
-  printf 'FAIL: container security rejection did not identify the production admission rule\n' >&2
+  printf 'FAIL: container security rejection did not come from the container security check\n' >&2
   exit 1
 }
 

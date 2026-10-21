@@ -11,7 +11,6 @@ resources:
   # This layer follows installation of the Kyverno admission controller.
   - cluster-policies/restrict-arc-openbao-certificate.yaml
   # A retained namespace journal constrains asynchronous native portal cleanup.
-  - cluster-policies/restrict-backstage-retirement.yaml
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers
@@ -83,6 +82,8 @@ resources:
   # on an autoscaler node unnoticed (#3287). Checks the Pod spec only, so it
   # never waits on the label above.
   - cluster-policies/require-baseline-workers-for-hcloud-volumes.yaml
+  # Its audit-only companion reports a mounted claim that policy could not find.
+  - cluster-policies/report-hcloud-claim-lookup-failure.yaml
   # Prod-only: give those same hcloud-volume Pods a priority one step above
   # normal workloads, so they can preempt a stateless Pod on a full baseline
   # worker instead of staying Pending (#4031). The PriorityClass lives in the
@@ -214,19 +215,19 @@ patches:
   # remains strict for every other environment. The authorization validator pins
   # the rendered exception set and the reconciler's immutable source/delete bounds.
   - target:
-      group: kyverno.io
+      group: policies.kyverno.io
       version: v1
-      kind: ClusterPolicy
+      kind: ValidatingPolicy
       name: enforce-flux-best-practices
     patch: |
       - op: add
-        path: /spec/rules/0/exclude/any/-
+        path: /spec/matchConditions/-
         value:
-          resources:
-            namespaces:
-              - unifi
-            names:
-              - unifi
+          name: not-unifi-kustomization
+          expression: >-
+            !(object.kind == 'Kustomization' &&
+            object.metadata.?namespace.orValue('') == 'unifi' &&
+            object.metadata.name == 'unifi')
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: patches/attach-hcloud-load-balancer.yaml

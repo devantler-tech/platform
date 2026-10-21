@@ -8,14 +8,12 @@ resources:
   - resources.yaml
 results:
   - policy: enforce-flux-best-practices
-    rule: kustomization-recommended-settings
     resources:
       - github-config/github-config
       - tenant/healthy
     kind: Kustomization
     result: pass
   - policy: enforce-flux-best-practices
-    rule: kustomization-recommended-settings
     resources:
       - tenant/github-config
       - github-config/sibling
@@ -23,7 +21,6 @@ results:
     kind: Kustomization
     result: fail
   - policy: enforce-flux-best-practices
-    rule: kustomization-recommended-settings
     resources:
       - flux-system/flux-system
     kind: Kustomization

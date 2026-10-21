@@ -128,7 +128,7 @@ consumer_fixture_wiring() {
     --arg suite_run $'bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n' \
     --arg production_run $'shellcheck -x scripts/guard-consumer-discovery-conservation.sh\nshellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh\n./scripts/guard-consumer-discovery-conservation.sh\n' '
       [.jobs["ci-required-checks"].steps[]
-        | select((.uses // "") | startswith("devantler-tech/actions/aggregate-job-checks@"))] as $aggregates
+        | select((.uses // "") | startswith("devantler-tech/.github/actions/aggregate-job-checks@"))] as $aggregates
       | .jobs[$job] as $suite
       | (($suite | type) == "object")
       and ($suite["runs-on"] == "ubuntu-latest")
@@ -202,9 +202,9 @@ ablate_wiring "removing the deployment dependency is refused" \
 ablate_wiring "removing the required-check dependency is refused" \
   '.jobs["ci-required-checks"].needs -= ["validate-consumer-discovery"]'
 ablate_wiring "removing the aggregated fixture result is refused" \
-  '(.jobs["ci-required-checks"].steps[] | select((.uses // "") | test("^devantler-tech/actions/aggregate-job-checks@")).with["job-results"]) |= sub("needs.validate-consumer-discovery.result", "needs.changes.result")'
+  '(.jobs["ci-required-checks"].steps[] | select((.uses // "") | test("^devantler-tech/[.]github/actions/aggregate-job-checks@")).with["job-results"]) |= sub("needs.validate-consumer-discovery.result", "needs.changes.result")'
 ablate_wiring "an unrelated action cannot mask a missing aggregated fixture result" \
-  '(.jobs["ci-required-checks"].steps[] | select((.uses // "") | test("^devantler-tech/actions/aggregate-job-checks@")).with["job-results"]) |= sub("needs.validate-consumer-discovery.result", "needs.changes.result") | .jobs["ci-required-checks"].steps += [{"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": {"job-results": "needs.validate-consumer-discovery.result"}}]'
+  '(.jobs["ci-required-checks"].steps[] | select((.uses // "") | test("^devantler-tech/[.]github/actions/aggregate-job-checks@")).with["job-results"]) |= sub("needs.validate-consumer-discovery.result", "needs.changes.result") | .jobs["ci-required-checks"].steps += [{"uses": "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", "with": {"job-results": "needs.validate-consumer-discovery.result"}}]'
 ablate_wiring "removing both dependencies cannot hide the fixture job" \
   '.jobs["deploy-prod"].needs -= ["validate-consumer-discovery"] | .jobs["ci-required-checks"].needs -= ["validate-consumer-discovery"]'
 ablate_wiring "replacing the full fixture command with success is refused" \

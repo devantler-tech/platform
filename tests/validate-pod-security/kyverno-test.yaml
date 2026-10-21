@@ -1,0 +1,264 @@
+---
+# Pins what validate-pod-security decides, resource by resource: one result
+# per resource, `fail` when any of the policy's three checks denies it.
+# Resources are in resources.yaml; each one's comment there says what it
+# exercises.
+#
+# The container matrix applies each securityContext change to the first and a
+# later regular, init and ephemeral container, so a rewrite that checks only one
+# position or one collection fails here. Every controller kind the generated
+# rules judge has a compliant, an insecure and an Unconfined-override template.
+# Resources in the infrastructure namespaces are skipped.
+#
+# Recorded as today's behaviour, not as intent: an empty `capabilities.drop`
+# list passes (`*-drop-empty`). Tightening that is a separate policy change
+# (#5149).
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: validate-pod-security
+policies:
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: validate-pod-security
+    kind: Pod
+    result: pass
+    resources:
+      - container-0-secure
+      - container-0-privileged-false
+      - container-0-drop-empty
+      - container-0-seccomp-localhost
+      - container-0-seccomp-runtime-default
+      - container-1-secure
+      - container-1-privileged-false
+      - container-1-drop-empty
+      - container-1-seccomp-localhost
+      - container-1-seccomp-runtime-default
+      - init-0-secure
+      - init-0-privileged-false
+      - init-0-drop-empty
+      - init-0-seccomp-localhost
+      - init-0-seccomp-runtime-default
+      - init-1-secure
+      - init-1-privileged-false
+      - init-1-drop-empty
+      - init-1-seccomp-localhost
+      - init-1-seccomp-runtime-default
+      - ephemeral-0-secure
+      - ephemeral-0-privileged-false
+      - ephemeral-0-drop-empty
+      - ephemeral-0-seccomp-localhost
+      - ephemeral-0-seccomp-runtime-default
+      - ephemeral-1-secure
+      - ephemeral-1-privileged-false
+      - ephemeral-1-drop-empty
+      - ephemeral-1-seccomp-localhost
+      - ephemeral-1-seccomp-runtime-default
+      - compliant-localhost
+  - policy: validate-pod-security
+    kind: Pod
+    result: fail
+    resources:
+      - container-0-ape-missing
+      - container-0-ape-true
+      - container-0-privileged-true
+      - container-0-nonroot-missing
+      - container-0-nonroot-false
+      - container-0-caps-missing
+      - container-0-drop-missing
+      - container-0-drop-net-raw
+      - container-0-drop-all-and-net-raw
+      - container-0-no-security-context
+      - container-0-seccomp-unconfined
+      - container-1-ape-missing
+      - container-1-ape-true
+      - container-1-privileged-true
+      - container-1-nonroot-missing
+      - container-1-nonroot-false
+      - container-1-caps-missing
+      - container-1-drop-missing
+      - container-1-drop-net-raw
+      - container-1-drop-all-and-net-raw
+      - container-1-no-security-context
+      - container-1-seccomp-unconfined
+      - init-0-ape-missing
+      - init-0-ape-true
+      - init-0-privileged-true
+      - init-0-nonroot-missing
+      - init-0-nonroot-false
+      - init-0-caps-missing
+      - init-0-drop-missing
+      - init-0-drop-net-raw
+      - init-0-drop-all-and-net-raw
+      - init-0-no-security-context
+      - init-0-seccomp-unconfined
+      - init-1-ape-missing
+      - init-1-ape-true
+      - init-1-privileged-true
+      - init-1-nonroot-missing
+      - init-1-nonroot-false
+      - init-1-caps-missing
+      - init-1-drop-missing
+      - init-1-drop-net-raw
+      - init-1-drop-all-and-net-raw
+      - init-1-no-security-context
+      - init-1-seccomp-unconfined
+      - ephemeral-0-ape-missing
+      - ephemeral-0-ape-true
+      - ephemeral-0-privileged-true
+      - ephemeral-0-nonroot-missing
+      - ephemeral-0-nonroot-false
+      - ephemeral-0-caps-missing
+      - ephemeral-0-drop-missing
+      - ephemeral-0-drop-net-raw
+      - ephemeral-0-drop-all-and-net-raw
+      - ephemeral-0-no-security-context
+      - ephemeral-0-seccomp-unconfined
+      - ephemeral-1-ape-missing
+      - ephemeral-1-ape-true
+      - ephemeral-1-privileged-true
+      - ephemeral-1-nonroot-missing
+      - ephemeral-1-nonroot-false
+      - ephemeral-1-caps-missing
+      - ephemeral-1-drop-missing
+      - ephemeral-1-drop-net-raw
+      - ephemeral-1-drop-all-and-net-raw
+      - ephemeral-1-no-security-context
+      - ephemeral-1-seccomp-unconfined
+      - non-root-at-pod-level-only
+      - no-pod-seccomp
+      - container-seccomp-only
+      - pod-seccomp-unconfined
+      - insecure
+      - lookalike-namespace
+  - policy: validate-pod-security
+    kind: Pod
+    result: skip
+    resources:
+      - exempt-kube-system
+      - exempt-kube-public
+      - exempt-kube-node-lease
+      - exempt-flux-system
+      - exempt-longhorn-system
+      - exempt-local-path-storage
+      - exempt-kubescape
+      - exempt-kubevirt
+      - exempt-cdi
+      - exempt-observability
+      - exempt-velero
+      - exempt-chaos-mesh
+  - policy: validate-pod-security
+    kind: Deployment
+    result: pass
+    resources:
+      - compliant-deployment
+  - policy: validate-pod-security
+    kind: Deployment
+    result: fail
+    resources:
+      - insecure-deployment
+      - unconfined-deployment
+  - policy: validate-pod-security
+    kind: Deployment
+    result: skip
+    resources:
+      - exempt-deployment
+  - policy: validate-pod-security
+    kind: StatefulSet
+    result: pass
+    resources:
+      - compliant-statefulset
+  - policy: validate-pod-security
+    kind: StatefulSet
+    result: fail
+    resources:
+      - insecure-statefulset
+      - unconfined-statefulset
+  - policy: validate-pod-security
+    kind: StatefulSet
+    result: skip
+    resources:
+      - exempt-statefulset
+  - policy: validate-pod-security
+    kind: DaemonSet
+    result: pass
+    resources:
+      - compliant-daemonset
+  - policy: validate-pod-security
+    kind: DaemonSet
+    result: fail
+    resources:
+      - insecure-daemonset
+      - unconfined-daemonset
+  - policy: validate-pod-security
+    kind: DaemonSet
+    result: skip
+    resources:
+      - exempt-daemonset
+  - policy: validate-pod-security
+    kind: ReplicaSet
+    result: pass
+    resources:
+      - compliant-replicaset
+  - policy: validate-pod-security
+    kind: ReplicaSet
+    result: fail
+    resources:
+      - insecure-replicaset
+      - unconfined-replicaset
+  - policy: validate-pod-security
+    kind: ReplicaSet
+    result: skip
+    resources:
+      - exempt-replicaset
+  - policy: validate-pod-security
+    kind: ReplicationController
+    result: pass
+    resources:
+      - compliant-replicationcontroller
+  - policy: validate-pod-security
+    kind: ReplicationController
+    result: fail
+    resources:
+      - insecure-replicationcontroller
+      - unconfined-replicationcontroller
+  - policy: validate-pod-security
+    kind: ReplicationController
+    result: skip
+    resources:
+      - exempt-replicationcontroller
+  - policy: validate-pod-security
+    kind: Job
+    result: pass
+    resources:
+      - compliant-job
+  - policy: validate-pod-security
+    kind: Job
+    result: fail
+    resources:
+      - insecure-job
+      - unconfined-job
+  - policy: validate-pod-security
+    kind: Job
+    result: skip
+    resources:
+      - exempt-job
+  - policy: validate-pod-security
+    kind: CronJob
+    result: pass
+    resources:
+      - compliant-cronjob
+  - policy: validate-pod-security
+    kind: CronJob
+    result: fail
+    resources:
+      - insecure-cronjob
+      - unconfined-cronjob
+  - policy: validate-pod-security
+    kind: CronJob
+    result: skip
+    resources:
+      - exempt-cronjob

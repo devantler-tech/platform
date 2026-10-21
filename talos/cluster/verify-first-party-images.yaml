@@ -76,9 +76,8 @@
 #   7. the private World at Ruin zone is signed by that repository's server-cd
 #      workflow on stable release tags only.
 #   8. the app images (wedding-app, ascoachingogvaner, …) are signed by the
-#      shared publish-app.yaml workflow in devantler-tech/actions, pinned by
-#      commit SHA — the SAME form their Flux OCIRepository verify blocks and the
-#      verify-app-images ImageValidatingPolicy pin (#3022).
+#      shared publish-app.yaml workflow: legacy full-commit compatibility or an
+#      explicitly reviewed maintained revision, matching the app admission rule.
 # Talos evaluates rules in order, first match wins, so the seven specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
@@ -181,12 +180,10 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
-  # First-party APP images signed by the shared publish-app.yaml workflow in
-  # devantler-tech/actions. Callers pin that reusable workflow by commit SHA, so
-  # the ref admits that form alone and rejects everything else — a mutable ref
-  # such as @main, and a release tag (#3022). Same shape as the apps' Flux
-  # OCIRepository verify blocks and the verify-app-images ImageValidatingPolicy.
+  # First-party APP images retain legacy full-commit verification and accept the
+  # explicitly reviewed maintained publisher revision. Mutable refs, tags and
+  # other maintained commits are refused, as in the app admission policy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}$
+      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b)$
