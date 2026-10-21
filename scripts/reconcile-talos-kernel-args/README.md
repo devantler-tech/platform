@@ -267,6 +267,14 @@ union and reconciliation for both roles, and explicit schematic-ID precedence ar
 unchanged. The extension and schematic-ID fields, types and defaults are
 unchanged, and Talos machinery is unchanged.
 
+**7.202.66**, commit `dee9de055be3b978331f208a39df6ff704127754`, is audited
+against 7.202.59. The Talos generator, chart, configuration manager and cluster
+API are byte-identical. Only `go.mod` and `go.sum` change, through five
+dependency bumps outside the fold: Gateway API v1.6.3, smithy-go v1.28.3, the
+OpenTelemetry log exporter v0.23.0 and log SDK v1.47.0, and `golang.org/x/sys`
+v0.49.0. The Go directive and the Talos machinery module are unchanged, so the
+mirrored fold still holds.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
