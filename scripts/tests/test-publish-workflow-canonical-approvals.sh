@@ -539,5 +539,42 @@ else
   fail 'writer: refused an invalid record but still changed the tree'
 fi
 
+# Exercise the committed verification payloads as identity predicates, not text
+# snapshots. Existing releases remain valid, but only the reviewed maintained
+# revision may join them; a wildcard or an unanchored alternation fails below.
+while IFS=$'\t' read -r profile file selector; do
+  subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
+  while IFS=$'\t' read -r expected identity; do
+    result=reject
+    if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
+    if [ "$result" = "$expected" ]; then
+      pass "committed $profile: $expected $identity"
+    else
+      fail "committed $profile: expected $expected for $identity, got $result"
+    fi
+  done <<'IDENTITIES'
+accept	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v7.23.0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@main
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b-extra
+reject	https://github.com/devantler-tech/xgithub/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+reject	https://github.com/another-org/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df90
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@v13.10.12
+reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@main
+IDENTITIES
+done <<'PROFILES'
+admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
+coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
+PROFILES
+
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

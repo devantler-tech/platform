@@ -133,9 +133,11 @@ ClusterSecretStore.
 
 ## 4. How publishing & trust fit together
 
-On every `v*` tag, the tenant's `cd.yaml` calls the
-[`publish-app.yaml`](https://github.com/devantler-tech/actions/blob/main/.github/workflows/publish-app.yaml)
-reusable workflow, which builds and pushes the image, pins its digest into
+On every `v*` tag, the tenant's `cd.yaml` calls its approved, commit-pinned
+shared publisher. The maintained
+[`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
+and the legacy location implement that contract. Existing callers stay on their
+approved location until migrated. The workflow builds and pushes the image, pins its digest into
 `deploy/deployment.yaml`, pushes the manifests as an OCI artifact, and
 **cosign-signs** both (keyless, via GitHub OIDC). The platform's `OCIRepository`
 (§5) **verifies** that signature against the `publish-app.yaml` identity.
@@ -145,9 +147,9 @@ container **image**. Three verifiers check them, and they do not check the same 
 
 | Verifier | Artifact | What it accepts |
 |---|---|---|
-| **Flux** — the tenant's `OCIRepository` | manifest | Only the approved `publish-app.yaml` revisions listed for this tenant: the revision that signed the artifact running now, the tenant's current pin, and the latest release candidate of the shared workflow. Any other commit is refused. |
-| **Admission** — the `verify-app-images` Kyverno policy | image | Any 40-hex commit of `publish-app.yaml` in the actions repository, from the GitHub OIDC issuer — the **commit shape**, not a reviewed revision. |
-| **Node pull** — the Talos image-verification rule | image | The same commit shape as the admission policy. |
+| **Flux** — a registered tenant's `OCIRepository` | manifest | Its recorded legacy signer, current pin and release candidate, plus any exact maintained revisions explicitly approved for that consumer. Other commits are refused. |
+| **Admission** — the `verify-app-images` Kyverno policy | image | Legacy `actions` publishers with a full commit identity, or the explicitly reviewed maintained `.github` publisher revision, from the GitHub OIDC issuer. Other maintained commits, tags and branches are refused. |
+| **Node pull** — the Talos image-verification rule | image | The same legacy compatibility and exact maintained revision as admission. |
 
 Because the signatures are separate, a release can pass one layer and fail another: if only the
 manifest is signed, Flux applies the manifests and then admission denies the Pod, or the node
@@ -159,22 +161,25 @@ generator. It lives in `scripts/publish-workflow-approved-revisions.tsv`, and
 `OCIRepository`. The generator's consumer list is fixed in code
 (`scripts/report-publish-workflow-signing-revisions.sh` and the
 `Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
-covered until a reviewed platform change adds it there. The `Tenant` archetype pilot (below) still
-generates an `OCIRepository` that accepts any 40-hex `publish-app.yaml` commit, the same shape as
-admission.
+covered until a reviewed platform change adds it there. Maintained revisions are curated separately
+in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's location does not
+approve it. The `Tenant` archetype pilot (below) retains the generic legacy full-commit rule and
+accepts the explicitly reviewed maintained revision. Its starter check also requires that this
+rule accept the starter's actual pinned caller.
 
 **What this means for a registered tenant:** the platform must approve a `publish-app.yaml` commit
 before `cd.yaml` can move to it. Each registered application tenant runs a required check that
 refuses a pin the platform's committed approved list does not contain, so a pin change made too
 early waits instead of merging. The daily `Regenerate Approved Publish Revisions` workflow in this
-repository (06:20 UTC, or run it by hand) adds the latest released `devantler-tech/actions`
-revision to the list in a pull request. Once that pull request is merged and deployed, re-run the
-tenant's check; the pin change can then merge, and Flux accepts the releases it makes. The
-generator never adds a commit that is not the latest release, so pinning one needs a reviewed
-platform change to the approved list. Releases on an approved revision need no platform change.
+repository (06:20 UTC, or run it by hand) refreshes publication and caller observations in a pull
+request. It never invents a maintained approval: review the publisher source, record the exact
+consumer/workflow/revision approval, and regenerate its matcher. Merge and verify deployment of
+the manifest, admission and node-pull acceptance before moving the caller. Re-run the tenant's
+check, merge its pin change, and verify the resulting publication. Releases on an already approved
+revision need no new platform approval.
 
-The admission policy and the node pull rule do not prove that a commit belongs to the actions
-repository's reviewed history; that remaining risk is accepted in
+For the legacy location, admission and node-pull verification do not prove that a commit belongs
+to the actions repository's reviewed history; that compatibility risk is accepted in
 [#3746](https://github.com/devantler-tech/platform/issues/3746). Package write access,
 namespace, RBAC, network policy and admission policy bound what a release can do. A tenant that
 needs authority outside those bounds requires a reviewed platform change.
