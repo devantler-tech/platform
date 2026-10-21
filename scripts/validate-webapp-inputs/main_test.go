@@ -57,3 +57,25 @@ func TestUnavailableValidatorNeverPasses(t *testing.T) {
 		t.Fatal("missing contract evaluator accepted source")
 	}
 }
+
+func TestArgumentShapes(t *testing.T) {
+	for _, args := range [][]string{
+		nil, {"yaml"}, {"json"}, {"json", "-"},
+		{"yaml", "-", "../webapp-inputs.jq"},
+		{"json", "-", "../webapp-inputs.jq", "extra"},
+		{"unknown", "-"}, {"unknown", "-", "../webapp-inputs.jq"},
+	} {
+		t.Run(strings.Join(args, "/"), func(t *testing.T) {
+			input := strings.NewReader("kind: Service\n")
+			if err := run(args, input); err == nil {
+				t.Fatal("unsupported argument shape admitted")
+			}
+			if input.Len() != len("kind: Service\n") {
+				t.Fatal("invalid arguments consumed candidate source")
+			}
+		})
+	}
+	if err := run([]string{"yaml", "-"}, strings.NewReader("kind: Service\n")); err != nil {
+		t.Fatal("valid YAML invocation refused")
+	}
+}

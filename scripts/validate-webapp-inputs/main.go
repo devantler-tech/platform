@@ -55,13 +55,24 @@ func checkJSON(data []byte, contract string) error {
 }
 
 func run(args []string, stdin io.Reader) error {
-	if len(args) < 2 || (args[0] != "yaml" && args[0] != "json") ||
-		(args[0] == "yaml" && len(args) != 2) || (args[0] == "json" && len(args) != 3) {
+	var source, contract string
+	switch len(args) {
+	case 2:
+		if args[0] != "yaml" {
+			return errSource
+		}
+		source = args[1]
+	case 3:
+		if args[0] != "json" {
+			return errSource
+		}
+		source, contract = args[1], args[2]
+	default:
 		return errSource
 	}
 	input := stdin
-	if args[1] != "-" {
-		file, err := os.Open(args[1])
+	if source != "-" {
+		file, err := os.Open(source)
 		if err != nil {
 			return errSource
 		}
@@ -72,10 +83,10 @@ func run(args []string, stdin io.Reader) error {
 	if err != nil || len(data) > maxSourceBytes {
 		return errSource
 	}
-	if args[0] == "yaml" {
+	if len(args) == 2 {
 		return checkYAML(data)
 	}
-	return checkJSON(data, args[2])
+	return checkJSON(data, contract)
 }
 
 func main() {
