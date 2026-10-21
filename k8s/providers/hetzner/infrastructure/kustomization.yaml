@@ -11,7 +11,6 @@ resources:
   # This layer follows installation of the Kyverno admission controller.
   - cluster-policies/restrict-arc-openbao-certificate.yaml
   # A retained namespace journal constrains asynchronous native portal cleanup.
-  - cluster-policies/restrict-backstage-retirement.yaml
   # Prod-only audit-log forwarder. It consumes the `coroot-api-key` generated
   # from the Hetzner Coroot CR patch, so it belongs in this infrastructure
   # layer alongside that CR rather than in the earlier wait-gated controllers

@@ -1,6 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: backstage
-  annotations:
-    platform.devantler.tech/backstage-retirement: '{"version":1,"phase":"fenced"}'

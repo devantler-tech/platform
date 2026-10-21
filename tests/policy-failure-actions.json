@@ -47,10 +47,5 @@
   "restrict-arc-retirement/fence-credential-recreation": "Enforce",
   "restrict-arc-retirement/fence-retired-secret": "Enforce",
   "restrict-arc-retirement/preserve-retirement-journal": "Enforce",
-  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce",
-  "restrict-backstage-retirement/fence-native-targets": "Enforce",
-  "restrict-backstage-retirement/preserve-retained-identities": "Enforce",
-  "restrict-backstage-retirement/fence-retiring-dependencies": "Enforce",
-  "restrict-backstage-retirement/fence-chart-consumers": "Enforce",
-  "restrict-backstage-retirement/preserve-retirement-journal": "Enforce"
+  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce"
 }
