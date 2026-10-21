@@ -39,8 +39,8 @@ concurrency:
 jobs:
   validate-webapp-compiler:
     name: 🧩 Compile WebApp with pinned KRO
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -59,8 +59,27 @@ jobs:
         run: |
           go install github.com/mikefarah/yq/v4@v4.54.1
           printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+      - name: 🔒 Validate confined WebApp source inputs
+        run: |
+          shellcheck scripts/validate-webapp-inputs.sh scripts/tests/test-webapp-inputs.sh
+          bash scripts/tests/test-webapp-inputs.sh
       - name: 🧩 Compile the committed WebApp and refusal controls
         run: bash scripts/tests/test-webapp-compiler.sh
+      - name: ⚙️ Install pinned Trivy for compiled workloads
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.74.0
+          cache: true
+      - name: 🔬 Scan actual compiled identities and defaults
+        run: |
+          shellcheck scripts/tests/test-webapp-compiled-scan.sh
+          bash scripts/tests/test-webapp-compiled-scan.sh
+      - name: 🔏 Install reviewed public-image verification tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+      - name: 🧪 Exercise the real controller and restricted public application
+        run: |
+          shellcheck scripts/tests/test-webapp-runtime-hosted.sh
+          bash scripts/tests/test-webapp-runtime-hosted.sh
 
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization
@@ -228,6 +247,12 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: ⚙️ Setup Go for WebApp input validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: ⚙️ Setup Trivy for nested RGD templates
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1

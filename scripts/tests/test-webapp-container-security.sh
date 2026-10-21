@@ -5,7 +5,6 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
-graph="$root/k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml"
 policy="$root/k8s/bases/infrastructure/cluster-policies/best-practices/validate-pod-security.yaml"
 GITHUB_OUTPUT="$scratch/version" bash "$root/.github/scripts/kyverno-version.sh"
 expected="$(sed -n 's/^release=v//p' "$scratch/version")"
@@ -14,19 +13,15 @@ expected="$(sed -n 's/^release=v//p' "$scratch/version")"
   exit 1
 }
 
-# Only the graph's existing scalar inputs are realized. In particular, the
-# securityContext objects below remain byte-for-value copies of the source.
-yq -o=json '.spec.resources[] | select(.id == "deployment") | .template' "$graph" |
-  jq '
-    {"${schema.spec.name}":"webapp-admission-fixture",
-     "${schema.spec.image}":"registry.k8s.io/pause:3.10.2",
-     "${schema.spec.replicas}":2,"${schema.spec.port}":8080,
-     "${schema.spec.probePath}":"/healthz",
-     "${schema.spec.cpuRequest}":"10m","${schema.spec.memoryRequest}":"16Mi",
-     "${schema.spec.cpuLimit}":"100m","${schema.spec.memoryLimit}":"64Mi"} as $values |
-    walk(if type == "string" and contains("${") then
-      . as $key | if $values|has($key) then $values[$key] else error("unknown graph expression") end
-    else . end)' >"$scratch/current.json"
+# Resolve both real API-defaulted instances through the pinned compiler/runtime.
+# This proves dynamic expressions too; a hand-written empty-list substitution
+# would conceal a changed projection or security expression from this policy.
+PLATFORM_COMPILED_WEBAPP_DIR="$scratch/compiled" bash "$root/scripts/tests/test-webapp-compiler.sh" >"$scratch/compiler.log" 2>&1 || {
+  cat "$scratch/compiler.log" >&2
+  exit 1
+}
+for state in omitted enabled; do
+cp "$scratch/compiled/$state.json" "$scratch/current.json"
 
 jq 'del(.spec.template.spec.containers[].securityContext.runAsNonRoot)' "$scratch/current.json" >"$scratch/missing.json"
 jq '.spec.template.spec.containers[].securityContext.runAsNonRoot = false' "$scratch/current.json" >"$scratch/false.json"
@@ -60,7 +55,7 @@ for control in current missing false string; do
     (.results|length) == 1 and
     all(.results[]; .source == "KyvernoValidatingPolicy" and .policy == "validate-pod-security" and
       (.result == "pass" or .result == "fail") and
-      .resources == [{kind:"Deployment",namespace:"webapp-admission-fixture",name:"webapp-admission-fixture",apiVersion:"apps/v1"}]) and
+      .resources == [{kind:"Deployment",namespace:"runtime-fixture",name:"runtime-fixture",apiVersion:"apps/v1"}]) and
     all(.results[]|select(.result == "fail"); .message|contains("runAsNonRoot=true")))
   ' "$scratch/$control-report.json" >/dev/null || {
     echo "FAIL: actual WebApp container-security control $control did not evaluate as expected" >&2
@@ -69,4 +64,5 @@ for control in current missing false string; do
     exit 1
   }
 done
-echo 'WebApp container security: current graph accepted; missing/false/string declarations denied by the actual policy.'
+done
+echo 'WebApp container security: actual omitted/enabled workloads accepted; missing/false/string declarations denied by the actual policy.'

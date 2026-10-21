@@ -1222,6 +1222,12 @@ while IFS= read -r candidate; do
       if (.spec | type) == "object" then .spec.image // "" else "" end
     ' <<<"$instance_json")"
     [ -z "$instance_image" ] || validate_image_registry "$instance_image"
+    if [ "$instance_kind" = WebApp ] && [ "$instance_api_version" = kro.run/v1alpha1 ]; then
+      GOWORK=off go -C "$REPO_ROOT" run ./scripts/validate-webapp-inputs yaml "$candidate" || fail \
+        "committed WebApp has ambiguous raw source: $candidate"
+      bash "$REPO_ROOT/scripts/validate-webapp-inputs.sh" <<<"$instance_json" || fail \
+        "committed WebApp has invalid or unknown source inputs: $candidate"
+    fi
     printf '1\t%s\tINSTANCE-CONTENT\tSHA256\t%s\n' \
       "${candidate#"$SOURCE_ROOT"/}" "$(sha256_text "$instance_json")" >>"$WORK/content.tsv"
   done < <(
