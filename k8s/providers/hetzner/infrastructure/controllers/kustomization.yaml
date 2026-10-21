@@ -41,7 +41,8 @@ resources:
   # its Cloudflare token now arrives via an OpenBao ExternalSecret, and the
   # ClusterSecretStore only exists once `infrastructure` reconciles — in this
   # wait-gated layer the missing Secret would deadlock the dependency chain.
-  - flux-instance/
+  # flux-instance/ is applied by its own Flux Kustomization (flux-instance),
+  # ahead of this layer: see k8s/clusters/base/flux-kustomization-flux-instance.yaml.
   - hcloud-ccm/
   - hcloud-csi/
   # Kyverno background-controller + reports-controller grants on core Nodes for

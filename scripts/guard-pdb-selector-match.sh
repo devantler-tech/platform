@@ -52,9 +52,10 @@
 # ⚠️ CANNOT-CHECK IS NEVER CLEAN. A budget nothing rendered satisfies, in a namespace holding a
 # HelmRelease this guard cannot render the way Flux does, is exit 2: a chart source that needs
 # credentials or is not a HelmRepository or OCIRepository, a `valuesFrom` entry without a
-# `targetPath`, `valuesFiles`, `upgrade.preserveValues`, `postRenderStrategy`, a post-renderer that
-# is not a kustomize `patches`/`images` renderer or does not apply, or a chart that fails to pull
-# or render. A chart pull is tried PDB_GUARD_PULL_ATTEMPTS times (default 3), waiting
+# `targetPath`, `valuesFiles`, `upgrade.preserveValues`, a `postRenderStrategy` other than `nohooks`
+# (or none on a post-rendered release), a post-renderer that is not a kustomize `patches`/`images`
+# renderer or does not apply, or a chart that fails to pull or render. A chart pull is tried
+# PDB_GUARD_PULL_ATTEMPTS times (default 3), waiting
 # PDB_GUARD_PULL_BACKOFF seconds (default 2) and twice as long after each failure, before it counts
 # as failed. A release that cannot be rendered is no obstacle to a budget something else
 # satisfies. A Canary whose target nothing renders, or whose primary Flagger could not create, is
@@ -545,8 +546,12 @@ render_release() { # <resolved.json> <namespace> <name> <work>
     cannot "a post-renderer is not a kustomize patches/images renderer"
     return 1
   fi
-  if ! jq -e '.release.spec.postRenderStrategy == null' "$record" >/dev/null; then
-    cannot "spec.postRenderStrategy is not modelled"
+  # Only regular manifests are post-rendered here. Flux 2.9 post-renders hooks too unless a
+  # post-rendered release sets nohooks, so any other strategy, or none, is not modelled.
+  if ! jq -e '(.release.spec.postRenderStrategy == "nohooks") or
+      (.release.spec.postRenderStrategy == null and ((.release.spec.postRenderers // []) | length == 0))' \
+    "$record" >/dev/null; then
+    cannot "spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks)"
     return 1
   fi
   if ! jq -e '.release.spec.upgrade.preserveValues != true' "$record" >/dev/null; then
@@ -644,7 +649,7 @@ render_release() { # <resolved.json> <namespace> <name> <work>
       cannot "its chart does not render as an $mode: $(tr '\n' ' ' <"$work/$mode.err" | head -c 300)"
       return 1
     fi
-    # Hooks are not part of the release's manifest, and Flux does not post-render them.
+    # Hooks are not part of the release's manifest, and Flux does not post-render them under nohooks.
     mkdir -p "$work/$mode" || die "cannot create '$work/$mode'"
     yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode.rendered.yaml" \
       >"$work/$mode/resources.yaml" 2>"$work/$mode.err" ||

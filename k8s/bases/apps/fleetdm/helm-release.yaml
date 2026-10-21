@@ -18,6 +18,7 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: fleetdm
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

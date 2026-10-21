@@ -58,6 +58,7 @@ spec:
       # node drain/failure (not double-reconciliation). Drain safety comes from
       # the standalone maxUnavailable: 1 PDB (pod-disruption-budget.yaml).
       replicas: 2
+  postRenderStrategy: nohooks
   postRenderers:
     # POD-level seccompProfile, required by validate-pod-security's
     # require-seccomp-profile rule (#3474). A post-renderer rather than a values

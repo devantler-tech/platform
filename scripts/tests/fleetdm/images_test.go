@@ -146,7 +146,7 @@ func TestPreparationUsesServerImage(t *testing.T) {
 				metadata, _ := doc["metadata"].(map[string]any)
 				chartFleetImages = append(chartFleetImages, fleetImages(doc)...)
 				annotations, _ := metadata["annotations"].(map[string]any)
-				// Flux 2.8.8 post-renders regular manifests, not Helm hooks.
+				// The release sets postRenderStrategy: nohooks, so Flux post-renders regular manifests, not Helm hooks.
 				if doc != nil && annotations["helm.sh/hook"] == nil {
 					if err := encoder.Encode(doc); err != nil {
 						t.Fatal(err)

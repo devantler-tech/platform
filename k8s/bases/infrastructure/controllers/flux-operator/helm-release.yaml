@@ -88,6 +88,7 @@ spec:
   # rendering spec.template.spec.securityContext, its fields survive. A JSON-6902
   # `add` of the whole object would have replaced them silently; that is why this is
   # a merge rather than an object add.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
