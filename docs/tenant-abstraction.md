@@ -136,6 +136,54 @@ customer-facing routing is introduced by this foundation. Private-input
 projection (#4854) and the business repository's signed manifest (#102 there)
 remain separate prerequisites.
 
+### Confined public runtime inputs
+
+WebApp accepts opt-in literal arguments (at most 32, each at most 256 UTF-8
+bytes), a non-root UID and primary GID (1–2147483647), a read-only-root option,
+and at most one same-namespace Secret projection. The projection selects 1–8
+unique keys and unique single-component destinations. Its directory is fixed
+at `/run/webapp-inputs`, with required input, mode `0440` and read-only mounting;
+there is no path, namespace, executable, environment or arbitrary volume override.
+Arguments reject NUL and Kubernetes `$(...)` expansion; they must contain no
+credentials. Secret values remain outside source, images, arguments and receipts.
+The WebApp writer chooses the same-namespace Secret reference. This is workload
+authority: its chosen image can consume selected keys even without Secret API
+`get` permission. Grant WebApp editing only to trusted tenant workload writers;
+do not place higher-privilege shared secrets in that tenant namespace. The fixed
+directory and selected keys are confinement, not a new secret-authorization boundary.
+
+Omitted inputs preserve empty argument/mount/volume lists, UID/GID 1000 and the
+existing writable root. The Pod now explicitly derives its file group from its
+primary GID, including that compatibility default. Current pilots have no graph
+volumes and the normal platform mutation already supplies group 1000, but this
+is not a byte-identical Pod template: existing instances may roll on reconciliation.
+Do not generalize that permissions are unchanged for injected or future volumes.
+The restricted business image opts into UID/GID 65532 and read-only root, so a
+root-owned projected file is readable by exactly its non-root application group.
+The public disclosure is an immutable startup snapshot: rotation requires a restart.
+
+The platform source scanner refuses unknown or malformed WebApp spec fields
+before sealing committed-instance evidence. This is the platform's committed
+source gate, not proof of a future tenant publisher's input validation. The actual
+KRO 0.9.2 compiler/generated API tests admission, defaults, literal arguments and
+resolved children. Resolved deployments are separately scanned with Trivy 0.74.0;
+the writable-root and low-ID compatibility findings remain explicit rather than
+disappearing behind expressions. Both resolved states pass the actual container
+security policy, whose missing/false/string controls remain denied.
+
+The required hosted fixture uses a disposable kind node (Kubernetes 1.36.4,
+not the compiler fixture's 1.36.2 API server), one pinned KRO controller and the
+signed source-owned public business image. It tests controller input transitions,
+real process identity, kubelet atomic projection permissions, fictional EN/DA
+disclosure and closed private routes. It has no platform credentials, gateway,
+production policies, database or identity provider. Passing it is not production
+ingress, tenant authorization, portal activation or recovery proof. The script
+refuses execution outside an isolated GitHub-hosted Linux runner.
+Removing required disclosure changes the template but does not revoke an already
+healthy Pod: the zero-unavailable rolling strategy can retain it while replacement
+startup fails. The fixture explicitly scales to zero before cleanup; this is not
+a new production revocation mechanism.
+
 **Positive** — onboarding a tenant is one small typed CR; the drift is gone; the abstraction is typed
 and `kubectl`-native with CRD-schema validation; no Helm/overlay stacking; the isolation posture is
 templated verbatim.

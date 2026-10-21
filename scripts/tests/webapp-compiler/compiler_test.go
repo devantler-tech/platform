@@ -19,7 +19,11 @@ import (
 	kroapi "github.com/kubernetes-sigs/kro/api/v1alpha1"
 	"github.com/kubernetes-sigs/kro/pkg/features"
 	"github.com/kubernetes-sigs/kro/pkg/graph"
+	kroruntime "github.com/kubernetes-sigs/kro/pkg/runtime"
+	appsv1 "k8s.io/api/apps/v1"
 	extv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -97,6 +101,9 @@ func TestCommittedWebApp(t *testing.T) {
 	if err := kroapi.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
+	if err := extv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
 	apiClient, err := client.New(config, client.Options{Scheme: scheme})
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +150,165 @@ func TestCommittedWebApp(t *testing.T) {
 		if got.CRD.Spec.Versions[0].Schema.OpenAPIV3Schema.Properties["spec"].Properties["port"].Type != "integer" {
 			t.Fatal("the wrong-output-type control requires spec.port to be an integer")
 		}
+	})
+	t.Run("confined inputs produce the complete application workload", func(t *testing.T) {
+		compiled, err := compile(t, definition)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := apiClient.Create(ctx, compiled.CRD); err != nil {
+			t.Fatal(err)
+		}
+		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			paths, err := discoveryClient.OpenAPIV3().Paths()
+			if err != nil {
+				return false, err
+			}
+			path, exists := paths["apis/kro.run/v1alpha1"]
+			if !exists {
+				return false, nil
+			}
+			_, err = path.Schema("application/json")
+			return err == nil, err
+		}); err != nil {
+			t.Fatal(err)
+		}
+		instance := &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "kro.run/v1alpha1", "kind": "WebApp",
+			"metadata": map[string]interface{}{"name": "runtime-fixture", "namespace": "default"},
+			"spec": map[string]interface{}{
+				"name": "runtime-fixture", "image": "registry.k8s.io/pause:3.10.2", "host": "fixture.invalid",
+				"args":      []interface{}{"--public", "/app/public", "--company-disclosure-projection", "/run/webapp-inputs/company-address"},
+				"runAsUser": int64(65532), "runAsGroup": int64(65532), "readOnlyRootFilesystem": true,
+				"secretProjections": []interface{}{map[string]interface{}{
+					"secretName": "public-disclosure", "items": []interface{}{map[string]interface{}{"key": "address", "path": "company-address"}},
+				}},
+			},
+		}}
+		// Strict API admission, not pruning, establishes that every source field is
+		// understood. The runtime below receives real API-defaulted input.
+		if err := apiClient.Create(ctx, instance, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
+			t.Fatal(err)
+		}
+		deployment := desiredDeployment(t, compiled, instance)
+		writeDesiredFixture(t, "enabled", deployment)
+		pod := deployment.Spec.Template.Spec
+		if pod.SecurityContext == nil || pod.SecurityContext.RunAsUser == nil || *pod.SecurityContext.RunAsUser != 65532 ||
+			pod.SecurityContext.RunAsGroup == nil || *pod.SecurityContext.RunAsGroup != 65532 ||
+			pod.SecurityContext.FSGroup == nil || *pod.SecurityContext.FSGroup != 65532 {
+			t.Fatal("resolved workload must use the exact non-root user, primary group and projected-file group")
+		}
+		if len(pod.Containers) != 1 || len(pod.Volumes) != 1 {
+			t.Fatal("one application container and one confined projection are required")
+		}
+		container := pod.Containers[0]
+		if !slices.Equal(container.Args, []string{"--public", "/app/public", "--company-disclosure-projection", "/run/webapp-inputs/company-address"}) ||
+			container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem {
+			t.Fatal("actual ordered arguments and read-only root were not applied")
+		}
+		if len(container.VolumeMounts) != 1 || container.VolumeMounts[0].MountPath != "/run/webapp-inputs" ||
+			!container.VolumeMounts[0].ReadOnly || container.VolumeMounts[0].SubPath != "" {
+			t.Fatal("projection must use the fixed read-only directory without subPath")
+		}
+		secret := pod.Volumes[0].Secret
+		if secret == nil || secret.SecretName != "public-disclosure" || secret.DefaultMode == nil || *secret.DefaultMode != 288 ||
+			secret.Optional == nil || *secret.Optional || len(secret.Items) != 1 ||
+			secret.Items[0].Key != "address" || secret.Items[0].Path != "company-address" {
+			t.Fatal("actual selected-key Secret projection must require its input and fixed 0440 permissions")
+		}
+		candidate := func() *unstructured.Unstructured {
+			input := instance.DeepCopy()
+			input.Object["metadata"] = map[string]interface{}{"name": "input-control", "namespace": "default"}
+			return input
+		}
+		admit := func(input *unstructured.Unstructured) error {
+			return apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict", DryRun: []string{metav1.DryRunAll}})
+		}
+		refused := func(t *testing.T, input *unstructured.Unstructured) {
+			t.Helper()
+			err := admit(input)
+			if !apierrors.IsInvalid(err) && !apierrors.IsBadRequest(err) {
+				t.Fatalf("expected actual API validation refusal, not success or an operational error: %v", err)
+			}
+		}
+		t.Run("omitted inputs keep effective defaults and no projection", func(t *testing.T) {
+			input := candidate()
+			spec := input.Object["spec"].(map[string]interface{})
+			for _, key := range []string{"args", "runAsUser", "runAsGroup", "readOnlyRootFilesystem", "secretProjections"} {
+				delete(spec, key)
+			}
+			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			defaultDeployment := desiredDeployment(t, compiled, input)
+			writeDesiredFixture(t, "omitted", defaultDeployment)
+			got := defaultDeployment.Spec.Template.Spec
+			if len(got.Containers) != 1 || len(got.Containers[0].Args) != 0 || len(got.Containers[0].VolumeMounts) != 0 || len(got.Volumes) != 0 ||
+				got.SecurityContext == nil || got.SecurityContext.RunAsUser == nil || *got.SecurityContext.RunAsUser != 1000 ||
+				got.SecurityContext.RunAsGroup == nil || *got.SecurityContext.RunAsGroup != 1000 ||
+				got.SecurityContext.FSGroup == nil || *got.SecurityContext.FSGroup != 1000 ||
+				got.Containers[0].SecurityContext.ReadOnlyRootFilesystem == nil || *got.Containers[0].SecurityContext.ReadOnlyRootFilesystem {
+				t.Fatal("omitted inputs changed effective identity, startup, root access or volume permissions")
+			}
+		})
+		for _, tc := range []struct {
+			name, key string
+			value     interface{}
+		}{
+			{"root user", "runAsUser", int64(0)}, {"root group", "runAsGroup", int64(0)},
+			{"negative identity", "runAsUser", int64(-1)}, {"oversized identity", "runAsGroup", int64(2147483648)},
+			{"fractional identity", "runAsUser", 1.5}, {"string root flag", "readOnlyRootFilesystem", "true"},
+			{"unknown command override", "command", []interface{}{"sh"}},
+			{"argument expansion", "args", []interface{}{"$(UNTRUSTED)"}},
+			{"NUL argument", "args", []interface{}{"before\x00after"}},
+			{"oversized ASCII argument", "args", []interface{}{strings.Repeat("x", 257)}},
+			{"oversized UTF8 argument", "args", []interface{}{strings.Repeat("é", 129)}},
+			{"wrong argument type", "args", []interface{}{true}},
+			{"too many arguments", "args", slices.Repeat([]interface{}{"literal"}, 33)},
+			{"too many projections", "secretProjections", slices.Repeat([]interface{}{map[string]interface{}{
+				"secretName": "input", "items": []interface{}{map[string]interface{}{"key": "a", "path": "a"}},
+			}}, 2)},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				input := candidate()
+				input.Object["spec"].(map[string]interface{})[tc.key] = tc.value
+				refused(t, input)
+			})
+		}
+		for _, tc := range []struct {
+			name, key string
+			value     interface{}
+		}{
+			{"cross-namespace reference", "namespace", "other"},
+			{"optional missing input", "optional", true},
+			{"unsafe Secret name", "secretName", "../secret"},
+			{"no selected keys", "items", []interface{}{}},
+			{"duplicate key and path", "items", []interface{}{map[string]interface{}{"key": "a", "path": "one"}, map[string]interface{}{"key": "a", "path": "one"}}},
+			{"duplicate key only", "items", []interface{}{map[string]interface{}{"key": "a", "path": "one"}, map[string]interface{}{"key": "a", "path": "two"}}},
+			{"duplicate path only", "items", []interface{}{map[string]interface{}{"key": "a", "path": "one"}, map[string]interface{}{"key": "b", "path": "one"}}},
+			{"traversal destination", "items", []interface{}{map[string]interface{}{"key": "a", "path": "../one"}}},
+			{"missing selected key", "items", []interface{}{map[string]interface{}{"path": "one"}}},
+			{"missing destination", "items", []interface{}{map[string]interface{}{"key": "a"}}},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				input := candidate()
+				projection := input.Object["spec"].(map[string]interface{})["secretProjections"].([]interface{})[0].(map[string]interface{})
+				projection[tc.key] = tc.value
+				refused(t, input)
+			})
+		}
+		t.Run("exact UTF8 byte boundary preserves repeated arguments", func(t *testing.T) {
+			input := candidate()
+			value := strings.Repeat("é", 128)
+			input.Object["spec"].(map[string]interface{})["args"] = []interface{}{value, value}
+			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			got := desiredDeployment(t, compiled, input)
+			if !slices.Equal(got.Spec.Template.Spec.Containers[0].Args, []string{value, value}) {
+				t.Fatal("admission or expression evaluation changed literal ordered repeated arguments")
+			}
+		})
 	})
 	for _, tc := range []struct {
 		name, expression, want string
@@ -308,6 +474,65 @@ func TestFailedStartupStopsControlPlane(t *testing.T) {
 			_ = connection.Close()
 			t.Errorf("%s still accepts connections after failed startup", name)
 		}
+	}
+}
+
+// desiredDeployment evaluates every actual child in dependency order. Seeding
+// observations from those desired objects proves expressions, not reconciliation.
+func desiredDeployment(t *testing.T, compiled *graph.Graph, instance *unstructured.Unstructured) *appsv1.Deployment {
+	t.Helper()
+	resolved, err := kroruntime.FromGraph(compiled, instance, graph.RGDConfig{MaxCollectionDimensionSize: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deployment *appsv1.Deployment
+	for _, node := range resolved.Nodes() {
+		ignored, err := node.IsIgnored()
+		if err != nil || ignored {
+			t.Fatalf("required graph child was ignored: %v", err)
+		}
+		objects, err := node.GetDesired()
+		if err != nil || len(objects) != 1 {
+			t.Fatalf("resolve actual child %s: count=%d error=%v", node.Spec.Meta.ID, len(objects), err)
+		}
+		if node.Spec.Meta.ID == "deployment" {
+			data, err := json.Marshal(objects[0].Object)
+			if err != nil {
+				t.Fatal(err)
+			}
+			deployment = &appsv1.Deployment{}
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if err := decoder.Decode(deployment); err != nil {
+				t.Fatalf("strict Deployment decoding: %v", err)
+			}
+		}
+		node.SetObserved(objects)
+	}
+	if deployment == nil {
+		t.Fatal("actual Deployment was not resolved")
+	}
+	return deployment
+}
+
+func writeDesiredFixture(t *testing.T, name string, deployment *appsv1.Deployment) {
+	t.Helper()
+	directory := os.Getenv("PLATFORM_COMPILED_WEBAPP_DIR")
+	if directory == "" {
+		return
+	}
+	if !filepath.IsAbs(directory) {
+		t.Fatal("an explicit absolute compiler fixture output directory is required")
+	}
+	if err := os.MkdirAll(directory, 0700); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(deployment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, name+".json"), data, 0600); err != nil {
+		t.Fatal(err)
 	}
 }
 

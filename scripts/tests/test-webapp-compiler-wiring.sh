@@ -14,13 +14,26 @@ check_job() {
     .jobs["validate-webapp-compiler"] as $job
     | $job != null and $job.permissions == {"contents":"read"}
       and ($job["continue-on-error"] // false) == false
-      and ($job["timeout-minutes"] > 0 and $job["timeout-minutes"] <= 15)
+      and ($job["timeout-minutes"] > 0 and $job["timeout-minutes"] <= 25)
       and (if $selection == "" then ($job | has("if") | not)
            else $job.if == $selection and $job.needs == ["changes"] end)
       and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-compiler.sh")) ]
            | length == 1 and (.[0] | has("if") | not)
              and (.[0]["continue-on-error"] // false) == false
              and .[0].run == "bash scripts/tests/test-webapp-compiler.sh")
+      and $job["runs-on"] == "ubuntu-24.04"
+      and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-compiled-scan.sh")) ]
+           | length == 1 and (.[0] | has("if") | not)
+             and (.[0]["continue-on-error"] // false) == false
+             and .[0].run == "shellcheck scripts/tests/test-webapp-compiled-scan.sh\nbash scripts/tests/test-webapp-compiled-scan.sh\n")
+      and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-runtime-hosted.sh")) ]
+           | length == 1 and (.[0] | has("if") | not)
+             and (.[0]["continue-on-error"] // false) == false
+             and .[0].run == "shellcheck scripts/tests/test-webapp-runtime-hosted.sh\nbash scripts/tests/test-webapp-runtime-hosted.sh\n")
+      and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-inputs.sh")) ]
+           | length == 1 and (.[0] | has("if") | not)
+             and (.[0]["continue-on-error"] // false) == false
+             and .[0].run == "shellcheck scripts/validate-webapp-inputs.sh scripts/tests/test-webapp-inputs.sh\nbash scripts/tests/test-webapp-inputs.sh\n")
   ' <<<"${input}" >/dev/null || fail 'compiler job is absent, bypassed or unbounded'
 }
 check_job "${ci}" "needs.changes.outputs.k8s == 'true'"
@@ -43,6 +56,12 @@ jq -e '
   index("scripts/tests/test-webapp-compiler.sh") != null
   and index("scripts/tests/test-webapp-compiler-wiring.sh") != null
   and index("scripts/tests/webapp-compiler/**") != null
+  and index("scripts/tests/test-webapp-runtime-hosted.sh") != null
+  and index("scripts/tests/test-webapp-compiled-scan.sh") != null
+  and index("scripts/validate-webapp-inputs.sh") != null
+  and index("scripts/webapp-inputs.jq") != null
+  and index("scripts/tests/test-webapp-inputs.sh") != null
+  and index("scripts/tests/test-webapp-inputs-wiring.sh") != null
 ' <<<"${filter}" >/dev/null || fail 'compiler inputs must select validation'
 step="$(jq -c '[.jobs["ci-required-checks"].steps[] |
   select(.env.COMPILER_RESULT == "${{ needs.validate-webapp-compiler.result }}")]' <<<"${ci}")"
