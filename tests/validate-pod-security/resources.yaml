@@ -1,0 +1,3860 @@
+# Fixtures for validate-pod-security. They pin what the policy decides today, so
+# a rewrite of the policy (#4996) has to keep every decision below.
+#
+# The container matrix: every container securityContext change below is applied,
+# one at a time, to each position a container can hold: the first and a later
+# regular container, the first and a later init container, and the first and a
+# later ephemeral container. Every other container in the Pod stays hardened, so
+# each Pod isolates exactly one change in exactly one place.
+---
+# Matrix: secure on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-secure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-missing on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-ape-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-true on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-ape-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-true on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-privileged-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+---
+# Matrix: privileged-false on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+---
+# Matrix: nonroot-missing on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-nonroot-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-false on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-nonroot-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: caps-missing on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-caps-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+---
+# Matrix: drop-missing on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-drop-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: {}
+---
+# Matrix: drop-empty on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-drop-empty
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: []
+---
+# Matrix: drop-net-raw on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-drop-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+---
+# Matrix: drop-all-and-net-raw on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+---
+# Matrix: no-security-context on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+---
+# Matrix: seccomp-unconfined on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# Matrix: seccomp-localhost on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+---
+# Matrix: seccomp-runtime-default on the regular container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-0-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+# Matrix: secure on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-secure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-missing on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-ape-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-true on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-ape-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-true on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-privileged-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+---
+# Matrix: privileged-false on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+---
+# Matrix: nonroot-missing on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-nonroot-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-false on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-nonroot-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: caps-missing on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-caps-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+---
+# Matrix: drop-missing on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-drop-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: {}
+---
+# Matrix: drop-empty on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-drop-empty
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: []
+---
+# Matrix: drop-net-raw on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-drop-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+---
+# Matrix: drop-all-and-net-raw on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+---
+# Matrix: no-security-context on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+---
+# Matrix: seccomp-unconfined on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# Matrix: seccomp-localhost on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+---
+# Matrix: seccomp-runtime-default on the regular container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-1-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+# Matrix: secure on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-secure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-missing on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-ape-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-true on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-ape-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-true on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-privileged-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-false on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-missing on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-nonroot-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-false on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-nonroot-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: caps-missing on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-caps-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-missing on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-drop-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: {}
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-empty on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-drop-empty
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: []
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-net-raw on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-drop-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-all-and-net-raw on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: no-security-context on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: seccomp-unconfined on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: seccomp-localhost on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: seccomp-runtime-default on the init container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-0-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: secure on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-secure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-missing on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-ape-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-true on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-ape-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-true on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-privileged-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-false on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-missing on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-nonroot-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-false on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-nonroot-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: caps-missing on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-caps-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-missing on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-drop-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: {}
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-empty on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-drop-empty
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: []
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-net-raw on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-drop-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: drop-all-and-net-raw on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: no-security-context on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: seccomp-unconfined on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: seccomp-localhost on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: seccomp-runtime-default on the init container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-1-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  initContainers:
+    - name: hardened-init
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: secure on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-secure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-missing on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-ape-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-true on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-ape-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-true on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-privileged-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+---
+# Matrix: privileged-false on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+---
+# Matrix: nonroot-missing on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-nonroot-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-false on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-nonroot-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: caps-missing on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-caps-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+---
+# Matrix: drop-missing on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-drop-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: {}
+---
+# Matrix: drop-empty on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-drop-empty
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: []
+---
+# Matrix: drop-net-raw on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-drop-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+---
+# Matrix: drop-all-and-net-raw on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+---
+# Matrix: no-security-context on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+---
+# Matrix: seccomp-unconfined on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# Matrix: seccomp-localhost on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+---
+# Matrix: seccomp-runtime-default on the ephemeral container at index 0.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-0-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+# Matrix: secure on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-secure
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-missing on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-ape-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: ape-true on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-ape-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: true
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: privileged-true on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-privileged-true
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: true
+---
+# Matrix: privileged-false on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-privileged-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        privileged: false
+---
+# Matrix: nonroot-missing on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-nonroot-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: nonroot-false on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-nonroot-false
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: false
+        capabilities:
+          drop:
+            - ALL
+---
+# Matrix: caps-missing on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-caps-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+---
+# Matrix: drop-missing on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-drop-missing
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities: {}
+---
+# Matrix: drop-empty on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-drop-empty
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop: []
+---
+# Matrix: drop-net-raw on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-drop-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - NET_RAW
+---
+# Matrix: drop-all-and-net-raw on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-drop-all-and-net-raw
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+            - NET_RAW
+---
+# Matrix: no-security-context on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-no-security-context
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+---
+# Matrix: seccomp-unconfined on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Unconfined
+---
+# Matrix: seccomp-localhost on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-seccomp-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: Localhost
+          localhostProfile: profiles/app.json
+---
+# Matrix: seccomp-runtime-default on the ephemeral container at index 1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ephemeral-1-seccomp-runtime-default
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: hardened
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+  ephemeralContainers:
+    - name: hardened-debug
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+    - name: target
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+# Pod-level cases.
+---
+# A Localhost pod-level profile is accepted as well as RuntimeDefault.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: compliant-localhost
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: Localhost
+      localhostProfile: profiles/app.json
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# runAsNonRoot is required on each container; the pod-level value does not count.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: non-root-at-pod-level-only
+  namespace: workloads
+spec:
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+---
+# A pod with no pod-level seccomp profile is refused, even with hardened containers.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-pod-seccomp
+  namespace: workloads
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# A container-level profile does not stand in for the pod-level one.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: container-seccomp-only
+  namespace: workloads
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+        seccompProfile:
+          type: RuntimeDefault
+---
+# An Unconfined pod-level profile is refused.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pod-seccomp-unconfined
+  namespace: workloads
+spec:
+  securityContext:
+    seccompProfile:
+      type: Unconfined
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        capabilities:
+          drop:
+            - ALL
+---
+# Fails every check. Its twins below sit in exempt namespaces.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: insecure
+  namespace: workloads
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kube-system: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kube-system
+  namespace: kube-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kube-public: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kube-public
+  namespace: kube-public
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kube-node-lease: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kube-node-lease
+  namespace: kube-node-lease
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace flux-system: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-flux-system
+  namespace: flux-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace longhorn-system: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-longhorn-system
+  namespace: longhorn-system
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace local-path-storage: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-local-path-storage
+  namespace: local-path-storage
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kubescape: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kubescape
+  namespace: kubescape
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace kubevirt: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-kubevirt
+  namespace: kubevirt
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace cdi: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-cdi
+  namespace: cdi
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace observability: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-observability
+  namespace: observability
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace velero: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-velero
+  namespace: velero
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# The same Pod in the exempt namespace chaos-mesh: no check applies.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: exempt-chaos-mesh
+  namespace: chaos-mesh
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# A namespace whose name only starts like an exempt one is still checked.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lookalike-namespace
+  namespace: observability-apps
+spec:
+  containers:
+    - name: app
+      image: registry.k8s.io/pause:3.10
+      securityContext:
+        privileged: true
+        seccompProfile:
+          type: Unconfined
+---
+# An insecure Deployment template is refused when the Deployment itself is applied.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: insecure-deployment
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant Deployment template passes every check.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: compliant-deployment
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A Deployment template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: unconfined-deployment
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure Deployment template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: exempt-deployment
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure StatefulSet template is refused when the StatefulSet itself is applied.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: insecure-statefulset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant StatefulSet template passes every check.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: compliant-statefulset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A StatefulSet template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: unconfined-statefulset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure StatefulSet template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: exempt-statefulset
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  serviceName: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure DaemonSet template is refused when the DaemonSet itself is applied.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: insecure-daemonset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant DaemonSet template passes every check.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: compliant-daemonset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A DaemonSet template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: unconfined-daemonset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure DaemonSet template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: exempt-daemonset
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure ReplicaSet template is refused when the ReplicaSet itself is applied.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: insecure-replicaset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant ReplicaSet template passes every check.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: compliant-replicaset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A ReplicaSet template whose container overrides seccomp with Unconfined is refused.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: unconfined-replicaset
+  namespace: workloads
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure ReplicaSet template in the exempt namespace observability: no check applies.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: exempt-replicaset
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure ReplicationController template is refused when the ReplicationController itself is applied.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: insecure-replicationcontroller
+  namespace: workloads
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant ReplicationController template passes every check.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: compliant-replicationcontroller
+  namespace: workloads
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A ReplicationController template whose container overrides seccomp with Unconfined is refused.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: unconfined-replicationcontroller
+  namespace: workloads
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure ReplicationController template in the exempt namespace observability: no check applies.
+apiVersion: v1
+kind: ReplicationController
+metadata:
+  name: exempt-replicationcontroller
+  namespace: observability
+spec:
+  selector:
+    app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure Job template is refused when the Job itself is applied.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: insecure-job
+  namespace: workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# A compliant Job template passes every check.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: compliant-job
+  namespace: workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+---
+# A Job template whose container overrides seccomp with Unconfined is refused.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: unconfined-job
+  namespace: workloads
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: Unconfined
+---
+# The insecure Job template in the exempt namespace observability: no check applies.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: exempt-job
+  namespace: observability
+spec:
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.10
+          securityContext:
+            allowPrivilegeEscalation: true
+---
+# An insecure CronJob template is refused when the CronJob itself is applied.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: insecure-cronjob
+  namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: true
+---
+# A compliant CronJob template passes every check.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: compliant-cronjob
+  namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+---
+# A CronJob template whose container overrides seccomp with Unconfined is refused.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: unconfined-cronjob
+  namespace: workloads
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          securityContext:
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: false
+                runAsNonRoot: true
+                capabilities:
+                  drop:
+                    - ALL
+                seccompProfile:
+                  type: Unconfined
+---
+# The insecure CronJob template in the exempt namespace observability: no check applies.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: exempt-cronjob
+  namespace: observability
+spec:
+  schedule: "0 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: demo
+        spec:
+          containers:
+            - name: app
+              image: registry.k8s.io/pause:3.10
+              securityContext:
+                allowPrivilegeEscalation: true

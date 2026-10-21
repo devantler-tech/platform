@@ -27,15 +27,13 @@
 # The original set retains the last proven legacy publication and pin for
 # compatibility; it never relabels a canonical commit as a legacy signer.
 #
-# THE RELEASE CANDIDATE (#3960, #4416)
-# Consumers move their pin to a new `devantler-tech/actions` release by dependency
-# bump, often within hours of the release, while this set only learns a pin once it has landed.
-# So each publishing row also records the commit of the latest published (non-draft,
-# non-prerelease) `actions` release, and a matcher built from the row can accept the revision a
-# tenant is about to move to before it moves. The candidate is derived, never hand-written: a
-# release that cannot be resolved to one commit carrying the shared workflow fails the run like
-# any other unresolved input. Each workflow is resolved separately so a release must carry
-# the actual publishing workflow the consumer will use.
+# THE FROZEN LEGACY CANDIDATE (#5146)
+# The legacy catalogue is being deleted, not accepting more releases. Its final stable
+# release and both publisher source blobs were verified before recording them in
+# frozen-legacy-publisher-release.tsv. That reviewed snapshot preserves the historical
+# candidate without requiring the retired repository to remain reachable. It is not a
+# fallback for a failed read. Applied publications and current pins are STILL observed;
+# maintained revisions STILL require exact, separately reviewed canonical approvals.
 #
 # FAIL CLOSED, WRITE NOTHING. A consumer that cannot be resolved on either half is named on
 # stderr and the run exits 1 having written NO file: an approved set missing a consumer, or
@@ -54,6 +52,7 @@
 #   APPROVED_REVISIONS_OBSERVED_ON  YYYY-MM-DD stamped on rows whose tuple changed (default: today, UTC)
 #   PUBLISH_KUBE_CONTEXT            kube context the default observer reads OCIRepositories through
 #   PUBLISH_CONSUMER_ROOT           discovery root, passed through to the report
+#   FROZEN_LEGACY_RELEASE_FILE      snapshot path (tests override; production uses the committed record)
 set -euo pipefail
 
 GEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -305,16 +304,34 @@ default_pin_resolver() {
   esac
 }
 
-# The commit of the latest published `devantler-tech/actions` release, provided that commit
-# carries <workflow>. `releases/latest` already excludes drafts and prereleases.
+# Read the complete final-release snapshot before returning either workflow's candidate.
+# This is hand-reviewed historical authority, like the fixed canonical approvals, not
+# generated observations. It must never be refreshed from a deleted repository or used
+# to infer a canonical approval. The blob IDs bind the review record to both sources.
 default_release_resolver() {
-  local workflow="$1" tag sha blob
-  tag="$(gh_retry api repos/devantler-tech/actions/releases/latest --jq .tag_name)" || return 1
-  plausible_ref "$tag" || return 1
-  sha="$(tag_commit actions "$tag")" || return 1
-  blob="$(gh_retry api "repos/devantler-tech/actions/contents/.github/workflows/${workflow}.yaml?ref=${sha}" --jq .sha)" || return 1
-  is_sha "$blob" || return 1
-  printf '%s\n' "$sha"
+  local workflow="$1" snapshot="${FROZEN_LEGACY_RELEASE_FILE:-$GEN_DIR/frozen-legacy-publisher-release.tsv}"
+  case "$workflow" in publish-app | publish-manifests) ;; *) return 1 ;; esac
+  [ -f "$snapshot" ] && [ ! -L "$snapshot" ] || return 1
+  awk -F'\t' -v wanted="$workflow" '
+    function sha(value) { return length(value) == 40 && value ~ /^[0-9a-f]+$/ }
+    NR == 1 {
+      if ($0 != "repository\tworkflow\ttag\tcommit\tworkflow_blob\tobserved_on") bad = 1
+      next
+    }
+    {
+      if (NF != 6 || $1 != "devantler-tech/actions" ||
+          ($2 != "publish-app" && $2 != "publish-manifests") || seen[$2]++ ||
+          $3 !~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/ ||
+          !sha($4) || !sha($5) || $6 !~ /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/) bad = 1
+      if (NR == 2) { tag = $3; commit = $4; observed = $6 }
+      else if ($3 "" != tag "" || $4 "" != commit "" || $6 "" != observed "") bad = 1
+      if ($2 == wanted) candidate = $4
+    }
+    END {
+      if (bad || NR != 3 || seen["publish-app"] != 1 || seen["publish-manifests"] != 1 || !sha(candidate)) exit 1
+      print candidate
+    }
+  ' "$snapshot"
 }
 
 # Split "<a>\t<b>\t<c>" into three variables WITHOUT `read`, which collapses an empty middle
@@ -460,7 +477,7 @@ main() {
     esac
     candidate="$(printf '%s' "$release_candidates" | awk -F'\t' -v w="$workflow" '$1 == w {print $2; exit}')"
     if ! is_sha "$candidate"; then
-      refuse "$repo ($workflow): latest devantler-tech/actions release not resolved to one commit carrying $workflow.yaml; refusing to write a set without its release candidate"
+      refuse "$repo ($workflow): frozen legacy release candidate is missing or invalid; refusing to write a set without its compatibility evidence"
       unresolved=$((unresolved + 1))
       continue
     fi
