@@ -225,10 +225,21 @@ func TestVerifiedBinarySelection(t *testing.T) {
 		t.Setenv(name, filepath.Join(t.TempDir(), "unverified-override"))
 	}
 	environment := newCompilerEnvironment(t, nil)
-	// A regression must not leave its own processes behind, even on the RED path.
+	// Last-resort cleanup runs after the assertions, so a RED cleanup control
+	// cannot leak its own generated certificates or processes.
 	t.Cleanup(func() {
-		if err := environment.ControlPlane.Stop(); err != nil {
+		if err := environment.Stop(); err != nil {
 			t.Error(err)
+		}
+	})
+	t.Cleanup(func() {
+		if err := environment.Stop(); err != nil {
+			t.Error(err)
+		}
+		if directory := environment.WebhookInstallOptions.LocalServingCertDir; directory != "" {
+			if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("generated serving certificates remain after cleanup: %v", err)
+			}
 		}
 	})
 	_, err := startCompilerEnvironment(environment)
@@ -245,6 +256,11 @@ func TestVerifiedBinarySelection(t *testing.T) {
 		}
 	}
 	if err == nil {
+		if directory := environment.WebhookInstallOptions.LocalServingCertDir; directory == "" {
+			t.Fatal("successful startup must exercise actual serving-certificate creation")
+		} else if _, err := os.Stat(directory); err != nil {
+			t.Fatalf("serving certificates were not created: %v", err)
+		}
 		// Exercise kubectl as well as the two long-running binaries.
 		user, err := environment.AddUser(envtest.User{Name: "verified-asset-check"}, nil)
 		if err != nil {
@@ -267,7 +283,7 @@ func TestFailedStartupStopsControlPlane(t *testing.T) {
 	environment := newCompilerEnvironment(t, []*extv1.CustomResourceDefinition{&invalid})
 	// Backstop only: assertions run before this cleanup, so it cannot mask a leak.
 	t.Cleanup(func() {
-		if err := environment.ControlPlane.Stop(); err != nil {
+		if err := environment.Stop(); err != nil {
 			t.Error(err)
 		}
 	})
@@ -277,6 +293,11 @@ func TestFailedStartupStopsControlPlane(t *testing.T) {
 	}
 	if config == nil || environment.ControlPlane.Etcd.URL == nil {
 		t.Fatal("failure must follow an actual control-plane startup")
+	}
+	if directory := environment.WebhookInstallOptions.LocalServingCertDir; directory == "" {
+		t.Fatal("failed CRD admission must follow actual serving-certificate creation")
+	} else if _, err := os.Stat(directory); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("failed startup left generated serving certificates behind: %v", err)
 	}
 	for name, address := range map[string]string{
 		"kube-apiserver": environment.ControlPlane.GetAPIServer().SecureServing.URL("https", "/").Host,
