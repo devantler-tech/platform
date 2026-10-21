@@ -66,6 +66,8 @@ groups="$(jq -c --arg chart "${chart}" --arg module "${module}" '
 rule="$(jq -c '.[0].value' <<<"${groups}")"
 at="$(jq -r '.[0].key' <<<"${groups}")"
 [[ -n "$(jq -r '.groupName // ""' <<<"${rule}")" ]] || fail 'the KRO rule must set a groupName'
+[[ "$(jq -r '.minimumGroupSize // 1' <<<"${rule}")" == '2' ]] ||
+  fail 'the KRO rule must set minimumGroupSize to 2, so neither dependency is proposed without the other'
 [[ "$(jq -r '.automerge' <<<"${rule}")" == 'false' ]] || fail 'the KRO rule must turn automerge off'
 [[ "$(jq -r '.minimumReleaseAge // ""' <<<"${rule}")" == '0 days' ]] ||
   fail 'the KRO rule must set minimumReleaseAge to 0 days: the chart registry gives no release date'

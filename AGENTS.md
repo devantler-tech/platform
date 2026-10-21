@@ -271,7 +271,8 @@ each update against the operator's release notes and the HelmRelease's post-rend
 The KRO controller chart is a fourth, for the same reason: `registry.k8s.io` gives no release date
 (#5204). Its custom manager is grouped with the `github.com/kubernetes-sigs/kro` Go module, which the
 web-app compiler check requires to match the controller, and both take `0 days` so a release arrives
-as one PR rather than as a module bump that cannot pass alone. Automerge is off; review the update
+as one PR rather than as a module bump that cannot pass alone; `minimumGroupSize: 2` holds the PR
+until both have an update. Automerge is off; review the update
 against KRO's release notes. `scripts/tests/test-kro-renovate-group.sh` pins this policy.
 
 ## Local Development Cluster
