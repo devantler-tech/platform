@@ -18,6 +18,10 @@ spec:
     # reconcile, since e.g. Coroot's node-agent references platform-critical and
     # the operator would otherwise roll its pods before the class exists.
     - name: bootstrap
+    # The flux-instance layer installs Flux and its CRDs. This layer's apply
+    # rejects a HelmRelease field a Flux upgrade adds until those CRDs are
+    # live, so it waits for that layer at the same revision.
+    - name: flux-instance
   decryption:
     provider: sops
     secretRef:

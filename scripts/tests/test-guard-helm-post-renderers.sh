@@ -153,7 +153,7 @@ run_guard() { # <tree> [guard-args...]
   local tree="$1"
   shift
   : >"$HELM_SHIM_LOG"
-  if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.8.8 "$@" "$tree/k8s" 2>&1)"; then
+  if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.9.6 "$@" "$tree/k8s" 2>&1)"; then
     GUARD_RC=0
   else
     GUARD_RC=$?
@@ -246,7 +246,7 @@ EOF
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' '  - config-map.yaml' \
     '  - flux-instance.yaml' >"$k8s/bootstrap/test/kustomization.yaml"
   printf '%s\n' 'apiVersion: fluxcd.controlplane.io/v1' 'kind: FluxInstance' 'metadata:' '  name: flux' \
-    '  namespace: flux-system' 'spec:' '  distribution:' '    version: 2.8.x' >"$k8s/bootstrap/test/flux-instance.yaml"
+    '  namespace: flux-system' 'spec:' '  distribution:' '    version: 2.9.x' >"$k8s/bootstrap/test/flux-instance.yaml"
   variables 3
   printf '%s\n' 'apiVersion: kustomize.config.k8s.io/v1beta1' 'kind: Kustomization' 'resources:' \
     '  - helm-repository.yaml' '  - helm-release.yaml' >"$k8s/controllers/test/kustomization.yaml"
@@ -266,12 +266,15 @@ variables() { # <operator_replicas, or "" for none>
   } >"$TREE/k8s/bootstrap/test/config-map.yaml"
 }
 
-# Writes the HelmRelease: the header at a chart version, then the case's spec lines from stdin.
+# Writes the HelmRelease: the header at a chart version, the post-render strategy (RELEASE_STRATEGY,
+# default nohooks; set it empty to omit the field), then the case's spec lines from stdin.
 release() { # [chart-version]
+  local strategy="${RELEASE_STRATEGY-nohooks}"
   {
     printf '%s\n' 'apiVersion: helm.toolkit.fluxcd.io/v2' 'kind: HelmRelease' 'metadata:' '  name: flux-operator' \
       '  namespace: flux-system' 'spec:' '  interval: 10m' '  chart:' '    spec:' '      chart: flux-operator' \
       "      version: ${1:-0.50.0}" '      sourceRef:' '        kind: HelmRepository' '        name: flux-operator'
+    if [ -n "$strategy" ]; then printf '  postRenderStrategy: %s\n' "$strategy"; fi
     cat
   } >"$TREE/k8s/controllers/test/helm-release.yaml"
 }
@@ -399,7 +402,7 @@ printf 'guard-helm-post-renderers:\n'
 
 printf 'the committed tree, compared with itself\n'
 : >"$HELM_SHIM_LOG"
-if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.8.8 --base HEAD "$repo_root/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
+if GUARD_OUT="$(PATH="$scratch/bin:$PATH" "$guard" --flux-version 2.9.6 --base HEAD "$repo_root/k8s" 2>&1)"; then GUARD_RC=0; else GUARD_RC=$?; fi
 assert_rc 'an unchanged tree passes' 0
 assert_contains 'nothing is rendered when nothing changed' ', 0 checked'
 assertions=$((assertions + 1))
@@ -547,19 +550,21 @@ new_tree
   pr_job_leaf_add
 } | release
 run_guard "$TREE"
-assert_rc 'Flux 2.8.8 leaves hooks out of post-rendering by default' 0
+assert_rc 'nohooks leaves hooks out of post-rendering' 0
 {
-  printf '%s\n' '  postRenderStrategy: combined' '  values:' '    hook: true'
+  printf '%s\n' '  values:' '    hook: true'
   pr_job_leaf_add
-} | release
+} | RELEASE_STRATEGY=combined release
 run_guard "$TREE"
-assert_rc 'Flux 2.8.8 rejects the unsupported strategy field' 2
+assert_rc 'combined post-renders hooks, which this guard does not model' 2
+assert_contains 'the combined strategy is refused' 'must be nohooks'
 {
-  printf '%s\n' '  postRenderStrategy: nohooks' '  values:' '    hook: true'
+  printf '%s\n' '  values:' '    hook: true'
   pr_job_leaf_add
-} | release
+} | RELEASE_STRATEGY='' release
 run_guard "$TREE"
-assert_rc 'even nohooks is an unsupported field on the admitted API' 2
+assert_rc 'an omitted strategy defaults to combined on Flux 2.9.6' 2
+assert_contains 'the omitted strategy is refused' 'must be nohooks'
 
 new_tree
 cat <<'EOF' | release
@@ -732,7 +737,8 @@ spec:
 EOF
 {
   printf '%s\n' 'apiVersion: helm.toolkit.fluxcd.io/v2' 'kind: HelmRelease' 'metadata:' '  name: flux-operator' \
-    '  namespace: flux-system' 'spec:' '  interval: 10m' '  chartRef:' '    kind: OCIRepository' '    name: flux-operator'
+    '  namespace: flux-system' 'spec:' '  interval: 10m' '  chartRef:' '    kind: OCIRepository' '    name: flux-operator' \
+    '  postRenderStrategy: nohooks'
   pr_3580
 } >"$TREE/k8s/controllers/test/helm-release.yaml"
 run_guard "$TREE"
@@ -807,7 +813,7 @@ assert_rc 'an empty substitution map must not swallow the HelmRelease' 1
 new_tree
 pr_3580 | release
 commit "$TREE" base
-yq -i '.spec.distribution.version = "2.9.x"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
+yq -i '.spec.distribution.version = "2.10.x"' "$TREE/k8s/bootstrap/test/flux-instance.yaml"
 run_guard "$TREE" --base HEAD
 assert_rc 'a runtime-only change cannot be skipped as unchanged' 2
 
@@ -877,24 +883,24 @@ printf '%s\n' '  - template-input.yaml' >>"$TREE/k8s/controllers/test/kustomizat
 run_guard "$TREE"
 assert_rc 'revision-dependent templates supplied by selected ConfigMap data are cannot-check' 2
 assert_contains 'selected template values reach the historical-input check' 'revision-dependent chart'
-printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.2.0" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
+printf '%s\n' '{{ if eq .Capabilities.HelmVersion.Version "v4.2.4" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 pr_3580 | release
 yq -i '.spec.chart.spec.chart = "revision-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
 run_guard "$TREE"
 assert_rc 'the audited SDK renders HelmVersion-dependent charts' 0
 # shellcheck disable=SC2016 # Go raw-string template keys must remain literal.
-printf '%s\n' '{{ if eq (index (.Capabilities | toJson | fromJson) `HelmVersion`).Version "v4.2.0" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
+printf '%s\n' '{{ if eq (index (.Capabilities | toJson | fromJson) `HelmVersion`).Version "v4.2.4" }}' 'apiVersion: v1' 'kind: ConfigMap' 'metadata:' '  name: cli-version' '{{ end }}' \
   >"$scratch/charts/revision-sensitive/templates/revision.yaml"
 run_guard "$TREE"
 assert_rc 'raw-string HelmVersion properties use the audited SDK metadata' 0
 
-# The official CLI adds a pod securityContext only in its v4.2.0 capability branch.
+# The official CLI adds a pod securityContext only in its v4.2.4 capability branch.
 # Flux's embedded SDK exposes v4.2, so its render lacks that parent and the JSON leaf add must
 # fail. A renderer that silently returns to the CLI would incorrectly report this patch clean.
 cp -R "$chart" "$scratch/charts/sdk-sensitive"
 yq -i '.name = "sdk-sensitive"' "$scratch/charts/sdk-sensitive/Chart.yaml"
-sed 's/semverCompare "<0.50.0" .Chart.Version/eq .Capabilities.HelmVersion.Version "v4.2.0"/' \
+sed 's/semverCompare "<0.50.0" .Chart.Version/eq .Capabilities.HelmVersion.Version "v4.2.4"/' \
   "$chart/templates/deployment.yaml" >"$scratch/charts/sdk-sensitive/templates/deployment.yaml"
 new_tree
 pr_pod_leaf_add | release
@@ -929,7 +935,7 @@ assert_rc 'a correct post-renderer applies to both SDK install and upgrade rende
 
 cp -R "$scratch/charts/sdk-sensitive" "$scratch/charts/sdk-upgrade-sensitive"
 yq -i '.name = "sdk-upgrade-sensitive"' "$scratch/charts/sdk-upgrade-sensitive/Chart.yaml"
-sed 's/(eq .Capabilities.HelmVersion.Version "v4.2.0")/(or (not .Release.IsUpgrade) (eq .Capabilities.HelmVersion.Version "v4.2.0"))/' \
+sed 's/(eq .Capabilities.HelmVersion.Version "v4.2.4")/(or (not .Release.IsUpgrade) (eq .Capabilities.HelmVersion.Version "v4.2.4"))/' \
   "$scratch/charts/sdk-sensitive/templates/deployment.yaml" >"$scratch/charts/sdk-upgrade-sensitive/templates/deployment.yaml"
 pr_pod_leaf_add | release
 yq -i '.spec.chart.spec.chart = "sdk-upgrade-sensitive"' "$TREE/k8s/controllers/test/helm-release.yaml"
@@ -975,7 +981,7 @@ YAML
                 value: ""
               - op: test
                 path: /data/compiler
-                value: go1.26.3
+                value: go1.26.8
               - op: test
                 path: /data/client
                 value: v1.36

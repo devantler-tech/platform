@@ -11,8 +11,8 @@ equal to `generation`, while every later reconcile logged that the release was i
 
 ## Why it happens
 
-It is helm-controller behaviour, read from the released source of v1.5.5 (the version production
-runs) and unchanged in v1.6.5 and on its `main` branch on 2026-10-07:
+It is helm-controller behaviour, read from the released source of v1.5.5 and unchanged in v1.6.5 (the
+version production runs, with Flux 2.9) and on its `main` branch on 2026-10-07:
 
 - The controller decides a release needs an upgrade by comparing the chart, the values and a digest
   of the post-renderers with what it last observed.
