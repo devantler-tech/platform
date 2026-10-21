@@ -49,26 +49,20 @@ for control in current missing false string; do
     echo 'FAIL: the current graph did not complete successfully' >&2
     exit 1
   }
-  # CLI 1.19.1 writes this exact API deprecation to stdout before its JSON.
-  # Strip only that one known line; unexpected output still fails JSON parsing.
-  warning="Warning: $policy: kyverno.io/v1 ClusterPolicy is deprecated and will be removed in a future release; migrate to ValidatingPolicy, MutatingPolicy, GeneratingPolicy or ImageValidatingPolicy (policies.kyverno.io), see https://kyverno.io/docs/guides/migration-to-cel/"
-  if [ "$(head -n 1 "$scratch/$control-report.json")" = "$warning" ]; then
-    tail -n +2 "$scratch/$control-report.json" >"$scratch/$control-verdict.json"
-  else
-    cp "$scratch/$control-report.json" "$scratch/$control-verdict.json"
-  fi
+  # The policy is a ValidatingPolicy: one result per resource, no rule names.
+  # Its container-security expression shares one message with three sibling
+  # conditions, so the denial is attributed by construction: the current graph
+  # passes, and each control changes only runAsNonRoot from that graph.
   jq -es --argjson denied "$expected_fail" '
     length == 1 and (.[0] |
     .kind == "ClusterReport" and
-    .summary == {pass:(3-$denied),fail:$denied,warn:0,error:0,skip:0} and
-    (.results|length) == 3 and
-    ([.results[].rule]|sort) == ["autogen-deny-container-seccomp-unconfined","autogen-require-seccomp-profile","autogen-validate-container-security"] and
-    all(.results[]; .policy == "validate-pod-security" and
+    .summary == {pass:(1-$denied),fail:$denied,warn:0,error:0,skip:0} and
+    (.results|length) == 1 and
+    all(.results[]; .source == "KyvernoValidatingPolicy" and .policy == "validate-pod-security" and
       (.result == "pass" or .result == "fail") and
       .resources == [{kind:"Deployment",namespace:"webapp-admission-fixture",name:"webapp-admission-fixture",apiVersion:"apps/v1"}]) and
-    all(.results[]|select(.result == "fail"); .rule == "autogen-validate-container-security" and
-      (.message|contains("/securityContext/runAsNonRoot/"))))
-  ' "$scratch/$control-verdict.json" >/dev/null || {
+    all(.results[]|select(.result == "fail"); .message|contains("runAsNonRoot=true")))
+  ' "$scratch/$control-report.json" >/dev/null || {
     echo "FAIL: actual WebApp container-security control $control did not evaluate as expected" >&2
     cat "$scratch/$control-report.json" >&2
     cat "$scratch/$control.log" >&2
