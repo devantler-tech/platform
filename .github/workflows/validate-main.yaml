@@ -37,6 +37,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  validate-webapp-compiler:
+    name: 🧩 Compile WebApp with pinned KRO
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: scripts/tests/webapp-compiler/go.mod
+          cache: false
+      - name: 📌 Install reviewed YAML parser
+        env:
+          GOBIN: ${{ runner.temp }}/webapp-compiler-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+      - name: 🧩 Compile the committed WebApp and refusal controls
+        run: bash scripts/tests/test-webapp-compiler.sh
+
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization
     runs-on: ubuntu-latest
