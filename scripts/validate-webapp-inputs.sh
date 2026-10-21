@@ -6,7 +6,12 @@ if [ "$#" -gt 1 ]; then
   echo 'usage: validate-webapp-inputs.sh [json-file|-]' >&2
   exit 2
 fi
-if ! GOWORK=off go -C "$root" run ./scripts/validate-webapp-inputs json "${1:--}" "$root/scripts/webapp-inputs.jq" >/dev/null; then
+input="${1:--}"
+case "$input" in
+  -|/*) ;;
+  *) input="$(pwd -P)/$input" ;;
+esac
+if ! GOWORK=off go -C "$root" run ./scripts/validate-webapp-inputs json "$input" "$root/scripts/webapp-inputs.jq" >/dev/null; then
   echo 'FAIL: WebApp source is incomplete, unknown or outside the confined input contract' >&2
   exit 1
 fi
