@@ -102,6 +102,7 @@ jobs:
               - 'tests/policy-failure-actions.json'
               - '.github/scripts/setup-ksail.sh'
               - '.github/scripts/kyverno-version.sh'
+              - 'scripts/tests/test-webapp-container-security.sh'
               - 'scripts/guard-cilium-sni/**'
               - 'scripts/tests/test-setup-ksail.sh'
               - '.github/scripts/setup-talosctl.sh'
@@ -1616,6 +1617,8 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          shellcheck scripts/tests/test-webapp-container-security.sh
+          bash scripts/tests/test-webapp-container-security.sh
           shellcheck scripts/tests/test-hcloud-volume-priority.sh
           bash scripts/tests/test-hcloud-volume-priority.sh
           shellcheck scripts/tests/test-tetragon-agent-priority.sh
@@ -3409,6 +3412,20 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: ⚖️ Read Kyverno CLI version for WebApp admission
+        id: webapp-kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+
+      - name: ⚖️ Install Kyverno CLI for WebApp admission
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.webapp-kyverno-version.outputs.release }}
+
+      - name: ⚖️ Validate the exact merge-group WebApp security template
+        run: |
+          shellcheck scripts/tests/test-webapp-container-security.sh
+          bash scripts/tests/test-webapp-container-security.sh
 
       - name: ⚙️ Setup Trivy for nested RGD templates
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1

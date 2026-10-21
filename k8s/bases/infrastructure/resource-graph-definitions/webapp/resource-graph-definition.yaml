@@ -176,6 +176,9 @@ spec:
                       cpu: ${schema.spec.cpuLimit}
                       memory: ${schema.spec.memoryLimit}
                   securityContext:
+                    # The controller-template admission rule requires this
+                    # explicitly; Pod-level inheritance is not sufficient.
+                    runAsNonRoot: true
                     allowPrivilegeEscalation: false
                     readOnlyRootFilesystem: false
                     capabilities:
