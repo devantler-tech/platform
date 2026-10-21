@@ -1,0 +1,18 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-webapps
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-webapps.yaml
+resources:
+  - resources.yaml
+userinfo: user-info.yaml
+results:
+  - policy: restrict-tenant-webapps
+    resources: [tenant-a/tenant-a]
+    kind: WebApp
+    result: pass
+  - policy: restrict-tenant-webapps
+    resources: [tenant-b/tenant-b]
+    kind: WebApp
+    result: fail

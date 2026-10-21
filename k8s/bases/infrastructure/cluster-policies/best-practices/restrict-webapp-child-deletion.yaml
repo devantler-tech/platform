@@ -1,0 +1,63 @@
+# KRO 0.9.2 deletes graph targets by name without an ownership precondition.
+# A failed collision followed by parent deletion must not delete another app.
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-webapp-child-deletion
+  annotations:
+    policies.kyverno.io/title: Bind WebApp Cleanup to Its Deleting Owner
+    policies.kyverno.io/category: Security, Multi-Tenancy
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Deployment, Service, HTTPRoute
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["deployments"]
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["services"]
+      - apiGroups: ["gateway.networking.k8s.io"]
+        apiVersions: ["v1"]
+        operations: ["DELETE"]
+        resources: ["httproutes"]
+  variables:
+    - name: kro
+      expression: "request.userInfo.username == 'system:serviceaccount:kro-system:kro'"
+    - name: labels
+      expression: "oldObject.metadata.?labels.orValue({})"
+    - name: node
+      expression: "oldObject.kind == 'Deployment' ? 'deployment' : oldObject.kind == 'Service' ? 'service' : 'httpRoute'"
+    - name: owned
+      expression: >-
+        variables.labels[?'kro.run/instance-kind'].orValue('') == 'WebApp' &&
+        variables.labels[?'kro.run/instance-group'].orValue('') == 'kro.run' &&
+        variables.labels[?'kro.run/instance-version'].orValue('') == 'v1alpha1' &&
+        variables.labels[?'kro.run/instance-id'].orValue('').matches('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') &&
+        variables.labels[?'kro.run/node-id'].orValue('') == variables.node &&
+        variables.labels[?'applyset.kubernetes.io/part-of'].orValue('') != '' &&
+        variables.labels[?'kro.run/instance-name'].orValue('') == oldObject.metadata.name &&
+        oldObject.metadata.name == oldObject.metadata.namespace &&
+        (variables.labels[?'kro.run/instance-namespace'].orValue('') == oldObject.metadata.namespace ||
+        (variables.labels[?'kro.run/instance-namespace'].orValue('') == 'flux-system' &&
+        oldObject.metadata.name == 'wedding-app' && oldObject.metadata.namespace == 'wedding-app'))
+    - name: parent
+      expression: >-
+        variables.kro && variables.owned ?
+        resource.Get('kro.run/v1alpha1', 'webapps', variables.labels['kro.run/instance-namespace'], variables.labels['kro.run/instance-name']) : {}
+  validations:
+    - expression: >-
+        (!variables.kro && !variables.owned) ||
+        (variables.kro && variables.owned &&
+        variables.parent.metadata.?uid.orValue('') == variables.labels['kro.run/instance-id'] &&
+        variables.parent.metadata.?deletionTimestamp.orValue(null) != null)
+      message: KRO may clean up only an owned WebApp child whose matching parent is being deleted.

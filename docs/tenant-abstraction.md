@@ -84,6 +84,58 @@ needs**, not to reconsider the technology.
 
 ## Consequences
 
+### Tenant-owned WebApps: opt-in permission and ownership boundary
+
+`Tenant.spec.webApp` defaults to `false`. Setting it to `true` adds a namespaced
+RoleBinding to the dedicated, nonaggregated `tenant-webapp-edit` ClusterRole. It
+grants CRUD on `kro.run/webapps` only; it does not grant status, Tenant/RGD, RBAC,
+impersonation or exec access. Existing tenants are not opted in by this change.
+
+Tenant-owned WebApps must use their namespace as both parent name and
+`spec.name`, which selects the generated workload namespace. That target is
+immutable. Only KRO may establish/change reserved KRO/ApplySet metadata; its
+parent writes may maintain metadata/status but not change application spec.
+Tenant writers must preserve KRO's cleanup finalizer as well as reserved labels
+and annotations; they cannot force orphaning by removing that finalizer.
+The existing platform-owned `flux-system/wedding-app` pilot is an exact
+exception, not a wildcard namespace exemption.
+
+KRO 0.9.2 identifies children through ApplySet and `kro.run/instance-*` labels,
+not WebApp owner references. Child admission therefore checks their complete
+placement/identity and refuses updates that would adopt an unlabelled or
+foreign-owned Deployment, Service or HTTPRoute. Non-controller writers must
+preserve reserved ownership labels. Controller updates may change provenance
+such as `kro.run/kro-version`, while instance/node/ApplySet identity remains fixed.
+Existing hostname, secret-store and
+network admission remain in force; KRO has no hostname bypass.
+
+KRO's pinned deletion path does not itself verify child ownership. Deletion
+admission additionally requires complete old child ownership, a read of the
+labelled parent's matching UID, and that parent's deletion timestamp. This
+prevents failed collision/rollback from deleting an unowned workload or another
+active parent's child. The admission controller gains only `get` on WebApps for
+that check; missing/refused reads fail closed. Non-controller writers may delete
+ordinary unowned workloads, while owned child cleanup remains controller-only.
+The current graph has three
+unconditional children; future pruning under an active parent requires a
+separately reviewed authorization change.
+
+`scripts/tests/test-tenant-webapp-boundary.sh` tests the actual policies with
+the pinned Kyverno compiler/engine. Its request adapter supplies distinct
+old/new objects and explicit status subresources: CLI 1.19.1's CEL adapter
+copies the new object into the old one on UPDATE and drops subresources, so
+CLI UPDATE fixtures alone cannot establish these protections. The regular
+Kyverno fixture census is retained for CREATE/DELETE selection and denial
+coverage. Cross-resource deletion controls feed fictional parent snapshots to
+the upstream engine; they do not prove live API authorization or convergence.
+
+These are source/admission controls, not proof that a signed tenant artifact
+has reconciled through a live controller. Issue #4897 retains that runtime
+acceptance. No business-site Tenant, portal activation, database, hostname or
+customer-facing routing is introduced by this foundation. Private-input
+projection (#4854) and the business repository's signed manifest (#102 there)
+remain separate prerequisites.
+
 **Positive** — onboarding a tenant is one small typed CR; the drift is gone; the abstraction is typed
 and `kubectl`-native with CRD-schema validation; no Helm/overlay stacking; the isolation posture is
 templated verbatim.

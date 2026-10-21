@@ -159,6 +159,11 @@ spec:
       rbac:
         clusterRole:
           extraResources:
+            # Read only the owning WebApp for deletion admission. No mutation,
+            # list/watch, Secret or other application-data authority is added.
+            - apiGroups: ["kro.run"]
+              resources: ["webapps"]
+              verbs: ["get"]
             # The auto-vpa ClusterPolicy generates VPA objects for every
             # Deployment / StatefulSet.  Kyverno needs RBAC on the target
             # resource type for generate rules to work.

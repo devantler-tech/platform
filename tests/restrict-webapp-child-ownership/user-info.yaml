@@ -1,0 +1,6 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: kro-controller
+userInfo:
+  username: system:serviceaccount:kro-system:kro

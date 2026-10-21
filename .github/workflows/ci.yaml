@@ -122,6 +122,8 @@ jobs:
               - 'internal/strictjson/**'
               - 'scripts/tests/test-kyverno-auth-reviews.sh'
               - 'scripts/tests/kyverno-auth-reviews/**'
+              - 'scripts/tests/test-tenant-webapp-boundary.sh'
+              - 'scripts/tests/tenant-webapp-admission/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
@@ -1617,6 +1619,8 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          shellcheck scripts/tests/test-tenant-webapp-boundary.sh
+          bash scripts/tests/test-tenant-webapp-boundary.sh
           shellcheck scripts/tests/test-webapp-container-security.sh
           bash scripts/tests/test-webapp-container-security.sh
           shellcheck scripts/tests/test-hcloud-volume-priority.sh

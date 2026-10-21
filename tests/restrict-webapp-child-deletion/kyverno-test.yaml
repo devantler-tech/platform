@@ -1,0 +1,15 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-webapp-child-deletion
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-webapp-child-deletion.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: ../restrict-webapp-child-ownership/user-info.yaml
+results:
+  - policy: restrict-webapp-child-deletion
+    resources: [tenant-b/tenant-b]
+    kind: Service
+    result: fail
