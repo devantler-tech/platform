@@ -1,0 +1,15 @@
+---
+# The namespace holds a claim, but not the one the Pod mounts.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Context
+metadata:
+  name: context
+spec:
+  resources:
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: data-some-other-claim
+        namespace: observability
+      spec:
+        storageClassName: hcloud
