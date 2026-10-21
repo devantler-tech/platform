@@ -40,6 +40,19 @@ canonical publisher. A canonical observation must match one of that consumer's
 fixed reviewed approvals; daily regeneration cannot approve a new canonical
 revision.
 
+The legacy release candidate is historical evidence in
+`scripts/frozen-legacy-publisher-release.tsv`, not a live release lookup. The
+reviewed record binds the final stable release to one commit and both publisher
+source blobs. Regeneration validates the complete record and refuses malformed,
+missing or inconsistent evidence without querying the retired repository. The
+obsolete legacy-release watcher is removed; the scheduled approval regeneration
+still observes real consumer publications and current pins. This does not approve
+any maintained revision or waive its consumer-specific canonical approval.
+
+```bash
+bash scripts/tests/test-frozen-legacy-publisher-release.sh
+```
+
 The framework supports `publish-manifests` and `publish-app`, but an approval
 must match the registered consumer's publishing workflow. Family support alone
 grants no signer authority: a separately reviewed record must name the consumer,
