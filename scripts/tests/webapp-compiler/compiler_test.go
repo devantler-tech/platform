@@ -160,6 +160,16 @@ func TestCommittedWebApp(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
+			resources, err := discoveryClient.ServerResourcesForGroupVersion("kro.run/v1alpha1")
+			if err != nil {
+				if apierrors.IsNotFound(err) {
+					return false, nil
+				}
+				return false, err
+			}
+			if !webAppServed(resources) {
+				return false, nil
+			}
 			paths, err := discoveryClient.OpenAPIV3().Paths()
 			if err != nil {
 				return false, err
@@ -171,6 +181,12 @@ func TestCommittedWebApp(t *testing.T) {
 			_, err = path.Schema("application/json")
 			return err == nil, err
 		}); err != nil {
+			t.Fatal(err)
+		}
+		// The prior client may have discovered this group when it contained only
+		// ResourceGraphDefinitions. A fresh mapper must bind the generated resource.
+		apiClient, err := client.New(config, client.Options{Scheme: scheme})
+		if err != nil {
 			t.Fatal(err)
 		}
 		instance := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -347,6 +363,40 @@ func TestCommittedWebApp(t *testing.T) {
 			t.Fatal("a partial graph must never claim all three children")
 		}
 	})
+}
+
+func webAppServed(resources *metav1.APIResourceList) bool {
+	if resources == nil || resources.GroupVersion != "kro.run/v1alpha1" {
+		return false
+	}
+	for _, resource := range resources.APIResources {
+		if resource.Name == "webapps" && resource.Kind == "WebApp" && resource.Namespaced {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWebAppDiscoveryRequiresGeneratedResource(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		resource metav1.APIResource
+		want     bool
+	}{
+		{"preexisting graph resource", metav1.APIResource{Name: "resourcegraphdefinitions", Kind: "ResourceGraphDefinition"}, false},
+		{"actual namespaced application", metav1.APIResource{Name: "webapps", Kind: "WebApp", Namespaced: true}, true},
+		{"wrong kind", metav1.APIResource{Name: "webapps", Kind: "Other", Namespaced: true}, false},
+		{"wrong scope", metav1.APIResource{Name: "webapps", Kind: "WebApp"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := webAppServed(&metav1.APIResourceList{GroupVersion: "kro.run/v1alpha1", APIResources: []metav1.APIResource{tc.resource}}); got != tc.want {
+				t.Fatalf("generated API readiness = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if webAppServed(nil) {
+		t.Fatal("missing discovery is not readiness")
+	}
 }
 
 func newCompilerEnvironment(t *testing.T, crds []*extv1.CustomResourceDefinition) *envtest.Environment {
