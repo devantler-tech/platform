@@ -3666,6 +3666,12 @@ Nothing is added or removed, and every other ledger line is unchanged. The
 tenant definition's separate core fingerprint changes with the same reviewed
 subject. No RBAC, IAM, credential or permission grant changes.
 
+The nested-template scanner also binds the complete graph and each finding's
+semantic cause. Its ratchet changes only the graph digest and the existing OCI
+source's two whole-node cause digests. Independent canonical JSON hashing
+reproduces the old and new values. Finding counts, targets, IDs and severities
+are unchanged; no finding or scanner check is ignored or added to the baseline.
+
 Independent full-object comparisons verify that the six manifests change
 only their intended subject fields and the app-admission diagnostic wording;
 all other content is identical. The committed-profile controls reproduce six
