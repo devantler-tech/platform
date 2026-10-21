@@ -16,6 +16,11 @@ kind: FluxInstance
 metadata:
   name: flux
   namespace: flux-system
+  annotations:
+    # Never garbage-collect: deleting the FluxInstance uninstalls Flux. This
+    # must be live before the FluxInstance moves to its own Flux Kustomization
+    # (platform#5184), so that no layer can prune it during the hand-over.
+    kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   distribution:
     version: "2.8.x"
