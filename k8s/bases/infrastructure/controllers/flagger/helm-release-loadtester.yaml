@@ -73,6 +73,7 @@ spec:
   # With only two eligible workers, required cross-node affinity prevents a
   # third surge pod from scheduling. Retire one old pod before replacing it;
   # the remaining replica stays available throughout the rollout.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

@@ -26,6 +26,7 @@ spec:
   # applied here as a post-render kustomize patch (strategic-merge merges the
   # named containers/volumes additively; every other securityContext field —
   # capabilities.drop, runAsUser, seccompProfile — is preserved).
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

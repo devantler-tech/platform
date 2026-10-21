@@ -18,11 +18,11 @@ fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 for tool in kubectl helm yq jq; do
   command -v "${tool}" >/dev/null || fail "${tool} is required"
 done
-[[ "$(helm version --template '{{.Version}}')" == v4.2.0 ]] || fail 'the audited Helm v4.2.0 chart puller is required'
+[[ "$(helm version --template '{{.Version}}')" == v4.2.4 ]] || fail 'the audited Helm v4.2.4 chart puller is required'
 [[ -n "${CONTROLLER_HELM:-}" && -x "${CONTROLLER_HELM}" ]] || fail 'the audited controller SDK renderer is required'
 [[ "$("${CONTROLLER_HELM}" version --template '{{ printf "%#v" . }}')" == \
-  'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.3", KubeClientVersion:"v1.36"}' ]] ||
-  fail 'controller SDK renderer metadata does not match Flux 2.8.8'
+  'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ]] ||
+  fail 'controller SDK renderer metadata does not match Flux 2.9.6'
 kube_version="$(yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")' "${root}/ksail.prod.yaml")"
 
 kubectl kustomize "${release_dir}" | yq -o=json \
@@ -59,7 +59,7 @@ render() {
   [[ "${phase}" == install ]] || args+=(--is-upgrade)
   "${CONTROLLER_HELM}" template longhorn "${work}/longhorn-1.13.0.tgz" --namespace longhorn-system \
     --kube-version "${kube_version}" --values "${work}/${mode}-values.json" "${args[@]}" >"${dir}/chart.yaml"
-  # Flux 2.8.8 post-renders regular manifests only; lifecycle hooks stay untouched.
+  # Releases set postRenderStrategy: nohooks, so lifecycle hooks stay untouched.
   yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' \
     "${dir}/chart.yaml" >"${dir}/resources.yaml"
   yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] != null)' \

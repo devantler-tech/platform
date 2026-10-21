@@ -45,6 +45,7 @@ spec:
             app.kubernetes.io/instance: whoami
     ingress:
       enabled: false
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

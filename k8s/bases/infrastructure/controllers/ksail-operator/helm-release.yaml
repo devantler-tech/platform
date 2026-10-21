@@ -83,6 +83,7 @@ spec:
   # chart exposes no securityContext value, so set the UID via a post-renderer.
   # add-security-context uses +(...) add-anchors, so it layers
   # runAsNonRoot/seccomp/drop-caps on top without clobbering this runAsUser.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

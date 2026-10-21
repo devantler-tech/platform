@@ -105,6 +105,7 @@ spec:
   # the live one so drift detection (which does not ignore /spec/strategy) sees
   # no diff. Leader election makes the brief pod overlap a rolling update allows
   # safe.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

@@ -45,6 +45,7 @@ spec:
     certManager:
       namespace: cert-manager
       serviceAccountName: cert-manager
+  postRenderStrategy: nohooks
   postRenderers:
     # The chart renders no securityContext at all (and offers no values knob),
     # which fails the validate-container-security Kyverno baseline. The solver

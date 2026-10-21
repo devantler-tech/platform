@@ -380,6 +380,7 @@ spec:
   # component that legitimately gains one would lose it without any error. Being
   # non-root does not make that safe on its own: a file capability on the binary
   # would still take effect. Re-check this patch when bumping the chart.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:
