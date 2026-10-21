@@ -4,8 +4,7 @@ kind: Kustomization
 resources:
   - config-map.yaml
   - flux-kustomization-bootstrap.yaml
+  - flux-kustomization-flux-instance.yaml
   - flux-kustomization-infrastructure-controllers.yaml
   - flux-kustomization-infrastructure.yaml
   - flux-kustomization-apps.yaml
-
-

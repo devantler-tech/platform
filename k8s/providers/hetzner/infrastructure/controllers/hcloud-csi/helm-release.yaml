@@ -148,6 +148,7 @@ spec:
   # level or MCS category, so every container keeps the runtime's own SELinux
   # defaults -- including the privileged hcloud-csi-driver container on the node
   # DaemonSet, which the runtime already labels spc_t.
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

@@ -148,7 +148,7 @@ func TestRenderedStrategyClearsRetainedRollingUpdate(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			force := true // helm-controller v1.5.5 forces conflicts for SSA upgrades.
+			force := true // helm-controller (v1.5.5 through v1.6.5) forces conflicts for SSA upgrades.
 			apply := func(object *unstructured.Unstructured) (*unstructured.Unstructured, error) {
 				payload, err := object.MarshalJSON()
 				if err != nil {

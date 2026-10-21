@@ -15,6 +15,7 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: actual-budget
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

@@ -940,8 +940,8 @@ jobs:
       - name: ⎈ Install checksum-verified native Helm
         shell: bash
         env:
-          HELM_VERSION: v4.2.0
-          HELM_SHA256: 97dbeb971be4ac4b27e3839976d9564c0fb35c6f3b1da89dd1e292d236af4096
+          HELM_VERSION: v4.2.4
+          HELM_SHA256: c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3
         run: |
           set -euo pipefail
           native_dir="$(mktemp -d)"
@@ -3608,10 +3608,10 @@ jobs:
           cache: false
 
       - name: 🧩 Install the audited controller's Helm renderer
-        # Flux 2.8.8 / helm-controller 1.5.5 embeds upstream Helm 4.2.0. The
+        # Flux 2.9.6 / helm-controller 1.6.5 embeds upstream Helm 4.2.4. The
         # runner's ambient Helm is not proof of matching template capabilities.
         env:
-          HELM_VERSION: v4.2.0
+          HELM_VERSION: v4.2.4
         run: |
           install_dir="$(mktemp -d)"
           cd "$install_dir"
@@ -3656,7 +3656,7 @@ jobs:
 
       - name: 🧩 Apply the actual Whoami chart's post-renderers
         run: |
-          bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --release whoami/whoami \
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.9.6 --release whoami/whoami \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 
       - name: 🧩 Verify independent reloader placement
@@ -3738,7 +3738,7 @@ jobs:
             github.event.merge_group.base_sha }}
         run: |
           base_kube_version="$(git show "${BASE_SHA}:ksail.prod.yaml" | yq -er '.spec.cluster.kubernetesVersion | select(tag == "!!str" and . != "")')"
-          bash scripts/guard-helm-post-renderers.sh --flux-version 2.8.8 --base "$BASE_SHA" \
+          bash scripts/guard-helm-post-renderers.sh --flux-version 2.9.6 --base "$BASE_SHA" \
             --base-kube-version "$base_kube_version" \
             --kube-version "$(yq -r '.spec.cluster.kubernetesVersion' ksail.prod.yaml)" k8s
 

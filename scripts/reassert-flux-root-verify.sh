@@ -5,7 +5,7 @@
 # recoverable (platform#3014).
 #
 # WHY. The trust configuration for the root source is delivered THROUGH that
-# source: flux-instance.yaml → Kustomization infrastructure-controllers →
+# source: flux-instance.yaml → Kustomization flux-instance →
 # FluxInstance/flux → rendered by flux-operator onto OCIRepository/flux-system,
 # which must verify the artifact carrying that very config. Once the live
 # matcher is wrong, main can hold the corrected value and never deliver it:

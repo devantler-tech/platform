@@ -26,6 +26,7 @@ spec:
       valuesKey: client-secret
       targetPath: config.oidc.clientSecret
       optional: true
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

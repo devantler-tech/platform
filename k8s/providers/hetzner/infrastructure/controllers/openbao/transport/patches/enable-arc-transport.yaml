@@ -10,6 +10,7 @@ spec:
   dependsOn:
     - name: cert-manager
       namespace: cert-manager
+  postRenderStrategy: nohooks
   postRenderers:
     - kustomize:
         patches:

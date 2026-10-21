@@ -33,7 +33,8 @@ resources:
   - ../../../../bases/infrastructure/controllers/cloudnative-pg/
   # --- Core: docker-provider-local ----------------------------------------
   - coredns/
-  - flux-instance/
+  # flux-instance/ is applied by its own Flux Kustomization (flux-instance),
+  # ahead of this layer: see k8s/clusters/base/flux-kustomization-flux-instance.yaml.
   - namespace.yaml
   - cilium-network-policy.yaml
   #
