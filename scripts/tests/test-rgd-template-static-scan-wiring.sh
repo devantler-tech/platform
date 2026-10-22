@@ -30,6 +30,39 @@ k8s_filter_json="$(yq -o=json -I=0 '
   from_yaml | .k8s
 ' "$CI_WORKFLOW")"
 
+# Every scanner runs the source validator from this checkout. Tool setup in another
+# job (or after this step) cannot supply that job's required compiler.
+check_scanner_go() {
+  local workflow="$1" job="$2" module="$3" label="$4"
+  jq -e --arg job "$job" --arg module "$module" --arg behavior_run "$BEHAVIORAL_RUN" '
+    .jobs[$job].steps as $steps
+    | [$steps | to_entries[] | select(.value.run == $behavior_run) | .key] as $scans
+    | [$steps | to_entries[] | select(
+        .value.uses == "actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+        and .value.with["go-version-file"] == $module
+        and (.value.with | has("go-version") | not)
+        and (.value | has("if") | not)
+        and (.value["continue-on-error"] // false) == false
+      ) | .key] as $setups
+    | [$steps | to_entries[] | select(
+        ((.value.uses // "") | startswith("actions/checkout@"))
+        and (.value | has("if") | not)
+        and (.value["continue-on-error"] // false) == false
+      ) | .key] as $checkouts
+    | ($scans | length) == 1
+      and ([$steps[] | select((.uses // "") | startswith("actions/setup-go@"))] | length) == 1
+      and ($setups | length) == 1
+      and any($checkouts[]; . < $setups[0])
+      and $setups[0] < $scans[0]
+  ' <<<"$workflow" >/dev/null || fail "$label scanner lacks unconditional checkout-bound Go setup before execution"
+}
+check_scanner_go "$ci_workflow_json" validate-rgd-templates go.mod PR
+check_scanner_go "$ci_workflow_json" validate-rgd-templates-merge-group scripts/tests/webapp-compiler/go.mod merge-group
+check_scanner_go "$ci_workflow_json" heal-prod-on-failure go.mod heal
+check_scanner_go "$main_workflow_json" validate-rgd-templates go.mod main
+check_scanner_go "$cd_workflow_json" validate-rgd-templates go.mod CD
+check_scanner_go "$dr_workflow_json" rebuild go.mod DR
+
 jq -e --arg wiring_run "$WIRING_RUN" '
   .jobs["validate-repository-guards"] as $wiring_job
   | (($wiring_job["continue-on-error"] // false) == false)
@@ -197,6 +230,57 @@ jq -e --arg setup "$SETUP_TRIVY" --arg behavior_run "$BEHAVIORAL_RUN" \
 if [ "${RGD_WIRING_SKIP_ABLATIONS:-false}" != "true" ]; then
   ablation_work="$(mktemp -d)"
   trap 'rm -rf "$ablation_work"' EXIT
+
+  # Each real route must reject a missing, late, skipped, suppressed or unrelated
+  # compiler setup. Run the complete wiring validator against each mutated file.
+  for route in \
+    'ci|validate-rgd-templates|PR' \
+    'ci|validate-rgd-templates-merge-group|merge-group' \
+    'ci|heal-prod-on-failure|heal' \
+    'main|validate-rgd-templates|main' \
+    'cd|validate-rgd-templates|CD' \
+    'dr|rebuild|DR'; do
+    IFS='|' read -r workflow_kind go_job go_label <<<"$route"
+    case "$workflow_kind" in
+      ci) go_workflow="$CI_WORKFLOW"; go_override=RGD_WIRING_CI_WORKFLOW ;;
+      main) go_workflow="$MAIN_WORKFLOW"; go_override=RGD_WIRING_MAIN_WORKFLOW ;;
+      cd) go_workflow="$CD_WORKFLOW"; go_override=RGD_WIRING_CD_WORKFLOW ;;
+      dr) go_workflow="$DR_WORKFLOW"; go_override=RGD_WIRING_DR_WORKFLOW ;;
+    esac
+    go_ablation_index=0
+    for mutation in \
+      'del(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/setup-go@")))' \
+      '.jobs[strenv(GO_JOB)].steps |= (map(select(((.uses // "") | test("^actions/setup-go@")) | not)) + map(select((.uses // "") | test("^actions/setup-go@"))))' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/setup-go@"))).if = false' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/setup-go@"))).continue-on-error = true' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/setup-go@"))).with.go-version-file = "unrelated/go.mod"' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/setup-go@"))).uses = "actions/setup-go@unreviewed"' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/setup-go@"))).with.go-version = "1.20"' \
+      '(.jobs[strenv(GO_JOB)].steps[] | select((.uses // "") | test("^actions/checkout@"))).if = false'; do
+      go_ablation_index=$((go_ablation_index + 1))
+      go_fixture="${ablation_work}/go-${workflow_kind}-${go_job}-${go_ablation_index}.yaml"
+      cp "$go_workflow" "$go_fixture"
+      GO_JOB="$go_job" yq -i "$mutation" "$go_fixture"
+      if env "$go_override=$go_fixture" RGD_WIRING_SKIP_ABLATIONS=true \
+        "$0" >"${ablation_work}/go-refused.log" 2>&1; then
+        fail "the wiring validator accepted $go_label compiler mutation $go_ablation_index"
+      fi
+      grep -Fq "$go_label scanner lacks unconditional checkout-bound Go setup" \
+        "${ablation_work}/go-refused.log" || fail "$go_label compiler mutation failed for an unrelated reason"
+    done
+    go_fixture="${ablation_work}/go-${workflow_kind}-${go_job}-override.yaml"
+    yq -o=json '.' "$go_workflow" | jq --arg job "$go_job" '
+      .jobs[$job].steps |= [.[] |
+        if ((.uses // "") | startswith("actions/setup-go@"))
+        then ., (.with["go-version"] = "1.20") else . end]
+    ' >"$go_fixture"
+    if env "$go_override=$go_fixture" RGD_WIRING_SKIP_ABLATIONS=true \
+      "$0" >"${ablation_work}/go-override.log" 2>&1; then
+      fail "the wiring validator accepted a second overriding $go_label compiler setup"
+    fi
+    grep -Fq "$go_label scanner lacks unconditional checkout-bound Go setup" \
+      "${ablation_work}/go-override.log" || fail "$go_label override failed for an unrelated reason"
+  done
 
   # Prove the independent PR route and required aggregate cannot lose the scan.
   pr_ablation_index=0
