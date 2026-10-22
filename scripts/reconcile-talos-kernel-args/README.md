@@ -296,6 +296,13 @@ dependency bumps outside the fold: the AWS SDK STS service v1.51.2 and Wails
 v3.0.0-beta.28. The Go directive and the Talos machinery module are unchanged,
 so the mirrored fold still holds.
 
+**7.202.80**, commit `f4c2ac75d39da783f57e91e824303d0957308071`, is audited
+against 7.202.76. The Talos generator, chart, configuration manager and cluster
+API are byte-identical. Only `go.mod` and `go.sum` change, through AWS SDK patch
+bumps outside the fold: config v1.33.7, credentials v1.20.7, smithy-go v1.28.4
+and the indirect signin, sso and ssooidc services. The Go directive and the
+Talos machinery module are unchanged, so the mirrored fold still holds.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
