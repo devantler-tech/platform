@@ -149,6 +149,27 @@ extract_rbac() {
     "$rendered"
 }
 
+# Applies a HelmRelease's kustomize post-renderers to one render in place, in order,
+# as Flux does after helm template. Each post-renderer becomes a kustomization over
+# the previous output, carrying its patches and image overrides unchanged.
+post_render_release() {
+  local work="$1" rendered="$2" count index dir
+  count="$(jq '(.spec.postRenderers // []) | length' "${work}/release.json")"
+  for ((index = 0; index < count; index++)); do
+    dir="${work}/post-render-${index}"
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    cp "$rendered" "${dir}/rendered.yaml"
+    jq --argjson i "$index" '
+      .spec.postRenderers[$i].kustomize
+      | {apiVersion: "kustomize.config.k8s.io/v1beta1", kind: "Kustomization",
+         resources: ["rendered.yaml"]} + .
+    ' "${work}/release.json" | yq -p=json -o=yaml >"${dir}/kustomization.yaml"
+    kubectl kustomize "$dir" >"$rendered" ||
+      fail "$(jq -r '.metadata.name' "${work}/release.json"): post-renderer ${index} did not apply"
+  done
+}
+
 # Renders one HelmRelease from the built overlay with its effective values, as both
 # an install and an upgrade, into <work>/rbac.yaml, keeping only its Roles and
 # ClusterRoles.
@@ -178,22 +199,25 @@ render() {
     fi
   done
 
-  # The render skips Flux post-renderers, which is exact for RBAC only while every
-  # post-renderer is a kustomize patch or image override whose patches each name an
-  # explicit kind outside the RBAC API. A patch without a kind could select a role by
-  # name alone, so it fails closed too.
+  # Every post-renderer must be a kustomize patch or image override whose patches each
+  # name an explicit kind; anything else fails closed. A patch without a kind could
+  # select a role by name alone.
   jq -e '
     (.spec.postRenderers // []) | all(.[];
       keys == ["kustomize"] and
       (.kustomize | keys - ["images", "patches"] | length) == 0 and
-      ((.kustomize.patches // []) | all(.[];
-        (.target.kind // "") as $kind |
-        (.target.group // "") as $group |
-        $kind != "" and
-        ($kind | test("^(Cluster)?Role(Binding)?$") | not) and
-        $group != "rbac.authorization.k8s.io")))
+      ((.kustomize.patches // []) | all(.[]; (.target.kind // "") != "")))
   ' "${work}/release.json" >/dev/null ||
-    fail "${name}: a post-renderer is not an explicit non-RBAC kustomize patch; render it through the post-renderer"
+    fail "${name}: a post-renderer is not a kustomize patch or image override with an explicit target kind"
+  # Skipping the post-renderers is exact for RBAC only while no patch targets the RBAC
+  # API. When one does, the renders below run through the post-renderers as Flux does.
+  local post_render=false
+  jq -e '
+    (.spec.postRenderers // []) | all(.[];
+      (.kustomize.patches // []) | all(.[];
+        (.target.kind | test("^(Cluster)?Role(Binding)?$") | not) and
+        (.target.group // "") != "rbac.authorization.k8s.io"))
+  ' "${work}/release.json" >/dev/null || post_render=true
 
   # Flux merges spec.valuesFrom before spec.values, and this render reads only the
   # inline values, so a release that sources values elsewhere fails closed.
@@ -214,6 +238,10 @@ render() {
   helm template "$release" "${work}/${chart}-${version}.tgz" \
     --namespace "$namespace" --kube-version "$kube_version" --is-upgrade \
     --values "${work}/values.json" >"${work}/rendered-upgrade.yaml"
+  if [ "$post_render" = true ]; then
+    post_render_release "${work}" "${work}/rendered-install.yaml"
+    post_render_release "${work}" "${work}/rendered-upgrade.yaml"
+  fi
   extract_rbac "${work}/rendered-install.yaml" "$namespace" >"${work}/rbac-install.yaml"
   extract_rbac "${work}/rendered-upgrade.yaml" "$namespace" >"${work}/rbac-upgrade.yaml"
 
