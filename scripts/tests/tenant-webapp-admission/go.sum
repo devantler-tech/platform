@@ -570,6 +570,8 @@ github.com/kyverno/kyverno v1.19.1 h1:/MkgFii3/VlQfKR1JpC9tVwNNVNQTt2S4U6qCsafsT
 github.com/kyverno/kyverno v1.19.1/go.mod h1:j4oc847WUsfY16WBCgjYuVL/syUP8YTOZoR3AabOQ2E=
 github.com/kyverno/pod-security-admission v0.0.0-20251031094455-46f20778634f h1:9u+4QYMLdZPC8qeUB1TnfiUYRrFGYHxjYQsPiHKgJjI=
 github.com/kyverno/pod-security-admission v0.0.0-20251031094455-46f20778634f/go.mod h1:2oJ/wAoh8hld09eMTT1KzlN3dHjKEQn1xJdu1WAZMa0=
+github.com/kyverno/pod-security-admission v0.0.0-20261015135348-40bb0fb141a9 h1:a60yPq4EC9s0l68R/s1tXwxy1QP5sxXD7k0XDXcmWoY=
+github.com/kyverno/pod-security-admission v0.0.0-20261015135348-40bb0fb141a9/go.mod h1:2oJ/wAoh8hld09eMTT1KzlN3dHjKEQn1xJdu1WAZMa0=
 github.com/kyverno/sdk v0.0.0-20260825082632-68d74afcb07a h1:Oh5sST+MT/r4FcTGdTKQhr1kuB4IzoO8wxA8vAP4GTE=
 github.com/kyverno/sdk v0.0.0-20260825082632-68d74afcb07a/go.mod h1:LBPB/TdWmJ8VWZvRbc27SVHMutYX/lJIZnlFMm2xWes=
 github.com/lestrrat-go/blackmagic v1.0.4 h1:IwQibdnf8l2KoO+qC3uT4OaTWsW7tuRQXy9TRN9QanA=
