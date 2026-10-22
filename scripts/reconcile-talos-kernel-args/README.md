@@ -289,6 +289,13 @@ dependency bump outside the fold: the GitHub Copilot SDK v1.0.17. The Go
 directive and the Talos machinery module are unchanged, so the mirrored fold
 still holds.
 
+**7.202.76**, commit `1f31818acd4d4f3a28731a037db24e102850eb62`, is audited
+against 7.202.73. The Talos generator, chart, configuration manager and cluster
+API are byte-identical. Only `go.mod` and `go.sum` change, through two
+dependency bumps outside the fold: the AWS SDK STS service v1.51.2 and Wails
+v3.0.0-beta.28. The Go directive and the Talos machinery module are unchanged,
+so the mirrored fold still holds.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
