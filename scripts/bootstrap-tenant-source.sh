@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Verify one first publication without claiming that Flux has applied it.
-# Currently scoped to the requested Data Products tenant; no generic trust grant.
+# Approval bootstrap is scoped to Data Products; business-site has evidence-only mode.
 set -euo pipefail
 BOOTSTRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/generate-publish-workflow-approved-revisions.sh
@@ -9,6 +9,13 @@ source "$BOOTSTRAP_DIR/generate-publish-workflow-approved-revisions.sh"
 source "$BOOTSTRAP_DIR/tenant-publication-binding.lib.sh"
 
 bootstrap_tenant_source() (
+  if [ "${1:-}" = --consumer ]; then
+    business_site_manifest_evidence "$@" || {
+      echo 'business manifest publication could not be verified; no approval created' >&2
+      return 1
+    }
+    return 0
+  fi
   local source_root="$REPO_ROOT" source_file='' tag='' output="$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json"
   while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || {
