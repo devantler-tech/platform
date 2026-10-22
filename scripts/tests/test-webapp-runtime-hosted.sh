@@ -34,7 +34,12 @@ tar -xzf "$work/helm.tar.gz" -C "$work" linux-amd64/helm
 chmod 0700 "$work/kind" "$work/kubectl" "$work/linux-amd64/helm"
 export PATH="$work:$work/linux-amd64:$PATH"
 gateway="$(go -C "$root/scripts/tests/webapp-compiler" mod download -json sigs.k8s.io/gateway-api | jq -er .Dir)"
-[[ "$(go -C "$root/scripts/tests/webapp-compiler" list -m -f '{{.Version}}' sigs.k8s.io/gateway-api)" == v1.4.1 ]] || fail 'unreviewed route schema'
+# The reviewed route schema is the Gateway API release production serves (its
+# HTTPRoute CRD bundle-version), not the newest release KSail links. Production
+# runs the experimental channel; this checks against the standard one, which it
+# contains, so a route that passes here is valid on either. Move this pin, the
+# go.mod requirement and the Renovate ceiling together (#5218).
+[[ "$(go -C "$root/scripts/tests/webapp-compiler" list -m -f '{{.Version}}' sigs.k8s.io/gateway-api)" == v1.5.1 ]] || fail 'unreviewed route schema'
 
 # Verify the original source-owned CI, image signature and complete provenance
 # with the maintained catalogue helper. Only this temporary manifest is mutated.
