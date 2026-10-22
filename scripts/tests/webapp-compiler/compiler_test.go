@@ -531,7 +531,7 @@ func TestFailedStartupStopsControlPlane(t *testing.T) {
 // observations from those desired objects proves expressions, not reconciliation.
 func desiredDeployment(t *testing.T, compiled *graph.Graph, instance *unstructured.Unstructured) *appsv1.Deployment {
 	t.Helper()
-	resolved, err := kroruntime.FromGraph(compiled, instance, graph.RGDConfig{MaxCollectionDimensionSize: 5})
+	resolved, err := kroruntime.FromGraph(compiled, graph.Config{MaxCollectionDimensionSize: 5}, kroruntime.WithInstance(instance))
 	if err != nil {
 		t.Fatal(err)
 	}
