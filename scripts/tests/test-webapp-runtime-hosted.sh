@@ -55,7 +55,11 @@ jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixt
     PREBUILT_PUBLIC_DIGEST=b362f95711b9b9fc285335bb19c1a206ee0856eb42a79e39874e653b4735e593 \
     PREBUILT_CI_RUN_ID=39603006665 PREBUILT_CI_RUN_ATTEMPT=1 GITHUB_OUTPUT="$work/verified" \
     bash "$work/verify-image.sh" >"$work/verification.log" 2>&1
-) || fail 'source-owned public image verification failed'
+) || {
+  # The verifier reads public evidence over the network; show why it refused.
+  tail -n 40 "$work/verification.log" >&2
+  fail 'source-owned public image verification failed'
+}
 yq -o=json '.' "$work/deploy/webapp.yaml" >"$work/omitted.json"
 jq '.spec += {args:["--public","/app/public","--listen","0.0.0.0:8080","--company-disclosure-projection","/run/webapp-inputs/disclosure"],runAsUser:65532,runAsGroup:65532,readOnlyRootFilesystem:true,secretProjections:[{secretName:"synthetic-disclosure",items:[{key:"disclosure",path:"disclosure"}]}]}' \
   "$work/omitted.json" >"$work/enabled.json"
