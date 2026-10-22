@@ -576,5 +576,33 @@ wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIde
 product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
+# The starter moved to v8.0.0 before its generic consumers accepted that
+# publisher (#5213). Exercise the committed predicates at all three boundaries;
+# registered tenants retain their independently reviewed approval records above.
+while IFS=$'\t' read -r profile file selector; do
+  subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
+  while IFS=$'\t' read -r expected identity; do
+    result=reject
+    if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
+    if [ "$result" = "$expected" ]; then
+      pass "v8 transition $profile: $expected $identity"
+    else
+      fail "v8 transition $profile: expected $expected for $identity, got $result"
+    fi
+  done <<'IDENTITIES'
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v8.0.0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f075
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0-extra
+reject	https://github.com/devantler-tech/xgithub/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+reject	https://github.com/another-org/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+IDENTITIES
+done <<'PROFILES'
+admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
+PROFILES
+
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

@@ -158,6 +158,12 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: ⚙️ Setup Go for WebApp input validation
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: ⚙️ Setup Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:
@@ -173,7 +179,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.202.71"
+          KSAIL_VERSION: "7.202.72"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh

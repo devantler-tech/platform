@@ -51,9 +51,9 @@
 #
 # Lands in the `infrastructure` layer alongside the Tenant RGD (a CR of an
 # RGD-defined kind cannot share a Flux Kustomization with the controller that
-# installs its CRD). Pre-1.0 KRO (v1alpha1): only scalar schema fields with
-# defaults (the proven Tenant-RGD subset, which reconciled live); `WebApp`
-# instances arrive with the pilot migration, not here.
+# installs its CRD). Optional runtime inputs default to no arguments or file
+# projections. Their actual generated API and resolved Deployment are exercised
+# by scripts/tests/test-webapp-compiler.sh against the pinned KRO release.
 apiVersion: kro.run/v1alpha1
 kind: ResourceGraphDefinition
 metadata:
@@ -72,6 +72,18 @@ spec:
     apiVersion: v1alpha1
     kind: WebApp
     scope: Namespaced
+    types:
+      Argument: >-
+        string | maxLength=256
+        validation="size(bytes(self)) <= 256 && !self.contains('\u0000') && !self.contains('$(')"
+      ProjectionItem:
+        key: 'string | required=true minLength=1 maxLength=253 pattern="^[-._a-zA-Z0-9]+$"'
+        path: 'string | required=true minLength=1 maxLength=64 pattern="^[A-Za-z0-9][A-Za-z0-9._-]*$"'
+      SecretProjection:
+        secretName: 'string | required=true minLength=1 maxLength=253 pattern="^[a-z0-9]([-a-z0-9]*[a-z0-9])?([.][a-z0-9]([-a-z0-9]*[a-z0-9])?)*$"'
+        items: >-
+          []ProjectionItem | required=true minItems=1 maxItems=8 listType=atomic
+          validation="self.all(x, self.filter(y, y.key == x.key).size() == 1 && self.filter(y, y.path == x.path).size() == 1)"
     spec:
       # App name — used verbatim as the Deployment/Service/HTTPRoute name AND as
       # the target namespace (the tenant namespace the Tenant archetype created).
@@ -98,6 +110,14 @@ spec:
       memoryRequest: string | default="16Mi"
       cpuLimit: string | default="100m"
       memoryLimit: string | default="64Mi"
+      # Empty/default lists preserve the executable's normal startup. Arguments
+      # are nonsecret literal values; Kubernetes interpolation is not admitted.
+      args: '[]Argument | default=[] maxItems=32 listType=atomic'
+      runAsUser: integer | default=1000 minimum=1 maximum=2147483647
+      runAsGroup: integer | default=1000 minimum=1 maximum=2147483647
+      readOnlyRootFilesystem: boolean | default=false
+      # One same-namespace directory projection; no generic paths or modes.
+      secretProjections: '[]SecretProjection | default=[] maxItems=1 listType=atomic'
   resources:
     - id: deployment
       template:
@@ -133,13 +153,17 @@ spec:
               # `pod-security.kubernetes.io/enforce: restricted`, so the pod ships
               # a compliant security context (Kyverno mutate is additive and
               # idempotent over these — it sets the same values, no conflict).
-              # Matches both pilots (non-root uid/gid 1000).
+              # Defaults match both pilots. The file group is always the primary
+              # process group, never an independently granted supplemental group.
               securityContext:
                 runAsNonRoot: true
-                runAsUser: 1000
-                runAsGroup: 1000
+                runAsUser: ${schema.spec.runAsUser}
+                runAsGroup: ${schema.spec.runAsGroup}
+                fsGroup: ${schema.spec.runAsGroup}
                 seccompProfile:
                   type: RuntimeDefault
+              volumes: >-
+                ${schema.spec.secretProjections.map(p, {"name": "webapp-inputs", "secret": {"secretName": p.secretName, "defaultMode": 288, "optional": false, "items": p.items.map(i, {"key": i.key, "path": i.path})}})}
               # Spread replicas across nodes (soft) so a single node failure can't
               # take out the whole app; ScheduleAnyway keeps single-node local/CI
               # clusters schedulable — matches both pilots + the operator tier.
@@ -153,6 +177,9 @@ spec:
               containers:
                 - name: ${schema.spec.name}
                   image: ${schema.spec.image}
+                  args: ${schema.spec.args}
+                  volumeMounts: >-
+                    ${schema.spec.secretProjections.map(p, {"name": "webapp-inputs", "mountPath": "/run/webapp-inputs", "readOnly": true})}
                   ports:
                     - containerPort: ${schema.spec.port}
                       protocol: TCP
@@ -180,7 +207,7 @@ spec:
                     # explicitly; Pod-level inheritance is not sufficient.
                     runAsNonRoot: true
                     allowPrivilegeEscalation: false
-                    readOnlyRootFilesystem: false
+                    readOnlyRootFilesystem: ${schema.spec.readOnlyRootFilesystem}
                     capabilities:
                       drop:
                         - ALL
