@@ -3729,6 +3729,43 @@ The independently canonicalized complete graph digest is
 Finding rows, cause digests, counts and severities remain unchanged. These
 approvals bind the combined source; they establish no deployed acceptance.
 
+## 2026-10-22 — Accept the reviewed v10.0.3 github-config publisher and retire e1681322
+
+For #5234 and #5117, the canonical approvals for the `.github` manifest
+consumer move from `e1681322e671f8e277c5e230a57fe66cdf1a612d` and
+`devantler-tech/.github@8d2203af130a8c27b8b98b3d7146f76b5ade7a98` (v7.16.2)
+to `8d2203af130a8c27b8b98b3d7146f76b5ade7a98` and
+`devantler-tech/.github@0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3).
+The record allows two commits per consumer, so the transition to v10.0.3
+retires the superseded e1681322 entry in the same change. Production applies a
+publication signed by 8d2203af, and the caller pins 8d2203af, so no current
+consumer needs e1681322.
+
+The publishing workflow is byte-identical at 8d2203af and 0f390329, with
+SHA-256 `2858f387b7b7587d871940af0ac26ff88e6a73c6242e39e38f8e9919b601ca1e`.
+Its two helpers, `require-unpublished-version.sh` and
+`recover-manifests-version.sh`, do not change in the comparison
+`8d2203af...0f390329`. This source parity does not make the new revision the
+same certificate identity; it requires its own explicit consumer approval.
+
+Against base `9e71ba39f3`, the authorization ledger changes exactly one entry,
+with nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `d26055f2d4b80751c249d58fa2a1062d5d504842b3ac1afd4feb9d5812ef1a9b` to
+  `16447462c20c2f5a38287845572807803de61105fc84a6b6ca868e36d4e3bf39`.
+
+The matcher accepts 8d2203af and 0f390329 and rejects e1681322, a one-digit
+variant of 0f390329, another repository, another workflow and another issuer.
+Both legacy `devantler-tech/actions` revisions are unchanged. No artifact URL,
+RBAC, IAM policy, credential or permission grant changes.
+
+Deploy this acceptance before advancing the publisher caller in
+devantler-tech/.github#712, and keep 8d2203af until the first publication by
+0f390329 is independently verified. Offline checks and this historical
+evidence do not establish deployed acceptance or successful publication by the
+new signer.
+
 ## 2026-10-22 — Approve the v8.0.0 application publisher for the registered consumers
 
 For #5214, the three registered `publish-app` consumers (`ascoachingogvaner`,
