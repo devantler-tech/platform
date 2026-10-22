@@ -282,6 +282,13 @@ dependency bumps outside the fold: the GitHub Copilot SDK v1.0.16 and
 `hcloud-go` v2.52.0. The Go directive and the Talos machinery module are
 unchanged, so the mirrored fold still holds.
 
+**7.202.73**, commit `8dc1060d544f157f1fee623124e4607666bc81c6`, is audited
+against 7.202.68. The Talos generator, chart, configuration manager and cluster
+API are byte-identical. Only `go.mod` and `go.sum` change, through one
+dependency bump outside the fold: the GitHub Copilot SDK v1.0.17. The Go
+directive and the Talos machinery module are unchanged, so the mirrored fold
+still holds.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
