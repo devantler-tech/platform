@@ -170,6 +170,12 @@
       "allowedVersions": "!/^0\\.10\\.[34]$/"
     },
     {
+      "description": "The web-app compiler tests check routes against the HTTPRoute schema production serves, pinned in its go.mod and in the guard in scripts/tests/test-webapp-runtime-hosted.sh. A newer release fails that guard by design, so cap it here at the production Gateway API release and move all three together (#5218).",
+      "matchFileNames": ["scripts/tests/webapp-compiler/go.mod"],
+      "matchPackageNames": ["sigs.k8s.io/gateway-api"],
+      "allowedVersions": "<=1.5.1"
+    },
+    {
       "description": "flux-operator is tracked by the dedicated regex customManager above (the built-in `flux` manager stalled on it). Disable the `flux` manager for this chart so the two managers cannot open duplicate PRs if the flux manager later resumes.",
       "matchManagers": ["flux"],
       "matchPackageNames": [

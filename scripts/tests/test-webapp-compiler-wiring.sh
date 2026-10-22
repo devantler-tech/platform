@@ -96,4 +96,10 @@ nonexecuting="$(jq '(.jobs["validate-webapp-compiler"].steps[] |
 if (check_job "${nonexecuting}" "needs.changes.outputs.k8s == 'true'") >"${work}/nonexecuting.log" 2>&1; then
   fail 'printing the compiler command must not count as executing it'
 fi
+# The route-schema pin lives in three places that must move together (#5218).
+gateway_required="$(awk '$1 == "sigs.k8s.io/gateway-api" { print $2 }' "${root}/scripts/tests/webapp-compiler/go.mod")"
+gateway_reviewed="$(sed -nE 's/.*sigs\.k8s\.io\/gateway-api\)" == (v[0-9.]+) \]\] \|\| fail .unreviewed route schema.*/\1/p' "${root}/scripts/tests/test-webapp-runtime-hosted.sh")"
+gateway_ceiling="$(jq -r '[.packageRules[] | select(.matchFileNames == ["scripts/tests/webapp-compiler/go.mod"] and .matchPackageNames == ["sigs.k8s.io/gateway-api"]) | .allowedVersions] | if length == 1 then .[0] else "" end' "${root}/.github/renovate.json")"
+[[ -n "${gateway_required}" && "${gateway_reviewed}" == "${gateway_required}" && "${gateway_ceiling}" == "<=${gateway_required#v}" ]] ||
+  fail "gateway-api pin disagrees: go.mod=${gateway_required:-none} guard=${gateway_reviewed:-none} renovate=${gateway_ceiling:-none}"
 echo 'PASS: selected KRO compiler proof is required before merge and deploy'
