@@ -3728,3 +3728,32 @@ The independently canonicalized complete graph digest is
 `b196fbaff4273d0ec97cd0276f2e83ca9ce5f77653530864c2f7694c179e0a57`.
 Finding rows, cause digests, counts and severities remain unchanged. These
 approvals bind the combined source; they establish no deployed acceptance.
+
+## 2026-10-22 — Approve the v8.0.0 application publisher for the registered consumers
+
+For #5214, the three registered `publish-app` consumers (`ascoachingogvaner`,
+`data-product-controller` and `wedding-app`) each gain a second canonical
+approval, `devantler-tech/.github@467f07582436a26b62cf4aa756423512f85ba0c0`
+(v8.0.0), beside their current
+`0c7b6c3509b73adbc7537e030935bb01987e625b` (v7.23.0). Each consumer keeps at
+most two approved commits. #5215 already admits the same exact revision in the
+generic Tenant, image-admission and node-pull rules, so this change only
+regenerates the three consumer matchers from the approval record.
+
+The authorization ledger changes exactly three entries, with nothing added or
+removed:
+
+- OCIRepository ascoachingogvaner/ascoachingogvaner moves from
+  `0414886ff9fd35085e40b4b83f1de5ab3d622955f3b6b374c39ddb89b7f6f57a` to
+  `af12d172b3cc20f85f5b2016d30558db30905e977fe7682130184d0b1a4d3b16`.
+- OCIRepository data-product-controller/khoist-documentation moves from
+  `ac6d4e6c365a937280e9dad33a3a3e592ff12d22267176251235f3e0c05fa967` to
+  `621428fc92599ef4d1a7649f965527c246eda606c726ebd92e01fe539b19f17e`.
+- OCIRepository wedding-app/wedding-app moves from
+  `34e779239a8d5be3d790ac96e322d3faddb1296153271660c23730eebba931e9` to
+  `75dcbe67805b834dac8e5e5e2bb329045ee362ea76f8e2336ee1b71d87bae436`.
+
+No consumer pin, publisher mode, artifact URL, RBAC, IAM policy, credential or
+permission grant changes. Deploy this acceptance before any of these consumers
+moves its caller to v8.0.0. Offline checks and this record do not establish
+deployed acceptance or a successful publication by the new signer.
