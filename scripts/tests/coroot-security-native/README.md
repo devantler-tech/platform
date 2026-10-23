@@ -17,6 +17,11 @@ browser failure cannot prevent later dashboards' API responses from being
 validated and retained. The browser phase independently recomputes each
 dashboard's expected panel count for its strict HAR check.
 
+Both browser captures use the explicit `en-US` locale. The hosted runner's
+inherited `en-US@posix` tag causes Coroot's number formatter to throw before
+the first API request; Playwright's `--lang` sets a valid browser locale
+without changing the released application or weakening rendering checks.
+
 `synthetic.prom` includes failures, coverage gaps, accepted/skipped outcomes and
 unknown scan freshness/runtime delivery. The helper replaces the timestamp
 placeholder for each run. It calls the actual shared `bind-project-metrics.sh`

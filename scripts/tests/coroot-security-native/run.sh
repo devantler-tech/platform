@@ -196,14 +196,15 @@ while IFS= read -r definition; do
   # failure can be diagnosed without weakening the canvas requirement below.
   if [ "${dashboard_index}" = 1 ]; then
     DEBUG=pw:protocol npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
-      --viewport-size '1600,1200' --full-page --timeout 30000 --wait-for-timeout 10000 \
+      --lang en-US --viewport-size '1600,1200' --full-page --timeout 30000 --wait-for-timeout 10000 \
       --save-har "${artifacts}/dashboard-1-diagnostic.har" \
       "${base}/p/${pid}/dashboards/${id}?from=now-5m&to=now" \
       "${artifacts}/dashboard-1-diagnostic.png" 2>"${artifacts}/dashboard-1-protocol.log"
   fi
   # CLI only: no authored browser JavaScript and no local desktop automation.
+  # The hosted runner's en-US@posix default is not a valid Intl language tag.
   npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
-    --viewport-size '1600,1200' --full-page --timeout 60000 \
+    --lang en-US --viewport-size '1600,1200' --full-page --timeout 60000 \
     --wait-for-selector '.dashboard .grid-stack-item canvas' --wait-for-timeout 5000 \
     --save-har "${har}" --save-har-glob '**/api/project/**' \
     "${base}/p/${pid}/dashboards/${id}?from=now-5m&to=now" "${screenshot}"
