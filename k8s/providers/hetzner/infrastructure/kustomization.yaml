@@ -204,6 +204,9 @@ components:
   # shared Coroot base because Crossplane exists only on this provider. The
   # adjacent alerter delivers stuck-resource and coverage-gap notifications.
   - ../../../bases/infrastructure/coroot/components/crossplane-sync-exporter
+  # Prod-only security progress: collect policy and scan evidence, and reconcile
+  # the three owned Coroot dashboards. Policy Reporter retains detail workflows.
+  - ../../../bases/infrastructure/coroot/components/security-progress
   # Platform-wide HelmRelease drift detection (mode: enabled). See
   # bases/components/helmrelease-drift-detection.
   - ../../../bases/components/helmrelease-drift-detection
