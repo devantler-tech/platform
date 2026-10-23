@@ -1,0 +1,72 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: coroot-security-dashboards
+  namespace: observability
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 200
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 240
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: coroot-security-dashboards
+            app.kubernetes.io/part-of: coroot
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: reconcile
+              image: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+              imagePullPolicy: IfNotPresent
+              command: [/bin/sh, /config/reconcile.sh]
+              env:
+                - name: COROOT_URL
+                  value: http://coroot-coroot.observability.svc.cluster.local.:8080
+                - name: COROOT_PROJECT
+                  value: platform
+                - name: DASHBOARDS_FILE
+                  value: /config/dashboards.json
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: [ALL]
+                seccompProfile:
+                  type: RuntimeDefault
+                seLinuxOptions: {}
+              resources:
+                requests:
+                  cpu: 5m
+                  memory: 16Mi
+                limits:
+                  cpu: 100m
+                  memory: 64Mi
+              volumeMounts:
+                - name: config
+                  mountPath: /config
+                  readOnly: true
+                - name: scratch
+                  mountPath: /tmp
+          volumes:
+            - name: config
+              configMap:
+                name: coroot-security-progress
+            - name: scratch
+              emptyDir:
+                sizeLimit: 16Mi

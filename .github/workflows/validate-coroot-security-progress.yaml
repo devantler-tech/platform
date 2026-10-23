@@ -1,0 +1,74 @@
+name: Validate Coroot Security Progress
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/validate-coroot-security-progress.yaml
+      - k8s/bases/infrastructure/coroot/components/security-progress/**
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/validate-coroot-security-progress.yaml
+      - k8s/bases/infrastructure/coroot/components/security-progress/**
+
+permissions: {}
+
+jobs:
+  runtime-tools:
+    name: Exercise pinned security dashboard helpers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Exercise the collector and loopback metrics server
+        shell: bash
+        env:
+          COLLECTOR_IMAGE: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
+          SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+        run: |
+          set -euo pipefail
+          deployment=k8s/bases/infrastructure/coroot/components/security-progress/deployment.yaml
+          grep -Fq -- "$COLLECTOR_IMAGE" "$deployment"
+          grep -Fq -- "$SERVER_IMAGE" "$deployment"
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
+            --entrypoint /bin/sh "$COLLECTOR_IMAGE" -ec \
+            'command -v bash; command -v jq; command -v kubectl; timeout 1 true'
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
+            --entrypoint /bin/sh "$SERVER_IMAGE" -ec '
+              mkdir /tmp/metrics
+              printf "platform_security_smoke 1\n" > /tmp/metrics/metrics
+              httpd -p 127.0.0.1:8080 -h /tmp/metrics
+              wget -qO- http://127.0.0.1:8080/metrics | grep -qx "platform_security_smoke 1"
+            '
+
+      - name: Exercise the reconciler toolchain and Prometheus configuration
+        shell: bash
+        env:
+          RECONCILER_IMAGE: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+          PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+        run: |
+          set -euo pipefail
+          component=k8s/bases/infrastructure/coroot/components/security-progress
+          grep -Fq -- "$RECONCILER_IMAGE" "$component/cron-job.yaml"
+          grep -Fq -- "$PROMETHEUS_IMAGE" "$component/deployment.yaml"
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
+            --entrypoint /bin/sh "$RECONCILER_IMAGE" -ec \
+            'command -v curl; command -v jq; tmp=$(mktemp -d); rm -r "$tmp"'
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --volume "$PWD/$component/prometheus.conf:/etc/prometheus/test.yml:ro" \
+            --entrypoint /bin/promtool "$PROMETHEUS_IMAGE" check config /etc/prometheus/test.yml

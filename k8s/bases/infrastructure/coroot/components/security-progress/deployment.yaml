@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: coroot-security-progress
+  namespace: observability
+  labels:
+    app.kubernetes.io/name: coroot-security-progress
+    app.kubernetes.io/part-of: coroot
+    platform.devantler.tech/replica-floor: exempt
+  annotations:
+    configmap.reloader.stakater.com/reload: coroot-security-progress
+    checkov.io/skip1: "CKV_K8S_8=metrics and scrape listeners bind loopback only; no Service or pod-network listener is exposed"
+    checkov.io/skip2: "CKV_K8S_9=loopback metrics are consumed by the in-pod agent; collection freshness and success are explicit metrics"
+spec:
+  # One snapshot writer and one remote-write stream. Recreate prevents overlap.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: coroot-security-progress
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: coroot-security-progress
+        app.kubernetes.io/part-of: coroot
+    spec:
+      serviceAccountName: coroot-security-progress
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: collector
+          image: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
+          imagePullPolicy: IfNotPresent
+          command: [/bin/bash, /config/collector.sh]
+          securityContext: &container-security
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions: {}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: metrics
+              mountPath: /metrics
+            - name: scratch
+              mountPath: /tmp
+            - name: api-access
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+        - name: metrics
+          image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+          imagePullPolicy: IfNotPresent
+          command: [httpd, -f, -p, "127.0.0.1:8080", -h, /metrics]
+          securityContext: *container-security
+          resources:
+            requests:
+              cpu: 5m
+              memory: 4Mi
+            limits:
+              cpu: 50m
+              memory: 16Mi
+          volumeMounts:
+            - name: metrics
+              mountPath: /metrics
+              readOnly: true
+        - name: prometheus-agent
+          image: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/config/prometheus.yml
+            - --enable-feature=agent
+            - --storage.agent.path=/prometheus
+            - --web.listen-address=127.0.0.1:9090
+          securityContext: *container-security
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: prometheus
+              mountPath: /prometheus
+      volumes:
+        - name: config
+          configMap:
+            name: coroot-security-progress
+        - name: metrics
+          emptyDir:
+            sizeLimit: 10Mi
+        - name: scratch
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: prometheus
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: api-access
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt

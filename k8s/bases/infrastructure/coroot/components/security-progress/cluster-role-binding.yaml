@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: coroot-security-progress
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: coroot-security-progress
+subjects:
+  - kind: ServiceAccount
+    name: coroot-security-progress
+    namespace: observability
