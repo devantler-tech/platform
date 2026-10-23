@@ -19,6 +19,30 @@ gateway_profile="$(go -C "${fixture}" list -mod=readonly -m -json sigs.k8s.io/ga
 jq -e '.Replace == null' <<<"${gateway_profile}" >/dev/null || { echo 'FAIL: replaced HTTPRoute schema' >&2; exit 1; }
 gateway="$(go -C "${fixture}" mod download -json sigs.k8s.io/gateway-api | jq -er '.Dir | select(type == "string" and length > 0)')"
 
+# Real dependency schemas, pinned to the reviewed Flux 2.9.6 fixture and current
+# External Secrets chart. A fixture pin is not an observation of production.
+fetch_schema() {
+  local url="$1" expected_digest="$2" output="$3" actual_digest
+  curl --proto '=https' --proto-redir '=https' --location --tlsv1.2 \
+    --fail --silent --show-error --connect-timeout 10 --max-time 90 \
+    --max-filesize 10000000 "$url" --output "$output"
+  actual_digest="$(shasum -a 256 "$output" | cut -d ' ' -f 1)"
+  [[ "$actual_digest" == "$expected_digest" ]] || { echo 'FAIL: dependency schema checksum changed' >&2; exit 1; }
+}
+[[ "$(yq -er '.spec.chart.spec.version' "${root}/k8s/bases/infrastructure/controllers/external-secrets/helm-release.yaml")" == 2.12.0 ]] || {
+  echo 'FAIL: review Tenant schema fixtures for the new External Secrets chart' >&2; exit 1;
+}
+fetch_schema 'https://raw.githubusercontent.com/fluxcd/source-controller/v1.9.6/config/crd/bases/source.toolkit.fluxcd.io_ocirepositories.yaml' \
+  80c7c6e5c8de0764cc83acd4de5c74bea8e51186085304d22cecc5f2eb35500e "${work}/oci.yaml"
+fetch_schema 'https://raw.githubusercontent.com/fluxcd/kustomize-controller/v1.9.6/config/crd/bases/kustomize.toolkit.fluxcd.io_kustomizations.yaml' \
+  da23ca0e6b4c80d3d26a91583137491e147ef4ef1e2208aece0d0af4ef851974 "${work}/kustomization.yaml"
+fetch_schema 'https://raw.githubusercontent.com/external-secrets/external-secrets/v2.12.0/deploy/crds/bundle.yaml' \
+  d4da9492a6906a3834bb1f5b7367575a29b5c43411017babc7a30728f465d1ba "${work}/external-secrets.yaml"
+yq -o=json -I=0 '.' "${work}/external-secrets.yaml" | jq -se '
+  [.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "externalsecrets.external-secrets.io")]
+  | if length == 1 then .[0] else error("expected exactly one actual ExternalSecret schema") end
+' >"${work}/external-secret.json"
+
 # Same reviewed envtest assets as the existing Kyverno admission fixture.
 case "$(uname -s)/$(uname -m)" in
   Linux/x86_64)
@@ -40,4 +64,7 @@ PLATFORM_TEST_ROOT="${root}" \
   KUBEBUILDER_ASSETS="${work}/controller-tools/envtest" \
   GATEWAY_HTTPROUTE_CRD="${gateway}/config/crd/standard/gateway.networking.k8s.io_httproutes.yaml" \
   KRO_GRAPH_CRD="${kro}/helm/crds/kro.run_resourcegraphdefinitions.yaml" \
+  FLUX_OCI_CRD="${work}/oci.yaml" \
+  FLUX_KUSTOMIZATION_CRD="${work}/kustomization.yaml" \
+  EXTERNAL_SECRET_CRD="${work}/external-secret.json" \
   go -C "${fixture}" test -mod=readonly -race -count=1 -timeout=4m -v .

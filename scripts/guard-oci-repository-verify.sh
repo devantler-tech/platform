@@ -80,6 +80,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source=scripts/tenant-source-constructors.lib.sh
+source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
 readonly REQUIRED_URL_PREFIX='oci://ghcr.io/devantler-tech/'
 # The identity every devantler-tech artifact is signed under: GitHub Actions keyless
 # signing, with a subject regex anchored on a devantler-tech GitHub path. Compared as
@@ -297,6 +299,15 @@ while IFS= read -r root; do
       *) continue ;;
     esac
     in_scope=$((in_scope + 1))
+    # Only the complete constrained Tenant profile may construct these values.
+    # Validate its supplied branch too, before judging the unchanged default.
+    if [[ "$url" == "$TEMPLATED_TENANT_STREAM_URL" && "$ref_type" == '!!str' ]]; then
+      if ! subject="$(tenant_source_default_subject "$work/render.yaml" "$subject")"; then
+        fail "$label: invalid Tenant source constructor"
+        continue
+      fi
+      ref_type='!!map'; ref_key_count=1; ref_semver="$REQUIRED_TENANT_STREAM_SEMVER"
+    fi
     case "$url" in
       "$WEDDING_STREAM_URL" | "$ASCOACHING_STREAM_URL" | "$TEMPLATED_TENANT_STREAM_URL")
         if [ "$ref_type" != "!!map" ] || [ "$ref_key_count" -ne 1 ] || [ "$ref_semver" != "$REQUIRED_TENANT_STREAM_SEMVER" ]; then

@@ -1222,6 +1222,8 @@ jobs:
         run: |
           shellcheck scripts/guard-oci-repository-verify.sh
           shellcheck scripts/tests/test-guard-oci-repository-verify.sh
+          shellcheck scripts/tenant-source-constructors.lib.sh scripts/tests/test-tenant-source-constructors.sh
+          bash scripts/tests/test-tenant-source-constructors.sh
           bash scripts/tests/test-guard-oci-repository-verify.sh
           ./scripts/guard-oci-repository-verify.sh
 

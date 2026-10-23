@@ -87,6 +87,22 @@ acceptance. Pages and the private portal remain unchanged.
 
 ## Observe before activating reconciliation
 
+A generic `Tenant` can bootstrap only its verified source with
+`spec.reconcileApplication: false`. This omits both application Kustomizations,
+including the SOPS variant, rather than creating suspended children. Set
+`spec.source.digest` and `spec.source.publisherRevision` together: the former is
+an exact `sha256:` digest and the latter the reviewed maintained publisher's
+40-character lowercase commit. Neither setting creates a consumer approval.
+Publication evidence, approval generation and live source verification remain
+separate requirements.
+
+Omitting the pair preserves the normal semver selector and existing publisher
+policy. Omitting `reconcileApplication` preserves application reconciliation.
+After verification, a source-only Tenant can change false to true. Admission
+refuses true to false, including active objects stored before this field
+existed: disabling an active tenant requires a separately reviewed lifecycle
+procedure, not pruning its workloads through this bootstrap switch.
+
 After the reviewed source is deployed, confirm `Ready=True`, `SourceVerified=True`
 and a current `observedGeneration`. Its `status.artifact.revision` must equal the
 declared manifest digest. `status.artifact.digest` is a different identity: Flux's

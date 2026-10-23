@@ -18,6 +18,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly REPO_ROOT
+# shellcheck source=scripts/tenant-source-constructors.lib.sh
+source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
 readonly GUARD="$REPO_ROOT/scripts/guard-publish-workflow-approved-revisions.sh"
 readonly WRITER="$REPO_ROOT/scripts/write-publish-workflow-matchers.sh"
 readonly REPORT="$REPO_ROOT/scripts/report-publish-workflow-signing-revisions.sh"
@@ -544,6 +546,7 @@ fi
 # revision may join them; a wildcard or an unanchored alternation fails below.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
+  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
@@ -581,6 +584,7 @@ PROFILES
 # registered tenants retain their independently reviewed approval records above.
 while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
+  if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
