@@ -70,10 +70,20 @@ metrics and route are preserved by this component.
 
 ## Deployment and maintenance
 
-The component is **off by default**: no normal overlay references it. After its validation
-and review, a separate activation adds
-`../../../bases/infrastructure/coroot/components/security-progress` to the production
-infrastructure overlay's `components`. Use the protected merge/deploy path. The
+The shared base leaves this component **off by default**. The production infrastructure
+overlay explicitly enables
+`../../../bases/infrastructure/coroot/components/security-progress` in its `components`.
+To disable collection and reconciliation, remove that production component reference
+through the protected merge/deploy path. In the same change, remove
+`Deployment/coroot-security-progress` from the Coroot budget's reviewed-unrelated list
+in `scripts/pdb-selector-exceptions.tsv`, since it no longer renders alongside the
+operator-managed Coroot server. Also remove the `ClusterRole/coroot-security-progress`
+and `ClusterRoleBinding/coroot-security-progress` entries from
+`scripts/validate-eks-ci-role-policy/approved-surface.txt`; the authorization validator
+rejects approvals for resources that no longer render. To re-enable the component,
+restore its production reference and the reviewed-unrelated entry, then review the
+rendered RBAC and restore both matching authorization fingerprints in the same
+protected change. Run the deployment validation before either transition. The
 collector needs only the explicitly listed read-only resources; only its container
 receives a projected service-account token. Exec probes check publication freshness,
 project binding and the two local services. Reporting a failed security source still

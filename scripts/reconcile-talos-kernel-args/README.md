@@ -303,6 +303,18 @@ bumps outside the fold: config v1.33.7, credentials v1.20.7, smithy-go v1.28.4
 and the indirect signin, sso and ssooidc services. The Go directive and the
 Talos machinery module are unchanged, so the mirrored fold still holds.
 
+**7.203.0**, commit `d21c5bd92bcf694a82b36f84be573ef7fa13f8f1`, is audited
+against 7.202.80. The configuration-manager change updates only the vCluster
+image from 0.37.2 to 0.37.3; the Talos fold and distribution caller are
+byte-identical. The Talos generator, cluster API and charts are unchanged,
+preserving both-role argument folding and explicit schematic-ID precedence.
+The module changes update Docker connections, the Flux Kustomize API, Azure
+SDK modules, the AWS EKS service and vCluster modules. The Go directive,
+Talos machinery, Image Factory and YAML/protobuf encoding dependencies and
+checksums are unchanged. The offline render regression retains both production
+and local roles, explicit and whitespace schematic IDs, and invalid-patch
+refusals. This source audit changes no cluster configuration.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
