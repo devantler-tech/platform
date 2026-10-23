@@ -86,7 +86,7 @@ readonly REPO_ROOT
 # Either publisher family, with an optional group opener (#4502), so a two-family subject
 # and a canonical-only one are FOUND and judged rather than left outside the scan. Kept
 # textually parallel to FAMILY_SUBJECT_PATTERN in publish-workflow-approved-revisions.lib.sh.
-readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@'
+readonly SUBJECT_PATTERN='(subject|subjectRegex|subjectRegExp):[[:space:]]*(.?\^?https://github\\?\.com/devantler-tech/[(]?(actions|\\?\.github)/\\?\.github/workflows/publish-(app|manifests)\\?\.yaml@|.?[$][{]schema[.]spec[.]source[.]publisherRevision)'
 
 # The workflow identity of either family with no key name, no organisation prefix and no
 # line structure, for the independent discovery below. The canonical half of a two-family
@@ -732,6 +732,24 @@ EOF
       printf 'unterminated scalar). Rewrite it as a single-quoted or plain scalar, or extend\n' >&2
       printf 'yaml_scalar to understand this form deliberately.\n' >&2
       status=1
+      continue
+    fi
+
+    # shellcheck disable=SC2016 # Match the literal CEL expression opener.
+    if [[ "$subject" == '${'* ]]; then
+      if [[ ! -r "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh" ]]; then
+        printf '%s: invalid Tenant source constructor: reader is missing\n' "$location" >&2
+        status=1
+        continue
+      fi
+      # shellcheck source=scripts/tenant-source-constructors.lib.sh
+      source "$REPO_ROOT/scripts/tenant-source-constructors.lib.sh"
+      if ! subject="$(tenant_source_default_subject "${location%:*}" "$subject")"; then
+        printf '%s: invalid Tenant source constructor\n' "$location" >&2
+        status=1
+        continue
+      fi
+      judge_family_subject "$location" "$subject" || status=1
       continue
     fi
 

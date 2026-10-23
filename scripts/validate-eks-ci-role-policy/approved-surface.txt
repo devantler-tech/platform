@@ -104,7 +104,7 @@ iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
-kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 230562ae39b386fe6a5b4226eb0f1dff4078013855fdcc2dfc78b598077bbba0
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 57991b34a106277418f96c81e458a640a8a648b8a89717d2e049d8de86f79639
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|ascoachingogvaner|ascoachingogvaner ac00ca29c04de8d2c30a045d583570536a97fc305a1b06c4300da018ecdfb864
 

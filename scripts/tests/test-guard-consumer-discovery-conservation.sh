@@ -2611,6 +2611,27 @@ printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
 expect_refusal 'an instance of an RGD with a templated subject is refused' "$root" \
   'production renders 1 Tenant instance(s)'
 
+# A syntactically valid exact publisher is not a canonical approval. Even these
+# pinned source-only and active instances remain outside the admitted inventory.
+for reconcile_application in false true; do
+  root="$(fixture "rgd-pinned-tenant-$reconcile_application")"
+  cat >"$root/k8s/providers/prod/apps/tenant.yaml" <<YAML
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: iota
+spec:
+  name: iota
+  source:
+    digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    publisherRevision: '7777777777777777777777777777777777777777'
+    reconcileApplication: $reconcile_application
+YAML
+  printf '  - tenant.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_refusal "an exact-pinned Tenant (reconcile=$reconcile_application) is not production-admitted" "$root" \
+    'production renders 1 Tenant instance(s)'
+done
+
 # (i) An RGD that templates an OCIRepository but names no schema kind: its instances
 #     cannot be counted, so it cannot be judged.
 root="$(fixture rgd-no-kind)"

@@ -23,12 +23,20 @@ CI path filters.
 
 ## WebApp compiler
 
-Run the committed WebApp graph through the pinned KRO compiler:
+Run the committed WebApp and Tenant graphs through the pinned KRO compiler:
 
 ```bash
 bash scripts/tests/test-webapp-compiler.sh
 bash scripts/tests/test-webapp-compiler-wiring.sh
 ```
+
+Tenant controls compile the complete graph and submit its generated API schema
+to the real API server. They cover source-only creation, paired digest and
+publisher inputs, unchanged omitted defaults, later application activation and
+refusal to disable active tenants, including objects stored under the earlier
+schema. These checks do not prove a live controller has reconciled a tenant.
+`scripts/tests/test-tenant-source-constructors.sh` separately exercises the actual
+publication guards against constrained constructors and mutated graph contexts.
 
 The fixture downloads checksum-verified Kubernetes 1.36.2 API-server assets and
 starts a disposable, loopback-only API server. It explicitly refuses an existing

@@ -3794,3 +3794,29 @@ No consumer pin, publisher mode, artifact URL, RBAC, IAM policy, credential or
 permission grant changes. Deploy this acceptance before any of these consumers
 moves its caller to v8.0.0. Offline checks and this record do not establish
 deployed acceptance or a successful publication by the new signer.
+
+## 2026-10-23 — Couple Tenant source-only bootstrap to its exact publication
+
+For #5259, the new, unshipped bootstrap switch moves into
+`spec.source.reconcileApplication`. The API now requires an exact digest and
+publisher pair for source-only mode, refuses removal of an established pin, and
+retains the one-way activation rule, including for legacy stored objects.
+Default active output, RBAC, IAM, consumer approvals and credentials do not change.
+
+Against `2c1896ff31`, the authorization ledger changes exactly one existing entry:
+ResourceGraphDefinition tenant.kro.run moves from
+`85bd812d0647ece482348e405741ec164ff4ae4b0bc42dceaa2b1dad5690ae08` to
+`57991b34a106277418f96c81e458a640a8a648b8a89717d2e049d8de86f79639`.
+Its reviewed core fingerprint moves from
+`50d77a54610006ed298f96a686f957d1a708fc610c4362a3127f33d3f866f802` to
+`2ea76ac2c5cb6795c0b9ff8766cba31409569db318307b6ccd1987a2038e1e34`.
+The static-scan ratchet changes only this graph's content fingerprint; rendered
+instances and all security findings are unchanged.
+
+The pinned KRO compiler and Kubernetes API tests exercise missing/partial pins,
+four pin-removal forms, activation, SOPS, and legacy objects. The mandatory
+production conservation guard remains closed to every Tenant instance, including
+exact-pinned source-only instances. These schema checks are not publisher approval
+or production onboarding; #5247 must establish concrete consumer attribution and
+canonical approval before that boundary can be extended. This record does not
+claim deployment, live source verification or application activation.
