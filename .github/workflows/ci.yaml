@@ -1165,7 +1165,7 @@ jobs:
           shellcheck -x scripts/write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
-          shellcheck scripts/tests/test-publish-workflow-canonical-approvals.sh
+          shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
           bash scripts/tests/test-publish-workflow-canonical-approvals.sh
