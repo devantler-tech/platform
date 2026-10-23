@@ -42,3 +42,9 @@ and screenshots as seven-day workflow artifacts.
 
 The binary version is verified from its real startup log. Coroot 1.22.2 does
 not expose a `--version` option.
+
+The workflow also runs for changes to the base Coroot resource and production
+Coroot patch. A preflight requires the native image to equal the versioned
+`communityEdition.image.name` and the reviewed 1.22.2 contract. A Coroot version
+change deliberately fails this check until its API/browser compatibility and
+the fixture's pinned source references are reviewed together.

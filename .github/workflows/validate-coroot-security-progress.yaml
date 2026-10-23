@@ -6,6 +6,8 @@ on:
     paths:
       - .github/workflows/validate-coroot-security-progress.yaml
       - k8s/bases/infrastructure/coroot/components/security-progress/**
+      - k8s/bases/infrastructure/coroot/coroot.yaml
+      - k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml
       - scripts/tests/coroot-security-native/**
       - scripts/tests/coroot-security-dashboards/**
       - scripts/tests/security-progress-metrics/**
@@ -17,6 +19,8 @@ on:
     paths:
       - .github/workflows/validate-coroot-security-progress.yaml
       - k8s/bases/infrastructure/coroot/components/security-progress/**
+      - k8s/bases/infrastructure/coroot/coroot.yaml
+      - k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml
       - scripts/tests/coroot-security-native/**
       - scripts/tests/coroot-security-dashboards/**
       - scripts/tests/security-progress-metrics/**
@@ -107,6 +111,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Verify the native API contract matches the versioned Coroot image
+        shell: bash
+        run: |
+          # Updating either pin requires reviewing the v1.22.2 API and browser
+          # source contract in scripts/tests/coroot-security-native/README.md.
+          if [ "$COROOT_IMAGE" != ghcr.io/coroot/coroot:1.22.2 ] ||
+             [ "$(grep -Fxc "      name: $COROOT_IMAGE" k8s/bases/infrastructure/coroot/coroot.yaml)" != 1 ]; then
+            echo 'Native Coroot contract/image differs from communityEdition.image.name; review compatibility before updating the fixture.' >&2
+            exit 1
+          fi
 
       - name: Install the pinned browser CLI and Chromium
         shell: bash
