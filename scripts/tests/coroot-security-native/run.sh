@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Hosted-only real binary/API/browser integration. All listeners bind loopback;
 # every sample, database, container and screenshot belongs to this invocation.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'echo "Native Coroot integration failed at line ${LINENO}" >&2' ERR
 [ "${CI:-}" = true ] || {
   echo 'Run this browser integration only in hosted CI.' >&2
   exit 2
@@ -38,8 +39,6 @@ for image in "${COROOT_IMAGE}" "${PROMETHEUS_IMAGE}" "${SERVER_IMAGE}"; do
 done
 docker image inspect "${COROOT_IMAGE}" --format '{{json .Config.Entrypoint}}' |
   jq -e '. == ["/usr/bin/coroot"]' >/dev/null
-docker run --rm --network none "${COROOT_IMAGE}" --version >"${artifacts}/coroot-version.txt" 2>&1
-grep -Fq '1.22.2' "${artifacts}/coroot-version.txt"
 docker image inspect "${COROOT_IMAGE}" "${PROMETHEUS_IMAGE}" "${SERVER_IMAGE}" \
   --format '{{json .RepoDigests}}' >"${artifacts}/image-digests.jsonl"
 
@@ -88,6 +87,10 @@ wait_json "${prom}/api/v1/query?query=platform_security_policy_total" \
 wait_json "${base}/api/user" \
   '.anonymous == true and .role == "Admin" and (.projects | length) == 1 and .projects[0].name == "default"' \
   "${artifacts}/user.json"
+# v1.22.2 has no --version option. main.go logs the compiled version before
+# loading configuration; assert that real startup line after API readiness.
+docker logs "${prefix}-coroot" 2>&1 | grep -E 'version: 1\.22\.2([[:space:]]|$)' \
+  >"${artifacts}/coroot-version.txt"
 pid="$(jq -r '.projects[0].id | @uri' "${artifacts}/user.json")"
 collection="${base}/api/project/${pid}/dashboards"
 wait_json "${collection}" '.data | type == "array"' "${tmp}/list-ready.json"
@@ -131,6 +134,7 @@ while IFS= read -r definition; do
     panel_index=$((panel_index + 1))
     output="${artifacts}/panel-${dashboard_index}-${panel_index}.json"
     curl --silent --show-error --fail --max-time 30 --get --data-urlencode "query=${panel}" \
+      --data-urlencode 'from=now-5m' --data-urlencode 'to=now' \
       "${base}/api/project/${pid}/panel/data" >"${output}"
     if jq -e '.name | startswith("Daily net change")' <<<"${panel}" >/dev/null; then
       jq -e 'type == "object"' "${output}" >/dev/null

@@ -3,7 +3,8 @@
 The hosted workflow runs `run.sh` against the released Coroot 1.22.2 image, an
 ephemeral Prometheus and a loopback-only synthetic metrics server. It provisions
 the versioned dashboard definitions twice, checks persisted configurations and
-an unrelated dashboard, queries every panel through Coroot, and captures all
+an unrelated dashboard, queries every panel through Coroot using the same
+five-minute relative time range as the browser, and captures all
 three real browser pages with the pinned Playwright CLI. HAR files verify the
 page's panel requests returned HTTP 200. Inspect the PNGs before accepting UI
 quality; synthetic results say nothing about production platform health.
@@ -31,3 +32,6 @@ are disabled. Docker uses host networking only on the isolated hosted runner;
 no port is published or bound to a public interface. Cleanup removes only this
 invocation's named containers and temporary files, preserving diagnostic logs
 and screenshots as seven-day workflow artifacts.
+
+The binary version is verified from its real startup log. Coroot 1.22.2 does
+not expose a `--version` option.

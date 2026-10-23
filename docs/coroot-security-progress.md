@@ -89,8 +89,14 @@ ksail workload validate
 ksail --config ksail.prod.yaml workload validate
 ```
 
-CI checks generated/source parity and the enabled and disabled renderings. Before
-activation, exercise the pinned helper images and reconciliation against Coroot's API.
+CI checks generated/source parity and the enabled and disabled renderings. The
+`Validate Coroot Security Progress` workflow exercises the pinned helper images and
+the released Coroot binary against synthetic data. It reconciles twice, verifies
+every persisted panel and preserves browser screenshots and panel responses as
+seven-day artifacts. Inspect those screenshots before accepting a change to the
+dashboard layout. These fixtures establish dashboard behaviour; they do not establish
+production coverage or platform health.
+
 After deployment, observe successful collection and reconciliation, open all three
 dashboards in Coroot, exercise resource legends and a longer time range, and verify
 that incomplete evidence remains visible. Keep #5260 open until that live evaluation
