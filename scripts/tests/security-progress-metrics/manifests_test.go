@@ -1,9 +1,11 @@
 package securityprogress_test
 
 import (
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -80,5 +82,42 @@ func TestPackagedScriptsMatchReviewedSources(t *testing.T) {
 	c.Dir = root
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
+	}
+}
+
+func TestPackagedDashboardPassesEmbeddedJSONGate(t *testing.T) {
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command("bash", "scripts/validate-embedded-json.sh")
+	c.Dir = root
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("dashboard JSON is not readable by the manifest gate: %v %s", err, out)
+	}
+	component := filepath.Join(root, "k8s/bases/infrastructure/coroot/components/security-progress")
+	b, err := os.ReadFile(filepath.Join(component, "config-map.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Data map[string]string `json:"data"`
+	}
+	if err := yaml.Unmarshal(b, &config); err != nil {
+		t.Fatal(err)
+	}
+	source, err := os.ReadFile(filepath.Join(component, "dashboards.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want, got any
+	if err := json.Unmarshal(source, &want); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(strings.ReplaceAll(config.Data["dashboards.json"], "$${", "${")), &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(want, got) {
+		t.Fatal("packaging changed dashboard semantics")
 	}
 }

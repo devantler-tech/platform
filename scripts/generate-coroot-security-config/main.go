@@ -4,13 +4,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf16"
 
-	"sigs.k8s.io/yaml"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -26,15 +28,35 @@ func main() {
 		"check-kubescape-result-coverage.sh": "scripts/check-kubescape-result-coverage.sh",
 		"kubescape-unscanned-namespaces.tsv": "scripts/kubescape-unscanned-namespaces.tsv",
 	}
-	data := map[string]string{}
+	data := map[string]*yaml.Node{}
 	for name, path := range files {
 		b, err := os.ReadFile(path)
 		if err != nil {
 			fail(err)
 		}
+		if strings.HasSuffix(name, ".json") {
+			if !json.Valid(b) {
+				fail(fmt.Errorf("invalid source JSON: %s", path))
+			}
+			// YAML emitters quote/fold strings containing non-BMP glyphs even
+			// when literal style is requested. JSON Unicode escapes preserve the
+			// decoded dashboard and keep the embedded-JSON gate's literal block.
+			var ascii strings.Builder
+			for _, r := range string(b) {
+				if r <= 127 {
+					ascii.WriteRune(r)
+					continue
+				}
+				for _, unit := range utf16.Encode([]rune{r}) {
+					fmt.Fprintf(&ascii, "\\u%04x", unit)
+				}
+			}
+			b = []byte(ascii.String())
+		}
 		// Flux substitutes the entire rendered YAML. Escape shell substitutions
 		// in the generated copy only; the ordinary source remains executable.
-		data[name] = strings.ReplaceAll(string(b), "${", "$${")
+		data[name] = &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Style: yaml.LiteralStyle,
+			Value: strings.ReplaceAll(string(b), "${", "$${")}
 	}
 	cm := map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "metadata": map[string]any{"name": "coroot-security-progress", "namespace": "observability"}, "data": data}
 	b, err := yaml.Marshal(cm)
