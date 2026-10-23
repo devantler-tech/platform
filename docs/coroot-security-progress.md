@@ -70,10 +70,11 @@ metrics and route are preserved by this component.
 
 ## Deployment and maintenance
 
-The component is **off by default**: no normal overlay references it. After its validation
-and review, a separate activation adds
-`../../../bases/infrastructure/coroot/components/security-progress` to the production
-infrastructure overlay's `components`. Use the protected merge/deploy path. The
+The shared base leaves this component **off by default**. The production infrastructure
+overlay explicitly enables
+`../../../bases/infrastructure/coroot/components/security-progress` in its `components`.
+To disable collection and reconciliation, remove that production component reference
+through the protected merge/deploy path. The
 collector needs only the explicitly listed read-only resources; only its container
 receives a projected service-account token. Exec probes check publication freshness,
 project binding and the two local services. Reporting a failed security source still
