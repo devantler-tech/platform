@@ -11,26 +11,31 @@ def scope_key: [.kind, .namespace, .name] | join("/");
 
 if .mode == "policy" then
   ([.policy, .cluster_policy] | map(list) | add
-    | [ .[] as $report | $report.results[]? | select(.source == "kyverno") | . as $r
+    | [ .[] as $report | $report.results[]?
+      | if (.source | type) != "string" then error("missing policy source") else . end
+      | select(.source == "kyverno" or (.source | startswith("Kyverno")))
+      | if (.source | IN("kyverno","KyvernoGeneratingPolicy","KyvernoMutatingPolicy","KyvernoValidatingPolicy") | not)
+        then error("unsupported Kyverno policy source") else . end | . as $r
+      | ($r.rule // (if $r.source != "kyverno" then "(policy)" else null end)) as $rule
       | (if ($r.resources | length) > 0 then $r.resources[] else $report.scope end) as $resource
       | if ($resource.kind | type) != "string" or ($resource.name | type) != "string" or
-           ($r.policy | type) != "string" or ($r.rule | type) != "string" or
+           ($r.policy | type) != "string" or ($rule | type) != "string" or
            ([$r.result] | inside(["pass","fail","warn","error","skip"]) | not)
         then error("unrecognized policy result") else
-        {policy:$r.policy,rule:$r.rule,namespace:($resource.namespace // $report.metadata.namespace // "_"),
+        {source:$r.source,policy:$r.policy,rule:$rule,namespace:($resource.namespace // $report.metadata.namespace // "_"),
          kind:$resource.kind,name:$resource.name,status:$r.result,severity:($r.severity // $r.properties.severity // "unknown" | ascii_downcase),
          at:($r.timestamp.seconds // 0)} end ]
-    | group_by([.policy,.rule,.namespace,.kind,.name])
+    | group_by([.source,.policy,.rule,.namespace,.kind,.name])
     | map((map(.at) | max) as $at | map(select(.at == $at)) | unique
       | if (map(.status) | unique | length) > 1 then error("conflicting policy reports") else .[0] end)
   ) as $results
   | if ($results | length) == 0 then error("no policy evidence") else
     (["pass","fail","warn","error","skip"][] as $status
       | metric("platform_security_policy_total"; {status:$status}; ([$results[] | select(.status == $status)] | length))),
-    ($results | group_by([.policy,.rule,.namespace,.status,.severity])[]
-      | .[0] as $r | metric("platform_security_policy_results"; ($r | {policy,rule,namespace,status,severity}); length)),
+    ($results | group_by([.source,.policy,.rule,.namespace,.status,.severity])[]
+      | .[0] as $r | metric("platform_security_policy_results"; ($r | {source,policy,rule,namespace,status,severity}); length)),
     ($results[] | select(.status != "pass")
-      | metric("platform_security_policy_finding"; {policy,rule,namespace,kind,name,status,severity}; 1))
+      | metric("platform_security_policy_finding"; {source,policy,rule,namespace,kind,name,status,severity}; 1))
   end
 elif .mode == "kubescape" then . as $input
   | if ($input.vulnerability | list | length) == 0 or ($input.vulnerability_stored | list | length) == 0

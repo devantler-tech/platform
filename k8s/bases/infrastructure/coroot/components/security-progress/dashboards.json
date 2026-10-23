@@ -495,8 +495,8 @@
                   "queries": [
                     {
                       "datasource": "",
-                      "query": "(topk(30, sum by (policy, rule, status, severity) (platform_security_policy_results{status=~\"fail|warn|error\"}))) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
-                      "legend": "{{policy}} / {{rule}} / {{status}} / {{severity}}",
+                      "query": "(topk(30, sum by (source, policy, rule, status, severity) (platform_security_policy_results{status=~\"fail|warn|error\"}))) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
+                      "legend": "{{source}} / {{policy}} / {{rule}} / {{status}} / {{severity}}",
                       "color": ""
                     }
                   ]
@@ -552,7 +552,7 @@
                     {
                       "datasource": "",
                       "query": "(topk(50, platform_security_policy_finding{status=~\"fail|warn|error\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
-                      "legend": "{{policy}} / {{rule}} / {{namespace}} / {{kind}}/{{name}} / {{status}} / {{severity}}",
+                      "legend": "{{source}} / {{policy}} / {{rule}} / {{namespace}} / {{kind}}/{{name}} / {{status}} / {{severity}}",
                       "color": ""
                     }
                   ]
@@ -579,8 +579,8 @@
                   "queries": [
                     {
                       "datasource": "",
-                      "query": "(sum by (policy, rule, namespace) (platform_security_policy_results{status=\"skip\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
-                      "legend": "Skipped: {{policy}} / {{rule}} / {{namespace}}",
+                      "query": "(sum by (source, policy, rule, namespace) (platform_security_policy_results{status=\"skip\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
+                      "legend": "Skipped: {{source}} / {{policy}} / {{rule}} / {{namespace}}",
                       "color": "#f59e0b"
                     }
                   ]

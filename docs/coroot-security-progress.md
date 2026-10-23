@@ -45,8 +45,13 @@ severity, using current, coherent summaries. The same CVE in two images counts t
 They do not claim unique CVEs across the platform, runtime relevance or complete coverage
 while images are missing or stale. Source severities and acceptance markers are retained;
 an accepted rule cannot turn an otherwise failed control into an accepted control.
-Kyverno reports are deduplicated by policy, rule and resource; skipped checks remain
-separate from passes. Observed reports alone do not prove complete policy execution.
+Kyverno reports include legacy `kyverno` results and the newer generating, mutating
+and validating policy families. Results are deduplicated by source, policy, rule and
+resource; the source stays in drill-down legends so equal names in different policy
+families cannot collide. Policy-level CEL results without a rule use `(policy)`.
+Unrecognised Kyverno families fail collection instead of silently disappearing.
+Skipped checks remain separate from passes. Observed reports alone do not prove
+complete policy execution.
 
 ## Policy Reporter replacement decision
 

@@ -8,10 +8,12 @@ platform_security_policy_total{status="fail"} 2
 platform_security_policy_total{status="warn"} 1
 platform_security_policy_total{status="error"} 0
 platform_security_policy_total{status="skip"} 1
-platform_security_policy_results{policy="synthetic-nonroot",rule="synthetic-rule",namespace="synthetic-demo",status="fail",severity="high"} 2
-platform_security_policy_results{policy="synthetic-label",rule="synthetic-label",namespace="synthetic-demo",status="warn",severity="medium"} 1
-platform_security_policy_results{policy="synthetic-exception",rule="synthetic-skip",namespace="synthetic-demo",status="skip",severity="low"} 1
-platform_security_policy_finding{policy="synthetic-nonroot",rule="synthetic-rule",namespace="synthetic-demo",kind="Deployment",name="synthetic-web",status="fail",severity="high"} 1
+platform_security_policy_results{source="kyverno",policy="synthetic-nonroot",rule="synthetic-rule",namespace="synthetic-demo",status="fail",severity="high"} 1
+platform_security_policy_results{source="KyvernoValidatingPolicy",policy="synthetic-cel",rule="(policy)",namespace="synthetic-demo",status="fail",severity="high"} 1
+platform_security_policy_results{source="kyverno",policy="synthetic-label",rule="synthetic-label",namespace="synthetic-demo",status="warn",severity="medium"} 1
+platform_security_policy_results{source="kyverno",policy="synthetic-exception",rule="synthetic-skip",namespace="synthetic-demo",status="skip",severity="low"} 1
+platform_security_policy_finding{source="kyverno",policy="synthetic-nonroot",rule="synthetic-rule",namespace="synthetic-demo",kind="Deployment",name="synthetic-web",status="fail",severity="high"} 1
+platform_security_policy_finding{source="KyvernoValidatingPolicy",policy="synthetic-cel",rule="(policy)",namespace="synthetic-demo",kind="Deployment",name="synthetic-cel-web",status="fail",severity="high"} 1
 platform_security_posture_total{status="passed"} 18
 platform_security_posture_total{status="failed"} 2
 platform_security_posture_total{status="accepted"} 1

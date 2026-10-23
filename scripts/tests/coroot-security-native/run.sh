@@ -92,7 +92,8 @@ wait_native_panel() {
     if curl --silent --fail --connect-timeout 2 --max-time 5 --get \
       --data-urlencode "query=${panel}" --data-urlencode 'from=now-5m' --data-urlencode 'to=now' \
       "${base}/api/project/${pid}/panel/data" >"${output}" &&
-      jq -e '.chart.series | type == "array" and length > 0' "${output}" >/dev/null; then
+      jq -e '.chart.series | type == "array" and any(.[]?; ([.data[]? | select(type == "number")] | length) >= 2)' \
+        "${output}" >/dev/null; then
       return
     fi
     sleep 1
@@ -176,17 +177,29 @@ while IFS= read -r definition; do
       jq -e '.chart.series | type == "array" and length > 0' "${output}" >/dev/null
     fi
   done < <(jq -c '.config.groups[].panels[]' <<<"${definition}")
+  printf 'Native API dashboard %s: %s; validated panels=%s\n' \
+    "${dashboard_index}" "${name}" "${panel_index}" >>"${artifacts}/README.txt"
+done < <(jq -c '.[]' "${component}/dashboards.json")
+
+# Complete every configured native API check before any browser work, so a
+# frontend bootstrap failure cannot hide evidence from later dashboards.
+dashboard_index=0
+while IFS= read -r definition; do
+  dashboard_index=$((dashboard_index + 1))
+  name="$(jq -r '.name' <<<"${definition}")"
+  id="$(jq -r --arg name "${name}" '.data[] | select(.name == $name) | .id | @uri' "${artifacts}/dashboards-2.json")"
+  panel_count="$(jq '[.config.groups[].panels[]] | length' <<<"${definition}")"
   screenshot="${artifacts}/dashboard-${dashboard_index}.png"
   har="${artifacts}/dashboard-${dashboard_index}.har"
   # A selector timeout exits the CLI before its HAR is flushed. Preserve one
   # actual rendered page and its full network evidence first, so a frontend
   # failure can be diagnosed without weakening the canvas requirement below.
   if [ "${dashboard_index}" = 1 ]; then
-    npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
+    DEBUG=pw:protocol npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
       --viewport-size '1600,1200' --full-page --timeout 30000 --wait-for-timeout 10000 \
       --save-har "${artifacts}/dashboard-1-diagnostic.har" \
       "${base}/p/${pid}/dashboards/${id}?from=now-5m&to=now" \
-      "${artifacts}/dashboard-1-diagnostic.png"
+      "${artifacts}/dashboard-1-diagnostic.png" 2>"${artifacts}/dashboard-1-protocol.log"
   fi
   # CLI only: no authored browser JavaScript and no local desktop automation.
   npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
@@ -197,11 +210,11 @@ while IFS= read -r definition; do
   [ -s "${screenshot}" ]
   # HAR validates the requests made by the actual page. Screenshot pixels still
   # need human inspection; a successful CLI exit alone is not visual acceptance.
-  jq -e --argjson expected "${panel_index}" '
+  jq -e --argjson expected "${panel_count}" '
     [.log.entries[] | select(.request.url | contains("/panel/data"))] as $panels
     | ($panels | length) >= $expected and all($panels[]; .response.status == 200)
   ' "${har}" >/dev/null
   printf 'Dashboard %s: %s; native panels=%s; screenshot=%s\n' \
-    "${dashboard_index}" "${name}" "${panel_index}" "${screenshot##*/}" >>"${artifacts}/README.txt"
+    "${dashboard_index}" "${name}" "${panel_count}" "${screenshot##*/}" >>"${artifacts}/README.txt"
 done < <(jq -c '.[]' "${component}/dashboards.json")
 printf '%s\n' 'Native API persistence and browser capture completed. One-day trend panels intentionally lack fixture history; inspect screenshots before accepting UI quality.' >>"${artifacts}/README.txt"

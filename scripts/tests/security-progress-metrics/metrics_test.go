@@ -39,7 +39,7 @@ func TestPolicyDeduplicatesReportsAndKeepsRemainingResource(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
-	if !strings.Contains(out, `platform_security_policy_results{policy="safe-pods",rule="nonroot",namespace="demo",status="fail",severity="unknown"} 1`) {
+	if !strings.Contains(out, `platform_security_policy_results{source="kyverno",policy="safe-pods",rule="nonroot",namespace="demo",status="fail",severity="unknown"} 1`) {
 		t.Fatal(out)
 	}
 	if !strings.Contains(out, `kind="Deployment",name="web"`) {

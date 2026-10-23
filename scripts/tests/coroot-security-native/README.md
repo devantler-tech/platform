@@ -6,17 +6,24 @@ the versioned dashboard definitions twice, checks persisted configurations and
 an unrelated dashboard, queries every panel through Coroot using the same
 five-minute relative time range as the browser, and captures all
 three real browser pages with the pinned Playwright CLI. HAR files verify the
-page's panel requests returned HTTP 200. A diagnostic screenshot and full HAR
+page's panel requests returned HTTP 200. A diagnostic screenshot, full HAR and
+Playwright protocol log (kept out of public stdout)
 are captured before the first strict canvas wait, preserving evidence even if
 that wait fails before Playwright flushes its normal HAR. Inspect the PNGs before accepting UI
 quality; synthetic results say nothing about production platform health.
+
+Every configured panel API check finishes before browser capture begins, so a
+browser failure cannot prevent later dashboards' API responses from being
+validated and retained. The browser phase independently recomputes each
+dashboard's expected panel count for its strict HAR check.
 
 `synthetic.prom` includes failures, coverage gaps, accepted/skipped outcomes and
 unknown scan freshness/runtime delivery. The helper replaces the timestamp
 placeholder for each run. It calls the actual shared `bind-project-metrics.sh`
 against native Coroot discovery to add the default project's
 `coroot_project_id` label, required by Coroot's global Prometheus selector, and
-waits for that labeled scrape and actual Coroot range-query chart series before
+waits for that labeled scrape and actual Coroot range-query chart series with
+at least two numeric observations before
 testing the panels. This accounts for Coroot truncating range endpoints to the
 refresh step. One-day net-change panels have no historical baseline
 in this short fixture and may show no data; every other panel must return chart
