@@ -1,0 +1,11 @@
+# Off by default: activate by referencing this component in the production
+# infrastructure overlay, in a separate reviewed change after validation.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - config-map.yaml
+  - service-account.yaml
+  - cluster-role.yaml
+  - cluster-role-binding.yaml
+  - deployment.yaml
+  - cron-job.yaml

@@ -1,0 +1,194 @@
+name: Validate Coroot Security Progress
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/validate-coroot-security-progress.yaml
+      - k8s/bases/infrastructure/coroot/components/security-progress/**
+      - k8s/bases/infrastructure/coroot/coroot.yaml
+      - k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml
+      - scripts/tests/coroot-security-native/**
+      - scripts/tests/coroot-security-dashboards/**
+      - scripts/tests/security-progress-metrics/**
+      - scripts/generate-coroot-security-config/**
+      - scripts/check-kubescape-result-coverage.sh
+      - k8s/providers/hetzner/infrastructure/kustomization.yaml
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/validate-coroot-security-progress.yaml
+      - k8s/bases/infrastructure/coroot/components/security-progress/**
+      - k8s/bases/infrastructure/coroot/coroot.yaml
+      - k8s/providers/hetzner/infrastructure/coroot/patches/enable-ha.yaml
+      - scripts/tests/coroot-security-native/**
+      - scripts/tests/coroot-security-dashboards/**
+      - scripts/tests/security-progress-metrics/**
+      - scripts/generate-coroot-security-config/**
+      - scripts/check-kubescape-result-coverage.sh
+      - k8s/providers/hetzner/infrastructure/kustomization.yaml
+  merge_group:
+
+permissions: {}
+
+jobs:
+  runtime-tools:
+    name: Exercise pinned security dashboard helpers
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Exercise the collector and loopback metrics server
+        shell: bash
+        env:
+          COLLECTOR_IMAGE: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
+          SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+        run: |
+          set -euo pipefail
+          component=k8s/bases/infrastructure/coroot/components/security-progress
+          deployment=$component/deployment.yaml
+          grep -Fq -- "$COLLECTOR_IMAGE" "$deployment"
+          grep -Fq -- "$SERVER_IMAGE" "$deployment"
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
+            --volume "$PWD/$component/healthcheck.sh:/config/healthcheck.sh:ro" \
+            --entrypoint /bin/sh "$COLLECTOR_IMAGE" -ec '
+              command -v bash; command -v jq; command -v curl; command -v kubectl; timeout 1 true
+              export METRICS_FILE=/tmp/metrics
+              printf "platform_security_collection_success{coroot_project_id=\"synthetic-probe\",surface=\"policy\"} 0\nplatform_security_collection_success{coroot_project_id=\"synthetic-probe\",surface=\"kubescape\"} 1\n" > "$METRICS_FILE"
+              bash /config/healthcheck.sh
+              bash /config/healthcheck.sh --require-project
+              touch -t 200001010000 "$METRICS_FILE"
+              if bash /config/healthcheck.sh; then
+                echo "Stale collector publication passed its probe" >&2
+                exit 1
+              fi
+              if bash /config/healthcheck.sh --require-project; then
+                echo "Stale scoped collector publication passed readiness" >&2
+                exit 1
+              fi
+            '
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
+            --entrypoint /bin/sh "$SERVER_IMAGE" -ec '
+              mkdir /tmp/metrics
+              printf "platform_security_smoke 1\n" > /tmp/metrics/metrics
+              httpd -p 127.0.0.1:8080 -h /tmp/metrics
+              wget -q -O /dev/null http://127.0.0.1:8080/metrics
+              wget -qO- http://127.0.0.1:8080/metrics | grep -qx "platform_security_smoke 1"
+            '
+
+      - name: Exercise the reconciler toolchain and Prometheus configuration
+        shell: bash
+        env:
+          RECONCILER_IMAGE: docker.io/badouralix/curl-jq:latest@sha256:1e7c0284e24572ace7170df9fc91f15fd3b79ebf056d4dde17244d5d74bbfabc
+          PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+        run: |
+          set -euo pipefail
+          component=k8s/bases/infrastructure/coroot/components/security-progress
+          grep -Fq -- "$RECONCILER_IMAGE" "$component/cron-job.yaml"
+          grep -Fq -- "$PROMETHEUS_IMAGE" "$component/deployment.yaml"
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
+            --entrypoint /bin/sh "$RECONCILER_IMAGE" -ec \
+            'command -v curl; command -v jq; tmp=$(mktemp -d); rm -r "$tmp"'
+          docker run --rm --network none --user 65532:65532 --read-only \
+            --volume "$PWD/$component/prometheus.conf:/etc/prometheus/test.yml:ro" \
+            --entrypoint /bin/promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/test.yml
+          probe_dir=$(mktemp -d)
+          agent="security-progress-probe-$$"
+          cleanup() {
+            result=$?
+            trap - EXIT
+            if [ "$result" != 0 ]; then docker logs "$agent" || true; fi
+            docker rm -f "$agent" >/dev/null 2>&1 || true
+            rm -rf "$probe_dir"
+            exit "$result"
+          }
+          trap cleanup EXIT
+          # Isolated Agent-mode process: no production destinations or network.
+          printf 'global:\n  scrape_interval: 1s\nscrape_configs: []\n' > "$probe_dir/agent.yml"
+          chmod 644 "$probe_dir/agent.yml"
+          docker run --detach --name "$agent" --network none --user 65532:65532 --read-only \
+            --tmpfs /prometheus:rw,uid=65532,gid=65532,mode=700 \
+            --volume "$probe_dir/agent.yml:/etc/prometheus/probe.yml:ro" "$PROMETHEUS_IMAGE" \
+            --config.file=/etc/prometheus/probe.yml --enable-feature=agent \
+            --storage.agent.path=/prometheus --web.listen-address=127.0.0.1:9090
+          for ((attempt = 0; attempt < 30; attempt++)); do
+            if timeout 5s docker exec "$agent" /bin/promtool check ready --url=http://127.0.0.1:9090 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "$agent" /bin/promtool check healthy --url=http://127.0.0.1:9090
+          docker exec "$agent" /bin/promtool check ready --url=http://127.0.0.1:9090
+          if docker exec "$agent" /bin/promtool check ready --url=http://127.0.0.1:1; then
+            echo 'Prometheus readiness accepted an unavailable endpoint' >&2
+            exit 1
+          fi
+
+  native-coroot:
+    name: Exercise released Coroot dashboards and capture browser evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      COROOT_IMAGE: ghcr.io/coroot/coroot:1.22.2
+      PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+      SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+      PLAYWRIGHT_VERSION: 1.56.1
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify the native API contract matches the versioned Coroot image
+        shell: bash
+        run: |
+          # Updating either pin requires reviewing the v1.22.2 API and browser
+          # source contract in scripts/tests/coroot-security-native/README.md.
+          if [ "$COROOT_IMAGE" != ghcr.io/coroot/coroot:1.22.2 ] ||
+             [ "$(grep -Fxc "      name: $COROOT_IMAGE" k8s/bases/infrastructure/coroot/coroot.yaml)" != 1 ]; then
+            echo 'Native Coroot contract/image differs from communityEdition.image.name; review compatibility before updating the fixture.' >&2
+            exit 1
+          fi
+
+      - name: Install the pinned browser CLI and Chromium
+        shell: bash
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/coroot-native-browsers"
+          printf 'PLAYWRIGHT_BROWSERS_PATH=%s\nNATIVE_ARTIFACT_DIR=%s\n' \
+            "$PLAYWRIGHT_BROWSERS_PATH" "$RUNNER_TEMP/coroot-security-native" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/coroot-security-native"
+          npx --yes "playwright@$PLAYWRIGHT_VERSION" install --with-deps chromium
+
+      - name: Exercise the real binary, persisted dashboards and browser rendering
+        shell: bash
+        run: bash scripts/tests/coroot-security-native/run.sh
+
+      - name: Preserve synthetic native API and browser evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coroot-security-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coroot-security-native/
+          if-no-files-found: error
+          retention-days: 7
