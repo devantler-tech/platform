@@ -1,0 +1,26 @@
+# Only the inputs already named by the coverage checker and policy dashboards.
+# No secrets, exception writes, policy mutations or issue-management credentials.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: coroot-security-progress
+rules:
+  - apiGroups: [""]
+    resources: [namespaces, pods]
+    verbs: [get, list]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, daemonsets]
+    verbs: [get, list]
+  - apiGroups: [batch]
+    resources: [cronjobs]
+    verbs: [get, list]
+  - apiGroups: [spdx.softwarecomposition.kubescape.io]
+    resources:
+      - workloadconfigurationscans
+      - vulnerabilitymanifestsummaries
+      - applicationprofiles
+      - networkneighborhoods
+    verbs: [get, list]
+  - apiGroups: [wgpolicyk8s.io]
+    resources: [policyreports, clusterpolicyreports]
+    verbs: [get, list]

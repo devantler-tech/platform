@@ -54,7 +54,9 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" ||
   die "could not resolve the repository root"
 
 context=''
+cache_dir=''
 from_dir=''
+snapshot_dir=''
 now=''
 vuln_max_age_days=7
 reviewed="${repo_root}/scripts/kubescape-unscanned-namespaces.tsv"
@@ -66,7 +68,9 @@ need_value() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --context) need_value "$@" && context="$2" && shift 2 ;;
+  --cache-dir) need_value "$@" && cache_dir="$2" && shift 2 ;;
   --from-dir) need_value "$@" && from_dir="$2" && shift 2 ;;
+  --snapshot-dir) need_value "$@" && snapshot_dir="$2" && shift 2 ;;
   --now) need_value "$@" && now="$2" && shift 2 ;;
   --vuln-max-age-days) need_value "$@" && vuln_max_age_days="$2" && shift 2 ;;
   --reviewed-list) need_value "$@" && reviewed="$2" && shift 2 ;;
@@ -109,7 +113,9 @@ work="$(mktemp -d)" || die "could not create a temporary directory"
 trap 'rm -rf "${work}"' EXIT
 
 kc() {
-  if [ -n "${context}" ]; then kubectl --context "${context}" "$@"; else kubectl "$@"; fi
+  [ -z "${cache_dir}" ] || set -- --cache-dir "${cache_dir}" "$@"
+  [ -z "${context}" ] || set -- --context "${context}" "$@"
+  kubectl "$@"
 }
 
 fetch() {
@@ -466,6 +472,17 @@ for surface in posture vulnerability runtime; do
   line="$(grep "^COVERAGE ${surface} " "${work}/report")" || die "no ${surface} result was computed"
   case "${line}" in *' expected=0 '*) die "${surface}: the expected set is empty; that is UNKNOWN, never clean" ;; esac
 done
+# Optional, private, short-lived input handoff for the security-progress exporter.
+# Publish only after every input and denominator was validated. Exit 1 still has
+# valid evidence of gaps; exit 2 must never leave a usable snapshot behind.
+if [ -n "${snapshot_dir}" ]; then
+  [ -d "${snapshot_dir}" ] && [ -z "$(ls -A "${snapshot_dir}")" ] ||
+    die "--snapshot-dir must name an existing empty directory"
+  for name in ${INPUTS}; do
+    cp "${work}/${name}.json" "${snapshot_dir}/${name}.json" || die "could not export ${name}"
+  done
+  cp "${work}/report" "${snapshot_dir}/report.txt" || die "could not export coverage report"
+fi
 if grep -qE '^(MISSING|STALE|SPLIT|PARTIAL|EMPTY) ' "${work}/report"; then
   exit 1
 fi

@@ -123,6 +123,17 @@ expect "unscanned namespace and Job pods are out of scope" 0 \
   "COVERAGE vulnerability expected=1 current=1" "${base}"
 expect "one runtime pair is expected" 0 "COVERAGE runtime expected=1 current=1" "${base}"
 
+snapshot="${tmp}/snapshot"
+mkdir "${snapshot}"
+rc=0
+bash "${CHECK}" --from-dir "${base}" --now "${NOW}" --snapshot-dir "${snapshot}" >"${tmp}/out" 2>&1 || rc=$?
+if [ "${rc}" -eq 0 ] && cmp -s "${base}/posture.json" "${snapshot}/posture.json" &&
+  grep -q '^COVERAGE runtime expected=1 current=1' "${snapshot}/report.txt"; then
+  ok "a validated snapshot retains the exact result-bearing inputs and coverage report"
+else
+  bad "validated snapshot unavailable: exit ${rc} ($(cat "${tmp}/out"))"
+fi
+
 rc=0
 bash "${CHECK}" --from-dir "${base}" --now "${NOW}" --vuln-max-age-days 08 \
   >"${tmp}/out" 2>&1 || rc=$?
