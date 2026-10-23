@@ -56,19 +56,36 @@ jobs:
           SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
         run: |
           set -euo pipefail
-          deployment=k8s/bases/infrastructure/coroot/components/security-progress/deployment.yaml
+          component=k8s/bases/infrastructure/coroot/components/security-progress
+          deployment=$component/deployment.yaml
           grep -Fq -- "$COLLECTOR_IMAGE" "$deployment"
           grep -Fq -- "$SERVER_IMAGE" "$deployment"
           docker run --rm --network none --user 65532:65532 --read-only \
             --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
-            --entrypoint /bin/sh "$COLLECTOR_IMAGE" -ec \
-            'command -v bash; command -v jq; command -v curl; command -v kubectl; timeout 1 true'
+            --volume "$PWD/$component/healthcheck.sh:/config/healthcheck.sh:ro" \
+            --entrypoint /bin/sh "$COLLECTOR_IMAGE" -ec '
+              command -v bash; command -v jq; command -v curl; command -v kubectl; timeout 1 true
+              export METRICS_FILE=/tmp/metrics
+              printf "platform_security_collection_success{coroot_project_id=\"synthetic-probe\",surface=\"policy\"} 0\nplatform_security_collection_success{coroot_project_id=\"synthetic-probe\",surface=\"kubescape\"} 1\n" > "$METRICS_FILE"
+              bash /config/healthcheck.sh
+              bash /config/healthcheck.sh --require-project
+              touch -t 200001010000 "$METRICS_FILE"
+              if bash /config/healthcheck.sh; then
+                echo "Stale collector publication passed its probe" >&2
+                exit 1
+              fi
+              if bash /config/healthcheck.sh --require-project; then
+                echo "Stale scoped collector publication passed readiness" >&2
+                exit 1
+              fi
+            '
           docker run --rm --network none --user 65532:65532 --read-only \
             --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
             --entrypoint /bin/sh "$SERVER_IMAGE" -ec '
               mkdir /tmp/metrics
               printf "platform_security_smoke 1\n" > /tmp/metrics/metrics
               httpd -p 127.0.0.1:8080 -h /tmp/metrics
+              wget -q -O /dev/null http://127.0.0.1:8080/metrics
               wget -qO- http://127.0.0.1:8080/metrics | grep -qx "platform_security_smoke 1"
             '
 
@@ -88,7 +105,38 @@ jobs:
             'command -v curl; command -v jq; tmp=$(mktemp -d); rm -r "$tmp"'
           docker run --rm --network none --user 65532:65532 --read-only \
             --volume "$PWD/$component/prometheus.conf:/etc/prometheus/test.yml:ro" \
-            --entrypoint /bin/promtool "$PROMETHEUS_IMAGE" check config /etc/prometheus/test.yml
+            --entrypoint /bin/promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/test.yml
+          probe_dir=$(mktemp -d)
+          agent="security-progress-probe-$$"
+          cleanup() {
+            result=$?
+            trap - EXIT
+            if [ "$result" != 0 ]; then docker logs "$agent" || true; fi
+            docker rm -f "$agent" >/dev/null 2>&1 || true
+            rm -rf "$probe_dir"
+            exit "$result"
+          }
+          trap cleanup EXIT
+          # Isolated Agent-mode process: no production destinations or network.
+          printf 'global:\n  scrape_interval: 1s\nscrape_configs: []\n' > "$probe_dir/agent.yml"
+          chmod 644 "$probe_dir/agent.yml"
+          docker run --detach --name "$agent" --network none --user 65532:65532 --read-only \
+            --tmpfs /prometheus:rw,uid=65532,gid=65532,mode=700 \
+            --volume "$probe_dir/agent.yml:/etc/prometheus/probe.yml:ro" "$PROMETHEUS_IMAGE" \
+            --config.file=/etc/prometheus/probe.yml --enable-feature=agent \
+            --storage.agent.path=/prometheus --web.listen-address=127.0.0.1:9090
+          for ((attempt = 0; attempt < 30; attempt++)); do
+            if timeout 5s docker exec "$agent" /bin/promtool check ready --url=http://127.0.0.1:9090 >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec "$agent" /bin/promtool check healthy --url=http://127.0.0.1:9090
+          docker exec "$agent" /bin/promtool check ready --url=http://127.0.0.1:9090
+          if docker exec "$agent" /bin/promtool check ready --url=http://127.0.0.1:1; then
+            echo 'Prometheus readiness accepted an unavailable endpoint' >&2
+            exit 1
+          fi
 
   native-coroot:
     name: Exercise released Coroot dashboards and capture browser evidence

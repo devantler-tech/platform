@@ -9,8 +9,6 @@ metadata:
     platform.devantler.tech/replica-floor: exempt
   annotations:
     configmap.reloader.stakater.com/reload: coroot-security-progress
-    checkov.io/skip1: "CKV_K8S_8=metrics and scrape listeners bind loopback only; no Service or pod-network listener is exposed"
-    checkov.io/skip2: "CKV_K8S_9=loopback metrics are consumed by the in-pod agent; collection freshness and success are explicit metrics"
 spec:
   # One snapshot writer and one remote-write stream. Recreate prevents overlap.
   replicas: 1
@@ -40,6 +38,22 @@ spec:
           image: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
           imagePullPolicy: IfNotPresent
           command: [/bin/bash, /config/collector.sh]
+          startupProbe:
+            exec:
+              command: [/bin/bash, /config/healthcheck.sh]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          livenessProbe:
+            exec:
+              command: [/bin/bash, /config/healthcheck.sh]
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: [/bin/bash, /config/healthcheck.sh, --require-project]
+            periodSeconds: 10
+            timeoutSeconds: 5
           env:
             - name: COROOT_URL
               value: http://coroot-coroot.observability.svc.cluster.local.:8080
@@ -76,6 +90,22 @@ spec:
           image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
           imagePullPolicy: IfNotPresent
           command: [httpd, -f, -p, "127.0.0.1:8080", -h, /metrics]
+          startupProbe:
+            exec:
+              command: [wget, -q, -O, /dev/null, "http://127.0.0.1:8080/metrics"]
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 90
+          livenessProbe:
+            exec:
+              command: [wget, -q, -O, /dev/null, "http://127.0.0.1:8080/metrics"]
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            exec:
+              command: [wget, -q, -O, /dev/null, "http://127.0.0.1:8080/metrics"]
+            periodSeconds: 10
+            timeoutSeconds: 5
           securityContext: *container-security
           resources:
             requests:
@@ -96,6 +126,22 @@ spec:
             - --enable-feature=agent
             - --storage.agent.path=/prometheus
             - --web.listen-address=127.0.0.1:9090
+          startupProbe:
+            exec:
+              command: [/bin/promtool, check, ready, "--url=http://127.0.0.1:9090"]
+            periodSeconds: 10
+            timeoutSeconds: 15
+            failureThreshold: 30
+          livenessProbe:
+            exec:
+              command: [/bin/promtool, check, healthy, "--url=http://127.0.0.1:9090"]
+            periodSeconds: 30
+            timeoutSeconds: 15
+          readinessProbe:
+            exec:
+              command: [/bin/promtool, check, ready, "--url=http://127.0.0.1:9090"]
+            periodSeconds: 20
+            timeoutSeconds: 15
           securityContext: *container-security
           resources:
             requests:

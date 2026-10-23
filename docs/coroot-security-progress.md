@@ -75,7 +75,10 @@ and review, a separate activation adds
 `../../../bases/infrastructure/coroot/components/security-progress` to the production
 infrastructure overlay's `components`. Use the protected merge/deploy path. The
 collector needs only the explicitly listed read-only resources; only its container
-receives a projected service-account token. Metrics are served on loopback and sent by
+receives a projected service-account token. Exec probes check publication freshness,
+project binding and the two local services. Reporting a failed security source still
+counts as a functioning collector; it makes the dashboards show degraded evidence.
+Metrics are served on loopback and sent by
 an in-pod Prometheus agent to Coroot's existing metrics backend. There is no Service or
 new public endpoint.
 

@@ -22,6 +22,7 @@ func main() {
 	files := map[string]string{
 		"bind-project-metrics.sh":            filepath.Join(dir, "bind-project-metrics.sh"),
 		"collector.sh":                       filepath.Join(dir, "collector.sh"),
+		"healthcheck.sh":                     filepath.Join(dir, "healthcheck.sh"),
 		"reconcile.sh":                       filepath.Join(dir, "reconcile.sh"),
 		"metrics.jq":                         filepath.Join(dir, "metrics.jq"),
 		"dashboards.json":                    filepath.Join(dir, "dashboards.json"),
