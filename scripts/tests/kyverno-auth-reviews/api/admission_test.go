@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,14 +58,24 @@ func TestRenderedConditionsBreakReviewWebhookRecursion(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	var calls atomic.Int64
+	// API-server background admissions and retried deliveries must not be
+	// attributed to the different built-in kind a subtest is exercising.
+	var callsMu sync.Mutex
+	calls := make(map[string]int)
+	callCount := func(kind string) int {
+		callsMu.Lock()
+		defer callsMu.Unlock()
+		return calls[kind]
+	}
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var review admissionv1.AdmissionReview
 		if err := json.NewDecoder(r.Body).Decode(&review); err != nil || review.Request == nil {
 			http.Error(w, "invalid fixture admission request", http.StatusBadRequest)
 			return
 		}
-		calls.Add(1)
+		callsMu.Lock()
+		calls[review.Request.Kind.Kind]++
+		callsMu.Unlock()
 		review.Response = &admissionv1.AdmissionResponse{UID: review.Request.UID, Allowed: false,
 			Result: &metav1.Status{Message: "fixture webhook reached"}}
 		review.Request = nil
@@ -150,11 +160,15 @@ func TestRenderedConditionsBreakReviewWebhookRecursion(t *testing.T) {
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			before := calls.Load()
+			before := callCount(name)
+			// An unrelated admission must not be attributed to this review.
+			if err := probe(); err == nil || !strings.Contains(err.Error(), "fixture webhook reached") {
+				t.Fatalf("unrelated admission bypassed rejecting webhook: %v", err)
+			}
 			if err := request(); err != nil {
 				t.Fatalf("already-filtered review called the webhook: %v", err)
 			}
-			if calls.Load() != before {
+			if callCount(name) != before {
 				t.Fatal("already-filtered review still dispatched")
 			}
 		})
@@ -186,7 +200,7 @@ func TestRenderedConditionsBreakReviewWebhookRecursion(t *testing.T) {
 		},
 	} {
 		t.Run(name+" remains fail closed", func(t *testing.T) {
-			before := calls.Load()
+			before := callCount(name)
 			if err := request(); err == nil || !strings.Contains(err.Error(), "fixture webhook reached") {
 				t.Fatalf("request bypassed rejecting webhook: %v", err)
 			}
@@ -194,7 +208,7 @@ func TestRenderedConditionsBreakReviewWebhookRecursion(t *testing.T) {
 			// contract is that an ordinary request reaches the rejecting
 			// webhook at least once and remains rejected, not that the
 			// transport performs exactly one HTTP exchange.
-			if calls.Load() <= before {
+			if callCount(name) <= before {
 				t.Fatal("expected a rejecting webhook call")
 			}
 		})
