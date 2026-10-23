@@ -36,15 +36,15 @@
               }
             },
             {
-              "name": "Collection age in minutes",
-              "description": "A line at or above 15 minutes is stale. This clock records metric collection, not Kubescape scan completion. Missing clocks are unknown.",
+              "name": "Collection age in seconds",
+              "description": "A line at or above 900 seconds (15 minutes) is stale. This clock records metric collection, not Kubescape scan completion. Missing clocks are unknown.",
               "source": {
                 "metrics": {
                   "queries": [
                     {
                       "datasource": "",
-                      "query": "(time() - min by (surface) (platform_security_snapshot_timestamp_seconds)) / 60",
-                      "legend": "{{surface}} collection age (minutes)",
+                      "query": "time() - min by (surface) (platform_security_snapshot_timestamp_seconds)",
+                      "legend": "{{surface}} collection age (seconds)",
                       "color": ""
                     }
                   ]
@@ -73,7 +73,7 @@
                       "datasource": "",
                       "query": "(sum(platform_security_policy_total{status=~\"fail|warn|error\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
                       "legend": "Remaining fail + warn + error",
-                      "color": "#ef4444"
+                      "color": ""
                     }
                   ]
                 }
@@ -101,7 +101,7 @@
                       "datasource": "",
                       "query": "(sum(platform_security_posture_total{status=\"failed\"})) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Observed failed control-resource outcomes",
-                      "color": "#ef4444"
+                      "color": ""
                     }
                   ]
                 }
@@ -129,7 +129,7 @@
                       "datasource": "",
                       "query": "(100 * sum(platform_security_posture_total{status=\"passed\"}) / sum(platform_security_posture_total{status=~\"passed|failed\"})) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Observed pass/fail control-workload pairs: pass share (%)",
-                      "color": "#22c55e"
+                      "color": ""
                     }
                   ]
                 }
@@ -213,13 +213,13 @@
                       "datasource": "",
                       "query": "(min(platform_security_posture_freshness_observable)) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Posture scan freshness observable (0 = unknown)",
-                      "color": "#f59e0b"
+                      "color": ""
                     },
                     {
                       "datasource": "",
                       "query": "(min(platform_security_runtime_delivery_verified)) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Runtime delivery verified (0 = unproven)",
-                      "color": "#f97316"
+                      "color": ""
                     }
                   ]
                 }
@@ -379,7 +379,7 @@
                       "datasource": "",
                       "query": "(sum(platform_security_policy_total{status=~\"fail|warn|error\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
                       "legend": "Remaining fail + warn + error",
-                      "color": "#ef4444"
+                      "color": ""
                     }
                   ]
                 }
@@ -407,7 +407,7 @@
                       "datasource": "",
                       "query": "(100 * sum(platform_security_policy_total{status=\"pass\"}) / sum(platform_security_policy_total{status=~\"pass|fail|warn|error\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
                       "legend": "Evaluated PolicyReport pass share (%)",
-                      "color": "#22c55e"
+                      "color": ""
                     }
                   ]
                 }
@@ -463,7 +463,7 @@
                       "datasource": "",
                       "query": "((sum(platform_security_policy_total{status=~\"fail|warn|error\"})) - (sum(platform_security_policy_total{status=~\"fail|warn|error\"} offset 1d))) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900)) and on() ((min(platform_security_collection_success{surface=\"policy\"} offset 1d) == 1) and on() (time() - 86400 - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"} offset 1d) >= 0) and on() (time() - 86400 - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"} offset 1d) < 900))",
                       "legend": "1-day net change (negative = fewer remaining)",
-                      "color": "#3b82f6"
+                      "color": ""
                     }
                   ]
                 }
@@ -545,14 +545,14 @@
             },
             {
               "name": "Resource drill-down: remaining rule failures",
-              "description": "Up to 50 current findings. Expand the legend to identify policy, rule and resource; then open its PolicyReport or PolicyReporter for the full result message and remediation context. This chart is a bounded sample, not a full findings table.",
+              "description": "Up to 50 current findings. Hover over the legend to identify policy, rule and resource; then open its PolicyReport or PolicyReporter for the full result message and remediation context. This chart is a bounded sample, not a full findings table.",
               "source": {
                 "metrics": {
                   "queries": [
                     {
                       "datasource": "",
                       "query": "(topk(50, platform_security_policy_finding{status=~\"fail|warn|error\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
-                      "legend": "{{source}} / {{policy}} / {{rule}} / {{namespace}} / {{kind}}/{{name}} / {{status}} / {{severity}}",
+                      "legend": "{{name}} / {{namespace}} / {{kind}} / {{severity}} {{status}} / {{source}} / {{policy}} / {{rule}}",
                       "color": ""
                     }
                   ]
@@ -581,7 +581,7 @@
                       "datasource": "",
                       "query": "(sum by (source, policy, rule, namespace) (platform_security_policy_results{status=\"skip\"})) and on() ((min(platform_security_collection_success{surface=\"policy\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"policy\"}) < 900))",
                       "legend": "Skipped: {{source}} / {{policy}} / {{rule}} / {{namespace}}",
-                      "color": "#f59e0b"
+                      "color": ""
                     }
                   ]
                 }
@@ -607,7 +607,7 @@
   },
   {
     "name": "Kubescape remediation progress",
-    "description": "> 🤖 Generated by the Agentic Engineer\n\nManaged by platform GitOps: coroot-security-progress/v1.\nTrack observed live-identity posture failures and current live-image vulnerability summary totals alongside expected coverage. Vulnerabilities are full-image image-CVE occurrences; relevance and accepted findings are not claimed as fixes. Stored posture has no trustworthy scan timestamp, and runtime alert delivery remains unproven. No universal green platform score is inferred. Expand chart legends for control/resource/image identity and inspect current report details. Acceptance: https://github.com/devantler-tech/platform/issues/5260 . Coverage/runtime follow-ups: https://github.com/devantler-tech/platform/issues/2447 , https://github.com/devantler-tech/platform/issues/3156 , https://github.com/devantler-tech/platform/issues/4263 , https://github.com/devantler-tech/platform/issues/4264 .",
+    "description": "> 🤖 Generated by the Agentic Engineer\n\nManaged by platform GitOps: coroot-security-progress/v1.\nTrack observed live-identity posture failures and current live-image vulnerability summary totals alongside expected coverage. Vulnerabilities are full-image image-CVE occurrences; relevance and accepted findings are not claimed as fixes. Stored posture has no trustworthy scan timestamp, and runtime alert delivery remains unproven. No universal green platform score is inferred. Hover over chart legend labels for control/resource/image identity and inspect current report details. Acceptance: https://github.com/devantler-tech/platform/issues/5260 . Coverage/runtime follow-ups: https://github.com/devantler-tech/platform/issues/2447 , https://github.com/devantler-tech/platform/issues/3156 , https://github.com/devantler-tech/platform/issues/4263 , https://github.com/devantler-tech/platform/issues/4264 .",
     "config": {
       "groups": [
         {
@@ -623,7 +623,7 @@
                       "datasource": "",
                       "query": "(sum(platform_security_posture_total{status=\"failed\"})) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Observed failed control-resource outcomes",
-                      "color": "#ef4444"
+                      "color": ""
                     }
                   ]
                 }
@@ -679,7 +679,7 @@
                       "datasource": "",
                       "query": "(100 * sum(platform_security_posture_total{status=\"passed\"}) / sum(platform_security_posture_total{status=~\"passed|failed\"})) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Observed pass/fail control-workload pairs: pass share (%)",
-                      "color": "#22c55e"
+                      "color": ""
                     }
                   ]
                 }
@@ -763,7 +763,7 @@
                       "datasource": "",
                       "query": "(min(platform_security_posture_freshness_observable)) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Scan freshness observable (0 = unknown)",
-                      "color": "#f59e0b"
+                      "color": ""
                     }
                   ]
                 }
@@ -791,7 +791,7 @@
                       "datasource": "",
                       "query": "(min(platform_security_runtime_delivery_verified)) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "Runtime delivery verified (0 = unproven)",
-                      "color": "#f97316"
+                      "color": ""
                     },
                     {
                       "datasource": "",
@@ -851,14 +851,14 @@
             },
             {
               "name": "Resource drill-down: observed failed controls",
-              "description": "Up to 50 failed control-resource outcomes. Expand the legend for the control and resource identity, then inspect its current workload configuration report and remediation guidance. This is a sample, not a complete findings table.",
+              "description": "Up to 50 failed control-resource outcomes. Hover over the legend for the control and resource identity, then inspect its current workload configuration report and remediation guidance. This is a sample, not a complete findings table.",
               "source": {
                 "metrics": {
                   "queries": [
                     {
                       "datasource": "",
                       "query": "(topk(50, platform_security_posture_finding{status=\"failed\"})) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
-                      "legend": "{{control}} / {{severity}} / {{namespace}} / {{kind}}/{{name}} failed",
+                      "legend": "{{name}} / {{namespace}} / {{kind}} / {{severity}} / {{control}} failed",
                       "color": ""
                     }
                   ]
@@ -886,7 +886,7 @@
                     {
                       "datasource": "",
                       "query": "(topk(30, sum by (image, severity) (platform_security_vulnerability_image{context=\"full\"}))) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
-                      "legend": "{{image}} / {{severity}} full-image occurrences",
+                      "legend": "{{severity}} / {{image}} full-image occurrences",
                       "color": ""
                     }
                   ]
@@ -915,7 +915,7 @@
                       "datasource": "",
                       "query": "((sum(platform_security_posture_total{status=\"failed\"})) - (sum(platform_security_posture_total{status=\"failed\"} offset 1d))) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900)) and on() ((min(platform_security_collection_success{surface=\"kubescape\"} offset 1d) == 1) and on() (time() - 86400 - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"} offset 1d) >= 0) and on() (time() - 86400 - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"} offset 1d) < 900))",
                       "legend": "1-day net posture change (negative = fewer remaining)",
-                      "color": "#3b82f6"
+                      "color": ""
                     }
                   ]
                 }
@@ -977,7 +977,7 @@
                       "datasource": "",
                       "query": "(topk(30, sum by (control, severity, status) (platform_security_posture_results{status!~\"passed|failed\"}))) and on() ((min(platform_security_collection_success{surface=\"kubescape\"}) == 1) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) >= 0) and on() (time() - min(platform_security_snapshot_timestamp_seconds{surface=\"kubescape\"}) < 900))",
                       "legend": "{{control}} / {{severity}} / {{status}}",
-                      "color": "#f59e0b"
+                      "color": ""
                     }
                   ]
                 }

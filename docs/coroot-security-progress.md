@@ -14,8 +14,10 @@ The optional `security-progress` Coroot component provisions three dashboards:
 - **Kubescape remediation progress** separates failed posture checks, accepted risks,
   incomplete scan coverage and full-image vulnerability occurrences.
 
-Coroot Community Edition 1.22.2 supports time-series panels. Use the legends to identify
-the namespace, resource, policy or control, then inspect the source report and its
+Coroot Community Edition 1.22.2 supports time-series panels. Resource legends lead
+with the resource name; image legends lead with severity. Hover over a legend label
+to read its complete identity when the visible text is shortened. Coroot chooses
+series colours; use labels and values to assess status. Then inspect the source report and its
 existing remediation issue. The dashboards describe these limits and link the existing
 security roadmap. They are not a resource findings table or an issue tracker.
 
