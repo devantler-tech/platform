@@ -20,6 +20,7 @@ func main() {
 	flag.Parse()
 	dir := "k8s/bases/infrastructure/coroot/components/security-progress"
 	files := map[string]string{
+		"bind-project-metrics.sh":            filepath.Join(dir, "bind-project-metrics.sh"),
 		"collector.sh":                       filepath.Join(dir, "collector.sh"),
 		"reconcile.sh":                       filepath.Join(dir, "reconcile.sh"),
 		"metrics.jq":                         filepath.Join(dir, "metrics.jq"),

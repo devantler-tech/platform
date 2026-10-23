@@ -40,6 +40,11 @@ spec:
           image: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
           imagePullPolicy: IfNotPresent
           command: [/bin/bash, /config/collector.sh]
+          env:
+            - name: COROOT_URL
+              value: http://coroot-coroot.observability.svc.cluster.local.:8080
+            - name: COROOT_PROJECT
+              value: platform
           securityContext: &container-security
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

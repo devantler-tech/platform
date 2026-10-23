@@ -58,7 +58,7 @@ jobs:
           docker run --rm --network none --user 65532:65532 --read-only \
             --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
             --entrypoint /bin/sh "$COLLECTOR_IMAGE" -ec \
-            'command -v bash; command -v jq; command -v kubectl; timeout 1 true'
+            'command -v bash; command -v jq; command -v curl; command -v kubectl; timeout 1 true'
           docker run --rm --network none --user 65532:65532 --read-only \
             --tmpfs /tmp:rw,uid=65532,gid=65532,mode=700 \
             --entrypoint /bin/sh "$SERVER_IMAGE" -ec '

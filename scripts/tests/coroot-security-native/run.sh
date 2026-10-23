@@ -82,6 +82,24 @@ wait_json() {
   echo "Timed out waiting for native fixture: ${url}" >&2
   return 1
 }
+wait_native_panel() {
+  local panel=$1 output=$2
+  # prom/http.go truncates range endpoints to the refresh step. Instant-query
+  # readiness can precede the first labeled sample at that truncated endpoint.
+  # Wait for the actual Coroot chart, preserving the same strict assertion used
+  # below, rather than assuming a fixed startup delay is sufficient.
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if curl --silent --fail --connect-timeout 2 --max-time 5 --get \
+      --data-urlencode "query=${panel}" --data-urlencode 'from=now-5m' --data-urlencode 'to=now' \
+      "${base}/api/project/${pid}/panel/data" >"${output}" &&
+      jq -e '.chart.series | type == "array" and length > 0' "${output}" >/dev/null; then
+      return
+    fi
+    sleep 1
+  done
+  echo 'Timed out waiting for actual Coroot range-query fixture series' >&2
+  return 1
+}
 wait_json "${prom}/api/v1/query?query=platform_security_policy_total" \
   '.status == "success" and (.data.result | length) == 5' "${tmp}/prom-ready.json"
 wait_json "${base}/api/user" \
@@ -91,9 +109,23 @@ wait_json "${base}/api/user" \
 # loading configuration; assert that real startup line after API readiness.
 docker logs "${prefix}-coroot" 2>&1 | grep -E 'version: 1\.22\.2([[:space:]]|$)' \
   >"${artifacts}/coroot-version.txt"
+# db/project.go PrometheusConfig adds this selector when using the global
+# backend. A successful unscoped Prometheus scrape alone cannot prove that the
+# project's actual dashboard queries can read the fixture.
+project_id="$(jq -er '.projects[0].id | select(test("^[A-Za-z0-9_-]+$"))' "${artifacts}/user.json")"
+sed "s/@SNAPSHOT_TIMESTAMP@/$(date +%s)/g" \
+  "${root}/scripts/tests/coroot-security-native/synthetic.prom" |
+  COROOT_URL="${base}" COROOT_PROJECT=default sh "${component}/bind-project-metrics.sh" \
+    >"${tmp}/metrics/next"
+chmod 644 "${tmp}/metrics/next"
+mv "${tmp}/metrics/next" "${tmp}/metrics/metrics"
+wait_json "${prom}/api/v1/query?query=platform_security_policy_total%7Bcoroot_project_id%3D%22${project_id}%22%7D" \
+  '.status == "success" and (.data.result | length) == 5' "${artifacts}/prom-project-ready.json"
 pid="$(jq -r '.projects[0].id | @uri' "${artifacts}/user.json")"
 collection="${base}/api/project/${pid}/dashboards"
 wait_json "${collection}" '.data | type == "array"' "${tmp}/list-ready.json"
+wait_native_panel "$(jq -c '.[0].config.groups[0].panels[0]' "${component}/dashboards.json")" \
+  "${artifacts}/native-range-ready.json"
 
 code="$(curl --silent --show-error --max-time 30 --output "${tmp}/unmanaged-id" --write-out '%{http_code}' \
   --header 'content-type: application/json' --data '{"action":"create","name":"Synthetic unmanaged dashboard","description":"Synthetic operator-owned state; must survive reconciliation."}' "${collection}")"
@@ -132,6 +164,8 @@ while IFS= read -r definition; do
   panel_index=0
   while IFS= read -r panel; do
     panel_index=$((panel_index + 1))
+    printf 'Checking native dashboard %s panel %s: %s\n' \
+      "${dashboard_index}" "${panel_index}" "$(jq -r '.name' <<<"${panel}")"
     output="${artifacts}/panel-${dashboard_index}-${panel_index}.json"
     curl --silent --show-error --fail --max-time 30 --get --data-urlencode "query=${panel}" \
       --data-urlencode 'from=now-5m' --data-urlencode 'to=now' \

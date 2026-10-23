@@ -79,6 +79,12 @@ definitions to keep managed dashboards changed; direct UI edits are reconciled a
 Disabling the component stops future reconciliation and collection, while the dashboards
 remain as recoverable Coroot state and their collection signals age out.
 
+Every snapshot resolves the named Coroot project through its existing internal API
+and attaches its `coroot_project_id` to every metric. Coroot adds this selector to
+queries against its shared backend; unlabelled metrics would be invisible to the
+dashboards. Dynamic discovery also recovers from a restored or recreated project.
+Failed or ambiguous project discovery publishes no finding counts.
+
 Source scripts, queries and JSON live beside the component. After changing any source
 or the shared coverage checker/reviewed exclusion list, regenerate its ConfigMap:
 

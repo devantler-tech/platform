@@ -149,7 +149,11 @@ func TestAcceptedRuleCannotHideAFailedControl(t *testing.T) {
 
 func TestCollectorReplacesStaleCountsWhenBothSourcesFail(t *testing.T) {
 	dir := t.TempDir()
-	for name, body := range map[string]string{"kubectl": "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_COMMANDS\"\nexit 1\n", "coverage": "#!/bin/sh\nexit 2\n"} {
+	for name, body := range map[string]string{
+		"kubectl":  "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_COMMANDS\"\nexit 1\n",
+		"coverage": "#!/bin/sh\nexit 2\n",
+		"curl":     "#!/bin/sh\nprintf '%s\\n' '{\"projects\":[{\"name\":\"platform\",\"id\":\"synthetic-project\"}]}'\n",
+	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +166,7 @@ func TestCollectorReplacesStaleCountsWhenBothSourcesFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := exec.Command("bash", script, "--once")
-	c.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "METRICS_DIR="+dir, "COVERAGE_CHECK="+filepath.Join(dir, "coverage"), "TEST_COMMANDS="+filepath.Join(dir, "commands"))
+	c.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "CONFIG_DIR="+filepath.Dir(script), "METRICS_DIR="+dir, "COVERAGE_CHECK="+filepath.Join(dir, "coverage"), "TEST_COMMANDS="+filepath.Join(dir, "commands"))
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
@@ -170,7 +174,7 @@ func TestCollectorReplacesStaleCountsWhenBothSourcesFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(b), " 99") || !strings.Contains(string(b), `platform_security_collection_success{surface="kubescape"} 0`) || !strings.Contains(string(b), `platform_security_collection_success{surface="policy"} 0`) {
+	if strings.Contains(string(b), " 99") || !strings.Contains(string(b), `platform_security_collection_success{coroot_project_id="synthetic-project",surface="kubescape"} 0`) || !strings.Contains(string(b), `platform_security_collection_success{coroot_project_id="synthetic-project",surface="policy"} 0`) {
 		t.Fatalf("stale clean counts survived: %s", b)
 	}
 	commands, err := os.ReadFile(filepath.Join(dir, "commands"))

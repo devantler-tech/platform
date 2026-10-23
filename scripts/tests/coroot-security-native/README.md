@@ -11,7 +11,12 @@ quality; synthetic results say nothing about production platform health.
 
 `synthetic.prom` includes failures, coverage gaps, accepted/skipped outcomes and
 unknown scan freshness/runtime delivery. The helper replaces the timestamp
-placeholder for each run. One-day net-change panels have no historical baseline
+placeholder for each run. It calls the actual shared `bind-project-metrics.sh`
+against native Coroot discovery to add the default project's
+`coroot_project_id` label, required by Coroot's global Prometheus selector, and
+waits for that labeled scrape and actual Coroot range-query chart series before
+testing the panels. This accounts for Coroot truncating range endpoints to the
+refresh step. One-day net-change panels have no historical baseline
 in this short fixture and may show no data; every other panel must return chart
 series. No Kubernetes cluster or production credentials are used.
 
@@ -20,8 +25,10 @@ Sources checked for the exact runtime contract:
 - [Coroot Docker entrypoint](https://github.com/coroot/coroot/blob/v1.22.2/Dockerfile)
 - [Coroot flags](https://github.com/coroot/coroot/blob/v1.22.2/config/flags.go)
 - [Coroot default-project bootstrap](https://github.com/coroot/coroot/blob/v1.22.2/config/bootstrap.go)
+- [Project selector for the global backend](https://github.com/coroot/coroot/blob/v1.22.2/db/project.go)
 - [Native API routes](https://github.com/coroot/coroot/blob/v1.22.2/main.go)
 - [Panel response implementation](https://github.com/coroot/coroot/blob/v1.22.2/api/views/dashboards/panel.go)
+- [Prometheus range alignment](https://github.com/coroot/coroot/blob/v1.22.2/prom/http.go)
 - [Browser routes](https://github.com/coroot/coroot/blob/v1.22.2/front/src/main.js)
 - [Playwright 1.56.1 CLI](https://github.com/microsoft/playwright/blob/v1.56.1/packages/playwright-core/src/cli/program.ts)
 - [Pinned Playwright registry metadata](https://registry.npmjs.org/playwright/1.56.1)

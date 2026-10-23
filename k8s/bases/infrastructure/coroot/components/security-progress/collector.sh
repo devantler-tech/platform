@@ -81,7 +81,7 @@ collect() (
 while :; do
   # Atomic replacement; a reader can never scrape half a collection. Count
   # series from the old snapshot disappear immediately when their source fails.
-  if collect >"${metrics_dir}/.next"; then
+  if collect | sh "${config_dir}/bind-project-metrics.sh" >"${metrics_dir}/.next"; then
     :
   else
     printf 'platform_security_collection_success{surface="policy"} 0\nplatform_security_collection_success{surface="kubescape"} 0\n' \
