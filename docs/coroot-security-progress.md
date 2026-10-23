@@ -74,7 +74,10 @@ The shared base leaves this component **off by default**. The production infrast
 overlay explicitly enables
 `../../../bases/infrastructure/coroot/components/security-progress` in its `components`.
 To disable collection and reconciliation, remove that production component reference
-through the protected merge/deploy path. The
+through the protected merge/deploy path. In the same change, remove
+`Deployment/coroot-security-progress` from the Coroot budget's reviewed-unrelated list
+in `scripts/pdb-selector-exceptions.tsv`, since it no longer renders alongside the
+operator-managed Coroot server. The
 collector needs only the explicitly listed read-only resources; only its container
 receives a projected service-account token. Exec probes check publication freshness,
 project binding and the two local services. Reporting a failed security source still
