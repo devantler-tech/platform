@@ -77,7 +77,13 @@ To disable collection and reconciliation, remove that production component refer
 through the protected merge/deploy path. In the same change, remove
 `Deployment/coroot-security-progress` from the Coroot budget's reviewed-unrelated list
 in `scripts/pdb-selector-exceptions.tsv`, since it no longer renders alongside the
-operator-managed Coroot server. The
+operator-managed Coroot server. Also remove the `ClusterRole/coroot-security-progress`
+and `ClusterRoleBinding/coroot-security-progress` entries from
+`scripts/validate-eks-ci-role-policy/approved-surface.txt`; the authorization validator
+rejects approvals for resources that no longer render. To re-enable the component,
+restore its production reference and the reviewed-unrelated entry, then review the
+rendered RBAC and restore both matching authorization fingerprints in the same
+protected change. Run the deployment validation before either transition. The
 collector needs only the explicitly listed read-only resources; only its container
 receives a projected service-account token. Exec probes check publication freshness,
 project binding and the two local services. Reporting a failed security source still
