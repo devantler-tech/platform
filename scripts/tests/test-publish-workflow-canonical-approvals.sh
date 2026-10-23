@@ -604,5 +604,48 @@ node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image 
 generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
+# The github-config v12 transition retains the independently verified v12.0.2
+# signer while admitting the new exact publisher. Retired and unrelated
+# identities must fail both the committed subject and issuer predicates (#5265).
+github_source="$REPO_ROOT/k8s/bases/apps/github-config/oci-repository.yaml"
+github_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$github_source")"
+github_issuer="$(yq -er '.spec.verify.matchOIDCIdentity[0].issuer' "$github_source")"
+while IFS=$'\t' read -r expected issuer identity; do
+  result=reject
+  if printf '%s\n' "$issuer" | grep -Eq -- "$github_issuer" &&
+    printf '%s\n' "$identity" | grep -Eq -- "$github_subject"; then
+    result=accept
+  fi
+  if [ "$result" = "$expected" ]; then
+    pass "github-config transition: $expected $issuer $identity"
+  else
+    fail "github-config transition: expected $expected for $issuer $identity, got $result"
+  fi
+done <<'IDENTITIES'
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0f390329b590404c02565b27a263ee841fa02bce
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@8d2203af130a8c27b8b98b3d7146f76b5ade7a98
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@1d726483facb9340655489913f609082677be8f5
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-manifests.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
+reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
+reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@v12.0.1
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@main
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d-extra
+IDENTITIES
+
+aws_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$REPO_ROOT/k8s/providers/hetzner/apps/aws/oci-repository.yaml")"
+if printf '%s\n' 'https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d' |
+  grep -Eq -- "$aws_subject"; then
+  fail 'github-config approval must not authorize the same new publisher for aws'
+else
+  pass 'github-config approval leaves the unrelated aws consumer closed to the new publisher'
+fi
+
 printf '\n%d failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]
