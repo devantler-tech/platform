@@ -1220,7 +1220,7 @@ jobs:
       # artifact (#3558). Unconditional, like the guards above.
       - name: 🔐 Validate every devantler-tech OCIRepository verifies
         run: |
-          shellcheck scripts/guard-oci-repository-verify.sh
+          shellcheck -x scripts/guard-oci-repository-verify.sh
           shellcheck scripts/tests/test-guard-oci-repository-verify.sh
           shellcheck scripts/tenant-source-constructors.lib.sh scripts/tests/test-tenant-source-constructors.sh
           bash scripts/tests/test-tenant-source-constructors.sh
