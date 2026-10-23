@@ -47,8 +47,43 @@ revisions with an existing ordinary row.
 Register the new consumer and artifact in the report's explicit identity floors,
 include its source in the regeneration workflow's consumer-read token and output
 paths, and run the existing matcher writer and guard. Review this change normally.
-The bootstrap command currently admits only this requested product; another product
+Only the documentation-consumer path creates a bootstrap approval. Another product
 needs a reviewed extension rather than a free-form identity argument.
+
+## Verify business-site manifest evidence without approval
+
+The explicit business-site profile verifies one maintained-publisher manifest
+publication. It reads public GitHub metadata and the immutable registry signature;
+it does not use a Kubernetes context or change cluster state. With `gh`, `jq`,
+`yq` v4 and Cosign available, supply the tag, source and manifest digest from the
+separately verified paired-release evidence recorded on the consumer's issue:
+
+```sh
+bash scripts/bootstrap-tenant-source.sh --consumer business-site --verify-only \
+  --tag v1.0.2 \
+  --source-sha e5eb256dcb5dbf3857257e9072937ab95f1ea6c3 \
+  --digest sha256:6adcb1794ebdf5de4e1b03f758d44d6f9061eee43b863b1b1f4955a1e1d2615e
+```
+
+`--consumer` must be first. This profile requires `--verify-only` and refuses
+output paths, other consumers, duplicate arguments and deployment options. It
+accepts only the business site's source-owned runtime caller, a successful
+`release` run, a published stable release and the exact reviewed maintained
+publisher identity. The signature certificate must also name the `release` event;
+another event at the same tag and source does not qualify. Signed publication
+claims bind the manifest to that exact run and attempt, repository, source, tag,
+version and publisher. The release must use a direct commit tag. Incomplete or failed
+reads emit no receipt, including a failed verifier that printed plausible output.
+The tag, release and original current run attempt are rebound after verification.
+
+Success prints one `manifest-publication-evidence` JSON receipt with
+`deploymentAuthorized: false`. That receipt is deliberately not readable as the
+legacy bootstrap-approval schema. It writes no approval tables, matchers or
+registration. It does not independently verify the paired image, all provenance
+claims, a Flux binding or a deployed tenant. Keep the source's independent paired
+release verification alongside it. Platform #5247 retains private-input ownership,
+typed source/reconciliation ordering, narrow routing approval and actual runtime
+acceptance. Pages and the private portal remain unchanged.
 
 ## Observe before activating reconciliation
 
