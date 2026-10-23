@@ -178,6 +178,16 @@ while IFS= read -r definition; do
   done < <(jq -c '.config.groups[].panels[]' <<<"${definition}")
   screenshot="${artifacts}/dashboard-${dashboard_index}.png"
   har="${artifacts}/dashboard-${dashboard_index}.har"
+  # A selector timeout exits the CLI before its HAR is flushed. Preserve one
+  # actual rendered page and its full network evidence first, so a frontend
+  # failure can be diagnosed without weakening the canvas requirement below.
+  if [ "${dashboard_index}" = 1 ]; then
+    npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
+      --viewport-size '1600,1200' --full-page --timeout 30000 --wait-for-timeout 10000 \
+      --save-har "${artifacts}/dashboard-1-diagnostic.har" \
+      "${base}/p/${pid}/dashboards/${id}?from=now-5m&to=now" \
+      "${artifacts}/dashboard-1-diagnostic.png"
+  fi
   # CLI only: no authored browser JavaScript and no local desktop automation.
   npx --yes "playwright@${PLAYWRIGHT_VERSION}" screenshot --browser chromium \
     --viewport-size '1600,1200' --full-page --timeout 60000 \

@@ -6,7 +6,9 @@ the versioned dashboard definitions twice, checks persisted configurations and
 an unrelated dashboard, queries every panel through Coroot using the same
 five-minute relative time range as the browser, and captures all
 three real browser pages with the pinned Playwright CLI. HAR files verify the
-page's panel requests returned HTTP 200. Inspect the PNGs before accepting UI
+page's panel requests returned HTTP 200. A diagnostic screenshot and full HAR
+are captured before the first strict canvas wait, preserving evidence even if
+that wait fails before Playwright flushes its normal HAR. Inspect the PNGs before accepting UI
 quality; synthetic results say nothing about production platform health.
 
 `synthetic.prom` includes failures, coverage gaps, accepted/skipped outcomes and
