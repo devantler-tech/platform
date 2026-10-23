@@ -6,11 +6,24 @@ on:
     paths:
       - .github/workflows/validate-coroot-security-progress.yaml
       - k8s/bases/infrastructure/coroot/components/security-progress/**
+      - scripts/tests/coroot-security-native/**
+      - scripts/tests/coroot-security-dashboards/**
+      - scripts/tests/security-progress-metrics/**
+      - scripts/generate-coroot-security-config/**
+      - scripts/check-kubescape-result-coverage.sh
+      - k8s/providers/hetzner/infrastructure/kustomization.yaml
   push:
     branches: [main]
     paths:
       - .github/workflows/validate-coroot-security-progress.yaml
       - k8s/bases/infrastructure/coroot/components/security-progress/**
+      - scripts/tests/coroot-security-native/**
+      - scripts/tests/coroot-security-dashboards/**
+      - scripts/tests/security-progress-metrics/**
+      - scripts/generate-coroot-security-config/**
+      - scripts/check-kubescape-result-coverage.sh
+      - k8s/providers/hetzner/infrastructure/kustomization.yaml
+  merge_group:
 
 permissions: {}
 
@@ -72,3 +85,47 @@ jobs:
           docker run --rm --network none --user 65532:65532 --read-only \
             --volume "$PWD/$component/prometheus.conf:/etc/prometheus/test.yml:ro" \
             --entrypoint /bin/promtool "$PROMETHEUS_IMAGE" check config /etc/prometheus/test.yml
+
+  native-coroot:
+    name: Exercise released Coroot dashboards and capture browser evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      COROOT_IMAGE: ghcr.io/coroot/coroot:1.22.2
+      PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
+      SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+      PLAYWRIGHT_VERSION: 1.56.1
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+
+      - name: Check out platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned browser CLI and Chromium
+        shell: bash
+        run: |
+          export PLAYWRIGHT_BROWSERS_PATH="$RUNNER_TEMP/coroot-native-browsers"
+          printf 'PLAYWRIGHT_BROWSERS_PATH=%s\nNATIVE_ARTIFACT_DIR=%s\n' \
+            "$PLAYWRIGHT_BROWSERS_PATH" "$RUNNER_TEMP/coroot-security-native" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/coroot-security-native"
+          npx --yes "playwright@$PLAYWRIGHT_VERSION" install --with-deps chromium
+
+      - name: Exercise the real binary, persisted dashboards and browser rendering
+        shell: bash
+        run: bash scripts/tests/coroot-security-native/run.sh
+
+      - name: Preserve synthetic native API and browser evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coroot-security-native-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coroot-security-native/
+          if-no-files-found: error
+          retention-days: 7
