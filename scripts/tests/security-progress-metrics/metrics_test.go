@@ -221,8 +221,8 @@ func TestEmptyPosturePreservesItsCoverageGap(t *testing.T) {
 	p["posture"].(map[string]any)["items"].([]any)[0].(map[string]any)["spec"].(map[string]any)["controls"] = nil
 	p["coverage_report"] = strings.Replace(p["coverage_report"].(string), "posture expected=1 current=1 missing=0 empty=0", "posture expected=1 current=0 missing=0 empty=1", 1)
 	out, err := run(t, p)
-	if err != nil || !strings.Contains(out, `platform_security_coverage{surface="posture",state="empty"} 1`) {
-		t.Fatalf("actionable empty gap hidden: %v %s", err, out)
+	if err != nil || !strings.Contains(out, `platform_security_coverage{surface="posture",state="empty"} 1`) || strings.Contains(out, "platform_security_posture_total{") {
+		t.Fatalf("empty posture became hidden or a clean count: %v %s", err, out)
 	}
 }
 

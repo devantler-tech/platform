@@ -85,8 +85,10 @@ elif .mode == "kubescape" then . as $input
     ($coverage[] | metric("platform_security_coverage"; {surface,state}; .value)),
     metric("platform_security_posture_freshness_observable"; {}; 0),
     metric("platform_security_runtime_delivery_verified"; {}; 0),
-    ((["passed","failed","skipped","accepted","unknown"] + [$posture[].status] | unique)[] as $status
-      | metric("platform_security_posture_total"; {status:$status}; ([$posture[] | select(.status == $status)] | length))),
+    (if ($posture | length) > 0 then
+      (["passed","failed","skipped","accepted","unknown"] + [$posture[].status] | unique)[] as $status
+      | metric("platform_security_posture_total"; {status:$status}; ([$posture[] | select(.status == $status)] | length))
+      else empty end),
     ($posture | group_by([.control,.severity,.status])[] | .[0] as $r
       | metric("platform_security_posture_results"; ($r | {control,severity,status}); length)),
     ($posture[] | select(.status != "passed") | metric("platform_security_posture_finding"; {control,severity,status,namespace,kind,name}; 1)),

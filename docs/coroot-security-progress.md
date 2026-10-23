@@ -30,7 +30,8 @@ deletes it. No raw scan documents or credentials enter the metrics endpoint.
 
 Collection failure replaces the old source's counts with an explicit failed collection
 signal. Dashboard queries also require a recent collection timestamp. Missing data is
-never filled with a healthy zero. Runtime learning, partial profiles, missing results,
+never filled with a healthy zero. If no usable posture or vulnerability result remains,
+its finding counts are absent while coverage gaps stay visible. Runtime learning, partial profiles, missing results,
 stale vulnerabilities and storage-version disagreements remain visible.
 
 Posture result coverage does **not** establish posture scan age: the current result
