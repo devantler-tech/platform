@@ -137,7 +137,7 @@ func TestCommittedWebApp(t *testing.T) {
 	}
 	compile := func(t *testing.T, input *kroapi.ResourceGraphDefinition) (*graph.Graph, error) {
 		t.Helper()
-		return builder.NewResourceGraphDefinition(input, graph.RGDConfig{MaxCollectionDimensionSize: 5})
+		return builder.NewResourceGraphDefinition(input, graph.Config{MaxCollectionDimensionSize: 5})
 	}
 	t.Run("committed graph includes all three children and namespaced schema", func(t *testing.T) {
 		got, err := compile(t, definition)

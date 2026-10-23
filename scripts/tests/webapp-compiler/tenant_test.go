@@ -123,7 +123,7 @@ func TestCommittedTenant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := builder.NewResourceGraphDefinition(&definition, graph.RGDConfig{MaxCollectionDimensionSize: 5})
+	compiled, err := builder.NewResourceGraphDefinition(&definition, graph.Config{MaxCollectionDimensionSize: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestCommittedTenant(t *testing.T) {
 	t.Run("partial-graph-is-not-complete", func(t *testing.T) {
 		input := definition.DeepCopy()
 		input.Spec.Resources = input.Spec.Resources[:1]
-		partial, err := builder.NewResourceGraphDefinition(input, graph.RGDConfig{MaxCollectionDimensionSize: 5})
+		partial, err := builder.NewResourceGraphDefinition(input, graph.Config{MaxCollectionDimensionSize: 5})
 		if err != nil {
 			t.Fatal(err)
 		}
