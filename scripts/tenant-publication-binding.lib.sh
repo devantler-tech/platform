@@ -145,7 +145,7 @@ business_site_manifest_evidence() (
   [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || return 2
   local publisher='devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0'
   local artifact='ghcr.io/devantler-tech/business-site/manifests'
-  local release runs selected record caller calls work current run_id run_attempt
+  local release runs selected record caller calls business_verification_dir current run_id run_attempt
   [ "$(business_manifest_tag_commit "$tag")" = "$source_sha" ] || return 1
   release="$(business_manifest_release_record "$tag")" || return 1
   runs="$(gh_retry api --method GET repos/devantler-tech/business-site/actions/runs \
@@ -174,19 +174,19 @@ business_site_manifest_evidence() (
       (.jobs | type=="object") and
       ([.jobs[].uses // "" | select(type=="string" and contains("/.github/workflows/publish-app.yaml@"))] == [$publisher]))' \
     >/dev/null 2>&1 || return 1
-  work="$(mktemp -d)" || return 1
-  trap 'rm -rf "$work"' EXIT
+  business_verification_dir="$(mktemp -d)" || return 1
+  trap 'rm -rf "$business_verification_dir"' EXIT
   cosign verify --certificate-identity "https://github.com/$publisher" \
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     --certificate-github-workflow-repository devantler-tech/business-site \
     --certificate-github-workflow-ref "refs/tags/$tag" \
     --certificate-github-workflow-sha "$source_sha" "$artifact@$digest" \
-    >"$work/signature.json" 2>"$work/signature-error" || return 1
+    >"$business_verification_dir/signature.json" 2>"$business_verification_dir/signature-error" || return 1
   jq -es --arg digest "$digest" --arg artifact "$artifact" '
     length==1 and (.[0] | type=="array" and length>0 and all(.[];
       .critical.image["docker-manifest-digest"]==$digest and
       (.critical.identity["docker-reference"]==$artifact or
-       .critical.identity["docker-reference"]==($artifact+"@"+$digest))))' "$work/signature.json" \
+       .critical.identity["docker-reference"]==($artifact+"@"+$digest))))' "$business_verification_dir/signature.json" \
     >/dev/null 2>&1 || return 1
   # Rebind the original current attempt, tag and published release after registry reads.
   current="$(gh_retry api "repos/devantler-tech/business-site/actions/runs/$run_id")" || return 1
