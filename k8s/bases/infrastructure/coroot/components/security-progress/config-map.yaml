@@ -58,6 +58,7 @@ data:
       die "could not resolve the repository root"
 
     context=''
+    cache_dir=''
     from_dir=''
     snapshot_dir=''
     now=''
@@ -71,6 +72,7 @@ data:
     while [ "$#" -gt 0 ]; do
       case "$1" in
       --context) need_value "$@" && context="$2" && shift 2 ;;
+      --cache-dir) need_value "$@" && cache_dir="$2" && shift 2 ;;
       --from-dir) need_value "$@" && from_dir="$2" && shift 2 ;;
       --snapshot-dir) need_value "$@" && snapshot_dir="$2" && shift 2 ;;
       --now) need_value "$@" && now="$2" && shift 2 ;;
@@ -115,7 +117,9 @@ data:
     trap 'rm -rf "$${work}"' EXIT
 
     kc() {
-      if [ -n "$${context}" ]; then kubectl --context "$${context}" "$@"; else kubectl "$@"; fi
+      [ -z "$${cache_dir}" ] || set -- --cache-dir "$${cache_dir}" "$@"
+      [ -z "$${context}" ] || set -- --context "$${context}" "$@"
+      kubectl "$@"
     }
 
     fetch() {
@@ -531,8 +535,8 @@ data:
       trap 'rm -rf "$${snapshot}"' EXIT
       now="$(date +%s)"
       # Isolate the two sources. One unavailable API must not hide the other source.
-      if kubectl --request-timeout=30s get policyreports.wgpolicyk8s.io -A -o json >"$${snapshot}/policy.json" &&
-        kubectl --request-timeout=30s get clusterpolicyreports.wgpolicyk8s.io -o json >"$${snapshot}/cluster-policy.json" &&
+      if kubectl --cache-dir=/tmp/security-progress-kubectl --request-timeout=30s get policyreports.wgpolicyk8s.io -A -o json >"$${snapshot}/policy.json" &&
+        kubectl --cache-dir=/tmp/security-progress-kubectl --request-timeout=30s get clusterpolicyreports.wgpolicyk8s.io -o json >"$${snapshot}/cluster-policy.json" &&
         jq -n --slurpfile policy "$${snapshot}/policy.json" --slurpfile cluster "$${snapshot}/cluster-policy.json" \
           '{mode:"policy",policy:$policy[0],cluster_policy:$cluster[0]}' |
         jq -er -f "$${config_dir}/metrics.jq" >"$${snapshot}/policy.prom"; then
@@ -546,7 +550,7 @@ data:
 
       mkdir "$${snapshot}/kubescape"
       rc=0
-      timeout 240 bash "$${coverage_check}" --snapshot-dir "$${snapshot}/kubescape" --reviewed-list "$${reviewed_list}" \
+      timeout 240 bash "$${coverage_check}" --cache-dir /tmp/security-progress-kubectl --snapshot-dir "$${snapshot}/kubescape" --reviewed-list "$${reviewed_list}" \
         >"$${snapshot}/coverage.log" 2>&1 || rc=$?
       if [ "$${rc}" -le 1 ] && (
         cd "$${snapshot}/kubescape"
@@ -1233,7 +1237,7 @@ data:
                ([$r.result] | inside(["pass","fail","warn","error","skip"]) | not)
             then error("unrecognized policy result") else
             {policy:$r.policy,rule:$r.rule,namespace:($resource.namespace // $report.metadata.namespace // "_"),
-             kind:$resource.kind,name:$resource.name,status:$r.result,severity:($r.properties.severity // "unknown" | ascii_downcase),
+             kind:$resource.kind,name:$resource.name,status:$r.result,severity:($r.severity // $r.properties.severity // "unknown" | ascii_downcase),
              at:($r.timestamp.seconds // 0)} end ]
         | group_by([.policy,.rule,.namespace,.kind,.name])
         | map((map(.at) | max) as $at | map(select(.at == $at)) | unique
@@ -1248,6 +1252,8 @@ data:
           | metric("platform_security_policy_finding"; {policy,rule,namespace,kind,name,status,severity}; 1))
       end
     elif .mode == "kubescape" then . as $input
+      | if ($input.vulnerability | list | length) == 0 or ($input.vulnerability_stored | list | length) == 0
+        then error("missing vulnerability input collection") else . end
       | ($input.coverage_report | split("\n") | map(select(startswith("COVERAGE ")))
         | map(capture("^COVERAGE (?<surface>posture|vulnerability|runtime) (?<values>.*)$")
           | .surface as $surface | .values | split(" ") | map(capture("^(?<state>[a-z]+)=(?<value>[0-9]+)$")
@@ -1260,7 +1266,8 @@ data:
       | ([$input.posture | list[] | .metadata.labels as $l
           | {kind:$l["kubescape.io/workload-kind"],namespace:$l["kubescape.io/workload-namespace"],name:$l["kubescape.io/workload-name"]} as $scope
           | select(($scope | scope_key) as $key | $expected | index($key) != null)
-          | .spec.controls | to_entries[] | .key as $control | .value
+          | (.spec.controls // {}) | if type != "object" then error("invalid posture controls") else . end
+          | to_entries[] | .key as $control | .value
           | if (.status.status | type) != "string" then error("missing posture status") else
             {control:$control,severity:(.severity.severity // "unknown" | ascii_downcase),
              status:(if .status.status != "failed" and
@@ -1284,12 +1291,16 @@ data:
           | ($a["kubescape.io/timestamp"] | tonumber) as $at
           | select($at <= $input.now and $input.now - $at <= 604800)
           | if (.spec.severities | type) != "object" or (.spec.severities | length) == 0 or
-               (any(.spec.severities[]; has("all")) | not) or
+               (all(.spec.severities[]; type == "object" and has("all") and
+                 (.all | type == "number" and . >= 0 and floor == .)) | not) or
                ((.spec.severities | keys) - ["critical","high","medium","low","negligible","unknown"] | length) != 0
             then error("missing vulnerability severities") else
-            {image:$digest,image_ref:$a["kubescape.io/image-id"],at:$at,severities:.spec.severities} end]
-          | group_by(.image) | map(max_by(.at))) as $vulnerabilities
-      | if ($vulnerabilities | length) == 0 then error("no current coherent vulnerability evidence") else
+            {image:$digest,image_ref:$a["kubescape.io/image-id"],at:$at,
+             severities:(.spec.severities | with_entries(.value = {all:.value.all}))} end]
+          | group_by(.image) | map((map(.at) | max) as $at | map(select(.at == $at))
+            | if (map(.severities) | unique | length) > 1 then error("conflicting current vulnerability summaries")
+              else sort_by(.image_ref) | .[0] end)) as $vulnerabilities
+      |
         ($coverage[] | metric("platform_security_coverage"; {surface,state}; .value)),
         metric("platform_security_posture_freshness_observable"; {}; 0),
         metric("platform_security_runtime_delivery_verified"; {}; 0),
@@ -1298,12 +1309,12 @@ data:
         ($posture | group_by([.control,.severity,.status])[] | .[0] as $r
           | metric("platform_security_posture_results"; ($r | {control,severity,status}); length)),
         ($posture[] | select(.status != "passed") | metric("platform_security_posture_finding"; {control,severity,status,namespace,kind,name}; 1)),
-        (["critical","high","medium","low","negligible","unknown"][] as $severity
+        (if ($vulnerabilities | length) > 0 then ["critical","high","medium","low","negligible","unknown"][] as $severity
           | ($vulnerabilities | map(.severities[$severity].all // 0) | add) as $total
-          | metric("platform_security_vulnerabilities"; {severity:$severity,context:"full"}; $total)),
+          | metric("platform_security_vulnerabilities"; {severity:$severity,context:"full"}; $total) else empty end),
         ($vulnerabilities[] | . as $v | ["critical","high","medium","low","negligible","unknown"][] as $severity
           | metric("platform_security_vulnerability_image"; {image:$v.image_ref,severity:$severity,context:"full"}; ($v.severities[$severity].all // 0)))
-      end end
+      end
     else error("unknown collection mode") end
   prometheus.yml: |
     # Source extension keeps KSail from treating this application config as a manifest.

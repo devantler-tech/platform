@@ -41,8 +41,8 @@ collect() (
   trap 'rm -rf "${snapshot}"' EXIT
   now="$(date +%s)"
   # Isolate the two sources. One unavailable API must not hide the other source.
-  if kubectl --request-timeout=30s get policyreports.wgpolicyk8s.io -A -o json >"${snapshot}/policy.json" &&
-    kubectl --request-timeout=30s get clusterpolicyreports.wgpolicyk8s.io -o json >"${snapshot}/cluster-policy.json" &&
+  if kubectl --cache-dir=/tmp/security-progress-kubectl --request-timeout=30s get policyreports.wgpolicyk8s.io -A -o json >"${snapshot}/policy.json" &&
+    kubectl --cache-dir=/tmp/security-progress-kubectl --request-timeout=30s get clusterpolicyreports.wgpolicyk8s.io -o json >"${snapshot}/cluster-policy.json" &&
     jq -n --slurpfile policy "${snapshot}/policy.json" --slurpfile cluster "${snapshot}/cluster-policy.json" \
       '{mode:"policy",policy:$policy[0],cluster_policy:$cluster[0]}' |
     jq -er -f "${config_dir}/metrics.jq" >"${snapshot}/policy.prom"; then
@@ -56,7 +56,7 @@ collect() (
 
   mkdir "${snapshot}/kubescape"
   rc=0
-  timeout 240 bash "${coverage_check}" --snapshot-dir "${snapshot}/kubescape" --reviewed-list "${reviewed_list}" \
+  timeout 240 bash "${coverage_check}" --cache-dir /tmp/security-progress-kubectl --snapshot-dir "${snapshot}/kubescape" --reviewed-list "${reviewed_list}" \
     >"${snapshot}/coverage.log" 2>&1 || rc=$?
   if [ "${rc}" -le 1 ] && (
     cd "${snapshot}/kubescape"

@@ -54,6 +54,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" ||
   die "could not resolve the repository root"
 
 context=''
+cache_dir=''
 from_dir=''
 snapshot_dir=''
 now=''
@@ -67,6 +68,7 @@ need_value() {
 while [ "$#" -gt 0 ]; do
   case "$1" in
   --context) need_value "$@" && context="$2" && shift 2 ;;
+  --cache-dir) need_value "$@" && cache_dir="$2" && shift 2 ;;
   --from-dir) need_value "$@" && from_dir="$2" && shift 2 ;;
   --snapshot-dir) need_value "$@" && snapshot_dir="$2" && shift 2 ;;
   --now) need_value "$@" && now="$2" && shift 2 ;;
@@ -111,7 +113,9 @@ work="$(mktemp -d)" || die "could not create a temporary directory"
 trap 'rm -rf "${work}"' EXIT
 
 kc() {
-  if [ -n "${context}" ]; then kubectl --context "${context}" "$@"; else kubectl "$@"; fi
+  [ -z "${cache_dir}" ] || set -- --cache-dir "${cache_dir}" "$@"
+  [ -z "${context}" ] || set -- --context "${context}" "$@"
+  kubectl "$@"
 }
 
 fetch() {

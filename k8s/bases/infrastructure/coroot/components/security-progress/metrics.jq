@@ -18,7 +18,7 @@ if .mode == "policy" then
            ([$r.result] | inside(["pass","fail","warn","error","skip"]) | not)
         then error("unrecognized policy result") else
         {policy:$r.policy,rule:$r.rule,namespace:($resource.namespace // $report.metadata.namespace // "_"),
-         kind:$resource.kind,name:$resource.name,status:$r.result,severity:($r.properties.severity // "unknown" | ascii_downcase),
+         kind:$resource.kind,name:$resource.name,status:$r.result,severity:($r.severity // $r.properties.severity // "unknown" | ascii_downcase),
          at:($r.timestamp.seconds // 0)} end ]
     | group_by([.policy,.rule,.namespace,.kind,.name])
     | map((map(.at) | max) as $at | map(select(.at == $at)) | unique
@@ -33,6 +33,8 @@ if .mode == "policy" then
       | metric("platform_security_policy_finding"; {policy,rule,namespace,kind,name,status,severity}; 1))
   end
 elif .mode == "kubescape" then . as $input
+  | if ($input.vulnerability | list | length) == 0 or ($input.vulnerability_stored | list | length) == 0
+    then error("missing vulnerability input collection") else . end
   | ($input.coverage_report | split("\n") | map(select(startswith("COVERAGE ")))
     | map(capture("^COVERAGE (?<surface>posture|vulnerability|runtime) (?<values>.*)$")
       | .surface as $surface | .values | split(" ") | map(capture("^(?<state>[a-z]+)=(?<value>[0-9]+)$")
@@ -45,7 +47,8 @@ elif .mode == "kubescape" then . as $input
   | ([$input.posture | list[] | .metadata.labels as $l
       | {kind:$l["kubescape.io/workload-kind"],namespace:$l["kubescape.io/workload-namespace"],name:$l["kubescape.io/workload-name"]} as $scope
       | select(($scope | scope_key) as $key | $expected | index($key) != null)
-      | .spec.controls | to_entries[] | .key as $control | .value
+      | (.spec.controls // {}) | if type != "object" then error("invalid posture controls") else . end
+      | to_entries[] | .key as $control | .value
       | if (.status.status | type) != "string" then error("missing posture status") else
         {control:$control,severity:(.severity.severity // "unknown" | ascii_downcase),
          status:(if .status.status != "failed" and
@@ -69,12 +72,16 @@ elif .mode == "kubescape" then . as $input
       | ($a["kubescape.io/timestamp"] | tonumber) as $at
       | select($at <= $input.now and $input.now - $at <= 604800)
       | if (.spec.severities | type) != "object" or (.spec.severities | length) == 0 or
-           (any(.spec.severities[]; has("all")) | not) or
+           (all(.spec.severities[]; type == "object" and has("all") and
+             (.all | type == "number" and . >= 0 and floor == .)) | not) or
            ((.spec.severities | keys) - ["critical","high","medium","low","negligible","unknown"] | length) != 0
         then error("missing vulnerability severities") else
-        {image:$digest,image_ref:$a["kubescape.io/image-id"],at:$at,severities:.spec.severities} end]
-      | group_by(.image) | map(max_by(.at))) as $vulnerabilities
-  | if ($vulnerabilities | length) == 0 then error("no current coherent vulnerability evidence") else
+        {image:$digest,image_ref:$a["kubescape.io/image-id"],at:$at,
+         severities:(.spec.severities | with_entries(.value = {all:.value.all}))} end]
+      | group_by(.image) | map((map(.at) | max) as $at | map(select(.at == $at))
+        | if (map(.severities) | unique | length) > 1 then error("conflicting current vulnerability summaries")
+          else sort_by(.image_ref) | .[0] end)) as $vulnerabilities
+  |
     ($coverage[] | metric("platform_security_coverage"; {surface,state}; .value)),
     metric("platform_security_posture_freshness_observable"; {}; 0),
     metric("platform_security_runtime_delivery_verified"; {}; 0),
@@ -83,10 +90,10 @@ elif .mode == "kubescape" then . as $input
     ($posture | group_by([.control,.severity,.status])[] | .[0] as $r
       | metric("platform_security_posture_results"; ($r | {control,severity,status}); length)),
     ($posture[] | select(.status != "passed") | metric("platform_security_posture_finding"; {control,severity,status,namespace,kind,name}; 1)),
-    (["critical","high","medium","low","negligible","unknown"][] as $severity
+    (if ($vulnerabilities | length) > 0 then ["critical","high","medium","low","negligible","unknown"][] as $severity
       | ($vulnerabilities | map(.severities[$severity].all // 0) | add) as $total
-      | metric("platform_security_vulnerabilities"; {severity:$severity,context:"full"}; $total)),
+      | metric("platform_security_vulnerabilities"; {severity:$severity,context:"full"}; $total) else empty end),
     ($vulnerabilities[] | . as $v | ["critical","high","medium","low","negligible","unknown"][] as $severity
       | metric("platform_security_vulnerability_image"; {image:$v.image_ref,severity:$severity,context:"full"}; ($v.severities[$severity].all // 0)))
-  end end
+  end
 else error("unknown collection mode") end

@@ -149,7 +149,7 @@ func TestAcceptedRuleCannotHideAFailedControl(t *testing.T) {
 
 func TestCollectorReplacesStaleCountsWhenBothSourcesFail(t *testing.T) {
 	dir := t.TempDir()
-	for name, body := range map[string]string{"kubectl": "#!/bin/sh\nexit 1\n", "coverage": "#!/bin/sh\nexit 2\n"} {
+	for name, body := range map[string]string{"kubectl": "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_COMMANDS\"\nexit 1\n", "coverage": "#!/bin/sh\nexit 2\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0755); err != nil {
 			t.Fatal(err)
 		}
@@ -162,7 +162,7 @@ func TestCollectorReplacesStaleCountsWhenBothSourcesFail(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := exec.Command("bash", script, "--once")
-	c.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "METRICS_DIR="+dir, "COVERAGE_CHECK="+filepath.Join(dir, "coverage"))
+	c.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "METRICS_DIR="+dir, "COVERAGE_CHECK="+filepath.Join(dir, "coverage"), "TEST_COMMANDS="+filepath.Join(dir, "commands"))
 	if out, err := c.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, out)
 	}
@@ -172,5 +172,75 @@ func TestCollectorReplacesStaleCountsWhenBothSourcesFail(t *testing.T) {
 	}
 	if strings.Contains(string(b), " 99") || !strings.Contains(string(b), `platform_security_collection_success{surface="kubescape"} 0`) || !strings.Contains(string(b), `platform_security_collection_success{surface="policy"} 0`) {
 		t.Fatalf("stale clean counts survived: %s", b)
+	}
+	commands, err := os.ReadFile(filepath.Join(dir, "commands"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(commands), "--cache-dir=/tmp/security-progress-kubectl") {
+		t.Fatalf("read-only container has no writable discovery cache: %s", commands)
+	}
+}
+
+func TestEveryPresentSeverityBucketMustHaveAFullCount(t *testing.T) {
+	p := kubescape()
+	p["vulnerability_stored"].(map[string]any)["items"].([]any)[0].(map[string]any)["spec"].(map[string]any)["severities"].(map[string]any)["high"] = map[string]any{"relevant": 2}
+	if out, err := run(t, p); err == nil {
+		t.Fatalf("missing full count appeared clean: %s", out)
+	}
+}
+
+func TestConflictingLatestSummariesFailRegardlessOfListOrder(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		p := kubescape()
+		first := p["vulnerability_stored"].(map[string]any)["items"].([]any)[0]
+		b, err := json.Marshal(first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var second map[string]any
+		if err := json.Unmarshal(b, &second); err != nil {
+			t.Fatal(err)
+		}
+		second["metadata"].(map[string]any)["name"] = "second-image-summary"
+		second["spec"].(map[string]any)["severities"].(map[string]any)["critical"].(map[string]any)["all"] = 0
+		items := []any{first, second}
+		if reverse {
+			items = []any{second, first}
+		}
+		p["vulnerability"] = map[string]any{"items": items}
+		p["vulnerability_stored"] = map[string]any{"items": items}
+		if out, err := run(t, p); err == nil {
+			t.Fatalf("conflicting latest counts succeeded reverse=%v: %s", reverse, out)
+		}
+	}
+}
+
+func TestEmptyPosturePreservesItsCoverageGap(t *testing.T) {
+	p := kubescape()
+	p["posture"].(map[string]any)["items"].([]any)[0].(map[string]any)["spec"].(map[string]any)["controls"] = nil
+	p["coverage_report"] = strings.Replace(p["coverage_report"].(string), "posture expected=1 current=1 missing=0 empty=0", "posture expected=1 current=0 missing=0 empty=1", 1)
+	out, err := run(t, p)
+	if err != nil || !strings.Contains(out, `platform_security_coverage{surface="posture",state="empty"} 1`) {
+		t.Fatalf("actionable empty gap hidden: %v %s", err, out)
+	}
+}
+
+func TestAllStaleVulnerabilitiesPreserveCoverageWithoutCleanCounts(t *testing.T) {
+	p := kubescape()
+	p["now"] = 1791000000
+	p["coverage_report"] = strings.Replace(p["coverage_report"].(string), "vulnerability expected=1 current=1 missing=0 stale=0", "vulnerability expected=1 current=0 missing=0 stale=1", 1)
+	out, err := run(t, p)
+	if err != nil || !strings.Contains(out, `platform_security_coverage{surface="vulnerability",state="stale"} 1`) || strings.Contains(out, "platform_security_vulnerabilities{") {
+		t.Fatalf("stale findings became hidden or zero: %v %s", err, out)
+	}
+}
+
+func TestKyvernoTopLevelSeverityIsPreserved(t *testing.T) {
+	p := policy()
+	p["policy"].(map[string]any)["items"].([]any)[0].(map[string]any)["results"].([]any)[0].(map[string]any)["severity"] = "high"
+	out, err := run(t, p)
+	if err != nil || !strings.Contains(out, `severity="high"`) {
+		t.Fatalf("severity lost: %v %s", err, out)
 	}
 }
