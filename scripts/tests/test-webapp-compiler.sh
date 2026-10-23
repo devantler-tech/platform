@@ -29,14 +29,14 @@ fetch_schema() {
   actual_digest="$(shasum -a 256 "$output" | cut -d ' ' -f 1)"
   [[ "$actual_digest" == "$expected_digest" ]] || { echo 'FAIL: dependency schema checksum changed' >&2; exit 1; }
 }
-[[ "$(yq -er '.spec.chart.spec.version' "${root}/k8s/bases/infrastructure/controllers/external-secrets/helm-release.yaml")" == 2.12.0 ]] || {
+[[ "$(yq -er '.spec.chart.spec.version' "${root}/k8s/bases/infrastructure/controllers/external-secrets/helm-release.yaml")" == 2.13.0 ]] || {
   echo 'FAIL: review Tenant schema fixtures for the new External Secrets chart' >&2; exit 1;
 }
 fetch_schema 'https://raw.githubusercontent.com/fluxcd/source-controller/v1.9.6/config/crd/bases/source.toolkit.fluxcd.io_ocirepositories.yaml' \
   80c7c6e5c8de0764cc83acd4de5c74bea8e51186085304d22cecc5f2eb35500e "${work}/oci.yaml"
 fetch_schema 'https://raw.githubusercontent.com/fluxcd/kustomize-controller/v1.9.6/config/crd/bases/kustomize.toolkit.fluxcd.io_kustomizations.yaml' \
   da23ca0e6b4c80d3d26a91583137491e147ef4ef1e2208aece0d0af4ef851974 "${work}/kustomization.yaml"
-fetch_schema 'https://raw.githubusercontent.com/external-secrets/external-secrets/v2.12.0/deploy/crds/bundle.yaml' \
+fetch_schema 'https://raw.githubusercontent.com/external-secrets/external-secrets/v2.13.0/deploy/crds/bundle.yaml' \
   d4da9492a6906a3834bb1f5b7367575a29b5c43411017babc7a30728f465d1ba "${work}/external-secrets.yaml"
 yq -o=json -I=0 '.' "${work}/external-secrets.yaml" | jq -se '
   [.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "externalsecrets.external-secrets.io")]
