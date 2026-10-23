@@ -69,7 +69,10 @@ bash scripts/bootstrap-tenant-source.sh --consumer business-site --verify-only \
 output paths, other consumers, duplicate arguments and deployment options. It
 accepts only the business site's source-owned runtime caller, a successful
 `release` run, a published stable release and the exact reviewed maintained
-publisher identity. The release must use a direct commit tag. Incomplete or failed
+publisher identity. The signature certificate must also name the `release` event;
+another event at the same tag and source does not qualify. Signed publication
+claims bind the manifest to that exact run and attempt, repository, source, tag,
+version and publisher. The release must use a direct commit tag. Incomplete or failed
 reads emit no receipt, including a failed verifier that printed plausible output.
 The tag, release and original current run attempt are rebound after verification.
 

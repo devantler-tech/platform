@@ -180,13 +180,25 @@ business_site_manifest_evidence() (
     --certificate-oidc-issuer https://token.actions.githubusercontent.com \
     --certificate-github-workflow-repository devantler-tech/business-site \
     --certificate-github-workflow-ref "refs/tags/$tag" \
+    --certificate-github-workflow-trigger release \
     --certificate-github-workflow-sha "$source_sha" "$artifact@$digest" \
     >"$business_verification_dir/signature.json" 2>"$business_verification_dir/signature-error" || return 1
-  jq -es --arg digest "$digest" --arg artifact "$artifact" '
+  jq -es --arg digest "$digest" --arg artifact "$artifact" --arg tag "$tag" \
+    --arg source "$source_sha" --arg publisher "$publisher" --argjson run "$record" '
     length==1 and (.[0] | type=="array" and length>0 and all(.[];
       .critical.image["docker-manifest-digest"]==$digest and
       (.critical.identity["docker-reference"]==$artifact or
-       .critical.identity["docker-reference"]==($artifact+"@"+$digest))))' "$business_verification_dir/signature.json" \
+       .critical.identity["docker-reference"]==($artifact+"@"+$digest)) and
+      (.optional | {
+        repository:.["devantler.repository"],sourceSHA:.["devantler.source-sha"],
+        tag:.["devantler.source-ref"],version:.["devantler.version"],
+        publisher:.["devantler.workflow-ref"],runId:.["devantler.run-id"],
+        runAttempt:.["devantler.run-attempt"],digest:.["devantler.manifests-digest"]
+      }) == {
+        repository:"devantler-tech/business-site",sourceSHA:$source,tag:$tag,
+        version:($tag | ltrimstr("v")),publisher:$publisher,runId:($run.id | tostring),
+        runAttempt:($run.run_attempt | tostring),digest:$digest
+      }))' "$business_verification_dir/signature.json" \
     >/dev/null 2>&1 || return 1
   # Rebind the original current attempt, tag and published release after registry reads.
   current="$(gh_retry api "repos/devantler-tech/business-site/actions/runs/$run_id")" || return 1

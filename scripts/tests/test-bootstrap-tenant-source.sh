@@ -240,8 +240,17 @@ case "$*" in
   'api repos/devantler-tech/business-site/releases/tags/v1.0.2')
     if [ "$BIZ_CASE" = withdrawn-release ] && [ -f "$BIZ_WORK/release-read" ]; then
       jq '.draft=true' "$BIZ_WORK/release.json"
-    else cat "$BIZ_WORK/release.json"; fi
-    touch "$BIZ_WORK/release-read" ;;
+    else
+      case "$BIZ_CASE" in
+        draft-release) jq '.draft=true' "$BIZ_WORK/release.json" ;;
+        prerelease-release) jq '.prerelease=true' "$BIZ_WORK/release.json" ;;
+        unpublished-release) jq '.published_at=null' "$BIZ_WORK/release.json" ;;
+        invalid-release-id) jq '.id=0' "$BIZ_WORK/release.json" ;;
+        *) cat "$BIZ_WORK/release.json" ;;
+      esac
+    fi
+    touch "$BIZ_WORK/release-read"
+    [ "$BIZ_CASE" != release-read-failure ] || exit 42 ;;
   'api --method GET repos/devantler-tech/business-site/actions/runs --raw-field branch=v1.0.2 --raw-field event=release --raw-field per_page=100')
     cat "$BIZ_WORK/list.json"
     [ "$BIZ_CASE" != run-read-failure ] || exit 42 ;;
@@ -256,7 +265,15 @@ EOF
 cat >"$biz_work/bin/cosign" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == 'verify --certificate-identity https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0 --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository devantler-tech/business-site --certificate-github-workflow-ref refs/tags/v1.0.2 --certificate-github-workflow-sha e5eb256dcb5dbf3857257e9072937ab95f1ea6c3 ghcr.io/devantler-tech/business-site/manifests@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]
+# Model the certificate check only when the caller actually requests it. A
+# same-identity dispatch certificate otherwise passes, as it does in Cosign.
+verifier_args="$*"
+case "$verifier_args" in
+  *'--certificate-github-workflow-trigger release '*)
+    [ "$(cat "$BIZ_WORK/certificate-event")" = release ] || exit 42
+    verifier_args="${verifier_args/--certificate-github-workflow-trigger release /}" ;;
+esac
+[[ "$verifier_args" == 'verify --certificate-identity https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0 --certificate-oidc-issuer https://token.actions.githubusercontent.com --certificate-github-workflow-repository devantler-tech/business-site --certificate-github-workflow-ref refs/tags/v1.0.2 --certificate-github-workflow-sha e5eb256dcb5dbf3857257e9072937ab95f1ea6c3 ghcr.io/devantler-tech/business-site/manifests@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ]]
 cat "$BIZ_WORK/signature.json"
 [ "$BIZ_CASE" != signature-failure ] || exit 42
 EOF
@@ -274,10 +291,21 @@ business_evidence() {
 }
 business_fixture() {
   rm -f "$biz_work/tag-read" "$biz_work/release-read"
+  printf 'release\n' >"$biz_work/certificate-event"
   cp "$biz_work/run.json" "$biz_work/current-run.json"
   cp "$biz_work/caller.yaml" "$biz_work/current-caller.yaml"
   jq -n --slurpfile run "$biz_work/run.json" '{total_count:1,workflow_runs:$run}' >"$biz_work/list.json"
-  jq -n '[{critical:{image:{"docker-manifest-digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},identity:{"docker-reference":"ghcr.io/devantler-tech/business-site/manifests"}}}]' >"$biz_work/signature.json"
+  jq -n '[{critical:{image:{"docker-manifest-digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},identity:{"docker-reference":"ghcr.io/devantler-tech/business-site/manifests"}},optional:{
+    "devantler.ci-run-attempt":"1","devantler.ci-run-id":"39867770434",
+    "devantler.image-digest":"sha256:d71c867ac38472643dc38669b3b71d9ee3db4062ac46654314fde864846a9471",
+    "devantler.image-producer":"https://github.com/devantler-tech/business-site/.github/workflows/ci.yaml@refs/heads/main",
+    "devantler.manifests-digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "devantler.public-digest":"3b0947c7936b1003898d87d7e6d21b680cb1b0be087ce6ee40890b872bfbd7ac",
+    "devantler.public-profile":"production-template","devantler.repository":"devantler-tech/business-site",
+    "devantler.run-attempt":"1","devantler.run-id":"39869859801","devantler.source-ref":"v1.0.2",
+    "devantler.source-sha":"e5eb256dcb5dbf3857257e9072937ab95f1ea6c3","devantler.version":"1.0.2",
+    "devantler.workflow-ref":"devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0"
+  }}]' >"$biz_work/signature.json"
 }
 export BIZ_CASE=valid
 business_fixture
@@ -299,10 +327,14 @@ if read_bound_publications "$test_repo_root" "$biz_work/receipt.json" >/dev/null
 fi
 for BIZ_CASE in wrong-event wrong-caller wrong-source wrong-tag wrong-product wrong-publisher duplicate-publisher \
   malformed-list trailing-list incomplete-list run-read-failure tag-read-failure wrong-caller-pin multi-document-caller \
-  signature-failure malformed-signature trailing-signature wrong-digest wrong-reference changed-attempt moved-tag withdrawn-release; do
+  signature-failure malformed-signature trailing-signature wrong-digest wrong-reference changed-attempt moved-tag withdrawn-release \
+  draft-release prerelease-release unpublished-release invalid-release-id release-read-failure signature-wrong-event \
+  signature-wrong-run signature-wrong-attempt signature-wrong-source signature-wrong-workflow \
+  signature-missing-claims signature-wrong-ref signature-wrong-version signature-wrong-repository signature-wrong-manifest-claim; do
   export BIZ_CASE
   business_fixture
   filter='.'
+  signature_filter='.'
   case "$BIZ_CASE" in
     wrong-event) filter='.workflow_runs[0].event="push"' ;;
     wrong-caller) filter='.workflow_runs[0].path=".github/workflows/cd.yaml"' ;;
@@ -320,10 +352,24 @@ for BIZ_CASE in wrong-event wrong-caller wrong-source wrong-tag wrong-product wr
     trailing-signature) printf '\n{}\n' >>"$biz_work/signature.json" ;;
     wrong-digest) printf '[{"critical":{"image":{"docker-manifest-digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}}}]' >"$biz_work/signature.json" ;;
     wrong-reference) printf '[{"critical":{"image":{"docker-manifest-digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"identity":{"docker-reference":"ghcr.io/untrusted/manifests"}}}]' >"$biz_work/signature.json" ;;
+    signature-wrong-event) printf 'workflow_dispatch\n' >"$biz_work/certificate-event" ;;
+    signature-wrong-run) signature_filter='.[0].optional["devantler.run-id"]="39869859802"' ;;
+    signature-wrong-attempt) signature_filter='.[0].optional["devantler.run-attempt"]="2"' ;;
+    signature-wrong-source) signature_filter='.[0].optional["devantler.source-sha"]="1111111111111111111111111111111111111111"' ;;
+    signature-wrong-workflow) signature_filter='.[0].optional["devantler.workflow-ref"]="devantler-tech/.github/.github/workflows/publish-app.yaml@1111111111111111111111111111111111111111"' ;;
+    signature-missing-claims) signature_filter='del(.[0].optional)' ;;
+    signature-wrong-ref) signature_filter='.[0].optional["devantler.source-ref"]="v1.0.1"' ;;
+    signature-wrong-version) signature_filter='.[0].optional["devantler.version"]="1.0.1"' ;;
+    signature-wrong-repository) signature_filter='.[0].optional["devantler.repository"]="devantler-tech/another-product"' ;;
+    signature-wrong-manifest-claim) signature_filter='.[0].optional["devantler.manifests-digest"]="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' ;;
   esac
   if [ "$filter" != . ]; then
     jq "$filter" "$biz_work/list.json" >"$biz_work/next.json"
     mv "$biz_work/next.json" "$biz_work/list.json"
+  fi
+  if [ "$signature_filter" != . ]; then
+    jq "$signature_filter" "$biz_work/signature.json" >"$biz_work/next-signature.json"
+    mv "$biz_work/next-signature.json" "$biz_work/signature.json"
   fi
   if business_evidence >"$biz_work/refusal" 2>"$biz_work/error"; then
     echo "business evidence accepted $BIZ_CASE" >&2
