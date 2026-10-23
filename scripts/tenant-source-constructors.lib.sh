@@ -10,7 +10,7 @@ tenant_source_default_subject() (
   # shellcheck disable=SC2016 # Literal CEL, never shell expansion.
   expected_subject='${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}|\\.github/\\.github/workflows/publish-app\\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
   default_subject='^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$'
-  source_type="TenantSource | default={} validation=\"(!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')\""
+  source_type="TenantSource | default={} validation=\"((!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != ''))\" validation=\"!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')\""
   digest_type='string | default="" maxLength=71 pattern="^$|^sha256:[0-9a-f]{64}$"'
   publisher_type='string | default="" maxLength=40 pattern="^$|^[0-9a-f]{40}$"'
   lifecycle='boolean | default=true validation="self || !oldSelf"'
@@ -24,8 +24,8 @@ tenant_source_default_subject() (
       [ .[] | select(.apiVersion == "kro.run/v1alpha1" and .kind == "ResourceGraphDefinition" and .metadata.name == "tenant.kro.run") ] as $graphs
       | ($graphs | length) == 1
       and ($graphs[0].spec.schema | .apiVersion == "v1alpha1" and .kind == "Tenant" and .scope == "Namespaced"
-        and .types.TenantSource == {digest: $digest_type, publisherRevision: $publisher_type}
-        and .spec.source == $source_type and .spec.reconcileApplication == $lifecycle)
+        and .types.TenantSource == {digest: $digest_type, publisherRevision: $publisher_type, reconcileApplication: $lifecycle}
+        and .spec.source == $source_type and (.spec | has("reconcileApplication") | not))
       and ([$graphs[0].spec.resources[] | select(.id == "ociRepository")] | length) == 1
       and ([$graphs[0].spec.resources[] | select(.id == "ociRepository")][0].template |
         .apiVersion == "source.toolkit.fluxcd.io/v1" and .kind == "OCIRepository"

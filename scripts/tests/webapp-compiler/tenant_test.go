@@ -179,8 +179,8 @@ func TestCommittedTenant(t *testing.T) {
 		})
 		t.Run(fmt.Sprintf("pinned-source-only-sops-%t", sops), func(t *testing.T) {
 			input := instance("pinned-fixture", map[string]interface{}{
-				"sops": sops, "reconcileApplication": false,
-				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher},
+				"sops":   sops,
+				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
 			})
 			if err := admit(input); err != nil {
 				t.Fatalf("valid source-only input must be admitted: %v", err)
@@ -199,6 +199,9 @@ func TestCommittedTenant(t *testing.T) {
 		name string
 		spec map[string]interface{}
 	}{
+		{"source-only without exact publication", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": false}}},
+		{"source-only with empty publication", map[string]interface{}{"source": map[string]interface{}{"digest": "", "publisherRevision": "", "reconcileApplication": false}}},
+		{"obsolete top-level lifecycle", map[string]interface{}{"reconcileApplication": false}},
 		{"digest without publisher", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest}}},
 		{"publisher without digest", map[string]interface{}{"source": map[string]interface{}{"publisherRevision": tenantPublisher}}},
 		{"tag selector", map[string]interface{}{"source": map[string]interface{}{"digest": "v1.0.3", "publisherRevision": tenantPublisher}}},
@@ -208,7 +211,7 @@ func TestCommittedTenant(t *testing.T) {
 		{"publisher regex", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": "[0-9a-f]{40}"}}},
 		{"source URL override", map[string]interface{}{"source": map[string]interface{}{"url": "oci://example.invalid/other"}}},
 		{"identity override", map[string]interface{}{"source": map[string]interface{}{"subject": ".*"}}},
-		{"wrong lifecycle type", map[string]interface{}{"reconcileApplication": "false"}},
+		{"wrong lifecycle type", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": "false"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := admit(instance("invalid-fixture", tc.spec))
@@ -221,13 +224,15 @@ func TestCommittedTenant(t *testing.T) {
 		t.Run("cannot-prune-active-"+mode, func(t *testing.T) {
 			spec := map[string]interface{}{}
 			if mode == "explicit" {
-				spec["reconcileApplication"] = true
+				spec["source"] = map[string]interface{}{"reconcileApplication": true}
 			}
 			input := instance("active-"+mode, spec)
 			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 				t.Fatal(err)
 			}
-			input.Object["spec"].(map[string]interface{})["reconcileApplication"] = false
+			if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
+				t.Fatal(err)
+			}
 			err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"})
 			if !apierrors.IsInvalid(err) {
 				t.Fatalf("disabling an active child must be refused, not pruned: %v", err)
@@ -236,12 +241,14 @@ func TestCommittedTenant(t *testing.T) {
 	}
 	t.Run("source-only-can-activate", func(t *testing.T) {
 		input := instance("activation-fixture", map[string]interface{}{
-			"reconcileApplication": false, "source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher},
+			"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false},
 		})
 		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
 		}
-		input.Object["spec"].(map[string]interface{})["reconcileApplication"] = true
+		if err := unstructured.SetNestedField(input.Object, true, "spec", "source", "reconcileApplication"); err != nil {
+			t.Fatal(err)
+		}
 		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
 		}
@@ -252,6 +259,30 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal("activation must not change the selected source")
 		}
 	})
+	for _, mode := range []string{"omitted", "empty object", "null", "empty pair"} {
+		t.Run("pinned-source-cannot-become-floating-"+mode, func(t *testing.T) {
+			input := instance("pin-removal-"+strings.ReplaceAll(mode, " ", "-"), map[string]interface{}{
+				"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher},
+			})
+			if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
+				t.Fatal(err)
+			}
+			spec := input.Object["spec"].(map[string]interface{})
+			switch mode {
+			case "omitted":
+				delete(spec, "source")
+			case "empty object":
+				spec["source"] = map[string]interface{}{}
+			case "null":
+				spec["source"] = nil
+			case "empty pair":
+				spec["source"] = map[string]interface{}{"digest": "", "publisherRevision": ""}
+			}
+			if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
+				t.Fatalf("removing the selected publication via %s must be refused: %v", mode, err)
+			}
+		})
+	}
 	t.Run("pre-upgrade-active-tenant-cannot-be-disabled", func(t *testing.T) {
 		// Store an actual legacy object under a schema without the new fields.
 		// Creating an omitted field under the new schema would only test defaults.
@@ -263,14 +294,13 @@ func TestCommittedTenant(t *testing.T) {
 		for index := range legacy.Spec.Versions {
 			spec := legacy.Spec.Versions[index].Schema.OpenAPIV3Schema.Properties["spec"]
 			delete(spec.Properties, "source")
-			delete(spec.Properties, "reconcileApplication")
 			legacy.Spec.Versions[index].Schema.OpenAPIV3Schema.Properties["spec"] = spec
 		}
 		if err := apiClient.Update(ctx, legacy); err != nil {
 			t.Fatal(err)
 		}
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
-			err := admit(instance("legacy-readiness", map[string]interface{}{"reconcileApplication": true}))
+			err := admit(instance("legacy-readiness", map[string]interface{}{"source": map[string]interface{}{"reconcileApplication": true}}))
 			return apierrors.IsBadRequest(err), nil
 		}); err != nil {
 			t.Fatal(err)
@@ -279,7 +309,7 @@ func TestCommittedTenant(t *testing.T) {
 		if err := apiClient.Create(ctx, input, &client.CreateOptions{FieldValidation: "Strict"}); err != nil {
 			t.Fatal(err)
 		}
-		if _, found, err := unstructured.NestedBool(input.Object, "spec", "reconcileApplication"); err != nil || found {
+		if _, found, err := unstructured.NestedBool(input.Object, "spec", "source", "reconcileApplication"); err != nil || found {
 			t.Fatalf("fixture was not stored before the new default existed: found=%t error=%v", found, err)
 		}
 		if err := apiClient.Get(ctx, client.ObjectKey{Name: compiled.CRD.Name}, &current); err != nil {
@@ -290,7 +320,7 @@ func TestCommittedTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := wait.PollUntilContextCancel(ctx, 100*time.Millisecond, true, func(context.Context) (bool, error) {
-			return admit(instance("upgrade-readiness", map[string]interface{}{"reconcileApplication": false})) == nil, nil
+			return admit(instance("upgrade-readiness", map[string]interface{}{"source": map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}})) == nil, nil
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -299,7 +329,9 @@ func TestCommittedTenant(t *testing.T) {
 		}
 		objects, ignored := desiredTenant(t, compiled, input)
 		assertTenantChildren(t, objects, ignored, true, false)
-		input.Object["spec"].(map[string]interface{})["reconcileApplication"] = false
+		if err := unstructured.SetNestedMap(input.Object, map[string]interface{}{"digest": tenantDigest, "publisherRevision": tenantPublisher, "reconcileApplication": false}, "spec", "source"); err != nil {
+			t.Fatal(err)
+		}
 		if err := apiClient.Update(ctx, input, &client.UpdateOptions{FieldValidation: "Strict"}); !apierrors.IsInvalid(err) {
 			t.Fatalf("legacy active tenant must not become a pruning toggle: %v", err)
 		}

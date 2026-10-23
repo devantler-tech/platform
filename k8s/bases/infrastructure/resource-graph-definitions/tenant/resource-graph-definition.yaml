@@ -73,6 +73,8 @@ spec:
       TenantSource:
         digest: 'string | default="" maxLength=71 pattern="^$|^sha256:[0-9a-f]{64}$"'
         publisherRevision: 'string | default="" maxLength=40 pattern="^$|^[0-9a-f]{40}$"'
+        # An active child cannot be removed through this bootstrap control.
+        reconcileApplication: 'boolean | default=true validation="self || !oldSelf"'
       TenantResourceQuota:
         enabled: boolean | default=false
         # Total across all pods in the namespace (both request AND limit —
@@ -107,13 +109,13 @@ spec:
       # parent and generated child ownership; no existing tenant opts in here.
       webApp: boolean | default=false
       # Digest-addressed bootstrap uses an exact maintained publisher revision.
-      # The separate consumer approval guard authorizes that revision; syntax
-      # validation here never grants deployment or publisher authority.
+      # This checks syntax, not consumer approval. The mandatory production
+      # conservation guard refuses all Tenant instances until reviewed consumer
+      # onboarding adds exact attribution and approval; this graph grants none.
+      # Keep lifecycle and pinning in one validation scope. Source-only mode
+      # requires an exact publication; an established pin cannot become a range.
       source: >-
-        TenantSource | default={} validation="(!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')"
-      # Source-only bootstrap is an initial state, not a pause switch. Turning
-      # an active child off would remove it from KRO and can prune workloads.
-      reconcileApplication: 'boolean | default=true validation="self || !oldSelf"'
+        TenantSource | default={} validation="((!has(self.digest) || self.digest == '') == (!has(self.publisherRevision) || self.publisherRevision == '')) && (!has(self.reconcileApplication) || self.reconcileApplication || (has(self.digest) && self.digest != ''))" validation="!has(oldSelf.digest) || oldSelf.digest == '' || (has(self.digest) && self.digest != '')"
       # Standard multi-tenancy guardrails (#1932 follow-up #2522): a
       # namespace-wide ResourceQuota and a per-container default LimitRange.
       # Both default to `enabled: false` — no behaviour change for existing
@@ -317,7 +319,7 @@ spec:
     # on a tenant with no `sops-age` Secret would wedge reconciliation.
     - id: kustomization
       includeWhen:
-        - ${schema.spec.reconcileApplication && !schema.spec.sops}
+        - ${schema.spec.source.reconcileApplication && !schema.spec.sops}
       template:
         apiVersion: kustomize.toolkit.fluxcd.io/v1
         kind: Kustomization
@@ -354,7 +356,7 @@ spec:
           targetNamespace: ${tenantNamespace.metadata.name}
     - id: kustomizationSops
       includeWhen:
-        - ${schema.spec.reconcileApplication && schema.spec.sops}
+        - ${schema.spec.source.reconcileApplication && schema.spec.sops}
       template:
         apiVersion: kustomize.toolkit.fluxcd.io/v1
         kind: Kustomization

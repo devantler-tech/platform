@@ -88,7 +88,8 @@ acceptance. Pages and the private portal remain unchanged.
 ## Observe before activating reconciliation
 
 A generic `Tenant` can bootstrap only its verified source with
-`spec.reconcileApplication: false`. This omits both application Kustomizations,
+`spec.source.reconcileApplication: false`. This requires an exact source pair and
+omits both application Kustomizations,
 including the SOPS variant, rather than creating suspended children. Set
 `spec.source.digest` and `spec.source.publisherRevision` together: the former is
 an exact `sha256:` digest and the latter the reviewed maintained publisher's
@@ -96,12 +97,22 @@ an exact `sha256:` digest and the latter the reviewed maintained publisher's
 Publication evidence, approval generation and live source verification remain
 separate requirements.
 
-Omitting the pair preserves the normal semver selector and existing publisher
-policy. Omitting `reconcileApplication` preserves application reconciliation.
+The production consumer-conservation guard currently rejects every rendered Tenant
+instance because its generated source has no concrete per-consumer attribution in
+the ordinary matcher inventory. The generic graph's syntax check does not authorize
+any publisher revision. First-consumer onboarding must establish that attribution
+and canonical approval before extending this closed boundary; Platform #5247 owns
+the business-site registration. Neither source-only nor active instances are
+production-admitted by this graph change alone.
+
+Omitting the source object preserves the normal semver selector and existing
+publisher policy. Omitting `source.reconcileApplication` preserves application reconciliation.
 After verification, a source-only Tenant can change false to true. Admission
 refuses true to false, including active objects stored before this field
 existed: disabling an active tenant requires a separately reviewed lifecycle
 procedure, not pruning its workloads through this bootstrap switch.
+Once an exact source is selected, removing its pin is refused; activation cannot
+silently change the observed publication into a floating version range.
 
 After the reviewed source is deployed, confirm `Ready=True`, `SourceVerified=True`
 and a current `observedGeneration`. Its `status.artifact.revision` must equal the
