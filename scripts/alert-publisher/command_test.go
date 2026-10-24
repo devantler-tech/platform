@@ -111,7 +111,11 @@ func TestSeparateProcessesShareOneDurableIncident(t *testing.T) {
 			http.Error(w, "fixture unavailable", 500)
 			return
 		}
-		defer response.Body.Close()
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Errorf("close fake response: %v", err)
+			}
+		}()
 		for key, values := range response.Header {
 			w.Header()[key] = values
 		}

@@ -452,7 +452,7 @@ func validID(id string) bool {
 func validState(state string) bool {
 	return state == "firing" || state == "healthy" || state == "unknown"
 }
-func saveJournal(dir string, s journal) error {
+func saveJournal(dir string, s journal) (result error) {
 	b, err := json.Marshal(s)
 	if err != nil || len(b) > 128*1024 {
 		return errStore
@@ -462,7 +462,11 @@ func saveJournal(dir string, s journal) error {
 		return errStore
 	}
 	name := f.Name()
-	defer os.Remove(name)
+	defer func() {
+		if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+			result = errStore
+		}
+	}()
 	if _, err = f.Write(b); err != nil {
 		_ = f.Close()
 		return errStore
@@ -481,14 +485,15 @@ func saveJournal(dir string, s journal) error {
 	if err != nil {
 		return errStore
 	}
-	defer d.Close()
-	if d.Sync() != nil {
+	syncErr := d.Sync()
+	closeErr := d.Close()
+	if syncErr != nil || closeErr != nil {
 		return errStore
 	}
 	return nil
 }
 
-func ensureInitialized(dir string) error {
+func ensureInitialized(dir string) (result error) {
 	path := filepath.Join(dir, "initialized")
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|syscall.O_NOFOLLOW, 0600)
 	if err == nil {
@@ -512,7 +517,11 @@ func ensureInitialized(dir string) error {
 	if err != nil {
 		return errStore
 	}
-	defer f.Close()
+	defer func() {
+		if f.Close() != nil {
+			result = errStore
+		}
+	}()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() != 3 {
 		return errStore

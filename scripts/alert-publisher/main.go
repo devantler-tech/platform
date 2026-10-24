@@ -15,6 +15,12 @@ import (
 type remoteFactory func(int64, []byte) (githubAPI, error)
 
 func command(args []string, input io.Reader, output io.Writer, factory remoteFactory) int {
+	report := func(code int, message any) int {
+		if _, err := fmt.Fprintln(output, message); err != nil && code == 0 {
+			return 2
+		}
+		return code
+	}
 	flags := flag.NewFlagSet("alert-publisher", flag.ContinueOnError)
 	// Flag parse failures can echo untrusted argument values. Emit fixed errors.
 	flags.SetOutput(io.Discard)
@@ -24,58 +30,49 @@ func command(args []string, input io.Reader, output io.Writer, factory remoteFac
 	keyPath := flags.String("key-file", "", "projected App private key file")
 	installation := flags.Int64("installation-id", 0, "configured existing App installation")
 	if flags.Parse(args) != nil || flags.NArg() != 0 {
-		fmt.Fprintln(output, "Invalid publisher invocation.")
-		return 2
+		return report(2, "Invalid publisher invocation.")
 	}
 	if !*enabled {
-		fmt.Fprintln(output, "Publisher is disabled.")
-		return 0
+		return report(0, "Publisher is disabled.")
 	}
 	if !filepath.IsAbs(*dir) || !filepath.IsAbs(*keyPath) || *installation <= 0 {
-		fmt.Fprintln(output, "Publisher deployment facts are incomplete.")
-		return 2
+		return report(2, "Publisher deployment facts are incomplete.")
 	}
 	var event *observation
 	if !*drain {
 		value, err := decodeObservation(input)
 		if err != nil {
-			fmt.Fprintln(output, errInput)
-			return 2
+			return report(2, errInput)
 		}
 		event = &value
 	}
 	keyFile, err := os.Open(*keyPath)
 	if err != nil {
-		fmt.Fprintln(output, "Publisher credential is unavailable.")
-		return 2
+		return report(2, "Publisher credential is unavailable.")
 	}
 	info, statErr := keyFile.Stat()
 	key, readErr := io.ReadAll(io.LimitReader(keyFile, 64*1024+1))
 	closeErr := keyFile.Close()
 	if statErr != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0027 != 0 || readErr != nil || closeErr != nil || len(key) == 0 || len(key) > 64*1024 {
-		fmt.Fprintln(output, "Publisher credential is unavailable.")
-		return 2
+		return report(2, "Publisher credential is unavailable.")
 	}
 	api, err := factory(*installation, key)
 	if err != nil {
-		fmt.Fprintln(output, "Publisher App identity is unverified.")
-		return 2
+		return report(2, "Publisher App identity is unverified.")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	p := publisher{dir: *dir, api: api, now: time.Now}
 	if err = p.run(ctx, event); err != nil {
-		fmt.Fprintln(output, err)
 		if errors.Is(err, errQuarantined) {
-			return 4
+			return report(4, err)
 		}
 		if errors.Is(err, errStore) || errors.Is(err, errFull) || errors.Is(err, errInput) {
-			return 2
+			return report(2, err)
 		}
-		return 3
+		return report(3, err)
 	}
-	fmt.Fprintln(output, "Observation processed; confirmed receipts are recorded in the journal.")
-	return 0
+	return report(0, "Observation processed; confirmed receipts are recorded in the journal.")
 }
 func main() {
 	os.Exit(command(os.Args[1:], os.Stdin, os.Stderr, func(id int64, key []byte) (githubAPI, error) { return newGitHubRemote(id, key) }))
