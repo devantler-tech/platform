@@ -72,6 +72,10 @@ listeners:
 - An inbox test with passing SPF/DKIM/DMARC, forged-reply and open-relay refusal,
   a refused unauthorized recipient, an exercised backup and restore, and the
   maintainer-performed credential handoff to the host's Keychain.
+- A visible Stalwart entry on Homepage at `https://platform.devantler.tech`,
+  with a working link to the authenticated administration interface. Register
+  it with the serving administration route and verify the tile and navigation
+  in a real browser after activation. The recovery API stays internal.
 
 The public daily GitHub ask channel stays the accepted channel. Deploying mail
 does not enable spend stewardship or designate its financial decision channel.

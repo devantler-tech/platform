@@ -3,8 +3,10 @@
 set -euo pipefail
 umask 077
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+fixture_user="$(id -u):$(id -g)"
+[ "$(id -u)" != 0 ] || { echo 'FAIL: native mail proof requires an unprivileged fixture user' >&2; exit 1; }
 scratch="$(mktemp -d)"
-name="mail-config-$(basename "$scratch")"
+name="mail-config-$(basename "$scratch" | tr '[:upper:]' '[:lower:]')"
 network="${name}-network"
 server='ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c'
 cli='ghcr.io/stalwartlabs/cli:1.0.13@sha256:9a1e07307d6f890a193322c4b737fc0868405f0f8486a19922cbf362f43884fd'
@@ -23,7 +25,7 @@ cleanup() {
 }
 trap cleanup EXIT
 mkdir -p "$scratch/inputs" "$scratch/data" "$scratch/tmp" "$scratch/etc/tls"
-chmod 777 "$scratch/data" "$scratch/tmp"
+chmod 700 "$scratch/data" "$scratch/tmp"
 chmod 755 "$scratch/etc" "$scratch/etc/tls"
 printf '%s' '{"@type":"RocksDb","path":"/var/lib/stalwart/data","bufferSize":33554432,"cacheSize":33554432}' >"$scratch/etc/config.json"
 printf '%s' '{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator"}' >"$scratch/inputs/settings.json"
@@ -41,10 +43,15 @@ mkdir "$scratch/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
+[ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
+  echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
+}
 
 run_bootstrap() {
+  # Bind-mounted files belong to the invoking unprivileged user. Keep one
+  # identity through bootstrap and every restart, as the deployment requires.
   docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
-    --user "$(id -u):$(id -g)" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
@@ -60,7 +67,7 @@ start_server() {
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
   fi
   docker run --detach --name "$name" --network "$network" --read-only \
-    --user 2000:2000 --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
     --publish 127.0.0.1::8080 --publish 127.0.0.1::1025 \
     --publish 127.0.0.1::1587 --publish 127.0.0.1::1993 \
@@ -78,7 +85,7 @@ start_server() {
   return 1
 }
 native_cli() {
-  docker run --rm --interactive --user "$(id -u):$(id -g)" --network "$network" --cap-drop ALL --security-opt no-new-privileges:true \
+  docker run --rm --interactive --user "$fixture_user" --network "$network" --cap-drop ALL --security-opt no-new-privileges:true \
     --env "STALWART_URL=http://$name:8080" --env STALWART_USER=fixture \
     --env STALWART_PASSWORD=private-mail-recovery-fixture-only \
     --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
