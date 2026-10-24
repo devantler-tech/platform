@@ -1140,7 +1140,7 @@ spec:
 YAML
   printf '  - cel-mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed HelmRelease CRD-strategy MutatingPolicy does not alter consumers' "$root" '2 consumer(s)'
-  for target in source-kind extra-group wildcard-resource values-path computed-path move-op apply-configuration mutate-existing target-constraints foreign-group variables match-condition match-condition-key extra-spec-field extra-match-constraint; do
+  for target in source-kind extra-group wildcard-resource values-path computed-path move-op apply-configuration mutate-existing target-constraints foreign-group variables match-condition match-condition-key extra-spec-field extra-match-constraint no-match-condition second-match-condition appended-condition patch-value extra-mutation-field resource-rule-field; do
     root="$(fixture "reviewed-cel-mutation-$target")"
     cp "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml"
     case "$target" in
@@ -1159,6 +1159,12 @@ YAML
       match-condition-key) yq -i '.spec.matchConditions[0].extra = "x"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
       extra-spec-field) yq -i '.spec.failurePolicy = "Ignore"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
       extra-match-constraint) yq -i '.spec.matchConstraints.namespaceSelector.matchLabels.team = "x"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      no-match-condition) yq -i 'del(.spec.matchConditions)' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      second-match-condition) yq -i '.spec.matchConditions += [{"name":"second","expression":"true"}]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      appended-condition) yq -i '.spec.matchConditions[0].expression += " && http.Get(\"https://example.test\") != null"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      patch-value) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("value: \"CreateReplace\""; "value: string(resource.Get(\"v1\", \"configmaps\", \"flux-system\", \"x\"))")' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      extra-mutation-field) yq -i '.spec.mutations[0].extra = "x"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      resource-rule-field) yq -i '.spec.matchConstraints.resourceRules[0].resourceNames = ["cilium"]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml" &&
       { printf 'FAIL: the %s variant did not change the reviewed MutatingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
