@@ -63,13 +63,15 @@ Volumes at `/dev/sdb`, `/dev/sdc` and so on, and partitioning would destroy them
 Compute-only (autoscaled) workers run the Longhorn volume client, so a pod can
 mount a Longhorn volume there, but they hold no replicas: replica storage stays
 on the storage workers. A volume consumer such as Kubescape's result store can
-therefore run on any Linux worker. The soft `prefer-baseline-nodes` preference
-still places it on a baseline worker whenever one has room.
+therefore run on any Linux worker. Kyverno gives the store the soft
+`prefer-baseline-nodes` preference at admission, so it lands on a baseline worker
+whenever one has room.
 
 The production regression `scripts/tests/test-kubescape-storage-placement.sh`
 renders the pinned Kubescape chart for install and upgrade and checks that its
-store is not pinned to the storage workers, that no other component's placement
-changes, and that the store keeps its single-writer strategy, claim, security
+store is not pinned to the storage workers by a node selector, a required node
+affinity or a node name, that no post-renderer changes any component's
+placement, and that the store keeps its single-writer strategy, claim, security
 settings and health probes.
 
 ## StorageClasses

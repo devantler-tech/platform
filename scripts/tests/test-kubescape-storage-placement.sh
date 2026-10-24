@@ -12,9 +12,12 @@ trap 'rm -rf -- "$scratch"' EXIT
 # Refuse an incomplete render or a changed scheduling or safety boundary.
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-# Every Linux worker is eligible, with or without a storage disk; a Windows node never is.
+# Every Linux worker is eligible, with or without a storage disk; a Windows node never is,
+# and no required node affinity or fixed node name narrows that again.
 unpinned_placement() {
   jq -e '
+    (.spec.template.spec.nodeName == null) and
+    (.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution == null) and
     .spec.template.spec.nodeSelector as $selector |
     ($selector | type == "object") and
     ([
@@ -74,7 +77,7 @@ for mode in install upgrade; do
     "${args[@]}" >"$scratch/rendered.yaml"
   # The chart's own placement for every component, the store included.
   yq ea -o=json -I=0 'select(.kind == "Deployment" or .kind == "DaemonSet")' "$scratch/rendered.yaml" |
-    jq -s 'map({kind,name:.metadata.name,selector:.spec.template.spec.nodeSelector}) | sort_by(.kind,.name)' \
+    jq -s 'map({kind,name:.metadata.name} + (.spec.template.spec | {nodeSelector,affinity,tolerations,nodeName,topologySpreadConstraints})) | sort_by(.kind,.name)' \
       >"$scratch/before-placement.json"
   for ((i=0; i<count; i++)); do
     renderer="$scratch/$mode-renderer-$i"
@@ -93,7 +96,7 @@ for mode in install upgrade; do
   unpinned_placement "$scratch/storage.json" ||
     fail "$mode storage is not eligible for every Linux worker"
   yq ea -o=json -I=0 'select(.kind == "Deployment" or .kind == "DaemonSet")' "$scratch/rendered.yaml" |
-    jq -s 'map({kind,name:.metadata.name,selector:.spec.template.spec.nodeSelector}) | sort_by(.kind,.name)' \
+    jq -s 'map({kind,name:.metadata.name} + (.spec.template.spec | {nodeSelector,affinity,tolerations,nodeName,topologySpreadConstraints})) | sort_by(.kind,.name)' \
       >"$scratch/after-placement.json"
   cmp -s "$scratch/before-placement.json" "$scratch/after-placement.json" ||
     fail "$mode post-renderers changed a component's placement"
@@ -104,7 +107,9 @@ for mode in install upgrade; do
   for mutation in \
     '.spec.template.spec.nodeSelector["node.longhorn.io/create-default-disk"] = "true"' \
     'del(.spec.template.spec.nodeSelector["kubernetes.io/os"])' \
-    'del(.spec.template.spec.nodeSelector)'; do
+    'del(.spec.template.spec.nodeSelector)' \
+    '.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms = [{"matchExpressions":[{"key":"node.longhorn.io/create-default-disk","operator":"In","values":["true"]}]}]' \
+    '.spec.template.spec.nodeName = "storage-worker"'; do
     jq "$mutation" "$scratch/storage.json" >"$scratch/mutated.json"
     if unpinned_placement "$scratch/mutated.json"; then fail "accepted placement: $mutation"; fi
   done
