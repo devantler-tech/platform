@@ -315,6 +315,17 @@ checksums are unchanged. The offline render regression retains both production
 and local roles, explicit and whitespace schematic IDs, and invalid-patch
 refusals. This source audit changes no cluster configuration.
 
+**7.203.3**, commit `12f5204d5e5341c5cb1a7d7f5647d4cf6b82884c`, is audited
+against 7.203.0. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. Only `go.mod` and `go.sum` change, through
+`golang.org/x/term` v0.46.0 → v0.47.0. The Go directive, Talos machinery and
+YAML/protobuf encoding dependencies and checksums are unchanged, preserving
+argument normalization, folding for both roles and explicit schematic-ID
+precedence. The intervening documentation and EKS workflow changes do not
+alter this platform's Talos path. The actual offline render regression retains
+both production and local roles, explicit and whitespace schematic IDs, and
+invalid-patch refusals. This source audit changes no cluster configuration.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
