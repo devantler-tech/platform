@@ -2,6 +2,7 @@ package preparation_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os/exec"
 	"path/filepath"
@@ -26,7 +27,7 @@ func render(t *testing.T, path string) []map[string]any {
 	var result []map[string]any
 	for {
 		var object map[string]any
-		if err := decoder.Decode(&object); err == io.EOF {
+		if err := decoder.Decode(&object); errors.Is(err, io.EOF) {
 			return result
 		} else if err != nil {
 			t.Fatal(err)
@@ -35,6 +36,24 @@ func render(t *testing.T, path string) []map[string]any {
 			result = append(result, object)
 		}
 	}
+}
+
+func mapping(t *testing.T, value any) map[string]any {
+	t.Helper()
+	result, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("expected a mapping, got %T", value)
+	}
+	return result
+}
+
+func sequence(t *testing.T, value any) []any {
+	t.Helper()
+	result, ok := value.([]any)
+	if !ok || len(result) == 0 {
+		t.Fatalf("expected a nonempty sequence, got %T", value)
+	}
+	return result
 }
 
 func object(t *testing.T, objects []map[string]any, kind, name string) map[string]any {
@@ -52,22 +71,22 @@ func object(t *testing.T, objects []map[string]any, kind, name string) map[strin
 func TestPreparationRendersWithoutPublicMailOrAPIAuthority(t *testing.T) {
 	objects := render(t, "k8s/bases/apps/private-mail")
 	sts := object(t, objects, "StatefulSet", "private-mail")
-	spec := sts["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	spec := mapping(t, mapping(t, mapping(t, sts["spec"])["template"])["spec"])
 	if spec["automountServiceAccountToken"] != false {
 		t.Fatal("mail server must not receive Kubernetes API credentials")
 	}
 	if spec["hostNetwork"] == true || spec["hostPID"] == true {
 		t.Fatal("mail preparation must remain isolated from the host")
 	}
-	container := spec["containers"].([]any)[0].(map[string]any)
-	context := container["securityContext"].(map[string]any)
+	container := mapping(t, sequence(t, spec["containers"])[0])
+	context := mapping(t, container["securityContext"])
 	if context["runAsNonRoot"] != true || context["readOnlyRootFilesystem"] != true || context["allowPrivilegeEscalation"] != false {
 		t.Fatal("mail server must run restricted and without writable root or privilege escalation")
 	}
-	env := container["env"].([]any)
+	env := sequence(t, container["env"])
 	recovery, suppliedCredential := false, false
 	for _, item := range env {
-		e := item.(map[string]any)
+		e := mapping(t, item)
 		if e["name"] == "STALWART_RECOVERY_MODE" {
 			recovery = e["value"] == "1"
 		}
@@ -90,8 +109,8 @@ func TestPreparationRendersWithoutPublicMailOrAPIAuthority(t *testing.T) {
 			if s["type"] != nil && s["type"] != "ClusterIP" {
 				t.Fatal("preparation must not expose a public service")
 			}
-			for _, port := range s["ports"].([]any) {
-				if port.(map[string]any)["port"] != 8080 {
+			for _, port := range sequence(t, s["ports"]) {
+				if mapping(t, port)["port"] != 8080 {
 					t.Fatal("only the internal management port may be exposed")
 				}
 			}

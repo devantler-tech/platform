@@ -22,6 +22,28 @@ cleanup() {
 trap cleanup EXIT
 
 kubectl kustomize "$root/k8s/bases/apps/private-mail" >"$scratch/render.yaml"
+# The opt-in bundle is absent from both normal overlays. Scan its enabled
+# render explicitly, using the same reviewed exceptions as the platform gate.
+go -C "$root" run ./scripts/generate-kubescape-exceptions -o "$scratch/exceptions.json"
+ksail workload scan "$scratch/render.yaml" --no-render --framework nsa,mitre \
+  --exceptions "$scratch/exceptions.json" --compliance-threshold 100 \
+  --format json -o "$scratch/scan.json"
+jq -e '.summaryDetails.complianceScore == 100 and
+  (.summaryDetails.frameworks | length == 2)' "$scratch/scan.json" >/dev/null
+
+# Prove the exact scan rejects a real privileged-container regression rather
+# than reporting a green result for an empty or unexamined opt-in bundle.
+yq '(select(.kind == "StatefulSet").spec.template.spec.containers[0].securityContext.privileged) = true' \
+  "$scratch/render.yaml" >"$scratch/unsafe.yaml"
+if ksail workload scan "$scratch/unsafe.yaml" --no-render --framework nsa,mitre \
+  --exceptions "$scratch/exceptions.json" --compliance-threshold 100 \
+  --format json -o "$scratch/unsafe.json" >"$scratch/unsafe.log" 2>&1; then
+  echo 'FAIL: the enabled mail security scan accepted a privileged container' >&2
+  exit 1
+fi
+jq -e '[.summaryDetails.frameworks[].controls["C-0057"].ResourceCounters.failedResources // 0] | any(. > 0)' \
+  "$scratch/unsafe.json" >/dev/null
+
 yq -er 'select(.kind == "ConfigMap" and .metadata.name == "private-mail-datastore").data."config.json"' \
   "$scratch/render.yaml" >"$scratch/config.json"
 image="$(yq -er 'select(.kind == "StatefulSet" and .metadata.name == "private-mail").spec.template.spec.containers[0].image' "$scratch/render.yaml")"
