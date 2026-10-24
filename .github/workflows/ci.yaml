@@ -139,6 +139,8 @@ jobs:
               - 'k8s/**'
               - 'scripts/tests/private-mail-preparation/**'
               - 'scripts/tests/test-private-mail-server.sh'
+              - 'scripts/tests/test-private-mail-configuration.sh'
+              - 'scripts/private-mail-config/**'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
@@ -2911,6 +2913,13 @@ jobs:
         run: |
           shellcheck scripts/tests/test-private-mail-server.sh
           bash scripts/tests/test-private-mail-server.sh
+
+      - name: ✉️ Prove native mail accounts and recipient restrictions
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-private-mail-configuration.sh
+          bash scripts/tests/test-private-mail-configuration.sh
 
       - name: 🛡️ Validate Kubescape self-hosted scan persistence
         if: needs.changes.outputs.k8s == 'true'
