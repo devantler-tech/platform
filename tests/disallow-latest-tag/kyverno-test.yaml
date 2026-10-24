@@ -4,8 +4,8 @@
 # image, in a regular, init or ephemeral container; the same tagless image in an
 # excluded infrastructure namespace is out of scope. Workload controllers are
 # judged through the rules Kyverno generates: a `:latest` or tagless Deployment
-# or CronJob fails in an ordinary namespace and is skipped in an infrastructure
-# namespace, the same as a Pod (#5168).
+# or Job fails in an ordinary namespace, and a Deployment or CronJob in an
+# infrastructure namespace is skipped, the same as a Pod (#5168).
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -52,8 +52,8 @@ results:
     result: fail
   - policy: disallow-latest-tag
     resources:
-      - default/latest-tag-cronjob
-    kind: CronJob
+      - default/latest-tag-job
+    kind: Job
     result: fail
   - policy: disallow-latest-tag
     resources:

@@ -240,17 +240,14 @@ spec:
           image: ghcr.io/example/app:1.2.3
 ---
 apiVersion: batch/v1
-kind: CronJob
+kind: Job
 metadata:
-  name: latest-tag-cronjob
+  name: latest-tag-job
   namespace: default
 spec:
-  schedule: "0 0 * * *"
-  jobTemplate:
+  template:
     spec:
-      template:
-        spec:
-          restartPolicy: Never
-          containers:
-            - name: app
-              image: ghcr.io/example/app:latest
+      restartPolicy: Never
+      containers:
+        - name: app
+          image: ghcr.io/example/app:latest
