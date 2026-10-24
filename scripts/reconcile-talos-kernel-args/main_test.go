@@ -675,11 +675,41 @@ func TestResolveFoldInputsRejectsCleanupFailure(t *testing.T) {
 	}
 }
 
+// unrelatedToolCache stands in for a file another tool leaves in the temporary
+// directory. A macOS sandbox writes xcrun's cache there (#5221); it is not a
+// source checkout, so it must not read as one.
+const unrelatedToolCache = "xcrun_db"
+
+// plantUnrelatedToolCache writes that file into parent.
+func plantUnrelatedToolCache(t *testing.T, parent string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(parent, unrelatedToolCache), []byte("cache\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ownedCheckouts lists the entries in parent that this helper's checkouts
+// would be named as, so a cleanup check judges only what the helper creates.
+func ownedCheckouts(parent string) ([]string, error) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return nil, err
+	}
+	var owned []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), foldInputsCheckoutPrefix) {
+			owned = append(owned, entry.Name())
+		}
+	}
+	return owned, nil
+}
+
 // TestResolveFoldInputsRemovesItsCheckout checks real removal on successful and failed reads.
 func TestResolveFoldInputsRemovesItsCheckout(t *testing.T) {
 	repository, git := sourceRepository(t)
 	parent := t.TempDir()
 	t.Setenv("TMPDIR", parent)
+	plantUnrelatedToolCache(t, parent)
 	want := git("rev-parse", "v1.2.3:go.mod")
 	if err := os.Remove(filepath.Join(repository, "go.sum")); err != nil {
 		t.Fatal(err)
@@ -694,10 +724,34 @@ func TestResolveFoldInputsRemovesItsCheckout(t *testing.T) {
 		if version == "1.2.4" && (err == nil || ids != nil) {
 			t.Fatalf("unread source was accepted: %v, %v", ids, err)
 		}
-		entries, readErr := os.ReadDir(parent)
-		if readErr != nil || len(entries) != 0 {
-			t.Fatalf("temporary source checkout remains after reading %s: %d entries, %v", version, len(entries), readErr)
+		owned, readErr := ownedCheckouts(parent)
+		if readErr != nil || len(owned) != 0 {
+			t.Fatalf("temporary source checkout remains after reading %s: %v, %v", version, owned, readErr)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(parent, unrelatedToolCache)); err != nil {
+		t.Fatalf("the unrelated tool cache must be left alone: %v", err)
+	}
+}
+
+// TestOwnedCheckoutsFindsARetainedCheckout is the control for the cleanup check
+// above: a checkout the helper keeps is found beside an unrelated tool cache.
+func TestOwnedCheckoutsFindsARetainedCheckout(t *testing.T) {
+	repository, _ := sourceRepository(t)
+	parent := t.TempDir()
+	t.Setenv("TMPDIR", parent)
+	plantUnrelatedToolCache(t, parent)
+	var kept string
+	ids, err := resolveFoldInputsWithCleanup(repository, "1.2.3", func(dir string) error {
+		kept = dir
+		return nil
+	})
+	if err != nil || len(ids) != 6 {
+		t.Fatalf("valid source lost accepted identities: %v, %v", ids, err)
+	}
+	owned, err := ownedCheckouts(parent)
+	if err != nil || len(owned) != 1 || owned[0] != filepath.Base(kept) {
+		t.Fatalf("a retained checkout %q was not the one owned checkout found: %v, %v", kept, owned, err)
 	}
 }
 
