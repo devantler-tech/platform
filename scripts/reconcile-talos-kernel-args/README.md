@@ -379,6 +379,20 @@ precedence. The other changes touch KSail's documentation redirects, its VS Code
 extension and its own dependency automation, none of which this platform's Talos
 rendering uses.
 
+**7.203.17**, commit `93bc08b593353cebecdaf1090389c0e4fdebf40a`, is audited
+against 7.203.16. Its only change is one dependency update: `golang.org/x/mod`
+v0.41.0 → v0.42.0, with indirect `golang.org/x/tools` v0.50.0 → v0.51.0 and
+`golang.org/x/telemetry`; every changed checksum belongs to those three modules.
+The configuration manager, Talos generator, cluster API and charts are
+byte-identical, and `golang.org/x/mod` is imported only by KSail's internal
+release and maintenance tooling, so argument normalization, both-role folding
+and explicit schematic-ID precedence are preserved.
+
+**7.203.18**, commit `045d1cd94d1313298f3d15144552cec8061882ed`, has fold inputs
+byte-identical to 7.203.17, so it passes against that set. Its only change
+updates an action pin in KSail's own CI workflow, which this platform's Talos
+rendering does not use.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
