@@ -138,10 +138,30 @@ delivery, denied recipients/relay/writes/upload and human IMAP/TLS. It repeats
 configuration after real fixture mail exists and reads that message again.
 These are disposable `.test` accounts, not proof of public mail delivery.
 
-Production apply still requires reviewed orchestration that positively owns the
-exclusive recovery process, verifies exact readback and stops it before serving.
-API liveness or closed mail ports do not establish that boundary. A failed or
-interrupted CLI apply is not atomic and must leave recovery in place. This
+The explicit `bootstrap` subcommand owns an exclusive recovery child and the
+datastore-volume lock. It reads mounted inputs, queries the real inventory,
+applies the plan through the pinned CLI, requires a successful receipt for every
+operation and reads the resulting policy back. Permission, listener-bind and
+expression maps require exact equality, including removal of stale entries.
+All native output is kept out of logs. A cancellation or failure stops and
+collects the owned child; a forced kill cannot produce success. A clean recovery
+shutdown is required before exit zero can allow a separate serving container to
+start. The command never starts that serving container itself.
+
+The bootstrap image contains the exact upstream server and CLI plus the static
+Go initializer. Its default entrypoint is bootstrap; it cannot silently fall
+through to an unconfigured normal server. It expects private inputs under
+`/etc/private-mail`, the datastore at `/var/lib/stalwart`, native configuration
+and TLS at `/etc/stalwart`, and memory-backed `/tmp`. The dedicated publisher
+builds without publishing for PRs. Protected-main publication adds SBOM,
+provenance and a verified Cosign signature to the immutable image digest.
+Production manifests must use that signed digest and keep public activation
+separate. API liveness or closed mail ports alone are insufficient.
+
+The native fixture also runs the actual bootstrap image, rejects unsafe stored
+inventory, proves normal authentication after recovery stops, and repeats
+bootstrap after receiving mail to verify history survives. A failed or
+interrupted apply is not atomic and must keep serving stopped. This
 configuration slice changes no running workload, public route or DNS record.
 Client setup, private credential handoff, migration, public sender-authentication
 proof and a production backup restore remain in #5030.

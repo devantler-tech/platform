@@ -46,17 +46,10 @@ func privateInput(dir, name string, limit int64) (data []byte, result error) {
 	return b, nil
 }
 
-func command(args []string, log io.Writer) int {
-	f := flag.NewFlagSet("private-mail-config", flag.ContinueOnError)
-	f.SetOutput(io.Discard)
-	dir := f.String("input-dir", "", "private mounted configuration")
-	output := f.String("output-file", "", "new private plan in memory-backed storage")
-	fail := func() int { _, _ = fmt.Fprintln(log, errConfiguration); return 2 }
-	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) || !filepath.IsAbs(*output) {
-		return fail()
-	}
+func loadInputs(dir string) (inputs, error) {
 	var v inputs
-	b, err := privateInput(*dir, "settings.json", 4096)
+	fail := func() (inputs, error) { return inputs{}, errConfiguration }
+	b, err := privateInput(dir, "settings.json", 4096)
 	if err != nil {
 		return fail()
 	}
@@ -103,13 +96,35 @@ func command(args []string, log io.Writer) int {
 	}{
 		{"administrator-password", &v.administratorPassword}, {"maintainer-password", &v.maintainerPassword}, {"agent-password", &v.agentPassword},
 	} {
-		b, err = privateInput(*dir, target.name, 128)
+		b, err = privateInput(dir, target.name, 128)
 		if err != nil {
 			return fail()
 		}
 		*target.value = string(b)
 	}
-	b, err = render(v)
+	if _, err = render(v); err != nil {
+		return fail()
+	}
+	return v, nil
+}
+
+func command(args []string, log io.Writer) int {
+	if len(args) > 0 && args[0] == "bootstrap" {
+		return bootstrapCommand(args[1:], log)
+	}
+	f := flag.NewFlagSet("private-mail-config", flag.ContinueOnError)
+	f.SetOutput(io.Discard)
+	dir := f.String("input-dir", "", "private mounted configuration")
+	output := f.String("output-file", "", "new private plan in memory-backed storage")
+	fail := func() int { _, _ = fmt.Fprintln(log, errConfiguration); return 2 }
+	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) || !filepath.IsAbs(*output) {
+		return fail()
+	}
+	v, err := loadInputs(*dir)
+	if err != nil {
+		return fail()
+	}
+	b, err := render(v)
 	if err != nil {
 		return fail()
 	}

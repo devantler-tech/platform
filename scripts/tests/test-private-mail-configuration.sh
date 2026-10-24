@@ -13,6 +13,7 @@ cleanup() {
   trap - EXIT
   docker rm -fv "$name" > /dev/null 2>&1 || cleanup_rc=1
   docker network rm "$network" > /dev/null 2>&1 || cleanup_rc=1
+  docker image rm "$name-bootstrap-image" > /dev/null 2>&1 || cleanup_rc=1
   rm -rf "$scratch"
   if [ "$rc" = 0 ] && [ "$cleanup_rc" != 0 ]; then
     echo 'FAIL: native mail proof cleanup was not confirmed' >&2
@@ -36,6 +37,21 @@ chmod 644 "$scratch/etc/config.json" "$scratch/etc/tls/"*
 docker pull "$server" >/dev/null
 docker pull "$cli" >/dev/null
 docker network create --internal "$network" >/dev/null
+mkdir "$scratch/build"
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
+cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
+docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
+
+run_bootstrap() {
+  docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
+    --user "$(id -u):$(id -g)" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --security-opt no-new-privileges:true \
+    --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
+    --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
+    --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
+    --mount "type=bind,source=$scratch/tmp,target=/tmp" \
+    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1
+}
 
 start_server() {
   local mode=$1
@@ -82,6 +98,7 @@ apply_plan() {
   native_cli apply --file /proof/plan.ndjson --json >"$scratch/apply.jsonl" 2>"$scratch/apply.err"
   jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/apply.jsonl" >/dev/null
 }
+run_bootstrap
 start_server preparation
 prepare_plan "$scratch/plan.ndjson"
 apply_plan
@@ -96,6 +113,12 @@ if prepare_plan "$scratch/unsafe-plan.ndjson" >"$scratch/negative-render.log" 2>
   echo 'FAIL: unexpected native listener was accepted' >&2; exit 1
 fi
 [ ! -e "$scratch/unsafe-plan.ndjson" ]
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+if run_bootstrap; then
+  echo 'FAIL: bootstrap permitted serving after unsafe inventory' >&2; exit 1
+fi
+start_server preparation
 native_cli query NetworkListener --where name=unexpected --fields id --json >"$scratch/negative-listener.jsonl"
 jq -s '[.[].id] | if length==1 then . else error("negative listener identity is ambiguous") end' "$scratch/negative-listener.jsonl" |
   native_cli delete NetworkListener --stdin >"$scratch/negative-delete.out" 2>"$scratch/negative-delete.err"
@@ -143,8 +166,11 @@ inbound_port=$(docker port "$name" 1025/tcp | sed 's/.*://')
 imap_port=$(docker port "$name" 1993/tcp | sed 's/.*://')
 agent_password=$(cat "$scratch/inputs/agent-password")
 human_password=$(cat "$scratch/inputs/maintainer-password")
+administrator_password=$(cat "$scratch/inputs/administrator-password")
 printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.curl"
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
+printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
+curl --fail --silent --show-error --max-time 10 --config "$scratch/administrator.curl" "http://127.0.0.1:$management_port/jmap/session" >"$scratch/administrator-session.json"
 printf 'From: agents@example.test\r\nTo: maintainer@example.test\r\nSubject: Native policy proof\r\nMessage-ID: <mail-policy@example.test>\r\n\r\nPreserved native mail fixture.\r\n' >"$scratch/known.eml"
 smtp=(--silent --show-error --max-time 15 --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$submission_port:127.0.0.1" --ssl-reqd --url "smtp://mail.example.test:$submission_port" --mail-from agents@example.test --upload-file "$scratch/known.eml")
 curl --fail "${smtp[@]}" --config "$scratch/agent.curl" --mail-rcpt maintainer@example.test >"$scratch/allowed.out" 2>"$scratch/allowed.err"
@@ -188,12 +214,7 @@ grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 # again after real mail exists; account IDs alone are not preservation proof.
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
-start_server preparation
-prepare_plan "$scratch/replay-with-mail.ndjson"
-mv "$scratch/replay-with-mail.ndjson" "$scratch/plan.ndjson"
-apply_plan
-docker stop --time 30 "$name" >/dev/null
-docker rm "$name" >/dev/null
+run_bootstrap
 start_server serving
 imap_port=$(docker port "$name" 1993/tcp | sed 's/.*://')
 curl --fail --silent --show-error --max-time 10 --config "$scratch/human.curl" --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$imap_port:127.0.0.1" "imaps://mail.example.test:$imap_port/INBOX;UID=1" >"$scratch/preserved-read.eml"

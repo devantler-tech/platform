@@ -1,4 +1,5 @@
-// private-mail-config prepares a private native plan; it never activates mail.
+// private-mail-config prepares and verifies native configuration; public mail
+// activation remains a separate deployment step.
 package main
 
 import (
