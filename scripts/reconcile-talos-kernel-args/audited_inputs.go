@@ -272,6 +272,11 @@ func resolveFoldInputs(repository, version string) (map[string]string, error) {
 	return resolveFoldInputsWithCleanup(repository, version, os.RemoveAll)
 }
 
+// foldInputsCheckoutPrefix names every disposable source checkout this helper
+// creates in the temporary directory, so its own checkouts can be told apart
+// from unrelated files other tools leave there.
+const foldInputsCheckoutPrefix = "ksail-fold-inputs-"
+
 // resolveFoldInputsWithCleanup binds source acceptance to removing its disposable
 // checkout. The filesystem operation is supplied separately so removal failures
 // can be exercised without depending on the process's filesystem privileges.
@@ -279,7 +284,7 @@ func resolveFoldInputsWithCleanup(repository, version string, remove func(string
 	if !releaseVersion.MatchString(version) {
 		return nil, fmt.Errorf("%q is not a release version", version)
 	}
-	dir, err := os.MkdirTemp("", "ksail-fold-inputs-")
+	dir, err := os.MkdirTemp("", foldInputsCheckoutPrefix)
 	if err != nil {
 		return nil, err
 	}
