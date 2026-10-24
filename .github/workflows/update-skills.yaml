@@ -22,13 +22,18 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
-    uses: devantler-tech/.github/.github/workflows/update-agent-skills.yaml@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
+    uses: devantler-tech/.github/.github/workflows/update-agent-skills.yaml@a2403f8a2640dcf9d342bf7085a906d8e8ec094a # v12.1.0
     with:
       dir: .agents/skills
       # These are development skills our own agents use, not skills the platform publishes.
       # Marking them internal after every update keeps `npx skills add devantler-tech/platform`
       # from offering them (devantler-tech/ksail#6221).
       mark-internal: true
+      # Hold git-commit at the upstream commit we run today: the newer upstream text can lose a
+      # merge-conflict resolution and needs a Git version our hosts lack. Remove the pin when
+      # devantler-tech/platform#5224 is resolved upstream.
+      pins: |
+        .agents/skills/git-commit e24be77e6f203409cf99ab7d5a67e1540cb386d3 # devantler-tech/platform#5224
       # Create the update PR with a GitHub App token so it triggers this
       # repo's required CI (a PR opened with GITHUB_TOKEN does not), instead
       # of landing permanently blocked on missing required checks.
