@@ -410,6 +410,14 @@ changed checksum belongs to that module. The configuration manager, Talos
 generator, cluster API and charts are byte-identical, and KSail imports the
 CloudFormation client only in its EKS client, which the Talos fold never uses.
 
+**7.203.21**, commit `97e0f2c587da4ed1096da3a495eba1c94bc133a5`, is audited
+against 7.203.20. Its only change is one dependency update:
+`github.com/aws/aws-sdk-go-v2/config` v1.33.8 → v1.33.9; every changed
+checksum belongs to that module. The configuration manager, Talos generator,
+cluster API and charts are byte-identical, and KSail imports the AWS
+configuration loader only in its AWS credential, SSO and EKS code, which the
+Talos fold never uses.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
