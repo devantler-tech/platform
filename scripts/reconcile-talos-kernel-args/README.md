@@ -339,6 +339,26 @@ the changed AWS and Copilot paths are used by this platform's Talos rendering.
 The existing offline render regression covers both production and local roles,
 explicit and whitespace schematic IDs, and invalid-patch refusals.
 
+**7.203.11**, commit `8dec8dd8362cc46922f73252d04d918a635b9f51`, is audited
+against 7.203.7. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. Only the module inputs change: AWS SDK config
+v1.33.7 → v1.33.8, credentials v1.20.7 → v1.20.8 and their indirect IMDS,
+sign-in, SSO and SSO-OIDC modules, plus `github.com/cli/go-gh/v2` v2.16.1 →
+v2.16.2. The Go directive, Talos machinery, Image Factory and YAML/protobuf
+dependencies and checksums are unchanged, preserving argument normalization,
+both-role folding and explicit schematic-ID precedence. The other source changes
+touch KSail's EKS inventory summary and its own CI workflow pins, neither of
+which is used by this platform's Talos rendering. The existing offline render
+regression covers both production and local roles, explicit and whitespace
+schematic IDs, and invalid-patch refusals.
+
+**7.203.13**, commit `9ca69e7515bc9d6b08a9e3de630f5a609efb659b`, has fold inputs
+byte-identical to 7.203.11, so it passes against that set. Its changes make
+`cluster update` upgrade Argo CD when its chart values drift and rework the
+vCluster provisioner. This platform installs Flux, whose chart is not probed,
+and runs no vCluster; none of the changes touches the Talos configuration
+manager, generator, cluster API, charts or modules.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
