@@ -6,8 +6,8 @@ require (
 	github.com/kyverno/api v0.0.1-alpha.5
 	github.com/kyverno/kyverno v1.19.1
 	golang.org/x/mod v0.42.0
-	k8s.io/api v0.36.3
-	k8s.io/apimachinery v0.36.3
+	k8s.io/api v0.37.1
+	k8s.io/apimachinery v0.37.1
 	sigs.k8s.io/yaml v1.6.0
 )
 
