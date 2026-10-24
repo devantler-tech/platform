@@ -151,6 +151,13 @@ readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.nam
 readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
 # shellcheck disable=SC2090
 export REVIEWED_AUTO_VPA_DEPLOYMENT REVIEWED_AUTO_VPA_DAEMONSET REVIEWED_AUTO_VPA_STATEFULSET
+# The one match condition the reviewed HelmRelease CRD-strategy MutatingPolicy
+# (#5096) may carry, as an anchored pattern: it reads only the incoming object's
+# labels. Match conditions are CEL with Kyverno's libraries bound, so any other
+# condition is refused (#5106). Whitespace between tokens is free, and `in`
+# must stay a separate word.
+readonly REVIEWED_HELM_RELEASE_CRDS_CONDITION='^\s*has\(object\.metadata\.labels\)\s*&&\s*'"'"'helm\.toolkit\.fluxcd\.io/crds'"'"'\s+in\s+object\.metadata\.labels\s*&&\s*object\.metadata\.labels\['"'"'helm\.toolkit\.fluxcd\.io/crds'"'"'\]\s*==\s*'"'"'enabled'"'"'\s*$'
+export REVIEWED_HELM_RELEASE_CRDS_CONDITION
 if ! artifact_contract="$(yq -N -r '[
     (.apiVersion == "ksail.io/v1alpha1"), (.kind == "Cluster"),
     (.spec.cluster.gitOpsEngine == "Flux"),
@@ -746,6 +753,12 @@ while IFS=$'\t' read -r file label; do
   # The patch text is read literally: each "path" and "op" must be followed by
   # an approved string literal; the leading "#" keeps the text before the
   # first one from ever matching.
+  # Its spec holds only evaluation settings without mutateExisting, the match
+  # constraints (resource rules and an object selector, which is a label
+  # selector and not CEL), the mutations, and optionally match conditions that
+  # each equal REVIEWED_HELM_RELEASE_CRDS_CONDITION. Every other spec field is
+  # refused, because variables and other match conditions are CEL that can read
+  # or write the cluster (#5106).
   # The second reviewed shape (#5102) is the shared catalog's auto-vpa: a
   # Kyverno GeneratingPolicy whose spec holds only evaluation settings, one
   # apps resource rule (apiGroups, apiVersions, operations, resources) naming
@@ -767,6 +780,17 @@ while IFS=$'\t' read -r file label; do
         and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
         and (.spec | type) == "!!map"
         and (.spec | has("targetMatchConstraints") | not)
+        and ([.spec | keys | .[] | select((. == "evaluation" or . == "matchConstraints"
+          or . == "matchConditions" or . == "mutations") | not)] | length) == 0
+        and (.spec.matchConstraints | type) == "!!map"
+        and ([.spec.matchConstraints | keys | .[] | select((. == "resourceRules"
+          or . == "objectSelector") | not)] | length) == 0
+        and ((.spec | has("matchConditions") | not)
+          or ((.spec.matchConditions | type) == "!!seq"
+            and ([.spec.matchConditions[] | select(type != "!!map"
+              or ([keys | .[] | select((. == "name" or . == "expression") | not)] | length) != 0
+              or (.expression | type) != "!!str"
+              or ((.expression | test(strenv(REVIEWED_HELM_RELEASE_CRDS_CONDITION))) | not))] | length) == 0))
         and ((.spec.evaluation // {}) | has("mutateExisting") | not)
         and (.spec.matchConstraints.resourceRules | type) == "!!seq"
         and (.spec.matchConstraints.resourceRules | length) > 0

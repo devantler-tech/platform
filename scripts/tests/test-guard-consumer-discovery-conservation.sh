@@ -1125,6 +1125,10 @@ spec:
         apiVersions: ["*"]
         operations: ["CREATE", "UPDATE"]
         resources: ["helmreleases"]
+  matchConditions:
+    - name: crds-enabled-on-incoming-object
+      expression: >-
+        has(object.metadata.labels) && 'helm.toolkit.fluxcd.io/crds' in object.metadata.labels && object.metadata.labels['helm.toolkit.fluxcd.io/crds'] == 'enabled'
   mutations:
     - patchType: JSONPatch
       jsonPatch:
@@ -1136,7 +1140,7 @@ spec:
 YAML
   printf '  - cel-mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'the reviewed HelmRelease CRD-strategy MutatingPolicy does not alter consumers' "$root" '2 consumer(s)'
-  for target in source-kind extra-group wildcard-resource values-path computed-path move-op apply-configuration mutate-existing target-constraints foreign-group; do
+  for target in source-kind extra-group wildcard-resource values-path computed-path move-op apply-configuration mutate-existing target-constraints foreign-group variables match-condition match-condition-key extra-spec-field extra-match-constraint; do
     root="$(fixture "reviewed-cel-mutation-$target")"
     cp "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml"
     case "$target" in
@@ -1150,6 +1154,11 @@ YAML
       mutate-existing) yq -i '.spec.evaluation.mutateExisting.enabled = true' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
       target-constraints) yq -i '.spec.targetMatchConstraints.resourceRules = [{"apiGroups":["source.toolkit.fluxcd.io"],"apiVersions":["v1"],"operations":["UPDATE"],"resources":["ocirepositories"]}]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
       foreign-group) yq -i '.apiVersion = "policies.example.test/v1"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      variables) yq -i '.spec.variables = [{"name":"source","expression":"resource.Get(\"source.toolkit.fluxcd.io/v1\", \"ocirepositories\", \"flux-system\", \"platform\")"}]' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      match-condition) yq -i '.spec.matchConditions[0].expression = "true"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      match-condition-key) yq -i '.spec.matchConditions[0].extra = "x"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      extra-spec-field) yq -i '.spec.failurePolicy = "Ignore"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
+      extra-match-constraint) yq -i '.spec.matchConstraints.namespaceSelector.matchLabels.team = "x"' "$root/k8s/providers/prod/apps/cel-mutation.yaml" ;;
     esac
     cmp -s "$WORK/reviewed-cel-mutation/k8s/providers/prod/apps/cel-mutation.yaml" "$root/k8s/providers/prod/apps/cel-mutation.yaml" &&
       { printf 'FAIL: the %s variant did not change the reviewed MutatingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
