@@ -403,6 +403,13 @@ and `golang.org/x/text` only in the CLI chat interface, so argument
 normalization, both-role folding and explicit schematic-ID precedence are
 preserved.
 
+**7.203.20**, commit `c83dfa39b5347fdcd81f1f64ef3dbb610a550d91`, is audited
+against 7.203.19. Its only change is one dependency update:
+`github.com/aws/aws-sdk-go-v2/service/cloudformation` v1.81.1 → v1.82.1; every
+changed checksum belongs to that module. The configuration manager, Talos
+generator, cluster API and charts are byte-identical, and KSail imports the
+CloudFormation client only in its EKS client, which the Talos fold never uses.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
