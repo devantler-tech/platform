@@ -167,7 +167,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.16"
+          KSAIL_VERSION: "7.203.18"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
