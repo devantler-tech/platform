@@ -10,9 +10,8 @@
 # rules judge has a compliant, an insecure and an Unconfined-override template.
 # Resources in the infrastructure namespaces are skipped.
 #
-# Recorded as today's behaviour, not as intent: an empty `capabilities.drop`
-# list passes (`*-drop-empty`). Tightening that is a separate policy change
-# (#5149).
+# An empty `capabilities.drop` list fails like a missing one (`*-drop-empty`,
+# #5149): it drops nothing.
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -29,32 +28,26 @@ results:
     resources:
       - container-0-secure
       - container-0-privileged-false
-      - container-0-drop-empty
       - container-0-seccomp-localhost
       - container-0-seccomp-runtime-default
       - container-1-secure
       - container-1-privileged-false
-      - container-1-drop-empty
       - container-1-seccomp-localhost
       - container-1-seccomp-runtime-default
       - init-0-secure
       - init-0-privileged-false
-      - init-0-drop-empty
       - init-0-seccomp-localhost
       - init-0-seccomp-runtime-default
       - init-1-secure
       - init-1-privileged-false
-      - init-1-drop-empty
       - init-1-seccomp-localhost
       - init-1-seccomp-runtime-default
       - ephemeral-0-secure
       - ephemeral-0-privileged-false
-      - ephemeral-0-drop-empty
       - ephemeral-0-seccomp-localhost
       - ephemeral-0-seccomp-runtime-default
       - ephemeral-1-secure
       - ephemeral-1-privileged-false
-      - ephemeral-1-drop-empty
       - ephemeral-1-seccomp-localhost
       - ephemeral-1-seccomp-runtime-default
       - compliant-localhost
@@ -69,6 +62,7 @@ results:
       - container-0-nonroot-false
       - container-0-caps-missing
       - container-0-drop-missing
+      - container-0-drop-empty
       - container-0-drop-net-raw
       - container-0-drop-all-and-net-raw
       - container-0-no-security-context
@@ -80,6 +74,7 @@ results:
       - container-1-nonroot-false
       - container-1-caps-missing
       - container-1-drop-missing
+      - container-1-drop-empty
       - container-1-drop-net-raw
       - container-1-drop-all-and-net-raw
       - container-1-no-security-context
@@ -91,6 +86,7 @@ results:
       - init-0-nonroot-false
       - init-0-caps-missing
       - init-0-drop-missing
+      - init-0-drop-empty
       - init-0-drop-net-raw
       - init-0-drop-all-and-net-raw
       - init-0-no-security-context
@@ -102,6 +98,7 @@ results:
       - init-1-nonroot-false
       - init-1-caps-missing
       - init-1-drop-missing
+      - init-1-drop-empty
       - init-1-drop-net-raw
       - init-1-drop-all-and-net-raw
       - init-1-no-security-context
@@ -113,6 +110,7 @@ results:
       - ephemeral-0-nonroot-false
       - ephemeral-0-caps-missing
       - ephemeral-0-drop-missing
+      - ephemeral-0-drop-empty
       - ephemeral-0-drop-net-raw
       - ephemeral-0-drop-all-and-net-raw
       - ephemeral-0-no-security-context
@@ -124,6 +122,7 @@ results:
       - ephemeral-1-nonroot-false
       - ephemeral-1-caps-missing
       - ephemeral-1-drop-missing
+      - ephemeral-1-drop-empty
       - ephemeral-1-drop-net-raw
       - ephemeral-1-drop-all-and-net-raw
       - ephemeral-1-no-security-context

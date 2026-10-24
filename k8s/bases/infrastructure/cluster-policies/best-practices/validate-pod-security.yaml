@@ -106,13 +106,15 @@ spec:
     - name: allowedSeccompTypes
       expression: "['RuntimeDefault', 'Localhost']"
   validations:
-    # Each drop entry must be ALL; an empty drop list passes today (#5149).
+    # The drop list must name ALL and nothing else. An empty list drops
+    # nothing, so it keeps the runtime's default capabilities (#5149).
     - expression: >-
         variables.containers.all(c,
           c.?securityContext.?allowPrivilegeEscalation.orValue(true) == false &&
           c.?securityContext.?privileged.orValue(false) == false &&
           c.?securityContext.?runAsNonRoot.orValue(false) == true &&
           c.?securityContext.?capabilities.?drop.hasValue() &&
+          c.securityContext.capabilities.drop.size() > 0 &&
           c.securityContext.capabilities.drop.all(d, d == 'ALL'))
       message: >-
         All containers must set allowPrivilegeEscalation=false,
