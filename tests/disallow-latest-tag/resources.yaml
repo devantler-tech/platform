@@ -129,3 +129,128 @@ spec:
   containers:
     - name: app
       image: ghcr.io/example/app@sha256:0000000000000000000000000000000000000000000000000000000000000000
+---
+# Workload controllers are judged through the rules Kyverno generates from the
+# policy. The same controller is skipped in an infrastructure namespace and
+# judged in an ordinary one (#5168).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: latest-tag-deployment
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: latest-tag-deployment
+  template:
+    metadata:
+      labels:
+        app: latest-tag-deployment
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tagless-deployment
+  namespace: observability
+spec:
+  selector:
+    matchLabels:
+      app: tagless-deployment
+  template:
+    metadata:
+      labels:
+        app: tagless-deployment
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: latest-tag-cronjob
+  namespace: kube-system
+spec:
+  schedule: "0 0 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: app
+              image: ghcr.io/example/app:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: latest-tag-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: latest-tag-deployment
+  template:
+    metadata:
+      labels:
+        app: latest-tag-deployment
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:latest
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tagless-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: tagless-deployment
+  template:
+    metadata:
+      labels:
+        app: tagless-deployment
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: versioned-tag-deployment
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: versioned-tag-deployment
+  template:
+    metadata:
+      labels:
+        app: versioned-tag-deployment
+    spec:
+      containers:
+        - name: app
+          image: ghcr.io/example/app:1.2.3
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: latest-tag-cronjob
+  namespace: default
+spec:
+  schedule: "0 0 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: app
+              image: ghcr.io/example/app:latest
