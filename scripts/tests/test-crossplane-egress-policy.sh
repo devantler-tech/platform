@@ -898,6 +898,12 @@ assert_helm_rules_accept \
   "${helm_release_crds_mutation_fixture}" \
   'a MutatingPolicy that sets only the HelmRelease CRD strategy is the reviewed exception'
 
+# The variants below edit a reviewed fixture with ${fixture/pattern/replacement}.
+# Bash 3.2 (macOS /bin/bash) keeps a backslash in the replacement half and bash 5
+# removes it, so the replacement halves carry none: a slash needs no escape
+# there, and a closing brace comes from this variable (#5109).
+readonly closing_brace='}'
+
 assert_reviewed_mutation_variant_rejected() {
   local fixture_name="$1"
   local fixture_body="$2"
@@ -926,15 +932,15 @@ assert_reviewed_mutation_variant_rejected \
   'a wildcard resource must void the reviewed MutatingPolicy shape'
 assert_reviewed_mutation_variant_rejected \
   'mutating-policy-values-path' \
-  "${helm_release_crds_mutation_fixture/\/spec\/upgrade\/crds/\/spec\/values\/networkPolicy}" \
+  "${helm_release_crds_mutation_fixture/\/spec\/upgrade\/crds//spec/values/networkPolicy}" \
   'a patch that reaches HelmRelease values must stay rejected'
 assert_reviewed_mutation_variant_rejected \
   'mutating-policy-computed-path' \
-  "${helm_release_crds_mutation_fixture/path: \"\/spec\/install\/crds\"/path: \"\/spec\/install\" + \"\/crds\"}" \
+  "${helm_release_crds_mutation_fixture/path: \"\/spec\/install\/crds\"/path: \"/spec/install\" + \"/crds\"}" \
   'a computed patch path must stay rejected'
 assert_reviewed_mutation_variant_rejected \
   'mutating-policy-move-op' \
-  "${helm_release_crds_mutation_fixture/op: \"add\", path: \"\/spec\/install\", value: \{\}/op: \"move\", from: \"\/spec\/values\", path: \"\/spec\/install\"}" \
+  "${helm_release_crds_mutation_fixture/op: \"add\", path: \"\/spec\/install\", value: \{\}/op: \"move\", from: \"/spec/values\", path: \"/spec/install\"}" \
   'a move patch must stay rejected'
 assert_reviewed_mutation_variant_rejected \
   'mutating-policy-apply-configuration' \
@@ -1031,7 +1037,7 @@ assert_reviewed_generation_variant_rejected \
   'a GeneratingPolicy that builds a network policy must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-network-policy-api-version' \
-  "${auto_vpa_generating_policy_fixture/autoscaling.k8s.io\/v1/cilium.io\/v2}" \
+  "${auto_vpa_generating_policy_fixture/autoscaling.k8s.io\/v1/cilium.io/v2}" \
   'a GeneratingPolicy that builds a cilium.io object must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-namespace-trigger' \
@@ -1076,7 +1082,7 @@ assert_reviewed_generation_variant_rejected \
   'generating-policy-label-read' \
   "${auto_vpa_generating_policy_fixture/\"namespace\": string(object.metadata.namespace)
               \}/\"namespace\": string(object.metadata.labels.target)
-              \}}" \
+              ${closing_brace}}" \
   'a GeneratingPolicy that reads workload data beyond its name and namespace must stay rejected'
 generated_deployment_variant="${auto_vpa_generating_policy_fixture/\"kind\": dyn(\"VerticalPodAutoscaler\")/\"kind\": \"Deployment\"}"
 generated_deployment_variant="${generated_deployment_variant/\"apiVersion\": dyn(\"autoscaling.k8s.io\/v1\")/\"apiVersion\": \"apps/v1\"}"
