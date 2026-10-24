@@ -28,7 +28,7 @@ var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
 var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
 
 func render(v inputs) ([]byte, error) {
-	if !domainPattern.MatchString(v.Domain) || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
+	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
 		return nil, errConfiguration
 	}
 	seen := map[string]bool{}

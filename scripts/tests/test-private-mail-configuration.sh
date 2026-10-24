@@ -100,6 +100,20 @@ native_cli query NetworkListener --where name=unexpected --fields id --json >"$s
 jq -s '[.[].id] | if length==1 then . else error("negative listener identity is ambiguous") end' "$scratch/negative-listener.jsonl" |
   native_cli delete NetworkListener --stdin >"$scratch/negative-delete.out" 2>"$scratch/negative-delete.err"
 
+# The pinned server rejects a reserved primary domain, but accepts it as a
+# local domain alias. That alias must not turn the rejection sink into a local
+# recipient. Exercise the real accepted alias, then restore the fixture.
+inventory
+domain_id=$(jq -er '[.methodResponses[6][1].list[]|select(.name=="example.test")]|if length==1 then .[0].id else error("ambiguous fixture domain") end' "$scratch/inputs/listener-inventory.json")
+printf '%s' '{"aliases":{"example.invalid":true}}' >"$scratch/sink-alias-patch.json"
+native_cli update Domain "$domain_id" --file /proof/sink-alias-patch.json >"$scratch/sink-alias.out" 2>"$scratch/sink-alias.err"
+if prepare_plan "$scratch/unsafe-sink-plan.ndjson" >"$scratch/sink-negative.log" 2>&1; then
+  echo 'FAIL: a registered rejection-domain alias was accepted' >&2; exit 1
+fi
+[ ! -e "$scratch/unsafe-sink-plan.ndjson" ]
+printf '%s' '{"aliases":{}}' >"$scratch/restore-alias-patch.json"
+native_cli update Domain "$domain_id" --file /proof/restore-alias-patch.json >"$scratch/restore-alias.out" 2>"$scratch/restore-alias.err"
+
 # Seed a previously wider permission and an extra expression branch. Replay
 # must clear both maps rather than preserving keys absent from the new plan.
 printf '%s\n' '{"@type":"upsert","object":"Domain","matchOn":["name"],"value":{"domain":{"name":"example.test"}}}' \

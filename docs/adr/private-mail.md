@@ -104,6 +104,12 @@ incomplete reads and enabled hooks, milters or webhooks require reconciliation;
 they are never silently removed. After apply, require all four exact profiles.
 An empty CLI query is not this completeness proof.
 
+The same bounded inventory also covers every local domain and its aliases.
+The reserved rejection domain must be absent from both, and external directory
+resolution is refused. A reserved public DNS suffix alone cannot prove that a
+mail server will refuse local delivery. The settings cannot register a reserved
+`.invalid` domain as the mailbox domain.
+
 Apply the private plan with the pinned official Stalwart CLI 1.0.13, using its
 environment-based authentication from mounted credentials. Capture both output
 streams privately, check every operation and read back the resulting policy.

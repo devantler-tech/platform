@@ -12,11 +12,18 @@ func inventoryFixture() map[string]any {
 		[]any{"x:MtaHook/query", map[string]any{"ids": []string{}, "total": 0, "position": 0}, "MtaHook"},
 		[]any{"x:MtaMilter/query", map[string]any{"ids": []string{}, "total": 0, "position": 0}, "MtaMilter"},
 		[]any{"x:WebHook/query", map[string]any{"ids": []string{}, "total": 0, "position": 0}, "WebHook"},
+		[]any{"x:Domain/query", map[string]any{"ids": []string{"domain"}, "total": 1, "position": 0}, "domains-query"},
+		[]any{"x:Domain/get", map[string]any{"list": []any{map[string]any{"id": "domain", "name": "example.test", "aliases": map[string]bool{}, "directoryId": nil}}, "notFound": []string{}}, "domains-get"},
 	}}
 }
 func TestInventoryRefusesIncompleteOrUnexpectedServingProfiles(t *testing.T) {
 	for _, change := range []func(map[string]any){
 		func(v map[string]any) { v["methodResponses"] = []any{} },
+		func(v map[string]any) { inventoryDomain(v)["name"] = "example.invalid" },
+		func(v map[string]any) { inventoryDomain(v)["aliases"] = map[string]bool{"EXAMPLE.INVALID": true} },
+		func(v map[string]any) { inventoryDomain(v)["directoryId"] = "unexpected" },
+		func(v map[string]any) { delete(inventoryDomain(v), "aliases") },
+		func(v map[string]any) { v["methodResponses"].([]any)[5].([]any)[1].(map[string]any)["total"] = 2 },
 		func(v map[string]any) { v["methodResponses"].([]any)[2].([]any)[1].(map[string]any)["total"] = 1 },
 		func(v map[string]any) { v["methodResponses"].([]any)[0].([]any)[1].(map[string]any)["total"] = 2 },
 		func(v map[string]any) { delete(v["methodResponses"].([]any)[0].([]any)[1].(map[string]any), "total") },
@@ -59,6 +66,8 @@ func emptyInventory(t *testing.T) []byte {
 	methods := v["methodResponses"].([]any)
 	methods[0].([]any)[1] = map[string]any{"ids": []string{}, "total": 0, "position": 0}
 	methods[1].([]any)[1] = map[string]any{"list": []any{}, "notFound": []string{}}
+	methods[5].([]any)[1] = map[string]any{"ids": []string{}, "total": 0, "position": 0}
+	methods[6].([]any)[1] = map[string]any{"list": []any{}, "notFound": []string{}}
 	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
@@ -67,4 +76,8 @@ func emptyInventory(t *testing.T) []byte {
 }
 func inventoryListener(v map[string]any) map[string]any {
 	return v["methodResponses"].([]any)[1].([]any)[1].(map[string]any)["list"].([]any)[0].(map[string]any)
+}
+
+func inventoryDomain(v map[string]any) map[string]any {
+	return v["methodResponses"].([]any)[6].([]any)[1].(map[string]any)["list"].([]any)[0].(map[string]any)
 }

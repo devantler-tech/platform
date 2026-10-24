@@ -13,6 +13,11 @@ func fixture() inputs {
 func TestPrivateInputsCannotChangePolicyOrInjectExpressions(t *testing.T) {
 	for _, change := range []func(*inputs){
 		func(v *inputs) { v.Domain = "example.test' || true" },
+		func(v *inputs) {
+			v.Domain = "example.invalid"
+			v.Hostname = "mail.example.invalid"
+			v.Maintainer = "denied"
+		},
 		func(v *inputs) { v.Hostname = "mail.other.test" },
 		func(v *inputs) { v.Maintainer = "maintainer+tag" },
 		func(v *inputs) { v.Agent = v.Maintainer },
