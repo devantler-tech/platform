@@ -47,6 +47,32 @@ func TestMissingPreviouslyInitializedJournalCannotDuplicateAnIncident(t *testing
 	}
 }
 
+func TestIncompleteInitializedJournalCannotBecomeFreshState(t *testing.T) {
+	for _, data := range []string{"null", "{}", `{"routes":{}}`, `{"version":1}`, `{"version":1,"routes":null}`} {
+		t.Run(data, func(t *testing.T) {
+			api := &fakeGitHub{}
+			p := engine(t, t.TempDir(), api)
+			if err := p.run(context.Background(), ptr(eventAt("firing", 0))); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(p.dir, "state.json")
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.run(context.Background(), ptr(eventAt("firing", 1))); !errors.Is(err, errStore) {
+				t.Fatal("invalid persisted state became fresh", err)
+			}
+			if api.writes != 1 {
+				t.Fatal("invalid state duplicated an incident")
+			}
+			stored, err := os.ReadFile(path)
+			if err != nil || string(stored) != data {
+				t.Fatal("invalid state was replaced without reconciliation", err)
+			}
+		})
+	}
+}
+
 func TestCorruptOrPublicStateIsNeverReinitialized(t *testing.T) {
 	for _, data := range []string{
 		`{"version":2,"routes":{},"pending":[]}`,

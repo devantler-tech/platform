@@ -387,14 +387,14 @@ func lockStore(ctx context.Context, dir string) (func(), error) {
 	}
 }
 func readJournal(dir string) (journal, error) {
-	s := journal{Version: 1, Routes: map[string]routeState{}}
+	var s journal
 	path := filepath.Join(dir, "state.json")
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		if _, markerErr := os.Lstat(filepath.Join(dir, "initialized")); !errors.Is(markerErr, os.ErrNotExist) {
 			return journal{}, errStore
 		}
-		return s, nil
+		return journal{Version: 1, Routes: map[string]routeState{}}, nil
 	}
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() > 128*1024 {
 		return journal{}, errStore
