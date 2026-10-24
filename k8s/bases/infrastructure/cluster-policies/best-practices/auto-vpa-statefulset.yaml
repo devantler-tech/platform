@@ -6,12 +6,12 @@
 # carries the catalog's own header), auto-vpa-statefulset.yaml and
 # auto-vpa-daemonset.yaml. Each policy is copied verbatim except for one marked
 # PLATFORM ADDITION: a namespaceSelector that keeps it out of the system
-# namespaces, as the classic best-practices/auto-vpa.yaml did. The generate
+# namespaces, where prod runs static VPAs of its own. The generate
 # expressions must stay byte-for-byte the catalog's (whitespace aside): both static
 # producer guards pin them (scripts/guard-consumer-discovery-conservation.sh and
-# scripts/tests/crossplane-egress-policy-rules.yaml). The classic VPAs are named
-# <name>, these are <name>-<kind>, so running both forms at once would put two VPAs
-# on every workload: register these only after the classic policy's VPAs are gone.
+# scripts/tests/crossplane-egress-policy-rules.yaml). The catalog's classic
+# ClusterPolicy form names its VPAs <name>, not <name>-<kind>, so it must never run
+# beside these: every workload would get two VPAs.
 apiVersion: policies.kyverno.io/v1
 kind: GeneratingPolicy
 metadata:

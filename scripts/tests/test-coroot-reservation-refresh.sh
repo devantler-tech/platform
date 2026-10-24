@@ -32,9 +32,13 @@ yq -e '
   select(.kind == "PodDisruptionBudget" and .metadata.name == "coroot-coroot") |
   .spec.maxUnavailable == 1 and (.spec | has("minAvailable") | not)
 ' "${scratch}/infrastructure.yaml" >/dev/null
-yq -e '
-  .spec.rules[] | select(.name == "generate-vpa-for-statefulset") |
-  .generate.data.spec.updatePolicy.updateMode == "Initial"
-' "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa.yaml" >/dev/null
+# The StatefulSet VPA is admission-time only (Initial), so the refresh annotation
+# above, not an eviction, is what applies a new recommendation to the servers.
+yq -e '.spec.generate[0].expression' \
+  "${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-statefulset.yaml" |
+  grep -Fq '"updatePolicy": dyn({"updateMode": "Initial"})' || {
+  printf 'FAIL: the generated StatefulSet VPA must apply recommendations only at admission\n' >&2
+  exit 1
+}
 
 printf 'PASS: Coroot receives a server-only, HA-preserving refresh of its admission-time reservation\n'

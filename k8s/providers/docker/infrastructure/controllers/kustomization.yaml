@@ -21,7 +21,7 @@ resources:
   - ../../../../bases/infrastructure/controllers/trust-manager/ # CA trust bundles (cluster-issuers)
   - ../../../../bases/infrastructure/controllers/metrics-server/
   - ../../../../bases/infrastructure/controllers/kyverno/ # policy engine (prod-like admission)
-  - ../../../../bases/infrastructure/controllers/vertical-pod-autoscaler/ # VPA CRD — the core auto-vpa ClusterPolicy generates VerticalPodAutoscalers
+  - ../../../../bases/infrastructure/controllers/vertical-pod-autoscaler/ # VPA CRD — the auto-vpa GeneratingPolicies generate VerticalPodAutoscalers
   - ../../../../bases/infrastructure/controllers/flux-operator/
   # --- Core: secrets + SSO ------------------------------------------------
   - ../../../../bases/infrastructure/controllers/openbao/

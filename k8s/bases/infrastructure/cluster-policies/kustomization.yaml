@@ -9,10 +9,8 @@ resources:
   - best-practices/add-resource-defaults.yaml
   - best-practices/add-security-context.yaml
   # The shared catalog's GeneratingPolicy form of auto-vpa (#5130,
-  # devantler-tech/kyverno-policies#1). best-practices/auto-vpa.yaml, the classic
-  # form, is deliberately NOT registered: it stays, still tested, as the
-  # rollback form. Never register both, because they name their VPAs
-  # differently and every workload would get two.
+  # devantler-tech/kyverno-policies#1): one VerticalPodAutoscaler per
+  # Deployment, StatefulSet and DaemonSet outside the system namespaces.
   - best-practices/auto-vpa-daemonset.yaml
   - best-practices/auto-vpa-deployment.yaml
   - best-practices/auto-vpa-statefulset.yaml
@@ -123,7 +121,7 @@ patches:
       - op: replace
         path: /spec/rules/0/generate/data/spec/hard
         value:
-          # Quota only the REQUESTS dimension. auto-vpa.yaml runs VPA with
+          # Quota only the REQUESTS dimension. The auto-vpa-* policies run VPA with
           # controlledValues: RequestsAndLimits, so VPA raises container LIMITS
           # dynamically (ratio-preserving). A static limits.cpu/limits.memory
           # quota would then reject the very rollouts VPA triggers once limits

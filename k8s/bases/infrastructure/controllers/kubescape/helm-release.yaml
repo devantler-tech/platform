@@ -194,7 +194,7 @@ spec:
         hostSensor:
           enabled: true
       # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
-      # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
+      # cluster-policies/best-practices/auto-vpa-daemonset.yaml: VPA sized every node's
       # agent to the busiest node's peak — 523Mi/node × every node — which
       # ratcheted the cluster-autoscaler on 2026-06-30), so memory must be
       # authored here. Observed live range is 261–436Mi/node; request ≈
