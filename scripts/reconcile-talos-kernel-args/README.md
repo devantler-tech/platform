@@ -393,6 +393,16 @@ byte-identical to 7.203.17, so it passes against that set. Its only change
 updates an action pin in KSail's own CI workflow, which this platform's Talos
 rendering does not use.
 
+**7.203.19**, commit `387d639d50c3ce4211cb8ee3e59cd2212291471a`, is audited
+against 7.203.18. Its only change is one dependency update: `golang.org/x/crypto`
+v0.57.0 → v0.58.0 with `golang.org/x/text` v0.42.0 → v0.43.0; every changed
+checksum belongs to those two modules. The configuration manager, Talos
+generator, cluster API and charts are byte-identical, and KSail's own code
+imports `golang.org/x/crypto` only for SSH bootstrap and Hetzner provisioning
+and `golang.org/x/text` only in the CLI chat interface, so argument
+normalization, both-role folding and explicit schematic-ID precedence are
+preserved.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
