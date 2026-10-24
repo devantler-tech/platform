@@ -137,6 +137,8 @@ jobs:
           filters: |
             k8s:
               - 'k8s/**'
+              - 'scripts/tests/private-mail-preparation/**'
+              - 'scripts/tests/test-private-mail-server.sh'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
@@ -2902,6 +2904,13 @@ jobs:
         run: |
           ksail workload validate
           ksail --config ksail.prod.yaml workload validate
+
+      - name: ✉️ Prove the disabled mail service's preparation runtime
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 8
+        run: |
+          shellcheck scripts/tests/test-private-mail-server.sh
+          bash scripts/tests/test-private-mail-server.sh
 
       - name: 🛡️ Validate Kubescape self-hosted scan persistence
         if: needs.changes.outputs.k8s == 'true'

@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: private-mail
+  namespace: private-mail
+  labels:
+    # A single management-only preparation instance owns its local datastore.
+    # Public mail activation must separately establish its availability model.
+    platform.devantler.tech/replica-floor: exempt
+spec:
+  serviceName: private-mail
+  replicas: 1
+  selector:
+    matchLabels:
+      app: private-mail
+  template:
+    metadata:
+      labels:
+        app: private-mail
+    spec:
+      serviceAccountName: private-mail
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: private-mail
+          image: ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/stalwart/config.json"]
+          env:
+            - name: STALWART_RECOVERY_MODE
+              value: "1"
+            - name: STALWART_RECOVERY_ADMIN
+              valueFrom:
+                secretKeyRef:
+                  name: private-mail-admin
+                  key: credential
+            - name: STALWART_RECOVERY_MODE_PORT
+              value: "8080"
+          ports:
+            - name: management
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz/live
+              port: management
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: management
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: management
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              # Required by the upstream binary's effective file capability,
+              # even when recovery mode binds only the unprivileged port.
+              add: [NET_BIND_SERVICE]
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions: {}
+          volumeMounts:
+            - name: datastore
+              mountPath: /etc/stalwart
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/stalwart
+            - name: temporary
+              mountPath: /tmp
+      volumes:
+        - name: datastore
+          configMap:
+            name: private-mail-datastore
+        - name: data
+          persistentVolumeClaim:
+            claimName: private-mail-data
+        - name: temporary
+          emptyDir:
+            sizeLimit: 64Mi

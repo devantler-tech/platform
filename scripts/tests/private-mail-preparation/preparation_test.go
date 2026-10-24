@@ -1,0 +1,115 @@
+package preparation_test
+
+import (
+	"bytes"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+func root() string {
+	_, file, _, _ := runtime.Caller(0)
+	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
+}
+
+func render(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	out, err := exec.Command("kubectl", "kustomize", filepath.Join(root(), path)).CombinedOutput()
+	if err != nil {
+		t.Fatalf("mail deployment must render: %v: %s", err, out)
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(out))
+	var result []map[string]any
+	for {
+		var object map[string]any
+		if err := decoder.Decode(&object); err == io.EOF {
+			return result
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if object != nil {
+			result = append(result, object)
+		}
+	}
+}
+
+func object(t *testing.T, objects []map[string]any, kind, name string) map[string]any {
+	t.Helper()
+	for _, o := range objects {
+		metadata, _ := o["metadata"].(map[string]any)
+		if o["kind"] == kind && metadata["name"] == name {
+			return o
+		}
+	}
+	t.Fatalf("missing %s %s", kind, name)
+	return nil
+}
+
+func TestPreparationRendersWithoutPublicMailOrAPIAuthority(t *testing.T) {
+	objects := render(t, "k8s/bases/apps/private-mail")
+	sts := object(t, objects, "StatefulSet", "private-mail")
+	spec := sts["spec"].(map[string]any)["template"].(map[string]any)["spec"].(map[string]any)
+	if spec["automountServiceAccountToken"] != false {
+		t.Fatal("mail server must not receive Kubernetes API credentials")
+	}
+	if spec["hostNetwork"] == true || spec["hostPID"] == true {
+		t.Fatal("mail preparation must remain isolated from the host")
+	}
+	container := spec["containers"].([]any)[0].(map[string]any)
+	context := container["securityContext"].(map[string]any)
+	if context["runAsNonRoot"] != true || context["readOnlyRootFilesystem"] != true || context["allowPrivilegeEscalation"] != false {
+		t.Fatal("mail server must run restricted and without writable root or privilege escalation")
+	}
+	env := container["env"].([]any)
+	recovery, suppliedCredential := false, false
+	for _, item := range env {
+		e := item.(map[string]any)
+		if e["name"] == "STALWART_RECOVERY_MODE" {
+			recovery = e["value"] == "1"
+		}
+		if e["name"] == "STALWART_RECOVERY_ADMIN" {
+			_, suppliedCredential = e["valueFrom"].(map[string]any)
+			if e["value"] != nil {
+				t.Fatal("administrator credential must never be committed")
+			}
+		}
+	}
+	if !recovery || !suppliedCredential {
+		t.Fatal("preparation must use management-only recovery with a supplied credential, never a generated log password")
+	}
+	for _, o := range objects {
+		s, _ := o["spec"].(map[string]any)
+		switch o["kind"] {
+		case "Ingress", "HTTPRoute", "TCPRoute", "ClusterRole", "ClusterRoleBinding", "Role", "RoleBinding":
+			t.Fatalf("preparation must not expose mail or grant API authority: %s", o["kind"])
+		case "Service":
+			if s["type"] != nil && s["type"] != "ClusterIP" {
+				t.Fatal("preparation must not expose a public service")
+			}
+			for _, port := range s["ports"].([]any) {
+				if port.(map[string]any)["port"] != 8080 {
+					t.Fatal("only the internal management port may be exposed")
+				}
+			}
+		}
+	}
+	object(t, objects, "PodDisruptionBudget", "private-mail")
+	object(t, objects, "PersistentVolumeClaim", "private-mail-data")
+	object(t, objects, "CiliumNetworkPolicy", "private-mail")
+	object(t, objects, "ExternalSecret", "private-mail-admin")
+}
+
+func TestPreparationIsAbsentFromProductionAndLocal(t *testing.T) {
+	for _, path := range []string{"k8s/providers/hetzner/apps", "k8s/providers/docker/apps"} {
+		for _, o := range render(t, path) {
+			m, _ := o["metadata"].(map[string]any)
+			if m["namespace"] == "private-mail" || (o["kind"] == "Namespace" && m["name"] == "private-mail") {
+				t.Fatalf("private mail must be absent by default from %s", path)
+			}
+		}
+	}
+}

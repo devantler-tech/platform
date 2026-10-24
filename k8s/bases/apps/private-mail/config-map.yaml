@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: private-mail-datastore
+  namespace: private-mail
+data:
+  # The pinned server deserializes this file directly as DataStore.
+  config.json: |
+    {
+      "@type": "RocksDb",
+      "path": "/var/lib/stalwart/data",
+      "bufferSize": 33554432,
+      "cacheSize": 33554432
+    }

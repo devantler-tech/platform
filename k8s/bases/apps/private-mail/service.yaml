@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  type: ClusterIP
+  selector:
+    app: private-mail
+  ports:
+    - name: management
+      port: 8080
+      targetPort: management

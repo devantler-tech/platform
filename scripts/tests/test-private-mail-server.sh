@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# Exercise the actual pinned server with the authored datastore, not a second
+# mock server. All credentials below are disposable fixtures on network=none.
+set -euo pipefail
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+scratch="$(mktemp -d)"
+name="private-mail-proof-$(basename "$scratch")"
+negative="${name}-negative"
+cleanup() {
+  local rc=$? cleanup_rc=0
+  trap - EXIT
+  # --force tolerates a server that has already exited. A failed removal is
+  # never reported as a successful proof; the runner must surface the residue.
+  docker rm -fv "$name" "$negative" > /dev/null 2>&1 || cleanup_rc=1
+  rm -rf "$scratch"
+  if [ "$cleanup_rc" != 0 ] && [ "$rc" = 0 ]; then
+    echo 'FAIL: mail proof container cleanup was not confirmed' >&2
+    rc=1
+  fi
+  exit "$rc"
+}
+trap cleanup EXIT
+
+kubectl kustomize "$root/k8s/bases/apps/private-mail" >"$scratch/render.yaml"
+yq -er 'select(.kind == "ConfigMap" and .metadata.name == "private-mail-datastore").data."config.json"' \
+  "$scratch/render.yaml" >"$scratch/config.json"
+image="$(yq -er 'select(.kind == "StatefulSet" and .metadata.name == "private-mail").spec.template.spec.containers[0].image' "$scratch/render.yaml")"
+jq -e '."@type" == "RocksDb" and .path == "/var/lib/stalwart/data"' "$scratch/config.json" >/dev/null
+chmod 644 "$scratch/config.json"
+docker pull "$image" >/dev/null
+
+run_server() {
+  local target=$1
+  shift
+  docker run --detach --name "$target" --network none --read-only \
+    --user 2000:2000 --cpus 1 --memory 512m \
+    --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --security-opt no-new-privileges:true \
+    --tmpfs /var/lib/stalwart:rw,uid=2000,gid=2000,mode=0700 \
+    --tmpfs /tmp:rw,uid=2000,gid=2000,mode=0700 \
+    "$@" "$image" >/dev/null
+}
+wait_ready() {
+  local target=$1 attempt
+  for ((attempt = 0; attempt < 30; attempt++)); do
+    if docker exec "$target" curl --fail --silent --max-time 2 \
+      http://127.0.0.1:8080/healthz/ready >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo 'FAIL: the actual mail preparation server did not become ready' >&2
+  return 1
+}
+run_server "$name" \
+  --mount "type=bind,source=$scratch/config.json,target=/etc/stalwart/config.json,readonly" \
+  --env STALWART_RECOVERY_MODE=1 \
+  --env STALWART_RECOVERY_ADMIN=fixture:private-mail-fixture-only
+wait_ready "$name"
+
+docker exec "$name" curl --fail --silent --show-error --max-time 5 \
+  --user fixture:private-mail-fixture-only \
+  --header 'Content-Type: application/json' \
+  --data '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:DataStore/get",{},"proof"]]}' \
+  http://127.0.0.1:8080/jmap >"$scratch/api.json"
+jq -e '.methodResponses | length == 1 and .[0][0] == "x:DataStore/get"' "$scratch/api.json" >/dev/null
+status="$(docker exec "$name" curl --silent --max-time 5 --output /dev/null --write-out '%{http_code}' \
+  --user fixture:wrong-fixture-password --header 'Content-Type: application/json' \
+  --data '{"using":["urn:ietf:params:jmap:core"],"methodCalls":[]}' http://127.0.0.1:8080/jmap)"
+[ "$status" = 401 ] || { echo 'FAIL: management accepted an incorrect fixture credential' >&2; exit 1; }
+
+for port in 25 143 465 587 993; do
+  rc=0
+  docker exec "$name" curl --silent --max-time 2 "http://127.0.0.1:$port" >/dev/null 2>&1 || rc=$?
+  [ "$rc" = 7 ] || { echo 'FAIL: a mail listener was open or its absence was unproven' >&2; exit 1; }
+done
+docker logs "$name" >"$scratch/server.log" 2>&1
+if grep -Eqi 'temporary administrator|private-mail-fixture-only' "$scratch/server.log"; then
+  echo 'FAIL: the supplied administrator credential was exposed or replaced' >&2
+  exit 1
+fi
+
+# A deliberately empty install without the supplied credential must trigger the
+# very log condition above. Capture privately and delete without printing it.
+run_server "$negative" --env CONFIG_PATH=/tmp/missing-config.json
+wait_ready "$negative"
+docker logs "$negative" >"$scratch/negative.log" 2>&1
+grep -qi 'temporary administrator' "$scratch/negative.log" || {
+  echo 'FAIL: missing-credential control did not reach the generated-password path' >&2
+  exit 1
+}
+echo 'PASS: pinned server accepts authored datastore and supplied authentication; wrong password rejected; no mail listeners or generated log credential; missing-credential control detected.'
