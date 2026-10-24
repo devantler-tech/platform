@@ -326,6 +326,19 @@ alter this platform's Talos path. The actual offline render regression retains
 both production and local roles, explicit and whitespace schematic IDs, and
 invalid-patch refusals. This source audit changes no cluster configuration.
 
+**7.203.7**, commit `882273c06199efe2635280233734bce7c0fb5fee`, is audited
+against 7.203.3. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. Only the module inputs change: AWS SDK core
+v1.47.1 → v1.47.2, STS v1.51.2 → v1.51.3 and their indirect AWS modules,
+plus the GitHub Copilot SDK v1.0.17 → v1.0.19. The Go directive, Talos
+machinery, Image Factory and YAML/protobuf dependencies and checksums are
+unchanged, preserving argument normalization, both-role folding and explicit
+schematic-ID precedence. The other two releases update only KSail's own
+retired-repository-link and disk-cleanup CI actions. Neither those actions nor
+the changed AWS and Copilot paths are used by this platform's Talos rendering.
+The existing offline render regression covers both production and local roles,
+explicit and whitespace schematic IDs, and invalid-patch refusals.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
