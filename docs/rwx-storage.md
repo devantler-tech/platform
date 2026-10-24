@@ -58,20 +58,19 @@ bind-mounts `/var/lib/longhorn` from the worker's root filesystem into the kubel
 driver can reach it. Do not partition `/dev/sdb` for Longhorn: hcloud-csi attaches its Cloud
 Volumes at `/dev/sdb`, `/dev/sdc` and so on, and partitioning would destroy them.
 
-## Storage consumers during client recovery
+## Storage consumers on compute-only workers
 
-Kubescape's persistent storage component is temporarily restricted to the
-Longhorn storage-worker label in the Hetzner overlay. This keeps its existing
-claim usable while compute-only workers lack the Longhorn volume client.
-The restriction affects only that component, not the security agents or local
-Docker deployments.
+Compute-only (autoscaled) workers run the Longhorn volume client, so a pod can
+mount a Longhorn volume there, but they hold no replicas: replica storage stays
+on the storage workers. A volume consumer such as Kubescape's result store can
+therefore run on any Linux worker. The soft `prefer-baseline-nodes` preference
+still places it on a baseline worker whenever one has room.
 
-The production regression renders the pinned chart for install and upgrade,
-checks scheduling eligibility and preserves the single-writer strategy and
-claim. Remove this recovery placement through
-[#4777](https://github.com/devantler-tech/platform/issues/4777) only after the
-protected client rollout completes, clients are registered on compute workers,
-and storage readiness remains healthy across separated samples.
+The production regression `scripts/tests/test-kubescape-storage-placement.sh`
+renders the pinned Kubescape chart for install and upgrade and checks that its
+store is not pinned to the storage workers, that no other component's placement
+changes, and that the store keeps its single-writer strategy, claim, security
+settings and health probes.
 
 ## StorageClasses
 
