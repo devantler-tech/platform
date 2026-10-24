@@ -225,6 +225,14 @@ var auditedFoldInputs = []struct {
 		"go.mod":                     "e843176075da60aca6a89143b23917e8ccfd4c98",
 		"go.sum":                     "4d0e4a20f90b41c0da5d9a000ed730316afa0bdb",
 	}},
+	{"7.203.19", map[string]string{
+		"pkg/fsutil/configmanager":   "76455759a264c6a10ac3ceab608df912efb33307",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "d50e9dc79a9b9d0cd096ea449344a69d780b27e3",
+		"charts":                     "4351b93273821f333e9f0641e323ba99387844bb",
+		"go.mod":                     "9e15dde619ade90f9665151c95f95957658e795a",
+		"go.sum":                     "ab216f3b6420dd96a618f1b4af0b4141d67c367f",
+	}},
 }
 
 // verifyFoldInputs passes only when every fold input of the pinned release was
