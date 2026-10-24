@@ -367,6 +367,18 @@ not vCluster, and the Talos generator, cluster API, charts and modules are
 byte-identical, so argument normalization, both-role folding and explicit
 schematic-ID precedence are preserved.
 
+**7.203.16**, commit `4c1c4df5d19d11a601123a85fc4b2955d8d43c3c`, is audited
+against 7.203.14. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. Only the module inputs change: AWS SDK v1.47.2 →
+v1.47.3, credentials v1.20.8 → v1.20.9, STS v1.51.3 → v1.51.4, smithy-go
+v1.28.4 → v1.28.5 and their indirect IMDS, internal, sign-in, SSO and SSO-OIDC
+modules; every changed checksum belongs to those AWS modules. The Go directive,
+Talos machinery, Image Factory and YAML/protobuf dependencies are unchanged,
+preserving argument normalization, both-role folding and explicit schematic-ID
+precedence. The other changes touch KSail's documentation redirects, its VS Code
+extension and its own dependency automation, none of which this platform's Talos
+rendering uses.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
