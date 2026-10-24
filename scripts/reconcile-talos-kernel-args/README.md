@@ -359,6 +359,14 @@ vCluster provisioner. This platform installs Flux, whose chart is not probed,
 and runs no vCluster; none of the changes touches the Talos configuration
 manager, generator, cluster API, charts or modules.
 
+**7.203.14**, commit `ee5fe3922267eb83f074c2fcccdfdc5c8586d3c7`, is audited
+against 7.203.13. Its only change bumps the vCluster Kubernetes image in
+`pkg/fsutil/configmanager/vcluster/Dockerfile` from v1.36.5 to v1.37.1, which
+feeds only the vCluster default Kubernetes version. This platform runs Talos,
+not vCluster, and the Talos generator, cluster API, charts and modules are
+byte-identical, so argument normalization, both-role folding and explicit
+schematic-ID precedence are preserved.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
