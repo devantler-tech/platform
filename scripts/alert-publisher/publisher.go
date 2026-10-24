@@ -48,8 +48,38 @@ func decodeObservation(r io.Reader) (observation, error) {
 		return v, errInput
 	}
 	d := json.NewDecoder(strings.NewReader(string(b)))
-	d.DisallowUnknownFields()
-	if d.Decode(&v) != nil || !errors.Is(d.Decode(new(any)), io.EOF) {
+	start, err := d.Token()
+	if err != nil || start != json.Delim('{') {
+		return observation{}, errInput
+	}
+	seen := map[string]bool{}
+	for d.More() {
+		key, keyErr := d.Token()
+		name, ok := key.(string)
+		if keyErr != nil || !ok || seen[name] {
+			return observation{}, errInput
+		}
+		seen[name] = true
+		var target any
+		switch name {
+		case "route":
+			target = &v.Route
+		case "state":
+			target = &v.State
+		case "observedAt":
+			target = &v.ObservedAt
+		case "complete":
+			target = &v.Complete
+		default:
+			return observation{}, errInput
+		}
+		var value json.RawMessage
+		if d.Decode(&value) != nil || string(value) == "null" || json.Unmarshal(value, target) != nil {
+			return observation{}, errInput
+		}
+	}
+	end, err := d.Token()
+	if err != nil || end != json.Delim('}') || !errors.Is(d.Decode(new(any)), io.EOF) {
 		return observation{}, errInput
 	}
 	if _, ok := routes[v.Route]; !ok {

@@ -339,6 +339,10 @@ func TestInputCanariesNeverReachMessagesOrErrors(t *testing.T) {
 		`{"route":"cnpg-degraded","state":"firing","observedAt":"2026-10-24T20:00:00Z","repository":"private-canary.example"}`,
 		`{"route":"private-canary.example","state":"firing","observedAt":"2026-10-24T20:00:00Z"}`,
 		`{"route":"cnpg-degraded","state":"private-canary.example","observedAt":"2026-10-24T20:00:00Z"}`,
+		`{"route":"private-canary.example","route":"cnpg-degraded","state":"firing","observedAt":"2026-10-24T20:00:00Z"}`,
+		`{"route":"cnpg-degraded","state":"private-canary.example","state":"firing","observedAt":"2026-10-24T20:00:00Z"}`,
+		`{"route":"cnpg-degraded","Route":"cnpg-degraded","state":"firing","observedAt":"2026-10-24T20:00:00Z"}`,
+		`{"route":"cnpg-degraded","state":"firing","observedAt":"2026-10-24T20:00:00Z","complete":null}`,
 	} {
 		_, err := decodeObservation(strings.NewReader(raw))
 		if err == nil || strings.Contains(err.Error(), "private-canary") {
