@@ -544,23 +544,95 @@ func environmentWithPath(environment []string, path string) []string {
 	return append(result, "PATH="+path)
 }
 
+// The private UniFi provider package is preflighted from its Provider
+// declaration, so a dependency update that moves that one line moves the
+// pull target with it. The real derivation runs against the committed
+// declaration and against changed, missing, malformed and foreign ones.
 func TestRequiredPackageCoverageProviderUpjetUnifiReferenceIsPreflighted(t *testing.T) {
-	manifest := readRepositoryFile(t, "k8s/providers/hetzner/infrastructure/crossplane/provider-upjet-unifi.yaml")
 	helper := readRepositoryFile(t, "scripts/refresh-flux-ghcr-auth.sh")
+	committed := readRepositoryFile(t, providerUpjetUnifiManifest)
 
-	packageLine := ""
-	for line := range strings.SplitSeq(manifest, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "package: ghcr.io/") {
-			packageLine = line
-			break
+	requireContains(t, helper, `"${PROVIDER_UPJET_UNIFI_PULL_TARGET}"`)
+	requireContains(t, helper, providerUpjetUnifiManifest)
+	requireNotContains(t, helper, `"devantler-tech/provider-upjet-unifi:v`)
+
+	declared := "package: ghcr.io/" + providerUpjetUnifiPullTarget
+	if !strings.Contains(committed, declared) {
+		t.Fatalf("committed Provider does not declare %q", declared)
+	}
+	withPackage := func(value string) string { return strings.Replace(committed, declared, "package: "+value, 1) }
+	body := functionBody(t, helper, "provider_upjet_unifi_pull_target") + "\n}\n"
+
+	for _, tc := range []struct {
+		name     string
+		manifest string
+		want     string
+	}{
+		{name: "committed declaration", manifest: committed, want: providerUpjetUnifiPullTarget},
+		{name: "updated release", manifest: withPackage("ghcr.io/devantler-tech/provider-upjet-unifi:v9.8.7"), want: "devantler-tech/provider-upjet-unifi:v9.8.7"},
+		{name: "missing package", manifest: strings.Replace(committed, declared, "", 1)},
+		{name: "null package", manifest: withPackage("null")},
+		{name: "floating tag", manifest: withPackage("ghcr.io/devantler-tech/provider-upjet-unifi:latest")},
+		{name: "partial version", manifest: withPackage("ghcr.io/devantler-tech/provider-upjet-unifi:v1.3")},
+		{name: "pre-release", manifest: withPackage("ghcr.io/devantler-tech/provider-upjet-unifi:v1.3.0-rc.1")},
+		{name: "digest only", manifest: withPackage("ghcr.io/devantler-tech/provider-upjet-unifi@sha256:" + strings.Repeat("a", 64))},
+		{name: "foreign owner", manifest: withPackage("ghcr.io/example/provider-upjet-unifi:v1.3.0")},
+		{name: "foreign package", manifest: withPackage("ghcr.io/devantler-tech/provider-upjet-unifi-extra:v1.3.0")},
+		{name: "foreign registry", manifest: withPackage("xpkg.example.invalid/devantler-tech/provider-upjet-unifi:v1.3.0")},
+		{name: "unparseable", manifest: "spec: [unterminated\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "provider.yaml")
+			if err := os.WriteFile(path, []byte(tc.manifest), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			result := runCaptured(t, dir, environmentMap(os.Environ()), "bash", "-c",
+				body+`provider_upjet_unifi_pull_target "$1"`, "fixture", path)
+			if tc.want != "" {
+				if result.exitCode != 0 || result.stdout != tc.want+"\n" {
+					t.Fatalf("exit=%d stdout=%q stderr=%q, want %q", result.exitCode, result.stdout, result.stderr, tc.want)
+				}
+				return
+			}
+			if result.exitCode == 0 || result.stdout != "" {
+				t.Fatalf("accepted %s: exit=%d stdout=%q", tc.name, result.exitCode, result.stdout)
+			}
+		})
+	}
+}
+
+// A refused Provider declaration stops the real helper at startup, before it
+// reads any registry or touches the cluster.
+func TestForeignProviderUpjetUnifiDeclarationFailsBeforeAnyRegistryRead(t *testing.T) {
+	f := newFixture(t)
+	workdir := t.TempDir()
+	for relative, contents := range map[string]string{
+		"k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml": readRepositoryFile(t, "k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml"),
+		providerUpjetUnifiManifest: strings.Replace(readRepositoryFile(t, providerUpjetUnifiManifest),
+			"package: ghcr.io/"+providerUpjetUnifiPullTarget, "package: ghcr.io/example/provider-upjet-unifi:v1.3.0", 1),
+	} {
+		path := filepath.Join(workdir, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+			t.Fatal(err)
 		}
 	}
-	if packageLine == "" {
-		t.Fatal("find private provider package reference")
+	f.helperWorkdir = workdir
+
+	result := f.runHelper(validConfig(), nil, nil)
+	if result.exitCode == 0 {
+		t.Fatalf("helper accepted a foreign UniFi provider package: stdout=%q", result.stdout)
 	}
-	packageReference := strings.TrimPrefix(packageLine, "package: ghcr.io/")
-	requireContains(t, helper, `"`+packageReference+`"`)
+	requireContains(t, result.stderr, "UniFi provider declaration must name")
+	if pathExists(f.registryReadLog) && len(readLines(f.registryReadLog)) > 0 {
+		t.Fatalf("registry was read before the declaration was refused: %v", readLines(f.registryReadLog))
+	}
+	if pathExists(f.kubectlCalled) {
+		t.Fatal("cluster was contacted before the declaration was refused")
+	}
 }
 
 func TestRequiredPackageCoverageExactDeclaredKsailOperatorImageIsPreflighted(t *testing.T) {

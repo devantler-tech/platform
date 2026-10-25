@@ -180,6 +180,22 @@ KSAIL_OPERATOR_VERSION="$(yq -er '.spec.ref.tag' \
   k8s/bases/infrastructure/controllers/ksail-operator/oci-repository.yaml)"
 readonly KSAIL_OPERATOR_VERSION
 readonly KSAIL_OPERATOR_IMAGE="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
+# Crossplane pulls the private UniFi provider package named by its Provider
+# declaration, so preflight that exact reference instead of a second copy of
+# its version. Only the fixed first-party package at a release tag is accepted:
+# a missing, malformed or foreign declaration fails here, before any registry read.
+provider_upjet_unifi_pull_target() {
+  local package
+  package="$(yq -er '.spec.package' "$1")" || return 1
+  if ! [[ "${package}" =~ ^ghcr\.io/devantler-tech/provider-upjet-unifi:v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    printf '::error::UniFi provider declaration must name ghcr.io/devantler-tech/provider-upjet-unifi:v<major>.<minor>.<patch>\n' >&2
+    return 1
+  fi
+  printf '%s\n' "${package#ghcr.io/}"
+}
+PROVIDER_UPJET_UNIFI_PULL_TARGET="$(provider_upjet_unifi_pull_target \
+  k8s/providers/hetzner/infrastructure/crossplane/provider-upjet-unifi.yaml)"
+readonly PROVIDER_UPJET_UNIFI_PULL_TARGET
 # Private first-party release workflows create/update latest alongside every
 # semver image or artifact tag. Flux still selects immutable releases; latest is
 # the stable read-permission/existence probe for the same private packages.
@@ -193,7 +209,7 @@ readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/ascoachingogvaner:latest"
   "devantler-tech/world-at-ruin/zone:v0.114.0"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
-  "devantler-tech/provider-upjet-unifi:v1.3.0"
+  "${PROVIDER_UPJET_UNIFI_PULL_TARGET}"
 )
 # These packages are intentionally private and have independent ACLs. A public
 # image (including KSail itself) can prove registry reachability but cannot
