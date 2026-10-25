@@ -43,8 +43,11 @@ func TestApprovalSummaryNamesTheExactLedgerEdit(t *testing.T) {
 	if !strings.Contains(text, "### Production authorization approval needed") || !strings.Contains(text, surfaceLedgerFile) {
 		t.Fatalf("summary does not name the approval or its file:\n%s", text)
 	}
-	block := text[strings.Index(text, "```diff\n")+len("```diff\n"):]
-	block = block[:strings.Index(block, "```\n")]
+	_, block, opened := strings.Cut(text, "```diff\n")
+	block, _, closed := strings.Cut(block, "```\n")
+	if !opened || !closed {
+		t.Fatalf("summary has no complete diff block:\n%s", text)
+	}
 	if got, want := strings.Split(strings.TrimSuffix(block, "\n"), "\n"), mismatch.delta; strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("summary lines = %q, want exactly the ledger edit %q", got, want)
 	}
