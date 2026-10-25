@@ -160,6 +160,9 @@ kind: ResourceGraphDefinition
 metadata:
   name: tenant
 spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Tenant
   resources:
     - id: oci
       template:

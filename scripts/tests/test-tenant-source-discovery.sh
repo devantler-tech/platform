@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# Actual report/guard discovery must not silently omit a controller-created source.
+set -euo pipefail
+export LC_ALL=C
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+report="${REPORT_UNDER_TEST:-$root/scripts/report-publish-workflow-signing-revisions.sh}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/tree/k8s/apps"
+cat >"$work/tree/k8s/controller.yaml" <<'EOF'
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: tenant.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Tenant
+  resources:
+    - id: source
+      template:
+        apiVersion: source.toolkit.fluxcd.io/v1
+        kind: OCIRepository
+        spec: {}
+EOF
+input="$work/tree/k8s/apps/tenant.yaml"
+failures=0
+discover() {
+  bash -c 'source "$1"; discover_consumers "$2"' bash "$report" "$work/tree"
+}
+refuses() {
+  local name="$1" reason="${2-needs complete admission}"
+  if discover >"$work/result" 2>"$work/error"; then
+    printf 'FAIL: silently accepted %s\n' "$name" >&2
+    failures=$((failures + 1))
+  elif [ -s "$work/result" ]; then
+    printf 'FAIL: partial inventory after %s\n' "$name" >&2
+    failures=$((failures + 1))
+  elif [ -n "$reason" ] && ! grep -qF -- "$reason" "$work/error"; then
+    printf 'FAIL: %s was refused for a different reason:\n' "$name" >&2
+    cat "$work/error" >&2
+    failures=$((failures + 1))
+  fi
+}
+
+cat >"$work/good.yaml" <<'EOF'
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: business-site
+spec:
+  source:
+    reconcileApplication: false
+EOF
+cp "$work/good.yaml" "$input"
+refuses 'literal source-only Tenant' 'k8s/apps/tenant.yaml'
+yq '.spec.source.reconcileApplication=true' "$work/good.yaml" >"$input"
+refuses 'active Tenant'
+yq -o=json '.' "$work/good.yaml" >"$input"
+refuses 'JSON with quoted keys'
+printf '{"apiVersion":"kro.run/v1alpha1","kind":"Tenant"}\n' >"$input"
+refuses 'flow document'
+printf '"apiVersion": "kro.run/v1alpha1"\n"kind": "Tenant"\n' >"$input"
+refuses 'quoted YAML keys'
+printf 'apiVersion: kro.run/v1alpha1\nkind: "Te\\x6eant"\n' >"$input"
+refuses 'escaped kind spelling'
+printf 'schema: &schema kro.run/v1alpha1\napiVersion: *schema\nkind: Tenant\n' >"$input"
+refuses 'YAML alias'
+printf 'schema: &schema\n  apiVersion: kro.run/v1alpha1\n  kind: Tenant\nobject:\n  <<: *schema\n' >"$input"
+refuses 'YAML merge'
+{ printf 'apiVersion: v1\nkind: ConfigMap\n---\n'; cat "$work/good.yaml"; } >"$input"
+refuses 'second document'
+printf 'apiVersion: example.test/v1\nkind: Carrier\nspec:\n  template:\n    apiVersion: kro.run/v1alpha1\n    kind: Tenant\n' >"$input"
+refuses 'nested typed controller template'
+cp "$work/good.yaml" "$input"
+mv "$input" "${input%.yaml}.yml"
+refuses 'yml filename'
+rm "${input%.yaml}.yml"
+for extension in json YAML YML JSON; do
+  case "$extension" in
+    json | JSON)
+      yq -o=json '.' "$work/good.yaml" >"$work/tree/k8s/apps/source.$extension"
+      jq -e '.kind == "Tenant"' "$work/tree/k8s/apps/source.$extension" >/dev/null
+      ;;
+    *) cp "$work/good.yaml" "$work/tree/k8s/apps/source.$extension" ;;
+  esac
+  refuses "$extension resource filename"
+  rm "$work/tree/k8s/apps/source.$extension"
+done
+# A valid mixed-format tree without typed instances remains an ordinary read.
+printf '{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"ordinary"}}\n' >"$work/tree/k8s/apps/source.json"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+rm "$work/tree/k8s/apps/source.json"
+# Kustomize resource references are not restricted to YAML/JSON suffixes.
+for spelling in tenant tenant.txt tenant.config; do
+  cp "$work/good.yaml" "$work/tree/k8s/apps/$spelling"
+  printf 'resources:\n  - apps/%s\n' "$spelling" >"$work/tree/k8s/Kustomization"
+  refuses "explicit resource $spelling"
+  rm "$work/tree/k8s/apps/$spelling" "$work/tree/k8s/Kustomization"
+done
+cp "$work/good.yaml" "$work/tree/k8s/apps/tenant text"
+printf 'resources: ["apps/tenant text"]\n' >"$work/tree/k8s/kustomization.yml"
+refuses 'explicit resource containing a space'
+rm "$work/tree/k8s/apps/tenant text" "$work/tree/k8s/kustomization.yml"
+mv "$work/tree/k8s/controller.yaml" "$work/tree/k8s/controller.txt"
+cp "$work/good.yaml" "$input"
+printf 'resources: [controller.txt, apps/tenant.yaml]\n' >"$work/tree/k8s/kustomization.yaml"
+refuses 'source-producing schema itself has a nonstandard suffix'
+mv "$work/tree/k8s/controller.txt" "$work/tree/k8s/controller.yaml"
+rm "$input" "$work/tree/k8s/kustomization.yaml"
+printf 'apiVersion: v1\nkind: ConfigMap\n' >"$work/tree/k8s/apps/ordinary resource"
+printf 'resources: ["apps/ordinary resource"]\n' >"$work/tree/k8s/Kustomization"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+rm "$work/tree/k8s/apps/ordinary resource" "$work/tree/k8s/Kustomization"
+mkdir "$work/tree/k8s/apps/shared"
+printf 'resources: [tenant.config]\n' >"$work/tree/k8s/apps/shared/shared.cfg"
+ln -s shared/shared.cfg "$work/tree/k8s/apps/Kustomization"
+cp "$work/good.yaml" "$work/tree/k8s/apps/tenant.config"
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shadow}\n' >"$work/tree/k8s/apps/shared/tenant.config"
+refuses 'contained build-file link retains its original reference directory'
+rm "$work/tree/k8s/apps/Kustomization" "$work/tree/k8s/apps/tenant.config" "$work/tree/k8s/apps/shared/shared.cfg" "$work/tree/k8s/apps/shared/tenant.config"
+rmdir "$work/tree/k8s/apps/shared"
+mkdir -p "$work/tree/k8s/targets"
+cp "$work/good.yaml" "$work/tree/k8s/targets/typed.txt"
+ln -s ../targets/typed.txt "$input"
+refuses 'contained manifest file link'
+rm "$input"
+ln -s ../targets "$work/tree/k8s/apps/linked"
+refuses 'linked directory' ''
+rm "$work/tree/k8s/apps/linked"
+ln -s "$work/good.yaml" "$input"
+refuses 'manifest link outside published k8s root' ''
+rm "$input"
+ln -s missing "$input"
+refuses 'dangling manifest link' ''
+rm "$input"
+printf 'apiVersion: [broken\n' >"$input"
+refuses 'unreadable candidate syntax' 'could not parse every candidate'
+
+# Complete foreign GVKs are not assumed to use this source-producing constructor.
+printf 'apiVersion: other.example/v1\nkind: Tenant\n' >"$input"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+# A contained ordinary manifest link retains the existing artifact boundary.
+cp "$input" "$work/tree/k8s/targets/ordinary.txt"
+ln -s ../targets/ordinary.txt "$work/tree/k8s/apps/ordinary.yaml"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+# Comments/prose naming Tenant do not instantiate its schema.
+printf 'apiVersion: v1\nkind: ConfigMap\ndata:\n  note: "Tenant kro.run/v1alpha1"\n' >"$input"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+# Existing local-only Docker scope stays outside the production raw census.
+mkdir -p "$work/tree/k8s/providers/docker"
+cp "$work/good.yaml" "$work/tree/k8s/providers/docker/local-tenant.yaml"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+
+# The declared schema, not the name Tenant alone, defines a source instance.
+yq -i '.spec.schema.group="tenants.example.test"' "$work/tree/k8s/controller.yaml"
+cp "$work/good.yaml" "$input"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+yq '.apiVersion="tenants.example.test/v1alpha1"' "$work/good.yaml" >"$input"
+refuses 'matching custom-group instance'
+yq -i 'del(.spec.schema.apiVersion)' "$work/tree/k8s/controller.yaml"
+refuses 'source-producing schema without a complete GVK' 'source-producing schema GVK is unknown'
+printf '%s failure(s)\n' "$failures"
+[ "$failures" -eq 0 ]
