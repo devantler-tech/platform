@@ -5,4 +5,5 @@ resources:
   - ../../../providers/hetzner/bootstrap
   - config-map.yaml
   - secret.enc.yaml
+  - secret-heartbeat.enc.yaml
   - secret-wedding-db-backup-r2.enc.yaml
