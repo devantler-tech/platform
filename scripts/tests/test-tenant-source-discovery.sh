@@ -7,6 +7,22 @@ report="${REPORT_UNDER_TEST:-$root/scripts/report-publish-workflow-signing-revis
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/tree/k8s/apps"
+cat >"$work/tree/k8s/controller.yaml" <<'EOF'
+apiVersion: kro.run/v1alpha1
+kind: ResourceGraphDefinition
+metadata:
+  name: tenant.kro.run
+spec:
+  schema:
+    apiVersion: v1alpha1
+    kind: Tenant
+  resources:
+    - id: source
+      template:
+        apiVersion: source.toolkit.fluxcd.io/v1
+        kind: OCIRepository
+        spec: {}
+EOF
 input="$work/tree/k8s/apps/tenant.yaml"
 failures=0
 discover() {
@@ -56,11 +72,35 @@ cp "$work/good.yaml" "$input"
 mv "$input" "${input%.yaml}.yml"
 refuses 'yml filename'
 rm "${input%.yaml}.yml"
+for extension in json YAML YML JSON; do
+  cp "$work/good.yaml" "$work/tree/k8s/apps/source.$extension"
+  refuses "$extension resource filename"
+  rm "$work/tree/k8s/apps/source.$extension"
+done
+mkdir -p "$work/tree/k8s/targets"
+cp "$work/good.yaml" "$work/tree/k8s/targets/typed.txt"
+ln -s ../targets/typed.txt "$input"
+refuses 'contained manifest file link'
+rm "$input"
+ln -s ../targets "$work/tree/k8s/apps/linked"
+refuses 'linked directory'
+rm "$work/tree/k8s/apps/linked"
+ln -s "$work/good.yaml" "$input"
+refuses 'manifest link outside published k8s root'
+rm "$input"
+ln -s missing "$input"
+refuses 'dangling manifest link'
+rm "$input"
 printf 'apiVersion: [broken\n' >"$input"
 refuses 'unreadable candidate syntax'
 
 # Complete foreign GVKs are not assumed to use this source-producing constructor.
 printf 'apiVersion: other.example/v1\nkind: Tenant\n' >"$input"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+# A contained ordinary manifest link retains the existing artifact boundary.
+cp "$input" "$work/tree/k8s/targets/ordinary.txt"
+ln -s ../targets/ordinary.txt "$work/tree/k8s/apps/ordinary.yaml"
 discover >"$work/result"
 [ ! -s "$work/result" ]
 # Comments/prose naming Tenant do not instantiate its schema.
@@ -73,11 +113,14 @@ cp "$work/good.yaml" "$work/tree/k8s/providers/docker/local-tenant.yaml"
 discover >"$work/result"
 [ ! -s "$work/result" ]
 
-# Direct document extraction (used on rendered roots) has the same refusal.
-if bash -c 'source "$1"; consumer_rows "$2" with-identity' bash "$report" "$work/good.yaml" \
-  >"$work/result" 2>"$work/error"; then
-  printf 'FAIL: direct rendered reader omitted a typed source\n' >&2
-  failures=$((failures + 1))
-fi
+# The declared schema, not the name Tenant alone, defines a source instance.
+yq -i '.spec.schema.group="tenants.example.test"' "$work/tree/k8s/controller.yaml"
+cp "$work/good.yaml" "$input"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+yq '.apiVersion="tenants.example.test/v1alpha1"' "$work/good.yaml" >"$input"
+refuses 'matching custom-group instance'
+yq -i 'del(.spec.schema.apiVersion)' "$work/tree/k8s/controller.yaml"
+refuses 'source-producing schema without a complete GVK'
 printf '%s failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

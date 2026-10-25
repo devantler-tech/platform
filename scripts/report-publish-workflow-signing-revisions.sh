@@ -257,7 +257,6 @@ discover_consumers() {
 # subjects, filter/activity flags and verification settings for EVERY top-level Flux OCI
 # document, including unsigned sources that could overwrite an attributed consumer.
 consumer_rows() {
-  reject_unattributed_tenant_documents "$1" || return 1
   local file="$1" mode="${2:-}" rows row url version subjects repo workflow workflows artifact filtered active literal_keys namespace name literal_identity verification extra identity_fields='' contract_field=''
   # Append conservation fields to the same yq array so omitted refs and namespaces keep
   # the original boolean columns and cannot shift later fields into earlier ones.
