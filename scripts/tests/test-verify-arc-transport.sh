@@ -9,6 +9,8 @@ trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/bin" "$scratch/state"
 go build -o "$scratch/evidence" ./scripts/verify-arc-transport
 export PROOF_TEST_ROOT="$scratch"
+export PROOF_TEST_SED
+PROOF_TEST_SED=$(command -v sed)
 readonly head=1111111111111111111111111111111111111111
 export GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=refs/heads/main GITHUB_SHA="$head" GITHUB_RUN_ID=12345 GITHUB_RUN_ATTEMPT=1
 # The issuance restriction is a ValidatingPolicy: its CRD adds no spec defaults
@@ -25,6 +27,35 @@ yq -o=json '.spec' k8s/bases/infrastructure/cluster-policies/best-practices/rest
 yq -o=json '.' k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml \
   | jq '.metadata.uid="listener-uid" | .metadata.resourceVersion="123"' >"$scratch/listener.json"
 readonly script="$PWD/scripts/verify-arc-transport.sh"
+# Hold only the real background launch before its redirections. The copied
+# orchestrator otherwise keeps the actual command, PID, readers and cleanup.
+# A completed first read releases the child; elapsed time cannot decide success.
+delayed_script="$scratch/delayed-forward-proof.sh"
+launches=0
+pid_records=0
+while IFS= read -r line || [[ -n "$line" ]]; do
+  case "$line" in
+    kubectl*' port-forward '*' &')
+      printf '%s\n' '{' \
+        '  for probe_step in {1..500}; do' \
+        "    [[ -f \"\$PROOF_TEST_ROOT/state/first-forward-read\" ]] && break" \
+        '    sleep 0.01' \
+        '  done' \
+        "  [[ -f \"\$PROOF_TEST_ROOT/state/first-forward-read\" ]] || exit 98"
+      printf '  exec %s\n' "${line% &}"
+      printf '%s\n' '} &'
+      launches=$((launches+1)) ;;
+    'forward_pid=$!')
+      printf '%s\n' "$line" \
+        "printf '%s\\n' \"\$forward_pid\" > \"\$PROOF_TEST_ROOT/state/port-forward-pid\""
+      pid_records=$((pid_records+1)) ;;
+    *) printf '%s\n' "$line" ;;
+  esac
+done <"$script" >"$delayed_script"
+[[ "$launches" == 1 && "$pid_records" == 1 ]] || {
+  printf 'FAIL: delayed launch fixture did not bind the unique real launch and PID\n' >&2
+  exit 1
+}
 for file in k8s/providers/hetzner/infrastructure/cluster-policies/restrict-arc-openbao-certificate.yaml \
   k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml \
   k8s/providers/hetzner/infrastructure/controllers/openbao/transport/config-map-listener.yaml; do
@@ -60,6 +91,17 @@ elif [[ "$target" == https://* ]]; then
 else exit 99; fi
 if [[ "${PROOF_CASE:-}" == sealed ]]; then printf '{"initialized":true,"sealed":true,"version":"2.6.3","cluster_id":"fixture"}'; exit; fi
 printf '{"initialized":true,"sealed":false,"version":"2.6.3","cluster_id":"fixture"}'
+MOCK
+cat >"$scratch/bin/sed" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${PROOF_CASE:-}" == delayed_forward_* && "${!#}" == */forward ]]; then
+  result=0
+  "$PROOF_TEST_SED" "$@" || result=$?
+  : >"$PROOF_TEST_ROOT/state/first-forward-read"
+  exit "$result"
+fi
+exec "$PROOF_TEST_SED" "$@"
 MOCK
 cat >"$scratch/bin/kubectl" <<'MOCK'
 #!/usr/bin/env bash
@@ -192,7 +234,10 @@ case "$args" in
       .protocol == ["tcp"] and .verdict == ["DROPPED"] and .drop_reason_desc == ["POLICY_DENIED"] and length == 7' \
       <<<"$filter" >/dev/null || exit 99
     port=$(jq -er '.destination_port[0]' <<<"$filter")
-    reason=POLICY_DENIED; [[ "${PROOF_CASE:-}" != wrong_reason ]] || reason=CT_TRUNCATED_OR_INVALID_HEADER
+    reason=POLICY_DENIED
+    if [[ "${PROOF_CASE:-}" == wrong_reason || "${PROOF_CASE:-}" == delayed_forward_wrong_reason ]]; then
+      reason=CT_TRUNCATED_OR_INVALID_HEADER
+    fi
     # Literal native identities, independently derived from pinned Cilium's
     # node/types/nodename.go: the default cluster has no observer-name prefix.
     observer_node=prod/node-a
@@ -214,7 +259,7 @@ case "$args" in
   *) printf 'unexpected fixture command\n' >&2; exit 99 ;;
 esac
 MOCK
-chmod +x "$scratch/bin/gh" "$scratch/bin/go" "$scratch/bin/curl" "$scratch/bin/kubectl"
+chmod +x "$scratch/bin/gh" "$scratch/bin/go" "$scratch/bin/curl" "$scratch/bin/sed" "$scratch/bin/kubectl"
 export PATH="$scratch/bin:$PATH"
 cases=0
 run_case() {
@@ -222,10 +267,16 @@ run_case() {
   rm -f "$scratch/state/"*
   if [[ "$name" == source_explicit_* ]]; then
     (cd "$scratch/source"; PROOF_CASE=$name bash "$script" --same-node) >"$scratch/output" 2>"$scratch/error" || result=$?
+  elif [[ "$name" == delayed_forward_* ]]; then
+    PROOF_CASE=$name bash "$delayed_script" --same-node >"$scratch/output" 2>"$scratch/error" || result=$?
   else
     PROOF_CASE=$name bash "$script" --same-node >"$scratch/output" 2>"$scratch/error" || result=$?
   fi
   [[ "$result" == "$expected" ]] || { printf 'FAIL %s: exit %s expected %s\n' "$name" "$result" "$expected"; cat "$scratch/error"; exit 1; }
+  if [[ "$name" == delayed_forward_* && ! -f "$scratch/state/first-forward-read" ]]; then
+    printf 'FAIL %s: first native capture read was not observed\n' "$name" >&2
+    exit 1
+  fi
   if [[ -n "$expected_phase" ]]; then
     grep -Fxq "ARC transport: FAIL at $expected_phase" "$scratch/error" || { printf 'FAIL %s: incorrect failure phase\n' "$name"; cat "$scratch/error"; exit 1; }
     ! grep -Fq private-error-sentinel "$scratch/error" || { printf 'FAIL %s: private diagnostic leaked\n' "$name"; exit 1; }
@@ -254,6 +305,8 @@ run_case() {
   cases=$((cases+1))
 }
 GITHUB_REF=refs/heads/feature run_case unreviewed_ref 1
+run_case delayed_forward_healthy 0
+run_case delayed_forward_wrong_reason 1 same-node-evidence-validation
 run_case healthy_denied 0
 run_case default_cluster 0
 run_case default_cluster_prefixed 1 same-node-evidence-validation
