@@ -20,14 +20,15 @@ self-hosted-mail result. The server's exact release, licensing, source and
 official deployment documentation were then inspected. An external relay remains
 a separate decision if direct outbound delivery cannot be established.
 
-## Preparation is disabled by default
+## Shared preparation resources
 
-The `k8s/bases/apps/private-mail` bundle is deliberately absent from both normal
-application overlays. Its explicit inclusion is the coarse deployment toggle.
-Rendering the bundle directly tests the enabled preparation state; rendering
-both provider application layers tests that the default state remains absent.
+The `k8s/bases/apps/private-mail` bundle supplies the shared storage and
+initialization resources. The shared and local application layers omit mail;
+production includes this base through the administration bundle below. Rendering
+the base directly tests preparation, while the provider renders verify that only
+production enables normal administration.
 
-Even when included, this revision starts only the internal recovery management
+The preparation base alone starts only the internal recovery management
 API. It has no public Service or route, mail listener or outbound network grant.
 Only a setup workload in the same namespace can reach its management port. The
 server receives no Kubernetes API token. Its single local datastore owner is
@@ -111,12 +112,12 @@ Those remain separate maintainer-owned decisions.
 The owned bootstrap process uses recovery management port 18080, separate from
 normal administration on 8080. The pinned server supports a recovery port
 override but [binds it to every interface](https://github.com/stalwartlabs/stalwart/blob/v0.16.27/crates/common/src/config/server/listener.rs#L59-L84),
-so a future serving overlay must exclude 18080 from every Service and ingress
+so the administration overlay excludes 18080 from every Service and ingress
 grant, including during initialization and retries. Readiness alone is not that
 boundary. Bootstrap sets the override explicitly rather than inheriting it, and
-stops and collects its recovery child before permitting normal serving. The
-existing management-only preparation bundle remains internal and disabled;
-this separation does not activate a route, mail listener or migration.
+stops and collects its recovery child before permitting normal serving.
+Production exposes only normal administration after this clean recovery exit.
+Public mail transport and migration remain separate activation requirements.
 
 ## Prepared account configuration
 
