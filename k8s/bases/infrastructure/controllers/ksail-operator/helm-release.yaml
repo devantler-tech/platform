@@ -115,7 +115,25 @@ spec:
                             app.kubernetes.io/name: ksail-operator
                             app.kubernetes.io/instance: ksail-operator
                             app.kubernetes.io/component: operator
+                    # KSail embeds k9s, whose command package picks a log
+                    # directory while the binary initializes, before any
+                    # operator command runs. It prefers K9S_LOGS_DIR, so point
+                    # that at this small writable volume instead of the
+                    # read-only home directory. The operator never runs the k9s
+                    # interface, so the directory stays empty; the size limit
+                    # only bounds the worst case. The root filesystem stays
+                    # read-only (#4769).
+                    volumes:
+                      - name: k9s-logs
+                        emptyDir:
+                          sizeLimit: 16Mi
                     containers:
                       - name: operator
                         securityContext:
                           runAsUser: 65532
+                        env:
+                          - name: K9S_LOGS_DIR
+                            value: /var/log/k9s
+                        volumeMounts:
+                          - name: k9s-logs
+                            mountPath: /var/log/k9s
