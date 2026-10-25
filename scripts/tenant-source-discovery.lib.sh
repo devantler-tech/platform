@@ -26,7 +26,7 @@ reject_unattributed_tenant_sources() (
       *.[yY][aA][mM][lL] | *.[yY][mM][lL] | *.[jJ][sS][oO][nN] | */Kustomization) files+=("$resolved") ;;
     esac
     case "$file" in
-      */kustomization.yaml | */kustomization.yml | */Kustomization) kustomizations+=("$resolved") ;;
+      */kustomization.yaml | */kustomization.yml | */Kustomization) kustomizations+=("$file") ;;
     esac
   done <"$work/files"
   # Every parser invocation proves its complete filename set, including the
@@ -72,9 +72,9 @@ reject_unattributed_tenant_sources() (
   # Join complete schema GVKs across the whole tree before inspecting instances:
   # an RGD and the objects it creates can live in different roots. A same-kind
   # resource in a different group/version is not one of its instances.
-  jq -es '
-    [.[].document | .. | objects] as $nodes |
-    [$nodes[] | select(.kind=="ResourceGraphDefinition") |
+  jq -es --arg prefix "$root/" '
+    [.[] | .file as $file | .document | .. | objects | {file:$file,resource:.}] as $nodes |
+    [$nodes[].resource | select(.kind=="ResourceGraphDefinition") |
       select(any(.. | objects; .kind=="OCIRepository" and has("spec"))) |
       .spec.schema |
       if (.kind|type=="string" and test("^[A-Za-z][A-Za-z0-9]*$")) and
@@ -82,9 +82,13 @@ reject_unattributed_tenant_sources() (
          (.apiVersion|type=="string" and test("^[a-z][a-z0-9]*$"))
       then {kind,apiVersion:((.group // "kro.run")+"/"+.apiVersion)}
       else error("source-producing schema GVK is unknown") end] as $schemas |
-    if any($nodes[]; . as $node |
-      any($schemas[]; .kind==$node.kind and .apiVersion==$node.apiVersion))
-    then error("typed source (including business-site) needs complete admission; inventory is UNKNOWN")
+    [$nodes[] | .resource as $node |
+      select(any($schemas[]; .kind==$node.kind and .apiVersion==$node.apiVersion)) |
+      {file:(.file|ltrimstr($prefix)),
+       name:(.resource.metadata | if type=="object" then (.name // "?") else "?" end)}] as $hits |
+    if ($hits|length)>0
+    then error("typed source needs complete admission; inventory is UNKNOWN: " +
+      ($hits | map((.file|@json) + " (" + (.name|tojson) + ")") | join(", ")))
     else true end
   ' "$work/documents.jsonl" >/dev/null || return 1
 )

@@ -29,12 +29,16 @@ discover() {
   bash -c 'source "$1"; discover_consumers "$2"' bash "$report" "$work/tree"
 }
 refuses() {
-  local name="$1"
+  local name="$1" reason="${2-needs complete admission}"
   if discover >"$work/result" 2>"$work/error"; then
     printf 'FAIL: silently accepted %s\n' "$name" >&2
     failures=$((failures + 1))
   elif [ -s "$work/result" ]; then
     printf 'FAIL: partial inventory after %s\n' "$name" >&2
+    failures=$((failures + 1))
+  elif [ -n "$reason" ] && ! grep -qF -- "$reason" "$work/error"; then
+    printf 'FAIL: %s was refused for a different reason:\n' "$name" >&2
+    cat "$work/error" >&2
     failures=$((failures + 1))
   fi
 }
@@ -49,7 +53,7 @@ spec:
     reconcileApplication: false
 EOF
 cp "$work/good.yaml" "$input"
-refuses 'literal source-only Tenant'
+refuses 'literal source-only Tenant' 'k8s/apps/tenant.yaml'
 yq '.spec.source.reconcileApplication=true' "$work/good.yaml" >"$input"
 refuses 'active Tenant'
 yq -o=json '.' "$work/good.yaml" >"$input"
@@ -99,22 +103,30 @@ printf 'resources: ["apps/ordinary resource"]\n' >"$work/tree/k8s/Kustomization"
 discover >"$work/result"
 [ ! -s "$work/result" ]
 rm "$work/tree/k8s/apps/ordinary resource" "$work/tree/k8s/Kustomization"
+mkdir "$work/tree/k8s/apps/shared"
+printf 'resources: [tenant.config]\n' >"$work/tree/k8s/apps/shared/shared.cfg"
+ln -s shared/shared.cfg "$work/tree/k8s/apps/Kustomization"
+cp "$work/good.yaml" "$work/tree/k8s/apps/tenant.config"
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata: {name: shadow}\n' >"$work/tree/k8s/apps/shared/tenant.config"
+refuses 'contained build-file link retains its original reference directory'
+rm "$work/tree/k8s/apps/Kustomization" "$work/tree/k8s/apps/tenant.config" "$work/tree/k8s/apps/shared/shared.cfg" "$work/tree/k8s/apps/shared/tenant.config"
+rmdir "$work/tree/k8s/apps/shared"
 mkdir -p "$work/tree/k8s/targets"
 cp "$work/good.yaml" "$work/tree/k8s/targets/typed.txt"
 ln -s ../targets/typed.txt "$input"
 refuses 'contained manifest file link'
 rm "$input"
 ln -s ../targets "$work/tree/k8s/apps/linked"
-refuses 'linked directory'
+refuses 'linked directory' ''
 rm "$work/tree/k8s/apps/linked"
 ln -s "$work/good.yaml" "$input"
-refuses 'manifest link outside published k8s root'
+refuses 'manifest link outside published k8s root' ''
 rm "$input"
 ln -s missing "$input"
-refuses 'dangling manifest link'
+refuses 'dangling manifest link' ''
 rm "$input"
 printf 'apiVersion: [broken\n' >"$input"
-refuses 'unreadable candidate syntax'
+refuses 'unreadable candidate syntax' 'could not parse every candidate'
 
 # Complete foreign GVKs are not assumed to use this source-producing constructor.
 printf 'apiVersion: other.example/v1\nkind: Tenant\n' >"$input"
@@ -143,6 +155,6 @@ discover >"$work/result"
 yq '.apiVersion="tenants.example.test/v1alpha1"' "$work/good.yaml" >"$input"
 refuses 'matching custom-group instance'
 yq -i 'del(.spec.schema.apiVersion)' "$work/tree/k8s/controller.yaml"
-refuses 'source-producing schema without a complete GVK'
+refuses 'source-producing schema without a complete GVK' 'source-producing schema GVK is unknown'
 printf '%s failure(s)\n' "$failures"
 [ "$failures" -eq 0 ]

@@ -179,7 +179,7 @@ spec:
     publisherRevision: $SHA_K
     reconcileApplication: false
 EOF
-expect_refusal 'an unapproved typed business source cannot disappear from attribution' "$root" 'business-site'
+expect_refusal 'an unapproved typed business source cannot disappear from attribution' "$root" 'k8s/providers/hetzner/apps/business-site/tenant.yaml'
 
 # ── the record, read strictly ─────────────────────────────────────────────────────────────
 root="$(build_tree record-missing)"
