@@ -878,11 +878,18 @@ metadata:
   name: helm-release-install-crds
 spec:
   matchConstraints:
+    objectSelector:
+      matchLabels:
+        helm.toolkit.fluxcd.io/crds: "enabled"
     resourceRules:
     - apiGroups: [helm.toolkit.fluxcd.io]
       apiVersions: ["*"]
       operations: [CREATE, UPDATE]
       resources: [helmreleases]
+  matchConditions:
+  - name: crds-enabled-on-incoming-object
+    expression: >-
+      has(object.metadata.labels) && 'helm.toolkit.fluxcd.io/crds' in object.metadata.labels && object.metadata.labels['helm.toolkit.fluxcd.io/crds'] == 'enabled'
   mutations:
   - patchType: JSONPatch
     jsonPatch:
@@ -954,6 +961,54 @@ assert_reviewed_mutation_variant_rejected \
   'mutating-policy-mutate-existing' \
   "${helm_release_crds_mutation_fixture}"$'\n  evaluation:\n    mutateExisting:\n      enabled: true' \
   'a mutate-existing MutatingPolicy must stay rejected'
+# #5106: every field outside the reviewed set voids the shape, and so does any
+# match condition or patch expression other than the reviewed one. An unknown key
+# inside a match condition or a mutation fails schema validation before this rule
+# is reached, so those two cases are covered by the consumer guard's suite.
+readonly newline=$'\n'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-variables' \
+  "${helm_release_crds_mutation_fixture}"$'\n  variables:\n  - name: source\n    expression: resource.Get("cilium.io/v2", "ciliumnetworkpolicies", "crossplane-system", "allow-crossplane")' \
+  'a MutatingPolicy that declares variables must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-match-condition' \
+  "${helm_release_crds_mutation_fixture/has(object.metadata.labels)/true}" \
+  'a match condition other than the reviewed label read must stay rejected'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-extra-spec-field' \
+  "${helm_release_crds_mutation_fixture}"$'\n  failurePolicy: Ignore' \
+  'a spec field outside the reviewed set must void the MutatingPolicy shape'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-namespace-selector' \
+  "${helm_release_crds_mutation_fixture/    resourceRules:/    namespaceSelector:${newline}      matchLabels:${newline}        team: x${newline}    resourceRules:}" \
+  'a match constraint outside the reviewed set must void the MutatingPolicy shape'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-resource-rule-field' \
+  "${helm_release_crds_mutation_fixture/resources: \[helmreleases\]/resources: [helmreleases]${newline}      resourceNames: [cilium]}" \
+  'a resource rule field outside the reviewed set must void the MutatingPolicy shape'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-no-match-condition' \
+  "${helm_release_crds_mutation_fixture/  matchConditions:*  mutations:/  mutations:}" \
+  'a MutatingPolicy without the reviewed match condition must stay rejected'
+readonly second_condition=$'  - name: second\n    expression: "true"\n  mutations:'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-second-match-condition' \
+  "${helm_release_crds_mutation_fixture/  mutations:/${second_condition}}" \
+  'a second match condition must void the MutatingPolicy shape'
+# Bash 5.2 replaces each & in a substitution's replacement with the matched text,
+# so the appended CEL uses || rather than &&.
+readonly reviewed_condition_end="== 'enabled'"
+readonly appended_condition="== 'enabled' || http.Get(\"https://example.test\") != null"
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-appended-condition' \
+  "${helm_release_crds_mutation_fixture/${reviewed_condition_end}/${appended_condition}}" \
+  'CEL appended to the reviewed match condition must stay rejected'
+readonly reviewed_patch_value='value: "CreateReplace"'
+readonly computed_patch_value='value: string(resource.Get("v1", "configmaps", "flux-system", "x"))'
+assert_reviewed_mutation_variant_rejected \
+  'mutating-policy-patch-value' \
+  "${helm_release_crds_mutation_fixture/${reviewed_patch_value}/${computed_patch_value}}" \
+  'a patch value computed by CEL must stay rejected'
 
 # The reviewed GeneratingPolicy shape (#5102): the catalog's auto-vpa, which
 # builds only a VerticalPodAutoscaler for an apps workload. Each reject below

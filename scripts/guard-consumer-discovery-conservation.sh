@@ -151,6 +151,20 @@ readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.nam
 readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
 # shellcheck disable=SC2090
 export REVIEWED_AUTO_VPA_DEPLOYMENT REVIEWED_AUTO_VPA_DAEMONSET REVIEWED_AUTO_VPA_STATEFULSET
+# The reviewed HelmRelease CRD-strategy MutatingPolicy (#5096,
+# k8s/bases/infrastructure/cluster-policies/flux/helm-release-install-crds.yaml):
+# its one JSON-patch expression with spaces, tabs and line breaks removed, read
+# under the same no-whitespace-in-literals rule as the auto-vpa expressions above,
+# and its one match condition as an anchored pattern that reads only the incoming
+# object's labels. Both are CEL with Kyverno's libraries bound, so any other
+# expression is refused (#5106). In the condition, whitespace between tokens is
+# free and `in` must stay a separate word.
+# shellcheck disable=SC2089
+readonly REVIEWED_HELM_RELEASE_CRDS_MUTATION='(has(object.spec.install)?[]:[JSONPatch{op:"add",path:"/spec/install",value:{}}])+[JSONPatch{op:"add",path:"/spec/install/crds",value:"CreateReplace"}]+(has(object.spec.upgrade)?[]:[JSONPatch{op:"add",path:"/spec/upgrade",value:{}}])+[JSONPatch{op:"add",path:"/spec/upgrade/crds",value:"CreateReplace"}]'
+# shellcheck disable=SC2089
+readonly REVIEWED_HELM_RELEASE_CRDS_CONDITION='^\s*has\(object\.metadata\.labels\)\s*&&\s*'"'"'helm\.toolkit\.fluxcd\.io/crds'"'"'\s+in\s+object\.metadata\.labels\s*&&\s*object\.metadata\.labels\['"'"'helm\.toolkit\.fluxcd\.io/crds'"'"'\]\s*==\s*'"'"'enabled'"'"'\s*$'
+# shellcheck disable=SC2090
+export REVIEWED_HELM_RELEASE_CRDS_MUTATION REVIEWED_HELM_RELEASE_CRDS_CONDITION
 if ! artifact_contract="$(yq -N -r '[
     (.apiVersion == "ksail.io/v1alpha1"), (.kind == "Cluster"),
     (.spec.cluster.gitOpsEngine == "Flux"),
@@ -746,6 +760,13 @@ while IFS=$'\t' read -r file label; do
   # The patch text is read literally: each "path" and "op" must be followed by
   # an approved string literal; the leading "#" keeps the text before the
   # first one from ever matching.
+  # Its spec holds only the match constraints (resource rules naming only
+  # their four selection fields, and an object selector, which is a label
+  # selector and not CEL), exactly one match condition equal to
+  # REVIEWED_HELM_RELEASE_CRDS_CONDITION, and exactly one mutation whose
+  # expression equals REVIEWED_HELM_RELEASE_CRDS_MUTATION, whitespace aside.
+  # Every other field is refused, because variables, conditions and patch
+  # values are CEL that can read or write the cluster (#5106).
   # The second reviewed shape (#5102) is the shared catalog's auto-vpa: a
   # Kyverno GeneratingPolicy whose spec holds only evaluation settings, one
   # apps resource rule (apiGroups, apiVersions, operations, resources) naming
@@ -767,19 +788,37 @@ while IFS=$'\t' read -r file label; do
         and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
         and (.spec | type) == "!!map"
         and (.spec | has("targetMatchConstraints") | not)
+        and ([.spec | keys | .[] | select((. == "matchConstraints" or . == "matchConditions"
+          or . == "mutations") | not)] | length) == 0
+        and (.spec.matchConstraints | type) == "!!map"
+        and ([.spec.matchConstraints | keys | .[] | select((. == "resourceRules"
+          or . == "objectSelector") | not)] | length) == 0
+        and (.spec.matchConditions | type) == "!!seq"
+        and (.spec.matchConditions | length) == 1
+        and (.spec.matchConditions[0] | type) == "!!map"
+        and ([.spec.matchConditions[0] | keys | .[] | select((. == "name" or . == "expression") | not)] | length) == 0
+        and (.spec.matchConditions[0].expression | type) == "!!str"
+        and (.spec.matchConditions[0].expression | test(strenv(REVIEWED_HELM_RELEASE_CRDS_CONDITION)))
         and ((.spec.evaluation // {}) | has("mutateExisting") | not)
         and (.spec.matchConstraints.resourceRules | type) == "!!seq"
         and (.spec.matchConstraints.resourceRules | length) > 0
         and ([.spec.matchConstraints.resourceRules[] | select(type != "!!map"
+          or ([keys | .[] | select((. == "apiGroups" or . == "apiVersions" or . == "operations"
+            or . == "resources") | not)] | length) != 0
           or (.apiGroups | type) != "!!seq" or (.apiGroups | length) != 1
           or .apiGroups[0] != "helm.toolkit.fluxcd.io"
           or (.resources | type) != "!!seq" or (.resources | length) != 1
           or .resources[0] != "helmreleases")] | length) == 0
         and (.spec.mutations | type) == "!!seq"
-        and (.spec.mutations | length) > 0
+        and (.spec.mutations | length) == 1
         and ([.spec.mutations[] | select(type != "!!map"
+          or ([keys | .[] | select((. == "patchType" or . == "jsonPatch") | not)] | length) != 0
           or .patchType != "JSONPatch" or has("applyConfiguration")
+          or (.jsonPatch | type) != "!!map"
+          or ([.jsonPatch | keys | .[] | select(. != "expression")] | length) != 0
           or (.jsonPatch.expression | type) != "!!str"
+          or ((.jsonPatch.expression | test("^[^\"\\x5c]*(\"[^\"\\x5c\\s]*\"[^\"\\x5c]*)*$")) | not)
+          or (.jsonPatch.expression | sub("[ \t\r\n]"; "")) != strenv(REVIEWED_HELM_RELEASE_CRDS_MUTATION)
           or (("#" + .jsonPatch.expression) | split("path")
             | ((length < 2)
               or (([.[] | select(test("^\\s*:\\s*\"/spec/(install|upgrade)(/crds)?\"\\s*[,}]") | not)] | length) != 1)))
