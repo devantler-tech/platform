@@ -40,6 +40,8 @@ var canonicalCIPaths = []string{
 	"scripts/tests/test-canonical-bootstrap-output.sh",
 	"scripts/tests/test-canonical-publisher-regeneration.sh",
 	"scripts/tests/test-tenant-source-discovery.sh",
+	"scripts/tests/test-tenant-kro-pull-secret.sh",
+	"scripts/tests/tenant-webapp-admission/**",
 }
 
 // This package runs independently through the unconditional Go regressions.

@@ -227,6 +227,7 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-tenant-kro-pull-secret.sh'
               - 'scripts/tests/test-arc-listener-public-content.sh'
               - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
@@ -1802,6 +1803,10 @@ jobs:
           bash scripts/tests/test-guard-coroot-baseline-context.sh
           shellcheck scripts/admit-coroot-baseline-context.sh scripts/tests/test-admit-coroot-baseline-context.sh
           bash scripts/tests/test-admit-coroot-baseline-context.sh
+      - name: 🔐 Verify the controller-owned tenant pull secret
+        run: |
+          shellcheck scripts/tests/test-tenant-kro-pull-secret.sh
+          bash scripts/tests/test-tenant-kro-pull-secret.sh
 
   validate-rgd-templates:
     name: 🔬 Validate Nested RGD Templates

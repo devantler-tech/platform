@@ -228,7 +228,7 @@ rbac.authorization.k8s.io/v1|ClusterRole||external-secrets-tenant-edit 0880321fd
 
 rbac.authorization.k8s.io/v1|ClusterRole||gateway-tenant-edit deb3a7675f72c5c79c121092b933ae775a4a30fc71278e6f843a1e3d4d35d98c
 
-rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 5afa77b476da22918e8605e65e2a3172409f18ae46270b280a4cd6aba9496fd0
+rbac.authorization.k8s.io/v1|ClusterRole||kro-tenant-rgd 91cb7bc7012ca296f7c73a719a8a28ee548a73813accf94f0f813d4c378c0244
 
 rbac.authorization.k8s.io/v1|ClusterRole||kubescape-hostdata-cleanup b047f9796da7c8c6d7fa9ae09d559c701219e6ce308c2cc1a5fe155649c52f6f
 
