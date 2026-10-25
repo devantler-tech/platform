@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+// A normal administration Service must never select the recovery listener.
+// Stalwart's supported recovery override changes its port, not its bind address.
+const bootstrapRecoveryPort = "18080"
+
 type bootstrapRuntime struct {
 	server, cli, url, dataDir          string
 	applicationFile, applicationDigest string
@@ -41,7 +45,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 		return 2
 	}
 	runtime := bootstrapRuntime{
-		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:8080",
+		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:" + bootstrapRecoveryPort,
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
 		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
@@ -124,7 +128,8 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	}
 	child := exec.Command(runtime.server, runtime.serverArgs...)
 	child.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work,
-		"STALWART_RECOVERY_MODE=1", "STALWART_RECOVERY_ADMIN=bootstrap:" + v.administratorPassword}
+		"STALWART_RECOVERY_MODE=1", "STALWART_RECOVERY_MODE_PORT=" + bootstrapRecoveryPort,
+		"STALWART_RECOVERY_ADMIN=bootstrap:" + v.administratorPassword}
 	// Native diagnostics may include credentials or private configuration.
 	child.Stdout, child.Stderr = io.Discard, io.Discard
 	if child.Start() != nil {
