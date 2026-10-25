@@ -29,8 +29,8 @@ func TestApprovalSummaryNamesTheExactLedgerEdit(t *testing.T) {
 	if err := os.WriteFile(summary, []byte("earlier step\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeApprovalSummary(validationErr, summary); err != nil {
-		t.Fatalf("write approval summary: %v", err)
+	if written, err := writeApprovalSummary(validationErr, summary); err != nil || !written {
+		t.Fatalf("write approval summary: written=%v error=%v", written, err)
 	}
 	contents, err := os.ReadFile(summary) //nolint:gosec // Test-owned temporary file.
 	if err != nil {
@@ -78,16 +78,16 @@ func TestApprovalSummaryWritesNothingWithoutAShowableMismatch(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			summary := filepath.Join(t.TempDir(), "summary.md")
-			err := writeApprovalSummary(tc.err, summary)
-			if (err != nil) != tc.wantErr {
-				t.Fatalf("error = %v, want error %v", err, tc.wantErr)
+			written, err := writeApprovalSummary(tc.err, summary)
+			if (err != nil) != tc.wantErr || written {
+				t.Fatalf("written=%v error=%v, want written=false error %v", written, err, tc.wantErr)
 			}
 			if _, statErr := os.Stat(summary); !errors.Is(statErr, os.ErrNotExist) {
 				t.Fatalf("summary written for %s (stat error %v)", tc.name, statErr)
 			}
 		})
 	}
-	if err := writeApprovalSummary(&surfaceMismatchError{delta: []string{"+ line"}}, ""); err != nil {
-		t.Fatalf("outside GitHub Actions: %v", err)
+	if written, err := writeApprovalSummary(&surfaceMismatchError{delta: []string{"+ line"}}, ""); err != nil || written {
+		t.Fatalf("outside GitHub Actions: written=%v error=%v", written, err)
 	}
 }
