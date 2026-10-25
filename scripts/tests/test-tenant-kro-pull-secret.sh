@@ -54,6 +54,7 @@ jq -nc --slurpfile raw "$work/raw.json" --slurpfile defaults "$work/defaulted.js
   deny("target type";($raw[0]|.spec.target.template.type="Opaque")),
   deny("refresh behavior";($raw[0]|.spec.refreshPolicy="OnChange")),
   deny("managed label";($raw[0]|.metadata.labels["app.kubernetes.io/managed-by"]="other")),
+  deny("obsolete template ownership";($raw[0]|.metadata.labels["app.kubernetes.io/managed-by"]="ksail")),
   deny("other API";($raw[0]|.apiVersion="external-secrets.io/v1beta1")),
   (["kro.run/instance-id","kro.run/instance-name","kro.run/instance-namespace","kro.run/instance-group","kro.run/instance-version","kro.run/instance-kind","kro.run/node-id"][] as $key |
     deny("substituted identity "+$key;($raw[0]|.metadata.labels[$key]="other"))),
@@ -71,8 +72,12 @@ expected="$(jq -s length "$work/requests.jsonl")"
   cd "$root/scripts/tests/tenant-webapp-admission"
   go build -mod=readonly -o "$work/admission" .
 )
-"$work/admission" "$policy" <"$work/requests.jsonl" >"$work/result"
-grep -Fq "$expected explicit Kyverno engine controls passed" "$work/result"
+for owner in ksail kro; do
+  jq -c --arg owner "$owner" '.namespaces[].metadata.labels["app.kubernetes.io/managed-by"]=$owner' \
+    "$work/requests.jsonl" >"$work/owner.jsonl"
+  "$work/admission" "$policy" <"$work/owner.jsonl" >"$work/result"
+  grep -Fq "$expected explicit Kyverno engine controls passed" "$work/result"
+done
 # Removing namespace observations must fail instead of silently excluding cases.
 jq -c 'del(.namespaces)' "$work/requests.jsonl" >"$work/no-namespaces.jsonl"
 if "$work/admission" "$policy" <"$work/no-namespaces.jsonl" >"$work/no-namespaces.log" 2>&1; then

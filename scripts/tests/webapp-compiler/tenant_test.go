@@ -187,6 +187,11 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			objects, ignored := desiredTenant(t, compiled, input)
 			assertTenantChildren(t, objects, ignored, false, sops)
+			if !sops {
+				t.Run("controller-ownership", func(t *testing.T) {
+					assertTenantControllerOwnership(t, ctx, config, root, objects)
+				})
+			}
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
 			if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
