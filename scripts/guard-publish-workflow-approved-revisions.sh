@@ -85,5 +85,11 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
   printf 'ok %s %s %s form=%s\n' "$consumer" "$workflow" "$file" "$form"
 done
 
+canonical_count="$(printf '%s\n' "$canonical_only" | jq -r '.bindings|length')"
+while IFS= read -r canonical_entry; do
+  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
+  printf 'ok %s publish-app form=canonical-source-only (%s; no application reconciliation)\n' \
+    "$canonical_consumer" "$(printf '%s\n' "$canonical_entry" | jq -r .kind)"
+done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 printf 'guard-publish-workflow-approved-revisions: %d consumer matcher(s) agree with %s (enforce=%s)\n' \
-  "${#EXPECTED_CONSUMERS[@]}" "${APPROVED_SET#"$REPO_ROOT"/}" "$ENFORCE"
+  "$((${#EXPECTED_CONSUMERS[@]}+canonical_count))" "${APPROVED_SET#"$REPO_ROOT"/}" "$ENFORCE"

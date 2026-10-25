@@ -80,6 +80,7 @@ jobs:
             .github
             ascoachingogvaner
             aws
+            business-site
             khoist
             wedding-app
           permission-contents: read
@@ -112,6 +113,10 @@ jobs:
           # data change. Pinning here keeps that pull request one concern whatever ref
           # the dispatch came from.
           ref: main
+
+      # Canonical source evidence verifies the immutable publication signature.
+      - name: ⚙️ Setup cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: 🔑 Restore kubeconfig
         shell: bash
@@ -162,6 +167,7 @@ jobs:
             scripts/publish-workflow-approved-revisions.tsv
             scripts/publish-workflow-approved-revisions.identities.tsv
             scripts/publish-workflow-bootstrap-publications.json
+            scripts/canonical-tenant-source-bindings.json
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -215,6 +221,7 @@ jobs:
             scripts/publish-workflow-approved-revisions.tsv
             scripts/publish-workflow-approved-revisions.identities.tsv
             scripts/publish-workflow-bootstrap-publications.json
+            scripts/canonical-tenant-source-bindings.json
             k8s/bases/apps/github-config/oci-repository.yaml
             k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
             k8s/providers/hetzner/apps/aws/oci-repository.yaml

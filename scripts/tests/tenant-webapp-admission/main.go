@@ -39,6 +39,7 @@ type fixture struct {
 	Subresource   string                       `json:"subresource"`
 	Expected      string                       `json:"expected"`
 	Parents       []*unstructured.Unstructured `json:"parents"`
+	Namespaces    []*corev1.Namespace          `json:"namespaces"`
 	LookupFailure string                       `json:"lookupFailure"`
 }
 
@@ -116,7 +117,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if target == nil {
 		target = f.OldObject
 	}
-	resources := map[string]string{"WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes"}
+	resources := map[string]string{"WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets"}
 	gvk := target.GroupVersionKind()
 	resource, ok := resources[gvk.Kind]
 	if !ok || gvk.Version == "" {
@@ -151,7 +152,14 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if err != nil {
 		return err
 	}
-	eng := vpolengine.NewEngine(provider, func(string) *corev1.Namespace { return nil }, matching.NewMatcher())
+	namespaces := map[string]*corev1.Namespace{}
+	for _, namespace := range f.Namespaces {
+		if namespace == nil || namespace.Name == "" || namespaces[namespace.Name] != nil {
+			return fmt.Errorf("invalid fictional namespace observation")
+		}
+		namespaces[namespace.Name] = namespace
+	}
+	eng := vpolengine.NewEngine(provider, func(name string) *corev1.Namespace { return namespaces[name] }, matching.NewMatcher())
 	req := celengine.Request(libraryContext, gvk, schema.GroupVersionResource{Group: gvk.Group, Version: gvk.Version, Resource: resource},
 		f.Subresource, target.GetName(), target.GetNamespace(), f.Operation,
 		authenticationv1.UserInfo{Username: f.Actor}, object, oldObject, false, nil)

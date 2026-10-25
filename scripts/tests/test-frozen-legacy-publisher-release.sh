@@ -105,8 +105,13 @@ for path in "${retired_paths[@]}"; do
   fi
 done
 
-# Exercise the real generator entry point too. Only its external publication and
-# pin observations are fixtures; consumer discovery and frozen resolution are real.
+# Exercise the real generator for the frozen legacy/dual-family universe. The
+# canonical-only consumer has separate six-consumer generator controls; it must
+# not borrow this test's synthetic legacy publication or network assumptions.
+# shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
+source "$root_dir/scripts/tests/lib/legacy-consumer-fixture.sh"
+legacy_fixture="$work/legacy-consumers"
+build_legacy_consumer_fixture "$root_dir" "$legacy_fixture"
 cat > "$work/observe" <<'STUB'
 #!/usr/bin/env bash
 printf '1.2.3\tsha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\tea4df9004d4ab43b6c9af5b0c5f55712f7211328\n'
@@ -119,6 +124,8 @@ chmod +x "$work/observe" "$work/pin"
 printf '{"schemaVersion":1,"publications":[]}\n' > "$work/bootstrap.json"
 generate() {
   env PATH="$work/bin:$PATH" FROZEN_TEST_LOG="$work/requests.log" \
+    PUBLISH_CONSUMER_ROOT="$legacy_fixture" \
+    CANONICAL_APPROVALS_FILE="$legacy_fixture/scripts/publish-workflow-canonical-approvals.tsv" \
     FROZEN_LEGACY_RELEASE_FILE="$1" APPROVED_REVISION_RELEASE_RESOLVER='' \
     APPROVED_REVISION_OBSERVER="$work/observe" APPROVED_REVISION_PIN_RESOLVER="$work/pin" \
     PUBLISH_BOOTSTRAP_FILE="$work/bootstrap.json" APPROVED_REVISIONS_FILE="$work/generated.tsv" \
@@ -126,10 +133,10 @@ generate() {
 }
 : > "$work/requests.log"
 if generate '' && [[ ! -s "$work/requests.log" ]] && \
-  awk -F'\t' -v candidate="$frozen" 'NR>1 { if (NF!=8 || $7!=candidate) bad=1; rows++ } END {exit bad || !rows}' "$work/generated.tsv"; then
+  awk -F'\t' -v candidate="$frozen" 'NR>1 { if (NF!=8 || $7!=candidate || $1=="business-site") bad=1; rows++ } END {exit bad || rows!=5}' "$work/generated.tsv"; then
   passed=$((passed + 1))
 else
-  printf 'FAIL: complete generator must use the frozen default without network requests\n'
+  printf 'FAIL: complete legacy generator must use the frozen default without network requests\n'
   failed=$((failed + 1))
 fi
 if [[ -f "$work/generated.tsv" && -f "$work/generated.identities.tsv" ]]; then

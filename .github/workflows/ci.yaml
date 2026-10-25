@@ -227,6 +227,7 @@ jobs:
               - 'scripts/tests/test-headlamp-plugin-removal.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-tenant-kro-pull-secret.sh'
               - 'scripts/tests/test-arc-listener-public-content.sh'
               - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
@@ -553,6 +554,13 @@ jobs:
               - 'scripts/publish-workflow-approved-revisions.lib.sh'
               - 'scripts/tenant-publication-binding.lib.sh'
               - 'scripts/tenant-source-discovery.lib.sh'
+              - 'scripts/canonical-tenant-source.lib.sh'
+              - 'scripts/canonical-tenant-source-bindings.json'
+              - 'scripts/tests/test-canonical-source-bootstrap.sh'
+              - 'scripts/tests/test-canonical-constructor-attribution.sh'
+              - 'scripts/tests/test-canonical-generator-output.sh'
+              - 'scripts/tests/test-canonical-bootstrap-output.sh'
+              - 'scripts/tests/lib/legacy-consumer-fixture.sh'
               - 'scripts/tests/test-tenant-source-discovery.sh'
               - 'scripts/bootstrap-tenant-source.sh'
               - 'scripts/publish-workflow-bootstrap-publications.json'
@@ -1135,7 +1143,7 @@ jobs:
       - name: 🔐 Validate the publish-revision report
         run: |
           shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
-          shellcheck scripts/tests/test-publish-workflow-signing-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-signing-revisions.sh
           bash scripts/tests/test-publish-workflow-signing-revisions.sh
           shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
           bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
@@ -1165,7 +1173,14 @@ jobs:
           shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
           bash scripts/tests/test-tenant-publication-binding.sh
           bash scripts/tests/test-bootstrap-tenant-source.sh
-          shellcheck scripts/tests/test-canonical-publisher-regeneration.sh
+          shellcheck -x scripts/canonical-tenant-source.lib.sh scripts/tests/test-canonical-source-bootstrap.sh scripts/tests/test-canonical-bootstrap-output.sh
+          bash scripts/tests/test-canonical-source-bootstrap.sh
+          shellcheck -x scripts/tests/test-canonical-constructor-attribution.sh
+          bash scripts/tests/test-canonical-constructor-attribution.sh
+          shellcheck -x scripts/tests/test-canonical-generator-output.sh
+          bash scripts/tests/test-canonical-generator-output.sh
+          bash scripts/tests/test-canonical-bootstrap-output.sh
+          shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
           bash scripts/tests/test-canonical-publisher-regeneration.sh
 
       # The pin guard above proves each matcher pins a FIXED revision; this one proves each
@@ -1183,7 +1198,7 @@ jobs:
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
-          shellcheck scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
+          shellcheck -x scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
           bash scripts/tests/test-tenant-source-discovery.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
@@ -1210,7 +1225,7 @@ jobs:
       # current observations and canonical approvals remain separately required.
       - name: 🔐 Validate frozen legacy publisher evidence
         run: |
-          shellcheck scripts/tests/test-frozen-legacy-publisher-release.sh
+          shellcheck -x scripts/tests/test-frozen-legacy-publisher-release.sh
           bash scripts/tests/test-frozen-legacy-publisher-release.sh
 
       # The authorization gate's verdict and its moved-entry diagnostics are two
@@ -1788,6 +1803,10 @@ jobs:
           bash scripts/tests/test-guard-coroot-baseline-context.sh
           shellcheck scripts/admit-coroot-baseline-context.sh scripts/tests/test-admit-coroot-baseline-context.sh
           bash scripts/tests/test-admit-coroot-baseline-context.sh
+      - name: 🔐 Verify the controller-owned tenant pull secret
+        run: |
+          shellcheck scripts/tests/test-tenant-kro-pull-secret.sh
+          bash scripts/tests/test-tenant-kro-pull-secret.sh
 
   validate-rgd-templates:
     name: 🔬 Validate Nested RGD Templates

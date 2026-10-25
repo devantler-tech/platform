@@ -7,6 +7,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$ROOT/scripts/report-publish-workflow-signing-revisions.sh"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# This suite injects the five legacy/dual-family consumers below. Use the same
+# explicit universe for the report's registration floor instead of borrowing
+# canonical-only registrations from the production tree.
+# shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
+source "$ROOT/scripts/tests/lib/legacy-consumer-fixture.sh"
+build_legacy_consumer_fixture "$ROOT" "$WORK/legacy-consumers"
+export PUBLISH_CONSUMER_ROOT="$WORK/legacy-consumers"
 SHA='1111111111111111111111111111111111111111'
 COMMIT='3333333333333333333333333333333333333333'
 fixture_case=canonical-signed
