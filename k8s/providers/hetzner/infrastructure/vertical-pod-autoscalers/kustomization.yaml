@@ -10,7 +10,7 @@
 # injects recommendations into every namespace regardless.
 #
 # NO PER-WORKLOAD DUPLICATION: the shared updatePolicy + resourcePolicy (which
-# mirrors auto-vpa.yaml) is defined ONCE in the patches below and applied to
+# mirrors the auto-vpa-* GeneratingPolicies) is defined ONCE in the patches below and applied to
 # every VPA via a kind selector. The per-workload files carry only targetRefs.
 #   * base patch  → all VPAs: InPlaceOrRecreate (resize in place, never evict the
 #     datapath/admission pods), controlledValues RequestsAndLimits, minAllowed
@@ -59,7 +59,7 @@ resources:
   - tetragon-operator.yaml
   - tetragon.yaml
 patches:
-  # Shared policy for every system VPA (mirrors auto-vpa.yaml).
+  # Shared policy for every system VPA (mirrors auto-vpa-deployment.yaml).
   - target:
       kind: VerticalPodAutoscaler
     patch: |
@@ -81,8 +81,8 @@ patches:
               maxAllowed:
                 cpu: "3"
                 memory: 6Gi
-  # DaemonSets: CPU only — VPA must not manage DaemonSet MEMORY (mirrors the
-  # auto-vpa.yaml DaemonSet rule; full rationale there). VPA keeps one usage
+  # DaemonSets: CPU only — VPA must not manage DaemonSet MEMORY (mirrors
+  # auto-vpa-daemonset.yaml). VPA keeps one usage
   # histogram across all pods of a DaemonSet, so it sizes EVERY node's agent
   # to the busiest node's peak and multiplies that by the node count; that
   # pushed the per-node agent stack to ~3.5Gi ≈ 50% of a cx33's allocatable —

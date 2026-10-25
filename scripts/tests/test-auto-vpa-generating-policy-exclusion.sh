@@ -18,7 +18,7 @@ static_vpas="${repo_root}/k8s/providers/hetzner/infrastructure/vertical-pod-auto
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
 
-# The classic policy's exclusions, plus every namespace prod gives static VPAs.
+# The system namespaces, plus every namespace prod gives static VPAs.
 required="$(
   {
     printf '%s\n' kube-system kube-public kube-node-lease kyverno

@@ -274,7 +274,6 @@ jobs:
               # The admission guard for every hcloud consumer, and its fixtures.
               - 'tests/require-baseline-workers-for-hcloud-volumes/**'
               - 'tests/audit-privileged-rbac/**'
-              - 'tests/auto-vpa/**'
               # The platform's copy of the catalog auto-vpa GeneratingPolicy: its
               # fixtures and its system-namespace exclusion test (#5130).
               - 'tests/auto-vpa-generating-policy-*/**'

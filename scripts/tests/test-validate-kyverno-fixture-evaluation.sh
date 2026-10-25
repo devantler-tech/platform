@@ -130,13 +130,14 @@ if kyverno_passes "renamed resource" "${root}"; then
 fi
 
 # A generate row names the object it generates, which need not share its trigger's name.
-root="$(copy generated-name auto-vpa)"
-yq -i '(.spec.rules[] | select(.name == "generate-vpa-for-deployment") | .generate.name) = "{{request.object.metadata.name}}-vpa"' \
-  "${root}/${policies}/auto-vpa.yaml"
-for expected in "${root}"/tests/auto-vpa/deployment-owner-expected.yaml "${root}"/tests/auto-vpa/recreated/*expected*.yaml; do
-  [ "$(yq '.metadata.name' "${expected}")" = "deployment-owner" ] || continue
-  yq -i '.metadata.name = "deployment-owner-vpa"' "${expected}"
-done
+# Renaming the generated VPA, and the expected object with it, must still pass.
+root="$(copy generated-name auto-vpa-generating-policy-deployment)"
+sed -i.orig 's/string(object.metadata.name) + "-deployment"/string(object.metadata.name) + "-vpa"/' \
+  "${root}/${policies}/auto-vpa-deployment.yaml"
+rm -f "${root}/${policies}/auto-vpa-deployment.yaml.orig"
+grep -Fq 'string(object.metadata.name) + "-vpa"' "${root}/${policies}/auto-vpa-deployment.yaml" ||
+  fail "generated object named apart from its trigger: the rename did not apply"
+yq -i '.metadata.name = "shared-vpa"' "${root}/tests/auto-vpa-generating-policy-deployment/generated-vpa.yaml"
 if kyverno_passes "generated object named apart from its trigger" "${root}"; then
   expect_pass "generated object named apart from its trigger" "${root}"
 fi
