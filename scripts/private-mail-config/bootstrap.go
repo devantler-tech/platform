@@ -17,9 +17,10 @@ import (
 )
 
 type bootstrapRuntime struct {
-	server, cli, url, dataDir string
-	serverArgs                []string
-	startup, shutdown         time.Duration
+	server, cli, url, dataDir          string
+	applicationFile, applicationDigest string
+	serverArgs                         []string
+	startup, shutdown                  time.Duration
 }
 
 func bootstrapCommand(args []string, log io.Writer) int {
@@ -34,10 +35,16 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	defer cancel()
 	ctx, timeout := context.WithTimeout(ctx, 3*time.Minute)
 	defer timeout()
+	applicationDigest, err := pinnedApplicationDigest()
+	if err != nil {
+		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid administration asset metadata.")
+		return 2
+	}
 	runtime := bootstrapRuntime{
 		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:8080",
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
+		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
 		_, _ = fmt.Fprintln(log, "Private mail bootstrap failed; serving must remain stopped.", err)
@@ -67,6 +74,9 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	}
 	plan, err := render(v)
 	if err != nil {
+		return errConfiguration
+	}
+	if verifyApplicationAsset(runtime.applicationFile, runtime.applicationDigest) != nil {
 		return errConfiguration
 	}
 	lock, err := os.OpenFile(filepath.Join(runtime.dataDir, ".private-mail-bootstrap.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)

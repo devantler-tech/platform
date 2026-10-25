@@ -88,7 +88,7 @@ func validateApply(plan, output []byte) error {
 // extra permission, socket or expression branch must never compare equal.
 func policyMatches(want, actual any, key string) bool {
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -256,6 +256,9 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 					identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
 					if op.Object == "Certificate" {
 						identity = policyMatches(fields["certificate"], actual["certificate"], "")
+					}
+					if op.Object == "Application" {
+						identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
 					}
 					if identity {
 						if match != nil {
