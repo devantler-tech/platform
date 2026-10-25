@@ -9,10 +9,17 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"regexp"
 	"syscall"
 )
 
-const applicationAssetPath = "/usr/local/share/stalwart/webui.zip"
+const legacyApplicationAssetPath = "/usr/local/share/stalwart/webui.zip"
+
+var administrationAssetURI = regexp.MustCompile(`^file:///usr/local/share/stalwart/webui-[0-9a-f]{64}\.zip$`)
+
+func applicationAssetPath(digest string) string {
+	return "/usr/local/share/stalwart/webui-" + digest + ".zip"
+}
 
 //go:embed webui-pins.json
 var applicationReleaseJSON []byte
@@ -101,7 +108,7 @@ func validateApplications(methods [][]json.RawMessage) error {
 	if app.ID == "" || app.ID != query.IDs[0] || app.Description != "Stalwart Web Interface" || app.Enabled == nil || !*app.Enabled || !reflect.DeepEqual(app.Prefixes, map[string]bool{"/admin": true, "/account": true}) || !bytes.Equal(bytes.TrimSpace(app.Unpack), []byte("null")) || !bytes.Equal(bytes.TrimSpace(app.OAuth), []byte("null")) {
 		return errConfiguration
 	}
-	if app.Resource != "https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip" && app.Resource != "file://"+applicationAssetPath {
+	if app.Resource != "https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip" && app.Resource != "file://"+legacyApplicationAssetPath && !administrationAssetURI.MatchString(app.Resource) {
 		return errConfiguration
 	}
 	return nil

@@ -44,7 +44,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:8080",
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
-		applicationFile: applicationAssetPath, applicationDigest: applicationDigest,
+		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
 		_, _ = fmt.Fprintln(log, "Private mail bootstrap failed; serving must remain stopped.", err)

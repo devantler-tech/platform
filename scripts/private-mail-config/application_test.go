@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,17 @@ import (
 	"testing"
 	"time"
 )
+
+func expectedAdministrationURI(t *testing.T) string {
+	t.Helper()
+	var pin struct {
+		Digest string `json:"sha256"`
+	}
+	if err := json.Unmarshal(applicationReleaseJSON, &pin); err != nil || len(pin.Digest) != 64 {
+		t.Fatal("administration fixture pin is invalid")
+	}
+	return "file:///usr/local/share/stalwart/webui-" + pin.Digest + ".zip"
+}
 
 func TestPlanSelectsLocalAdministrationAssetsAndBoundedRoutes(t *testing.T) {
 	plan, err := render(fixture())
@@ -38,8 +50,8 @@ func TestPlanSelectsLocalAdministrationAssetsAndBoundedRoutes(t *testing.T) {
 	if !ok || app["description"] != "Stalwart Web Interface" || app["enabled"] != true {
 		t.Fatal("the administration application is not configured")
 	}
-	if app["resourceUrl"] != "file:///usr/local/share/stalwart/webui.zip" {
-		t.Fatal("administration still depends on an external download or another local resource")
+	if app["resourceUrl"] != expectedAdministrationURI(t) {
+		t.Fatal("administration cache identity is not bound to the reviewed bundle digest")
 	}
 	if !reflect.DeepEqual(app["urlPrefix"], map[string]any{"/admin": true, "/account": true}) {
 		t.Fatal("administration routes are incomplete or broader than the supported interfaces")
@@ -105,7 +117,7 @@ func TestBootstrapChecksAdministrationAssetsBeforeStartingRecovery(t *testing.T)
 }
 
 func TestAdministrationReadbackRequiresTheLocalResourceAndExactRoutes(t *testing.T) {
-	plan := []byte(`{"@type":"upsert","object":"Application","matchOn":["description"],"value":{"webadmin":{"description":"Stalwart Web Interface","enabled":true,"resourceUrl":"file:///usr/local/share/stalwart/webui.zip","urlPrefix":{"/admin":true,"/account":true}}}}` + "\n")
+	plan := []byte(fmt.Sprintf(`{"@type":"upsert","object":"Application","matchOn":["description"],"value":{"webadmin":{"description":"Stalwart Web Interface","enabled":true,"resourceUrl":%q,"urlPrefix":{"/admin":true,"/account":true}}}}`+"\n", expectedAdministrationURI(t)))
 	for _, tc := range []struct {
 		name   string
 		change func(map[string]any)
@@ -113,12 +125,13 @@ func TestAdministrationReadbackRequiresTheLocalResourceAndExactRoutes(t *testing
 	}{
 		{"verified local application", func(map[string]any) {}, true},
 		{"external download", func(app map[string]any) { app["resourceUrl"] = "https://example.test/unreviewed.zip" }, false},
+		{"unversioned cached resource", func(app map[string]any) { app["resourceUrl"] = "file:///usr/local/share/stalwart/webui.zip" }, false},
 		{"additional public route", func(app map[string]any) { app["urlPrefix"].(map[string]bool)["/"] = true }, false},
 		{"another application", func(app map[string]any) { app["description"] = "Another application" }, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := map[string]any{"id": "ui", "description": "Stalwart Web Interface", "enabled": true,
-				"resourceUrl": "file:///usr/local/share/stalwart/webui.zip", "urlPrefix": map[string]bool{"/admin": true, "/account": true}}
+				"resourceUrl": expectedAdministrationURI(t), "urlPrefix": map[string]bool{"/admin": true, "/account": true}}
 			tc.change(app)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				var call struct {

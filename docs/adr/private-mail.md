@@ -120,6 +120,8 @@ the pinned server's single default Stalwart Web Interface, with exactly the
 another application, an unknown resource, an external OAuth client or a custom
 unpack directory fences initialization. The plan preserves the interface's
 identity and replaces its route map with the two approved prefixes.
+Known unversioned local resources and earlier digest-qualified resources are
+accepted only as input to reconciliation to the active image's verified pin.
 
 Apply the private plan with the pinned official Stalwart CLI 1.0.13, using its
 environment-based authentication from mounted credentials. Capture both output
@@ -166,6 +168,10 @@ their committed SHA-256 checksums. The image includes the upstream source URL.
 Bootstrap verifies the bundle again before starting recovery, refusing missing,
 altered, oversized or symbolic-link assets. The application uses the image's
 local file rather than downloading executable browser assets at runtime.
+The filename and configured resource URL include the bundle's digest. Changing
+the pin therefore changes the native resource URL and invalidates Stalwart's
+cached ZIP while preserving the Application identity; verifying an image file
+at a permanent URL alone would still permit a previously cached interface.
 
 Its default entrypoint is bootstrap; it cannot silently fall
 through to an unconfigured normal server. It expects private inputs under
@@ -181,6 +187,9 @@ inventory, and serves both interfaces from that same image on an internal
 network without external egress. It compares every script and stylesheet
 referenced by each entry page with the pinned bundle, proves authenticated
 management access and refuses the same request without authentication. It
+primes an old cached interface, reapplies bootstrap with the real image, and
+requires the pinned pages and assets to replace that cache without changing
+the Application identity. It
 proves normal authentication after recovery stops, and repeats
 bootstrap after receiving mail to verify history survives. A failed or
 interrupted apply is not atomic and must keep serving stopped. This

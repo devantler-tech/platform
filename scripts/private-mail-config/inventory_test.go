@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -101,11 +102,14 @@ func applicationInventoryFixture() map[string]any {
 }
 
 func TestInventoryRequiresCompleteAndRecognizedApplications(t *testing.T) {
-	for _, local := range []bool{false, true} {
+	for _, resource := range []string{
+		"https://github.com/stalwartlabs/webui/releases/download/v1.0.11/webui.zip",
+		"file:///usr/local/share/stalwart/webui.zip",
+		expectedAdministrationURI(t),
+		"file:///usr/local/share/stalwart/webui-" + strings.Repeat("a", 64) + ".zip",
+	} {
 		application := applicationInventoryFixture()
-		if local {
-			application["resourceUrl"] = "file:///usr/local/share/stalwart/webui.zip"
-		}
+		application["resourceUrl"] = resource
 		raw, err := json.Marshal(withApplicationInventory(inventoryFixture(), application))
 		if err != nil || validateInventory(raw) != nil {
 			t.Fatal("recognized administration application inventory refused")
@@ -132,7 +136,13 @@ func TestInventoryRefusesUnexpectedOrIncompleteApplications(t *testing.T) {
 		"external asset": func(_ map[string]any, a map[string]any) {
 			a["resourceUrl"] = "https://unexpected.example.test/webui.zip"
 		},
-		"another local file":   func(_ map[string]any, a map[string]any) { a["resourceUrl"] = "file:///tmp/unverified.zip" },
+		"another local file": func(_ map[string]any, a map[string]any) { a["resourceUrl"] = "file:///tmp/unverified.zip" },
+		"non-digest file": func(_ map[string]any, a map[string]any) {
+			a["resourceUrl"] = "file:///usr/local/share/stalwart/webui-version.zip"
+		},
+		"digest path traversal": func(_ map[string]any, a map[string]any) {
+			a["resourceUrl"] = "file:///usr/local/share/stalwart/webui-" + strings.Repeat("a", 64) + ".zip/../private"
+		},
 		"another application":  func(_ map[string]any, a map[string]any) { a["description"] = "unexpected" },
 		"disabled application": func(_ map[string]any, a map[string]any) { a["enabled"] = false },
 		"missing enablement":   func(_ map[string]any, a map[string]any) { delete(a, "enabled") },
