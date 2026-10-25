@@ -284,7 +284,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "iam.aws.m.upbound.io/v1beta1", kind: "Policy", namespace: "aws", name: "eks-ci-smoke-boundary"}:                       "9eb6e5e1b43a470a02cb292f8a449a51b7792e50220c7c3d5c08fe6b73e62f02",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "Role", namespace: "aws", name: "aws-managed-resources"}:                         "ff4c3264c519b1b4a7ec9b5145412f39ea2ba7b6163d8dc50fb029b1460edcda",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "RoleBinding", namespace: "aws", name: "aws-managed-resources"}:                  "d846c8d9810dd7c0cba33612d2de63183403ccb07c4d5a5c90d0563a444cd714",
-	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "79e9147a9440b8c82670c20436d1dc26286cab27ae711322be231ea251c7139b",
+	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRole", name: "kro-tenant-rgd"}:                                           "63e57d91d99abd5502413cbd9f3daff6de117265c611f523afda232d56e52ef3",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-cluster-reader"}:                          "bc6c370f5bff72c541428274f9ef7ab13e3bb5a2b804ec5f4c81087171311c0d",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "crossview-view"}:                                    "536a4baa1970100ea117d1655f80e06ed874e2248b75f33f161e8b44ca3df50c",
 	{apiVersion: "rbac.authorization.k8s.io/v1", kind: "ClusterRoleBinding", name: "oidc-cluster-reader"}:                               "7d896404f02d6418c289065d73f9ad79345217d76c8d89eadca2c06e6066b487",

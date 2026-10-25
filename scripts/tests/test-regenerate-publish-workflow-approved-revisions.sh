@@ -32,6 +32,7 @@ readonly identities_file='scripts/publish-workflow-approved-revisions.identities
 readonly generated_paths='scripts/publish-workflow-approved-revisions.tsv
 scripts/publish-workflow-approved-revisions.identities.tsv
 scripts/publish-workflow-bootstrap-publications.json
+scripts/canonical-tenant-source-bindings.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -328,6 +329,21 @@ check() {
     printf 'VIOLATION A16: the generated pull-request body links an issue with Part of, which the template does not accept\n'; return 1
   fi
 
+  # A17 — canonical source evidence invokes Cosign during generation. Hosted
+  # runners do not supply it, so the pinned installer must finish first.
+  local cosign_indices cosign_idx cosign_uses
+  cosign_indices="$(yq -r '.jobs.regenerate.steps | to_entries | map(select(.value.uses // "" | test("^sigstore/cosign-installer@"))) | .[].key' "$f")"
+  [ "$(printf '%s\n' "${cosign_indices}" | grep -c '[0-9]')" = '1' ] ||
+    { printf 'VIOLATION A17: require exactly one Cosign installer\n'; return 1; }
+  cosign_idx="${cosign_indices}"
+  cosign_uses="$(q "$f" ".jobs.regenerate.steps[${cosign_idx}].uses")"
+  printf '%s\n' "${cosign_uses}" | grep -Eq '^sigstore/cosign-installer@[0-9a-f]{40}$' ||
+    { printf 'VIOLATION A17: the Cosign installer must be pinned to a full commit\n'; return 1; }
+  [ "${cosign_idx}" -lt "${gen_idx}" ] ||
+    { printf 'VIOLATION A17: install Cosign before generation\n'; return 1; }
+  [ "$(q "$f" ".jobs.regenerate.steps[${cosign_idx}].if")" = '' ] ||
+    { printf 'VIOLATION A17: the Cosign installer must not be conditional\n'; return 1; }
+
   printf 'ok\n'
 }
 
@@ -336,12 +352,12 @@ check() {
 # A relocated consumer must update the automation boundary in the same change.
 discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")"
-actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
+actual_paths="$(printf '%s\n%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json scripts/canonical-tenant-source-bindings.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
 # The token names repositories, which a rename moves away from the consumer's
 # logical name, so the inventory is resolved to each consumer's current repository.
-approved_consumer_inventory="$(bash -c 'set -o pipefail; source "$1"; printf "%s" "$approved" | cut -f1 | sort -u |
+approved_consumer_inventory="$(bash -c 'set -o pipefail; source "$1"; { printf "%s" "$approved" | cut -f1; printf "%s\n" "$canonical_only" | jq -r ".bindings[].consumer"; } | sort -u |
   while IFS= read -r consumer; do consumer_github_repository "$consumer"; done' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" ||
   fail 'approved consumer inventory is unresolved'
@@ -427,6 +443,12 @@ ablate A16 'both issue alternatives' '(.jobs.regenerate.steps[] | select(.uses /
 ablate A16 'closed-issue link restored' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("No issue: trivial fix\\."; "Fixes #1\n\nPart of #3308.")'
 ablate A16 'Why section emptied' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("(?s)## Why\n.*?## What"; "## Why\n\n## What")'
 ablate A16 'What section emptied' '(.jobs.regenerate.steps[] | select(.uses // "" | contains("create-pull-request")) | .with.body) |= sub("(?s)## What\n.*?No issue"; "## What\n\nNo issue")'
+ablate A17 'Cosign installer missing' 'del(.jobs.regenerate.steps[] | select(.uses // "" | test("^sigstore/cosign-installer@")))'
+ablate A17 'Cosign installer unpinned' '(.jobs.regenerate.steps[] | select(.uses // "" | test("^sigstore/cosign-installer@")) | .uses) = "sigstore/cosign-installer@main"'
+ablate A17 'Cosign installer after generation' '.jobs.regenerate.steps = ([.jobs.regenerate.steps[] | select((.uses // "" | test("^sigstore/cosign-installer@")) | not)] + [.jobs.regenerate.steps[] | select(.uses // "" | test("^sigstore/cosign-installer@"))])'
+ablate A17 'Cosign installer conditional' '(.jobs.regenerate.steps[] | select(.uses // "" | test("^sigstore/cosign-installer@")) | .if) = "false"'
+ablate A17 'duplicate Cosign installer' '.jobs.regenerate.steps += [.jobs.regenerate.steps[] | select(.uses // "" | test("^sigstore/cosign-installer@"))]'
+ablate A9 'Cosign installer failure ignored' '(.jobs.regenerate.steps[] | select(.uses // "" | test("^sigstore/cosign-installer@")) | .continue-on-error) = true'
 
 # Execute the actual change-detection step in a disposable checkout. This proves
 # that the PR boundary handles each matcher, staged changes, and unrelated paths.
@@ -469,4 +491,4 @@ mkdir -p "${checkout}"
   fi
 )
 
-printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 53 ablations + change-detection cases passed\n'
+printf 'test-regenerate-publish-workflow-approved-revisions: 1 control + 59 ablations + change-detection cases passed\n'

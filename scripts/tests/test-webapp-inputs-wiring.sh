@@ -55,14 +55,19 @@ for mutation in \
 done
 [[ "$failed" -eq 0 ]] || exit 1
 echo 'PASS: all four failed mutations stop before their candidate reaches validation.'
-for file in \
-  k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml \
-  k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml \
-  k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml \
-  k8s/providers/docker/apps/web-app-wedding-app.yaml; do
+# Preserve the complete committed instance universe selected by the scanner's
+# current content ledger. A new source-only Tenant must not disappear from this
+# positive scanner fixture while its three unsafe WebApp controls remain real.
+while IFS= read -r file; do
+  case "$file" in k8s/*) ;; *) echo 'FAIL: instance fixture path is outside k8s' >&2; exit 1 ;; esac
+  case "/$file/" in *'/../'* | *'/./'*) exit 1 ;; esac
   mkdir -p "$work/$(dirname "$file")"
   cp "$root/$file" "$work/$file"
-done
+done < <({
+  printf '%s\n' k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml \
+    k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml
+  awk -F '\t' '$3=="INSTANCE-CONTENT" {print $2}' "$root/scripts/rgd-template-static-scan-baseline.tsv"
+} | LC_ALL=C sort -u)
 bash "$root/scripts/scan-rgd-templates.sh" "$work" >"$work/valid.log" 2>&1 || { cat "$work/valid.log" >&2; exit 1; }
 instance="$work/k8s/providers/docker/apps/web-app-wedding-app.yaml"
 cp "$instance" "$work/original.yaml"

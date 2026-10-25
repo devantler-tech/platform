@@ -6,6 +6,8 @@ resources:
   # The product owns deploy/documentation; this production-only tenant registers
   # the signed source and an identity limited to its DNS endpoint resources.
   - khoist-documentation/
+  # Fetch/verify the exact reviewed publication only; no tenant application.
+  - business-site/
   # Temporary database-only control, replication and monitoring for the protected
   # retirement orphan. #4266 removes this after verified retained-data cleanup.
   - retained-backstage-db/namespace.yaml
