@@ -557,7 +557,7 @@ jobs:
               - 'scripts/canonical-tenant-source-bindings.json'
               - 'scripts/tests/test-canonical-source-bootstrap.sh'
               - 'scripts/tests/test-canonical-bootstrap-output.sh'
-              - 'scripts/tests/legacy-consumer-fixture.lib.sh'
+              - 'scripts/tests/lib/legacy-consumer-fixture.sh'
               - 'scripts/tests/test-tenant-source-discovery.sh'
               - 'scripts/bootstrap-tenant-source.sh'
               - 'scripts/publish-workflow-bootstrap-publications.json'

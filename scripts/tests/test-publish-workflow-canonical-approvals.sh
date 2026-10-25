@@ -49,8 +49,8 @@ pass() { printf 'ok: %s\n' "$*"; }
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 # Keep legacy compatibility controls independent of canonical-only admission.
-# shellcheck source=scripts/tests/legacy-consumer-fixture.lib.sh
-source "$REPO_ROOT/scripts/tests/legacy-consumer-fixture.lib.sh"
+# shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
+source "$REPO_ROOT/scripts/tests/lib/legacy-consumer-fixture.sh"
 build_legacy_consumer_fixture "$REPO_ROOT" "$WORK/legacy-source"
 export PUBLISH_CONSUMER_ROOT="$WORK/legacy-source"
 # Keep canonical fixture approvals independent of production bootstrap evidence.

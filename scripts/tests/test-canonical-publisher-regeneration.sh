@@ -14,8 +14,8 @@ esac
 test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_work="$(mktemp -d)"
 trap 'rm -rf "$test_work"' EXIT
-# shellcheck source=scripts/tests/legacy-consumer-fixture.lib.sh
-source "$test_root/scripts/tests/legacy-consumer-fixture.lib.sh"
+# shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
+source "$test_root/scripts/tests/lib/legacy-consumer-fixture.sh"
 build_legacy_consumer_fixture "$test_root" "$test_work/consumers"
 export PUBLISH_CONSUMER_ROOT="$test_work/consumers"
 export PUBLISH_BOOTSTRAP_FILE="$test_work/bootstrap-none.json"
