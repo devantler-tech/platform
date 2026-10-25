@@ -153,8 +153,10 @@ spec:
                 - CREATE
                 - UPDATE
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       exclude:
         any:
           - subjects:

@@ -56,7 +56,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro cd7531d09eab1fa5898b2069fef
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator dfc2fd679b30a0acf35fcddc41eb883980c345036c95b3ebc5a9d21e0354bfa9
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 7b1a93c61cca43e79ceed6b7cb91a1c3d638dc8791fe7e0aa106181e3ced83b9
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium ff994bb8e8eddba43c6c683da0c28062b80d32fcd933f974d747badbc61e43dd
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 40d41e62d48b7db3706d544a94b25a75e497d7f11ca6efec1376774c8085de13
 
@@ -104,7 +104,7 @@ iam.aws.m.upbound.io/v1beta1|Policy|aws|eks-ci-smoke-boundary 019210611429956763
 
 iam.aws.m.upbound.io/v1beta1|Role|aws|eks-ci c40205b3f48d193e8be1a39abda738865b954c90733039a49854f0bac5844306
 
-kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 57991b34a106277418f96c81e458a640a8a648b8a89717d2e049d8de86f79639
+kro.run/v1alpha1|ResourceGraphDefinition||tenant.kro.run 24ef73925e497cac2805d326deedd7ff0f2f418520e2908cd5bd16e3ae4d4109
 
 kro.run/v1alpha1|Tenant|flux-system|business-site 71ab4be37780b6877d5c2676bf1e918f149b2c19a957aeb687d2acef1a99509b
 
@@ -122,7 +122,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure be1fbaa7ee876dd766dd17532647946988895ed9d52723f8175a88e428c37a22
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers 8783fd44460b3652ad343366de37be12652c48434f08889e384dd80c8b0c93ad
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc1ffeb139e69a5ac205f9bce35628dec215fe892e1871145f333d363b2
 
@@ -444,4 +444,6 @@ v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a81
 
 v1|ConfigMap|flux-system|variables-cluster e44f686f8632152eb22ee50f48dd608a69a8b2718ba420350808d12d78ddd755
 
-v1|Secret|flux-system|variables-cluster b53a3d75045944cb02a60934626a5820b448f5954828a721524bafcfbe7fff6a
+v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
+
+v1|Secret|flux-system|variables-heartbeat 1ae01ab68307178f8a0d330b313612ceb0a10ca06b5f953415749ca2aea9c81c
