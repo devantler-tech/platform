@@ -64,6 +64,9 @@ func TestOwnedBootstrapChild(t *testing.T) {
 	if !strings.HasPrefix(os.Getenv("STALWART_RECOVERY_ADMIN"), "bootstrap:") {
 		os.Exit(3)
 	}
+	if err := os.WriteFile(os.Args[len(os.Args)-1]+".port", []byte(os.Getenv("STALWART_RECOVERY_MODE_PORT")), 0600); err != nil {
+		os.Exit(3)
+	}
 	if err := os.WriteFile(os.Args[len(os.Args)-1], []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		os.Exit(3)
 	}
@@ -74,6 +77,9 @@ func TestOwnedBootstrapChild(t *testing.T) {
 }
 
 func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testing.T) {
+	// An inherited serving port cannot make the owned recovery child reachable
+	// through the normal administration Service during startup or a retry.
+	t.Setenv("STALWART_RECOVERY_MODE_PORT", "8080")
 	dir, data := bootstrapInputs(t), t.TempDir()
 	pidFile := filepath.Join(data, "owned-child")
 	executable, err := os.Executable()
@@ -114,6 +120,16 @@ func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testi
 	}
 	if process.Signal(syscall.Signal(0)) == nil {
 		t.Fatal("owned recovery child leaked")
+	}
+	port, err := os.ReadFile(pidFile + ".port")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := strconv.Atoi(string(port))
+	// This literal is the independent boundary that serving policies exclude;
+	// deriving it from the implementation would miss a simultaneous port drift.
+	if err != nil || value < 1024 || value > 65535 || value == 8080 || string(port) != "18080" {
+		t.Fatal("bootstrap did not give its recovery child a separate unprivileged management port")
 	}
 }
 
