@@ -545,6 +545,8 @@ jobs:
               - 'scripts/guard-publish-workflow-approved-revisions.sh'
               - 'scripts/publish-workflow-approved-revisions.lib.sh'
               - 'scripts/tenant-publication-binding.lib.sh'
+              - 'scripts/tenant-source-discovery.lib.sh'
+              - 'scripts/tests/test-tenant-source-discovery.sh'
               - 'scripts/bootstrap-tenant-source.sh'
               - 'scripts/publish-workflow-bootstrap-publications.json'
               - 'scripts/tests/test-tenant-publication-binding.sh'
@@ -1174,6 +1176,8 @@ jobs:
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
+          shellcheck scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
+          bash scripts/tests/test-tenant-source-discovery.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
           bash scripts/tests/test-publish-workflow-canonical-approvals.sh

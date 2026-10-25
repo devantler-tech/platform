@@ -37,6 +37,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 # shellcheck source=scripts/tenant-publication-binding.lib.sh
 source "$REPO_ROOT/scripts/tenant-publication-binding.lib.sh"
+# shellcheck source=scripts/tenant-source-discovery.lib.sh
+source "$REPO_ROOT/scripts/tenant-source-discovery.lib.sh"
 
 # Matches the subject spelling `guard-shared-publish-workflow-pin.sh` validates. Kept
 # textually parallel to that guard: if one moves, the other should be looked at.
@@ -206,6 +208,7 @@ registry_tag_for_git_tag() {
 discover_consumers() {
   local root="$1" mode="${2:-}" file files rows found='' rc=0
   [ -d "$root" ] || return 0
+  reject_unattributed_tenant_sources "$root" || return 1
   # grep exits 1 when NOTHING matches, which is an answer, and 2 when it could not read
   # something, which is not: a file it failed to read is never selected, so its consumers
   # would leave the set without any of the refusals below.
