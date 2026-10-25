@@ -1,5 +1,5 @@
 {
-  "restrict-explicit-dns-records/approved-platform-records": "Enforce",
+  "restrict-explicit-dns-records": "Enforce",
   "restrict-arc-openbao-certificate": "Enforce",
   "restrict-arc-openbao-listener/public-listener-settings-only": "Enforce",
   "require-baseline-workers-for-hcloud-volumes": "Enforce",
