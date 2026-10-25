@@ -87,6 +87,11 @@ for extension in json YAML YML JSON; do
   refuses "$extension resource filename"
   rm "$work/tree/k8s/apps/source.$extension"
 done
+# A valid mixed-format tree without typed instances remains an ordinary read.
+printf '{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"ordinary"}}\n' >"$work/tree/k8s/apps/source.json"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+rm "$work/tree/k8s/apps/source.json"
 # Kustomize resource references are not restricted to YAML/JSON suffixes.
 for spelling in tenant tenant.txt tenant.config; do
   cp "$work/good.yaml" "$work/tree/k8s/apps/$spelling"

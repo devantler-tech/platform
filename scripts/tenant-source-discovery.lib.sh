@@ -34,7 +34,9 @@ reject_unattributed_tenant_sources() (
   read_source_documents() {
     local output="$1"; shift
     printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1] | unique' >"$output.expected.json" || return 1
-    yq -N -o=json -I=0 '{"file": filename, "document": explode(.)}' "$@" >"$output" || return 1
+    # YAML also accepts JSON. Older yq releases infer one input format for the
+    # entire argument list, so mixed suffixes must never select that format.
+    yq -p=yaml -N -o=json -I=0 '{"file": filename, "document": explode(.)}' "$@" >"$output" || return 1
     jq -es --slurpfile expected "$output.expected.json" '
       length>0 and all(.[]; type=="object" and keys==["document","file"]) and
       ((map(.file)|unique)==$expected[0])
