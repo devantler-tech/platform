@@ -1808,6 +1808,13 @@ func run(repoRoot string, stdout io.Writer, stderr io.Writer) int {
 	}
 	if err := validateAuthorization(role, boundary, rendered); err != nil {
 		_, _ = fmt.Fprintf(stderr, "EKS CI role policy: %v\n", err)
+		written, summaryErr := writeApprovalSummary(err, os.Getenv("GITHUB_STEP_SUMMARY"))
+		switch {
+		case summaryErr != nil:
+			_, _ = fmt.Fprintf(stderr, "EKS CI role policy: approval summary not written: %v\n", summaryErr)
+		case written:
+			_, _ = fmt.Fprintln(stderr, "EKS CI role policy: the exact approval edit is also in this job's summary.")
+		}
 		return 1
 	}
 	_, _ = fmt.Fprintln(stdout, "EKS CI role authorization contract passed.")
