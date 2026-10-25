@@ -43,10 +43,15 @@ docker network create --internal "$network" >/dev/null
 mkdir "$scratch/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
+bash "$root/scripts/private-mail-config/stage-webui.sh" "$scratch/build"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
 [ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
   echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
 }
+docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
+  --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
+  -ec 'sha256sum /usr/local/share/stalwart/webui.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE' >"$scratch/image-assets.txt"
+[ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 
 run_bootstrap() {
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
@@ -73,7 +78,7 @@ start_server() {
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "${recovery[@]}" "$server" >/dev/null
+    "${recovery[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
     if docker exec "$name" curl --fail --silent --max-time 2 http://127.0.0.1:8080/healthz/ready >/dev/null 2>&1; then
       return 0
@@ -119,6 +124,7 @@ prepare_plan "$scratch/plan.ndjson"
 apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
+native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
 
 # The renderer must reject an actual unexpected stored listener, even though
 # recovery ignores its socket and the health endpoint remains green.
@@ -137,6 +143,24 @@ start_server preparation
 native_cli query NetworkListener --where name=unexpected --fields id --json >"$scratch/negative-listener.jsonl"
 jq -s '[.[].id] | if length==1 then . else error("negative listener identity is ambiguous") end' "$scratch/negative-listener.jsonl" |
   native_cli delete NetworkListener --stdin >"$scratch/negative-delete.out" 2>"$scratch/negative-delete.err"
+
+# A second application shares HTTP even when the mail listeners are safe. Its
+# presence must fence initialization rather than being silently preserved.
+printf '%s\n' '{"@type":"upsert","object":"Application","matchOn":["description"],"value":{"negative":{"description":"Unexpected fixture application","enabled":false,"resourceUrl":"file:///usr/local/share/stalwart/webui.zip","urlPrefix":{"/unexpected":true}}}}' >"$scratch/negative-application.ndjson"
+native_cli apply --file /proof/negative-application.ndjson --json >"$scratch/negative-application-apply.jsonl" 2>"$scratch/negative-application-apply.err"
+if prepare_plan "$scratch/unsafe-application-plan.ndjson" >"$scratch/negative-application-render.log" 2>&1; then
+  echo 'FAIL: unexpected native application was accepted' >&2; exit 1
+fi
+[ ! -e "$scratch/unsafe-application-plan.ndjson" ]
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+if run_bootstrap; then
+  echo 'FAIL: bootstrap permitted serving after an unexpected application' >&2; exit 1
+fi
+start_server preparation
+native_cli query Application --where 'description=Unexpected fixture application' --fields id --json >"$scratch/negative-application.jsonl"
+jq -s '[.[].id] | if length==1 then . else error("negative application identity is ambiguous") end' "$scratch/negative-application.jsonl" |
+  native_cli delete Application --stdin >"$scratch/negative-application-delete.out" 2>"$scratch/negative-application-delete.err"
 
 # The pinned server rejects a reserved primary domain, but accepts it as a
 # local domain alias. That alias must not turn the rejection sink into a local
@@ -165,7 +189,8 @@ native_cli get MtaStageRcpt --json >"$scratch/rcpt.json"
 jq -e '.rewrite.match|keys|sort==["0","1"]' "$scratch/rcpt.json" >/dev/null
 native_cli query Account --fields id --json >"$scratch/accounts-after.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-after.jsonl"
-for object in accounts certificates; do
+native_cli query Application --fields id --json >"$scratch/applications-after.jsonl"
+for object in accounts certificates applications; do
   jq -s '[.[].id]|sort' "$scratch/$object-before.jsonl" >"$scratch/before.ids"
   jq -s '[.[].id]|sort' "$scratch/$object-after.jsonl" >"$scratch/after.ids"
   cmp "$scratch/before.ids" "$scratch/after.ids"
@@ -182,6 +207,27 @@ printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.cu
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
+# The private bridge has no external egress. Verify each served interface and
+# compare every script/style referenced by its entry page to the pinned ZIP.
+for prefix in admin account; do
+  protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/$prefix/login" >"$scratch/$prefix.html"
+  grep -Fq "<base href=\"/$prefix/\"" "$scratch/$prefix.html"
+  grep -oE '(src|href)="\./assets/[A-Za-z0-9_.-]+\.(js|css)"' "$scratch/$prefix.html" |
+    sed -E 's/^(src|href)="\.\///;s/"$//' >"$scratch/$prefix-assets.txt"
+  [ -s "$scratch/$prefix-assets.txt" ]
+  while IFS= read -r asset; do
+    unzip -p "$scratch/build/webui.zip" "$asset" >"$scratch/expected-asset"
+    protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/$prefix/$asset" >"$scratch/actual-asset"
+    cmp "$scratch/expected-asset" "$scratch/actual-asset"
+  done <"$scratch/$prefix-assets.txt"
+done
+printf '%s' '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:Application/query",{"limit":2,"calculateTotal":true},"applications"]]}' >"$scratch/management-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/management-request.json "http://$name:8080/jmap" >"$scratch/management-authenticated.json"
+jq -e '.methodResponses[0][0]=="x:Application/query" and .methodResponses[0][1].total==1' "$scratch/management-authenticated.json" >/dev/null
+management_status=$(protocol_curl --silent --show-error --max-time 10 --header 'Content-Type: application/json' \
+  --data-binary @/proof/management-request.json --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap")
+[ "$management_status" = 401 ]
 printf 'From: agents@example.test\r\nTo: maintainer@example.test\r\nSubject: Native policy proof\r\nMessage-ID: <mail-policy@example.test>\r\n\r\nPreserved native mail fixture.\r\n' >"$scratch/known.eml"
 smtp=(--silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" --ssl-reqd --url smtp://mail.example.test:1587 --mail-from agents@example.test --upload-file /proof/known.eml)
 auth_advertised() {

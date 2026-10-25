@@ -114,6 +114,13 @@ resolution is refused. A reserved public DNS suffix alone cannot prove that a
 mail server will refuse local delivery. The settings cannot register a reserved
 `.invalid` domain as the mailbox domain.
 
+The inventory also covers every HTTP application. It accepts no application or
+the pinned server's single default Stalwart Web Interface, with exactly the
+`/admin` and `/account` prefixes. A missing or partial application census,
+another application, an unknown resource, an external OAuth client or a custom
+unpack directory fences initialization. The plan preserves the interface's
+identity and replaces its route map with the two approved prefixes.
+
 Apply the private plan with the pinned official Stalwart CLI 1.0.13, using its
 environment-based authentication from mounted credentials. Capture both output
 streams privately, check every operation and read back the resulting policy.
@@ -153,7 +160,14 @@ shutdown is required before exit zero can allow a separate serving container to
 start. The command never starts that serving container itself.
 
 The bootstrap image contains the exact upstream server and CLI plus the static
-Go initializer. Its default entrypoint is bootstrap; it cannot silently fall
+Go initializer and the pinned Web Interface v1.0.11 bundle. Both image build
+paths stage the bundle and its Community AGPL license only after verifying
+their committed SHA-256 checksums. The image includes the upstream source URL.
+Bootstrap verifies the bundle again before starting recovery, refusing missing,
+altered, oversized or symbolic-link assets. The application uses the image's
+local file rather than downloading executable browser assets at runtime.
+
+Its default entrypoint is bootstrap; it cannot silently fall
 through to an unconfigured normal server. It expects private inputs under
 `/etc/private-mail`, the datastore at `/var/lib/stalwart`, native configuration
 and TLS at `/etc/stalwart`, and memory-backed `/tmp`. The dedicated publisher
@@ -163,7 +177,11 @@ Production manifests must use that signed digest and keep public activation
 separate. API liveness or closed mail ports alone are insufficient.
 
 The native fixture also runs the actual bootstrap image, rejects unsafe stored
-inventory, proves normal authentication after recovery stops, and repeats
+inventory, and serves both interfaces from that same image on an internal
+network without external egress. It compares every script and stylesheet
+referenced by each entry page with the pinned bundle, proves authenticated
+management access and refuses the same request without authentication. It
+proves normal authentication after recovery stops, and repeats
 bootstrap after receiving mail to verify history survives. A failed or
 interrupted apply is not atomic and must keep serving stopped. This
 configuration slice changes no running workload, public route or DNS record.
@@ -174,6 +192,8 @@ proof and a production backup restore remain in #5030.
 
 - [Pinned release](https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.27)
 - [Pinned community license](https://github.com/stalwartlabs/stalwart/blob/v0.16.27/LICENSES/AGPL-3.0-only.txt)
+- [Pinned Web Interface release](https://github.com/stalwartlabs/webui/releases/tag/v1.0.11)
+- [Web Interface Community license](https://github.com/stalwartlabs/webui/blob/v1.0.11/LICENSES/AGPL-3.0-only.txt)
 - [Declarative deployments](https://stalw.art/docs/configuration/declarative-deployments/)
 - [Kubernetes deployment and restricted security context](https://stalw.art/docs/cluster/orchestration/kubernetes/)
 - [Hetzner outbound mail policy](https://docs.hetzner.com/cloud/servers/faq/#why-can-i-not-send-any-mails-from-my-server)
