@@ -77,6 +77,28 @@ for extension in json YAML YML JSON; do
   refuses "$extension resource filename"
   rm "$work/tree/k8s/apps/source.$extension"
 done
+# Kustomize resource references are not restricted to YAML/JSON suffixes.
+for spelling in tenant tenant.txt tenant.config; do
+  cp "$work/good.yaml" "$work/tree/k8s/apps/$spelling"
+  printf 'resources:\n  - apps/%s\n' "$spelling" >"$work/tree/k8s/Kustomization"
+  refuses "explicit resource $spelling"
+  rm "$work/tree/k8s/apps/$spelling" "$work/tree/k8s/Kustomization"
+done
+cp "$work/good.yaml" "$work/tree/k8s/apps/tenant text"
+printf 'resources: ["apps/tenant text"]\n' >"$work/tree/k8s/kustomization.yml"
+refuses 'explicit resource containing a space'
+rm "$work/tree/k8s/apps/tenant text" "$work/tree/k8s/kustomization.yml"
+mv "$work/tree/k8s/controller.yaml" "$work/tree/k8s/controller.txt"
+cp "$work/good.yaml" "$input"
+printf 'resources: [controller.txt, apps/tenant.yaml]\n' >"$work/tree/k8s/kustomization.yaml"
+refuses 'source-producing schema itself has a nonstandard suffix'
+mv "$work/tree/k8s/controller.txt" "$work/tree/k8s/controller.yaml"
+rm "$input" "$work/tree/k8s/kustomization.yaml"
+printf 'apiVersion: v1\nkind: ConfigMap\n' >"$work/tree/k8s/apps/ordinary resource"
+printf 'resources: ["apps/ordinary resource"]\n' >"$work/tree/k8s/Kustomization"
+discover >"$work/result"
+[ ! -s "$work/result" ]
+rm "$work/tree/k8s/apps/ordinary resource" "$work/tree/k8s/Kustomization"
 mkdir -p "$work/tree/k8s/targets"
 cp "$work/good.yaml" "$work/tree/k8s/targets/typed.txt"
 ln -s ../targets/typed.txt "$input"

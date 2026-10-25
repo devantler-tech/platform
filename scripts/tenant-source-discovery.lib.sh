@@ -5,7 +5,7 @@
 
 reject_unattributed_tenant_sources() (
   set -euo pipefail
-  local root="$1" work file resolved files=()
+  local root="$1" work file resolved resource resource_file files=() kustomizations=()
   [ -d "$root/k8s" ] || return 0
   root="$(cd "$root" && pwd -P)" || return 1
   work="$(mktemp -d)" || return 1
@@ -23,23 +23,56 @@ reject_unattributed_tenant_sources() (
       [ -f "$resolved" ] || return 1
     fi
     case "$file" in
-      *.[yY][aA][mM][lL] | *.[yY][mM][lL] | *.[jJ][sS][oO][nN]) files+=("$resolved") ;;
+      *.[yY][aA][mM][lL] | *.[yY][mM][lL] | *.[jJ][sS][oO][nN] | */Kustomization) files+=("$resolved") ;;
+    esac
+    case "$file" in
+      */kustomization.yaml | */kustomization.yml | */Kustomization) kustomizations+=("$resolved") ;;
     esac
   done <"$work/files"
+  # Every parser invocation proves its complete filename set, including the
+  # Kustomize reference pass; a partial read can never narrow the later census.
+  read_source_documents() {
+    local output="$1"; shift
+    printf '%s\0' "$@" | jq -Rs 'split("\u0000")[:-1] | unique' >"$output.expected.json" || return 1
+    yq -N -o=json -I=0 '{"file": filename, "document": explode(.)}' "$@" >"$output" || return 1
+    jq -es --slurpfile expected "$output.expected.json" '
+      length>0 and all(.[]; type=="object" and keys==["document","file"]) and
+      ((map(.file)|unique)==$expected[0])
+    ' "$output" >/dev/null || return 1
+  }
+  if [ "${#kustomizations[@]}" -gt 0 ]; then
+    read_source_documents "$work/kustomizations.jsonl" "${kustomizations[@]}" || return 1
+    jq -jrs '
+      .[] | .file as $file | .document |
+      (.resources // [], .components // [], .bases // []) |
+      if type!="array" then error("invalid local resource references") else .[] end |
+      if type!="string" or length==0 or test("[\u0000-\u001f]")
+      then error("invalid local resource path") else $file,"\u0000",.,"\u0000" end
+    ' "$work/kustomizations.jsonl" >"$work/references" || return 1
+    while IFS= read -r -d '' file && IFS= read -r -d '' resource; do
+      # Remote resources retain their separate reviewed render/conservation
+      # boundary. This raw discovery helper never fetches a declared URL.
+      case "$resource" in https://*) continue ;; esac
+      resource_file="${file%/*}/$resource"
+      case "$resource" in /*) resource_file="$resource" ;; esac
+      resolved="$(realpath "$resource_file" 2>/dev/null)" || return 1
+      case "$resolved" in "$root/k8s" | "$root/k8s/"*) ;; *) return 1 ;; esac
+      if [ -f "$resolved" ]; then files+=("$resolved")
+      elif [ ! -d "$resolved" ]; then return 1
+      fi
+    done <"$work/references"
+  fi
   [ "${#files[@]}" -gt 0 ] || return 0
   # Keep filenames in the parsed envelope so a successful partial parser read
   # cannot attest a complete inventory. Alias/merge expansion precedes classification.
-  printf '%s\0' "${files[@]}" | jq -Rs 'split("\u0000")[:-1] | unique' >"$work/expected.json" || return 1
-  yq -N -o=json -I=0 '{"file": filename, "document": explode(.)}' "${files[@]}" >"$work/documents.jsonl" || {
+  read_source_documents "$work/documents.jsonl" "${files[@]}" || {
     printf 'typed source discovery could not parse every candidate; inventory is UNKNOWN\n' >&2
     return 1
   }
   # Join complete schema GVKs across the whole tree before inspecting instances:
   # an RGD and the objects it creates can live in different roots. A same-kind
   # resource in a different group/version is not one of its instances.
-  jq -es --slurpfile expected "$work/expected.json" '
-    select(length>0 and all(.[]; type=="object" and keys==["document","file"])) |
-    select((map(.file)|unique)==$expected[0]) |
+  jq -es '
     [.[].document | .. | objects] as $nodes |
     [$nodes[] | select(.kind=="ResourceGraphDefinition") |
       select(any(.. | objects; .kind=="OCIRepository" and has("spec"))) |
