@@ -13,11 +13,12 @@ import (
 var errConfiguration = errors.New("private mail configuration is incomplete or invalid")
 
 type settings struct {
-	Domain        string `json:"domain"`
-	Hostname      string `json:"hostname"`
-	Maintainer    string `json:"maintainer"`
-	Agent         string `json:"agent"`
-	Administrator string `json:"administrator"`
+	Domain            string   `json:"domain"`
+	Hostname          string   `json:"hostname"`
+	Maintainer        string   `json:"maintainer"`
+	Agent             string   `json:"agent"`
+	Administrator     string   `json:"administrator"`
+	MaintainerAliases []string `json:"maintainerAliases,omitempty"`
 }
 type inputs struct {
 	settings
@@ -34,6 +35,15 @@ func render(v inputs) ([]byte, error) {
 	}
 	seen := map[string]bool{}
 	for _, name := range []string{v.Maintainer, v.Agent, v.Administrator} {
+		if !localPattern.MatchString(name) || strings.Contains(name, "..") || strings.HasSuffix(name, ".") || seen[name] {
+			return nil, errConfiguration
+		}
+		seen[name] = true
+	}
+	if len(v.MaintainerAliases) > 16 {
+		return nil, errConfiguration
+	}
+	for _, name := range v.MaintainerAliases {
 		if !localPattern.MatchString(name) || strings.Contains(name, "..") || strings.HasSuffix(name, ".") || seen[name] {
 			return nil, errConfiguration
 		}
@@ -59,6 +69,9 @@ func render(v inputs) ([]byte, error) {
 	}
 	administrator := account(v.Administrator, v.administratorPassword, "Admin")
 	maintainer := account(v.Maintainer, v.maintainerPassword, "User")
+	if v.MaintainerAliases != nil {
+		maintainer["aliases"] = receivingAliases(v.MaintainerAliases, "#domain")
+	}
 	agents := account(v.Agent, v.agentPassword, "User")
 	permissions := map[string]bool{}
 	for _, name := range []string{"authenticate", "emailSend", "emailReceive", "jmapMailboxGet", "jmapMailboxChanges", "jmapMailboxQuery", "jmapMailboxQueryChanges", "jmapThreadGet", "jmapThreadChanges", "jmapEmailGet", "jmapEmailChanges", "jmapEmailQuery", "jmapEmailQueryChanges", "jmapBlobGet"} {

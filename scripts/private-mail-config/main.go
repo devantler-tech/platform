@@ -66,6 +66,13 @@ func loadInputs(dir string) (inputs, error) {
 			return fail()
 		}
 		seen[name] = true
+		if name == "maintainerAliases" {
+			var value json.RawMessage
+			if d.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &v.MaintainerAliases) != nil || v.MaintainerAliases == nil {
+				return fail()
+			}
+			continue
+		}
 		var target *string
 		switch name {
 		case "domain":
@@ -129,7 +136,7 @@ func command(args []string, log io.Writer) int {
 		return fail()
 	}
 	inventory, err := privateInput(*dir, "listener-inventory.json", 65536)
-	if err != nil || validateInventory(inventory) != nil {
+	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fail()
 	}
 	parent, err := os.Stat(filepath.Dir(*output))
