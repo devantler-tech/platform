@@ -147,6 +147,9 @@ stage=healthy-health-forward
 # Positive health controls use loopback-only tunnels to this exact Pod. The
 # API-server proxy is not an allowed HTTP client under OpenBao's network policy.
 # Direct same-node HTTP/TLS denial challenges below remain unchanged.
+# Create the capture before forking: the parent may read before the child runs
+# its output redirection, even while the background process is alive.
+: >"$scratch/forward"
 kubectl --context "$context" --request-timeout=30s -n openbao port-forward --address=127.0.0.1 pod/openbao-2 :8204 :8200 >"$scratch/forward" 2>"$scratch/forward-error" &
 forward_pid=$!
 for _ in {1..30}; do
