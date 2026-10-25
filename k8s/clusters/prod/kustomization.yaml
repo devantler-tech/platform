@@ -30,6 +30,21 @@ patches:
         namespace: flux-system
       spec:
         timeout: 25m
+  # The approved heartbeat handoff is production-only. Keep it last so it
+  # overrides the legacy cluster value, and require it rather than falling back.
+  - target:
+      group: kustomize.toolkit.fluxcd.io
+      version: v1
+      kind: Kustomization
+      name: infrastructure-controllers
+      namespace: flux-system
+    patch: |
+      - op: add
+        path: /spec/postBuild/substituteFrom/-
+        value:
+          kind: Secret
+          name: variables-heartbeat
+          optional: false
   - patch: |
       apiVersion: kustomize.toolkit.fluxcd.io/v1
       kind: Kustomization

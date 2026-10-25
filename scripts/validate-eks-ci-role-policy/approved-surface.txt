@@ -122,7 +122,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure be1fbaa7ee876dd766dd17532647946988895ed9d52723f8175a88e428c37a22
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers 8783fd44460b3652ad343366de37be12652c48434f08889e384dd80c8b0c93ad
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|github-config|github-config dc10cfc1ffeb139e69a5ac205f9bce35628dec215fe892e1871145f333d363b2
 
@@ -444,4 +444,6 @@ v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a81
 
 v1|ConfigMap|flux-system|variables-cluster e44f686f8632152eb22ee50f48dd608a69a8b2718ba420350808d12d78ddd755
 
-v1|Secret|flux-system|variables-cluster b53a3d75045944cb02a60934626a5820b448f5954828a721524bafcfbe7fff6a
+v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
+
+v1|Secret|flux-system|variables-heartbeat 1ae01ab68307178f8a0d330b313612ceb0a10ca06b5f953415749ca2aea9c81c
