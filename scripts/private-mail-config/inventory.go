@@ -25,11 +25,19 @@ func validateInventory(raw []byte) error {
 	var response struct {
 		Methods [][]json.RawMessage `json:"methodResponses"`
 	}
-	if len(raw) > 65536 || json.Unmarshal(raw, &response) != nil || len(response.Methods) != 9 {
+	if len(raw) > 65536 || json.Unmarshal(raw, &response) != nil || (len(response.Methods) != 9 && len(response.Methods) != 13) {
 		return errConfiguration
 	}
-	if validateDomains(response.Methods[5:7]) != nil || validateApplications(response.Methods[7:]) != nil {
+	if validateDomains(response.Methods[5:7]) != nil || validateApplications(response.Methods[7:9]) != nil {
 		return errConfiguration
+	}
+	if len(response.Methods) == 13 {
+		for i, object := range []string{"Account", "MailingList"} {
+			tag := []string{"accounts", "mailing-lists"}[i]
+			if _, err := receivingObjects(response.Methods[9+i*2:11+i*2], object, tag); err != nil {
+				return errConfiguration
+			}
+		}
 	}
 	for offset, object := range []string{"MtaHook", "MtaMilter", "WebHook"} {
 		method := response.Methods[offset+2]
