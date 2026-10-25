@@ -1,26 +1,48 @@
 #!/usr/bin/env bash
-# Exercise the production placement against the pinned chart and its post-renderers.
+# Exercise the production placement of Kubescape's result store against the pinned chart and its
+# post-renderers. Compute-only workers run the Longhorn volume client, so the store follows the
+# ordinary rule: any Linux worker, with no pin to the storage-disk workers (#4777). Nothing may
+# narrow it again silently, and it keeps its single writer, claim, security settings and probes.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/kubescape-placement.XXXXXX")"
 trap 'rm -rf -- "$scratch"' EXIT
 
-# Refuse an incomplete render or unsafe scheduling boundary.
+# Refuse an incomplete render or a changed scheduling or safety boundary.
 fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 
-# A compute-only Linux worker lacks the volume client; only the storage worker is eligible.
-safe_placement() {
+# Every Linux worker is eligible, with or without a storage disk; a Windows node never is,
+# and no required node affinity or fixed node name narrows that again.
+unpinned_placement() {
   jq -e '
+    (.spec.template.spec.nodeName == null) and
+    (.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution == null) and
     .spec.template.spec.nodeSelector as $selector |
     ($selector | type == "object") and
     ([
       {labels:{"kubernetes.io/os":"linux","node.longhorn.io/create-default-disk":"true"},eligible:true},
-      {labels:{"kubernetes.io/os":"linux"},eligible:false},
+      {labels:{"kubernetes.io/os":"linux"},eligible:true},
       {labels:{"kubernetes.io/os":"windows","node.longhorn.io/create-default-disk":"true"},eligible:false}
     ] | all(.[];
       . as $node |
       (all($selector | to_entries[]; $node.labels[.key] == .value)) == $node.eligible))
+  ' "$1" >/dev/null
+}
+
+# One writer on its existing claim, the restricted security settings, and both health probes.
+store_contract() {
+  jq -e '
+    .spec.replicas == 1 and .spec.strategy.type == "Recreate" and
+    any(.spec.template.spec.volumes[]; .persistentVolumeClaim.claimName == "kubescape-storage") and
+    .spec.template.spec.securityContext.seccompProfile.type == "RuntimeDefault" and
+    (.spec.template.spec.containers | length) == 1 and
+    (.spec.template.spec.containers[0] |
+      .securityContext.allowPrivilegeEscalation == false and
+      .securityContext.runAsNonRoot == true and
+      .securityContext.capabilities.drop == ["ALL"] and
+      .securityContext.seccompProfile.type == "RuntimeDefault" and
+      (.readinessProbe | type) == "object" and (.livenessProbe | type) == "object")
   ' "$1" >/dev/null
 }
 
@@ -53,9 +75,9 @@ for mode in install upgrade; do
   "$controller_helm" template kubescape "$scratch/kubescape-operator-$version.tgz" \
     --namespace kubescape --kube-version "$kube_version" --values "$scratch/values.json" \
     "${args[@]}" >"$scratch/rendered.yaml"
+  # The chart's own placement for every component, the store included.
   yq ea -o=json -I=0 'select(.kind == "Deployment" or .kind == "DaemonSet")' "$scratch/rendered.yaml" |
-    jq -s 'map(select(.metadata.name != "storage") |
-      {kind,name:.metadata.name,selector:.spec.template.spec.nodeSelector}) | sort_by(.kind,.name)' \
+    jq -s 'map({kind,name:.metadata.name} + (.spec.template.spec | {nodeSelector,affinity,tolerations,nodeName,topologySpreadConstraints})) | sort_by(.kind,.name)' \
       >"$scratch/before-placement.json"
   for ((i=0; i<count; i++)); do
     renderer="$scratch/$mode-renderer-$i"
@@ -71,22 +93,37 @@ for mode in install upgrade; do
   yq ea -o=json -I=0 'select(.kind == "Deployment")' "$scratch/rendered.yaml" |
     jq -e -s 'map(select(.metadata.name == "storage")) |
       if length == 1 then .[0] else error("expected one storage Deployment") end' >"$scratch/storage.json"
-  safe_placement "$scratch/storage.json" || fail "$mode storage may select a worker without its volume client"
+  unpinned_placement "$scratch/storage.json" ||
+    fail "$mode storage is not eligible for every Linux worker"
   yq ea -o=json -I=0 'select(.kind == "Deployment" or .kind == "DaemonSet")' "$scratch/rendered.yaml" |
-    jq -s 'map(select(.metadata.name != "storage") |
-      {kind,name:.metadata.name,selector:.spec.template.spec.nodeSelector}) | sort_by(.kind,.name)' \
+    jq -s 'map({kind,name:.metadata.name} + (.spec.template.spec | {nodeSelector,affinity,tolerations,nodeName,topologySpreadConstraints})) | sort_by(.kind,.name)' \
       >"$scratch/after-placement.json"
   cmp -s "$scratch/before-placement.json" "$scratch/after-placement.json" ||
-    fail 'placement changed for a component other than storage'
-  jq -e '.spec.replicas == 1 and .spec.strategy.type == "Recreate" and
-    any(.spec.template.spec.volumes[]; .persistentVolumeClaim.claimName == "kubescape-storage")' \
-    "$scratch/storage.json" >/dev/null || fail 'single-writer storage or claim identity changed'
+    fail "$mode post-renderers changed a component's placement"
+  store_contract "$scratch/storage.json" ||
+    fail "$mode storage lost its single writer, claim, security settings or probes"
+
+  # Negative controls: each mutation must be refused by the check it targets.
   for mutation in \
-    'del(.spec.template.spec.nodeSelector["node.longhorn.io/create-default-disk"])' \
-    '.spec.template.spec.nodeSelector["node.longhorn.io/create-default-disk"] = "false"' \
-    'del(.spec.template.spec.nodeSelector["kubernetes.io/os"])'; do
+    '.spec.template.spec.nodeSelector["node.longhorn.io/create-default-disk"] = "true"' \
+    'del(.spec.template.spec.nodeSelector["kubernetes.io/os"])' \
+    'del(.spec.template.spec.nodeSelector)' \
+    '.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms = [{"matchExpressions":[{"key":"node.longhorn.io/create-default-disk","operator":"In","values":["true"]}]}]' \
+    '.spec.template.spec.nodeName = "storage-worker"'; do
     jq "$mutation" "$scratch/storage.json" >"$scratch/mutated.json"
-    if safe_placement "$scratch/mutated.json"; then fail "accepted unsafe placement: $mutation"; fi
+    if unpinned_placement "$scratch/mutated.json"; then fail "accepted placement: $mutation"; fi
+  done
+  for mutation in \
+    '.spec.replicas = 2' \
+    '.spec.strategy.type = "RollingUpdate"' \
+    '.spec.template.spec.volumes |= map(select(.persistentVolumeClaim == null))' \
+    '.spec.template.spec.securityContext.seccompProfile.type = "Unconfined"' \
+    '.spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation = true' \
+    '.spec.template.spec.containers[0].securityContext.capabilities.drop = []' \
+    'del(.spec.template.spec.containers[0].readinessProbe)' \
+    'del(.spec.template.spec.containers[0].livenessProbe)'; do
+    jq "$mutation" "$scratch/storage.json" >"$scratch/mutated.json"
+    if store_contract "$scratch/mutated.json"; then fail "accepted store change: $mutation"; fi
   done
 done
-printf 'PASS: production Kubescape storage selects volume-client workers without changing its claim\n'
+printf 'PASS: production Kubescape storage may run on every Linux worker and keeps its claim and safeguards\n'
