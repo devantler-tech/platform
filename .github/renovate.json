@@ -381,6 +381,13 @@
       "enabled": false
     },
     {
+      "description": "The alert publisher (scripts/alert-publisher) passes go-github types to github.com/bradleyfalzon/ghinstallation/v2, whose installation-token options, permissions and repositories are go-github types of the major ghinstallation itself requires. A go-github major that ghinstallation has not adopted cannot compile against it, and a go.mod-only proposal leaves the imports on the old path. Keep major proposals on the Dependency Dashboard for approval, and adopt one only alongside a ghinstallation release on that major, with the imports moved in the same change. Patch and minor updates of the current major stay enabled.",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["/^github\\.com/google/go-github/"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "The Helm SDK is HARD-PINNED at v4.2.4 in every Go module here (scripts/render-helm-chart, scripts/tests/openbao-strategy-transition): they build the exact Helm the deployed Flux helm-controller embeds, so an offline render matches what production renders. scripts/build-controller-helm.sh refuses any other version or module sum, so a standalone update can never go green, and closing it only delays the next offer (#4424, #4731, tracked in #4738). The version moves with the controller instead: when a Flux update changes the embedded Helm, update this pattern, the version and sum in scripts/build-controller-helm.sh, its expected build metadata, HELM_VERSION in .github/workflows/ci.yaml, scripts/guard-helm-post-renderers.sh and both go.mod files in one reviewed change. scripts/tests/test-controller-helm-sdk-renovate-pin.sh fails when this pattern and the build guard disagree. Placed last so no earlier rule can widen it.",
       "matchManagers": ["gomod"],
       "matchPackageNames": ["helm.sh/helm/v4"],
