@@ -44,6 +44,32 @@ or agent reads the credential as part of this preparation.
 The namespace and claim retain the platform's current prune protection. The
 claim is not a backup or restore proof. No mailbox content exists in preparation.
 
+## Administration opt-in
+
+The separate `k8s/bases/apps/private-mail-administration` bundle inherits the
+preparation resources and remains absent from both normal provider overlays.
+Its initializer must finish and stop recovery before Kubernetes starts the
+normal Stalwart process. Both use the same immutable published bootstrap image.
+Only the initializer receives the private settings and account passwords;
+normal serving receives the datastore and certificate files. Each process has
+its own memory-backed temporary directory, and neither receives Kubernetes API
+credentials.
+
+Maintainer and agent passwords follow the existing administrator's durable
+generation pattern: create a cache once, push only if absent, then consume the
+value read back from OpenBao. Deleting a generator cache cannot rotate an
+existing account password. Missing settings, credentials or certificate files
+block startup. Production settings remain encrypted outside the shared bundle.
+
+The administration Service and HTTPS route select only normal management port
+8080. The network policy admits only gateway ingress there, explicitly denies
+recovery and prepared mail ports from every source, and retains all-egress
+denial. The route registers a Stalwart Homepage entry at its authenticated
+administration path. Inclusion prepares browser evaluation; it does not prove
+the Homepage entry, authentication or any production behavior until observed.
+Public mail, DNS migration, credential custody, history import and restoration
+remain separate activation requirements below.
+
 ## Activation and completion
 
 The parent #5030 remains open until the service delivers and receives real mail.

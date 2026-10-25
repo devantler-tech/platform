@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Explicit administration opt-in; neither normal provider layer includes it.
+resources:
+  - ../private-mail
+  - password-maintainer.yaml
+  - external-secret-generated-maintainer.yaml
+  - push-secret-maintainer.yaml
+  - external-secret-maintainer.yaml
+  - password-agent.yaml
+  - external-secret-generated-agent.yaml
+  - push-secret-agent.yaml
+  - external-secret-agent.yaml
+  - certificate.yaml
+  - http-route.yaml
+patches:
+  - path: patches/serve-after-initialization.yaml
+  - path: patches/read-back-admin-password.yaml
+  - path: patches/isolate-administration.yaml
+images:
+  - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+    # Signed protected-main publication from PR #5335.
+    digest: sha256:e51d4d1f574405910f6f070d50efabc5e3c84ec65c33b44e5fad1684e25030d8
