@@ -3,10 +3,14 @@ package main
 // Compiled only with the fixed reviewed publisher revision by the main-only
 // workflow. No state machine, issue publication or operator-selected target.
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,14 +18,68 @@ import (
 	"github.com/google/go-github/v88/github"
 )
 
+func proofCredential(raw []byte) ([]byte, int64, error) {
+	if len(raw) == 0 || len(raw) > 128*1024 {
+		return nil, 0, errQuarantined
+	}
+	var value struct {
+		Owner string `json:"owner"`
+		Apps  []struct {
+			ID           string `json:"id"`
+			Installation string `json:"installation_id"`
+			PEM          string `json:"pem_file"`
+		} `json:"app_auth"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF || value.Owner != repositoryOwner || len(value.Apps) != 1 {
+		return nil, 0, errQuarantined
+	}
+	appID, err := strconv.ParseInt(value.Apps[0].ID, 10, 64)
+	if err != nil || appID != publisherAppID {
+		return nil, 0, errQuarantined
+	}
+	installation, err := strconv.ParseInt(value.Apps[0].Installation, 10, 64)
+	if err != nil || installation <= 0 || len(value.Apps[0].PEM) == 0 || len(value.Apps[0].PEM) > 64*1024 {
+		return nil, 0, errQuarantined
+	}
+	return []byte(value.Apps[0].PEM), installation, nil
+}
+
+func TestProofCredential(t *testing.T) {
+	key, installation, err := proofCredential([]byte(`{"owner":"devantler-tech","app_auth":[{"id":"4085939","installation_id":"9","pem_file":"fixture-only"}]}`))
+	if err != nil || installation != 9 || string(key) != "fixture-only" {
+		t.Fatal("valid publisher credential rejected")
+	}
+	for _, raw := range []string{
+		`{"owner":"another-owner","app_auth":[{"id":"4085939","installation_id":"9","pem_file":"fixture-only"}]}`,
+		`{"owner":"devantler-tech","app_auth":[{"id":"1","installation_id":"9","pem_file":"fixture-only"}]}`,
+		`{"owner":"devantler-tech","app_auth":[{"id":"4085939","installation_id":"0","pem_file":"fixture-only"}]}`,
+		`{"owner":"devantler-tech","app_auth":[{"id":"4085939","installation_id":"9","pem_file":""}]}`,
+		`{"owner":"devantler-tech","app_auth":[]}`,
+		`{"owner":"devantler-tech","app_auth":[{"id":"4085939","installation_id":"9","pem_file":"fixture-only","target":"another"}]}`,
+		`{"owner":"devantler-tech","app_auth":[{"id":"4085939","installation_id":"9","pem_file":"fixture-only"}]} {}`,
+		strings.Repeat("x", 1<<18),
+	} {
+		if key, _, err := proofCredential([]byte(raw)); err == nil || key != nil {
+			t.Fatal("invalid publisher credential admitted")
+		}
+	}
+}
+
 func TestCredentialedPublisherReadOnly(t *testing.T) {
-	file, err := os.Open(os.Getenv("ALERT_APP_PROOF_KEY_FILE"))
+	file, err := os.Open(os.Getenv("ALERT_APP_PROOF_CREDENTIAL_FILE"))
 	if err != nil {
 		t.Fatal("proof credential unavailable")
 	}
-	key, err := io.ReadAll(io.LimitReader(file, 64*1024+1))
+	raw, err := io.ReadAll(io.LimitReader(file, 128*1024+1))
 	_ = file.Close()
-	if err != nil || len(key) == 0 || len(key) > 64*1024 {
+	if err != nil {
+		t.Fatal("proof credential invalid")
+	}
+	defer clear(raw)
+	key, expectedInstallation, err := proofCredential(raw)
+	if err != nil {
 		t.Fatal("proof credential invalid")
 	}
 	defer clear(key)
@@ -39,7 +97,7 @@ func TestCredentialedPublisherReadOnly(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	installation, _, err := appClient.Apps.GetRepositoryInstallation(ctx, repositoryOwner, repositoryName)
-	if err != nil || installation.GetID() <= 0 || installation.GetAppID() != publisherAppID || installation.GetAppSlug() != publisherAppSlug || installation.GetAccount().GetLogin() != repositoryOwner {
+	if err != nil || installation.GetID() != expectedInstallation || installation.GetAppID() != publisherAppID || installation.GetAppSlug() != publisherAppSlug || installation.GetAccount().GetLogin() != repositoryOwner {
 		t.Fatal("existing credential does not establish the required publisher identity")
 	}
 	remote, err := newGitHubRemote(installation.GetID(), key)
