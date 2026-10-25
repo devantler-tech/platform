@@ -184,6 +184,9 @@ printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratc
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
 printf 'From: agents@example.test\r\nTo: maintainer@example.test\r\nSubject: Native policy proof\r\nMessage-ID: <mail-policy@example.test>\r\n\r\nPreserved native mail fixture.\r\n' >"$scratch/known.eml"
 smtp=(--silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" --ssl-reqd --url smtp://mail.example.test:1587 --mail-from agents@example.test --upload-file /proof/known.eml)
+auth_advertised() {
+  grep -Eqi '^< 250[- ]AUTH([ =]|$)' "$1"
+}
 protocol_curl --fail "${smtp[@]}" --config /proof/agent.curl --mail-rcpt maintainer@example.test >"$scratch/allowed.out" 2>"$scratch/allowed.err"
 for recipient in operator@example.test someone@remote.example.test maintainer+tag@example.test; do
   if protocol_curl "${smtp[@]}" --config /proof/agent.curl --mail-rcpt "$recipient" >"$scratch/denied.out" 2>"$scratch/denied.err"; then
@@ -191,10 +194,15 @@ for recipient in operator@example.test someone@remote.example.test maintainer+ta
   fi
   grep -q '550' "$scratch/denied.err"
 done
-if protocol_curl "${smtp[@]}" --mail-rcpt maintainer@example.test >"$scratch/no-auth.out" 2>"$scratch/no-auth.err"; then
+if protocol_curl --verbose "${smtp[@]}" --mail-rcpt maintainer@example.test >"$scratch/no-auth.out" 2>"$scratch/no-auth.err"; then
   echo 'FAIL: submission accepted an unauthenticated envelope' >&2; exit 1
 fi
 grep -q '503' "$scratch/no-auth.err"
+# The same detector must see AUTH on submission. This probe supplies no
+# credentials, so capability logging cannot record an authentication secret.
+auth_advertised "$scratch/no-auth.err" || {
+  echo 'FAIL: authenticated-submission capabilities were not observed' >&2; exit 1;
+}
 if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" --mail-from sender@remote.example.test --mail-rcpt someone@other.example.test --upload-file /proof/known.eml >"$scratch/relay.out" 2>"$scratch/relay.err"; then
   echo 'FAIL: unauthenticated relay was accepted' >&2; exit 1
 fi
@@ -206,10 +214,17 @@ protocol_curl --fail --silent --show-error --max-time 15 --config /proof/human.c
   --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" \
   --ssl-reqd --url smtp://mail.example.test:1587 --mail-from maintainer@example.test \
   --mail-rcpt someone@remote.example.test --upload-file /proof/human.eml >"$scratch/human-send.out" 2>"$scratch/human-send.err"
-if protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl \
+# Incoming local delivery succeeds without credentials. Observe both EHLOs
+# across STARTTLS: successful delivery alone says nothing about AUTH being
+# offered, because curl can omit authentication when the server omits AUTH.
+protocol_curl --fail --silent --show-error --verbose --max-time 10 \
   --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1025:$name:1025" \
-  --ssl-reqd --url smtp://mail.example.test:1025 --mail-from agents@example.test \
-  --mail-rcpt maintainer@example.test --upload-file /proof/known.eml >"$scratch/mx-auth.out" 2>"$scratch/mx-auth.err"; then
+  --ssl-reqd --url smtp://mail.example.test:1025 --mail-from sender@remote.example.test \
+  --mail-rcpt maintainer@example.test --upload-file /proof/known.eml >"$scratch/mx-auth.out" 2>"$scratch/mx-capabilities.log"
+if [ "$(grep -c '^> EHLO ' "$scratch/mx-capabilities.log")" -lt 2 ]; then
+  echo 'FAIL: MX capabilities were not observed before and after TLS' >&2; exit 1
+fi
+if auth_advertised "$scratch/mx-capabilities.log"; then
   echo 'FAIL: MX offered agent authentication' >&2; exit 1
 fi
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl "http://$name:8080/jmap/session" >"$scratch/session.json"
