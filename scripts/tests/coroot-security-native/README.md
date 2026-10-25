@@ -1,6 +1,6 @@
 # Native Coroot dashboard evidence
 
-The hosted workflow runs `run.sh` against the released Coroot 1.22.2 image, an
+The hosted workflow runs `run.sh` against the released Coroot 1.28.1 image, an
 ephemeral Prometheus and a loopback-only synthetic metrics server. It provisions
 the versioned dashboard definitions twice, checks persisted configurations and
 an unrelated dashboard, queries every panel through Coroot using the same
@@ -36,14 +36,14 @@ series. No Kubernetes cluster or production credentials are used.
 
 Sources checked for the exact runtime contract:
 
-- [Coroot Docker entrypoint](https://github.com/coroot/coroot/blob/v1.22.2/Dockerfile)
-- [Coroot flags](https://github.com/coroot/coroot/blob/v1.22.2/config/flags.go)
-- [Coroot default-project bootstrap](https://github.com/coroot/coroot/blob/v1.22.2/config/bootstrap.go)
-- [Project selector for the global backend](https://github.com/coroot/coroot/blob/v1.22.2/db/project.go)
-- [Native API routes](https://github.com/coroot/coroot/blob/v1.22.2/main.go)
-- [Panel response implementation](https://github.com/coroot/coroot/blob/v1.22.2/api/views/dashboards/panel.go)
-- [Prometheus range alignment](https://github.com/coroot/coroot/blob/v1.22.2/prom/http.go)
-- [Browser routes](https://github.com/coroot/coroot/blob/v1.22.2/front/src/main.js)
+- [Coroot Docker entrypoint](https://github.com/coroot/coroot/blob/v1.28.1/Dockerfile)
+- [Coroot flags](https://github.com/coroot/coroot/blob/v1.28.1/config/flags.go)
+- [Coroot default-project bootstrap](https://github.com/coroot/coroot/blob/v1.28.1/config/bootstrap.go)
+- [Project selector for the global backend](https://github.com/coroot/coroot/blob/v1.28.1/db/project.go)
+- [Native API routes](https://github.com/coroot/coroot/blob/v1.28.1/main.go)
+- [Panel response implementation](https://github.com/coroot/coroot/blob/v1.28.1/api/views/dashboards/panel.go)
+- [Prometheus range alignment](https://github.com/coroot/coroot/blob/v1.28.1/prom/http.go)
+- [Browser routes](https://github.com/coroot/coroot/blob/v1.28.1/front/src/main.js)
 - [Playwright 1.56.1 CLI](https://github.com/microsoft/playwright/blob/v1.56.1/packages/playwright-core/src/cli/program.ts)
 - [Pinned Playwright registry metadata](https://registry.npmjs.org/playwright/1.56.1)
 
@@ -54,11 +54,11 @@ no port is published or bound to a public interface. Cleanup removes only this
 invocation's named containers and temporary files, preserving diagnostic logs
 and screenshots as seven-day workflow artifacts.
 
-The binary version is verified from its real startup log. Coroot 1.22.2 does
+The binary version is verified from its real startup log. Coroot 1.28.1 does
 not expose a `--version` option.
 
 The workflow also runs for changes to the base Coroot resource and production
 Coroot patch. A preflight requires the native image to equal the versioned
-`communityEdition.image.name` and the reviewed 1.22.2 contract. A Coroot version
+`communityEdition.image.name` and the reviewed 1.28.1 contract. A Coroot version
 change deliberately fails this check until its API/browser compatibility and
 the fixture's pinned source references are reviewed together.
