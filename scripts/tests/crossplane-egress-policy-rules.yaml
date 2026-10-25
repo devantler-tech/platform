@@ -638,6 +638,16 @@ rules:
   # by one of those string literals, so a computed path, another field, or a
   # move/copy/remove keeps the policy rejected. A leading '#' keeps the text
   # before the first match from ever reading as an approved literal.
+  # Its spec holds only the match constraints (resource rules naming only their
+  # four selection fields, and an object selector, a label selector that is not
+  # CEL), exactly one match condition that reads the incoming object's
+  # helm.toolkit.fluxcd.io/crds label exactly as the reviewed policy does, and
+  # exactly one mutation whose expression equals the reviewed one once spaces,
+  # tabs and line breaks are removed (under the same no-whitespace-in-literals
+  # rule as the auto-vpa expressions below). Every other field is refused,
+  # because variables, conditions and patch values are CEL that can read or
+  # write the cluster (#5106). The same condition pattern and expression are
+  # pinned in scripts/guard-consumer-discovery-conservation.sh.
   #
   # #5102: the shared catalog's auto-vpa
   # (devantler-tech/kyverno-policies
@@ -680,20 +690,39 @@ rules:
       (object.kind == 'MutatingPolicy' &&
        has(object.spec) &&
        !has(object.spec.targetMatchConstraints) &&
+       object.spec.all(key, key in ['matchConstraints', 'matchConditions', 'mutations']) &&
+       has(object.spec.matchConditions) &&
+       object.spec.matchConditions.size() == 1 &&
+       object.spec.matchConditions.all(condition,
+         condition.all(key, key in ['name', 'expression']) &&
+         has(condition.expression) && type(condition.expression) == string &&
+         condition.expression.matches(
+           "^\\s*has\\(object\\.metadata\\.labels\\)\\s*&&\\s*'helm\\.toolkit\\.fluxcd\\.io/crds'\\s+in\\s+object\\.metadata\\.labels\\s*&&\\s*object\\.metadata\\.labels\\['helm\\.toolkit\\.fluxcd\\.io/crds'\\]\\s*==\\s*'enabled'\\s*$")) &&
        (!has(object.spec.evaluation) ||
         !has(object.spec.evaluation.mutateExisting)) &&
        has(object.spec.matchConstraints) &&
+       object.spec.matchConstraints.all(key,
+         key in ['resourceRules', 'objectSelector']) &&
        has(object.spec.matchConstraints.resourceRules) &&
        object.spec.matchConstraints.resourceRules.size() > 0 &&
        object.spec.matchConstraints.resourceRules.all(rule,
+         rule.all(key, key in ['apiGroups', 'apiVersions', 'operations', 'resources']) &&
          has(rule.apiGroups) && rule.apiGroups == ['helm.toolkit.fluxcd.io'] &&
          has(rule.resources) && rule.resources == ['helmreleases']) &&
        has(object.spec.mutations) &&
-       object.spec.mutations.size() > 0 &&
+       object.spec.mutations.size() == 1 &&
        object.spec.mutations.all(mutation,
+         mutation.all(key, key in ['patchType', 'jsonPatch']) &&
          has(mutation.patchType) && mutation.patchType == 'JSONPatch' &&
          !has(mutation.applyConfiguration) &&
-         has(mutation.jsonPatch) && has(mutation.jsonPatch.expression) &&
+         has(mutation.jsonPatch) &&
+         mutation.jsonPatch.all(key, key == 'expression') &&
+         has(mutation.jsonPatch.expression) &&
+         type(mutation.jsonPatch.expression) == string &&
+         mutation.jsonPatch.expression.matches(
+           '^[^"\\x5c]*("[^"\\x5c\\s]*"[^"\\x5c]*)*$') &&
+         mutation.jsonPatch.expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
+           '(has(object.spec.install)?[]:[JSONPatch{op:"add",path:"/spec/install",value:{}}])+[JSONPatch{op:"add",path:"/spec/install/crds",value:"CreateReplace"}]+(has(object.spec.upgrade)?[]:[JSONPatch{op:"add",path:"/spec/upgrade",value:{}}])+[JSONPatch{op:"add",path:"/spec/upgrade/crds",value:"CreateReplace"}]' &&
          ('#' + mutation.jsonPatch.expression).split('path').size() > 1 &&
          ('#' + mutation.jsonPatch.expression).split('path').filter(part,
            !part.matches(
