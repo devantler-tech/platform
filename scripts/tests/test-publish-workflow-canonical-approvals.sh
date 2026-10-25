@@ -160,6 +160,27 @@ expect_refusal() { # <case> <root> <must-mention>...
 root="$(build_tree control)"
 expect_pass 'control: a legacy-only tree with a record that approves nothing passes' "$root"
 
+# A typed source has no literal subject for the old grep to find. It must not
+# disappear beside an otherwise complete legacy census without explicit admission.
+root="$(build_tree unapproved-typed-source)"
+cp "$REPO_ROOT/${GENERICS[1]}" "$root/${GENERICS[1]}"
+mkdir -p "$root/k8s/providers/hetzner/apps/business-site"
+cat >"$root/k8s/providers/hetzner/apps/business-site/tenant.yaml" <<EOF
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: business-site
+  namespace: default
+spec:
+  name: business-site
+  webApp: true
+  source:
+    digest: $DIGEST
+    publisherRevision: $SHA_K
+    reconcileApplication: false
+EOF
+expect_refusal 'an unapproved typed business source cannot disappear from attribution' "$root" 'k8s/providers/hetzner/apps/business-site/tenant.yaml'
+
 # ── the record, read strictly ─────────────────────────────────────────────────────────────
 root="$(build_tree record-missing)"
 rm "$root/scripts/canonical.tsv"
