@@ -12,7 +12,12 @@
 # (`kubectl get polr -A | grep disallow-latest-tag`) show zero violations.
 #
 # Namespace exclusions mirror validate-pod-security: infrastructure
-# namespaces that run third-party system charts by design.
+# namespaces that run third-party system charts by design. The exclusion
+# reads the request's namespace, not the object's: Kyverno also judges the pod
+# templates of Deployments, StatefulSets, DaemonSets, Jobs and CronJobs through
+# rules it generates from this policy, and those rules read the template, whose
+# metadata carries no namespace. Only the request's namespace says where a
+# controller runs (#5168).
 apiVersion: policies.kyverno.io/v1
 kind: ValidatingPolicy
 metadata:
@@ -41,7 +46,7 @@ spec:
   matchConditions:
     - name: not-infrastructure-namespace
       expression: >-
-        !(object.metadata.?namespace.orValue('') in [
+        !(request.namespace in [
           'kube-system', 'kube-public', 'kube-node-lease', 'flux-system',
           'longhorn-system', 'local-path-storage', 'kubescape', 'kubevirt',
           'cdi', 'observability', 'velero'])
