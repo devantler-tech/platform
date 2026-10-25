@@ -1278,6 +1278,13 @@ jobs:
           shellcheck scripts/tests/test-kro-renovate-group.sh
           bash scripts/tests/test-kro-renovate-group.sh
 
+      # Renovate moves the Talos version only where it can; every other file that names it
+      # must be on the checklist each Talos pull request carries, or it goes stale (#4746).
+      - name: 📌 Validate the Talos version pin checklist
+        run: |
+          shellcheck scripts/tests/test-talos-version-pins.sh
+          bash scripts/tests/test-talos-version-pins.sh
+
       # Kyverno 1.20 removes the kyverno.io ClusterPolicy API most policies here still use.
       # This spans the Renovate policy, the CLI pin and the manifests, so it runs here for
       # the same reason as the gates above; its first case checks the tree as committed (#4994).
