@@ -264,6 +264,19 @@
       "automerge": false
     },
     {
+      "description": "Six more ghcr.io dependencies get no release date from Renovate, the same cause as the flux-operator chart above: the Homepage and origin-ca-issuer charts (flux manager, read from their OCIRepository), the PostgreSQL operand image (the CloudNativePG custom manager), the Coroot server and cluster-agent images (the Coroot custom manager) and the Umami image (kubernetes manager, in its CronJob). Every one had newer releases, yet none was proposed after the repository-wide wait began on 2026-05-04 (#5008). minimumReleaseAge is therefore 0 days. Raising the PR adopts nothing: automerge is off whatever the update type, because with no wait nothing soaks an update before it merges, and several of these are minor or major versions behind, so each update is read against its release notes before merge. Placed after the broad automerge rules so none of them can turn automerge back on; scripts/tests/oci-chart-sources checks each dependency's manager and that every update of it resolves to both settings.",
+      "matchPackageNames": [
+        "ghcr.io/m0nsterrr/helm-charts/homepage",
+        "ghcr.io/cloudflare/origin-ca-issuer-charts/origin-ca-issuer",
+        "ghcr.io/cloudnative-pg/postgresql",
+        "ghcr.io/coroot/coroot",
+        "ghcr.io/coroot/coroot-cluster-agent",
+        "ghcr.io/umami-software/umami"
+      ],
+      "minimumReleaseAge": "0 days",
+      "automerge": false
+    },
+    {
       "description": "KRO moves as one pull request: the controller chart (dedicated regex manager above) and the github.com/kubernetes-sigs/kro Go module the web-app compiler check builds against, which must match it (#5204). The chart registry gives Renovate no release date, so the repository-wide wait would hold the chart back forever while the module arrived alone and failed; minimumReleaseAge is 0 days for both so they arrive together, and minimumGroupSize 2 holds the PR until both have an update, so one never arrives alone. Automerge is off: a controller bump is reviewed against KRO's release notes. Placed after the broad automerge rules so none of them can turn automerge back on.",
       "matchPackageNames": [
         "registry.k8s.io/kro/charts/kro",

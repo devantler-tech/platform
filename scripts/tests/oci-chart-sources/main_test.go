@@ -241,17 +241,26 @@ var fluxOperatorUpdatePolicy = map[string]any{"automerge": false, "minimumReleas
 
 type renovateConfig struct {
 	CustomManagers []struct {
-		CustomType          string `json:"customType"`
-		DatasourceTemplate  string `json:"datasourceTemplate"`
-		DepNameTemplate     string `json:"depNameTemplate"`
-		PackageNameTemplate string `json:"packageNameTemplate"`
+		CustomType          string   `json:"customType"`
+		ManagerFilePatterns []string `json:"managerFilePatterns"`
+		MatchStrings        []string `json:"matchStrings"`
+		DatasourceTemplate  string   `json:"datasourceTemplate"`
+		DepNameTemplate     string   `json:"depNameTemplate"`
+		PackageNameTemplate string   `json:"packageNameTemplate"`
 	} `json:"customManagers"`
+	Flux         builtInManager   `json:"flux"`
+	Kubernetes   builtInManager   `json:"kubernetes"`
 	PackageRules []map[string]any `json:"packageRules"`
 }
 
-// fluxOperatorRenovateConfig reads the committed Renovate config and describes
-// the chart as its dedicated manager extracts it.
-func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependency) {
+// builtInManager is the part of a built-in manager's settings that decides
+// which files it reads.
+type builtInManager struct {
+	ManagerFilePatterns []string `json:"managerFilePatterns"`
+}
+
+// readRenovateConfig reads the committed Renovate config.
+func readRenovateConfig(t *testing.T) renovateConfig {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(t), ".github/renovate.json"))
 	if err != nil {
@@ -261,6 +270,14 @@ func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependenc
 	if err := json.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
 	}
+	return config
+}
+
+// fluxOperatorRenovateConfig reads the committed Renovate config and describes
+// the chart as its dedicated manager extracts it.
+func fluxOperatorRenovateConfig(t *testing.T) (renovateConfig, renovateDependency) {
+	t.Helper()
+	config := readRenovateConfig(t)
 	dep := renovateDependency{
 		packageName: strings.TrimPrefix(chartSources[0].url, "oci://"),
 		packageFile: chartSources[0].directory + "/oci-repository.yaml",
