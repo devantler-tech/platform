@@ -807,6 +807,11 @@ jobs:
           go test ./scripts/validate-feature-flags
           go run ./scripts/validate-feature-flags
 
+      - name: 🔒 Validate alert App proof dispatch boundary
+        run: |
+          shellcheck scripts/tests/test-alert-app-proof.sh
+          bash scripts/tests/test-alert-app-proof.sh
+
       - name: ⚖️ Validate policy-job result boundary
         run: |
           shellcheck scripts/tests/test-policy-ci-job.sh

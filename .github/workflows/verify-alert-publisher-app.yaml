@@ -1,0 +1,82 @@
+name: Verify Alert Publisher App
+
+# Coverage bootstrap for #5291/#5294. The publisher stays dormant. This reads
+# GitHub metadata, mints one repository-scoped token, then revokes that token.
+# It never runs the publisher state machine or creates an incident/ask.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-alert-publisher-read-only"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: verify-alert-publisher-app
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require reviewed main and explicit read-only confirmation
+        id: guard
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]
+          [[ "$GITHUB_REF" == refs/heads/main ]]
+          [[ "$GITHUB_REPOSITORY" == devantler-tech/platform ]]
+          [[ "$GITHUB_RUN_ATTEMPT" == 1 ]]
+          [[ "$CONFIRM" == verify-alert-publisher-read-only ]]
+      - name: Checkout reviewed proof definition
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Checkout the exact publisher revision with a clean review
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: devantler-tech/platform
+          ref: e64bc9c5b438bbaabca2b95927e6a1f568165644
+          path: publisher-source
+          persist-credentials: false
+      - name: Setup the reviewed source's Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: publisher-source/go.mod
+          cache: false
+      - name: Validate dispatch refusals and compile without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/tests/test-alert-app-proof.sh
+          cp scripts/tests/testdata/alert-app-probe/credential_probe_test.go publisher-source/scripts/alert-publisher/credential_probe_test.go
+          cd publisher-source
+          go test -c -o "$RUNNER_TEMP/alert-app-proof" ./scripts/alert-publisher
+      - name: Verify the existing App and revoke only the probe's token
+        shell: bash
+        env:
+          APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/alert-app-proof.XXXXXX")"
+          trap 'rm -rf "$proof_dir"' EXIT
+          if [[ -z "$APP_PRIVATE_KEY" || ${#APP_PRIVATE_KEY} -gt 65536 ]]; then
+            echo 'Existing App credential unavailable; no verification performed.' >&2
+            exit 1
+          fi
+          printf '%s' "$APP_PRIVATE_KEY" > "$proof_dir/key.pem"
+          unset APP_PRIVATE_KEY
+          ALERT_APP_PROOF_KEY_FILE="$proof_dir/key.pem" "$RUNNER_TEMP/alert-app-proof" -test.run '^TestCredentialedPublisherReadOnly$' -test.v -test.timeout 70s
+          echo 'Verified publisher source: e64bc9c5b438bbaabca2b95927e6a1f568165644'
