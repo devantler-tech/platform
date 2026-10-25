@@ -30,9 +30,10 @@ type request struct {
 	dashboard
 }
 
-// The API fixture follows v1.22.2 api/api.go, api/views/users/users.go and
+// The API fixture follows v1.28.1 api/api.go, api/views/users/users.go and
 // db/dashboards.go: list/detail wrap data, create returns a plain ID, and the
 // detail GET omits the stored description. It rejects malformed write forms.
+// With emptyScope it also echoes the "scope" key v1.28.1 adds to every query.
 type coroot struct {
 	mu             sync.Mutex
 	dashboards     []dashboard
@@ -41,6 +42,7 @@ type coroot struct {
 	override       func(http.ResponseWriter, *http.Request) bool
 	writeFailure   string
 	discardSave    bool
+	emptyScope     bool
 	unexpectedPath string
 }
 
@@ -79,6 +81,9 @@ func (c *coroot) serve(w http.ResponseWriter, r *http.Request) {
 			for _, d := range c.dashboards {
 				if d.ID == id {
 					d.Description = ""
+					if c.emptyScope {
+						d.Config = withEmptyScope(d.Config)
+					}
 					data = d
 				}
 			}
@@ -454,4 +459,58 @@ func TestBundledPanelsUseCorootChartContract(t *testing.T) {
 			}
 		}
 	}
+}
+
+// withEmptyScope adds `"scope": ""` to every metrics query that has none, as
+// db.DashboardPanelSourceMetricsQuery serialises it in v1.28.1.
+func withEmptyScope(raw json.RawMessage) json.RawMessage {
+	var config any
+	if json.Unmarshal(raw, &config) != nil {
+		return raw
+	}
+	var walk func(any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if _, isQuery := v["query"]; isQuery {
+				if _, scoped := v["scope"]; !scoped {
+					v["scope"] = ""
+				}
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		}
+	}
+	walk(config)
+	encoded, err := json.Marshal(config)
+	if err != nil {
+		return raw
+	}
+	return encoded
+}
+
+// v1.28.1 returns an empty query scope the desired configuration never sets. It
+// must read as converged: no failure, and no repeated save on the second pass.
+func TestEmptyQueryScopeIsConverged(t *testing.T) {
+	c := newCoroot()
+	c.emptyScope = true
+	s := httptest.NewServer(http.HandlerFunc(c.serve))
+	defer s.Close()
+	d := desired()
+	d.Config = json.RawMessage(`{"groups":[{"name":"Overview","panels":[{"name":"Policies","source":{"metrics":{"queries":[{"datasource":"","query":"sum(platform_security_policy_total)","legend":"","color":""}]}}}],"collapsed":false}]}`)
+	for pass := range 2 {
+		output, err := run(t, s, []dashboard{d})
+		if err != nil {
+			t.Fatalf("pass %d failed: %v\n%s", pass, err, output)
+		}
+	}
+	if len(c.posts) != 2 || c.posts[0].Action != "create" || c.posts[1].Action != "" {
+		t.Fatalf("expected one create and one save across both runs; got %+v", c.posts)
+	}
+	assertConfig(t, c.dashboards[0].Config, d.Config)
 }
