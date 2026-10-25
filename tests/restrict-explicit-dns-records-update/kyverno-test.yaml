@@ -11,109 +11,91 @@ resources:
 variables: values.yaml
 results:
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - external-dns/misplaced-platform-record
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/approved
     kind: DNSEndpoint
     result: pass
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - wedding-app/tenant-namespace
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/other-host
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/wildcard-host
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/other-target
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/wildcard-target
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/address-record
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/extra-endpoint
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/extra-target
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/missing-proxy
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/proxied
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/extra-property
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/different-ttl
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/empty-endpoints
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/missing-endpoints
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - data-product-controller/weighted-record
     kind: DNSEndpoint
     result: fail
   - policy: restrict-explicit-dns-records
-    rule: approved-platform-records
     resources:
       - wedding-app/forged-label
     kind: DNSEndpoint
