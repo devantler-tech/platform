@@ -258,4 +258,3 @@ canonical_observation_consistent() (
       [[ "${actual##*$'\t'}" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
   fi
 )
-
