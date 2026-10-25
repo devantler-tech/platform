@@ -43,6 +43,10 @@ func TestApprovalSummaryNamesTheExactLedgerEdit(t *testing.T) {
 	if !strings.Contains(text, "### Production authorization approval needed") || !strings.Contains(text, surfaceLedgerFile) {
 		t.Fatalf("summary does not name the approval or its file:\n%s", text)
 	}
+	// An added entry must land where parseSurfaceLedger accepts it.
+	if !strings.Contains(text, "sorted byte by byte with exactly one blank line between entries") {
+		t.Fatalf("summary does not state the ledger's ordering and spacing rules:\n%s", text)
+	}
 	_, block, opened := strings.Cut(text, "```diff\n")
 	block, _, closed := strings.Cut(block, "```\n")
 	if !opened || !closed {

@@ -22,7 +22,8 @@ func writeApprovalSummary(validationErr error, summaryPath string) (bool, error)
 	body.WriteString("### Production authorization approval needed\n\n")
 	fmt.Fprintf(&body, "The rendered production authorization surface differs from `%s`. "+
 		"If this change is intended, approve it by making exactly these edits to that file "+
-		"(`-` remove the line, `+` add it) and committing them for review:\n\n", surfaceLedgerFile)
+		"(`-` remove the line, `+` add it, keeping the file sorted byte by byte with exactly one blank line between entries)"+
+		"and committing them for review:\n\n", surfaceLedgerFile)
 	body.WriteString("```diff\n")
 	for _, line := range mismatch.delta {
 		// Ledger lines never contain a backtick; refusing one keeps the fence intact.
