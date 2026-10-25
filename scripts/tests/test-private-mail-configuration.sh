@@ -67,10 +67,14 @@ run_bootstrap() {
 }
 
 start_server() {
-  local mode=$1
+  local mode=$1 health_port=8080
   local -a recovery=() application_assets=()
-  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ]; then
+  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
+  fi
+  if [ "$mode" = isolated-preparation ]; then
+    health_port=18080
+    recovery+=(--env STALWART_RECOVERY_MODE_PORT=18080)
   fi
   if [ "$mode" = old-interface ] || [ "$mode" = old-interface-preparation ]; then
     application_assets=(--mount "type=bind,source=$scratch/stale-assets,target=/usr/local/share/stalwart,readonly")
@@ -83,7 +87,7 @@ start_server() {
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
     "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
-    if docker exec "$name" curl --fail --silent --max-time 2 http://127.0.0.1:8080/healthz/ready >/dev/null 2>&1; then
+    if docker exec "$name" curl --fail --silent --max-time 2 "http://127.0.0.1:$health_port/healthz/ready" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
@@ -159,6 +163,18 @@ apply_plan() {
   jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/apply.jsonl" >/dev/null
 }
 run_bootstrap
+# The actual pinned server must honor the recovery override while keeping the
+# normal Service's port closed. Probe from a separate network client, without
+# --fail on the negative: any HTTP response there would show an open endpoint.
+start_server isolated-preparation
+protocol_curl --fail --silent --show-error --max-time 3 "http://$name:18080/healthz/ready" >/dev/null
+if protocol_curl --silent --output /dev/null --max-time 3 "http://$name:8080/healthz/ready"; then
+  echo 'FAIL: recovery mode exposed the normal administration port' >&2
+  exit 1
+fi
+echo 'PASS: native recovery management is separate from normal administration'
+docker stop "$name" >/dev/null
+docker rm "$name" >/dev/null
 start_server preparation
 prepare_plan "$scratch/plan.ndjson"
 apply_plan

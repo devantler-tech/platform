@@ -81,6 +81,16 @@ The public daily GitHub ask channel stays the accepted channel. Deploying mail
 does not enable spend stewardship or designate its financial decision channel.
 Those remain separate maintainer-owned decisions.
 
+The owned bootstrap process uses recovery management port 18080, separate from
+normal administration on 8080. The pinned server supports a recovery port
+override but [binds it to every interface](https://github.com/stalwartlabs/stalwart/blob/v0.16.27/crates/common/src/config/server/listener.rs#L59-L84),
+so a future serving overlay must exclude 18080 from every Service and ingress
+grant, including during initialization and retries. Readiness alone is not that
+boundary. Bootstrap sets the override explicitly rather than inheriting it, and
+stops and collects its recovery child before permitting normal serving. The
+existing management-only preparation bundle remains internal and disabled;
+this separation does not activate a route, mail listener or migration.
+
 ## Prepared account configuration
 
 The default-off command `go run ./scripts/private-mail-config` prepares a native
