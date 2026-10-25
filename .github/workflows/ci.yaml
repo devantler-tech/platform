@@ -1197,7 +1197,7 @@ jobs:
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
           shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
-          shellcheck scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
+          shellcheck -x scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
           bash scripts/tests/test-tenant-source-discovery.sh
           bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
           bash scripts/tests/test-write-publish-workflow-matchers.sh
