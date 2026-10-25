@@ -50,7 +50,7 @@ printf '%s\n' "$PROOF_CANARY"
 printf '%s\n' "$PROOF_CANARY" >&2
 [[ "${PROOF_PROBE_FAIL:-0}" == 0 ]]
 SH
-chmod +x "$scratch/bin/kubectl" "$scratch/temp/alert-app-proof"
+chmod +x "$scratch/bin/kubectl" "$scratch/temp/alert-app-proof" "$scratch/source/scripts/use-prod-stable-api-endpoint.sh"
 check_step() {
   local expected=$1 endpoint_fail=$2 read_fail=$3 probe_fail=$4 kube_config=$5 status=0
   (
