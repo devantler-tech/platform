@@ -170,8 +170,10 @@ spec:
               kinds:
                 - CiliumNetworkPolicy
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       exclude:
         any:
           - subjects:
@@ -329,8 +331,10 @@ spec:
               kinds:
                 - CiliumNetworkPolicy
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       exclude:
         any:
           - subjects:
@@ -454,8 +458,10 @@ spec:
               kinds:
                 - CiliumNetworkPolicy
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       exclude:
         any:
           - subjects:
@@ -500,8 +506,10 @@ spec:
                 - allow-dns
                 - allow-cnpg-operator
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       exclude:
         any:
           - subjects:
@@ -532,8 +540,10 @@ spec:
               kinds:
                 - CiliumNetworkPolicy
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       exclude:
         any:
           - subjects:
