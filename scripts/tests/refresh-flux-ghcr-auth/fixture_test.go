@@ -367,7 +367,9 @@ func (f *fixture) runHelperWithMutationEnabled(
 	if err := os.Chmod(testHelperPath, 0o700); err != nil {
 		f.t.Fatalf("make test helper executable: %v", err)
 	}
-	return f.runHelperExecutable(config, helperArgs, overrides, false, testHelperPath)
+	// A parallel fork can briefly retain the script's writer after Close, so
+	// executing the new file can fail with ETXTBSY. Let the existing Bash read it.
+	return f.runHelperExecutable(config, append([]string{testHelperPath}, helperArgs...), overrides, false, "bash")
 }
 
 func (f *fixture) runKSailPullWrapper(config any, command []string, overrides map[string]string) commandResult {
