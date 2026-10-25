@@ -41,7 +41,24 @@ for consumer in "${EXPECTED_CONSUMERS[@]}"; do
     "$SCAN_ROOT/$file" >"$STAGED/$file"
 done
 
+# The canonical-only instance is already pinned. Stage it byte-for-byte with
+# its complete constructor/binding context; never rewrite the shared graph.
+while IFS= read -r canonical_file; do
+  [ -n "$canonical_file" ] || continue
+  mkdir -p "$STAGED/$(dirname "$canonical_file")"
+  cp "$SCAN_ROOT/$canonical_file" "$STAGED/$canonical_file"
+done < <(printf '%s\n' "$canonical_only" | jq -r '.bindings[].sourcePath')
+mkdir -p "$STAGED/scripts"
+printf '%s\n' "$canonical_only" >"$STAGED/scripts/canonical-tenant-source-bindings.json"
+if [ "$(printf '%s\n' "$canonical_only" | jq -r '.bindings|length')" -gt 0 ]; then
+  cp "${APPROVED_IDENTITIES_FILE:-${APPROVED_SET%.tsv}.identities.tsv}" "$STAGED/scripts/canonical-identities.tsv"
+else
+  printf 'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_publisher_identity\tmain_publisher_identity\tobserved_on\n' >"$STAGED/scripts/canonical-identities.tsv"
+fi
+
 APPROVED_REVISIONS_FILE="$APPROVED_SET" CANONICAL_APPROVALS_FILE="$CANONICAL_SET" PUBLISH_CONSUMER_ROOT="$STAGED" \
+  CANONICAL_TENANT_BINDINGS_FILE="$STAGED/scripts/canonical-tenant-source-bindings.json" \
+  APPROVED_IDENTITIES_FILE="$STAGED/scripts/canonical-identities.tsv" \
   APPROVED_REVISIONS_ENFORCE=1 bash "$WRITER_DIR/guard-publish-workflow-approved-revisions.sh"
 
 changed=0

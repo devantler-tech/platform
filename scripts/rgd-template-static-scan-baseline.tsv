@@ -40,3 +40,4 @@
 1	k8s/bases/infrastructure/resource-graph-definitions/webapp/resource-graph-definition.yaml.resources/service.yaml	KSV-0040	LOW	CAUSE-SHA256:e59d76fdca878919309a3203c94916d7258f052f5ac4012683c70a6307f16e07
 1	k8s/providers/docker/apps/tenant-ascoachingogvaner.yaml	INSTANCE-CONTENT	SHA256	7e65481a62deb24c89dca2e5f83969e308e7604e770d97edb15e86ecc948f22c
 1	k8s/providers/docker/apps/web-app-wedding-app.yaml	INSTANCE-CONTENT	SHA256	3d42027c7e549014cad1e717876a6eb72e0a6641f3bf181f7a0e1a70d94306d6
+1	k8s/providers/hetzner/apps/business-site/tenant.yaml	INSTANCE-CONTENT	SHA256	30edb1a22004f47b034429ad7e64ad24717f3612e9bde324609ac46daeb7b3fd

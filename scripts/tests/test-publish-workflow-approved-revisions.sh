@@ -37,6 +37,11 @@ pass() { printf 'ok: %s\n' "$*"; }
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+# Keep legacy compatibility controls independent of canonical-only admission.
+# shellcheck source=scripts/tests/legacy-consumer-fixture.lib.sh
+source "$REPO_ROOT/scripts/tests/legacy-consumer-fixture.lib.sh"
+build_legacy_consumer_fixture "$REPO_ROOT" "$WORK/legacy-source"
+export PUBLISH_CONSUMER_ROOT="$WORK/legacy-source"
 # Synthetic observations must not consume a real deployment's publication receipt.
 export PUBLISH_BOOTSTRAP_FILE="$WORK/bootstrap-none.json"
 printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
@@ -531,8 +536,7 @@ fi
 # The ordinary observer retires bootstrap approval. Discovery and all writers
 # remain real; only the existing provider observation seam supplies the fixture.
 binding_tree="$WORK/binding-tree"
-mkdir -p "$binding_tree"
-cp -R "$REPO_ROOT/k8s" "$REPO_ROOT/talos" "$binding_tree/"
+build_legacy_consumer_fixture "$REPO_ROOT" "$binding_tree"
 binding_consumer="$(printf '%s\n' "$consumers" | awk -F'\t' '$2=="publish-app" {print $1; exit}')"
 binding_path="k8s/bases/apps/$binding_consumer/oci-repository.yaml"
 yq -i '.metadata.namespace="product" | .metadata.name="product-manifests" | .spec.ref={"digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}' "$binding_tree/$binding_path"

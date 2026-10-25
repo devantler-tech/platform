@@ -32,6 +32,7 @@ readonly identities_file='scripts/publish-workflow-approved-revisions.identities
 readonly generated_paths='scripts/publish-workflow-approved-revisions.tsv
 scripts/publish-workflow-approved-revisions.identities.tsv
 scripts/publish-workflow-bootstrap-publications.json
+scripts/canonical-tenant-source-bindings.json
 k8s/bases/apps/github-config/oci-repository.yaml
 k8s/bases/apps/ascoachingogvaner/oci-repository.yaml
 k8s/providers/hetzner/apps/aws/oci-repository.yaml
@@ -336,12 +337,12 @@ check() {
 # A relocated consumer must update the automation boundary in the same change.
 discovered_paths="$(bash -c 'source "$1"; printf "%s" "$observed" | cut -f2' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")"
-actual_paths="$(printf '%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json "${discovered_paths}" | sort)"
+actual_paths="$(printf '%s\n%s\n%s\n%s\n%s\n' "${data_file}" "${identities_file}" scripts/publish-workflow-bootstrap-publications.json scripts/canonical-tenant-source-bindings.json "${discovered_paths}" | sort)"
 [ "$(printf '%s\n' "${generated_paths}" | sort)" = "$actual_paths" ] ||
   fail 'the regeneration path fence does not match the discovered consumer manifests'
 # The token names repositories, which a rename moves away from the consumer's
 # logical name, so the inventory is resolved to each consumer's current repository.
-approved_consumer_inventory="$(bash -c 'set -o pipefail; source "$1"; printf "%s" "$approved" | cut -f1 | sort -u |
+approved_consumer_inventory="$(bash -c 'set -o pipefail; source "$1"; { printf "%s" "$approved" | cut -f1; printf "%s\n" "$canonical_only" | jq -r ".bindings[].consumer"; } | sort -u |
   while IFS= read -r consumer; do consumer_github_repository "$consumer"; done' _ \
   "${root_dir}/scripts/publish-workflow-approved-revisions.lib.sh")" ||
   fail 'approved consumer inventory is unresolved'
