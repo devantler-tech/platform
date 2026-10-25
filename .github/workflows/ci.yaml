@@ -3710,7 +3710,7 @@ jobs:
             bash scripts/tests/test-reloader-rendered-placement.sh
           fi
 
-      - name: 🧩 Verify Kubescape recovery storage placement
+      - name: 🧩 Verify Kubescape storage placement
         env:
           BASE_SHA: >-
             ${{ github.event.pull_request.base.sha ||
