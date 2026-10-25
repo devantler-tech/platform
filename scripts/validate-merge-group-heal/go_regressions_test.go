@@ -63,8 +63,10 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
 		t.Fatal("the regression runner needs only read-only checkout permission")
 	}
+	// The explicit per-package timeout is part of the pinned command, so
+	// dropping it back to Go's default is caught as a narrowed suite (#4893).
 	for _, command := range []string{
-		"go test ./...",
+		"go test -timeout 20m ./...",
 	} {
 		found := false
 		for name, candidate := range workflow.Jobs {

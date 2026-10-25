@@ -95,8 +95,15 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
 
+      # The per-package bound is deliberate, not Go's 10-minute default. The
+      # slowest package (scripts/tests/refresh-flux-ghcr-auth) took 295-478s in
+      # six hosted merge-group runs measured on 2026-10-25, up to 80% of that
+      # default, and a package that outruns its bound fails the merge group and
+      # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
+      # under half the bound. Resize it only from fresh hosted timings, never to
+      # hide a hung test.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test ./...
+        run: go test -timeout 20m ./...
 
   changes:
     name: 🔍 Detect Changes
