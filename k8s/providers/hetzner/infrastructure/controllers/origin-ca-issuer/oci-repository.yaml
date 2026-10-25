@@ -7,7 +7,7 @@ spec:
   interval: 10m
   url: oci://ghcr.io/cloudflare/origin-ca-issuer-charts/origin-ca-issuer
   ref:
-    tag: 0.6.4
+    tag: 0.6.11
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy
