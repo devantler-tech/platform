@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Native protocol proof using disposable .test accounts and a private network.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'printf "FAIL: native mail proof stopped at line %s\n" "$LINENO" >&2' ERR
 umask 077
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture_user="$(id -u):$(id -g)"
@@ -24,7 +25,7 @@ cleanup() {
   exit "$rc"
 }
 trap cleanup EXIT
-mkdir -p "$scratch/inputs" "$scratch/data" "$scratch/tmp" "$scratch/etc/tls"
+mkdir -p "$scratch/inputs" "$scratch/data" "$scratch/tmp" "$scratch/etc/tls" "$scratch/cli-home"
 chmod 700 "$scratch/data" "$scratch/tmp"
 chmod 755 "$scratch/etc" "$scratch/etc/tls"
 printf '%s' '{"@type":"RocksDb","path":"/var/lib/stalwart/data","bufferSize":33554432,"cacheSize":33554432}' >"$scratch/etc/config.json"
@@ -86,6 +87,7 @@ start_server() {
 }
 native_cli() {
   docker run --rm --interactive --user "$fixture_user" --network "$network" --cap-drop ALL --security-opt no-new-privileges:true \
+    --workdir /proof/cli-home --env HOME=/proof/cli-home --env TMPDIR=/proof/cli-home \
     --env "STALWART_URL=http://$name:8080" --env STALWART_USER=fixture \
     --env STALWART_PASSWORD=private-mail-recovery-fixture-only \
     --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
