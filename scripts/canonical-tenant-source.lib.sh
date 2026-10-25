@@ -50,9 +50,11 @@ canonical_tenant_constructor() (
   # shellcheck source=scripts/tenant-source-constructors.lib.sh
   source "$(dirname "${BASH_SOURCE[0]}")/tenant-source-constructors.lib.sh"
   tenant_source_default_subject "$constructor_file" >/dev/null || return 1
-  spec="$(yq -o=json -I=0 '.' "$constructor_file" | jq -cSs '
+  spec="$(yq -o=json -I=0 '.' "$constructor_file" | jq -cSs --argjson identity "$(printf '%s\n' "$record" | jq -c .tenantIdentity)" '
     [.[]|select(.apiVersion=="kro.run/v1alpha1" and .kind=="ResourceGraphDefinition" and .metadata.name=="tenant.kro.run")]
-    | select(length==1) | .[0].spec')" || return 1
+    | select(length==1) | .[0] |
+    select(.spec.schema.kind==$identity.kind and
+      (((.spec.schema.group // "kro.run")+"/"+.spec.schema.apiVersion)==$identity.apiVersion)) | .spec')" || return 1
   expected="$(printf '%s\n' "$record" | jq -er .constructorSpecSha256)"
   actual="$(printf '%s\n' "$spec" | shasum -a 256)" || return 1
   [ "${actual%% *}" = "$expected" ]
@@ -139,11 +141,14 @@ canonical_tenant_inventory_projection() (
     .spec.schema.kind=="Tenant")] | length' "$inventory")" || return 1
   [ "$graph_count" = 1 ] || return 1
   graph_file="$inventory_root/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
-  # Require the observed graph to be the complete exact admitted graph, not a
-  # different same-GVK producer while the expected file is merely present.
-  observed_spec="$(jq -cSes --arg file "$graph_file" --arg mode "$mode" '[.[] |
+  # Require the one counted full-GVK producer itself to be the named/hash-bound
+  # graph. A separately named producer cannot borrow another group's graph hash.
+  observed_spec="$(jq -cSes --arg file "$graph_file" --arg mode "$mode" \
+    --argjson identity "$(printf '%s\n' "$record" | jq -c .tenantIdentity)" '[.[] |
     select($mode=="rendered" or .file==$file) | .document | .. | objects |
-    select(.apiVersion=="kro.run/v1alpha1" and .kind=="ResourceGraphDefinition" and .metadata.name=="tenant.kro.run")] |
+    select(.apiVersion=="kro.run/v1alpha1" and .kind=="ResourceGraphDefinition" and .metadata.name=="tenant.kro.run" and
+      .spec.schema.kind==$identity.kind and
+      (((.spec.schema.group // "kro.run")+"/"+.spec.schema.apiVersion)==$identity.apiVersion))] |
     select(length==1) | .[0].spec' "$inventory")" || return 1
   expected_hash="$(printf '%s\n' "$record" | jq -r .constructorSpecSha256)"
   [ "$(printf '%s\n' "$observed_spec" | shasum -a 256 | awk '{print $1}')" = "$expected_hash" ] || return 1

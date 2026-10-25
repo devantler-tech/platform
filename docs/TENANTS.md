@@ -194,6 +194,10 @@ observation and retires bootstrap authority. A later missing, pending, malformed
 duplicated or unreadable observation fails; it cannot restore bootstrap. See the
 [canonical-only source decision](adr/canonical-only-source-bootstrap.md).
 
+Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
+uses its no-target-directory operation, so a concurrent destination-directory
+change is refused instead of receiving a nested generated file.
+
 **What this means for a registered tenant:** the platform must approve a `publish-app.yaml` commit
 before `cd.yaml` can move to it. Each registered application tenant runs a required check that
 refuses a pin the platform's committed approved list does not contain, so a pin change made too

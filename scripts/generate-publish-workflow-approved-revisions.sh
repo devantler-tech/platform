@@ -354,6 +354,19 @@ split_observation() {
   OBS_COUNT="$n"
 }
 
+# Use rename-to-this-path semantics. POSIX/BSD mv can instead put the temporary
+# file inside a concurrently created directory and falsely report publication.
+replace_generated_record() {
+  local replacement_command
+  case "$(uname -s)" in
+    Linux) replacement_command='mv' ;;
+    Darwin) replacement_command='gmv' ;;
+    *) refuse 'record replacement requires GNU coreutils'; return 1 ;;
+  esac
+  command -v "$replacement_command" >/dev/null || { refuse 'record replacement requires GNU coreutils (gmv on macOS)'; return 1; }
+  "$replacement_command" --no-target-directory -- "$1" "$2"
+}
+
 main() {
   local observer="${APPROVED_REVISION_OBSERVER:-}" pin_resolver="${APPROVED_REVISION_PIN_RESOLVER:-}"
   local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidates='' release_attempted=' '
@@ -564,7 +577,9 @@ main() {
   identities_tmp="$(mktemp "${IDENTITIES_OUTPUT}.XXXXXX")"
   trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}" "${canonical_tmp:-}"' EXIT
   if [ "$(printf '%s\n' "$canonical_document" | jq '.bindings|length')" -gt 0 ]; then
-    [ ! -L "$canonical_file" ] || exit 1
+    if [ ! -f "$canonical_file" ] || [ -L "$canonical_file" ]; then
+      refuse 'canonical destination changed; no file written'; exit 1
+    fi
     canonical_tmp="$(mktemp "${canonical_file}.XXXXXX")"
     printf '%s\n' "$canonical_document" >"$canonical_tmp"
     chmod 0644 "$canonical_tmp"
@@ -584,10 +599,10 @@ main() {
   } >"$identities_tmp"
   # mktemp creates 0600; the committed data file is an ordinary 0644 file and must stay one.
   chmod 0644 "$tmp" "$identities_tmp"
-  mv "$tmp" "$OUTPUT"
-  mv "$identities_tmp" "$IDENTITIES_OUTPUT"
-  [ -z "$bootstrap_tmp" ] || mv "$bootstrap_tmp" "$bootstrap_file"
-  [ -z "$canonical_tmp" ] || mv "$canonical_tmp" "$canonical_file"
+  replace_generated_record "$tmp" "$OUTPUT"
+  replace_generated_record "$identities_tmp" "$IDENTITIES_OUTPUT"
+  [ -z "$bootstrap_tmp" ] || replace_generated_record "$bootstrap_tmp" "$bootstrap_file"
+  [ -z "$canonical_tmp" ] || replace_generated_record "$canonical_tmp" "$canonical_file"
   trap - EXIT
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }
