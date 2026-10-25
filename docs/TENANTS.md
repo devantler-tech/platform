@@ -122,6 +122,16 @@ credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `ope
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
+The initial typed business-site registration instead has KRO create this child.
+Its admission exception is confined to the authenticated controller, the fixed
+business-site destination, the existing pull-credential reference and the exact
+Docker configuration template. Other writers cannot add, remove or change its
+reserved ownership labels, and controller updates must preserve the complete
+ownership tuple. The instance UID is controller-supplied attribution, not an
+independently verified parent identity. This exception neither opens arbitrary
+secret paths nor grants tenant application access. KRO's bind permission names
+the constructor's four exact roles, including `tenant-edit`, rather than the
+unrelated built-in `edit` role.
 The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
 `secret.enc.yaml` (the same org token both clusters use); the
 `seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
