@@ -84,8 +84,10 @@ spec:
               kinds:
                 - Certificate
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       # Exclude platform-authored resources: the tenant registration dir is
       # reconciled by the apps-layer Flux Kustomization as flux-system's own
       # kustomize-controller SA (no impersonation). A tenant's deploy/ artifact
@@ -116,8 +118,10 @@ spec:
               kinds:
                 - CertificateRequest
               namespaceSelector:
-                matchLabels:
-                  app.kubernetes.io/managed-by: ksail
+                matchExpressions:
+                  - key: app.kubernetes.io/managed-by
+                    operator: In
+                    values: [ksail, kro]
       # Same platform carve-out as the Certificate rule above, plus cert-manager
       # itself: it derives a CertificateRequest from every Certificate under its
       # own identity and copies the issuerRef, so denying it here would break

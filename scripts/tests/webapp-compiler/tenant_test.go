@@ -187,12 +187,56 @@ func TestCommittedTenant(t *testing.T) {
 			}
 			objects, ignored := desiredTenant(t, compiled, input)
 			assertTenantChildren(t, objects, ignored, false, sops)
+			if !sops {
+				t.Run("controller-ownership", func(t *testing.T) {
+					assertTenantNetworkFloor(t, ctx, config, root, objects)
+				})
+			}
 			source := objects["ociRepository"]
 			ref, _, _ := unstructured.NestedMap(source.Object, "spec", "ref")
 			if !reflect.DeepEqual(ref, map[string]interface{}{"digest": tenantDigest}) {
 				t.Fatalf("pinned source must have exactly the selected digest: %v", ref)
 			}
 			assertTenantIdentity(t, source, `^https://github\.com/devantler-tech/\.github/\.github/workflows/publish-app\.yaml@467f07582436a26b62cf4aa756423512f85ba0c0$`)
+		})
+		t.Run(fmt.Sprintf("all-opt-ins-sops-%t", sops), func(t *testing.T) {
+			input := instance("opt-in-fixture", map[string]interface{}{
+				"sops": sops, "externalDns": true, "webApp": true,
+				"resourceQuota": map[string]interface{}{"enabled": true},
+				"limitRange":    map[string]interface{}{"enabled": true},
+			})
+			if err := admit(input); err != nil {
+				t.Fatal(err)
+			}
+			objects, ignored := desiredTenant(t, compiled, input)
+			optional := []string{"externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "limitRange", "resourceQuota", "webAppBinding"}
+			want := append([]string{"defaultDeny", "ghcrAuth", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}, optional...)
+			active, inactive := "kustomization", "kustomizationSops"
+			if sops {
+				active, inactive = inactive, active
+			}
+			want = append(want, active)
+			slices.Sort(want)
+			var got []string
+			for id := range objects {
+				got = append(got, id)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) || !slices.Equal(ignored, []string{inactive}) {
+				t.Fatalf("opt-ins included=%v ignored=%v; want included=%v ignored=[%s]", got, ignored, want, inactive)
+			}
+			assertTenantControllerMetadata(t, objects)
+			for _, id := range append(optional, active) {
+				t.Run("reject-obsolete-ownership-"+id, func(t *testing.T) {
+					changed := objects[id].DeepCopy()
+					labels := changed.GetLabels()
+					labels["app.kubernetes.io/managed-by"] = "ksail"
+					changed.SetLabels(labels)
+					if tenantControllerMetadataError(map[string]*unstructured.Unstructured{id: changed}) == nil {
+						t.Fatal("obsolete ownership was not detected on the actual compiled child")
+					}
+				})
+			}
 		})
 	}
 	for _, tc := range []struct {
@@ -396,6 +440,7 @@ func desiredTenant(t *testing.T, compiled *graph.Graph, input *unstructured.Unst
 
 func assertTenantChildren(t *testing.T, objects map[string]*unstructured.Unstructured, ignored []string, reconcile, sops bool) {
 	t.Helper()
+	assertTenantControllerMetadata(t, objects)
 	want := []string{"defaultDeny", "ghcrAuth", "ociRepository", "roleBinding", "serviceAccount", "tenantNamespace"}
 	wantIgnored := []string{"externalDnsGateway", "externalDnsHttproutes", "externalDnsNamespaces", "limitRange", "resourceQuota", "webAppBinding"}
 	if reconcile {

@@ -35,13 +35,23 @@ to the real API server. They cover source-only creation, paired digest and
 publisher inputs, unchanged omitted defaults, later application activation and
 refusal to disable active tenants, including objects stored under the earlier
 schema. These checks do not prove a live controller has reconciled a tenant.
+They also use the pinned controller's label decorator and server-side applier
+against the isolated API server. A competing writer uses the committed Kyverno
+baseline body: the old shared policy is retired only after the independently
+named tenant floor exists, then repeated applies must stop mutating it. This
+does not run a Kyverno controller or establish production convergence.
 `scripts/tests/test-tenant-source-constructors.sh` separately exercises the actual
 publication guards against constrained constructors and mutated graph contexts.
 
+`scripts/tests/test-tenant-controller-namespace-coverage.sh` replays the complete
+credential-store, certificate-issuer, hostname and network-policy fixture sets
+under both legacy `ksail` and actual `kro` namespace ownership. Exact nonzero
+allow/deny counts prevent excluded rows from masquerading as enforcement.
+
 The fixture downloads checksum-verified Kubernetes 1.36.2 API-server assets and
 starts a disposable, loopback-only API server. It explicitly refuses an existing
-cluster. The KRO 0.9.2 CRD applies the actual graph-admission defaults; the Gateway
-API 1.4.1 HTTPRoute CRD supplies the fixture's route type. These are pinned test
+cluster. The KRO CRD matches the chart/library pin; the Gateway API 1.5.1 HTTPRoute
+CRD supplies the fixture's route type. These are pinned test
 dependencies, not an assertion about every deployed gateway version.
 
 After real OpenAPI publication, the KRO library compiles the repository's graph.
