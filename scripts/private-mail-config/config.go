@@ -1,0 +1,127 @@
+// private-mail-config prepares and verifies native configuration; public mail
+// activation remains a separate deployment step.
+package main
+
+import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"regexp"
+	"strings"
+)
+
+var errConfiguration = errors.New("private mail configuration is incomplete or invalid")
+
+type settings struct {
+	Domain        string `json:"domain"`
+	Hostname      string `json:"hostname"`
+	Maintainer    string `json:"maintainer"`
+	Agent         string `json:"agent"`
+	Administrator string `json:"administrator"`
+}
+type inputs struct {
+	settings
+	administratorPassword, maintainerPassword, agentPassword string
+}
+
+var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
+var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
+var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
+
+func render(v inputs) ([]byte, error) {
+	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
+		return nil, errConfiguration
+	}
+	seen := map[string]bool{}
+	for _, name := range []string{v.Maintainer, v.Agent, v.Administrator} {
+		if !localPattern.MatchString(name) || strings.Contains(name, "..") || strings.HasSuffix(name, ".") || seen[name] {
+			return nil, errConfiguration
+		}
+		seen[name] = true
+	}
+	seen = map[string]bool{}
+	for _, password := range []string{v.administratorPassword, v.maintainerPassword, v.agentPassword} {
+		if !passwordPattern.MatchString(password) || seen[password] {
+			return nil, errConfiguration
+		}
+		seen[password] = true
+	}
+	// Expression values contain only the validated conservative address alphabet.
+	agent := v.Agent + "@" + v.Domain
+	recipient := v.Maintainer + "@" + v.Domain
+	expression := func(value string) map[string]any { return map[string]any{"match": map[string]any{}, "else": value} }
+	account := func(name, password, role string) map[string]any {
+		return map[string]any{"@type": "User", "name": name, "domainId": "#domain", "credentials": map[string]any{"0": map[string]any{"@type": "Password", "secret": password}}, "roles": map[string]any{"@type": role}}
+	}
+	administrator := account(v.Administrator, v.administratorPassword, "Admin")
+	maintainer := account(v.Maintainer, v.maintainerPassword, "User")
+	agents := account(v.Agent, v.agentPassword, "User")
+	permissions := map[string]bool{}
+	for _, name := range []string{"authenticate", "emailSend", "emailReceive", "jmapMailboxGet", "jmapMailboxChanges", "jmapMailboxQuery", "jmapMailboxQueryChanges", "jmapThreadGet", "jmapThreadChanges", "jmapEmailGet", "jmapEmailChanges", "jmapEmailQuery", "jmapEmailQueryChanges", "jmapBlobGet"} {
+		permissions[name] = true
+	}
+	listener := func(name, protocol, bind string, tls, implicit bool) map[string]any {
+		return map[string]any{"name": name, "protocol": protocol, "bind": map[string]bool{bind: true}, "useTls": tls, "tlsImplicit": implicit}
+	}
+	upsert := func(object string, match []string, value any) map[string]any {
+		return map[string]any{"@type": "upsert", "object": object, "matchOn": match, "value": value}
+	}
+	update := func(object string, value any) map[string]any {
+		return map[string]any{"@type": "update", "object": object, "value": value}
+	}
+	operations := []map[string]any{
+		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, "isEnabled": true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
+		upsert("Account", []string{"name", "domainId"}, map[string]any{"administrator": administrator, "maintainer": maintainer, "agents": agents}),
+		// Address the exact ID returned by the upsert and replace the whole
+		// tagged permission object; a second upsert can reuse a stale lookup.
+		map[string]any{"@type": "update", "object": "Account", "id": "#agents", "value": map[string]any{"permissions": map[string]any{"@type": "Replace", "enabledPermissions": permissions, "disabledPermissions": map[string]bool{}}}},
+		upsert("Certificate", []string{"certificate"}, map[string]any{"mail-tls": map[string]any{
+			"certificate": map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.crt"},
+			"privateKey":  map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.key"},
+		}}),
+		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls"}),
+		// Named listeners are prepared while the recovery-only process ignores them.
+		// Public activation separately removes recovery mode and supplies TLS files.
+		upsert("NetworkListener", []string{"name"}, map[string]any{
+			"management": listener("management", "http", "0.0.0.0:8080", false, false),
+			"inbound":    listener("smtp-inbound", "smtp", "0.0.0.0:1025", true, false),
+			"submission": listener("submission", "smtp", "0.0.0.0:1587", true, false),
+			"imap":       listener("imaps", "imap", "0.0.0.0:1993", true, true),
+		}),
+		update("MtaStageAuth", map[string]any{
+			"saslMechanisms": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission' && is_tls", "then": "[plain, login]"}}, "else": "false"},
+			"require":        expression("listener == 'submission'"), "mustMatchSender": expression("true"),
+		}),
+		update("MtaStageMail", map[string]any{
+			"isSenderAllowed": expression("listener != 'submission' || authenticated_as != ''"),
+			"rewrite":         expression("false"), "script": expression("false"),
+		}),
+		update("MtaStageRcpt", map[string]any{
+			"rewrite": map[string]any{"match": map[string]any{
+				"0": map[string]any{"if": "authenticated_as == '" + agent + "' && rcpt == '" + recipient + "'", "then": "'" + recipient + "'"},
+				"1": map[string]any{"if": "authenticated_as == '" + agent + "'", "then": "'denied@example.invalid'"},
+			}, "else": "false"},
+			"allowRelaying": expression("authenticated_as != '' && (authenticated_as != '" + agent + "' || rcpt == '" + recipient + "')"),
+			"script":        expression("false"),
+		}),
+		// The server's upload endpoint does not honor the JMAP mutation permission
+		// list. This dedicated IMAP/SMTP service denies it for every account.
+		update("Http", map[string]any{"allowedEndpoints": map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"}, "useXForwarded": false, "usePermissiveCors": false}),
+		update("MtaStageData", map[string]any{"addAuthResultsHeader": expression("true"), "script": expression("false")}),
+		update("SenderAuth", map[string]any{
+			"dkimVerify":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
+			"dmarcVerify": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},
+			"dkimStrict":  true,
+		}),
+		update("Imap", map[string]any{"allowPlainTextAuth": false}),
+	}
+	var output bytes.Buffer
+	encoder := json.NewEncoder(&output)
+	encoder.SetEscapeHTML(false)
+	for _, operation := range operations {
+		if encoder.Encode(operation) != nil {
+			return nil, errConfiguration
+		}
+	}
+	return output.Bytes(), nil
+}
