@@ -47,6 +47,10 @@ func render(v inputs) ([]byte, error) {
 		seen[password] = true
 	}
 	// Expression values contain only the validated conservative address alphabet.
+	applicationDigest, err := pinnedApplicationDigest()
+	if err != nil {
+		return nil, errConfiguration
+	}
 	agent := v.Agent + "@" + v.Domain
 	recipient := v.Maintainer + "@" + v.Domain
 	expression := func(value string) map[string]any { return map[string]any{"match": map[string]any{}, "else": value} }
@@ -107,6 +111,12 @@ func render(v inputs) ([]byte, error) {
 		// The server's upload endpoint does not honor the JMAP mutation permission
 		// list. This dedicated IMAP/SMTP service denies it for every account.
 		update("Http", map[string]any{"allowedEndpoints": map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"}, "useXForwarded": false, "usePermissiveCors": false}),
+		upsert("Application", []string{"description"}, map[string]any{"webadmin": map[string]any{
+			"description": "Stalwart Web Interface", "enabled": true,
+			"resourceUrl": "file://" + applicationAssetPath(applicationDigest), "autoUpdateFrequency": int64(30 * 24 * 60 * 60 * 1000),
+			"urlPrefix":       map[string]bool{"/admin": true, "/account": true},
+			"unpackDirectory": nil, "oauthClientId": nil,
+		}}),
 		update("MtaStageData", map[string]any{"addAuthResultsHeader": expression("true"), "script": expression("false")}),
 		update("SenderAuth", map[string]any{
 			"dkimVerify":  map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'smtp-inbound'", "then": "'relaxed'"}}, "else": "false"},

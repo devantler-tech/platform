@@ -81,6 +81,7 @@ func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testi
 		t.Fatal(err)
 	}
 	runtime := bootstrapRuntime{server: executable, serverArgs: []string{"-test.run=TestOwnedBootstrapChild", "--", pidFile}, cli: "/must-not-run", url: "http://127.0.0.1:1", dataDir: data, startup: 5 * time.Second, shutdown: 3 * time.Second}
+	runtime.applicationFile, runtime.applicationDigest = applicationAssetFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -120,6 +121,7 @@ func TestBootstrapRefusesAnExistingManagementServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer server.Close()
 	runtime := bootstrapRuntime{server: "/must-not-run", url: server.URL, dataDir: t.TempDir()}
+	runtime.applicationFile, runtime.applicationDigest = applicationAssetFixture(t)
 	if bootstrap(context.Background(), bootstrapInputs(t), runtime) == nil {
 		t.Fatal("pre-existing management server trusted")
 	}

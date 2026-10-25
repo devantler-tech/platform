@@ -43,10 +43,15 @@ docker network create --internal "$network" >/dev/null
 mkdir "$scratch/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
+bash "$root/scripts/private-mail-config/stage-webui.sh" "$scratch/build"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
 [ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
   echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
 }
+docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
+  --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
+  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE' >"$scratch/image-assets.txt"
+[ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 
 run_bootstrap() {
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
@@ -63,9 +68,12 @@ run_bootstrap() {
 
 start_server() {
   local mode=$1
-  local -a recovery=()
-  if [ "$mode" = preparation ]; then
+  local -a recovery=() application_assets=()
+  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
+  fi
+  if [ "$mode" = old-interface ] || [ "$mode" = old-interface-preparation ]; then
+    application_assets=(--mount "type=bind,source=$scratch/stale-assets,target=/usr/local/share/stalwart,readonly")
   fi
   docker run --detach --name "$name" --network "$network" --read-only \
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
@@ -73,7 +81,7 @@ start_server() {
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "${recovery[@]}" "$server" >/dev/null
+    "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
     if docker exec "$name" curl --fail --silent --max-time 2 http://127.0.0.1:8080/healthz/ready >/dev/null 2>&1; then
       return 0
@@ -104,6 +112,21 @@ inventory() {
     --data-binary @- http://127.0.0.1:8080/jmap <"$root/scripts/private-mail-config/inventory-request.json" \
     >"$scratch/inputs/listener-inventory.json"
 }
+verify_administration_assets() {
+  local prefix asset
+  for prefix in admin account; do
+    protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/$prefix/login" >"$scratch/$prefix.html"
+    grep -Fq "<base href=\"/$prefix/\"" "$scratch/$prefix.html"
+    grep -oE '(src|href)="\./assets/[A-Za-z0-9_.-]+\.(js|css)"' "$scratch/$prefix.html" |
+      sed -E 's/^(src|href)="\.\///;s/"$//' >"$scratch/$prefix-assets.txt"
+    [ -s "$scratch/$prefix-assets.txt" ]
+    while IFS= read -r asset; do
+      unzip -p "$scratch/build/webui.zip" "$asset" >"$scratch/expected-asset"
+      protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/$prefix/$asset" >"$scratch/actual-asset"
+      cmp "$scratch/expected-asset" "$scratch/actual-asset"
+    done <"$scratch/$prefix-assets.txt"
+  done
+}
 prepare_plan() {
   local output=$1
   inventory
@@ -119,6 +142,7 @@ prepare_plan "$scratch/plan.ndjson"
 apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
+native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
 
 # The renderer must reject an actual unexpected stored listener, even though
 # recovery ignores its socket and the health endpoint remains green.
@@ -137,6 +161,36 @@ start_server preparation
 native_cli query NetworkListener --where name=unexpected --fields id --json >"$scratch/negative-listener.jsonl"
 jq -s '[.[].id] | if length==1 then . else error("negative listener identity is ambiguous") end' "$scratch/negative-listener.jsonl" |
   native_cli delete NetworkListener --stdin >"$scratch/negative-delete.out" 2>"$scratch/negative-delete.err"
+
+# A second application shares HTTP even when the mail listeners are safe. Its
+# presence must fence initialization rather than being silently preserved.
+printf '%s\n' '{"@type":"upsert","object":"Application","matchOn":["description"],"value":{"negative":{"description":"Unexpected fixture application","enabled":false,"resourceUrl":"file:///usr/local/share/stalwart/webui.zip","urlPrefix":{"/unexpected":true}}}}' >"$scratch/negative-application.ndjson"
+native_cli apply --file /proof/negative-application.ndjson --json >"$scratch/negative-application-apply.jsonl" 2>"$scratch/negative-application-apply.err"
+if prepare_plan "$scratch/unsafe-application-plan.ndjson" >"$scratch/negative-application-render.log" 2>&1; then
+  echo 'FAIL: unexpected native application was accepted' >&2; exit 1
+fi
+[ ! -e "$scratch/unsafe-application-plan.ndjson" ]
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+if run_bootstrap; then
+  echo 'FAIL: bootstrap permitted serving after an unexpected application' >&2; exit 1
+fi
+start_server preparation
+inventory
+# Application/query cannot filter by description in the pinned server. Select
+# the owned negative fixture from a complete bounded query/get instead.
+jq -ce '
+  .methodResponses[7][1] as $query | .methodResponses[8][1] as $get |
+  if $query.total != 2 or $query.position != 0 or ($query.ids|unique|length) != 2 or
+     ($get.list|length) != 2 or $get.notFound != [] or
+     ([$get.list[].id]|sort) != ($query.ids|sort) then
+    error("negative application inventory is incomplete")
+  else
+    [$get.list[]|select(.description=="Unexpected fixture application")|.id] |
+    if length==1 and (.[0]|type)=="string" and .[0]!="" then .
+    else error("negative application identity is ambiguous") end
+  end' "$scratch/inputs/listener-inventory.json" |
+  native_cli delete Application --stdin >"$scratch/negative-application-delete.out" 2>"$scratch/negative-application-delete.err"
 
 # The pinned server rejects a reserved primary domain, but accepts it as a
 # local domain alias. That alias must not turn the rejection sink into a local
@@ -165,7 +219,8 @@ native_cli get MtaStageRcpt --json >"$scratch/rcpt.json"
 jq -e '.rewrite.match|keys|sort==["0","1"]' "$scratch/rcpt.json" >/dev/null
 native_cli query Account --fields id --json >"$scratch/accounts-after.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-after.jsonl"
-for object in accounts certificates; do
+native_cli query Application --fields id --json >"$scratch/applications-after.jsonl"
+for object in accounts certificates applications; do
   jq -s '[.[].id]|sort' "$scratch/$object-before.jsonl" >"$scratch/before.ids"
   jq -s '[.[].id]|sort' "$scratch/$object-after.jsonl" >"$scratch/after.ids"
   cmp "$scratch/before.ids" "$scratch/after.ids"
@@ -182,6 +237,16 @@ printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.cu
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
+# The private bridge has no external egress. Verify each served interface and
+# compare every script/style referenced by its entry page to the pinned ZIP.
+verify_administration_assets
+printf '%s' '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:Application/query",{"limit":2,"calculateTotal":true},"applications"]]}' >"$scratch/management-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/management-request.json "http://$name:8080/jmap" >"$scratch/management-authenticated.json"
+jq -e '.methodResponses[0][0]=="x:Application/query" and .methodResponses[0][1].total==1' "$scratch/management-authenticated.json" >/dev/null
+management_status=$(protocol_curl --silent --show-error --max-time 10 --header 'Content-Type: application/json' \
+  --data-binary @/proof/management-request.json --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap")
+[ "$management_status" = 401 ]
 printf 'From: agents@example.test\r\nTo: maintainer@example.test\r\nSubject: Native policy proof\r\nMessage-ID: <mail-policy@example.test>\r\n\r\nPreserved native mail fixture.\r\n' >"$scratch/known.eml"
 smtp=(--silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" --ssl-reqd --url smtp://mail.example.test:1587 --mail-from agents@example.test --upload-file /proof/known.eml)
 auth_advertised() {
@@ -236,12 +301,44 @@ upload_status=$(protocol_curl --silent --max-time 10 --config /proof/agent.curl 
 [ "$upload_status" = 403 ]
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/known-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
-# Re-enter an explicitly owned recovery process and apply the configuration
-# again after real mail exists; account IDs alone are not preservation proof.
+# Prime the native application cache with a previous unversioned bundle. An
+# upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
+mkdir "$scratch/stale-assets" "$scratch/stale-source"
+printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
+(cd "$scratch/stale-source" && zip -q "$scratch/stale-assets/webui.zip" index.html)
+cp "$scratch/stale-assets/webui.zip" "$scratch/stale-assets/previous-ui-cache-canary.zip"
+start_server old-interface-preparation
+inventory
+application_id=$(jq -er '.methodResponses[8][1].list|if length==1 then .[0].id else error("ambiguous administration identity") end' "$scratch/inputs/listener-inventory.json")
+printf '%s' "$application_id" >"$scratch/cached-application-before.id"
+# Clear any initially cached bundle using a second safe fixture URI. Both
+# resources in this priming process contain only our disposable canary page.
+printf '%s' '{"resourceUrl":"file:///usr/local/share/stalwart/previous-ui-cache-canary.zip"}' >"$scratch/stale-application-clear.json"
+native_cli update Application "$application_id" --file /proof/stale-application-clear.json >"$scratch/stale-clear.out" 2>"$scratch/stale-clear.err"
+printf '%s' '{"resourceUrl":"file:///usr/local/share/stalwart/webui.zip"}' >"$scratch/stale-application.json"
+native_cli update Application "$application_id" --file /proof/stale-application.json >"$scratch/stale-application.out" 2>"$scratch/stale-application.err"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+start_server old-interface
+protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/stale-served.html"
+grep -q 'previous-ui-cache-canary' "$scratch/stale-served.html"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+# Re-enter an explicitly owned recovery process after both cached UI and real
+# mail exist. A successful readback must not retain the previous cached bundle.
 run_bootstrap
 start_server serving
+protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/refreshed-interface.html"
+if grep -q 'previous-ui-cache-canary' "$scratch/refreshed-interface.html"; then
+  echo 'FAIL: bootstrap reused the previous cached administration bundle' >&2; exit 1
+fi
+verify_administration_assets
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/management-request.json "http://$name:8080/jmap" >"$scratch/cached-application-after.json"
+jq -er '.methodResponses[0][1]|if .total==1 and (.ids|length)==1 then .ids[0] else error("ambiguous refreshed administration identity") end' "$scratch/cached-application-after.json" | tr -d '\n' >"$scratch/cached-application-after.id"
+cmp "$scratch/cached-application-before.id" "$scratch/cached-application-after.id"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/preserved-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/preserved-read.eml"
 docker logs "$name" >"$scratch/server.log" 2>&1
@@ -253,4 +350,4 @@ done
 if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
   echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
 fi
-echo 'PASS: native mail configuration, replay, TLS and account restrictions'
+echo 'PASS: native mail configuration, cached UI upgrade, replay, TLS and account restrictions'

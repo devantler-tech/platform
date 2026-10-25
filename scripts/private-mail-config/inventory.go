@@ -25,10 +25,10 @@ func validateInventory(raw []byte) error {
 	var response struct {
 		Methods [][]json.RawMessage `json:"methodResponses"`
 	}
-	if len(raw) > 65536 || json.Unmarshal(raw, &response) != nil || len(response.Methods) != 7 {
+	if len(raw) > 65536 || json.Unmarshal(raw, &response) != nil || len(response.Methods) != 9 {
 		return errConfiguration
 	}
-	if validateDomains(response.Methods[5:]) != nil {
+	if validateDomains(response.Methods[5:7]) != nil || validateApplications(response.Methods[7:]) != nil {
 		return errConfiguration
 	}
 	for offset, object := range []string{"MtaHook", "MtaMilter", "WebHook"} {
