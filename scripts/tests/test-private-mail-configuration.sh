@@ -29,7 +29,7 @@ mkdir -p "$scratch/inputs" "$scratch/data" "$scratch/tmp" "$scratch/etc/tls" "$s
 chmod 700 "$scratch/data" "$scratch/tmp"
 chmod 755 "$scratch/etc" "$scratch/etc/tls"
 printf '%s' '{"@type":"RocksDb","path":"/var/lib/stalwart/data","bufferSize":33554432,"cacheSize":33554432}' >"$scratch/etc/config.json"
-printf '%s' '{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator"}' >"$scratch/inputs/settings.json"
+printf '%s' '{"domain":"example.test","hostname":"mail.example.test","maintainer":"maintainer","agent":"agents","administrator":"operator","maintainerAliases":["former-a","former-b"]}' >"$scratch/inputs/settings.json"
 for account in administrator maintainer agent; do
   openssl rand -hex 32 | tr -d '\n' >"$scratch/inputs/$account-password"
 done
@@ -43,10 +43,15 @@ docker network create --internal "$network" >/dev/null
 mkdir "$scratch/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
+bash "$root/scripts/private-mail-config/stage-webui.sh" "$scratch/build"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
 [ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
   echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
 }
+docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
+  --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
+  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE' >"$scratch/image-assets.txt"
+[ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 
 run_bootstrap() {
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
@@ -63,9 +68,12 @@ run_bootstrap() {
 
 start_server() {
   local mode=$1
-  local -a recovery=()
-  if [ "$mode" = preparation ]; then
+  local -a recovery=() application_assets=()
+  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
+  fi
+  if [ "$mode" = old-interface ] || [ "$mode" = old-interface-preparation ]; then
+    application_assets=(--mount "type=bind,source=$scratch/stale-assets,target=/usr/local/share/stalwart,readonly")
   fi
   docker run --detach --name "$name" --network "$network" --read-only \
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
@@ -73,7 +81,7 @@ start_server() {
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "${recovery[@]}" "$server" >/dev/null
+    "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
     if docker exec "$name" curl --fail --silent --max-time 2 http://127.0.0.1:8080/healthz/ready >/dev/null 2>&1; then
       return 0
@@ -104,6 +112,43 @@ inventory() {
     --data-binary @- http://127.0.0.1:8080/jmap <"$root/scripts/private-mail-config/inventory-request.json" \
     >"$scratch/inputs/listener-inventory.json"
 }
+verify_administration_assets() {
+  local prefix asset
+  for prefix in admin account; do
+    protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/$prefix/login" >"$scratch/$prefix.html"
+    grep -Fq "<base href=\"/$prefix/\"" "$scratch/$prefix.html"
+    grep -oE '(src|href)="\./assets/[A-Za-z0-9_.-]+\.(js|css)"' "$scratch/$prefix.html" |
+      sed -E 's/^(src|href)="\.\///;s/"$//' >"$scratch/$prefix-assets.txt"
+    [ -s "$scratch/$prefix-assets.txt" ]
+    while IFS= read -r asset; do
+      unzip -p "$scratch/build/webui.zip" "$asset" >"$scratch/expected-asset"
+      protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/$prefix/$asset" >"$scratch/actual-asset"
+      cmp "$scratch/expected-asset" "$scratch/actual-asset"
+    done <"$scratch/$prefix-assets.txt"
+  done
+}
+verify_receiving_aliases() {
+  local human_account alias
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl "http://$name:8080/jmap/session" >"$scratch/human-session.json"
+  human_account=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/human-session.json")
+  # Receiving into this account is the contract. The fixture retains native
+  # spam handling; do not assume an unauthenticated message lands in INBOX or
+  # that a native Message-ID header index behaves like a raw substring search.
+  jq -cn --arg account "$human_account" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account,limit:16,calculateTotal:true},"received"],["Email/get",{accountId:$account,"#ids":{resultOf:"received",name:"Email/query",path:"/ids"},properties:["id","messageId","mailboxIds"]},"received-metadata"]]}' >"$scratch/receiving-query.json"
+  protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --header 'Content-Type: application/json' --data-binary @/proof/receiving-query.json "http://$name:8080/jmap" >"$scratch/receiving-result.json"
+  jq -e --arg account "$human_account" '
+    .methodResponses as $r | ($r|length)==2 and $r[0][0]=="Email/query" and $r[1][0]=="Email/get"
+    and $r[0][1].accountId==$account and $r[1][1].accountId==$account and $r[0][1].position==0
+    and ($r[0][1].ids|type)=="array" and $r[0][1].total==($r[0][1].ids|length) and $r[0][1].total<=16
+    and ($r[0][1].ids|unique|length)==$r[0][1].total and $r[1][1].notFound==[]
+    and ($r[1][1].list|map(.id)|sort)==($r[0][1].ids|sort)' "$scratch/receiving-result.json" >/dev/null
+  for alias in former-a former-b; do
+    jq -Se --arg message "$alias-receiving@example.test" '
+      [.methodResponses[1][1].list[]|select(.messageId==[$message])]
+      | if length==1 and (.[0].id|type)=="string" and .[0].id!="" and (.[0].mailboxIds|type)=="object" and (.[0].mailboxIds|length)>0
+        then .[0]|{id,messageId,mailboxIds} else error("alias message is not uniquely retained") end' "$scratch/receiving-result.json" >"$scratch/$alias-receiving-metadata.json"
+  done
+}
 prepare_plan() {
   local output=$1
   inventory
@@ -119,6 +164,63 @@ prepare_plan "$scratch/plan.ndjson"
 apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
+native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
+
+# Primary addresses and aliases share a namespace across Users, Groups and
+# MailingLists. Free only the owned aliases before creating each negative.
+inventory
+domain_id=$(jq -er '.methodResponses[6][1].list|map(select(.name=="example.test"))|if length==1 then .[0].id else error("ambiguous fixture domain") end' "$scratch/inputs/listener-inventory.json")
+maintainer_id=$(jq -er '.methodResponses[10][1].list|map(select(.name=="maintainer"))|if length==1 then .[0].id else error("ambiguous retained account") end' "$scratch/inputs/listener-inventory.json")
+jq -cn --arg domain "$domain_id" '{aliases:{"0":{name:"former-a",domainId:$domain,enabled:true,description:null},"1":{name:"former-b",domainId:$domain,enabled:true,description:null}}}' >"$scratch/approved-aliases.json"
+printf '%s' '{"aliases":{}}' >"$scratch/clear-owned-aliases.json"
+for collision in user-primary group-primary user-alias disabled-user-alias list-primary list-alias; do
+  object=Account
+  response_index=10
+  case "$collision" in list-*) object=MailingList; response_index=12 ;; esac
+  native_cli update Account "$maintainer_id" --file /proof/clear-owned-aliases.json >"$scratch/clear-owned.out" 2>"$scratch/clear-owned.err"
+  jq -cn --arg kind "$collision" --arg object "$object" --arg domain "$domain_id" '
+    ({name:(if ($kind|endswith("-primary")) then "former-a" else "owned-negative" end),domainId:$domain}
+     + (if $object=="Account" then {"@type":(if $kind=="group-primary" then "Group" else "User" end)} else {recipients:{}} end)
+     + (if ($kind|endswith("-alias")) then {aliases:{"0":{name:"former-a",domainId:$domain,enabled:($kind!="disabled-user-alias"),description:null}}} else {} end)) as $value
+    | {"@type":"create",object:$object,value:{owned:$value}}' >"$scratch/receiving-negative.ndjson"
+  native_cli apply --file /proof/receiving-negative.ndjson --json >"$scratch/receiving-create.jsonl" 2>"$scratch/receiving-create.err"
+  jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/receiving-create.jsonl" >/dev/null
+  inventory
+  negative_id=$(jq -er --argjson i "$response_index" --arg kind "$collision" '.methodResponses[$i][1].list|map(select(.name==(if ($kind|endswith("-primary")) then "former-a" else "owned-negative" end)))|if length==1 then .[0].id else error("ambiguous owned negative") end' "$scratch/inputs/listener-inventory.json")
+  jq -S --argjson i "$response_index" --arg id "$negative_id" '.methodResponses[$i][1].list|map(select(.id==$id))' "$scratch/inputs/listener-inventory.json" >"$scratch/receiving-owner-before.json"
+  if prepare_plan "$scratch/unsafe-receiving.ndjson" >"$scratch/receiving-refusal.log" 2>&1; then
+    echo 'FAIL: a competing receiving owner produced a plan' >&2; exit 1
+  fi
+  [ ! -e "$scratch/unsafe-receiving.ndjson" ]
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  if run_bootstrap; then
+    echo 'FAIL: bootstrap took a competing receiving address' >&2; exit 1
+  fi
+  start_server preparation
+  inventory
+  jq -S --argjson i "$response_index" --arg id "$negative_id" '.methodResponses[$i][1].list|map(select(.id==$id))' "$scratch/inputs/listener-inventory.json" >"$scratch/receiving-owner-after.json"
+  cmp "$scratch/receiving-owner-before.json" "$scratch/receiving-owner-after.json"
+  jq -e --arg id "$maintainer_id" '.methodResponses[10][1].list|map(select(.id==$id))|length==1 and (.[0].aliases|length)==0' "$scratch/inputs/listener-inventory.json" >/dev/null
+  printf '%s\n' "$negative_id" | native_cli delete "$object" --stdin >"$scratch/receiving-delete.out" 2>"$scratch/receiving-delete.err"
+  inventory
+  jq -e --argjson i "$response_index" --arg id "$negative_id" '.methodResponses[$i][1].list|all(.[];.id!=$id)' "$scratch/inputs/listener-inventory.json" >/dev/null
+  native_cli update Account "$maintainer_id" --file /proof/approved-aliases.json >"$scratch/receiving-restore.out" 2>"$scratch/receiving-restore.err"
+done
+
+# An earlier safe snapshot cannot authorize a new bootstrap after live drift.
+prepare_plan "$scratch/earlier-safe-snapshot.ndjson"
+jq --arg domain "$domain_id" '.aliases["2"]={name:"unapproved",domainId:$domain,enabled:true,description:null}' "$scratch/approved-aliases.json" >"$scratch/drift-aliases.json"
+native_cli update Account "$maintainer_id" --file /proof/drift-aliases.json >"$scratch/drift-alias.out" 2>"$scratch/drift-alias.err"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+if run_bootstrap; then
+  echo 'FAIL: bootstrap trusted a stale receiving snapshot' >&2; exit 1
+fi
+start_server preparation
+inventory
+jq -e --arg id "$maintainer_id" '.methodResponses[10][1].list|map(select(.id==$id))|length==1 and (.[0].aliases|length)==3' "$scratch/inputs/listener-inventory.json" >/dev/null
+native_cli update Account "$maintainer_id" --file /proof/approved-aliases.json >"$scratch/drift-restore.out" 2>"$scratch/drift-restore.err"
 
 # The renderer must reject an actual unexpected stored listener, even though
 # recovery ignores its socket and the health endpoint remains green.
@@ -137,6 +239,36 @@ start_server preparation
 native_cli query NetworkListener --where name=unexpected --fields id --json >"$scratch/negative-listener.jsonl"
 jq -s '[.[].id] | if length==1 then . else error("negative listener identity is ambiguous") end' "$scratch/negative-listener.jsonl" |
   native_cli delete NetworkListener --stdin >"$scratch/negative-delete.out" 2>"$scratch/negative-delete.err"
+
+# A second application shares HTTP even when the mail listeners are safe. Its
+# presence must fence initialization rather than being silently preserved.
+printf '%s\n' '{"@type":"upsert","object":"Application","matchOn":["description"],"value":{"negative":{"description":"Unexpected fixture application","enabled":false,"resourceUrl":"file:///usr/local/share/stalwart/webui.zip","urlPrefix":{"/unexpected":true}}}}' >"$scratch/negative-application.ndjson"
+native_cli apply --file /proof/negative-application.ndjson --json >"$scratch/negative-application-apply.jsonl" 2>"$scratch/negative-application-apply.err"
+if prepare_plan "$scratch/unsafe-application-plan.ndjson" >"$scratch/negative-application-render.log" 2>&1; then
+  echo 'FAIL: unexpected native application was accepted' >&2; exit 1
+fi
+[ ! -e "$scratch/unsafe-application-plan.ndjson" ]
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+if run_bootstrap; then
+  echo 'FAIL: bootstrap permitted serving after an unexpected application' >&2; exit 1
+fi
+start_server preparation
+inventory
+# Application/query cannot filter by description in the pinned server. Select
+# the owned negative fixture from a complete bounded query/get instead.
+jq -ce '
+  .methodResponses[7][1] as $query | .methodResponses[8][1] as $get |
+  if $query.total != 2 or $query.position != 0 or ($query.ids|unique|length) != 2 or
+     ($get.list|length) != 2 or $get.notFound != [] or
+     ([$get.list[].id]|sort) != ($query.ids|sort) then
+    error("negative application inventory is incomplete")
+  else
+    [$get.list[]|select(.description=="Unexpected fixture application")|.id] |
+    if length==1 and (.[0]|type)=="string" and .[0]!="" then .
+    else error("negative application identity is ambiguous") end
+  end' "$scratch/inputs/listener-inventory.json" |
+  native_cli delete Application --stdin >"$scratch/negative-application-delete.out" 2>"$scratch/negative-application-delete.err"
 
 # The pinned server rejects a reserved primary domain, but accepts it as a
 # local domain alias. That alias must not turn the rejection sink into a local
@@ -165,7 +297,8 @@ native_cli get MtaStageRcpt --json >"$scratch/rcpt.json"
 jq -e '.rewrite.match|keys|sort==["0","1"]' "$scratch/rcpt.json" >/dev/null
 native_cli query Account --fields id --json >"$scratch/accounts-after.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-after.jsonl"
-for object in accounts certificates; do
+native_cli query Application --fields id --json >"$scratch/applications-after.jsonl"
+for object in accounts certificates applications; do
   jq -s '[.[].id]|sort' "$scratch/$object-before.jsonl" >"$scratch/before.ids"
   jq -s '[.[].id]|sort' "$scratch/$object-after.jsonl" >"$scratch/after.ids"
   cmp "$scratch/before.ids" "$scratch/after.ids"
@@ -182,13 +315,23 @@ printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.cu
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
+# The private bridge has no external egress. Verify each served interface and
+# compare every script/style referenced by its entry page to the pinned ZIP.
+verify_administration_assets
+printf '%s' '{"using":["urn:ietf:params:jmap:core","urn:stalwart:jmap"],"methodCalls":[["x:Application/query",{"limit":2,"calculateTotal":true},"applications"]]}' >"$scratch/management-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/management-request.json "http://$name:8080/jmap" >"$scratch/management-authenticated.json"
+jq -e '.methodResponses[0][0]=="x:Application/query" and .methodResponses[0][1].total==1' "$scratch/management-authenticated.json" >/dev/null
+management_status=$(protocol_curl --silent --show-error --max-time 10 --header 'Content-Type: application/json' \
+  --data-binary @/proof/management-request.json --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap")
+[ "$management_status" = 401 ]
 printf 'From: agents@example.test\r\nTo: maintainer@example.test\r\nSubject: Native policy proof\r\nMessage-ID: <mail-policy@example.test>\r\n\r\nPreserved native mail fixture.\r\n' >"$scratch/known.eml"
 smtp=(--silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" --ssl-reqd --url smtp://mail.example.test:1587 --mail-from agents@example.test --upload-file /proof/known.eml)
 auth_advertised() {
   grep -Eqi '^< 250[- ]AUTH([ =]|$)' "$1"
 }
 protocol_curl --fail "${smtp[@]}" --config /proof/agent.curl --mail-rcpt maintainer@example.test >"$scratch/allowed.out" 2>"$scratch/allowed.err"
-for recipient in operator@example.test someone@remote.example.test maintainer+tag@example.test; do
+for recipient in operator@example.test someone@remote.example.test maintainer+tag@example.test former-a@example.test former-b@example.test; do
   if protocol_curl "${smtp[@]}" --config /proof/agent.curl --mail-rcpt "$recipient" >"$scratch/denied.out" 2>"$scratch/denied.err"; then
     echo 'FAIL: agent recipient restriction was bypassed' >&2; exit 1
   fi
@@ -227,6 +370,20 @@ fi
 if auth_advertised "$scratch/mx-capabilities.log"; then
   echo 'FAIL: MX offered agent authentication' >&2; exit 1
 fi
+for alias in former-a former-b; do
+  printf 'From: sender@remote.example.test\r\nTo: %s@example.test\r\nSubject: Receiving continuity %s\r\nMessage-ID: <%s-receiving@example.test>\r\n\r\nReceiving continuity %s proof.\r\n' "$alias" "$alias" "$alias" "$alias" >"$scratch/alias.eml"
+  protocol_curl --fail --silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt \
+    --connect-to "mail.example.test:1025:$name:1025" --ssl-reqd --url smtp://mail.example.test:1025 \
+    --mail-from sender@remote.example.test --mail-rcpt "$alias@example.test" --upload-file /proof/alias.eml >"$scratch/alias-delivery.out" 2>"$scratch/alias-delivery.err"
+done
+verify_receiving_aliases
+for alias in former-a former-b; do
+  cp "$scratch/$alias-receiving-metadata.json" "$scratch/$alias-receiving-before.json"
+done
+if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" --mail-from sender@remote.example.test --mail-rcpt unknown@example.test --upload-file /proof/known.eml >"$scratch/unknown-recipient.out" 2>"$scratch/unknown-recipient.err"; then
+  echo 'FAIL: an undeclared receiving address was accepted' >&2; exit 1
+fi
+grep -q '550' "$scratch/unknown-recipient.err"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl "http://$name:8080/jmap/session" >"$scratch/session.json"
 account_id=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/session.json")
 jq -cn --arg account "$account_id" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account},"query"],["Email/import",{accountId:$account,emails:{}},"import"],["Email/set",{accountId:$account,create:{fake:{subject:"private-canary"}}},"set"]]}' >"$scratch/write-request.json"
@@ -236,14 +393,62 @@ upload_status=$(protocol_curl --silent --max-time 10 --config /proof/agent.curl 
 [ "$upload_status" = 403 ]
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/known-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
-# Re-enter an explicitly owned recovery process and apply the configuration
-# again after real mail exists; account IDs alone are not preservation proof.
+# Prime the native application cache with a previous unversioned bundle. An
+# upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
+mkdir "$scratch/stale-assets" "$scratch/stale-source"
+printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
+(cd "$scratch/stale-source" && zip -q "$scratch/stale-assets/webui.zip" index.html)
+cp "$scratch/stale-assets/webui.zip" "$scratch/stale-assets/previous-ui-cache-canary.zip"
+start_server old-interface-preparation
+inventory
+application_id=$(jq -er '.methodResponses[8][1].list|if length==1 then .[0].id else error("ambiguous administration identity") end' "$scratch/inputs/listener-inventory.json")
+printf '%s' "$application_id" >"$scratch/cached-application-before.id"
+# Clear any initially cached bundle using a second safe fixture URI. Both
+# resources in this priming process contain only our disposable canary page.
+printf '%s' '{"resourceUrl":"file:///usr/local/share/stalwart/previous-ui-cache-canary.zip"}' >"$scratch/stale-application-clear.json"
+native_cli update Application "$application_id" --file /proof/stale-application-clear.json >"$scratch/stale-clear.out" 2>"$scratch/stale-clear.err"
+printf '%s' '{"resourceUrl":"file:///usr/local/share/stalwart/webui.zip"}' >"$scratch/stale-application.json"
+native_cli update Application "$application_id" --file /proof/stale-application.json >"$scratch/stale-application.out" 2>"$scratch/stale-application.err"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+start_server old-interface
+protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/stale-served.html"
+grep -q 'previous-ui-cache-canary' "$scratch/stale-served.html"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+# Re-enter an explicitly owned recovery process after both cached UI and real
+# mail exist. A successful readback must not retain the previous cached bundle.
 run_bootstrap
 start_server serving
+protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/refreshed-interface.html"
+if grep -q 'previous-ui-cache-canary' "$scratch/refreshed-interface.html"; then
+  echo 'FAIL: bootstrap reused the previous cached administration bundle' >&2; exit 1
+fi
+verify_administration_assets
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/management-request.json "http://$name:8080/jmap" >"$scratch/cached-application-after.json"
+jq -er '.methodResponses[0][1]|if .total==1 and (.ids|length)==1 then .ids[0] else error("ambiguous refreshed administration identity") end' "$scratch/cached-application-after.json" | tr -d '\n' >"$scratch/cached-application-after.id"
+cmp "$scratch/cached-application-before.id" "$scratch/cached-application-after.id"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/preserved-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/preserved-read.eml"
+# Omitted settings must preserve configured aliases and their delivered mail.
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+jq 'del(.maintainerAliases)' "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
+mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+run_bootstrap
+start_server preparation
+inventory
+jq -e --arg id "$maintainer_id" '.methodResponses[10][1].list|map(select(.id==$id))|length==1 and (.[0].aliases|length)==2' "$scratch/inputs/listener-inventory.json" >/dev/null
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+start_server serving
+verify_receiving_aliases
+for alias in former-a former-b; do
+  cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
+done
 docker logs "$name" >"$scratch/server.log" 2>&1
 for secret in "$scratch/inputs/"*-password; do
   if grep -Fq -f "$secret" "$scratch/server.log"; then
@@ -253,4 +458,4 @@ done
 if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
   echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
 fi
-echo 'PASS: native mail configuration, replay, TLS and account restrictions'
+echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS and account restrictions'
