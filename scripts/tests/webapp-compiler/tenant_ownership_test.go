@@ -2,6 +2,7 @@ package compiler_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -16,20 +17,36 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-// Use the deployed KRO library's metadata and SSA implementation against the
-// isolated real API server. The competing writer's body comes from the actual
-// Kyverno generate rule; this is not a claim to run a Kyverno controller here.
-func assertTenantControllerOwnership(t *testing.T, ctx context.Context, config *rest.Config, root string, objects map[string]*unstructured.Unstructured) {
+// Check metadata without API writes so active and opt-in fixtures share the server.
+func assertTenantControllerMetadata(t *testing.T, objects map[string]*unstructured.Unstructured) {
 	t.Helper()
-	t.Run("templates-match-controller-metadata", func(t *testing.T) {
-		for id, object := range objects {
-			decorated := object.DeepCopy()
-			metadata.NewNodeLabeler().ApplyLabels(decorated)
-			if object.GetLabels()[metadata.ManagedByLabelKey] != decorated.GetLabels()[metadata.ManagedByLabelKey] {
-				t.Errorf("%s declares ownership different from the pinned controller", id)
-			}
+	if err := tenantControllerMetadataError(objects); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Compare actual compiled objects with the deployed KRO label decorator.
+func tenantControllerMetadataError(objects map[string]*unstructured.Unstructured) error {
+	if len(objects) == 0 {
+		return fmt.Errorf("no compiled tenant resources were checked")
+	}
+	for id, object := range objects {
+		if object == nil {
+			return fmt.Errorf("missing compiled resource %s", id)
 		}
-	})
+		decorated := object.DeepCopy()
+		metadata.NewNodeLabeler().ApplyLabels(decorated)
+		if object.GetLabels()[metadata.ManagedByLabelKey] != decorated.GetLabels()[metadata.ManagedByLabelKey] {
+			return fmt.Errorf("%s declares ownership different from the pinned controller", id)
+		}
+	}
+	return nil
+}
+
+// Exercise the pinned SSA implementation against the isolated real API server.
+// The competing writer uses the actual Kyverno generate body, not its controller.
+func assertTenantNetworkFloor(t *testing.T, ctx context.Context, config *rest.Config, root string, objects map[string]*unstructured.Unstructured) {
+	t.Helper()
 	t.Run("network-floor-settles-with-competing-generator", func(t *testing.T) {
 		clients, err := kroclient.NewSet(kroclient.Config{RestConfig: rest.CopyConfig(config)})
 		if err != nil {
