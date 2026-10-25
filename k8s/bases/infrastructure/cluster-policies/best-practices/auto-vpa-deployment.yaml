@@ -6,17 +6,17 @@
 # carries the catalog's own header), auto-vpa-statefulset.yaml and
 # auto-vpa-daemonset.yaml. Each policy is copied verbatim except for one marked
 # PLATFORM ADDITION: a namespaceSelector that keeps it out of the system
-# namespaces, as the classic best-practices/auto-vpa.yaml did. The generate
+# namespaces, where prod runs static VPAs of its own. The generate
 # expressions must stay byte-for-byte the catalog's (whitespace aside): both static
 # producer guards pin them (scripts/guard-consumer-discovery-conservation.sh and
-# scripts/tests/crossplane-egress-policy-rules.yaml). The classic VPAs are named
-# <name>, these are <name>-<kind>, so running both forms at once would put two VPAs
-# on every workload: register these only after the classic policy's VPAs are gone.
+# scripts/tests/crossplane-egress-policy-rules.yaml). The catalog's classic
+# ClusterPolicy form names its VPAs <name>, not <name>-<kind>, so it must never run
+# beside these: every workload would get two VPAs.
 #
-# The catalog's header follows. In this repository the classic file is the rollback
-# form, and "the root kustomization.yaml" means this folder's kustomization.yaml.
-# "Under the same name" below is not true here: the classic VPA is <name> and this
-# one is <name>-deployment, so running both forms gives every workload two VPAs.
+# The catalog's header follows. Here "the root kustomization.yaml" means this
+# folder's kustomization.yaml, and the repository keeps no classic file to roll back
+# to. "Under the same name" below is not true here: the classic VPA is <name> and
+# this one is <name>-deployment, so running both forms gives every workload two VPAs.
 #
 # The catalog's auto-vpa: a port of the classic policies/best-practices/auto-vpa.yaml
 # ClusterPolicy rules to the GeneratingPolicy API, which Kyverno keeps after classic

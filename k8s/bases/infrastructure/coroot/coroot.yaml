@@ -205,7 +205,7 @@ spec:
       name: ghcr.io/devantler-tech/platform-coroot-node-agent:v1.35.8-alerts.1-d72441cff6e32c8cabdf631a882a28af1e503e84@sha256:e71f4d608092ccd150ad33d5443e16d9fdccca659ebc1fd5b336c49d27fa5d63
     priorityClassName: platform-critical
     # Authored memory sizing — REQUIRED. DaemonSet VPAs are CPU-only (see
-    # cluster-policies/best-practices/auto-vpa.yaml: VPA sized every node's
+    # cluster-policies/best-practices/auto-vpa-daemonset.yaml: VPA sized every node's
     # agent to the busiest node's peak — 826Mi/node × every node — and that
     # per-node inflation ratcheted the cluster-autoscaler on 2026-06-30), so
     # memory must be authored here. Without it the observability LimitRange

@@ -52,9 +52,10 @@ spec:
                   - (name): "{{element.name}}"
                     resources:
                       +(requests):
-                        # 15m matches the lowered VPA minAllowed (auto-vpa.yaml)
-                        # and LimitRange defaultRequest; keeps the stamped default
-                        # consistent with the admission-time floor.
+                        # 15m matches the LimitRange defaultRequest, keeping the
+                        # stamped default consistent with the admission-time floor;
+                        # VPA raises it to its 50m minAllowed when it right-sizes.
+
                         cpu: 15m
                         memory: 128Mi
                       +(limits):
@@ -67,9 +68,10 @@ spec:
                   - (name): "{{element.name}}"
                     resources:
                       +(requests):
-                        # 15m matches the lowered VPA minAllowed (auto-vpa.yaml)
-                        # and LimitRange defaultRequest; keeps the stamped default
-                        # consistent with the admission-time floor.
+                        # 15m matches the LimitRange defaultRequest, keeping the
+                        # stamped default consistent with the admission-time floor;
+                        # VPA raises it to its 50m minAllowed when it right-sizes.
+
                         cpu: 15m
                         memory: 128Mi
                       +(limits):

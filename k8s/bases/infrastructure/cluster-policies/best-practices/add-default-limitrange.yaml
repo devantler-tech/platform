@@ -70,8 +70,8 @@ spec:
                   cpu: 500m
                   memory: 512Mi
                 defaultRequest:
-                  # CPU floor matches VPA minAllowed (auto-vpa.yaml); idle
-                  # controllers default lower until VPA right-sizes them.
+                  # Below the auto-vpa-* minAllowed CPU floor (50m) on purpose:
+                  # idle controllers start lower until VPA right-sizes them.
                   cpu: 15m
                   memory: 128Mi
                 type: Container

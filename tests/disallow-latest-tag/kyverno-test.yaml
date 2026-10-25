@@ -2,7 +2,10 @@
 # A versioned tag, a tag+digest and a digest alone pass, with or without a
 # registry port; a registry port is not a tag; ':latest' fails, as does a tagless
 # image, in a regular, init or ephemeral container; the same tagless image in an
-# excluded infrastructure namespace is out of scope.
+# excluded infrastructure namespace is out of scope. Workload controllers are
+# judged through the rules Kyverno generates: a `:latest` or tagless Deployment
+# or Job fails in an ordinary namespace, and a Deployment or CronJob in an
+# infrastructure namespace is skipped, the same as a Pod (#5168).
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -35,4 +38,31 @@ results:
     resources:
       - kube-system/tagless
     kind: Pod
+    result: skip
+  - policy: disallow-latest-tag
+    resources:
+      - default/versioned-tag-deployment
+    kind: Deployment
+    result: pass
+  - policy: disallow-latest-tag
+    resources:
+      - default/latest-tag-deployment
+      - default/tagless-deployment
+    kind: Deployment
+    result: fail
+  - policy: disallow-latest-tag
+    resources:
+      - default/latest-tag-job
+    kind: Job
+    result: fail
+  - policy: disallow-latest-tag
+    resources:
+      - observability/latest-tag-deployment
+      - observability/tagless-deployment
+    kind: Deployment
+    result: skip
+  - policy: disallow-latest-tag
+    resources:
+      - kube-system/latest-tag-cronjob
+    kind: CronJob
     result: skip
