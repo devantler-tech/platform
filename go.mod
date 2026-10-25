@@ -44,4 +44,4 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 )
 
-require github.com/google/go-github/v88 v88.0.0
+require github.com/google/go-github/v93 v93.0.0
