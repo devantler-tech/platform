@@ -87,6 +87,9 @@ func validateApply(plan, output []byte) error {
 // Structs may contain native defaults. Security maps are replacements, so an
 // extra permission, socket or expression branch must never compare equal.
 func policyMatches(want, actual any, key string) bool {
+	if key == "aliases" {
+		return receivingAliasesMatch(want, actual)
+	}
 	switch key {
 	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix":
 		return reflect.DeepEqual(want, actual)

@@ -165,7 +165,7 @@ prepared:
 	default:
 	}
 	inventory, err := m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil {
+	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fmt.Errorf("initial inventory: %w", errConfiguration)
 	}
 	applyCtx, applyCancel := context.WithTimeout(ctx, time.Minute)
@@ -184,7 +184,7 @@ prepared:
 	// Recovery intentionally authenticates only the recovery administrator.
 	// Normal account authentication is proved after this process has stopped.
 	inventory, err = m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil {
+	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return errConfiguration
 	}
 	// A successful configuration cannot mask an early child exit or a forced

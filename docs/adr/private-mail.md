@@ -197,6 +197,29 @@ configuration slice changes no running workload, public route or DNS record.
 Client setup, private credential handoff, migration, public sender-authentication
 proof and a production backup restore remain in #5030.
 
+### Receiving continuity
+
+Private settings may optionally declare `maintainerAliases`, a list of up to
+16 distinct local address names on the configured domain. They become receiving
+aliases of the maintainer mailbox, without separate credentials or broader
+agent-sending permission. Omission leaves existing aliases unmanaged. An
+explicit empty list cannot erase a nonempty native alias set.
+
+The inventory includes complete bounded Account and MailingList query/get
+responses: both primary addresses and disabled aliases reserve ownership.
+Configured aliases require an empty or exactly approved existing maintainer
+alias set; any competing owner, unexpected alias or incomplete census refuses
+the plan. Bootstrap repeats this check on fresh data from its exclusively owned
+recovery child immediately before apply. A saved standalone plan and inventory
+are snapshots, not an atomic reconcile: the pinned CLI has no revision
+precondition, so they must not authorize a later retry after live drift.
+
+Readback compares the entire alias collection, resolving domain references and
+native defaults without depending on numeric entry order. The native fixture
+exercises actual delivery to both aliases, unknown-address refusal, competing
+User/Group/MailingList ownership, stale snapshots, and omission/replay preserving
+the retained account and delivered mail. Deployment and DNS remain separate.
+
 ## Sources
 
 - [Pinned release](https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.27)
