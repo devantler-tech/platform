@@ -1224,7 +1224,7 @@ jobs:
       # current observations and canonical approvals remain separately required.
       - name: 🔐 Validate frozen legacy publisher evidence
         run: |
-          shellcheck scripts/tests/test-frozen-legacy-publisher-release.sh
+          shellcheck -x scripts/tests/test-frozen-legacy-publisher-release.sh
           bash scripts/tests/test-frozen-legacy-publisher-release.sh
 
       # The authorization gate's verdict and its moved-entry diagnostics are two
