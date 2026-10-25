@@ -160,7 +160,7 @@ while IFS= read -r definition; do
   name="$(jq -r '.name' <<<"${definition}")"
   id="$(jq -r --arg name "${name}" '.data[] | select(.name == $name) | .id | @uri' "${artifacts}/dashboards-2.json")"
   curl --silent --show-error --fail --max-time 30 "${collection}/${id}" >"${artifacts}/dashboard-${dashboard_index}.json"
-  jq -e --argjson desired "${definition}" '.data.name == $desired.name and .data.config == $desired.config' \
+  jq -e --argjson desired "${definition}" '.data.name == $desired.name and (.data.config | del(.. | .scope? | select(. == ""))) == $desired.config' \
     "${artifacts}/dashboard-${dashboard_index}.json" >/dev/null
   panel_index=0
   while IFS= read -r panel; do
