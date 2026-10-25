@@ -186,8 +186,9 @@ readonly KSAIL_OPERATOR_IMAGE="ghcr.io/devantler-tech/ksail:v${KSAIL_OPERATOR_VE
 # a missing, malformed or foreign declaration fails here, before any registry read.
 provider_upjet_unifi_pull_target() {
   local package
-  package="$(yq -er '.spec.package' "$1")" || return 1
-  if ! [[ "${package}" =~ ^ghcr\.io/devantler-tech/provider-upjet-unifi:v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  # Validate the scalar inside yq, before command substitution can strip a
+  # trailing newline from it. A release tag has no leading zeroes and no suffix.
+  if ! package="$(yq -er '.spec.package | select(type == "!!str" and test("^ghcr\\.io/devantler-tech/provider-upjet-unifi:v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))' "$1")"; then
     printf '::error::UniFi provider declaration must name ghcr.io/devantler-tech/provider-upjet-unifi:v<major>.<minor>.<patch>\n' >&2
     return 1
   fi
