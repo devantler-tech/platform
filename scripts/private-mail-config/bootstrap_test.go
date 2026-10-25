@@ -126,7 +126,9 @@ func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testi
 		t.Fatal(err)
 	}
 	value, err := strconv.Atoi(string(port))
-	if err != nil || value < 1024 || value > 65535 || value == 8080 {
+	// This literal is the independent boundary that serving policies exclude;
+	// deriving it from the implementation would miss a simultaneous port drift.
+	if err != nil || value < 1024 || value > 65535 || value == 8080 || string(port) != "18080" {
 		t.Fatal("bootstrap did not give its recovery child a separate unprivileged management port")
 	}
 }
