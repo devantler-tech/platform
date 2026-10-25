@@ -77,7 +77,13 @@ mv "$input" "${input%.yaml}.yml"
 refuses 'yml filename'
 rm "${input%.yaml}.yml"
 for extension in json YAML YML JSON; do
-  cp "$work/good.yaml" "$work/tree/k8s/apps/source.$extension"
+  case "$extension" in
+    json | JSON)
+      yq -o=json '.' "$work/good.yaml" >"$work/tree/k8s/apps/source.$extension"
+      jq -e '.kind == "Tenant"' "$work/tree/k8s/apps/source.$extension" >/dev/null
+      ;;
+    *) cp "$work/good.yaml" "$work/tree/k8s/apps/source.$extension" ;;
+  esac
   refuses "$extension resource filename"
   rm "$work/tree/k8s/apps/source.$extension"
 done
