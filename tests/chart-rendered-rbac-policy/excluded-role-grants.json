@@ -466,7 +466,7 @@
               "rbac.authorization.k8s.io"
             ],
             "resourceNames": [
-              "edit",
+              "tenant-edit",
               "tenant-external-dns",
               "tenant-external-dns-global",
               "tenant-webapp-edit"
