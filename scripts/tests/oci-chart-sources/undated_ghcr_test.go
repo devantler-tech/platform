@@ -26,7 +26,10 @@ var undatedGHCRDependencies = []renovateDependency{
 	{"ghcr.io/umami-software/umami", "kubernetes", "docker", "k8s/bases/apps/umami/cron-job.yaml"},
 }
 
-// Every update is proposed (no release-age wait) and none merges unreviewed.
+// Every ordinary update is proposed (no release-age wait) and none merges
+// unreviewed. Vulnerability-fix PRs keep the repository-wide vulnerabilityAlerts
+// fast path, which Renovate applies after package rules and checkUpdatePolicy
+// deliberately does not model.
 var undatedGHCRUpdatePolicy = map[string]any{"automerge": false, "minimumReleaseAge": "0 days"}
 
 func TestUndatedGHCRDependenciesAreProposedAndReviewed(t *testing.T) {
