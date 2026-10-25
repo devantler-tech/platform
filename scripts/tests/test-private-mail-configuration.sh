@@ -70,8 +70,6 @@ start_server() {
   docker run --detach --name "$name" --network "$network" --read-only \
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
-    --publish 127.0.0.1::8080 --publish 127.0.0.1::1025 \
-    --publish 127.0.0.1::1587 --publish 127.0.0.1::1993 \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
@@ -91,6 +89,14 @@ native_cli() {
     --env "STALWART_URL=http://$name:8080" --env STALWART_USER=fixture \
     --env STALWART_PASSWORD=private-mail-recovery-fixture-only \
     --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
+}
+protocol_curl() {
+  # Keep protocol clients in the isolated network. An internal bridge need not
+  # expose host port bindings, and a separate client retains non-loopback checks.
+  docker run --rm --network "$network" --user "$fixture_user" --cpus 1 --memory 128m \
+    --read-only --cap-drop ALL --security-opt no-new-privileges:true --workdir /proof \
+    --mount "type=bind,source=$scratch,target=/proof,readonly" \
+    --entrypoint curl "$server" --disable "$@"
 }
 inventory() {
   docker exec -i "$name" curl --fail --silent --show-error --max-time 10 \
@@ -169,55 +175,51 @@ jq -e '.methodResponses[0][1].total==4' "$scratch/inputs/listener-inventory.json
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
-management_port=$(docker port "$name" 8080/tcp | sed 's/.*://')
-submission_port=$(docker port "$name" 1587/tcp | sed 's/.*://')
-inbound_port=$(docker port "$name" 1025/tcp | sed 's/.*://')
-imap_port=$(docker port "$name" 1993/tcp | sed 's/.*://')
 agent_password=$(cat "$scratch/inputs/agent-password")
 human_password=$(cat "$scratch/inputs/maintainer-password")
 administrator_password=$(cat "$scratch/inputs/administrator-password")
 printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.curl"
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
-curl --fail --silent --show-error --max-time 10 --config "$scratch/administrator.curl" "http://127.0.0.1:$management_port/jmap/session" >"$scratch/administrator-session.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
 printf 'From: agents@example.test\r\nTo: maintainer@example.test\r\nSubject: Native policy proof\r\nMessage-ID: <mail-policy@example.test>\r\n\r\nPreserved native mail fixture.\r\n' >"$scratch/known.eml"
-smtp=(--silent --show-error --max-time 15 --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$submission_port:127.0.0.1" --ssl-reqd --url "smtp://mail.example.test:$submission_port" --mail-from agents@example.test --upload-file "$scratch/known.eml")
-curl --fail "${smtp[@]}" --config "$scratch/agent.curl" --mail-rcpt maintainer@example.test >"$scratch/allowed.out" 2>"$scratch/allowed.err"
+smtp=(--silent --show-error --max-time 15 --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" --ssl-reqd --url smtp://mail.example.test:1587 --mail-from agents@example.test --upload-file /proof/known.eml)
+protocol_curl --fail "${smtp[@]}" --config /proof/agent.curl --mail-rcpt maintainer@example.test >"$scratch/allowed.out" 2>"$scratch/allowed.err"
 for recipient in operator@example.test someone@remote.example.test maintainer+tag@example.test; do
-  if curl "${smtp[@]}" --config "$scratch/agent.curl" --mail-rcpt "$recipient" >"$scratch/denied.out" 2>"$scratch/denied.err"; then
+  if protocol_curl "${smtp[@]}" --config /proof/agent.curl --mail-rcpt "$recipient" >"$scratch/denied.out" 2>"$scratch/denied.err"; then
     echo 'FAIL: agent recipient restriction was bypassed' >&2; exit 1
   fi
   grep -q '550' "$scratch/denied.err"
 done
-if curl "${smtp[@]}" --mail-rcpt maintainer@example.test >"$scratch/no-auth.out" 2>"$scratch/no-auth.err"; then
+if protocol_curl "${smtp[@]}" --mail-rcpt maintainer@example.test >"$scratch/no-auth.out" 2>"$scratch/no-auth.err"; then
   echo 'FAIL: submission accepted an unauthenticated envelope' >&2; exit 1
 fi
 grep -q '503' "$scratch/no-auth.err"
-if curl --silent --show-error --max-time 10 --url "smtp://127.0.0.1:$inbound_port" --mail-from sender@remote.example.test --mail-rcpt someone@other.example.test --upload-file "$scratch/known.eml" >"$scratch/relay.out" 2>"$scratch/relay.err"; then
+if protocol_curl --silent --show-error --max-time 10 --url "smtp://$name:1025" --mail-from sender@remote.example.test --mail-rcpt someone@other.example.test --upload-file /proof/known.eml >"$scratch/relay.out" 2>"$scratch/relay.err"; then
   echo 'FAIL: unauthenticated relay was accepted' >&2; exit 1
 fi
 grep -q '550' "$scratch/relay.err"
 # Human submission retains normal external sending. The isolated .test
 # destination cannot leave this private fixture network.
 printf 'From: maintainer@example.test\r\nTo: someone@remote.example.test\r\nSubject: Human submission proof\r\n\r\nDisposable fixture.\r\n' >"$scratch/human.eml"
-curl --fail --silent --show-error --max-time 15 --config "$scratch/human.curl" \
-  --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$submission_port:127.0.0.1" \
-  --ssl-reqd --url "smtp://mail.example.test:$submission_port" --mail-from maintainer@example.test \
-  --mail-rcpt someone@remote.example.test --upload-file "$scratch/human.eml" >"$scratch/human-send.out" 2>"$scratch/human-send.err"
-if curl --fail --silent --show-error --max-time 10 --config "$scratch/agent.curl" \
-  --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$inbound_port:127.0.0.1" \
-  --ssl-reqd --url "smtp://mail.example.test:$inbound_port" --mail-from agents@example.test \
-  --mail-rcpt maintainer@example.test --upload-file "$scratch/known.eml" >"$scratch/mx-auth.out" 2>"$scratch/mx-auth.err"; then
+protocol_curl --fail --silent --show-error --max-time 15 --config /proof/human.curl \
+  --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1587:$name:1587" \
+  --ssl-reqd --url smtp://mail.example.test:1587 --mail-from maintainer@example.test \
+  --mail-rcpt someone@remote.example.test --upload-file /proof/human.eml >"$scratch/human-send.out" 2>"$scratch/human-send.err"
+if protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl \
+  --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1025:$name:1025" \
+  --ssl-reqd --url smtp://mail.example.test:1025 --mail-from agents@example.test \
+  --mail-rcpt maintainer@example.test --upload-file /proof/known.eml >"$scratch/mx-auth.out" 2>"$scratch/mx-auth.err"; then
   echo 'FAIL: MX offered agent authentication' >&2; exit 1
 fi
-curl --fail --silent --show-error --max-time 10 --config "$scratch/agent.curl" "http://127.0.0.1:$management_port/jmap/session" >"$scratch/session.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl "http://$name:8080/jmap/session" >"$scratch/session.json"
 account_id=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/session.json")
 jq -cn --arg account "$account_id" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account},"query"],["Email/import",{accountId:$account,emails:{}},"import"],["Email/set",{accountId:$account,create:{fake:{subject:"private-canary"}}},"set"]]}' >"$scratch/write-request.json"
-curl --fail --silent --show-error --max-time 10 --config "$scratch/agent.curl" --header 'Content-Type: application/json' --data-binary "@$scratch/write-request.json" "http://127.0.0.1:$management_port/jmap" >"$scratch/write-result.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/agent.curl --header 'Content-Type: application/json' --data-binary @/proof/write-request.json "http://$name:8080/jmap" >"$scratch/write-result.json"
 jq -e '.methodResponses[0][0]=="Email/query" and .methodResponses[1][0]=="error" and .methodResponses[1][1].type=="forbidden" and .methodResponses[2][0]=="error" and .methodResponses[2][1].type=="forbidden"' "$scratch/write-result.json" >/dev/null
-upload_status=$(curl --silent --max-time 10 --config "$scratch/agent.curl" --data-binary "@$scratch/known.eml" --output "$scratch/upload-result.json" --write-out '%{http_code}' "http://127.0.0.1:$management_port/jmap/upload/$account_id/")
+upload_status=$(protocol_curl --silent --max-time 10 --config /proof/agent.curl --data-binary @/proof/known.eml --output /dev/null --write-out '%{http_code}' "http://$name:8080/jmap/upload/$account_id/")
 [ "$upload_status" = 403 ]
-curl --fail --silent --show-error --max-time 10 --config "$scratch/human.curl" --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$imap_port:127.0.0.1" "imaps://mail.example.test:$imap_port/INBOX;UID=1" >"$scratch/known-read.eml"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/known-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 # Re-enter an explicitly owned recovery process and apply the configuration
 # again after real mail exists; account IDs alone are not preservation proof.
@@ -225,8 +227,7 @@ docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 run_bootstrap
 start_server serving
-imap_port=$(docker port "$name" 1993/tcp | sed 's/.*://')
-curl --fail --silent --show-error --max-time 10 --config "$scratch/human.curl" --cacert "$scratch/etc/tls/tls.crt" --resolve "mail.example.test:$imap_port:127.0.0.1" "imaps://mail.example.test:$imap_port/INBOX;UID=1" >"$scratch/preserved-read.eml"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/preserved-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/preserved-read.eml"
 docker logs "$name" >"$scratch/server.log" 2>&1
 for secret in "$scratch/inputs/"*-password; do
