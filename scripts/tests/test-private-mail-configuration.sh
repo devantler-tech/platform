@@ -158,8 +158,20 @@ if run_bootstrap; then
   echo 'FAIL: bootstrap permitted serving after an unexpected application' >&2; exit 1
 fi
 start_server preparation
-native_cli query Application --where 'description=Unexpected fixture application' --fields id --json >"$scratch/negative-application.jsonl"
-jq -s '[.[].id] | if length==1 then . else error("negative application identity is ambiguous") end' "$scratch/negative-application.jsonl" |
+inventory
+# Application/query cannot filter by description in the pinned server. Select
+# the owned negative fixture from a complete bounded query/get instead.
+jq -ce '
+  .methodResponses[7][1] as $query | .methodResponses[8][1] as $get |
+  if $query.total != 2 or $query.position != 0 or ($query.ids|unique|length) != 2 or
+     ($get.list|length) != 2 or $get.notFound != [] or
+     ([$get.list[].id]|sort) != ($query.ids|sort) then
+    error("negative application inventory is incomplete")
+  else
+    [$get.list[]|select(.description=="Unexpected fixture application")|.id] |
+    if length==1 and (.[0]|type)=="string" and .[0]!="" then .
+    else error("negative application identity is ambiguous") end
+  end' "$scratch/inputs/listener-inventory.json" |
   native_cli delete Application --stdin >"$scratch/negative-application-delete.out" 2>"$scratch/negative-application-delete.err"
 
 # The pinned server rejects a reserved primary domain, but accepts it as a
