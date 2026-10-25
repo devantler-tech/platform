@@ -65,7 +65,7 @@ spec:
   # field; the operator HelmRelease itself also stays Flux/Renovate-pinned.
   communityEdition:
     image:
-      name: ghcr.io/coroot/coroot:1.22.2
+      name: ghcr.io/coroot/coroot:1.28.1
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /
