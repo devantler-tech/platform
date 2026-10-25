@@ -49,7 +49,7 @@ spec:
   # the CNPG operator default (18.3-system-trixie) — same rationale and Renovate
   # wiring as umami-db. CNPG rolls the image in place across the HA instances.
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
   # Coroot Postgres self-integration: stamp the coroot.com/postgres-scrape
   # annotations onto the DB instance Pods (CNPG inheritedMetadata propagates to
   # all managed objects, incl. Pods) so Coroot's own cluster-agent discovers and
