@@ -120,10 +120,10 @@ canonical_tenant_inventory_projection() (
     [ "$(printf '%s\n' "$records" | jq -r '.bindings|length')" = 0 ] || return 1
     return 0
   fi
-  [ "$count" = 1 ] && [ "$(printf '%s\n' "$records" | jq -r '.bindings|length')" = 1 ] || {
+  if [ "$count" != 1 ] || [ "$(printf '%s\n' "$records" | jq -r '.bindings|length')" != 1 ]; then
     printf 'typed source needs complete admission; inventory is UNKNOWN: %s\n' "$hits" >&2
     return 1
-  }
+  fi
   record="$(printf '%s\n' "$records" | jq -c '.bindings[0]')"
   # The path is part of admission: another copy of an identical declaration
   # cannot borrow the binding or silently add a second source.
