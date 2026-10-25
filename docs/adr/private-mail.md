@@ -47,7 +47,8 @@ claim is not a backup or restore proof. No mailbox content exists in preparation
 ## Administration opt-in
 
 The separate `k8s/bases/apps/private-mail-administration` bundle inherits the
-preparation resources and remains absent from both normal provider overlays.
+preparation resources. Production includes it with encrypted settings; the
+shared and local application layers keep mail disabled.
 Its initializer must finish and stop recovery before Kubernetes starts the
 normal Stalwart process. Both use the same immutable published bootstrap image.
 Only the initializer receives the private settings and account passwords;

@@ -1,6 +1,6 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-# Explicit administration opt-in; neither normal provider layer includes it.
+# Administration bundle; production opts in with encrypted settings.
 resources:
   - ../private-mail
   - password-maintainer.yaml

@@ -21,8 +21,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# The opt-in bundle is absent from both normal overlays. Scan its enabled
-# render explicitly, using the same reviewed exceptions as the platform gate.
+# Scan preparation and administration explicitly with the same reviewed
+# exceptions as the platform gate, including the shared bundle in isolation.
 go -C "$root" run ./scripts/generate-kubescape-exceptions -o "$scratch/exceptions.json"
 for bundle in private-mail private-mail-administration; do
   ksail workload validate "$root/k8s/bases/apps/$bundle" --strict --ignore-missing-schemas=false
