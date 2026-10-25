@@ -1,0 +1,123 @@
+name: Verify Alert Publisher App
+
+# Coverage bootstrap for #5291/#5294. The publisher stays dormant. This reads
+# GitHub metadata, mints one repository-scoped token, then revokes that token.
+# It never runs the publisher state machine or creates an incident/ask.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-alert-publisher-read-only"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: verify-alert-publisher-app
+  cancel-in-progress: false
+
+jobs:
+  proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require reviewed main and explicit read-only confirmation
+        id: guard
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || \
+            "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_RUN_ATTEMPT" != 1 || \
+            "$CONFIRM" != verify-alert-publisher-read-only ]]; then
+            echo 'Read-only proof requires an explicit first-attempt main dispatch.' >&2
+            exit 1
+          fi
+      - name: Checkout reviewed proof definition
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Checkout the exact publisher revision with a clean review
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: devantler-tech/platform
+          ref: e64bc9c5b438bbaabca2b95927e6a1f568165644
+          path: publisher-source
+          persist-credentials: false
+      - name: Setup the reviewed source's Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: publisher-source/go.mod
+          cache: false
+      - name: Validate dispatch refusals and compile without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/tests/test-alert-app-proof.sh
+          cp scripts/tests/testdata/alert-app-probe/credential_probe_test.go publisher-source/scripts/alert-publisher/credential_probe_test.go
+          cd publisher-source
+          go test -run '^TestProofCredential$' ./scripts/alert-publisher
+          go test -c -o "$RUNNER_TEMP/alert-app-proof" ./scripts/alert-publisher
+      - name: Install the repository-approved Kubernetes reader
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/alert-proof-kubectl"
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/alert-proof-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/alert-proof-tools/kubectl"
+          echo "$RUNNER_TEMP/alert-proof-tools" >> "$GITHUB_PATH"
+      - name: Verify the existing App and revoke only the probe's token
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set -euo pipefail
+          set +x
+          umask 077
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/alert-app-proof.XXXXXX")"
+          trap 'rm -rf "$proof_dir"' EXIT
+          if [[ -z "$KUBE_CONFIG" || ${#KUBE_CONFIG} -gt 1048576 ]]; then
+            echo 'Read-only production access unavailable; no verification performed.' >&2
+            exit 1
+          fi
+          export KUBECONFIG="$proof_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          if ! (
+            if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+              exit 1
+            fi
+          ) 2>"$proof_dir/endpoint.log"; then
+            echo 'Read-only production endpoint unavailable; no verification performed.' >&2
+            exit 1
+          fi
+          unset HCLOUD_TOKEN
+          # The fixed existing provider credential is read only inside this
+          # reviewed job. No new key, grant, stored copy or shared-key rotation.
+          if ! kubectl --request-timeout=10s --namespace github-config get secret github-app-credentials \
+            --output='jsonpath={.data.credentials}' >"$proof_dir/credential.b64" 2>/dev/null || \
+            ! base64 --decode <"$proof_dir/credential.b64" >"$proof_dir/credential.json" 2>/dev/null; then
+            echo 'Publisher credential read unavailable; no verification performed.' >&2
+            exit 1
+          fi
+          rm -f "$KUBECONFIG" "$proof_dir/credential.b64" "$proof_dir/endpoint.log"
+          unset KUBECONFIG
+          if ! ALERT_APP_PROOF_CREDENTIAL_FILE="$proof_dir/credential.json" "$RUNNER_TEMP/alert-app-proof" \
+            -test.run '^TestCredentialedPublisherReadOnly$' -test.v -test.timeout 70s >"$proof_dir/probe.log" 2>&1; then
+            echo 'Publisher App verification failed; activation remains blocked.' >&2
+            exit 1
+          fi
+          echo 'Publisher identity, repository, token scope and probe-owned token revocation verified.'
+          echo 'Verified publisher source: e64bc9c5b438bbaabca2b95927e6a1f568165644'
