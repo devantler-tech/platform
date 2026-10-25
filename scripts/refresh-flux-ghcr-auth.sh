@@ -193,7 +193,7 @@ readonly -a REQUIRED_PULL_TARGETS=(
   "devantler-tech/ascoachingogvaner:latest"
   "devantler-tech/world-at-ruin/zone:v0.114.0"
   "devantler-tech/ksail:v${KSAIL_OPERATOR_VERSION}"
-  "devantler-tech/provider-upjet-unifi:v1.3.0"
+  "devantler-tech/provider-upjet-unifi:v1.3.1"
 )
 # These packages are intentionally private and have independent ACLs. A public
 # image (including KSail itself) can prove registry reachability but cannot
