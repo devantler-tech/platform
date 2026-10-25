@@ -37,6 +37,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly REPO_ROOT
 # shellcheck source=scripts/tenant-publication-binding.lib.sh
 source "$REPO_ROOT/scripts/tenant-publication-binding.lib.sh"
+# shellcheck source=scripts/tenant-source-discovery.lib.sh
+source "$REPO_ROOT/scripts/tenant-source-discovery.lib.sh"
 
 # Matches the subject spelling `guard-shared-publish-workflow-pin.sh` validates. Kept
 # textually parallel to that guard: if one moves, the other should be looked at.
@@ -206,6 +208,7 @@ registry_tag_for_git_tag() {
 discover_consumers() {
   local root="$1" mode="${2:-}" file files rows found='' rc=0
   [ -d "$root" ] || return 0
+  reject_unattributed_tenant_sources "$root" || return 1
   # grep exits 1 when NOTHING matches, which is an answer, and 2 when it could not read
   # something, which is not: a file it failed to read is never selected, so its consumers
   # would leave the set without any of the refusals below.
@@ -254,6 +257,7 @@ discover_consumers() {
 # subjects, filter/activity flags and verification settings for EVERY top-level Flux OCI
 # document, including unsigned sources that could overwrite an attributed consumer.
 consumer_rows() {
+  reject_unattributed_tenant_documents "$1" || return 1
   local file="$1" mode="${2:-}" rows row url version subjects repo workflow workflows artifact filtered active literal_keys namespace name literal_identity verification extra identity_fields='' contract_field=''
   # Append conservation fields to the same yq array so omitted refs and namespaces keep
   # the original boolean columns and cannot shift later fields into earlier ones.

@@ -277,6 +277,7 @@ approved_subject() {
 }
 
 # ── 2. Every shared-workflow subject in the tree, attributed or excluded ─────────────────
+reject_unattributed_tenant_sources "$SCAN_ROOT" || refuse 'typed source discovery failed; no approval inferred'
 [ -d "$SCAN_ROOT" ] || refuse "scan root $SCAN_ROOT is not a directory"
 for generic in "${GENERIC_SUBJECT_FILES[@]}"; do
   [ -f "$SCAN_ROOT/$generic" ] || refuse "generic subject file $generic is missing from the scan root; the scope boundary has moved — redraw GENERIC_SUBJECT_FILES deliberately"
