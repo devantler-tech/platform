@@ -54,7 +54,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|keda|keda 667d9298b1ca426e4c3ea1b623ead7d0
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro cd7531d09eab1fa5898b2069fef898c6347fb59e5819c7a5de90a7a5724f34fc
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator 32ad00efd7913f45ccd0e8dbb1ad91a963ac52994c81ffde329be9a864fa390a
+helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator dfc2fd679b30a0acf35fcddc41eb883980c345036c95b3ebc5a9d21e0354bfa9
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 7b1a93c61cca43e79ceed6b7cb91a1c3d638dc8791fe7e0aa106181e3ced83b9
 
