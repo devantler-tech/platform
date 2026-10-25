@@ -27,6 +27,9 @@ var (
 	ksailPullWrapperPath = filepath.Join(rootPath, "scripts", "run-ksail-prod-with-pull-auth.sh")
 	ksailOperatorVersion = readKSailOperatorVersion()
 	ksailTargetImage     = "ghcr.io/devantler-tech/ksail:v" + ksailOperatorVersion
+	// Read independently of the helper, so a Provider bump moves this expected
+	// pull target without a second hand-edited copy of its version.
+	providerUpjetUnifiPullTarget = readProviderUpjetUnifiPullTarget()
 
 	// Set once by prepareFakeCommandBinary; see the comment there for why the
 	// fakes do not run from the test binary itself.
@@ -65,6 +68,9 @@ type fixture struct {
 	ksailRegistryOverrideCapture string
 	syncStateDir                 string
 	encryptedCiphertext          string
+	// helperWorkdir replaces the repository root as the helper's working
+	// directory, so a test can supply its own repository-relative declarations.
+	helperWorkdir string
 }
 
 func TestMain(m *testing.M) {
@@ -150,6 +156,19 @@ func readKSailOperatorVersion() string {
 		}
 	}
 	panic("KSail operator chart version not found")
+}
+
+const providerUpjetUnifiManifest = "k8s/providers/hetzner/infrastructure/crossplane/provider-upjet-unifi.yaml"
+
+func readProviderUpjetUnifiPullTarget() string {
+	path := filepath.Join(rootPath, filepath.FromSlash(providerUpjetUnifiManifest))
+	for _, line := range strings.Split(mustReadFile(path), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "package: ghcr.io/devantler-tech/provider-upjet-unifi:v") {
+			return strings.TrimPrefix(trimmed, "package: ghcr.io/")
+		}
+	}
+	panic("UniFi provider package declaration not found")
 }
 
 func newFixture(t *testing.T) *fixture {
@@ -294,7 +313,11 @@ func (f *fixture) runHelperExecutable(
 	for key, value := range overrides {
 		env[key] = value
 	}
-	return runCaptured(f.t, rootPath, env, executable, helperArgs...)
+	workdir := rootPath
+	if f.helperWorkdir != "" {
+		workdir = f.helperWorkdir
+	}
+	return runCaptured(f.t, workdir, env, executable, helperArgs...)
 }
 
 func (f *fixture) runHelperWithMutationEnabled(
