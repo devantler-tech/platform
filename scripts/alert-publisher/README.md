@@ -83,3 +83,98 @@ Inbox and mobile delivery require the separate controlled proof in #2755.
 All existing alert routes, Alertmanager behavior and external heartbeat coverage
 remain active until their replacement is reviewed and demonstrated route by
 route. App or shared-credential retirement follows verified consumer migration.
+
+## Cluster-independent journal preparation
+
+The optional `r2` backend prepares the independent journal needed by #5328 and
+#4683. It uses the maintained AWS S3 SDK with explicit static credentials,
+the configured account's global Cloudflare R2 S3 endpoint, region `auto`,
+bounded requests, no redirects and no automatic request retries. It does not
+discover credentials from the environment or create a bucket. The existing
+declarative Cloudflare owner provisions storage; no browser writes are needed.
+
+Two private projected JSON files supply every storage fact. Configuration has
+exactly `accountId`, `bucket`, `key` and `instance`. The account ID is 32 lower-case
+hex characters; the bucket is a 3–63 character lower-case bucket name without
+dots. The object key is a lower-case relative path ending in `.json`, using
+letters, digits, slashes, underscores and hyphens. The explicit instance name
+uses 1–64 lower-case letters, digits and hyphens, starting with a letter or digit.
+Credentials have exactly `accessKeyId` and `secretAccessKey`. Both files are
+bounded at 8 KiB, regular, and inaccessible to other users; write permission for
+the projected credential's group is refused. Unknown, duplicate, missing or
+malformed facts are refused without echoing them. Operator facts never come
+from the observation payload.
+
+Initialize an absent journal **once**, without any GitHub credential:
+
+```sh
+alert-publisher --enabled --journal-backend r2 --initialize-journal \
+  --r2-config-file /config/r2-journal.json \
+  --r2-credential-file /credentials/journal.json
+```
+
+Initialization uses `If-None-Match: *` and reads the committed object back,
+checking its acknowledged revision, random identity and instance. It refuses an
+existing object. An uncertain initialization returns failure, never a receipt
+or automatic retry. A missing live journal is an error, even if a prior write
+has an uncertain outcome: a negative read does not cancel an in-flight write.
+
+Normal explicit activation uses the same storage files alongside the existing
+App's projected private key and installation fact:
+
+```sh
+alert-publisher --enabled --journal-backend r2 \
+  --r2-config-file /config/r2-journal.json \
+  --r2-credential-file /credentials/journal.json \
+  --key-file /credentials/app.pem --installation-id INSTALLATION_ID
+```
+
+Do not pass `--state-dir` in remote mode. `--drain` remains available. Disabled
+commands read no input, credentials or network; invalid invocations and
+observations stop before credential loading. Initialization cannot be combined
+with draining or GitHub publishing facts.
+
+Each invocation reads the complete bounded object and its ETag together and
+owns a separate revision. Every journal barrier uses `PutObject` with
+`If-Match`, advancing a generation and random nonce only after an acknowledged
+new revision. Writes are paced at one per second per backend instance;
+provider throttling, conflicts, cancellation, missing acknowledgements and
+uncertain responses stop that invocation without another GitHub write or a
+local fallback. The provider still enforces limits across independent processes.
+Remote envelopes are bounded at 132 KiB around the unchanged 128 KiB journal.
+Wrong instance, partial or ambiguous JSON and invalid revisions are refused.
+
+The saved send intent still precedes every POST. Loss of its storage response
+never authorizes sending; later invocations reconcile the persisted operation
+marker. Receipt persistence also uses the conditional session. A UTC-day change
+after persistence defers the unsent operation durably, so its next attempt
+reserves the new day's budget. Expiry and cancellation are checked again after
+the storage wait before publication.
+
+### Recovery and activation limits
+
+Conditional writes protect competing current writers. They **cannot detect a
+privileged restore of an older valid object**. Generation and nonce do not
+provide an independent rollback floor. This publisher does not automate a
+restore or repair corrupt state. Keep all publishers disabled, establish that
+prior in-flight writes have ended, and use a reviewed operator recovery
+procedure that reconciles the authoritative bot-authored GitHub objects,
+operation markers, receipts and current-day budget before replacing state.
+Missing or duplicate markers and incomplete reads remain quarantined. Never
+hand-edit the live object, initialize it again as a retry, or replay an old
+snapshot as if it established fresh state.
+
+This source is not live storage or route acceptance. Before activation, verify
+the actual private bucket, retention and lifecycle rules, available least
+privilege and independent credential/state custody through the declarative
+Cloudflare owner. Keep the bootstrap credential out of the publisher; its
+storage client issues only GetObject and conditional PutObject. Do not reuse a
+backup credential or publish the journal via a custom domain. Demonstrate real
+provider conflicts, uncertain writes and runner-crash recovery, then bind the
+fixed heartbeat and cut over routes with rollback. Neither a local file copy
+nor a runner cache/artifact is a transactional journal. The controlled inbox,
+phone and same-thread acceptance in #2755 remains required.
+
+Sources: [R2 consistency and in-flight writes](https://developers.cloudflare.com/r2/reference/consistency/),
+[conditional PutObject](https://developers.cloudflare.com/r2/api/s3/extensions/#conditional-operations-in-putobject),
+and [AWS SDK retry policy](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-retries-timeouts.html).
