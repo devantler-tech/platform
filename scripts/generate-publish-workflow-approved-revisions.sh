@@ -379,9 +379,10 @@ main() {
     refuse 'generation outputs must not be symlinks'; exit 1
   fi
   local canonical_baseline_checked=0
-  local canonical_root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" canonical_document canonical_file
+  local canonical_root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" canonical_document canonical_file canonical_initial
   canonical_file="${CANONICAL_TENANT_BINDINGS_FILE:-$canonical_root/scripts/canonical-tenant-source-bindings.json}"
   canonical_document="$(canonical_tenant_bindings "$canonical_root")" || { refuse 'canonical source admission is invalid'; exit 1; }
+  canonical_initial="$canonical_document"
   local bootstrap_file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}" bootstrap_document=''
   if [ -e "$bootstrap_file" ] || [ -n "${PUBLISH_BOOTSTRAP_FILE:-}" ]; then
     bootstrap_document="$(read_bound_publications "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$bootstrap_file")" || {
@@ -580,9 +581,19 @@ main() {
     if [ ! -f "$canonical_file" ] || [ -L "$canonical_file" ]; then
       refuse 'canonical destination changed; no file written'; exit 1
     fi
-    canonical_tmp="$(mktemp "${canonical_file}.XXXXXX")"
-    printf '%s\n' "$canonical_document" >"$canonical_tmp"
-    chmod 0644 "$canonical_tmp"
+    # The reader normalizes JSON for validation; that formatting is not an
+    # observation. Keep the original bytes unless the validated data changed.
+    local canonical_unchanged
+    canonical_unchanged="$(printf '%s\n' "$canonical_document" | jq -cr --argjson initial "$canonical_initial" '. == $initial')" || {
+      refuse 'canonical comparison failed; no file written'; exit 1;
+    }
+    if [ "$canonical_unchanged" = false ]; then
+      canonical_tmp="$(mktemp "${canonical_file}.XXXXXX")"
+      printf '%s\n' "$canonical_document" | jq . >"$canonical_tmp"
+      chmod 0644 "$canonical_tmp"
+    elif [ "$canonical_unchanged" != true ]; then
+      refuse 'canonical comparison was not boolean; no file written'; exit 1
+    fi
   fi
   if [ -n "$bootstrap_document" ]; then
     bootstrap_tmp="$(mktemp "${bootstrap_file}.XXXXXX")"

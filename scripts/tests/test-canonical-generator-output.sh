@@ -49,9 +49,15 @@ else
 fi
 BASH
 chmod 755 "$generator_test_work/run"
+cp "$fixture/scripts/canonical-tenant-source-bindings.json" "$generator_test_work/canonical-before.json"
 "$generator_test_work/run" >"$generator_test_work/positive"
 grep -q '6 consumer(s) examined' "$generator_test_work/positive"
 test "$(jq '.bindings|length' "$fixture/scripts/canonical-tenant-source-bindings.json")" = 1
+# An absent application produces no new canonical observation. Preserve the
+# existing ledger's exact formatting, not merely its parsed JSON value.
+cmp "$generator_test_work/canonical-before.json" "$fixture/scripts/canonical-tenant-source-bindings.json"
+"$generator_test_work/run" >"$generator_test_work/unchanged"
+cmp "$generator_test_work/canonical-before.json" "$fixture/scripts/canonical-tenant-source-bindings.json"
 cp "$fixture/scripts/publish-workflow-approved-revisions.tsv" "$generator_test_work/legacy-before"
 cp "$fixture/scripts/publish-workflow-approved-revisions.identities.tsv" "$generator_test_work/identities-before"
 if CANONICAL_GENERATOR_DIRECTORY_RACE=1 "$generator_test_work/run" >"$generator_test_work/race" 2>&1; then

@@ -1,0 +1,372 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"testing"
+
+	"gopkg.in/yaml.v3"
+)
+
+var canonicalCICommands = []string{
+	"bash scripts/tests/test-canonical-source-bootstrap.sh",
+	"bash scripts/tests/test-canonical-constructor-attribution.sh",
+	"bash scripts/tests/test-canonical-generator-output.sh",
+	"bash scripts/tests/test-canonical-bootstrap-output.sh",
+	"bash scripts/tests/test-canonical-publisher-regeneration.sh",
+	"bash scripts/tests/test-tenant-source-discovery.sh",
+	"./scripts/guard-consumer-discovery-conservation.sh",
+}
+
+var canonicalCIPaths = []string{
+	"k8s/**", "ksail.prod.yaml", "talos*/**", ".github/workflows/ci.yaml",
+	"scripts/validate-eks-ci-role-policy/**",
+	"scripts/canonical-tenant-source.lib.sh",
+	"scripts/canonical-tenant-source-bindings.json",
+	"scripts/tenant-source-discovery.lib.sh",
+	"scripts/tenant-publication-binding.lib.sh",
+	"scripts/bootstrap-tenant-source.sh",
+	"scripts/tests/lib/legacy-consumer-fixture.sh",
+	"scripts/publish-workflow-canonical-approvals.tsv",
+	"scripts/publish-workflow-approved-revisions.tsv",
+	"scripts/publish-workflow-approved-revisions.identities.tsv",
+	"scripts/publish-workflow-bootstrap-publications.json",
+	"scripts/shared-publish-workflow-matchers.tsv",
+	"scripts/generate-publish-workflow-approved-revisions.sh",
+	"scripts/tests/test-canonical-source-bootstrap.sh",
+	"scripts/tests/test-canonical-constructor-attribution.sh",
+	"scripts/tests/test-canonical-generator-output.sh",
+	"scripts/tests/test-canonical-bootstrap-output.sh",
+	"scripts/tests/test-canonical-publisher-regeneration.sh",
+	"scripts/tests/test-tenant-source-discovery.sh",
+}
+
+// This package runs independently through the unconditional Go regressions.
+// Removing a canonical shell step must not also remove its registration check.
+func TestCanonicalSourceCIRegistration(t *testing.T) {
+	if err := canonicalSourceCIContract(canonicalCIWorkflow(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func canonicalCIWorkflow(t *testing.T) workflow {
+	t.Helper()
+	body, err := os.ReadFile("../../.github/workflows/ci.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wf workflow
+	if err := yaml.Unmarshal(body, &wf); err != nil {
+		t.Fatal(err)
+	}
+	return wf
+}
+
+func mutateCanonicalCommand(t *testing.T, wf *workflow, command string, mutate func(*step)) {
+	t.Helper()
+	j := wf.Jobs["validate-repository-guards"]
+	found := 0
+	for i := range j.Steps {
+		if strings.Contains(j.Steps[i].Run, command) {
+			found++
+			mutate(&j.Steps[i])
+		}
+	}
+	if found != 1 {
+		t.Fatalf("mutation requires exactly one native command block, got %d for %s", found, command)
+	}
+	wf.Jobs["validate-repository-guards"] = j
+}
+
+func mutateCanonicalFilter(t *testing.T, wf *workflow, mutate func(map[string][]string)) {
+	t.Helper()
+	j := wf.Jobs["changes"]
+	found := 0
+	for i := range j.Steps {
+		if j.Steps[i].ID != "filter" {
+			continue
+		}
+		found++
+		var filters map[string][]string
+		if err := yaml.Unmarshal([]byte(j.Steps[i].With.Filters), &filters); err != nil {
+			t.Fatal(err)
+		}
+		mutate(filters)
+		body, err := yaml.Marshal(filters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		j.Steps[i].With.Filters = string(body)
+	}
+	if found != 1 {
+		t.Fatalf("mutation requires one native filter step, got %d", found)
+	}
+	wf.Jobs["changes"] = j
+}
+
+func TestCanonicalSourceCIRejectsLostOrNeutralizedCommands(t *testing.T) {
+	for _, command := range canonicalCICommands {
+		for name, replacement := range map[string]string{
+			"removed": "", "comment": "# " + command, "echo": "echo " + command,
+			"conditional": "if false; then " + command + "; fi",
+			"masked":      command + " || true", "and-list": command + " && true",
+		} {
+			t.Run(command+"/"+name, func(t *testing.T) {
+				wf := canonicalCIWorkflow(t)
+				mutateCanonicalCommand(t, &wf, command, func(s *step) {
+					if strings.Count(s.Run, command) != 1 {
+						t.Fatal("mutation is not unique")
+					}
+					s.Run = strings.Replace(s.Run, command, replacement, 1)
+				})
+				if canonicalSourceCIContract(wf) == nil {
+					t.Fatal("accepted a missing or neutralized real CI command")
+				}
+			})
+		}
+		for name, mutate := range map[string]func(*step){
+			"skipped":         func(s *step) { s.If = "false" },
+			"tolerated":       func(s *step) { s.ContinueOnError = true },
+			"expression":      func(s *step) { s.ContinueOnError = "${{ true }}" },
+			"non-errexit":     func(s *step) { s.Shell = "bash {0}" },
+			"early-exit":      func(s *step) { s.Run = "exit 0\n" + s.Run },
+			"disable-errexit": func(s *step) { s.Run = "set +e\n" + s.Run },
+			"duplicate":       func(s *step) { s.Run += "\n" + command },
+		} {
+			t.Run(command+"/"+name, func(t *testing.T) {
+				wf := canonicalCIWorkflow(t)
+				mutateCanonicalCommand(t, &wf, command, mutate)
+				if canonicalSourceCIContract(wf) == nil {
+					t.Fatal("accepted a bypassed or duplicated real CI command")
+				}
+			})
+		}
+	}
+}
+
+func TestCanonicalSourceCIRejectsLostSourceSelection(t *testing.T) {
+	for _, required := range canonicalCIPaths {
+		for _, move := range []bool{false, true} {
+			name := "removed/"
+			if move {
+				name = "wrong-bucket/"
+			}
+			t.Run(name+required, func(t *testing.T) {
+				wf := canonicalCIWorkflow(t)
+				mutateCanonicalFilter(t, &wf, func(filters map[string][]string) {
+					var kept []string
+					removed := 0
+					for _, item := range filters["k8s"] {
+						if item == required {
+							removed++
+						} else {
+							kept = append(kept, item)
+						}
+					}
+					if removed == 0 {
+						t.Fatal("mutation did not remove a real selection")
+					}
+					filters["k8s"] = kept
+					if move {
+						filters["another-bucket"] = append(filters["another-bucket"], required)
+					}
+				})
+				if canonicalSourceCIContract(wf) == nil {
+					t.Fatal("accepted lost native source selection")
+				}
+			})
+		}
+	}
+}
+
+func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
+	for name, mutate := range map[string]func(*workflow){
+		"missing guard job": func(w *workflow) { delete(w.Jobs, "validate-repository-guards") },
+		"conditional guard job": func(w *workflow) {
+			j := w.Jobs["validate-repository-guards"]
+			j.If = "false"
+			w.Jobs["validate-repository-guards"] = j
+		},
+		"tolerated guard job": func(w *workflow) {
+			j := w.Jobs["validate-repository-guards"]
+			j.ContinueOnError = "${{ true }}"
+			w.Jobs["validate-repository-guards"] = j
+		},
+		"workflow shell override": func(w *workflow) {
+			w.Defaults.Run.Shell = "bash {0}"
+			j := w.Jobs["validate-repository-guards"]
+			j.Defaults.Run.Shell = ""
+			for i := range j.Steps {
+				j.Steps[i].Shell = ""
+			}
+			w.Jobs["validate-repository-guards"] = j
+		},
+		"job shell override": func(w *workflow) {
+			j := w.Jobs["validate-repository-guards"]
+			j.Defaults.Run.Shell = "bash {0}"
+			for i := range j.Steps {
+				j.Steps[i].Shell = ""
+			}
+			w.Jobs["validate-repository-guards"] = j
+		},
+		"missing changes job": func(w *workflow) { delete(w.Jobs, "changes") },
+		"conditional changes": func(w *workflow) {
+			j := w.Jobs["changes"]
+			j.If = "false"
+			w.Jobs["changes"] = j
+		},
+		"tolerated changes": func(w *workflow) {
+			j := w.Jobs["changes"]
+			j.ContinueOnError = true
+			w.Jobs["changes"] = j
+		},
+		"missing filter": func(w *workflow) {
+			j := w.Jobs["changes"]
+			for i := range j.Steps {
+				if j.Steps[i].ID == "filter" {
+					j.Steps[i].ID = "lost-filter"
+				}
+			}
+			w.Jobs["changes"] = j
+		},
+		"conditional filter": func(w *workflow) {
+			j := w.Jobs["changes"]
+			for i := range j.Steps {
+				if j.Steps[i].ID == "filter" {
+					j.Steps[i].If = "false"
+				}
+			}
+			w.Jobs["changes"] = j
+		},
+		"tolerated filter": func(w *workflow) {
+			j := w.Jobs["changes"]
+			for i := range j.Steps {
+				if j.Steps[i].ID == "filter" {
+					j.Steps[i].ContinueOnError = "${{ true }}"
+				}
+			}
+			w.Jobs["changes"] = j
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			wf := canonicalCIWorkflow(t)
+			mutate(&wf)
+			if canonicalSourceCIContract(wf) == nil {
+				t.Fatal("accepted a bypassed native gate")
+			}
+		})
+	}
+	wf := canonicalCIWorkflow(t)
+	j := wf.Jobs["validate-repository-guards"]
+	j.ContinueOnError = false
+	for i := range j.Steps {
+		j.Steps[i].ContinueOnError = false
+	}
+	wf.Jobs["validate-repository-guards"] = j
+	j = wf.Jobs["changes"]
+	j.ContinueOnError = false
+	for i := range j.Steps {
+		j.Steps[i].ContinueOnError = false
+	}
+	wf.Jobs["changes"] = j
+	if err := canonicalSourceCIContract(wf); err != nil {
+		t.Fatalf("rejected explicit false: %v", err)
+	}
+	for _, scope := range []string{"job", "step"} {
+		wf = canonicalCIWorkflow(t)
+		wf.Defaults.Run.Shell = "bash {0}"
+		j = wf.Jobs["validate-repository-guards"]
+		j.Defaults.Run.Shell = "bash"
+		if scope == "step" {
+			j.Defaults.Run.Shell = "bash {0}"
+		}
+		for i := range j.Steps {
+			if scope == "step" {
+				j.Steps[i].Shell = "bash"
+			} else {
+				j.Steps[i].Shell = ""
+			}
+		}
+		wf.Jobs["validate-repository-guards"] = j
+		if err := canonicalSourceCIContract(wf); err != nil {
+			t.Fatalf("rejected safe %s shell override: %v", scope, err)
+		}
+	}
+}
+
+func canonicalSourceCIContract(wf workflow) error {
+	guard, ok := wf.Jobs["validate-repository-guards"]
+	if !ok || guard.If != "" || errorIsTolerated(guard.ContinueOnError) {
+		return fmt.Errorf("canonical source contracts require the unconditional repository guard job")
+	}
+	for _, command := range canonicalCICommands {
+		count := 0
+		for _, s := range guard.Steps {
+			shell := s.Shell
+			if shell == "" {
+				shell = guard.Defaults.Run.Shell
+			}
+			if shell == "" {
+				shell = wf.Defaults.Run.Shell
+			}
+			if s.Uses == "" && s.enforces() && shellKeepsErrexit(shell) {
+				count += canonicalCommandCount(s.Run, command)
+			}
+		}
+		if count != 1 {
+			return fmt.Errorf("canonical source CI must enforce exactly one %s invocation, got %d", command, count)
+		}
+	}
+	changes, ok := wf.Jobs["changes"]
+	if !ok || changes.If != "" || errorIsTolerated(changes.ContinueOnError) {
+		return fmt.Errorf("canonical source selection requires the unconditional changes job")
+	}
+	var filters map[string][]string
+	found := 0
+	for _, s := range changes.Steps {
+		if s.ID != "filter" {
+			continue
+		}
+		found++
+		if !s.enforces() || !strings.HasPrefix(s.Uses, "dorny/paths-filter@") || s.With.Filters == "" {
+			return fmt.Errorf("canonical source selection requires an enforcing native paths filter")
+		}
+		if err := yaml.Unmarshal([]byte(s.With.Filters), &filters); err != nil {
+			return fmt.Errorf("parse canonical source selection: %w", err)
+		}
+	}
+	if found != 1 {
+		return fmt.Errorf("canonical source selection requires exactly one native filter")
+	}
+	selected := make(map[string]bool)
+	for _, pattern := range filters["k8s"] {
+		selected[pattern] = true
+	}
+	for _, path := range canonicalCIPaths {
+		if !selected[path] {
+			return fmt.Errorf("k8s selection omits canonical input %s", path)
+		}
+	}
+	return approvedSignerRoute(wf, "validate-repository-guards", "deploy-prod", "")
+}
+
+// Every non-comment line in this fixed CI block must remain a simple command.
+// This reuses the existing positive shell grammar, so an earlier exit, disabled
+// errexit or conditional cannot make a later textual mention count as coverage.
+func canonicalCommandCount(script, command string) int {
+	count := 0
+	for _, raw := range strings.Split(script, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !isSimpleCommandLine(line) {
+			return 0
+		}
+		if strings.Join(strings.Fields(line), " ") == command {
+			count++
+		}
+	}
+	return count
+}

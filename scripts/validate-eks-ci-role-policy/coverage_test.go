@@ -39,6 +39,7 @@ type workflow struct {
 	On          triggerSet     `yaml:"on"`
 	Jobs        map[string]job `yaml:"jobs"`
 	Permissions any            `yaml:"permissions"`
+	Defaults    runDefaults    `yaml:"defaults"`
 	Concurrency struct {
 		Group            string `yaml:"group"`
 		CancelInProgress bool   `yaml:"cancel-in-progress"`
@@ -51,14 +52,22 @@ type workflow struct {
 // duplicate this file's parsing logic and trip the repository's duplication
 // gate for no benefit.
 type job struct {
-	Steps           []step `yaml:"steps"`
-	Needs           any    `yaml:"needs"`
-	If              string `yaml:"if"`
-	ContinueOnError any    `yaml:"continue-on-error"`
-	Permissions     any    `yaml:"permissions"`
+	Steps           []step      `yaml:"steps"`
+	Needs           any         `yaml:"needs"`
+	If              string      `yaml:"if"`
+	ContinueOnError any         `yaml:"continue-on-error"`
+	Permissions     any         `yaml:"permissions"`
+	Defaults        runDefaults `yaml:"defaults"`
+}
+
+type runDefaults struct {
+	Run struct {
+		Shell string `yaml:"shell"`
+	} `yaml:"run"`
 }
 
 type step struct {
+	ID              string            `yaml:"id"`
 	Run             string            `yaml:"run"`
 	Uses            string            `yaml:"uses"`
 	If              string            `yaml:"if"`
@@ -107,6 +116,7 @@ func (t templatableInt) is(want int) bool { return t.IsLiteral && t.Value == wan
 // stepInputs is the slice of an action's `with:` block these contracts read.
 // Actions inputs are heterogenous, so unknown keys are simply ignored.
 type stepInputs struct {
+	Filters  string `yaml:"filters"`
 	Category string `yaml:"category"`
 	// Ref is the revision an `actions/checkout` step re-points to. Its
 	// ABSENCE is the meaningful state: a checkout without it takes the
