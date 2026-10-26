@@ -123,12 +123,6 @@ data:
         icon: mdi-briefcase
       Products:
         icon: mdi-book-open-page-variant
-      # TRANSITIONAL — retire once the ascoachingogvaner tenant route names
-      # Business & Clients. A route naming a group missing from the Kyverno
-      # allow-list is rejected at admission, so the group must stay declared
-      # until no route claims it.
-      Clients:
-        icon: mdi-briefcase-account
       Personal:
         icon: mdi-web
       # Bookmark groups (bookmarks.yaml). Listing them here is what gives them a

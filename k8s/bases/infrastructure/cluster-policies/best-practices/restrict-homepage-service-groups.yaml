@@ -100,8 +100,8 @@ spec:
           layout (k8s/bases/apps/homepage/config-map.yaml): Kubernetes,
           Observability, Analytics, Secrets Management, Governance,
           Diagnostics, Device Management, Infrastructure as Code, Cloud,
-          Network, Home, Finance, Data, Business & Clients, Products, Clients,
-          or Personal.
+          Network, Home, Finance, Data, Business & Clients, Products, or
+          Personal.
           An undeclared group still renders,
           but sorts below every declared group with a generic icon. Bookmark
           group names are deliberately not accepted here.
@@ -128,8 +128,4 @@ spec:
                   - Data
                   - Business & Clients
                   - Products
-                  # TRANSITIONAL — still claimed by the ascoachingogvaner tenant
-                  # route. Remove it, with its layout entry, once that route
-                  # names Business & Clients.
-                  - Clients
                   - Personal

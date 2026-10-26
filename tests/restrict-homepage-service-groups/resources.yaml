@@ -120,8 +120,7 @@ spec:
   rules:
     - host: ingress.platform.devantler.tech
 ---
-# The site groups tenant routes use today. Clients is TRANSITIONAL: it stays
-# accepted only until the last tenant route moves to Business & Clients.
+# The site groups tenant routes use today.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -134,10 +133,12 @@ spec:
   hostnames:
     - business.platform.devantler.tech
 ---
+# Clients merged into Business & Clients. It was accepted only while the last
+# tenant route moved over, and the layout no longer declares it.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: clients-group
+  name: retired-clients-group
   namespace: client-site
   annotations:
     gethomepage.dev/enabled: "true"
