@@ -4,12 +4,12 @@
 #
 #   exit 0  every pkg.crossplane.io Provider carries the name Crossplane derives from
 #           its package (or is explicitly dispositioned) AND its generated ClusterRole
-#           regex appears in both Kubescape secret-reader exception lists
+#           regex appears in the Kubescape secret-reader exception
 #   exit 1  a name drifted from its derived name, or an exception entry is orphaned
 #   exit 2  the guard could not check — missing root, unreadable/empty exception list,
 #           or NO pkg.crossplane.io Provider found at all
 #
-# Three of these are anti-vacuity or scoping cases rather than behaviours:
+# Two of these are anti-vacuity or scoping cases rather than behaviours:
 #
 #   * A tree with no Crossplane Provider must be exit 2, NOT a clean exit 0. A
 #     selector that matched nothing looks exactly like a healthy tree, which is the
@@ -18,8 +18,6 @@
 #     provider). It has no package and no generated ClusterRole, so matching on
 #     `kind: Provider` alone would report a false failure on a correct tree. The
 #     mixed fixture asserts the reported count excludes it.
-#   * An orphaned exception must be caught in EACH list independently — the two are
-#     synced by hand, so the realistic drift is one updated and the other forgotten.
 #
 # Every fixture carries its OWN provider name, so an assertion can only be satisfied
 # by the case it belongs to.
@@ -80,17 +78,14 @@ assert_not_contains() { # <label> <needle>
   fi
 }
 
-# new_tree <name> -> echoes a root with both exception lists present but EMPTY of
+# new_tree <name> -> echoes a root with the exception list present but EMPTY of
 # crossplane entries; callers add providers and the matching exception lines.
 new_tree() {
   local root="$scratch/$1"
   mkdir -p "$root/bases/infrastructure/cluster-security-exceptions" \
-    "$root/bases/infrastructure/controllers/kubescape" \
     "$root/providers/hetzner/infrastructure/crossplane"
   printf 'apiVersion: spdx.softwarecomposition.kubescape.io/v1beta1\nkind: ClusterSecurityException\nspec:\n  patterns: |\n' \
     >"$root/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
-  printf 'apiVersion: v1\nkind: ConfigMap\ndata:\n  patterns: |\n' \
-    >"$root/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
   printf '%s\n' "$root"
 }
 
@@ -107,30 +102,20 @@ spec:
 YAML
 }
 
-add_exception() { # <root> <provider-name> <which: both|secret-reader|headlamp>
+add_exception() { # <root> <provider-name>
   local line="^crossplane:provider:$2-[0-9a-f]+:system\$"
-  case "$3" in
-    both | secret-reader)
-      printf '        name: %s\n' "$line" \
-        >>"$1/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
-      ;;
-  esac
-  case "$3" in
-    both | headlamp)
-      printf '              "name": "%s"\n' "$line" \
-        >>"$1/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
-      ;;
-  esac
+  printf '        name: %s\n' "$line" \
+    >>"$1/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
 }
 
 printf 'test-guard-crossplane-provider-name-parity\n'
 
-# --- 1. clean: canonical name, both exception lists carry it -------------------
+# --- 1. clean: canonical name, the exception list carries it ------------------
 t="$(new_tree clean)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" upbound-provider-family-aws both
+add_exception "$t" upbound-provider-family-aws
 run_guard "$t"
-assert_rc 'canonical name with both exceptions passes' 0 "$GUARD_RC"
+assert_rc 'canonical name with its exception passes' 0 "$GUARD_RC"
 assert_contains 'reports the number checked' '1 Crossplane Provider(s) checked'
 
 # --- 2. the platform#3454 drift: a shortened alias, exceptions consistent ------
@@ -138,33 +123,23 @@ assert_contains 'reports the number checked' '1 Crossplane Provider(s) checked'
 # else in the repo fails. Only the derived-name comparison catches it.
 t="$(new_tree alias)"
 add_provider "$t" provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" provider-family-aws both
+add_exception "$t" provider-family-aws
 run_guard "$t"
 assert_rc 'a shortened alias is refused' 1 "$GUARD_RC"
 assert_contains 'names the derived name it expected' 'upbound-provider-family-aws'
 assert_contains 'explains the lock-poisoning consequence' 'poisoning the lock dependency graph'
 
-# --- 3. orphaned exception, secret-reader list only ----------------------------
+# --- 3. orphaned exception ----------------------------------------------------
 t="$(new_tree orphan-secret-reader)"
 add_provider "$t" upbound-provider-orphan-a xpkg.upbound.io/upbound/provider-orphan-a:v1.0.0
-add_exception "$t" upbound-provider-orphan-a headlamp
 run_guard "$t"
 assert_rc 'a missing secret-reader entry is refused' 1 "$GUARD_RC"
 assert_contains 'names the secret-reader list' 'secret-reader-rbac.yaml'
-assert_not_contains 'does not blame the mirror that is correct' 'no secret-reader exception entry in '"$t"'/bases/infrastructure/controllers/kubescape'
 
-# --- 4. orphaned exception, Headlamp mirror only -------------------------------
-t="$(new_tree orphan-headlamp)"
-add_provider "$t" upbound-provider-orphan-b xpkg.upbound.io/upbound/provider-orphan-b:v1.0.0
-add_exception "$t" upbound-provider-orphan-b secret-reader
-run_guard "$t"
-assert_rc 'a missing Headlamp mirror entry is refused' 1 "$GUARD_RC"
-assert_contains 'names the Headlamp mirror' 'config-map-headlamp-exceptions.yaml'
-
-# --- 5. the Flux Provider kind is not a Crossplane Provider --------------------
+# --- 4. the Flux Provider kind is not a Crossplane Provider --------------------
 t="$(new_tree flux-mixed)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" upbound-provider-family-aws both
+add_exception "$t" upbound-provider-family-aws
 mkdir -p "$t/providers/hetzner/infrastructure/flux-notifications"
 cat >"$t/providers/hetzner/infrastructure/flux-notifications/provider.yaml" <<'YAML'
 apiVersion: notification.toolkit.fluxcd.io/v1beta3
@@ -178,55 +153,55 @@ run_guard "$t"
 assert_rc 'a Flux alert Provider does not make the tree fail' 0 "$GUARD_RC"
 assert_contains 'and is not counted as a Crossplane provider' '1 Crossplane Provider(s) checked'
 
-# --- 6. anti-vacuity: no Crossplane Provider at all ----------------------------
+# --- 5. anti-vacuity: no Crossplane Provider at all ----------------------------
 t="$(new_tree empty)"
 run_guard "$t"
 assert_rc 'a tree with no Crossplane Provider is exit 2, never a clean pass' 2 "$GUARD_RC"
 assert_contains 'says it refused to pass vacuously' 'refusing to pass vacuously'
 
-# --- 7. fail closed on an unreadable exception list ----------------------------
+# --- 6. fail closed on an unreadable exception list ----------------------------
 t="$(new_tree unreadable)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" upbound-provider-family-aws both
-rm -f "$t/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
+add_exception "$t" upbound-provider-family-aws
+rm -f "$t/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
 run_guard "$t"
 assert_rc 'a missing exception list is exit 2, not a drift verdict' 2 "$GUARD_RC"
 
-# --- 8. fail closed on a root that does not exist ------------------------------
+# --- 7. fail closed on a root that does not exist ------------------------------
 run_guard "$scratch/does-not-exist"
 assert_rc 'a missing root is exit 2' 2 "$GUARD_RC"
 
-# --- 9. an empty exception list is not silently "no entries to check" ----------
+# --- 8. an empty exception list is not silently "no entries to check" ----------
 t="$(new_tree empty-exception)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
 : >"$t/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
 run_guard "$t"
 assert_rc 'an empty exception list is exit 2' 2 "$GUARD_RC"
 
-# --- 10. a dispositioned non-canonical name passes, but says so ----------------
+# --- 9. a dispositioned non-canonical name passes, but says so -----------------
 t="$(new_tree dispositioned)"
 add_provider "$t" provider-upjet-github ghcr.io/crossplane-contrib/provider-upjet-github:v0.19.1
-add_exception "$t" provider-upjet-github both
+add_exception "$t" provider-upjet-github
 run_guard "$t"
 assert_rc 'a reviewed non-canonical name passes' 0 "$GUARD_RC"
 assert_contains 'but is reported rather than hidden' 'is not canonically named'
 
-# --- 11. the failure names the file the provider is IN --------------------------
+# --- 10. the failure names the file the provider is IN --------------------------
 # Regression: the parser flushes a completed document at FNR==1 of the NEXT file, by
 # which time awk's FILENAME has already advanced — so the message blamed whichever
 # file happened to be read next. That misdirects whoever has to fix it, and on the
 # real tree it pointed at deployment-runtime-config.yaml instead of the provider.
 t="$(new_tree filename-attribution)"
 add_provider "$t" provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" provider-family-aws both
+add_exception "$t" provider-family-aws
 add_provider "$t" upbound-provider-zzz-later xpkg.upbound.io/upbound/provider-zzz-later:v1.0.0
-add_exception "$t" upbound-provider-zzz-later both
+add_exception "$t" upbound-provider-zzz-later
 run_guard "$t"
 assert_rc 'still refuses the aliased provider alongside a correct one' 1 "$GUARD_RC"
 assert_contains 'blames the file the aliased provider is in' 'crossplane/provider-family-aws.yaml'
 assert_not_contains 'does not blame the innocent later file' 'crossplane/upbound-provider-zzz-later.yaml ('
 
-# --- 12. a Provider this parser cannot read is exit 2, never a silent skip ------
+# --- 11. a Provider this parser cannot read is exit 2, never a silent skip ------
 # Regression: flush() emitted a record only when BOTH name and package matched its
 # narrow block-style patterns, and dropped the document otherwise. A flow-style
 # Provider therefore vanished while its neighbours still parsed, so `checked` stayed
@@ -234,7 +209,7 @@ assert_not_contains 'does not blame the innocent later file' 'crossplane/upbound
 # exactly the aliased shape it exists to catch — the platform#3454 outage, re-armed.
 t="$(new_tree unparseable)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" upbound-provider-family-aws both
+add_exception "$t" upbound-provider-family-aws
 run_guard "$t"
 # Negative control FIRST: without the unreadable document this very tree passes, so
 # the assertion below can only be satisfied by the document the case is about.
@@ -254,7 +229,7 @@ assert_contains 'names the field it could not read' 'metadata.name'
 # above for a genuinely absent name, and prove a readable alias is actual drift.
 for shape in flow whole-flow alias merge; do
   t="$(new_tree "semantic-$shape")"
-  add_exception "$t" upbound-provider-family-aws both
+  add_exception "$t" upbound-provider-family-aws
   case "$shape" in
     flow)
       printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' \
@@ -282,7 +257,7 @@ for shape in flow whole-flow alias merge; do
 done
 
 t="$(new_tree flow-alias-drift)"
-add_exception "$t" shortened both
+add_exception "$t" shortened
 cat >"$t/providers/shortened.yaml" <<'YAML'
 apiVersion: pkg.crossplane.io/v1
 kind: Provider
@@ -296,7 +271,7 @@ assert_contains 'flow drift names the derived name' 'upbound-provider-family-aws
 for field in name package; do
   t="$(new_tree "typed-$field")"
   add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-  add_exception "$t" upbound-provider-family-aws both
+  add_exception "$t" upbound-provider-family-aws
   if [ "$field" = name ]; then
     yq -i '.metadata.name = ["invalid"]' "$t/providers/hetzner/infrastructure/crossplane/upbound-provider-family-aws.yaml"
     expected_field=metadata.name
@@ -311,7 +286,7 @@ done
 
 t="$(new_tree invalid-yaml)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" upbound-provider-family-aws both
+add_exception "$t" upbound-provider-family-aws
 printf '%s\n' 'apiVersion: pkg.crossplane.io/v1' 'kind: Provider' 'metadata: {' >"$t/providers/broken.yaml"
 run_guard "$t"
 assert_rc 'a malformed Provider is unreadable beside a valid one' 2 "$GUARD_RC"
@@ -319,7 +294,7 @@ assert_contains 'the malformed input identifies its file' 'broken.yaml'
 
 t="$(new_tree unsupported-yq)"
 add_provider "$t" upbound-provider-family-aws xpkg.upbound.io/upbound/provider-family-aws:v2.6.1
-add_exception "$t" upbound-provider-family-aws both
+add_exception "$t" upbound-provider-family-aws
 mkdir -p "$scratch/old-yq-bin"
 cat >"$scratch/old-yq-bin/yq" <<'SH'
 #!/usr/bin/env bash

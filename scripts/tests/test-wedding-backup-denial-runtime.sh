@@ -6,12 +6,11 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-# This fixture and the Crossview runtime fixture use separate hosted daemons.
-# Configure this daemon before its own pinned build.
+# Configure the hosted daemon before this fixture's own pinned build.
 if [ "${GITHUB_ACTIONS:-}" = true ] &&
   [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
   [ "${RUNNER_OS:-}" = Linux ]; then
-  bash "${root_dir}/scripts/tests/test-crossview-login-alerter-runtime.sh" --configure-registry-cache
+  bash "${root_dir}/scripts/tests/lib/configure-hosted-registry-cache.sh"
 fi
 work_dir="$(mktemp -d)"
 readonly work_dir

@@ -36,10 +36,9 @@ resources:
   # ephemeral PVC and Longhorn volume are garbage-collected.
   # - userns-longhorn-smoke/
   # Prod-only Coroot Postgres integrations for platform-owned databases:
-  # the Cluster patches below configure CNPG annotations, roles and extensions;
-  # the Crossview resources and HelmRelease patch configure its bundled
-  # PostgreSQL Deployment. Additive CiliumNetworkPolicies let only the
-  # observability cluster-agent scrape each database on 5432.
+  # the Cluster patches below configure CNPG annotations, roles and extensions.
+  # Additive CiliumNetworkPolicies let only the observability cluster-agent
+  # scrape each database on 5432.
   # coroot-db needs none — it is intra-namespace to the agent and already
   # covered by the base allow-coroot policy. The wedding-app TENANT owns its own
   # equivalent in its repo's deploy/ (cluster.yaml + networkpolicy.yaml), since
@@ -47,16 +46,6 @@ resources:
   - umami/cilium-network-policy.yaml
   - umami/password-coroot-monitor.yaml
   - umami/external-secret-coroot-monitor.yaml
-  # Crossview bundles a plain PostgreSQL Deployment instead of CNPG. These
-  # resources supply its init hook, dedicated credential, and scrape-only
-  # network path; the HelmRelease patch below wires them into the chart output.
-  - crossview/config-map-coroot-monitor-init.yaml
-  - crossview/cilium-network-policy.yaml
-  - crossview/password-coroot-monitor.yaml
-  - crossview/external-secret-coroot-monitor.yaml
-  # Admits only the prod crossview-login-alerter CronJob (observability) to the
-  # app's port, so an empty database is reported without anyone logging in.
-  - crossview/cilium-network-policy-login-alerter.yaml
 components:
   - ../../../bases/components/annotations-transformers
   # Platform-wide HelmRelease drift detection (mode: enabled) — see
@@ -99,15 +88,6 @@ patches:
   # merge: inheritedMetadata scrape annotations + pg_stat_statements params).
   # These self-identify, so no target.
   - path: umami/patches/enable-coroot-monitoring.yaml
-  # Crossview is a Helm-rendered Deployment, so its JSON6902 patch adds chart
-  # values and appends post-render patches without replacing the base list.
-  - target:
-      group: helm.toolkit.fluxcd.io
-      version: v2
-      kind: HelmRelease
-      name: crossview
-      namespace: crossview
-    path: crossview/patches/enable-coroot-monitoring.yaml
   # umami's dedicated pg_monitor role is a JSON6902 append onto the existing
   # managed.roles list (so it doesn't replace / desync the OpenBao-rotation enforcer); a
   # JSON6902 patch has no embedded identity, so it keeps an explicit target.
@@ -124,35 +104,5 @@ patches:
   # workloads apart from the Actual Budget pilot component above; in mixed
   # namespaces (umami) the rule itself excludes the
   # CNPG database pods via their cnpg.io/cluster label.
-  # Headlamp takes an exact-target values patch instead of a namespace label
-  # (#2651). Its chart renders `hostUsers: {{ .Values.hostUsers }}` from a
-  # values.yaml default of true, so the value is authored rather than absent and
-  # the add-security-context rule's +(hostUsers) conditional anchor — which only
-  # fills in a MISSING value — cannot reach it. Setting the chart value is what
-  # actually changes the rendered Deployment.
-  # Headlamp uses only ephemeral writable volumes now that runtime plugin
-  # downloads are disabled. The disposable userns-longhorn-smoke Job still
-  # carries the separate Longhorn idmapped-mount proof for future stateful
-  # workloads; this Headlamp activation no longer depends on that storage path.
-  - target:
-      group: helm.toolkit.fluxcd.io
-      version: v2
-      kind: HelmRelease
-      name: headlamp
-      namespace: headlamp
-    patch: |-
-      - op: add
-        path: /spec/values/hostUsers
-        value: false
   - path: whoami/patches/enable-user-namespaces.yaml
   - path: homepage/patches/enable-user-namespaces.yaml
-  - target:
-      group: helm.toolkit.fluxcd.io
-      version: v2
-      kind: HelmRelease
-      name: crossview
-      namespace: crossview
-    path: crossview/patches/enable-durable-storage.yaml
-  # Headlamp's label is the enforce ratchet only — the values patch above is
-  # what sets hostUsers, and the mutate rule cannot reach an authored value.
-  - path: headlamp/patches/enable-user-namespaces.yaml

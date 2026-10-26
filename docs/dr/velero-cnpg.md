@@ -153,7 +153,7 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
 > ×`longhorn_replica_count`) and a node-agent pod copies it to R2, then deletes
 > both. On the space-constrained cx23 workers this transiently consumes up to
 > the source volume's size × replica count per PVC during the 02:17 run — fine
-> for the current set (umami 5Gi, actual-budget 10Gi, headlamp 256Mi) but worth
+> for the current set (umami 5Gi, actual-budget 10Gi) but worth
 > watching if larger Longhorn volumes are added.
 
 ## CloudNativePG

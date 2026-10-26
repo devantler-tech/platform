@@ -4,10 +4,6 @@ kind: Kustomization
 resources:
   - actual-budget/
   - ascoachingogvaner/
-  # Crossplane resource dashboard (Crossview). Prod-only in practice: it reads
-  # Crossplane CRDs, and Crossplane runs only on the Hetzner provider. The
-  # docker provider deploys no apps, so it is naturally excluded from local.
-  - crossview/
   - data-product-controller/
   # fleetdm disabled 2026-06-03 — not in use. The manifests under
   # bases/apps/fleetdm/ are retained; re-enable by uncommenting the line below.
@@ -21,7 +17,6 @@ resources:
   # Prod-only in practice (its Crossplane provider is Hetzner-only); the docker
   # provider deploys no apps, so it is naturally excluded from local clusters.
   - github-config/
-  - headlamp/
   - homepage/
   - umami/
   - wedding-app/

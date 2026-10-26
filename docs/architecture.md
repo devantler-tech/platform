@@ -66,8 +66,8 @@ ships only core controllers by default and makes additional components opt-in.
 
 Application manifests live in [`k8s/bases/apps/`](../k8s/bases/apps).
 
-- Homepage (dashboard), Headlamp (Kubernetes UI), Umami (analytics), Actual
-  Budget (budgeting), `whoami` (debug)
+- Homepage (dashboard), Umami (analytics), Actual Budget (budgeting), `whoami`
+  (debug)
 - The [apps assembly](../k8s/bases/apps/kustomization.yaml) declares which
   optional applications are enabled.
 - **Tenants** — apps deployed from their own repositories (`ascoachingogvaner`,

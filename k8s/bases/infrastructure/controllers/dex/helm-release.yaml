@@ -152,8 +152,6 @@ spec:
             - "https://analytics.${domain}:443/oauth2/callback"
             - "https://budget.${domain}/oauth2/callback"
             - "https://budget.${domain}:443/oauth2/callback"
-            - "https://crossview.${domain}/oauth2/callback"
-            - "https://crossview.${domain}:443/oauth2/callback"
             - "https://data-products.${domain}/oauth2/callback"
             - "https://data-products.${domain}:443/oauth2/callback"
             - "https://hubble.${domain}/oauth2/callback"
@@ -166,7 +164,6 @@ spec:
             - "https://policy-reporter.${domain}:443/oauth2/callback"
             - "https://vault.${domain}/oauth2/callback"
             - "https://vault.${domain}:443/oauth2/callback"
-            - "https://headlamp.${domain}/oidc-callback"
             # actual-budget (sync-server) hardcodes its OIDC callback path as
             # /openid/callback (ACTUAL_OPENID_SERVER_HOSTNAME=https://budget.${domain}).
             - "https://budget.${domain}/openid/callback"
@@ -175,9 +172,6 @@ spec:
             # this paired with the admin role's allowed_redirect_uris.
             - "http://localhost:8250/oidc/callback"
             - "https://ksail.${domain}/api/v1/auth/callback"
-            # Crossview authenticates natively against Dex on its public HTTPS
-            # route; Dex matches this callback exactly.
-            - "https://crossview.${domain}/api/auth/oidc/callback"
           trustedPeers:
             - kubectl
         - name: kubectl
@@ -202,14 +196,12 @@ spec:
               - name: devantler-tech
                 # A LOGIN requirement for every Dex client, not a per-app filter:
                 # an org member outside `maintainers` fails at Dex before reaching
-                # any app — oauth2-proxy's UIs, Headlamp, OpenBao (UI and CLI)
-                # and kubectl alike. It is kept deliberately as a second layer.
+                # any app — oauth2-proxy's UIs, OpenBao (UI and CLI) and
+                # kubectl alike. It is kept deliberately as a second layer.
                 # Each sensitive client also enforces the rule itself:
                 # oauth2-proxy's allowed_groups gates the browser UIs routed
-                # through it (the native-OIDC apps behind it included); Headlamp
-                # is routed directly but acts only with the user's own token,
-                # which the OIDC RBAC bindings authorize for the admin alone;
-                # and OpenBao's oidc role binds the maintainers group. Dex has
+                # through it (the native-OIDC apps behind it included), and
+                # OpenBao's oidc role binds the maintainers group. Dex has
                 # no per-client group filter to replace it with.
                 # To give a collaborator access, add them to `maintainers`. To
                 # admit non-maintainers anywhere, first re-check that each client

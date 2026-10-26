@@ -69,7 +69,7 @@ Promotion vs rollback is gated on:
 
 | Workload | Reason |
 | --- | --- |
-| whoami, headlamp, actual-budget, fleetdm (parked), hubble-ui | Single-replica by design (always-on; auto-vpa right-sizes them). headlamp = single-pod in-memory OIDC; actual-budget = single-writer file DB; hubble-ui/whoami = single-replica UIs — none can run concurrent canary pods. fleetdm is disabled since 2026-06-03. |
+| whoami, actual-budget, fleetdm (parked), hubble-ui | Single-replica by design (always-on; auto-vpa right-sizes them). actual-budget = single-writer file DB; hubble-ui/whoami = single-replica UIs — none can run concurrent canary pods. fleetdm is disabled since 2026-06-03. |
 | openbao | StatefulSet — Flagger only manages Deployments / DaemonSets. |
 | coroot UI, hubble-ui | Operator-reconciled Deployments — the operator fights Flagger for ownership. |
 | dex, oauth2-proxy, flux-operator | Critical SSO / GitOps — too risky to canary. |

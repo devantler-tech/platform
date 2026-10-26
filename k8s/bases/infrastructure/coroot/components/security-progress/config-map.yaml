@@ -1448,7 +1448,7 @@ data:
                   "panels": [
                     {
                       "name": "Failed controls to remediate next",
-                      "description": "Up to 30 controls grouped by severity and failed control-resource outcome count. Raw operator results do not automatically apply the platform's CI or Headlamp exceptions.",
+                      "description": "Up to 30 controls grouped by severity and failed control-resource outcome count. Raw operator results do not automatically apply the platform's CI exceptions.",
                       "source": {
                         "metrics": {
                           "queries": [

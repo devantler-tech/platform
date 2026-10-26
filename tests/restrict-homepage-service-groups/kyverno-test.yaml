@@ -14,7 +14,7 @@ results:
     rule: declared-service-group
     resources:
       - observability/declared-group
-      - crossview/infrastructure-as-code-group
+      - github-config/infrastructure-as-code-group
       - client-site/clients-group
       - personal-site/personal-group
     kind: HTTPRoute
