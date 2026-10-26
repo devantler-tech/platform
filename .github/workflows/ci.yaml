@@ -1163,29 +1163,6 @@ jobs:
           shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
           ./scripts/guard-consumer-discovery-conservation.sh
 
-      # The report names the two revisions per consumer; the generator (#3550) turns them
-      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
-      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
-      # shape — an unresolved consumer writes nothing — not any particular revision.
-      - name: 🔐 Validate the approved-revisions generator
-        run: |
-          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
-          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
-          bash scripts/tests/test-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
-          bash scripts/tests/test-tenant-publication-binding.sh
-          bash scripts/tests/test-bootstrap-tenant-source.sh
-          shellcheck -x scripts/canonical-tenant-source.lib.sh scripts/tests/test-canonical-source-bootstrap.sh scripts/tests/test-canonical-bootstrap-output.sh
-          bash scripts/tests/test-canonical-source-bootstrap.sh
-          shellcheck -x scripts/tests/test-canonical-constructor-attribution.sh
-          bash scripts/tests/test-canonical-constructor-attribution.sh
-          shellcheck -x scripts/tests/test-canonical-generator-output.sh
-          bash scripts/tests/test-canonical-generator-output.sh
-          bash scripts/tests/test-canonical-bootstrap-output.sh
-          shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
-          bash scripts/tests/test-canonical-publisher-regeneration.sh
-
       # The pin guard above proves each matcher pins a FIXED revision; this one proves each
       # per-consumer matcher pins the revision PAIR the committed approved set names for that
       # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
@@ -1356,6 +1333,79 @@ jobs:
           shellcheck scripts/verify-wedding-backup-cutover.sh scripts/tests/test-verify-wedding-backup-cutover.sh
           bash scripts/tests/test-verify-wedding-backup-cutover.sh
           go test ./scripts/verify-wedding-dedicated-restore
+
+  validate-publication-generator:
+    name: 🔐 Validate Publication Generator
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Initialize the approved kubectl for native regressions
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      - name: ⎈ Install checksum-verified native Helm
+        shell: bash
+        env:
+          HELM_VERSION: v4.2.4
+          HELM_SHA256: c306b46f719b0a4da32d0f78ee21bf90ce8d602f15b22ab753f0674d1670a7f3
+        run: |
+          set -euo pipefail
+          native_dir="$(mktemp -d)"
+          archive="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+          curl --fail --location --retry 3 --output "$native_dir/$archive" "https://get.helm.sh/$archive"
+          printf '%s  %s\n' "$HELM_SHA256" "$native_dir/$archive" | sha256sum --check -
+          tar -xzf "$native_dir/$archive" -C "$native_dir" linux-amd64/helm
+          printf 'KYVERNO_LOG_HELM_BIN=%s\n' "$native_dir/linux-amd64/helm" >> "$GITHUB_ENV"
+
+      # The report names the two revisions per consumer; the generator (#3550) turns them
+      # into the committed approved set the matcher narrowing (#3308) is derived from. Its
+      # cluster read and its pin read are both stubbed here, so this proves the fail-closed
+      # shape — an unresolved consumer writes nothing — not any particular revision.
+      - name: 🔐 Validate the approved-revisions generator
+        run: |
+          # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
+          shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
+          bash scripts/tests/test-tenant-publication-binding.sh
+          bash scripts/tests/test-bootstrap-tenant-source.sh
+          shellcheck -x scripts/canonical-tenant-source.lib.sh scripts/tests/test-canonical-source-bootstrap.sh scripts/tests/test-canonical-bootstrap-output.sh
+          bash scripts/tests/test-canonical-source-bootstrap.sh
+          shellcheck -x scripts/tests/test-canonical-constructor-attribution.sh
+          bash scripts/tests/test-canonical-constructor-attribution.sh
+          shellcheck -x scripts/tests/test-canonical-generator-output.sh
+          bash scripts/tests/test-canonical-generator-output.sh
+          bash scripts/tests/test-canonical-bootstrap-output.sh
+          shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
+          bash scripts/tests/test-canonical-publisher-regeneration.sh
 
   validate-consumer-discovery:
     name: 🔐 Validate Consumer Discovery Regressions
@@ -1690,10 +1740,15 @@ jobs:
         run: ksail --config ksail.prod.yaml workload validate
 
   validate-cluster-policies:
-    name: ⚖️ Validate Cluster Policies
+    name: ⚖️ Validate Cluster Policies (${{ matrix.suite }})
     needs: [changes]
     if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        suite: [fixtures, tenant, services, placement, storage, observability]
     permissions:
       contents: read
     steps:
@@ -1725,28 +1780,19 @@ jobs:
         with:
           release: ${{ steps.kyverno-version.outputs.release }}
 
-      - name: ⚖️ Validate cluster policies
-        # Evaluate the complete policy census and its negative controls offline.
-        # No cluster access or secrets are required.
+      - name: ⚖️ Validate cluster policies (fixtures)
+        if: matrix.suite == 'fixtures'
         run: |
           kyverno test ./tests
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+
+      - name: ⚖️ Validate cluster policies (tenant)
+        if: matrix.suite == 'tenant'
+        run: |
           shellcheck scripts/tests/test-tenant-webapp-boundary.sh
           bash scripts/tests/test-tenant-webapp-boundary.sh
-          shellcheck scripts/tests/test-webapp-container-security.sh
-          bash scripts/tests/test-webapp-container-security.sh
-          shellcheck scripts/tests/test-hcloud-volume-priority.sh
-          bash scripts/tests/test-hcloud-volume-priority.sh
-          shellcheck scripts/tests/test-tetragon-agent-priority.sh
-          bash scripts/tests/test-tetragon-agent-priority.sh
-          shellcheck scripts/tests/test-audit-privileged-rbac.sh
-          bash scripts/tests/test-audit-privileged-rbac.sh
-          shellcheck scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
-          bash scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
-          shellcheck scripts/tests/test-arc-controller-availability.sh
-          bash scripts/tests/test-arc-controller-availability.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-tenant-controller-namespace-coverage.sh
@@ -1760,12 +1806,12 @@ jobs:
           bash scripts/tests/test-add-default-deny-shape.sh
           shellcheck scripts/tests/test-restrict-homepage-service-groups.sh
           bash scripts/tests/test-restrict-homepage-service-groups.sh
-          shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
-          bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
-          shellcheck scripts/tests/test-kyverno-github-team-report-rbac.sh
-          bash scripts/tests/test-kyverno-github-team-report-rbac.sh
           shellcheck scripts/tests/test-tenant-route-hostname-boundary.sh
           bash scripts/tests/test-tenant-route-hostname-boundary.sh
+
+      - name: ⚖️ Validate cluster policies (services)
+        if: matrix.suite == 'services'
+        run: |
           shellcheck scripts/tests/test-actual-budget-auth-route.sh
           bash scripts/tests/test-actual-budget-auth-route.sh
           shellcheck scripts/tests/test-umami-sso-dashboard-route.sh
@@ -1783,12 +1829,32 @@ jobs:
           shellcheck scripts/tests/test-umami-tracking-probe.sh
           bash scripts/tests/test-umami-tracking-probe.sh
           shellcheck scripts/verify-umami-tracking.sh
+
+      - name: ⚖️ Validate cluster policies (placement)
+        if: matrix.suite == 'placement'
+        run: |
+          shellcheck scripts/tests/test-webapp-container-security.sh
+          bash scripts/tests/test-webapp-container-security.sh
+          shellcheck scripts/tests/test-hcloud-volume-priority.sh
+          bash scripts/tests/test-hcloud-volume-priority.sh
+          shellcheck scripts/tests/test-tetragon-agent-priority.sh
+          bash scripts/tests/test-tetragon-agent-priority.sh
+          shellcheck scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
+          bash scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
+          shellcheck scripts/tests/test-arc-controller-availability.sh
+          bash scripts/tests/test-arc-controller-availability.sh
           shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
-          shellcheck scripts/tests/test-add-baseline-context.sh
-          bash scripts/tests/test-add-baseline-context.sh
           shellcheck scripts/tests/test-label-baseline-workers.sh
           bash scripts/tests/test-label-baseline-workers.sh
+          shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
+          bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
+
+      - name: ⚖️ Validate cluster policies (storage)
+        if: matrix.suite == 'storage'
+        run: |
+          shellcheck scripts/tests/test-add-baseline-context.sh
+          bash scripts/tests/test-add-baseline-context.sh
           shellcheck scripts/tests/test-longhorn-registrar-prestop-policy.sh
           bash scripts/tests/test-longhorn-registrar-prestop-policy.sh
           shellcheck scripts/tests/test-csi-sidecar-baseline-context.sh
@@ -1797,11 +1863,19 @@ jobs:
           bash scripts/tests/test-longhorn-csi-plugin-baseline-context.sh
           shellcheck scripts/tests/test-longhorn-engine-image-baseline-context.sh
           bash scripts/tests/test-longhorn-engine-image-baseline-context.sh
-          shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
-          bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
           shellcheck scripts/guard-longhorn-ui-baseline-context.sh scripts/tests/test-guard-longhorn-ui-baseline-context.sh scripts/tests/test-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-guard-longhorn-ui-baseline-context.sh
           bash scripts/tests/test-longhorn-ui-baseline-context.sh
+
+      - name: ⚖️ Validate cluster policies (observability)
+        if: matrix.suite == 'observability'
+        run: |
+          shellcheck scripts/tests/test-audit-privileged-rbac.sh
+          bash scripts/tests/test-audit-privileged-rbac.sh
+          shellcheck scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          bash scripts/tests/test-kyverno-umami-mutation-rbac.sh
+          shellcheck scripts/tests/test-kyverno-github-team-report-rbac.sh
+          bash scripts/tests/test-kyverno-github-team-report-rbac.sh
           shellcheck scripts/tests/test-cilium-hubble-baseline-context.sh
           bash scripts/tests/test-cilium-hubble-baseline-context.sh
           shellcheck scripts/guard-coroot-baseline-context.sh scripts/tests/test-guard-coroot-baseline-context.sh
@@ -1809,6 +1883,7 @@ jobs:
           shellcheck scripts/admit-coroot-baseline-context.sh scripts/tests/test-admit-coroot-baseline-context.sh
           bash scripts/tests/test-admit-coroot-baseline-context.sh
       - name: 🔐 Verify the controller-owned tenant pull secret
+        if: matrix.suite == 'observability'
         run: |
           shellcheck scripts/tests/test-tenant-kro-pull-secret.sh
           bash scripts/tests/test-tenant-kro-pull-secret.sh
@@ -3880,6 +3955,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
         validate-consumer-discovery,
@@ -4241,6 +4317,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
         validate-consumer-discovery,
@@ -4340,6 +4417,7 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
+            ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-go-regressions.result }}
             ${{ needs.validate-webapp-compiler.result }}
             ${{ needs.validate-consumer-discovery.result }}
@@ -4366,6 +4444,15 @@ jobs:
         run: |
           if [ "$REPOSITORY_GUARDS_RESULT" != success ]; then
             echo "::error::Repository guards did not succeed ($REPOSITORY_GUARDS_RESULT)"
+            exit 1
+          fi
+
+      - name: 🔐 Require publication generator validation
+        env:
+          GENERATOR_RESULT: ${{ needs.validate-publication-generator.result }}
+        run: |
+          if [ "$GENERATOR_RESULT" != success ]; then
+            echo "::error::Publication generator did not succeed ($GENERATOR_RESULT)"
             exit 1
           fi
 
