@@ -14,7 +14,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Policy Reporter
     gethomepage.dev/description: Kyverno PolicyReport dashboards and analytics.
-    gethomepage.dev/group: Governance
+    gethomepage.dev/group: Security
     # Policy Reporter isn't in the dashboard-icons/selfh.st sets Homepage
     # resolves, so point at the upstream Kyverno brand logo (same upstream-URL
     # pattern the Coroot / Cilium / OpenBao routes use). Homepage fetches icons

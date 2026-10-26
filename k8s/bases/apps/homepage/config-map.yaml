@@ -90,6 +90,13 @@ data:
       # for the sites rather than the cluster.
       Analytics:
         icon: si-umami
+      # TRANSITIONAL — OpenBao and Policy Reporter still name Security. Flux
+      # applies their routes before it updates the Kyverno allow-list, so a route
+      # may only switch to a group the LIVE allow-list already accepts: switch
+      # them to Secrets Management and Governance in a later deploy, then retire
+      # Security.
+      Security:
+        icon: mdi-shield-lock
       Secrets Management:
         icon: mdi-key-chain
       # Policy and compliance posture: what is allowed to run, and how it scores.
