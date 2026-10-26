@@ -11,7 +11,7 @@ fixture_pool_init "$FIXTURE" "${JOBS:-2}"
 cleanup_driver() {
   local result=$?
   trap - EXIT
-  fixture_pool_finish >/dev/null 2>&1 || true
+  fixture_pool_finish >/dev/null || true
   exit "$result"
 }
 trap cleanup_driver EXIT
@@ -19,7 +19,7 @@ trap fixture_pool_interrupt HUP INT TERM
 work_case() {
   local name=$1
   mkdir "$FIXTURE/active-$name"
-  [ "$(find "$FIXTURE" -maxdepth 1 -type d -name 'active-*' | wc -l | tr -d ' ')" -le 2 ]
+  [ "$(find "$FIXTURE" -maxdepth 1 -type d -name 'active-*' | wc -l | tr -d ' ')" -le "$FIXTURE_POOL_JOBS" ]
   [ "$name" != failed ] || return 17
   if [ "$name" = early-error ]; then false; printf 'unsafe\n' >"$FIXTURE/after-error"; fi
   if [ "$MODE" = good ] && [ "$FIXTURE_POOL_JOBS" = 2 ]; then
@@ -42,11 +42,16 @@ good)
   for name in alpha beta gamma delta; do fixture_pool_submit work_case "$name"; done
   ;;
 failed | early-error) fixture_pool_submit work_case "$MODE" ;;
-missing | corrupt)
+peer-failure)
+  fixture_pool_submit work_case failed
+  fixture_pool_submit work_case alpha
+  ;;
+missing | corrupt | extra)
   fixture_pool_submit work_case alpha
   fixture_pool_drain
   if [ "$MODE" = missing ]; then rm "$FIXTURE/fixture-workers/receipts/alpha";
-  else printf 'other\n' >"$FIXTURE/fixture-workers/receipts/alpha"; fi
+  elif [ "$MODE" = corrupt ]; then printf 'other\n' >"$FIXTURE/fixture-workers/receipts/alpha";
+  else printf 'unassigned\n' >"$FIXTURE/fixture-workers/receipts/unassigned"; fi
   ;;
 duplicate)
   fixture_pool_submit work_case alpha
@@ -66,7 +71,7 @@ fixture_pool_finish
 DRIVER
 chmod +x "$work/driver"
 library="$root/scripts/tests/lib/fixture-workers.lib.sh"
-for mode in good failed early-error missing corrupt duplicate unregistered interrupted signalled; do
+for mode in good failed early-error peer-failure missing corrupt extra duplicate unregistered interrupted signalled; do
   mkdir "$work/$mode"
   result=0
   POOL_LIBRARY="$library" FIXTURE="$work/$mode" MODE="$mode" \
@@ -96,7 +101,7 @@ for mode in good failed early-error missing corrupt duplicate unregistered inter
     fi
   fi
   case "$mode" in
-    interrupted | signalled) [ "$(cat "$work/$mode/result-alpha")" = alpha ] ;;
+    interrupted | signalled | peer-failure) [ "$(cat "$work/$mode/result-alpha")" = alpha ] ;;
   esac
   [ ! -e "$work/$mode/after-error" ] || {
     echo 'FAIL: worker ignored early failure' >&2

@@ -63,6 +63,13 @@ The services policy suite took 12m11s; the rollout regression alone consumed
 11m10s. These observations motivate the bounded fixture workers and rebalancing;
 the complete feedback target remains unproven until another native run finishes.
 
+The [bounded-worker trial](https://github.com/devantler-tech/platform/actions/runs/40300652085)
+finished in 9m57s, but failed the executable-bit guard because the new worker
+test was tracked as mode `100644`. Its services suite passed in 8m02s; both
+manifest jobs passed in 9m18s. The mode is corrected to `100755`, and both
+executable guards pass. This failed attempt is timing evidence, not successful
+feedback acceptance. The follow-up must pass every native gate at its own head.
+
 [GitHub's matrix documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
 defines independent job combinations, fail-fast and concurrency limits. The
 inference is that overlapping independent suites can shorten the critical path;
@@ -86,7 +93,9 @@ The additional manifest-regression boundary exercises selection, success,
 failure, cancellation, missing results and unexpected skips.
 `scripts/tests/test-fixture-workers.sh` proves actual overlap, complete receipts,
 serial operation and rejection of failures, early errors, duplicate or unknown
-cases, missing or corrupt receipts, interruption and invalid worker bounds.
+cases, missing, corrupt or unassigned receipts, interruption and invalid worker
+bounds. A failing peer must still be joined with its healthy sibling before
+cleanup returns; serial mode also checks the observed concurrency bound.
 
 Before accepting a scheduling edit, compare its complete command inventory and
 step inputs with the reviewed baseline. A passing partition check establishes
