@@ -1,0 +1,543 @@
+diff --git a/main.go b/main.go
+index 045f5047..ee422a2f 100644
+--- a/main.go
++++ b/main.go
+@@ -17,11 +17,13 @@ limitations under the License.
+ package main
+ 
+ import (
++	"context"
+ 	"flag"
+ 	"net/url"
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
++	"time"
+ 
+ 	utilsmetadata "github.com/armosec/utils-k8s-go/armometadata"
+ 	"github.com/go-logr/zapr"
+@@ -101,6 +103,20 @@ func main() {
+ 	osFs := afero.NewOsFs()
+ 	pool := file.NewPool(filepath.Join(file.DefaultStorageRoot, "metadata.sq3"), file.DefaultPoolSize)
+ 
++	// Reconcile the known payload-first summary split before any API request or
++	// background writer can touch storage. The deployment must retain its single
++	// writer/Recreate contract. Refusals leave both observations intact and stay
++	// visible; they do not prevent serving the available retained findings.
++	repairCtx, cancelRepair := context.WithTimeout(ctx, time.Minute)
++	repairReport, repairErr := file.ReconcileVulnerabilitySummaryMetadata(repairCtx, osFs, file.DefaultStorageRoot, pool)
++	cancelRepair()
++	logger.L().Info("vulnerability summary metadata reconciliation",
++		helpers.Int("examined", repairReport.Examined), helpers.Int("repaired", repairReport.Repaired),
++		helpers.Int("unchanged", repairReport.Unchanged), helpers.Int("refused", repairReport.Refused))
++	if repairErr != nil {
++		logger.L().Error("vulnerability summary metadata reconciliation incomplete", helpers.Error(repairErr))
++	}
++
+ 	// setup watcher
+ 	watchDispatcher := file.NewWatchDispatcher()
+ 
+diff --git a/pkg/registry/file/storage.go b/pkg/registry/file/storage.go
+index 35b50c66..29315e74 100644
+--- a/pkg/registry/file/storage.go
++++ b/pkg/registry/file/storage.go
+@@ -996,6 +996,13 @@ func (s *StorageImpl) GuaranteedUpdateWithConn(
+ 	// key preparation is skipped
+ 	// otel span tracking is skipped
+ 
++	// A failed payload-first write can leave the next scanner request carrying
++	// an obsolete listed version forever. Reconcile this one known summary
++	// failure while holding its write lock, before evaluating client versions.
++	if err := s.reconcileSummaryBeforeUpdate(ctx, conn, key); err != nil {
++		return err
++	}
++
+ 	v, err := conversion.EnforcePtr(metaOut)
+ 	if err != nil {
+ 		logger.L().Ctx(ctx).Error("GuaranteedUpdate - unable to convert output object to pointer", helpers.Error(err), helpers.String("key", key))
+diff --git a/pkg/registry/file/summary_metadata_repair.go b/pkg/registry/file/summary_metadata_repair.go
+new file mode 100644
+index 00000000..3f044057
+--- /dev/null
++++ b/pkg/registry/file/summary_metadata_repair.go
+@@ -0,0 +1,211 @@
++package file
++
++import (
++	"context"
++	"encoding/gob"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"io"
++	"os"
++	"path/filepath"
++	"strconv"
++	"strings"
++	"time"
++
++	"github.com/kubescape/storage/pkg/apis/softwarecomposition/v1beta1"
++	"github.com/spf13/afero"
++	"k8s.io/apimachinery/pkg/util/validation"
++	"zombiezen.com/go/sqlite"
++	"zombiezen.com/go/sqlite/sqlitemigration"
++	"zombiezen.com/go/sqlite/sqlitex"
++)
++
++// SummaryMetadataRepairReport keeps refusals separate from coherent observations.
++type SummaryMetadataRepairReport struct {
++	Examined  int
++	Repaired  int
++	Unchanged int
++	Refused   int
++}
++
++type summaryMetadataRow struct{ namespace, name, metadata string }
++
++// ReconcileVulnerabilitySummaryMetadata runs before the API server and background
++// writers start, with exclusive ownership of the retained storage directory. It
++// repairs only the known payload-first failure: the same summary's intact payload
++// is exactly one version newer than its metadata row. It never calls Get (whose
++// missing-file path deletes metadata), writes a payload, or changes a scan time.
++// The SQL compare-and-update also refuses any intervening metadata change.
++func ReconcileVulnerabilitySummaryMetadata(ctx context.Context, fs afero.Fs, root string, pool *sqlitemigration.Pool) (SummaryMetadataRepairReport, error) {
++	var report SummaryMetadataRepairReport
++	if err := ctx.Err(); err != nil {
++		return report, err
++	}
++	if !filepath.IsAbs(root) || filepath.Clean(root) != root {
++		return report, fmt.Errorf("invalid storage root")
++	}
++	conn, err := pool.Take(ctx)
++	if err != nil {
++		return report, err
++	}
++	defer pool.Put(conn)
++	var rows []summaryMetadataRow
++	err = sqlitex.Execute(conn, `SELECT namespace, name, metadata FROM metadata WHERE kind = 'vulnerabilitymanifestsummaries' LIMIT 10001`, &sqlitex.ExecOptions{
++		ResultFunc: func(stmt *sqlite.Stmt) error {
++			rows = append(rows, summaryMetadataRow{stmt.ColumnText(0), stmt.ColumnText(1), stmt.ColumnText(2)})
++			return nil
++		},
++	})
++	if err != nil {
++		return report, err
++	}
++	if len(rows) > 10000 {
++		return report, fmt.Errorf("summary reconciliation exceeds its bounded scope")
++	}
++	var failures []error
++	for _, row := range rows {
++		if err := ctx.Err(); err != nil {
++			return report, err
++		}
++		report.Examined++
++		changed, err := reconcileSummaryMetadataRow(ctx, fs, root, conn, row)
++		if err != nil {
++			report.Refused++
++			failures = append(failures, fmt.Errorf("%s/%s: %w", row.namespace, row.name, err))
++			continue
++		}
++		if changed != nil {
++			report.Repaired++
++		} else {
++			report.Unchanged++
++		}
++	}
++	if report.Refused != 0 {
++		return report, fmt.Errorf("summary metadata reconciliation incomplete: %w", errors.Join(failures...))
++	}
++	return report, nil
++}
++
++// The caller holds this key's write lock. Repairing metadata does not accept a
++// stale client's update: normal preconditions and version checks still run.
++func (s *StorageImpl) reconcileSummaryBeforeUpdate(ctx context.Context, conn *sqlite.Conn, key string) error {
++	parts := strings.Split(key, "/")
++	if len(parts) != 5 || parts[0] != "" || parts[1] != "spdx.softwarecomposition.kubescape.io" || parts[2] != "vulnerabilitymanifestsummaries" {
++		return nil
++	}
++	metadata, err := ReadMetadata(conn, key)
++	if errors.Is(err, ErrMetadataNotFound) {
++		return nil
++	}
++	if err != nil {
++		return err
++	}
++	changed, err := reconcileSummaryMetadataRow(ctx, s.appFs, s.root, conn, summaryMetadataRow{parts[3], parts[4], string(metadata)})
++	if err != nil {
++		return fmt.Errorf("summary metadata reconciliation refused: %w", err)
++	}
++	if changed == nil {
++		return nil
++	}
++	// Publish the restored current observation to existing watches without
++	// rewriting it or using Get's migration/deletion path.
++	s.watchDispatcher.Modified(key, extractFields(changed, []string{"ObjectMeta", "SchemaVersion"}), changed)
++	return nil
++}
++
++func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string, conn *sqlite.Conn, row summaryMetadataRow) (*v1beta1.VulnerabilityManifestSummary, error) {
++	if len(validation.IsDNS1123Label(row.namespace)) != 0 || len(validation.IsDNS1123Subdomain(row.name)) != 0 {
++		return nil, fmt.Errorf("invalid summary key")
++	}
++	var listed, stored v1beta1.VulnerabilityManifestSummary
++	if err := json.Unmarshal([]byte(row.metadata), &listed); err != nil {
++		return nil, err
++	}
++	if listed.Name != row.name || listed.Namespace != row.namespace || listed.UID == "" || listed.CreationTimestamp.IsZero() {
++		return nil, fmt.Errorf("unproven listed identity")
++	}
++	path := filepath.Join(root, "spdx.softwarecomposition.kubescape.io", "vulnerabilitymanifestsummaries", row.namespace, row.name) + GobExt
++	// Refuse links both at the payload and at every directory below the trusted
++	// storage root. No migration tool or cleanup-capable storage read is used.
++	lstater, ok := fs.(afero.Lstater)
++	if !ok {
++		return nil, fmt.Errorf("filesystem cannot prove link safety")
++	}
++	rel, err := filepath.Rel(root, path)
++	if err != nil {
++		return nil, err
++	}
++	current := root
++	parts := append([]string{""}, strings.Split(rel, string(filepath.Separator))...)
++	for i, part := range parts {
++		current = filepath.Join(current, part)
++		info, used, err := lstater.LstatIfPossible(current)
++		if err != nil {
++			return nil, err
++		}
++		if i == len(parts)-1 && (info.Size() < 1 || info.Size() > 8<<20) {
++			return nil, fmt.Errorf("invalid summary payload size")
++		}
++		if !used || info.Mode()&os.ModeSymlink != 0 || (i < len(parts)-1 && !info.IsDir()) || (i == len(parts)-1 && !info.Mode().IsRegular()) {
++			return nil, fmt.Errorf("unsafe summary payload path")
++		}
++	}
++	f, err := fs.Open(path)
++	if err != nil {
++		return nil, err
++	}
++	// Summaries are small metadata documents; malformed oversized payloads are
++	// refused rather than allocating without a bound during service startup.
++	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(&stored)
++	closeErr := f.Close()
++	if err != nil {
++		return nil, err
++	}
++	if closeErr != nil {
++		return nil, closeErr
++	}
++	if stored.Name != row.name || stored.Namespace != row.namespace || stored.UID != listed.UID || !stored.CreationTimestamp.Equal(&listed.CreationTimestamp) {
++		return nil, fmt.Errorf("summary identity changed")
++	}
++	listedVersion, err := strconv.ParseUint(listed.ResourceVersion, 10, 64)
++	if err != nil || listedVersion == 0 || strconv.FormatUint(listedVersion, 10) != listed.ResourceVersion {
++		return nil, fmt.Errorf("invalid listed version")
++	}
++	storedVersion, err := strconv.ParseUint(stored.ResourceVersion, 10, 64)
++	if err != nil || storedVersion == 0 || strconv.FormatUint(storedVersion, 10) != stored.ResourceVersion {
++		return nil, fmt.Errorf("invalid stored version")
++	}
++	if storedVersion == listedVersion {
++		return nil, nil
++	}
++	if storedVersion < listedVersion || storedVersion-listedVersion != 1 {
++		return nil, fmt.Errorf("unproven version direction")
++	}
++	oldScan, err := strconv.ParseInt(listed.Annotations["kubescape.io/timestamp"], 10, 64)
++	if err != nil || oldScan <= 0 {
++		return nil, fmt.Errorf("invalid previous scan time")
++	}
++	newScan, err := strconv.ParseInt(stored.Annotations["kubescape.io/timestamp"], 10, 64)
++	if err != nil || newScan < oldScan || newScan > time.Now().Add(5*time.Minute).Unix() {
++		return nil, fmt.Errorf("invalid retained scan time")
++	}
++	metadata := extractFields(&stored, []string{"ObjectMeta", "SchemaVersion"})
++	encoded, err := json.Marshal(metadata)
++	if err != nil {
++		return nil, err
++	}
++	if err := ctx.Err(); err != nil {
++		return nil, err
++	}
++	err = sqlitex.Execute(conn, `UPDATE metadata SET metadata = ? WHERE kind = 'vulnerabilitymanifestsummaries' AND namespace = ? AND name = ? AND CAST(metadata AS TEXT) = ?`, &sqlitex.ExecOptions{
++		Args: []any{encoded, row.namespace, row.name, row.metadata},
++	})
++	if err != nil {
++		return nil, err
++	}
++	if conn.Changes() != 1 {
++		return nil, fmt.Errorf("metadata changed during reconciliation")
++	}
++	return &stored, nil
++}
+diff --git a/pkg/registry/file/summary_metadata_repair_test.go b/pkg/registry/file/summary_metadata_repair_test.go
+new file mode 100644
+index 00000000..5f0ee570
+--- /dev/null
++++ b/pkg/registry/file/summary_metadata_repair_test.go
+@@ -0,0 +1,243 @@
++package file
++
++import (
++	"bytes"
++	"context"
++	"encoding/gob"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/kubescape/storage/pkg/apis/softwarecomposition"
++	"github.com/kubescape/storage/pkg/apis/softwarecomposition/v1beta1"
++	"github.com/kubescape/storage/pkg/generated/clientset/versioned/scheme"
++	"github.com/spf13/afero"
++	"github.com/stretchr/testify/require"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/types"
++	"k8s.io/apiserver/pkg/storage"
++	"zombiezen.com/go/sqlite"
++	"zombiezen.com/go/sqlite/sqlitemigration"
++	"zombiezen.com/go/sqlite/sqlitex"
++)
++
++const summaryRepairKey = "/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifestsummaries/example/deployment-example-app"
++
++type summaryRepairFixture struct {
++	fs          afero.Fs
++	root        string
++	pool        *sqlitemigration.Pool
++	store       *StorageImpl
++	conn        *sqlite.Conn
++	oldMetadata []byte
++	payload     []byte
++}
++
++// Leave the real payload at version 2 and its SQLite metadata at version 1 by
++// rejecting the metadata write after saveObject has finished writing the payload.
++func newSplitSummary(t *testing.T) summaryRepairFixture {
++	t.Helper()
++	root := t.TempDir()
++	pool := NewPool(filepath.Join(root, "metadata.sq3"), 2)
++	t.Cleanup(func() { require.NoError(t, pool.Close()) })
++	conn, err := pool.Take(context.Background())
++	require.NoError(t, err)
++	t.Cleanup(func() { pool.Put(conn) })
++	fs := afero.NewOsFs()
++	require.NoError(t, softwarecomposition.AddToScheme(scheme.Scheme))
++	s := NewStorageImpl(fs, root, pool, nil, scheme.Scheme).(*StorageImpl)
++	obj := &v1beta1.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
++		Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
++		CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
++		Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800", "kubescape.io/tool-version": "v1.32.0"},
++	}}
++	require.NoError(t, s.saveObject(conn, summaryRepairKey, obj, nil, ""))
++	oldMetadata, err := ReadMetadata(conn, summaryRepairKey)
++	require.NoError(t, err)
++	require.NoError(t, sqlitex.Execute(conn, `CREATE TRIGGER reject_summary_write BEFORE INSERT ON metadata BEGIN SELECT RAISE(FAIL, 'injected metadata failure'); END;`, nil))
++	obj.Annotations["kubescape.io/timestamp"] = "1788307200"
++	require.ErrorContains(t, s.saveObject(conn, summaryRepairKey, obj, nil, ""), "injected metadata failure")
++	require.NoError(t, sqlitex.Execute(conn, `DROP TRIGGER reject_summary_write;`, nil))
++	payload, err := afero.ReadFile(fs, filepath.Join(root, summaryRepairKey)+GobExt)
++	require.NoError(t, err)
++	return summaryRepairFixture{fs, root, pool, s, conn, oldMetadata, payload}
++}
++
++func TestSummaryMetadataRepairPreservesPayloadAndAllowsScannerUpdate(t *testing.T) {
++	f := newSplitSummary(t)
++	report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++	require.NoError(t, err)
++	require.Equal(t, 1, report.Repaired)
++	require.Zero(t, report.Refused)
++	metadata, err := ReadMetadata(f.conn, summaryRepairKey)
++	require.NoError(t, err)
++	var listed v1beta1.VulnerabilityManifestSummary
++	require.NoError(t, json.Unmarshal(metadata, &listed))
++	require.Equal(t, "2", listed.ResourceVersion)
++	require.Equal(t, types.UID("retained-identity"), listed.UID)
++	require.Equal(t, "1788307200", listed.Annotations["kubescape.io/timestamp"])
++	bytes, err := afero.ReadFile(f.fs, filepath.Join(f.root, summaryRepairKey)+GobExt)
++	require.NoError(t, err)
++	require.Equal(t, f.payload, bytes, "repair must not rewrite the payload")
++	report, err = ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++	require.NoError(t, err)
++	require.Zero(t, report.Repaired, "reconciliation must be idempotent")
++	require.Equal(t, 1, report.Unchanged)
++
++	out := &v1beta1.VulnerabilityManifestSummary{}
++	require.NoError(t, f.store.GuaranteedUpdate(context.Background(), summaryRepairKey, out, false, nil,
++		func(input runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
++			obj := input.(*v1beta1.VulnerabilityManifestSummary).DeepCopy()
++			require.Equal(t, "2", obj.ResourceVersion)
++			obj.Annotations["kubescape.io/timestamp"] = "1788393600"
++			return obj, nil, nil
++		}, &listed))
++	require.Equal(t, "3", out.ResourceVersion)
++	metadata, err = ReadMetadata(f.conn, summaryRepairKey)
++	require.NoError(t, err)
++	require.NoError(t, json.Unmarshal(metadata, &listed))
++	require.Equal(t, "3", listed.ResourceVersion)
++}
++
++func TestSummaryMetadataRepairRefusesUnprovenRecords(t *testing.T) {
++	for _, change := range []string{"replacement UID", "creation time", "metadata ahead", "invalid version", "missing payload", "corrupt payload", "oversized payload", "payload identity", "unsafe name", "write interrupted", "symlink payload"} {
++		t.Run(change, func(t *testing.T) {
++			f := newSplitSummary(t)
++			var metadata v1beta1.VulnerabilityManifestSummary
++			require.NoError(t, json.Unmarshal(f.oldMetadata, &metadata))
++			path := filepath.Join(f.root, summaryRepairKey) + GobExt
++			switch change {
++			case "replacement UID":
++				metadata.UID = types.UID("replacement")
++			case "creation time":
++				metadata.CreationTimestamp = metav1.NewTime(time.Now())
++			case "metadata ahead":
++				metadata.ResourceVersion = "3"
++			case "invalid version":
++				metadata.ResourceVersion = "not-a-version"
++			case "missing payload":
++				require.NoError(t, f.fs.Remove(path))
++			case "corrupt payload":
++				require.NoError(t, afero.WriteFile(f.fs, path, []byte("not gob"), 0600))
++			case "oversized payload":
++				require.NoError(t, afero.WriteFile(f.fs, path, append(f.payload, make([]byte, 9<<20)...), 0600))
++			case "payload identity":
++				var obj v1beta1.VulnerabilityManifestSummary
++				require.NoError(t, gob.NewDecoder(bytes.NewReader(f.payload)).Decode(&obj))
++				obj.Namespace = "replacement"
++				var buf bytes.Buffer
++				require.NoError(t, gob.NewEncoder(&buf).Encode(&obj))
++				require.NoError(t, afero.WriteFile(f.fs, path, buf.Bytes(), 0600))
++			case "unsafe name":
++				metadata.Name = "../../outside"
++			case "write interrupted":
++				require.NoError(t, sqlitex.Execute(f.conn, `CREATE TRIGGER reject_repair BEFORE UPDATE ON metadata BEGIN SELECT RAISE(FAIL, 'interrupted repair'); END;`, nil))
++			case "symlink payload":
++				target := filepath.Join(t.TempDir(), "outside.g")
++				require.NoError(t, afero.WriteFile(f.fs, target, f.payload, 0600))
++				require.NoError(t, f.fs.Remove(path))
++				require.NoError(t, os.Symlink(target, path))
++			}
++			if change != "write interrupted" {
++				require.NoError(t, writeMetadata(f.conn, summaryRepairKey, &metadata))
++			}
++			before, err := ReadMetadata(f.conn, summaryRepairKey)
++			require.NoError(t, err)
++			payloadBefore, payloadErr := afero.ReadFile(f.fs, path)
++			report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++			require.Error(t, err)
++			require.Zero(t, report.Repaired)
++			require.Equal(t, 1, report.Refused)
++			after, err := ReadMetadata(f.conn, summaryRepairKey)
++			require.NoError(t, err)
++			require.Equal(t, before, after, "refusal must retain the exact metadata row")
++			payloadAfter, err := afero.ReadFile(f.fs, path)
++			require.Equal(t, payloadErr != nil, err != nil)
++			require.Equal(t, payloadBefore, payloadAfter, "refusal must retain available payload bytes")
++		})
++	}
++}
++
++type changeMetadataOnRead struct {
++	afero.Fs
++	change func()
++}
++
++func (f *changeMetadataOnRead) LstatIfPossible(name string) (os.FileInfo, bool, error) {
++	return f.Fs.(afero.Lstater).LstatIfPossible(name)
++}
++
++func (f *changeMetadataOnRead) Open(name string) (afero.File, error) {
++	if f.change != nil && strings.HasSuffix(name, GobExt) {
++		change := f.change
++		f.change = nil
++		change()
++	}
++	return f.Fs.Open(name)
++}
++
++func TestSummaryMetadataRepairRefusesConcurrentMetadataChange(t *testing.T) {
++	f := newSplitSummary(t)
++	var replacement v1beta1.VulnerabilityManifestSummary
++	require.NoError(t, json.Unmarshal(f.oldMetadata, &replacement))
++	replacement.ResourceVersion = "7"
++	fs := &changeMetadataOnRead{Fs: f.fs, change: func() {
++		require.NoError(t, writeMetadata(f.conn, summaryRepairKey, &replacement))
++	}}
++	report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), fs, f.root, f.pool)
++	require.Error(t, err)
++	require.Zero(t, report.Repaired)
++	metadata, err := ReadMetadata(f.conn, summaryRepairKey)
++	require.NoError(t, err)
++	var after v1beta1.VulnerabilityManifestSummary
++	require.NoError(t, json.Unmarshal(metadata, &after))
++	require.Equal(t, "7", after.ResourceVersion, "a compare-and-update must not replace a new observation")
++}
++
++func TestSummaryMetadataRepairLeavesOtherKindsAndCancelledWorkIntact(t *testing.T) {
++	f := newSplitSummary(t)
++	otherKey := strings.Replace(summaryRepairKey, "vulnerabilitymanifestsummaries", "workloadconfigurationscans", 1)
++	require.NoError(t, WriteJSON(f.conn, otherKey, []byte(`{"metadata":{"resourceVersion":"99"}}`)))
++	ctx, cancel := context.WithCancel(context.Background())
++	cancel()
++	report, err := ReconcileVulnerabilitySummaryMetadata(ctx, f.fs, f.root, f.pool)
++	require.ErrorIs(t, err, context.Canceled)
++	require.Zero(t, report.Repaired)
++	after, err := ReadMetadata(f.conn, summaryRepairKey)
++	require.NoError(t, err)
++	require.Equal(t, f.oldMetadata, after)
++	report, err = ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++	require.NoError(t, err)
++	require.Equal(t, 1, report.Examined)
++	other, err := ReadMetadata(f.conn, otherKey)
++	require.NoError(t, err)
++	require.Equal(t, `{"metadata":{"resourceVersion":"99"}}`, string(other))
++}
++
++func TestSummaryMetadataRetryRepairsSplitBeforeVersionConflict(t *testing.T) {
++	f := newSplitSummary(t)
++	var stale v1beta1.VulnerabilityManifestSummary
++	require.NoError(t, json.Unmarshal(f.oldMetadata, &stale))
++	out := &v1beta1.VulnerabilityManifestSummary{}
++	err := f.store.GuaranteedUpdate(context.Background(), summaryRepairKey, out, false, nil,
++		func(input runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
++			obj := input.(*v1beta1.VulnerabilityManifestSummary)
++			if obj.ResourceVersion != stale.ResourceVersion {
++				return nil, nil, apierrors.NewConflict(schema.GroupResource{Resource: "vulnerabilitymanifestsummaries"}, stale.Name, fmt.Errorf("stale scanner version"))
++			}
++			return obj.DeepCopy(), nil, nil
++		}, nil)
++	require.True(t, apierrors.IsConflict(err), "the stale client must still retry")
++	metadata, err := ReadMetadata(f.conn, summaryRepairKey)
++	require.NoError(t, err)
++	var current v1beta1.VulnerabilityManifestSummary
++	require.NoError(t, json.Unmarshal(metadata, &current))
++	require.Equal(t, "2", current.ResourceVersion, "the next list must expose a retryable current version")
++}
+diff --git a/pkg/registry/file/watch_test.go b/pkg/registry/file/watch_test.go
+index 3c07ac41..12a99257 100644
+--- a/pkg/registry/file/watch_test.go
++++ b/pkg/registry/file/watch_test.go
+@@ -87,12 +87,14 @@ func TestFileSystemStorageWatchReturnsDistinctWatchers(t *testing.T) {
+ 			s := NewStorageImpl(afero.NewMemMapFs(), DefaultStorageRoot, nil, nil, nil)
+ 
+ 			got1, _ := s.Watch(context.TODO(), tt.args.key, tt.args.opts)
++			defer got1.Stop()
+ 			got1chan := got1.ResultChan()
+ 
+ 			got2, _ := s.Watch(context.TODO(), tt.args.key, tt.args.opts)
++			defer got2.Stop()
+ 			got2chan := got2.ResultChan()
+ 
+-			assert.NotEqual(t, got1, got2, "Should not return the same watcher object")
++			assert.NotSame(t, got1, got2, "Should not return the same watcher object")
+ 			assert.NotEqual(t, got1chan, got2chan, "Channels from the watches should not be the same")
+ 		})
+ 	}
