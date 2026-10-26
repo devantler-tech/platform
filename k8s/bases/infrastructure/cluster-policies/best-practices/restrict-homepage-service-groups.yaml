@@ -36,6 +36,15 @@
 # purpose: a Kyverno context lookup would make every annotated route in the
 # cluster un-appliable if that ConfigMap ever became unreadable, trading a silent
 # cosmetic bug for a reconciliation outage.
+#
+# RENAMING OR SPLITTING a group that a route claims takes TWO deploys. A route is
+# admitted against the LIVE copy of this policy, and Flux applies routes in
+# earlier layers (infrastructure-controllers, e.g. OpenBao) before this
+# infrastructure-layer policy, and tenant routes on their own schedule. So:
+#   1. add the new group here and to the layout, keeping the old one;
+#   2. once that is live, move the routes, and only then drop the old group.
+# Doing both in one change denies the route's dry-run and fails the whole Flux
+# layer — the merge-group deploy of platform#5383 was evicted for exactly this.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -89,7 +98,7 @@ spec:
           A route with gethomepage.dev/enabled="true" must set
           gethomepage.dev/group to a service group declared in the Homepage
           layout (k8s/bases/apps/homepage/config-map.yaml): Kubernetes,
-          Observability, Analytics, Security, Secrets Management, Governance,
+          Observability, Analytics, Secrets Management, Governance,
           Diagnostics, Device Management, Infrastructure as Code, Cloud,
           Network, Home, Finance, Data, Business & Clients, Products, Clients,
           or Personal.
@@ -107,12 +116,6 @@ spec:
                   - Kubernetes
                   - Observability
                   - Analytics
-                  # TRANSITIONAL — still claimed by the OpenBao and Policy
-                  # Reporter routes. A route can only move to a group this LIVE
-                  # list already accepts, because Flux applies routes before
-                  # this policy, so they switch to Secrets Management and
-                  # Governance in a later deploy; then remove this entry.
-                  - Security
                   - Secrets Management
                   - Governance
                   - Diagnostics

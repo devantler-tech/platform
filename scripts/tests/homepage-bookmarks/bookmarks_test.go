@@ -194,10 +194,12 @@ func TestBookmarkContracts(t *testing.T) {
 			group := d.bookmarks[0].(map[string]any)
 			group[d.group] = append(d.entries(), d.entries()[0])
 		}, "GROUP -> BOOKMARK: duplicate bookmark name in this group"},
+		// Governance is known only from a route annotation (Policy Reporter), so
+		// this also proves annotation discovery feeds the collision check.
 		{"service group collision", func(d *document) {
-			d.renameGroup("Security")
-			d.settings["layout"].(map[string]any)["Security"] = map[string]any{}
-		}, "Security: bookmark group reuses a service group name"},
+			d.renameGroup("Governance")
+			d.settings["layout"].(map[string]any)["Governance"] = map[string]any{}
+		}, "Governance: bookmark group reuses a service group name"},
 		{"unlisted group", func(d *document) { d.renameGroup("Unlisted Group") }, "Unlisted Group: bookmark group is not listed in settings.yaml layout"},
 		{"two group names", func(d *document) { d.bookmarks[0].(map[string]any)["Extra"] = d.entries() }, "bookmark group item 1 must map exactly one group name"},
 		{"two bookmark names", func(d *document) {

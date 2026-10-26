@@ -184,9 +184,7 @@ spec:
   hostnames:
     - retired-personal.platform.devantler.tech
 ---
-# The two groups Security is splitting into, as the platform's own routes will
-# use them. They must be accepted before those routes switch (Flux applies the
-# routes before this policy), so Security itself is still accepted meanwhile.
+# The two groups Security split into, as the platform's own routes use them.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -211,8 +209,20 @@ spec:
   hostnames:
     - policy-reporter.platform.devantler.tech
 ---
-# The group Business & Clients replaced. No route claims it, so the layout no
-# longer declares it and admission refuses it.
+# The groups those replaced. No route claims them any more, so the layout no
+# longer declares them and admission refuses them.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-security-group
+  namespace: openbao
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Security
+spec:
+  hostnames:
+    - retired-security.platform.devantler.tech
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
