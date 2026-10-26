@@ -7,7 +7,7 @@ metadata:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: OpenBao
     gethomepage.dev/description: Self-hosted secrets vault.
-    gethomepage.dev/group: Security
+    gethomepage.dev/group: Secrets Management
     gethomepage.dev/icon: https://raw.githubusercontent.com/openbao/openbao/main/ui/public/favicon.svg
     gethomepage.dev/href: https://vault.${domain}
     gethomepage.dev/pod-selector: app.kubernetes.io/name=openbao
