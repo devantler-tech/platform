@@ -230,6 +230,21 @@ exercises actual delivery to both aliases, unknown-address refusal, competing
 User/Group/MailingList ownership, stale snapshots, and omission/replay preserving
 the retained account and delivered mail. Deployment and DNS remain separate.
 
+## Deployment sequence
+
+Deliver the dedicated mail publisher's admission and node verification rules,
+together with exact-key credential seed/read permissions, in a prerequisite
+revision while production mail administration remains disabled. Verify the
+normal protected deployment and the exact declared rules on every node before a
+separate revision enables administration.
+
+The production pipeline reconciles applications before its full node configuration
+update. Combining the prerequisite with an application that already needs the new
+node rule makes that rollout wait on itself. Separate reviewed revisions preserve
+the existing deployment sequence and signer isolation without a manual node
+configuration change. Public mail activation and migration retain their separate
+acceptance requirements.
+
 ## Sources
 
 - [Pinned release](https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.27)
