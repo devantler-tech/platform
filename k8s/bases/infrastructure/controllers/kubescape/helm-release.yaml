@@ -334,6 +334,14 @@ spec:
     # scans against their limit despite spare node capacity. A 20:1 ratio gives
     # one core at the 50m floor without raising the idle request (#4389).
     kubevuln:
+      image:
+        # Upstream #946 fixes cross-namespace manifest references and refreshes
+        # cached summaries after image changes. v0.3.566 also preserves existing
+        # node-agent SBOMs when local generation is disabled (#1170). This digest
+        # is signed by the upstream main release workflow at source 45099c0;
+        # retain the chart and compatibility storage/profile APIs (#5403).
+        repository: quay.io/kubescape/kubevuln
+        tag: "v0.3.566@sha256:7fce339ce129227da00d32d7deb4dc2fa35284acf48cc3db433d853fa75ee97d"
       resources:
         requests:
           cpu: 50m
@@ -384,6 +392,50 @@ spec:
   postRenderers:
     - kustomize:
         patches:
+          # kubevuln v0.3.566 invalidates cached workload/namespace labels with
+          # informers. Chart 1.40.5 grants get only. Add read-only list/watch for
+          # precisely the informer resources so changed labels cannot leave an
+          # old exception selector decision cached. No new write or Secret access.
+          - target:
+              kind: ClusterRole
+              name: ^kubevuln$
+            patch: |
+              - op: add
+                path: /rules/-
+                value:
+                  apiGroups:
+                    - ""
+                  resources:
+                    - namespaces
+                    - pods
+                    - replicationcontrollers
+                  verbs:
+                    - list
+                    - watch
+              - op: add
+                path: /rules/-
+                value:
+                  apiGroups:
+                    - apps
+                  resources:
+                    - deployments
+                    - replicasets
+                    - statefulsets
+                    - daemonsets
+                  verbs:
+                    - list
+                    - watch
+              - op: add
+                path: /rules/-
+                value:
+                  apiGroups:
+                    - batch
+                  resources:
+                    - jobs
+                    - cronjobs
+                  verbs:
+                    - list
+                    - watch
           # The chart hard-codes a one-second liveness timeout. A full posture
           # scan can hold the scanner busy longer than that without wedging it:
           # production recorded one timeout during the daily scan while the pod
