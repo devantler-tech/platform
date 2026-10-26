@@ -1,0 +1,144 @@
+#!/bin/bash
+set -eu
+umask 077
+
+fail() {
+  printf '%s\n' 'EMAIL_CUSTODY_PREPARATION=FAIL' >&2
+  exit 1
+}
+
+mode=$EMAIL_CUSTODY_MODE
+case "$mode" in plan|copy) ;; *) fail ;; esac
+[ -n "$BAO_ADDR" ] || fail
+[ -f "$EMAIL_CUSTODY_TOKEN_FILE" ] || fail
+[ -d "$EMAIL_CUSTODY_WORK_DIR" ] || fail
+work=$(mktemp -d "$EMAIL_CUSTODY_WORK_DIR/email-credentials.XXXXXXXX") || fail
+trap 'rm -rf "$work"' 0
+trap 'exit 1' HUP INT TERM
+token=$(cat "$EMAIL_CUSTODY_TOKEN_FILE") || fail
+case "$token" in ''|*[!A-Za-z0-9._-]*) fail ;; esac
+printf 'X-Vault-Token: %s\nContent-Type: application/json\n' "$token" > "$work/headers"
+unset token
+
+# Headers and JSON bodies are files in private memory, never process arguments.
+# Disabling curl's user configuration also prevents accidental trace logging.
+request() {
+  request_method=$1
+  request_path=$2
+  request_input=$3
+  set -- --disable --silent --show-error --noproxy '*' \
+    --connect-timeout 5 --max-time 20 --max-filesize 1048576 \
+    --header "@$work/headers" --output "$work/response.json" \
+    --write-out '%{http_code}'
+  case "$request_method" in
+    GET) ;;
+    POST) set -- "$@" --request POST --data-binary "@$request_input" ;;
+    *) fail ;;
+  esac
+  status=$(curl "$@" "$BAO_ADDR/v1/$request_path" 2> "$work/request-error") || fail
+}
+
+read_record() {
+  record_path=$1
+  record_output=$2
+  : > "$record_output"
+  request GET "secret/data/$record_path" ''
+  case "$status" in
+    404) return 4 ;;
+    200) ;;
+    *) fail ;;
+  esac
+  # Preserve the complete data object, including any additional recovery fields.
+  # Invalid or unreadable credentials are not equivalent to an absent key.
+  # Refuse numeric extras rather than risk precision changes in JSON tooling.
+  if ! jq -ceS '.data.data | select(type == "object") |
+      select(all(..; type != "number")) |
+      select(.password | type == "string") |
+      select(.password | test("^[A-Za-z0-9]{40,128}$"))' \
+      "$work/response.json" > "$record_output" 2> "$work/json-error"; then
+    fail
+  fi
+}
+
+existing=0
+copied=0
+pending=0
+unseeded=0
+report() {
+  verdict=PLANNED
+  if [ "$unseeded" -gt 0 ]; then
+    verdict=UNSEEDED
+  elif [ "$mode" = copy ]; then
+    verdict=VERIFIED
+  fi
+  printf 'EMAIL_CUSTODY_PREPARATION=%s mode=%s existing=%s copied=%s pending=%s unseeded=%s\n' \
+    "$verdict" "$mode" "$existing" "$copied" "$pending" "$unseeded"
+}
+
+# A fresh installation may not have its KV mount yet. Report it explicitly
+# without creating passwords or mistaking absence for a verified migration.
+request GET sys/mounts ''
+[ "$status" = 200 ] || fail
+if ! jq -e '.data | type == "object"' "$work/response.json" > /dev/null 2> "$work/json-error"; then
+  fail
+fi
+if jq -e '.data["secret/"] == null' "$work/response.json" > /dev/null; then
+  unseeded=3
+  report
+  exit 0
+fi
+if ! jq -e '.data["secret/"] | .type == "kv" and .options.version == "2"' \
+    "$work/response.json" > /dev/null 2> "$work/json-error"; then
+  fail
+fi
+
+for account in admin maintainer agent; do
+  source_path=apps/private-mail/$account
+  destination_path=infrastructure/email/$account
+  source_present=false
+  destination_present=false
+  if read_record "$source_path" "$work/source.json"; then
+    source_present=true
+  else
+    [ "$?" = 4 ] || fail
+  fi
+  if read_record "$destination_path" "$work/destination.json"; then
+    destination_present=true
+  else
+    [ "$?" = 4 ] || fail
+  fi
+
+  if [ "$source_present" = false ]; then
+    # A populated destination without its source is not a proven migration.
+    [ "$destination_present" = false ] || fail
+    unseeded=$((unseeded + 1))
+    continue
+  fi
+  if [ "$destination_present" = true ]; then
+    cmp -s "$work/source.json" "$work/destination.json" || fail
+    existing=$((existing + 1))
+  elif [ "$mode" = plan ]; then
+    pending=$((pending + 1))
+  else
+    if ! jq -cn --slurpfile value "$work/source.json" \
+        '{options: {cas: 0}, data: $value[0]}' > "$work/create.json" 2> "$work/json-error"; then
+      fail
+    fi
+    request POST "secret/data/$destination_path" "$work/create.json"
+    creation_status=$status
+    case "$creation_status" in 200|204|400) ;; *) fail ;; esac
+    # Read back successful writes AND conditional-create races. Never replace
+    # a different destination or silently accept a lost/uncertain write.
+    read_record "$destination_path" "$work/destination.json" || fail
+    cmp -s "$work/source.json" "$work/destination.json" || fail
+    if [ "$creation_status" = 400 ]; then
+      existing=$((existing + 1))
+    else
+      copied=$((copied + 1))
+    fi
+  fi
+  read_record "$source_path" "$work/source-after.json" || fail
+  cmp -s "$work/source.json" "$work/source-after.json" || fail
+done
+report
+

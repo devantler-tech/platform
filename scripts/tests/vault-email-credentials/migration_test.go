@@ -1,10 +1,8 @@
 package emailcredentials_test
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 const syntheticToken = "test-only-root-token"
@@ -154,23 +150,15 @@ func runMigration(t *testing.T, fixture *apiFixture, mode string) (string, error
 
 func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 	t.Helper()
-	manifest, err := os.ReadFile(filepath.Join(repositoryRoot(), "k8s/bases/infrastructure/vault-config/config-map-email-credentials.yaml"))
+	script, err := os.ReadFile(filepath.Join(repositoryRoot(), "scripts/prepare-email-credentials.sh"))
 	if err != nil {
-		t.Fatal("missing declarative Email credential preparation", err)
-	}
-	var config struct{ Data map[string]string }
-	if err := yaml.Unmarshal(manifest, &config); err != nil {
-		t.Fatal(err)
-	}
-	script := config.Data["prepare-email-credentials.sh"]
-	if script == "" {
-		t.Fatal("missing executable credential preparation")
+		t.Fatal("missing canonical Email credential preparation", err)
 	}
 	dir := t.TempDir()
 	if err := os.Chmod(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	for name, content := range map[string]string{"prepare.sh": script, "token": syntheticToken} {
+	for name, content := range map[string]string{"prepare.sh": string(script), "token": syntheticToken} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -181,25 +169,7 @@ func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 		"EMAIL_CUSTODY_TOKEN_FILE=" + filepath.Join(dir, "token"),
 		"EMAIL_CUSTODY_WORK_DIR=" + dir,
 	}
-	command := exec.Command("/bin/sh", "-eu", filepath.Join(dir, "prepare.sh"))
-	if os.Getenv("EMAIL_CREDENTIAL_CONTAINER_TEST") == "1" {
-		// Linux CI runs the identical fixture through the exact deployed image.
-		// Bind only synthetic private inputs, and grant no container capabilities.
-		if runtime.GOOS != "linux" {
-			t.Fatal("native container proof requires the Linux CI host network")
-		}
-		args := []string{
-			"run", "--rm", "--network=host", "--read-only", "--cap-drop=ALL",
-			"--security-opt=no-new-privileges", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
-			"--mount", "type=bind,source=" + dir + ",target=" + dir,
-			"--entrypoint", "/bin/sh",
-		}
-		for _, value := range environment[1:] {
-			args = append(args, "--env", value)
-		}
-		args = append(args, deployedToolingImage(t), "-eu", filepath.Join(dir, "prepare.sh"))
-		command = exec.Command("docker", args...)
-	}
+	command := exec.Command("bash", "-eu", filepath.Join(dir, "prepare.sh"))
 	command.Env = environment
 	out, runErr := command.CombinedOutput()
 	if strings.Contains(string(out), syntheticToken) || strings.Contains(string(out), strings.Repeat("A", 48)) || strings.Contains(string(out), serverURL) {
@@ -213,33 +183,6 @@ func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 		t.Fatal("credential scratch material survived the operation")
 	}
 	return string(out), runErr
-}
-
-func deployedToolingImage(t *testing.T) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(repositoryRoot(), "k8s/bases/infrastructure/vault-config/job.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var job struct {
-		Spec struct {
-			Template struct {
-				Spec struct {
-					InitContainers []struct{ Name, Image string } `yaml:"initContainers"`
-				}
-			}
-		}
-	}
-	if err := yaml.Unmarshal(data, &job); err != nil {
-		t.Fatal(err)
-	}
-	for _, c := range job.Spec.Template.Spec.InitContainers {
-		if c.Name == "prepare-email-credentials" && strings.HasPrefix(c.Image, "docker.io/alpine/k8s:") && strings.Contains(c.Image, "@sha256:") {
-			return c.Image
-		}
-	}
-	t.Fatal("native proof must use the exact declared tooling image")
-	return ""
 }
 
 func TestPlanIsReadOnlyAndCopyPreservesEveryCurrentField(t *testing.T) {
@@ -331,101 +274,5 @@ func TestUnseededInstallationIsExplicitAndNeverCreatesCredentials(t *testing.T) 
 				t.Fatalf("fresh installation must report unseeded state: %v %s", err, out)
 			}
 		})
-	}
-}
-
-func TestDeclaredPreparationRunsReadOnlyWithPrivateMemoryScratch(t *testing.T) {
-	out, err := exec.Command("kubectl", "kustomize", filepath.Join(repositoryRoot(), "k8s/bases/infrastructure/vault-config")).CombinedOutput()
-	if err != nil {
-		t.Fatalf("configuration bundle must render: %v", err)
-	}
-	type volume struct {
-		Name     string
-		EmptyDir *struct {
-			Medium    string
-			SizeLimit string `yaml:"sizeLimit"`
-		} `yaml:"emptyDir"`
-	}
-	type container struct {
-		Name, Image  string
-		Command      []string
-		Env          []struct{ Name, Value string }
-		VolumeMounts []struct {
-			Name      string
-			MountPath string `yaml:"mountPath"`
-			ReadOnly  bool   `yaml:"readOnly"`
-		} `yaml:"volumeMounts"`
-		SecurityContext struct {
-			ReadOnlyRootFilesystem   bool  `yaml:"readOnlyRootFilesystem"`
-			RunAsNonRoot             bool  `yaml:"runAsNonRoot"`
-			AllowPrivilegeEscalation *bool `yaml:"allowPrivilegeEscalation"`
-		} `yaml:"securityContext"`
-	}
-	var foundConfig, foundContainer bool
-	decoder := yaml.NewDecoder(bytes.NewReader(out))
-	for {
-		var object struct {
-			Kind     string
-			Metadata struct{ Name string }
-			Spec     struct {
-				Template struct {
-					Spec struct {
-						InitContainers []container `yaml:"initContainers"`
-						Volumes        []volume
-					}
-				}
-			}
-		}
-		if err := decoder.Decode(&object); err == io.EOF {
-			break
-		} else if err != nil {
-			t.Fatal(err)
-		}
-		if object.Kind == "ConfigMap" && object.Metadata.Name == "vault-email-credentials" {
-			foundConfig = true
-		}
-		if object.Kind != "Job" || object.Metadata.Name != "vault-config" {
-			continue
-		}
-		for _, c := range object.Spec.Template.Spec.InitContainers {
-			if c.Name != "prepare-email-credentials" {
-				continue
-			}
-			foundContainer = true
-			if c.Image != deployedToolingImage(t) || !reflect.DeepEqual(c.Command, []string{"/bin/sh", "-eu", "/vault-config/email/prepare-email-credentials.sh"}) {
-				t.Fatal("preparation must execute the declared script with the existing pinned tooling image")
-			}
-			env := map[string]string{}
-			for _, v := range c.Env {
-				env[v.Name] = v.Value
-			}
-			if len(env) != 4 || env["EMAIL_CUSTODY_MODE"] != "plan" || env["EMAIL_CUSTODY_TOKEN_FILE"] != "/shared/root-token" || env["EMAIL_CUSTODY_WORK_DIR"] != "/work" {
-				t.Fatal("deployed preparation must only plan and reuse the existing private credential file")
-			}
-			if !c.SecurityContext.ReadOnlyRootFilesystem || !c.SecurityContext.RunAsNonRoot || c.SecurityContext.AllowPrivilegeEscalation == nil || *c.SecurityContext.AllowPrivilegeEscalation {
-				t.Fatal("preparation must preserve the restricted container boundary")
-			}
-			mounts := map[string]bool{}
-			for _, m := range c.VolumeMounts {
-				mounts[m.Name+":"+m.MountPath] = m.ReadOnly
-			}
-			if len(mounts) != 3 || !mounts["shared:/shared"] || !mounts["email-credentials:/vault-config/email"] {
-				t.Fatal("credential and script mounts must remain read only")
-			}
-			foundScratch := false
-			for _, v := range object.Spec.Template.Spec.Volumes {
-				if v.Name == "email-credential-work" && v.EmptyDir != nil && v.EmptyDir.Medium == "Memory" && v.EmptyDir.SizeLimit == "16Mi" {
-					if _, ok := mounts["email-credential-work:/work"]; ok {
-						foundScratch = true
-					}
-				}
-			}
-			if !foundScratch {
-				t.Fatal("credential scratch must use bounded memory-backed storage")
-			}
-		}
-	}
-	if !foundConfig || !foundContainer {
-		t.Fatal("declarative Email preparation is not wired into the configuration Job")
 	}
 }

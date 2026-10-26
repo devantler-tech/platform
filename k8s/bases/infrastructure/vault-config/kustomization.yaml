@@ -6,6 +6,5 @@ resources:
   - role.yaml
   - role-binding.yaml
   - job.yaml
-  - config-map-email-credentials.yaml
   - external-secret.yaml
   - cilium-network-policy.yaml

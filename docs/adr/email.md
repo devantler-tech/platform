@@ -86,13 +86,17 @@ infrastructure. Its credential destination is the `secret/` mount under
 `infrastructure/email/agent`. Retained namespace, datastore and image identifiers
 keep their existing `private-mail` names during this migration.
 
-The OpenBao configuration Job first runs the declared credential preparation in
-`plan` mode. It reads the current durable records under `apps/private-mail/`,
+The main-only **Verify Email Credential Custody** workflow runs the canonical
+`scripts/prepare-email-credentials.sh` in fixed `plan` mode. Dispatch it on `main`
+with confirmation `verify-email-credential-custody`. It reads the current durable records under `apps/private-mail/`,
 compares any existing destination, and reports pending copies without changing
-credentials or consumer paths. It uses the configuration Job's existing private
-credential file and bounded memory-backed scratch space; credentials and API
+credentials or consumer paths. It reuses the existing recovery credential over
+a loopback connection, with private memory-backed scratch space; credentials and API
 responses are never logged. Missing or unreadable data is distinguished from a
-valid plan, and a different destination fails closed.
+valid plan, and a different destination fails closed. The workflow rejects an
+unseeded or incomplete result and exposes only validated counters for all three
+records. It has no copy input and cannot activate migration. No credential-handling
+program is embedded in a Kubernetes ConfigMap or added to the configuration Job.
 
 After snapshot recovery has been verified, a separate reviewed revision may
 activate `copy` mode. Creation uses KV v2 compare-and-set with version zero and
@@ -328,7 +332,7 @@ the existing deployment sequence and signer isolation without a manual node
 configuration change. Public mail activation and migration retain their separate
 acceptance requirements.
 
-After the protected rollout, the dispatch-only **Verify Private Mail Storage
+After the protected rollout, the dispatch-only **Verify Email Storage
 Recovery** workflow checks the original failed deployment's ownership window.
 Run it from `main` with confirmation `verify-private-mail-storage-recovery`.
 It uses the existing production reader while holding the deployment lock, makes

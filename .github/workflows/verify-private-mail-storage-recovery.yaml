@@ -1,4 +1,4 @@
-name: Verify Private Mail Storage Recovery
+name: Verify Email Storage Recovery
 
 "on":
   workflow_dispatch:
