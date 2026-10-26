@@ -9,17 +9,20 @@ fail() {
   exit 1
 }
 [ "$#" -eq 0 ] || fail 'no arguments are accepted'
-[ "${ROLE:-}" = shared ] && [ "${BUCKET:-}" = platform-backups ] &&
-  [ "${PREFIX:-}" = cnpg/wedding-db ] &&
-  [ "${REMOVAL_CONFIRM:-}" = remove-wedding-shared-backups-4481 ] ||
+if [ "${ROLE:-}" != shared ] || [ "${BUCKET:-}" != platform-backups ] ||
+  [ "${PREFIX:-}" != cnpg/wedding-db ] ||
+  [ "${REMOVAL_CONFIRM:-}" != remove-wedding-shared-backups-4481 ]; then
   fail 'the exact shared location and retirement confirmation are required'
+fi
 
 work="${WORK_DIR:-/work}"
 [ -s "${work}/listing" ] || fail 'the current coverage listing is missing'
 # Consume and validate the complete bounded plan before the first write.
 head -n 10001 >"${work}/removal-keys"
 count="$(wc -l <"${work}/removal-keys" | tr -d ' ')"
-[ "${count}" -gt 0 ] && [ "${count}" -le 10000 ] || fail 'the object count is outside its reviewed bounds'
+if [ "${count}" -lt 1 ] || [ "${count}" -gt 10000 ]; then
+  fail 'the object count is outside its reviewed bounds'
+fi
 : >"${work}/removal-targets"
 while IFS= read -r key; do
   printf '%s\n' "${key}" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._-]*/(base|wals)/[A-Za-z0-9._/-]+$' || fail 'an object key is outside the catalogue layout'

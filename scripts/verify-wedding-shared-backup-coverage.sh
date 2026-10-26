@@ -8,7 +8,8 @@
 # that pointed at it, so nothing applies retention to it any more and every
 # holder of the shared backup credential can still read it. Removing it is
 # irreversible, so the decision needs current evidence that nothing would be
-# lost. This is that evidence, and it is all this does.
+# lost. The default command supplies that evidence; retirement is a separate,
+# explicitly confirmed main-only command.
 #
 # --confirm is READ ONLY. The separate --remove-confirmed path is restricted to
 # a confirmed, first-attempt main dispatch for #4481. It repeats this proof and
@@ -31,8 +32,9 @@
 #      the dedicated store's 30-day retention.
 #   5. Repeats step 1.
 #
-# Exit status: 0 covered; 1 refused, failed or not covered. Needs --confirm,
-# because it starts pods beside two production backup credentials.
+# Exit status: 0 covered/empty, or removal and fresh consumer backups verified;
+# 1 refused, failed or not covered. --confirm starts the read-only proof beside
+# two production backup credentials; --remove-confirmed uses the stronger gate.
 
 set -euo pipefail
 
