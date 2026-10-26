@@ -38,6 +38,9 @@ resources:
   # keep serving while it waits for the token.
   - external-dns/
   - vault-seed/
+  # Retain replacement snapshot storage before any Job starts consuming it.
+  # The original claim remains intact throughout recovery (#5376).
+  - vault-backup-recovery/
   # Prod-only FinOps: a Kyverno ClusterPolicy that biases pod scheduling toward
   # the static baseline workers and away from the autoscaler nodes, so the
   # cost-optimized `autoscale-cx*` pools stay idle and scale to zero. Lives in
