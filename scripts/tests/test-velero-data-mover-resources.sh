@@ -115,14 +115,20 @@ kubectl kustomize "${root_dir}/k8s/providers/hetzner/infrastructure/controllers"
   fail 'the production infrastructure controllers overlay did not render'
 
 hcloud_pvcs="$(
-  yq -r '
+  yq -N -r '
     select(.kind == "PersistentVolumeClaim" and .spec.storageClassName == "hcloud") |
     .metadata.namespace + "/" + .metadata.name
   ' "${rendered_infrastructure}" | sort
 )" || fail 'the production hcloud PVC inventory could not be read'
 readonly hcloud_pvcs
 
-[[ "${hcloud_pvcs}" == 'openbao/vault-snapshots' ]] ||
+# The replacement is deliberately unused until main owns its retained claim.
+# It has no independently-mirrored marker yet, so the existing labelled skip
+# rule below still exempts only the original snapshot cache.
+expected_hcloud_pvcs=$'openbao/vault-snapshots\nopenbao/vault-snapshots-recovery'
+readonly expected_hcloud_pvcs
+
+[[ "${hcloud_pvcs}" == "${expected_hcloud_pvcs}" ]] ||
   fail "the explicit production hcloud PVC inventory changed; found: ${hcloud_pvcs:-none}"
 
 independently_mirrored_pvcs="$(
