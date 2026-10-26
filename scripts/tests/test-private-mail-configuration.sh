@@ -302,8 +302,11 @@ native_cli update Domain "$domain_id" --file /proof/restore-alias-patch.json >"$
 
 # Seed a previously wider permission and an extra expression branch. Replay
 # must clear both maps rather than preserving keys absent from the new plan.
+# Also suspend the managed administrator: replay must restore its inherited
+# access, proved by the regular administrator's requests after serving starts.
 printf '%s\n' '{"@type":"upsert","object":"Domain","matchOn":["name"],"value":{"domain":{"name":"example.test"}}}' \
   '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"agents":{"@type":"User","name":"agents","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{"jmapEmailImport":true,"jmapEmailCreate":true}}}}}' \
+  '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"administrator":{"@type":"User","name":"operator","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{},"disabledPermissions":{}}}}}' \
   '{"@type":"update","object":"MtaStageRcpt","value":{"rewrite":{"match":{"9":{"if":"true","then":"'"'"'operator@example.test'"'"'"}}}}}' >"$scratch/wider.ndjson"
 native_cli apply --file /proof/wider.ndjson --json >"$scratch/wider-apply.jsonl" 2>"$scratch/wider-apply.err"
 prepare_plan "$scratch/replay.ndjson"
