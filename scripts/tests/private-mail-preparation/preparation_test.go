@@ -56,6 +56,15 @@ func sequence(t *testing.T, value any) []any {
 	return result
 }
 
+func stringField(t *testing.T, value map[string]any, key string) string {
+	t.Helper()
+	result, ok := value[key].(string)
+	if !ok {
+		t.Fatalf("expected string field %q, got %T", key, value[key])
+	}
+	return result
+}
+
 func object(t *testing.T, objects []map[string]any, kind, name string) map[string]any {
 	t.Helper()
 	for _, o := range objects {

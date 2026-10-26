@@ -40,8 +40,11 @@ spec:
               type: RuntimeDefault
             seLinuxOptions: {}
           volumeMounts:
+            # The startup configuration is a file; leave the TLS directory
+            # outside the read-only ConfigMap projection.
             - name: datastore
-              mountPath: /etc/stalwart
+              mountPath: /etc/stalwart/config.json
+              subPath: config.json
               readOnly: true
             - name: data
               mountPath: /var/lib/stalwart
@@ -95,7 +98,8 @@ spec:
             seLinuxOptions: {}
           volumeMounts:
             - name: datastore
-              mountPath: /etc/stalwart
+              mountPath: /etc/stalwart/config.json
+              subPath: config.json
               readOnly: true
             - name: data
               mountPath: /var/lib/stalwart

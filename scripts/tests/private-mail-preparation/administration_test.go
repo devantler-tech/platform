@@ -3,6 +3,7 @@ package preparation_test
 import (
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -39,7 +40,7 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	volumes := map[string]map[string]any{}
 	for _, item := range sequence(t, pod["volumes"]) {
 		v := mapping(t, item)
-		volumes[v["name"].(string)] = v
+		volumes[stringField(t, v, "name")] = v
 		if v["hostPath"] != nil {
 			t.Fatal("mail must not mount host files")
 		}
@@ -47,12 +48,12 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	initMounts, serverMounts := map[string]bool{}, map[string]bool{}
 	for _, item := range sequence(t, init["volumeMounts"]) {
 		m := mapping(t, item)
-		initMounts[m["name"].(string)] = true
+		initMounts[stringField(t, m, "name")] = true
 	}
 	for _, item := range sequence(t, server["volumeMounts"]) {
 		m := mapping(t, item)
-		serverMounts[m["name"].(string)] = true
-		v := volumes[m["name"].(string)]
+		serverMounts[stringField(t, m, "name")] = true
+		v := volumes[stringField(t, m, "name")]
 		if v["projected"] != nil || m["mountPath"] == "/etc/private-mail" {
 			t.Fatal("normal serving must not receive bootstrap passwords or settings")
 		}
@@ -71,11 +72,11 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 			t.Fatal("missing private inputs must prevent initialization")
 		}
 		for _, item := range sequence(t, secret["items"]) {
-			path := mapping(t, item)["path"].(string)
+			path := stringField(t, mapping(t, item), "path")
 			if paths[path] != "" {
 				t.Fatal("private input paths must be unique")
 			}
-			paths[path], _ = secret["name"].(string)
+			paths[path] = stringField(t, secret, "name")
 		}
 	}
 	if !reflect.DeepEqual(paths, map[string]string{
@@ -94,6 +95,38 @@ func TestAdministrationSeparatesInitializationAuthority(t *testing.T) {
 	}
 	if !ok || !regexp.MustCompile(`^ghcr\.io/devantler-tech/platform-private-mail-bootstrap@sha256:[a-f0-9]{64}$`).MatchString(image) || server["image"] != image {
 		t.Fatal("both processes must use the same immutable published bootstrap image")
+	}
+}
+
+// A projected ConfigMap directory cannot provide the missing mount points for
+// another volume beneath it. Check the relationship between rendered mounts,
+// rather than relying on a particular configuration or certificate filename.
+func TestAdministrationConfigMapDoesNotCoverAnotherVolume(t *testing.T) {
+	objects := render(t, "k8s/bases/apps/private-mail-administration")
+	sts := object(t, objects, "StatefulSet", "private-mail")
+	pod := mapping(t, mapping(t, mapping(t, sts["spec"])["template"])["spec"])
+	volumes := map[string]map[string]any{}
+	for _, item := range sequence(t, pod["volumes"]) {
+		volume := mapping(t, item)
+		volumes[stringField(t, volume, "name")] = volume
+	}
+	for _, group := range []string{"initContainers", "containers"} {
+		for _, item := range sequence(t, pod[group]) {
+			container := mapping(t, item)
+			mounts := sequence(t, container["volumeMounts"])
+			for _, item := range mounts {
+				mount := mapping(t, item)
+				if volumes[stringField(t, mount, "name")]["configMap"] == nil {
+					continue
+				}
+				parent := strings.TrimRight(stringField(t, mount, "mountPath"), "/") + "/"
+				for _, other := range mounts {
+					if strings.HasPrefix(stringField(t, mapping(t, other), "mountPath"), parent) {
+						t.Fatalf("container %q: ConfigMap directory covers another volume mount", stringField(t, container, "name"))
+					}
+				}
+			}
+		}
 	}
 }
 
@@ -129,7 +162,7 @@ func TestAdministrationExposesOnlyNormalManagement(t *testing.T) {
 			if p["protocol"] != "TCP" {
 				t.Fatal("listener denials must apply to TCP")
 			}
-			denied[p["port"].(string)] = true
+			denied[stringField(t, p, "port")] = true
 		}
 	}
 	if !reflect.DeepEqual(denied, map[string]bool{"18080": true, "1025": true, "1587": true, "1993": true}) {
