@@ -3852,5 +3852,11 @@ regressions reject 26 altered surfaces, including consumer-kind matching,
 side-effect expressions, changed patch paths and added evaluation fields;
 all other unevaluated CEL stays refused.
 
+The effective-policy CEL producer gate also requires each complete closed spec
+to equal its reviewed shape. Only patch token whitespace can vary, with escapes
+and whitespace inside quoted literals refused. Its two positives and 26
+schema-valid scope, condition, value-path, selector and evaluation ablations
+exercise the actual KSail validator; existing producer rules stay unchanged.
+
 These offline checks do not establish production deployment;
 the remaining policies in #4997 still need their own migrations.

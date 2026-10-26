@@ -905,6 +905,40 @@ assert_helm_rules_accept \
   "${helm_release_crds_mutation_fixture}" \
   'a MutatingPolicy that sets only the HelmRelease CRD strategy is the reviewed exception'
 
+# #5357: a complete reviewed default spec cannot affect egress or chart values.
+# The guard must still reject added CEL/evaluation fields and altered scopes.
+for suffix in enable-tests remediation-retries; do
+  default_fixture="$(cat "${root_dir}/k8s/bases/infrastructure/cluster-policies/flux/helm-release-${suffix}.yaml")"
+  assert_helm_rules_accept \
+    "helm-default-${suffix}" "${default_fixture}" \
+    'the complete reviewed Helm default must preserve effective-policy inspection'
+  for target in missing-kind source-kind no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-selector resource-names second-mutation; do
+    default_candidate="${test_temp_root}/default-${suffix}-${target}.yaml"
+    printf '%s\n' "${default_fixture}" >"${default_candidate}"
+    case "${target}" in
+      missing-kind) yq -i 'del(.spec.matchConditions[0])' "${default_candidate}" ;;
+      source-kind) yq -i '.spec.matchConditions[0].expression = "object.kind == '\''CiliumNetworkPolicy'\''"' "${default_candidate}" ;;
+      no-label) yq -i 'del(.spec.matchConstraints.objectSelector)' "${default_candidate}" ;;
+      condition-side-effect) yq -i '.spec.matchConditions[1].expression += " && http.Get(\"https://example.test\") != null"' "${default_candidate}" ;;
+      patch-side-effect) yq -i '.spec.mutations[0].jsonPatch.expression += " + resource.Get(\"v1\", \"configmaps\", \"default\", \"x\")"' "${default_candidate}" ;;
+      values-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("/spec/"; "/spec/values/")' "${default_candidate}" ;;
+      failure-policy) yq -i '.spec.failurePolicy = "Ignore"' "${default_candidate}" ;;
+      mutate-existing) yq -i '.spec.evaluation.mutateExisting.enabled = true' "${default_candidate}" ;;
+      target-constraints) yq -i '.spec.targetMatchConstraints.resourceRules = [{"apiGroups":["*"],"apiVersions":["*"],"operations":["UPDATE"],"resources":["*"]}]' "${default_candidate}" ;;
+      variables) yq -i '.spec.variables = [{"name":"effect","expression":"true"}]' "${default_candidate}" ;;
+      extra-selector) yq -i '.spec.matchConstraints.namespaceSelector.matchLabels.team = "unreviewed"' "${default_candidate}" ;;
+      resource-names) yq -i '.spec.matchConstraints.resourceRules[0].resourceNames = ["unreviewed"]' "${default_candidate}" ;;
+      second-mutation) yq -i '.spec.mutations += [.spec.mutations[0]]' "${default_candidate}" ;;
+    esac
+    changed_default_fixture="$(cat "${default_candidate}")"
+    [ "${changed_default_fixture}" != "${default_fixture}" ] || fail "${suffix}/${target} control did not change its policy"
+    assert_helm_rules_reject \
+      "helm-default-${suffix}-${target}" "${changed_default_fixture}" \
+      'an altered Helm default cannot inherit the reviewed approval' \
+      'reject-cel-policy-producers'
+  done
+done
+
 # The variants below edit a reviewed fixture with ${fixture/pattern/replacement}.
 # Bash 3.2 (macOS /bin/bash) keeps a backslash in the replacement half and bash 5
 # removes it, so the replacement halves carry none: a slash needs no escape
