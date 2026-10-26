@@ -147,10 +147,10 @@ for parent_result in 0 11; do
     if [ "$expected" = 0 ]; then expected=$worker_result; fi
     scratch="$scratch" PARENT_RESULT="$parent_result" WORKER_RESULT="$worker_result" \
       "$BASH" "$work/cleanup-driver" >"$work/cleanup-out" 2>"$work/cleanup-err" || result=$?
-    [ "$result" = "$expected" ] && [ ! -e "$scratch" ] && [ ! -s "$work/cleanup-out" ] || {
+    if [[ "$result" != "$expected" || -e "$scratch" || -s "$work/cleanup-out" ]]; then
       echo 'FAIL: caller cleanup lost exit status or shared scratch ordering' >&2
       exit 1
-    }
+    fi
     grep -qxF 'pending-worker diagnostic' "$work/cleanup-err" || {
       echo 'FAIL: caller cleanup discarded pending-worker diagnostics' >&2
       exit 1
