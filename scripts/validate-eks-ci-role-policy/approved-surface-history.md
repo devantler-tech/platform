@@ -3860,3 +3860,20 @@ exercise the actual KSail validator; existing producer rules stay unchanged.
 
 These offline checks do not establish production deployment;
 the remaining policies in #4997 still need their own migrations.
+
+## Snapshot recovery activation (#5376)
+
+The main-owned retained replacement now has its two production snapshot
+consumers. Its preparation marker and the corresponding Pending-readiness
+exception are removed. The PVC predicate requires a non-terminating Bound claim;
+the native CEL regression rejects even a stale prepared marker on a Pending claim.
+
+Only that readiness predicate changes in the infrastructure Kustomization.
+Canonical comparison preserves every other field and health predicate, including
+reconciliation waiting, immutable-conflict protection, sources and decryption.
+No subject, verb, resource grant, credential or reconciliation scope is added.
+The exact rendered fingerprint becomes
+`f0ab6f11187056f9cb49c97d4e726df7ba0ef5c80947cbe3c0018bdcf812b77f`;
+its surface-ledger entry becomes
+`0cfe2fc47fa5c5ad7e0b696476d22361dc09ab095913995aca08c301156b2c3e`.
+All other approvals and validation rules remain unchanged.

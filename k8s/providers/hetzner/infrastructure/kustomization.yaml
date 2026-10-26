@@ -215,6 +215,8 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
+  - path: vault-backup-recovery/patches/use-recovery-storage-for-daily-snapshot.yaml
   # UniFi exists only on Hetzner and applies Crossplane Managed Resources whose
   # default deletion policy cascades to live network objects. Keep its deliberate
   # non-pruning exception in this provider overlay so the shared admission policy

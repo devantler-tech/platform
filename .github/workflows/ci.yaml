@@ -182,6 +182,7 @@ jobs:
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-business-disclosure-reader.sh'
               - 'scripts/check-business-disclosure-reader/**'
+              - 'scripts/tests/vault-backup-recovery/**'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
@@ -3351,6 +3352,12 @@ jobs:
           key: kubeconform-schema-cache-v1-render-regressions-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+      - name: 🔐 Prove snapshot readback with pinned static tooling
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 5
+        env:
+          VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
+        run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
       - name: 🐤 Validate staged OpenBao standby repair
         if: needs.changes.outputs.k8s == 'true'
         run: |

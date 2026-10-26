@@ -103,8 +103,35 @@ spec:
                 secretName: vault-snapshot-r2
                 optional: true
             - name: mc-config
-              emptyDir: {}
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Mi
+            - name: mirror-tools
+              emptyDir:
+                medium: Memory
+                sizeLimit: 8Mi
           initContainers:
+            - name: install-mirror-tools
+              image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
+              command: ["/bin/sh", "-ec", "cp /bin/busybox /tools/busybox; /tools/busybox --install -s /tools"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+                seccompProfile:
+                  type: RuntimeDefault
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 8Mi
+                limits:
+                  cpu: 100m
+                  memory: 32Mi
+              volumeMounts:
+                - name: mirror-tools
+                  mountPath: /tools
             - name: snapshot
               image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
               securityContext:
@@ -210,6 +237,8 @@ spec:
               env:
                 - name: MC_CONFIG_DIR
                   value: /tmp/.mc
+                - name: REQUIRE_REMOTE_SNAPSHOT
+                  value: "false"
               resources:
                 requests:
                   cpu: 10m
@@ -227,25 +256,52 @@ spec:
                   readOnly: true
                 - name: mc-config
                   mountPath: /tmp/.mc
+                - name: mirror-tools
+                  mountPath: /tools
+                  readOnly: true
               command:
-                - /bin/sh
-                - -ec
+                - /tools/sh
+                - -euc
                 - |
-                  if [ ! -f /r2/access_key_id ]; then
-                    echo "vault-snapshot-r2 Secret not synced yet — skipping the"
-                    echo "off-cluster mirror. The local PVC snapshot above still ran."
+                  set -o pipefail
+                  umask 077
+                  fail() {
+                    printf 'VAULT_SNAPSHOT_REMOTE=FAIL stage=%s\n' "$1" >&2
+                    exit 1
+                  }
+                  case "$REQUIRE_REMOTE_SNAPSHOT" in true|false) ;; *) fail configuration ;; esac
+                  [ -d "$MC_CONFIG_DIR" ] || fail configuration
+                  if [ ! -s /r2/access_key_id ] || [ ! -s /r2/secret_access_key ]; then
+                    if [ "$REQUIRE_REMOTE_SNAPSHOT" = true ]; then
+                      fail credentials
+                    fi
+                    printf '%s\n' 'VAULT_SNAPSHOT_REMOTE=UNSEEDED'
                     exit 0
                   fi
                   mc alias set backup "${r2_endpoint}" \
-                    "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)"
-                  # Copy-only mirror: NO --remove, so an empty/recreated PVC can
-                  # never wipe the off-cluster history. Remote retention is
-                  # pruned by age instead, and only after a successful upload in
-                  # the same run (this container only starts when the snapshot
-                  # initContainer succeeded), so the newest snapshot always
-                  # survives the prune.
-                  mc mirror --overwrite /snapshots/ "backup/${r2_bucket}/openbao-snapshots/"
-                  mc rm --recursive --force --older-than 14d \
-                    "backup/${r2_bucket}/openbao-snapshots/" || true
-                  echo "Mirrored snapshots:"
-                  mc ls "backup/${r2_bucket}/openbao-snapshots/"
+                    "$(cat /r2/access_key_id)" "$(cat /r2/secret_access_key)" \
+                    > /dev/null 2>"$MC_CONFIG_DIR/error" || fail authentication
+                  remote="backup/${r2_bucket}/openbao-snapshots"
+                  # Copy-only: never remove remote history because a local volume is empty.
+                  mc mirror --overwrite /snapshots/ "$remote/" \
+                    > /dev/null 2>"$MC_CONFIG_DIR/error" || fail upload
+                  verified=0
+                  for snapshot in /snapshots/openbao-*.snap; do
+                    [ -e "$snapshot" ] || continue
+                    [ -f "$snapshot" ] && [ -s "$snapshot" ] && [ ! -L "$snapshot" ] || fail source
+                    name=$(/tools/basename "$snapshot") || fail source
+                    /tools/sha256sum < "$snapshot" > "$MC_CONFIG_DIR/expected.sha256" || fail local_hash
+                    # Hash an actual GET, not object metadata or an upload acknowledgement.
+                    # pipefail also rejects a GET that emits a full body before returning error.
+                    if ! mc cat "$remote/$name" 2>"$MC_CONFIG_DIR/error" |
+                        /tools/sha256sum > "$MC_CONFIG_DIR/actual.sha256"; then
+                      fail readback
+                    fi
+                    /tools/cmp -s "$MC_CONFIG_DIR/expected.sha256" "$MC_CONFIG_DIR/actual.sha256" || fail integrity
+                    verified=$((verified + 1))
+                  done
+                  [ "$verified" -gt 0 ] || fail source
+                  # Retention runs only after upload AND byte-for-byte readback succeeded.
+                  mc rm --recursive --force --older-than 14d "$remote/" \
+                    > /dev/null 2>"$MC_CONFIG_DIR/error" || fail retention
+                  printf 'VAULT_SNAPSHOT_REMOTE=VERIFIED count=%s\n' "$verified"

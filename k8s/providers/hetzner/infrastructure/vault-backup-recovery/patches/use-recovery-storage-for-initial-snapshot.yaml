@@ -1,0 +1,17 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-snapshot-init
+  namespace: openbao
+spec:
+  template:
+    spec:
+      volumes:
+        - name: snapshots
+          persistentVolumeClaim:
+            claimName: vault-snapshots-recovery
+      containers:
+        - name: mirror
+          env:
+            - name: REQUIRE_REMOTE_SNAPSHOT
+              value: "true"
