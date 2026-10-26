@@ -20,6 +20,16 @@ var iconPattern = regexp.MustCompile(`^[A-Za-z0-9]+(-[A-Za-z0-9]+)*(-#[0-9A-Fa-f
 var hrefPattern = regexp.MustCompile(`^https://\S+$`)
 var groupPattern = regexp.MustCompile(`(?m)^[\t ]*gethomepage\.dev/group:[\t ]*(.*)$`)
 
+// configFiles mirrors Homepage's src/skeleton. The ConfigMap is Homepage's
+// read-only config directory (HOMEPAGE_CONFIG_DIR in helm-release.yaml), and
+// Homepage exits when a file it expects is missing because it cannot copy the
+// skeleton in. Edits hot-reload into the live pods without a canary analysis,
+// so a dropped key would crash-loop production rather than fail a rollout.
+var configFiles = []string{
+	"bookmarks.yaml", "custom.css", "custom.js", "docker.yaml", "kubernetes.yaml",
+	"proxmox.yaml", "services.yaml", "settings.yaml", "widgets.yaml",
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout)) }
 
 func run(args []string, out io.Writer) (status int) {
@@ -53,6 +63,26 @@ func run(args []string, out io.Writer) (status int) {
 	if manifest == nil || !ok {
 		fmt.Fprintln(out, "::error::manifest and data must be YAML mappings")
 		return 2
+	}
+	var missing []string
+	for _, key := range configFiles {
+		body, ok := values[key].(string)
+		if !ok {
+			missing = append(missing, key)
+			continue
+		}
+		// Homepage accepts an empty YAML file; anything else must parse.
+		if strings.HasSuffix(key, ".yaml") && strings.TrimSpace(body) != "" {
+			var value any
+			if err := decode([]byte(body), &value); err != nil {
+				fmt.Fprintf(out, "::error::cannot parse %s: %s\n", key, err)
+				return 2
+			}
+		}
+	}
+	if len(missing) > 0 {
+		fmt.Fprintf(out, "::error::%s missing from %s; Homepage exits without every config file\n", strings.Join(missing, ", "), args[0])
+		return 1
 	}
 	parsed := make(map[string]any)
 	for _, key := range []string{"bookmarks.yaml", "settings.yaml", "services.yaml"} {

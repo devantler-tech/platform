@@ -13,7 +13,7 @@ the Go modules the commands use. All but the last take a few seconds.
 | Check                                                                             | What it catches                                                        |
 | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | [`validate-embedded-json`](validate-embedded-json/README.md)                      | Broken JSON inside a ConfigMap, which schema checks read as plain text. |
-| [`validate-homepage-bookmarks`](validate-homepage-bookmarks/README.md)            | Homepage links without HTTPS or an icon, and duplicate or colliding groups. |
+| [`validate-homepage-bookmarks`](validate-homepage-bookmarks/README.md)            | Homepage links without HTTPS or an icon, duplicate or colliding groups, and missing config files. |
 | [`validate-feature-flags`](validate-feature-flags/README.md)                      | Invalid feature-flag definitions.                                      |
 | [`validate-talos-kubernetes-compatibility`](validate-talos-kubernetes-compatibility/README.md) | A Kubernetes version the pinned Talos version does not support.        |
 | [`guard-bash-local-initialization`](guard-bash-local-initialization/README.md)    | Bash functions that read a local variable before setting it.           |

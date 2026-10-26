@@ -29,9 +29,12 @@ spec:
               # default (1) only exists for the instant before Flagger/KEDA
               # reconcile; Flux drift detection ignores /spec/replicas, so
               # neither controller is fought. See canary.yaml.
-              - op: add
-                path: /metadata/annotations/configmap.reloader.stakater.com~1reload
-                value: homepage
+              #
+              # Deliberately NO Reloader annotation. Config changes hot-reload
+              # (see the volumes below), and a Reloader restart would stamp the
+              # source pod template, which Flagger reads as a new revision: a
+              # canary analysis plus a rolling restart of the primary for every
+              # bookmark edit — the restart this setup exists to avoid.
               - op: add
                 path: /spec/strategy
                 value:
@@ -89,8 +92,8 @@ spec:
               - op: add
                 path: /spec/template/spec/containers/0/readinessProbe/timeoutSeconds
                 value: 5
-              # Graceful drain on termination. The release rolls often (helm
-              # revisions + reloader restarts) and the Service's ClientIP
+              # Graceful drain on termination. The release rolls on every
+              # promoted helm revision, and the Service's ClientIP
               # affinity (below) pins each auth-proxy pod to one homepage
               # replica. Without draining, a rolling pod stops serving the
               # instant it is SIGTERMed while auth-proxy is still routed to it,
@@ -164,15 +167,16 @@ spec:
     # restricted context verbatim and flips only readOnlyRootFilesystem to true
     # (dropping any field here would silently weaken the context).
     #
-    # Safe to make the root FS read-only: homepage's only runtime writes go to
-    # /app/config (boot-copied defaults + generated files, e.g. proxmox.yaml) and
-    # /app/config/logs (homepage.log) — and the chart's deployment template
-    # already hardcodes BOTH as writable `config`/`logs` emptyDir volumes
-    # (verified on the live prod pod). Everything else the app touches is either a
-    # read-only configMap subPath or /app/.next build artifacts written at
-    # image-build time; /app/.next/cache is never created at runtime, so no extra
-    # writable mount is needed. Flagger copies this pod template to
-    # homepage-primary, so the hardening propagates to the primary it manages.
+    # Safe to make the root FS read-only: homepage writes at runtime only to its
+    # config directory (a skeleton copy of any missing config file) and to its
+    # log file there. Both are ruled out below — HOMEPAGE_CONFIG_DIR points at a
+    # complete, read-only ConfigMap directory and LOG_TARGETS=stdout drops the
+    # file log — and the chart's hardcoded `config`/`logs` emptyDirs at
+    # /app/config stay writable regardless. Everything else the app touches is
+    # /app/.next build artifacts written at image-build time; /app/.next/cache is
+    # never created at runtime, so no extra writable mount is needed. Flagger
+    # copies this pod template to homepage-primary, so the hardening propagates
+    # to the primary it manages.
     securityContext:
       allowPrivilegeEscalation: false
       capabilities:
@@ -188,34 +192,40 @@ spec:
     config:
       allowedHosts:
         - ${domain}
+        # The Host header of the Canary's acceptance and load tests
+        # (canary.yaml). Homepage v2 validates the host on every route, not
+        # only /api/* as v1 did, so without this entry every canary analysis
+        # failed its pre-rollout check with HTTP 400 and nothing was promoted.
+        - homepage-canary.homepage
     ingress:
       enabled: false
+    # Config changes hot-reload, without a pod restart. Three things make that
+    # work end to end:
+    #   1. The ConfigMap is mounted as a whole directory. A subPath mount is a
+    #      copy taken at pod start and never receives ConfigMap updates.
+    #   2. The ConfigMap opts out of Flagger's config tracking (config-map.yaml),
+    #      so the primary mounts it directly instead of a `homepage-primary` copy
+    #      that only changes on a promotion — which also rolls every pod.
+    #   3. Homepage re-reads its config on each request, and the open page polls
+    #      /api/hash and reloads itself when the files change.
+    # A ConfigMap edit therefore reaches the live page within about a minute
+    # (the kubelet's volume sync). The trade-off: config changes skip the canary
+    # analysis, so CI's bookmark validator is their only gate.
+    #
+    # The directory is read-only, so it must hold EVERY file Homepage expects:
+    # a missing one makes it copy a skeleton in, which fails here and exits the
+    # process (checkAndCopyConfig). File logging would also write into it, so
+    # logs go to stdout only.
+    extraEnv:
+      - name: HOMEPAGE_CONFIG_DIR
+        value: /etc/homepage
+      - name: LOG_TARGETS
+        value: stdout
     volumes:
       - name: homepage-config
         configMap:
           name: homepage
     volumeMounts:
-      - mountPath: /app/config/custom.js
+      - mountPath: /etc/homepage
         name: homepage-config
-        subPath: custom.js
-      - mountPath: /app/config/custom.css
-        name: homepage-config
-        subPath: custom.css
-      - mountPath: /app/config/docker.yaml
-        name: homepage-config
-        subPath: docker.yaml
-      - mountPath: /app/config/settings.yaml
-        name: homepage-config
-        subPath: settings.yaml
-      - mountPath: /app/config/kubernetes.yaml
-        name: homepage-config
-        subPath: kubernetes.yaml
-      - mountPath: /app/config/widgets.yaml
-        name: homepage-config
-        subPath: widgets.yaml
-      - mountPath: /app/config/services.yaml
-        name: homepage-config
-        subPath: services.yaml
-      - mountPath: /app/config/bookmarks.yaml
-        name: homepage-config
-        subPath: bookmarks.yaml
+        readOnly: true
