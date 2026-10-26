@@ -1,8 +1,8 @@
-# Private mail: isolated preparation before activation
+# Company email: isolated preparation before activation
 
 ## Decision
 
-Use Stalwart Community on the existing platform for the private mail capability
+Use Stalwart Community on the existing platform for the company email capability
 requested in #5030. The preparation slice is #5288. Version v0.16.27 was released
 on 18 October 2026; its source is available under AGPL-3.0-only or the vendor's
 commercial alternative. This deployment uses the Community functionality and
@@ -13,7 +13,7 @@ Stalwart supplies SMTP, IMAP/JMAP, DKIM and sender authentication together. Its
 supported declarative path uses a small datastore configuration and the official
 CLI to reconcile the remaining settings through its management API. Keeping this
 capability on the existing platform avoids a separate mail-only repository or an
-unnecessary external processor of private message contents.
+unnecessary external processor of confidential company correspondence.
 
 Provider discovery was performed before selection: the Directory had no
 self-hosted-mail result. The server's exact release, licensing, source and
@@ -72,8 +72,8 @@ signer requirements.
 The administration Service and HTTPS route select only normal management port
 8080. The network policy admits only gateway ingress there, explicitly denies
 recovery and prepared mail ports from every source, and retains all-egress
-denial. The route registers a Stalwart Homepage entry at its authenticated
-administration path. Inclusion prepares browser evaluation; it does not prove
+denial. The route registers an Email Homepage entry in the Email section at its
+authenticated administration path. Inclusion prepares browser evaluation; it does not prove
 the Homepage entry, authentication or any production behavior until observed.
 Public mail, DNS migration, credential custody, history import and restoration
 remain separate activation requirements below.
@@ -106,7 +106,8 @@ listeners:
 - An inbox test with passing SPF/DKIM/DMARC, forged-reply and open-relay refusal,
   a refused unauthorized recipient, an exercised backup and restore, and the
   maintainer-performed credential handoff to the host's Keychain.
-- A visible Stalwart entry on Homepage at `https://platform.devantler.tech`,
+- A visible Email entry in the Email section on Homepage at
+  `https://platform.devantler.tech`,
   with a working link to the authenticated administration interface. Register
   it with the serving administration route and verify the tile and navigation
   in a real browser after activation. The recovery API stays internal.
