@@ -8,6 +8,7 @@ cat >"$work/driver" <<'DRIVER'
 set -euo pipefail
 source "$POOL_LIBRARY"
 fixture_pool_init "$FIXTURE" "${JOBS:-2}"
+# cleanup_driver joins the synthetic pool before its temporary test files can be removed.
 cleanup_driver() {
   local result=$?
   trap - EXIT
@@ -16,6 +17,7 @@ cleanup_driver() {
 }
 trap cleanup_driver EXIT
 trap fixture_pool_interrupt HUP INT TERM
+# work_case supplies controlled success, early failure, corruption and interruption scenarios.
 work_case() {
   local name=$1
   mkdir "$FIXTURE/active-$name"
@@ -128,6 +130,7 @@ sed -n '/^cleanup() {$/,/^}$/p' "$root/scripts/tests/test-data-product-ui-rollou
 cat >"$work/cleanup-driver" <<'CLEANUP'
 #!/usr/bin/env bash
 set -euo pipefail
+# fixture_pool_finish models a pending worker diagnostic while requiring scratch to remain present.
 fixture_pool_finish() {
   [ -d "$scratch" ] || return 98
   printf 'pending-worker diagnostic\n'

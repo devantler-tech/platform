@@ -53,6 +53,7 @@ func TestCanonicalSourceCIRegistration(t *testing.T) {
 	}
 }
 
+// canonicalCIWorkflow loads the actual workflow so every mutation starts from shipping source.
 func canonicalCIWorkflow(t *testing.T) workflow {
 	t.Helper()
 	body, err := os.ReadFile("../../.github/workflows/ci.yaml")
@@ -66,6 +67,7 @@ func canonicalCIWorkflow(t *testing.T) workflow {
 	return wf
 }
 
+// mutateCanonicalCommand changes exactly one registered command in its owning CI job.
 func mutateCanonicalCommand(t *testing.T, wf *workflow, command string, mutate func(*step)) {
 	t.Helper()
 	owner := canonicalCICommands[command]
@@ -83,6 +85,7 @@ func mutateCanonicalCommand(t *testing.T, wf *workflow, command string, mutate f
 	wf.Jobs[owner] = j
 }
 
+// mutateCanonicalFilter applies a control to the real source-selection configuration.
 func mutateCanonicalFilter(t *testing.T, wf *workflow, mutate func(map[string][]string)) {
 	t.Helper()
 	j := wf.Jobs["changes"]
@@ -109,6 +112,7 @@ func mutateCanonicalFilter(t *testing.T, wf *workflow, mutate func(map[string][]
 	wf.Jobs["changes"] = j
 }
 
+// TestCanonicalSourceCIRejectsLostOrNeutralizedCommands rejects absent or masked source regressions.
 func TestCanonicalSourceCIRejectsLostOrNeutralizedCommands(t *testing.T) {
 	for command := range canonicalCICommands {
 		for name, replacement := range map[string]string{
@@ -149,6 +153,7 @@ func TestCanonicalSourceCIRejectsLostOrNeutralizedCommands(t *testing.T) {
 	}
 }
 
+// TestCanonicalSourceCIRejectsLostSourceSelection protects every registered source trigger.
 func TestCanonicalSourceCIRejectsLostSourceSelection(t *testing.T) {
 	for _, required := range canonicalCIPaths {
 		for _, move := range []bool{false, true} {
@@ -184,6 +189,7 @@ func TestCanonicalSourceCIRejectsLostSourceSelection(t *testing.T) {
 	}
 }
 
+// TestCanonicalSourceCIRejectsGateAndFilterBypasses checks scheduling, dependency and shell boundaries.
 func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 	for name, mutate := range map[string]func(*workflow){
 		"missing guard job": func(w *workflow) { delete(w.Jobs, "validate-repository-guards") },
@@ -301,6 +307,7 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 	}
 }
 
+// TestCanonicalGeneratorCIRejectsLostRequiredJob requires generator success before deployment and CI.
 func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
 	for _, mutation := range []string{"missing", "conditional", "tolerated", "unsafe-shell", "deploy-prod", "ci-required-checks"} {
 		t.Run(mutation, func(t *testing.T) {
@@ -351,6 +358,7 @@ func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
 	}
 }
 
+// canonicalSourceCIContract verifies source coverage and the required path to production authorization.
 func canonicalSourceCIContract(wf workflow) error {
 	for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
 		guard, ok := wf.Jobs[name]

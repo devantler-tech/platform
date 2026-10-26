@@ -7,6 +7,7 @@ readonly script="${root_dir}/scripts/verify-data-product-ui-rollout.sh"
 source "${root_dir}/scripts/tests/lib/fixture-workers.lib.sh"
 scratch="$(mktemp -d)"
 fixture_pool_init "$scratch" 2
+# cleanup joins pending workers before deleting shared scratch and preserves the original failure.
 cleanup() {
   local result=$? workers_result=0
   trap - EXIT
@@ -357,6 +358,7 @@ chmod +x "${scratch}/bin/kubectl" "${scratch}/bin/curl"
 
 expected_urls=14
 # run_case exercises one fixture and checks its verdict, cleanup and sanitized output.
+# run_case drains independent mutations before exercising a foreground verifier scenario.
 run_case() {
   # Foreground cases and shared-input changes never overlap the two workers.
   # The child deliberately reads its own exported flag; the parent stays unset.
@@ -542,6 +544,7 @@ for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do ru
 run_case transfer-timeout fail transfer-timeout 15
 
 # mutate_case verifies that a dormant-profile mutation reaches snapshot rejection.
+# mutate_case_impl copies the immutable healthy seed and checks one isolated rollout mutation.
 mutate_case_impl() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
@@ -551,6 +554,7 @@ mutate_case_impl() {
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 fixture_pool_register mutate_case_impl
+# mutate_case schedules a rollout mutation under the bounded worker and receipt contract.
 mutate_case() { fixture_pool_submit mutate_case_impl "$@"; }
 
 mutate_case ui-deployment-missing-contract deployment-ui-kit '.spec.template.spec.containers[0].env |= map(select(.name!="UI_CONTRACT_ENABLED"))'
@@ -591,6 +595,7 @@ done
 run_case publisher-unplanned-route fail publisher-unplanned-route 15
 
 # publisher_mutation starts from the separately declared enabled profile.
+# publisher_mutation_impl checks one private copy of the publisher identity fixtures.
 publisher_mutation_impl() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
@@ -600,6 +605,7 @@ publisher_mutation_impl() {
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 fixture_pool_register publisher_mutation_impl
+# publisher_mutation schedules a publisher identity mutation without sharing writable fixtures.
 publisher_mutation() { fixture_pool_submit publisher_mutation_impl "$@"; }
 publisher_mutation declared-publisher-missing-deployment deployment-ui-kit '.spec.template.spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED"))'
 publisher_mutation declared-publisher-missing-pod pods '.items[4].spec.containers[0].env |= map(select(.name!="PUBLISHER_PREFLIGHT_ENABLED"))'
@@ -698,6 +704,7 @@ jq '.metadata.name="ksail-releases" | .metadata.uid="release-product-uid" |
 expected_urls=17
 run_case ksail pass
 # ksail_mutation requires a real snapshot-predicate rejection for each control.
+# ksail_mutation_impl checks one private copy of the KSail release-product fixtures.
 ksail_mutation_impl() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
@@ -707,6 +714,7 @@ ksail_mutation_impl() {
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 fixture_pool_register ksail_mutation_impl
+# ksail_mutation schedules an independent release-product mutation and completion receipt.
 ksail_mutation() { fixture_pool_submit ksail_mutation_impl "$@"; }
 ksail_mutation ksail-disabled-live helm '.spec.values.demoProduct.ksailReleases.enabled=false'
 ksail_mutation ksail-stale-product release-product '.status.observedGeneration=2'
@@ -737,6 +745,7 @@ expected_urls=14
 jq -e '.retaken == 1 and .settled == ["apps.metadata.labels"]' "${scratch}/active-settled-label/stdout" >/dev/null ||
   fail 'active-settled-label: the active report did not name the change that settled'
 # active_mutation verifies that an active-profile mutation reaches snapshot rejection.
+# active_mutation_impl checks one private copy of the active declaration and workload fixtures.
 active_mutation_impl() {
   local name=$1 key=$2 mutation=$3
   mkdir "${scratch}/$name"
@@ -746,6 +755,7 @@ active_mutation_impl() {
   [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
 }
 fixture_pool_register active_mutation_impl
+# active_mutation schedules an active-state mutation within the same strict worker bound.
 active_mutation() { fixture_pool_submit active_mutation_impl "$@"; }
 active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
 active_mutation active-false-connector product '.status.conditions[1].status="False"'

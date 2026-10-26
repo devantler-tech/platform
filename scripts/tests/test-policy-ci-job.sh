@@ -46,15 +46,16 @@ cat >"${work}/partition.jq" <<'JQ'
      "⚖️ Read Kyverno CLI version", "⚖️ Install Kyverno CLI"])
 JQ
 
+# partition_result distinguishes a rejected matrix from an unreadable routing observation.
 partition_result() {
   local input="$1" result=0
   jq -e -f "${work}/partition.jq" "$input" >"${work}/partition-result" || result=$?
   case "$result" in
-  0 | 1) return "$result" ;;
-  *)
-    echo 'FAIL: CI partition observation could not be evaluated' >&2
-    return 2
-    ;;
+    0 | 1) return "$result" ;;
+    *)
+      echo 'FAIL: CI partition observation could not be evaluated' >&2
+      return 2
+      ;;
   esac
 }
 
@@ -64,6 +65,7 @@ if ! partition_result "${work}/workflow.json"; then
   exit 1
 fi
 
+# reject_partition requires each broken routing to fail for a policy verdict, not a parser error.
 reject_partition() {
   local name="$1" mutation="$2" result=0
   jq "$mutation" "${work}/workflow.json" >"${work}/mutated.json"
@@ -131,6 +133,7 @@ jq -e '.[0].env == {
   POLICY_RESULT: "${{ needs.validate-cluster-policies.result }}"
 }' <<<"${step}" >/dev/null
 
+# check exercises the actual aggregate decision with controlled upstream job outcomes.
 check() {
   local event="$1" selected="$2" result="$3" expected="$4" actual=0
   EVENT_NAME="${event}" SELECTED="${selected}" POLICY_RESULT="${result}" \
@@ -190,7 +193,7 @@ for event in pull_request merge_group; do
     for result in success failure cancelled skipped pending unknown ''; do
       expected=1 actual=0
       case "$event:$selected:$result" in
-      pull_request:true:success | pull_request:false:skipped | merge_group:*:skipped) expected=0 ;;
+        pull_request:true:success | pull_request:false:skipped | merge_group:*:skipped) expected=0 ;;
       esac
       EVENT_NAME="$event" SELECTED="$selected" REGRESSION_RESULT="$result" \
         bash -e "${work}/regression-gate.sh" >"${work}/regression-output" 2>&1 || actual=$?

@@ -19,6 +19,7 @@ type tenantBindRole struct {
 	} `yaml:"rules"`
 }
 
+// tenantPullSecretCIContract requires all fixed policy suites and one enforced pull-secret check.
 func tenantPullSecretCIContract(wf workflow) error {
 	j, ok := wf.Jobs["validate-cluster-policies"]
 	needs, valid := j.needsOf()
@@ -66,6 +67,7 @@ func tenantPullSecretCIContract(wf workflow) error {
 	return nil
 }
 
+// TestTenantPullSecretAdmissionRemainsInCI rejects mutations that omit, misroute or mask admission.
 func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 	wf := canonicalCIWorkflow(t)
 	if err := tenantPullSecretCIContract(wf); err != nil {
@@ -139,6 +141,7 @@ func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 	}
 }
 
+// TestPolicyMatrixRequiresSafeEffectiveShells checks failure propagation and shell-default precedence.
 func TestPolicyMatrixRequiresSafeEffectiveShells(t *testing.T) {
 	for _, scope := range []string{"step", "job", "workflow"} {
 		t.Run(scope, func(t *testing.T) {
@@ -193,6 +196,7 @@ func TestPolicyMatrixRequiresSafeEffectiveShells(t *testing.T) {
 	}
 }
 
+// TestWorkflowParserAcceptsUnrelatedExpressionMatrix keeps valid unrelated workflows parseable.
 func TestWorkflowParserAcceptsUnrelatedExpressionMatrix(t *testing.T) {
 	const source = `on: pull_request
 jobs:
