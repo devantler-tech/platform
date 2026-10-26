@@ -86,8 +86,15 @@ data:
       Observability:
         # `coroot` is not in any icon set Homepage resolves; use an MDI icon.
         icon: mdi-chart-line
-      Security:
-        icon: mdi-shield-lock
+      # Right after Observability: Umami is the other "how is it doing" view,
+      # for the sites rather than the cluster.
+      Analytics:
+        icon: si-umami
+      Secrets Management:
+        icon: mdi-key-chain
+      # Policy and compliance posture: what is allowed to run, and how it scores.
+      Governance:
+        icon: mdi-scale-balance
       Diagnostics:
         icon: mdi-stethoscope
       Device Management:
@@ -109,14 +116,17 @@ data:
         icon: mdi-home-automation
       Finance:
         icon: mdi-finance
-      Analytics:
-        icon: si-umami
       Data:
         icon: mdi-database-search
-      Business:
+      # The company site first, then the client projects hosted for it.
+      Business & Clients:
         icon: mdi-briefcase
       Products:
         icon: mdi-book-open-page-variant
+      # TRANSITIONAL — retire once the ascoachingogvaner tenant route names
+      # Business & Clients. A route naming a group missing from the Kyverno
+      # allow-list is rejected at admission, so the group must stay declared
+      # until no route claims it.
       Clients:
         icon: mdi-briefcase-account
       Personal:
@@ -134,14 +144,14 @@ data:
         icon: mdi-code-braces-box
       Supply Chain:
         icon: mdi-shield-search
-      Kubernetes Reference:
-        icon: si-kubernetes-#326CE5
       Package Registries:
         icon: mdi-package-variant-closed
       Learning & Reference:
         icon: mdi-school
-      Media:
+      Streaming:
         icon: mdi-play-circle-outline
+      Social Media:
+        icon: mdi-account-group
   kubernetes.yaml: |
     mode: cluster
     gateway: true
@@ -220,16 +230,21 @@ data:
             href: https://enablebanking.com
             description: Open-banking connections and consents.
     # The business site and the product documentation sites are served by
-    # GitHub Pages, not this cluster, so they are listed statically. Business is
-    # the company site; Products holds one documentation site per product. Client
-    # and personal sites are discovered from gethomepage.dev annotations on tenant
-    # HTTPRoutes. The KSail operator running in this cluster stays under
+    # GitHub Pages, not this cluster, so they are listed statically. Business &
+    # Clients holds the company site followed by the client projects, which are
+    # discovered from gethomepage.dev annotations on tenant HTTPRoutes; Products
+    # holds one documentation site per product. Personal sites are discovered the
+    # same way. The KSail operator running in this cluster stays under
     # Kubernetes, from its own route.
-    - Business:
+    - Business & Clients:
+        # Homepage sorts a group by weight, then name. Discovered services weigh
+        # 0 by default and static ones 100, 200, …, so without this the client
+        # projects would sort ahead of the company site.
         - devantler.tech:
             icon: mdi-web
             href: https://devantler.tech
             description: Business site — products, services, guides and documentation.
+            weight: -1
     - Products:
         - KSail Docs:
             icon: https://ksail.devantler.tech/favicon.svg
@@ -243,7 +258,7 @@ data:
     # Umami's Flagger-generated HTTPRoute (k8s/bases/apps/umami/canary.yaml,
     # spec.service.apex.annotations).
   # Bookmarks are grouped by WHAT YOU GO THERE TO DO, matching how services.yaml
-  # and the settings.yaml layout already group by function (Security, Cloud,
+  # and the settings.yaml layout already group by function (Governance, Cloud,
   # Network, Finance, …) rather than by vendor. A console that serves several
   # purposes is therefore split into its specific product views, each in the
   # group for that purpose, never collected under a vendor group: GitHub's repos,
@@ -252,7 +267,7 @@ data:
   # Registries, and its Actions metrics under the Observability service group.
   #
   # Group names are deliberately DISTINCT from the service group names in
-  # settings.yaml (Security, Kubernetes, Finance, …). Homepage renders services
+  # settings.yaml (Governance, Kubernetes, Finance, …). Homepage renders services
   # and bookmarks as separate sections, so reusing a name paints the same heading
   # twice on one page with different contents under each.
   bookmarks.yaml: |
@@ -307,16 +322,8 @@ data:
         - Renovate:
             - icon: si-renovate-#007fa0
               href: https://developer.mend.io
-    - Kubernetes Reference:
-        - ArtifactHUB:
-            - icon: si-artifacthub-#417598
-              href: https://artifacthub.io
-        - CRD Docs:
-            - icon: si-kubernetes-#326CE5
-              href: https://doc.crds.dev
-        - Network Policy Editor:
-            - icon: si-kubernetes-#326CE5
-              href: https://editor.networkpolicy.io
+    # Registries for every kind of package the portfolio consumes or publishes:
+    # container images, Helm charts, NuGet packages and AI agent skills.
     - Package Registries:
         - GitHub Packages:
             - icon: si-github-#181717
@@ -324,9 +331,15 @@ data:
         - Docker Hub:
             - icon: docker
               href: https://hub.docker.com
+        - ArtifactHUB:
+            - icon: si-artifacthub-#417598
+              href: https://artifacthub.io
         - NuGet:
             - icon: si-nuget-#1088d6
               href: https://www.nuget.org
+        - skills.sh:
+            - icon: mdi-certificate-outline
+              href: https://skills.sh
     - Learning & Reference:
         - KodeKloud:
             - icon: mdi-school-outline
@@ -334,13 +347,7 @@ data:
         - Killercoda:
             - icon: mdi-console
               href: https://killercoda.com
-        - skills.sh:
-            - icon: mdi-certificate-outline
-              href: https://skills.sh
-        - LLM Stats:
-            - icon: mdi-chart-bar
-              href: https://llm-stats.com
-    - Media:
+    - Streaming:
         - YouTube:
             - icon: si-youtube-#FF0000
               href: https://youtube.com
@@ -350,6 +357,7 @@ data:
         - Gramaton:
             - icon: mdi-movie-open-play-outline
               href: https://gramaton.io
+    - Social Media:
         - Reddit:
             - icon: si-reddit-#FF4500
               href: https://reddit.com

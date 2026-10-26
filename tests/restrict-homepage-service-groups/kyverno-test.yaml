@@ -15,8 +15,11 @@ results:
     resources:
       - observability/declared-group
       - crossview/infrastructure-as-code-group
+      - client-site/business-and-clients-group
       - client-site/clients-group
       - personal-site/personal-group
+      - openbao/secrets-management-group
+      - policy-reporter/governance-group
     kind: HTTPRoute
     result: pass
 
@@ -30,6 +33,8 @@ results:
       - whoami/wrong-case-group
       - client-site/retired-customer-sites-group
       - personal-site/retired-personal-sites-group
+      - openbao/retired-security-group
+      - client-site/retired-business-group
     kind: HTTPRoute
     result: fail
 
