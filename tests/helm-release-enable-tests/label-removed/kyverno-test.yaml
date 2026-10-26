@@ -9,7 +9,6 @@ resources:
 variables: values.yaml
 results:
   - policy: helm-release-enable-tests
-    rule: enable-helm-tests
     resources:
       - controllers/removed
       - controllers/disabled

@@ -1,4 +1,4 @@
-# Pin the legacy output before migrating this policy (#4997).
+# Opted-in Helm releases receive these defaults without changing other settings (#4997).
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
@@ -9,7 +9,6 @@ resources:
   - resources.yaml
 results:
   - policy: helm-release-remediation-retries
-    rule: set-remediation-retries
     resources:
       - controllers/enabled-empty
       - controllers/enabled-existing
@@ -20,14 +19,12 @@ results:
     result: pass
     patchedResources: patched-resources.yaml
   - policy: helm-release-remediation-retries
-    rule: set-remediation-retries
     resources:
       - controllers/unlabelled
       - controllers/disabled
     kind: HelmRelease
     result: skip
   - policy: helm-release-remediation-retries
-    rule: set-remediation-retries
     resources:
       - controllers/wrong-kind
     kind: ConfigMap

@@ -233,6 +233,7 @@ jobs:
               - 'scripts/tests/test-arc-controller-availability.sh'
               - 'scripts/validate-kyverno-fixture-evaluation.sh'
               - 'scripts/tests/test-validate-kyverno-fixture-evaluation.sh'
+              - 'scripts/tests/test-helm-release-mutation-scope.sh'
               - 'scripts/tests/test-policy-ci-job.sh'
               # Every kyverno fixture, so a change to one alone still runs kyverno test
               # and the fixture guard.
@@ -1731,6 +1732,8 @@ jobs:
           shellcheck scripts/validate-kyverno-fixture-evaluation.sh scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/tests/test-validate-kyverno-fixture-evaluation.sh
           bash scripts/validate-kyverno-fixture-evaluation.sh tests
+          shellcheck scripts/tests/test-helm-release-mutation-scope.sh
+          bash scripts/tests/test-helm-release-mutation-scope.sh
           shellcheck scripts/tests/test-tenant-webapp-boundary.sh
           bash scripts/tests/test-tenant-webapp-boundary.sh
           shellcheck scripts/tests/test-webapp-container-security.sh

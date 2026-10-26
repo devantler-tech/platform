@@ -9,7 +9,6 @@ resources:
 variables: values.yaml
 results:
   - policy: helm-release-remediation-retries
-    rule: set-remediation-retries
     resources:
       - controllers/removed
       - controllers/disabled
