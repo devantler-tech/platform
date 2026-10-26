@@ -574,6 +574,12 @@ while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
   if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
+    if [[ "$profile" == product-docs ]]; then
+      case "$identity" in
+        *@0c7b6c3509b73adbc7537e030935bb01987e625b) expected=reject ;;
+        *@2df24600b1113e291b87e300b91e59c160446134) expected=accept ;;
+      esac
+    fi
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     if [ "$result" = "$expected" ]; then
@@ -584,6 +590,8 @@ while IFS=$'\t' read -r profile file selector; do
   done <<'IDENTITIES'
 accept	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
 accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v7.23.0
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@main
@@ -598,7 +606,7 @@ reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.y
 IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
-node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image | test("^ghcr[.]io/devantler-tech/[*]$")).keyless.subjectRegex
 generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
@@ -630,7 +638,7 @@ reject	https://github.com/another-org/.github/.github/workflows/publish-app.yaml
 IDENTITIES
 done <<'PROFILES'
 admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml	.spec.attestors[] | select(.name == "publishapp").cosign.keyless.identities[0].subjectRegExp
-node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
+node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image | test("^ghcr[.]io/devantler-tech/[*]$")).keyless.subjectRegex
 generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 

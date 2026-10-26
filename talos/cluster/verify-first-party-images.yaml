@@ -191,6 +191,12 @@ rules:
   # two reviewed maintained publisher revisions during the v8 transition (#5213).
   # Mutable refs, tags and other maintained commits are refused, as in the app
   # admission policy.
+  # #5377: this reviewed publisher transition applies only to the exact KHoist
+  # image repository. First-match ordering preserves all other app boundaries.
+  - image: ghcr.io/devantler-tech/khoist
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(2df24600b1113e291b87e300b91e59c160446134|467f07582436a26b62cf4aa756423512f85ba0c0))$
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
