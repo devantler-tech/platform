@@ -1,0 +1,17 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: helm-release-enable-tests-label-removed
+policies:
+  - ../../../k8s/bases/infrastructure/cluster-policies/flux/helm-release-enable-tests.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: helm-release-enable-tests
+    rule: enable-helm-tests
+    resources:
+      - controllers/removed
+      - controllers/disabled
+    kind: HelmRelease
+    result: skip

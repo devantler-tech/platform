@@ -1,0 +1,115 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+  name: enabled-empty
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+  test:
+    enable: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+  name: enabled-existing
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+  test:
+    enable: true
+    ignoreFailures: true
+  values:
+    retained: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+  name: enabled-one-parent
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+  test:
+    enable: true
+    ignoreFailures: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+  name: enabled-null-parents
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+  test:
+    enable: true
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: unlabelled
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: disabled
+  name: disabled
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+---
+apiVersion: v1
+data:
+  retained: "yes"
+kind: ConfigMap
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+  name: wrong-kind
+  namespace: controllers

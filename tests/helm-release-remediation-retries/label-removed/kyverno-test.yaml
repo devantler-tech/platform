@@ -1,0 +1,17 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: helm-release-remediation-retries-label-removed
+policies:
+  - ../../../k8s/bases/infrastructure/cluster-policies/flux/helm-release-remediation-retries.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+results:
+  - policy: helm-release-remediation-retries
+    rule: set-remediation-retries
+    resources:
+      - controllers/removed
+      - controllers/disabled
+    kind: HelmRelease
+    result: skip
