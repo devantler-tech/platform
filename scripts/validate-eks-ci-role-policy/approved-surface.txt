@@ -424,7 +424,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 0184f1f2d65811dea0626800e786ff
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
 
-source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation 621428fc92599ef4d1a7649f965527c246eda606c726ebd92e01fe539b19f17e
+source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation c5d5b45f56c3aedffa33854bc8542cb08b07d9b3eaaa492232981d6f3e74d121
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 

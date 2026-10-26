@@ -1200,7 +1200,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 9 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 10 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
@@ -1209,10 +1209,11 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	analysisAttestorValid := false
 	warZoneAttestorValid := false
 	mailAttestorValid := false
+	khoistAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" && name != "publishkhoist" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1237,6 +1238,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
 		case "publishprivatemail":
 			mailAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-private-mail-bootstrap\\.yaml@refs/heads/main$"
+		case "publishkhoist":
+			khoistAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}|\\.github/\\.github/workflows/publish-app\\.yaml@(2df24600b1113e291b87e300b91e59c160446134|467f07582436a26b62cf4aa756423512f85ba0c0))$"
 		}
 	}
 	validations, _ := spec["validations"].([]any)
@@ -1252,10 +1255,15 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesWarZone := false
 	genericExcludesMail := false
 	dedicatedRoutesMail := false
+	genericExcludesKHoist := false
+	dedicatedRoutesKHoist := false
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesKHoist = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/khoist'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/khoist:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/khoist@')")
 			genericExcludesMail = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
@@ -1305,8 +1313,14 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
 		}
+		if strings.Contains(expression, "attestors.publishkhoist") {
+			dedicatedRoutesKHoist = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/khoist'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/khoist:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/khoist@')")
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!khoistAttestorValid || !genericExcludesKHoist || !dedicatedRoutesKHoist ||
 		!mailAttestorValid || !genericExcludesMail || !dedicatedRoutesMail ||
 		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||

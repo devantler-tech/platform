@@ -164,6 +164,7 @@ readonly kubescape_node_agent_pattern='ghcr.io/devantler-tech/platform-kubescape
 readonly coroot_node_agent_pattern='ghcr.io/devantler-tech/platform-coroot-node-agent'
 readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
+readonly khoist_pattern='ghcr.io/devantler-tech/khoist'
 readonly app_pattern='ghcr.io/devantler-tech/*'
 fixture_rules_json="$(yq -o=json '.rules' "${root_dir}/talos/cluster/verify-first-party-images.yaml" | jq '
   map({imagePattern: .image, skip: (.skip // false), deny: (.deny // false),
@@ -222,7 +223,8 @@ write_healthy_rules() {
     resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
     resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
     resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-    resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${khoist_pattern}"
+    resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -248,7 +250,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '9 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '10 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
@@ -293,7 +295,8 @@ write_node driftrules
   resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
   resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
   resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${khoist_pattern}"
+  resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules
@@ -351,6 +354,27 @@ mv "${work_dir}/changed-rules.json" "${mail_rules}"
 status=0
 output="$(run_script TALOS_NODES=mailsignerdrift 2>&1)" || status=$?
 [[ "${status}" -eq 1 ]] || fail 'ordinary app signer must not satisfy the mail route'
+
+# KHoist requires its independently reviewed route, not the shared app signer.
+healthy_node oldkhoistpolicy
+khoist_rules="${fixtures}/oldkhoistpolicy/resources/${rules_type}"
+jq -s --arg pattern "${khoist_pattern}" 'map(select(.spec.imagePattern != $pattern))[]' \
+  "${khoist_rules}" >"${work_dir}/changed-rules.json"
+mv "${work_dir}/changed-rules.json" "${khoist_rules}"
+status=0
+output="$(run_script TALOS_NODES=oldkhoistpolicy 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'missing exact KHoist route must fail'
+require_text "${output}" 'declared rule set' 'missing KHoist route must name policy drift'
+
+healthy_node khoistsignerdrift
+khoist_rules="${fixtures}/khoistsignerdrift/resources/${rules_type}"
+jq -s --arg pattern "${khoist_pattern}" --argjson verifier "${app_verifier}" \
+  'map(if .spec.imagePattern == $pattern then .spec.keylessVerifier = $verifier else . end)[]' \
+  "${khoist_rules}" >"${work_dir}/changed-rules.json"
+mv "${work_dir}/changed-rules.json" "${khoist_rules}"
+status=0
+output="$(run_script TALOS_NODES=khoistsignerdrift 2>&1)" || status=$?
+[[ "${status}" -eq 1 ]] || fail 'ordinary app signer must not satisfy the KHoist route'
 
 # A previously healthy six-rule fleet cannot clear activation of the new zone.
 # The existing app catch-all is present, but uses the wrong signer for this image.

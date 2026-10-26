@@ -3860,3 +3860,29 @@ exercise the actual KSail validator; existing producer rules stay unchanged.
 
 These offline checks do not establish production deployment;
 the remaining policies in #4997 still need their own migrations.
+
+## 2026-10-26 — Approve KHoist's current immutable publisher
+
+For #5377, the current KHoist documentation source accepts the reviewed maintained
+publisher `2df24600b1113e291b87e300b91e59c160446134`, retaining
+`467f07582436a26b62cf4aa756423512f85ba0c0` and its original full-commit compatibility.
+It retires `0c7b6c3509b73adbc7537e030935bb01987e625b` for this consumer alone. The
+complete workflow/helper closure and pinned hardener update were inspected.
+Independent signature verification of the current source manifest and deployed
+image succeeded using the retained alternatives before retiring that revision.
+
+Against `f45da03f04531fc2b12f64f14248d02738f22193`, the authorization ledger changes
+only `source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documentation`:
+`621428fc92599ef4d1a7649f965527c246eda606c726ebd92e01fe539b19f17e` becomes
+`c5d5b45f56c3aedffa33854bc8542cb08b07d9b3eaaa492232981d6f3e74d121`.
+Its artifact URL, path, credentials and reconciliation settings are unchanged.
+The complete-policy CEL and first matching node-rule controls confine the new
+publisher to the exact KHoist image repository; other consumers and the Tenant
+constructor retain their existing authority. The matcher inventory records both
+the unchanged shared matcher and this new dedicated matcher. Runtime liveness
+fixtures require all ten exact ordered routes, including KHoist's own signer.
+
+The genuine observation generator/writer refreshes all six consumers and records
+the already verified business-site source as a published binding, with identical
+output on repetition. This record grants no portal activation, customer enrollment
+or application reconciliation; deployment still requires protected review and CI.
