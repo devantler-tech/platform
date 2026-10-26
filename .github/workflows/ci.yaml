@@ -995,16 +995,6 @@ jobs:
           shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/remove-wedding-shared-backup-pod.sh scripts/verify-shared-backup-consumers.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
           bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
 
-      # The Crossview, Headlamp and Backstage leftovers, including retained
-      # database volumes, are deleted on this script's word, and deleted data
-      # cannot be restored. These cases keep an undeployed removal, a foreign
-      # object, attached or unrelated storage, a failed read or a survivor from
-      # passing.
-      - name: 🧹 Validate the unused-app retirement
-        run: |
-          shellcheck scripts/retire-unused-apps.sh scripts/tests/test-retire-unused-apps.sh
-          bash scripts/tests/test-retire-unused-apps.sh
-
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.

@@ -692,6 +692,21 @@ spec:
                 echo "WARNING: secret/infrastructure/velero/repo is not populated yet -- leaving the old copy at secret/infrastructure/backup/velero-repo in place until the PushSecret has synced."
               fi
 
+              # --- 1g. Retire Crossview's generated credentials ---
+              # Crossview, its retained database and their storage were deleted
+              # by the explicit retirement (#2496), so nothing can need these
+              # credentials any more. Their PushSecrets never delete the remote
+              # copies, so destroy every version plus the metadata here.
+              # Idempotent: a later run finds nothing to remove.
+              for retired in apps/crossview/db apps/crossview/app apps/crossview/admin; do
+                if bao kv metadata get -mount=secret "$retired" >/dev/null 2>&1; then
+                  echo "Retiring secret/$retired..."
+                  bao kv metadata delete -mount=secret "$retired"
+                else
+                  echo "No secret at secret/$retired (already retired)."
+                fi
+              done
+
               # --- 2. Enable Kubernetes auth ---
               if ! bao auth list -format=json | grep -q '"kubernetes/"'; then
                 echo "Enabling Kubernetes auth method..."
@@ -894,18 +909,9 @@ spec:
               }
               POLICY
 
-              # crossview reads its bundled-Postgres password, app session secret,
-              # and break-glass admin password from OpenBao via the shared
-              # `external-secrets` ClusterSecretStore role (apps/crossview/{db,app,
-              # admin}); the values are generated and seeded by
-              # infrastructure/vault-seed. (Its OIDC client secret is read from the
-              # shared infrastructure/oidc/dex path via infra-oidc-readonly, also on
-              # that role — no crossview-specific grant needed.)
-              bao policy write app-crossview-readonly - <<'POLICY'
-              path "secret/data/apps/crossview/*" {
-                capabilities = ["read"]
-              }
-              POLICY
+              # Crossview was removed from the platform; drop its retired read
+              # policy. Deleting an absent policy succeeds, so re-runs are no-ops.
+              bao policy delete app-crossview-readonly
 
               # actual-budget reads its Enable Banking bank-sync credentials from
               # OpenBao via the shared `external-secrets` ClusterSecretStore role
@@ -1033,9 +1039,6 @@ spec:
               path "secret/data/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/data/apps/crossview/*" {
-                capabilities = ["create", "update", "read"]
-              }
               # Private mail preparation preserves three durable credentials.
               # Exact-key read/seed only; no mailbox data or wildcard grant.
               path "secret/data/apps/private-mail/admin" {
@@ -1092,9 +1095,6 @@ spec:
               path "secret/metadata/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/metadata/apps/crossview/*" {
-                capabilities = ["create", "update", "read"]
-              }
               path "secret/metadata/apps/private-mail/admin" {
                 capabilities = ["create", "update", "read"]
               }
@@ -1124,7 +1124,7 @@ spec:
               bao write auth/kubernetes/role/external-secrets \
                 bound_service_account_names=external-secrets \
                 bound_service_account_namespaces=external-secrets \
-                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-actual-budget-readonly,app-crossview-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
+                policies=infra-backup-readonly,infra-dns-readonly,infra-monitoring-readonly,infra-hcloud-readonly,infra-tls-readonly,infra-ghcr-readonly,app-fleetdm-readonly,app-wedding-readonly,app-umami-readonly,app-actual-budget-readonly,app-ascoachingogvaner-readonly,infra-oidc-readonly,vault-seed-write \
                 ttl=1h
 
               # Dedicated role for the fleetdm VaultDynamicSecret generator.
