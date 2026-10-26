@@ -43,7 +43,8 @@ prevents Stalwart from generating a temporary password into its logs. No human
 or agent reads the credential as part of this preparation.
 
 The namespace and claim retain the platform's current prune protection. The
-claim is not a backup or restore proof. No mailbox content exists in preparation.
+claim is not a backup or restore proof. Preparation neither migrates nor receives
+messages, and must not be used as evidence that an existing volume is empty.
 
 ## Administration opt-in
 
@@ -262,6 +263,36 @@ native defaults without depending on numeric entry order. The native fixture
 exercises actual delivery to both aliases, unknown-address refusal, competing
 User/Group/MailingList ownership, stale snapshots, and omission/replay preserving
 the retained account and delivered mail. Deployment and DNS remain separate.
+
+## Deployment sequence
+
+Deliver the dedicated mail publisher's admission and node verification rules,
+together with exact-key credential seed/read permissions, in a prerequisite
+revision while production mail administration remains disabled. Verify the
+normal protected deployment and the exact declared rules on every node before a
+separate revision enables administration.
+
+That prerequisite also owns the namespace and claim through the storage-only
+`k8s/bases/apps/private-mail-storage` bundle. It starts no process and exposes no
+service. Preparation and administration inherit those same persistent identities.
+When activation replaces the production storage-only reference, remove that direct
+reference so the inherited resources are declared only once. A failed activation
+can then return to a reviewed main that still owns the retained storage, keeping
+it managed without deleting data or weakening the orphan-ownership check.
+
+The storage-only claim carries a `storage-stage: prepared` marker. Its explicit
+Flux health decision accepts Pending only for this exact claim on the default
+`longhorn-wffc` class before provisioning has selected a node or volume. Lost or
+terminating claims do not pass. The serving bundle removes the marker, so its
+claim must be Bound; all other claims retain their binding requirement. Health
+waiting remains enabled throughout, without changing the retained claim's spec.
+
+The production pipeline reconciles applications before its full node configuration
+update. Combining the prerequisite with an application that already needs the new
+node rule makes that rollout wait on itself. Separate reviewed revisions preserve
+the existing deployment sequence and signer isolation without a manual node
+configuration change. Public mail activation and migration retain their separate
+acceptance requirements.
 
 ## Sources
 

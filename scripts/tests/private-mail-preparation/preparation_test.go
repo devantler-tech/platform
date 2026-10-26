@@ -136,7 +136,7 @@ func TestPreparationIsAbsentFromSharedAndLocal(t *testing.T) {
 		for _, o := range render(t, path) {
 			m, _ := o["metadata"].(map[string]any)
 			if m["namespace"] == "private-mail" || (o["kind"] == "Namespace" && m["name"] == "private-mail") {
-				t.Fatalf("private mail must be absent by default from %s", path)
+				t.Fatalf("inactive mail must have no serving or credential resources in %s", path)
 			}
 		}
 	}

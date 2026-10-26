@@ -292,7 +292,7 @@ var expectedRenderedHashes = map[resourceIdentity]string{
 	{apiVersion: "kro.run/v1alpha1", kind: "ResourceGraphDefinition", name: "tenant.kro.run"}:                                           "4a6a55786cf97b671c4c4668396ad3e5b18dcb14ffbd86661fcc8be409dc9643",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "ascoachingogvaner", name: "ascoachingogvaner"}:    "f921a4720a182b24f289c6a5e1ae684a174ed2f5a748c01cc6bc6bc14c644c03",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "aws", name: "aws"}:                                "7bde9c682a81b752bdf9d2b14ce69ca1690008a39f2562d4887f8200447dea71",
-	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "b7dd0ad507a26f2ebd8ddf472a68a638b41dc2f2f1b476d0a6291f15332efe5d",
+	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "apps"}:                       "a47cc625e014f5c0202f46cd0d03c302d3d7715778dc4d5a18e22a31a0b28a12",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "bootstrap"}:                  "1223b3713886063661be32b3e82a8615856e3e01c526180f0d0d5b2bfade331d",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure"}:             "c366251c694a1647636cc029822fe23da00390dc55337463e30d637cbea375e7",
 	{apiVersion: "kustomize.toolkit.fluxcd.io/v1", kind: "Kustomization", namespace: "flux-system", name: "infrastructure-controllers"}: "f0e86fa4bc64945a57bd4c4bd10ff8593134b4047b3b99d4bcbd71720dcde8ab",
