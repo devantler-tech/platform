@@ -145,6 +145,7 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'scripts/tests/private-mail-preparation/**'
+              - 'scripts/tests/vault-email-credentials/**'
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
@@ -3360,6 +3361,12 @@ jobs:
       - name: 🔒 Validate Crossplane provider egress policy
         if: needs.changes.outputs.k8s == 'true'
         run: bash scripts/tests/test-crossplane-egress-policy.sh
+      - name: ✉️ Prove Email credential preparation in its pinned container
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 5
+        env:
+          EMAIL_CREDENTIAL_CONTAINER_TEST: '1'
+        run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 10

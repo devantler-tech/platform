@@ -153,7 +153,7 @@ func command(args []string, log io.Writer) int {
 		_ = os.Remove(*output)
 		return fail()
 	}
-	if _, err = fmt.Fprintln(log, "Private mail plan prepared; activation is separate."); err != nil {
+	if _, err = fmt.Fprintln(log, "Email plan prepared; activation is separate."); err != nil {
 		return 2
 	}
 	return 0

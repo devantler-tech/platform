@@ -32,7 +32,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "/etc/private-mail", "mounted private inputs")
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid arguments.")
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid arguments.")
 		return 2
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -41,7 +41,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	defer timeout()
 	applicationDigest, err := pinnedApplicationDigest()
 	if err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid administration asset metadata.")
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid administration asset metadata.")
 		return 2
 	}
 	runtime := bootstrapRuntime{
@@ -51,10 +51,10 @@ func bootstrapCommand(args []string, log io.Writer) int {
 		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap failed; serving must remain stopped.", err)
+		_, _ = fmt.Fprintln(log, "Email bootstrap failed; serving must remain stopped.", err)
 		return 2
 	}
-	if _, err := fmt.Fprintln(log, "Private mail configuration verified; recovery process stopped."); err != nil {
+	if _, err := fmt.Fprintln(log, "Email configuration verified; recovery process stopped."); err != nil {
 		return 2
 	}
 	return 0

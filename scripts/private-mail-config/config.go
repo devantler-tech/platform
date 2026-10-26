@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var errConfiguration = errors.New("private mail configuration is incomplete or invalid")
+var errConfiguration = errors.New("email configuration is incomplete or invalid")
 
 type settings struct {
 	Domain            string   `json:"domain"`

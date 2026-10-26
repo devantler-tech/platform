@@ -126,6 +126,13 @@ spec:
           secret:
             secretName: vault-config-oidc
             optional: true
+        - name: email-credentials
+          configMap:
+            name: vault-email-credentials
+        - name: email-credential-work
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
         # Local scratch for the newest raft snapshot, populated by the
         # fetch-snapshot initContainer from the OFF-CLUSTER mirror (Cloudflare R2
         # in prod, in-cluster MinIO locally) -- NOT the single-attach RWO
@@ -513,6 +520,49 @@ spec:
               else
                 echo "Vault was already initialized — no new keys to store."
               fi
+        # Read-only preparation for company Email credential custody. Reuse the
+        # configuration Job's existing private root-token file; no new identity,
+        # Kubernetes grant, password generation, consumer switch or deletion.
+        - name: prepare-email-credentials
+          image: docker.io/alpine/k8s:1.37.1@sha256:712dc5385d1c1a3f83b747fa9e40f64d433a97f72ff42f9755ff7dd1f62846e4
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          env:
+            - name: BAO_ADDR
+              value: http://openbao-active.openbao.svc.cluster.local:8200
+            - name: EMAIL_CUSTODY_MODE
+              value: plan
+            - name: EMAIL_CUSTODY_TOKEN_FILE
+              value: /shared/root-token
+            - name: EMAIL_CUSTODY_WORK_DIR
+              value: /work
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+              readOnly: true
+            - name: email-credentials
+              mountPath: /vault-config/email
+              readOnly: true
+            - name: email-credential-work
+              mountPath: /work
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          command:
+            - /bin/sh
+            - -eu
+            - /vault-config/email/prepare-email-credentials.sh
       containers:
         - name: vault-config
           image: quay.io/openbao/openbao:2.5.3@sha256:fdc6da21ca6963560c32336fd7feb9cf2d5e52668f1a1647205a4b41171f0806
