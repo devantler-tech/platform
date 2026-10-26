@@ -24,8 +24,10 @@ a separate decision if direct outbound delivery cannot be established.
 
 The `k8s/bases/apps/private-mail` bundle is deliberately absent from both normal
 application overlays. Its explicit inclusion is the coarse deployment toggle.
-Rendering the bundle directly tests the enabled preparation state; rendering
-both provider application layers tests that the default state remains absent.
+Production includes only the separate storage bundle; the preparation workload
+and credential generators remain off. Rendering the preparation bundle directly
+tests its enabled state. Provider-layer tests require inactive serving, with
+retained storage owned only in production.
 
 Even when included, this revision starts only the internal recovery management
 API. It has no public Service or route, mail listener or outbound network grant.
@@ -42,7 +44,8 @@ prevents Stalwart from generating a temporary password into its logs. No human
 or agent reads the credential as part of this preparation.
 
 The namespace and claim retain the platform's current prune protection. The
-claim is not a backup or restore proof. No mailbox content exists in preparation.
+claim is not a backup or restore proof. Preparation neither migrates nor receives
+messages, and must not be used as evidence that an existing volume is empty.
 
 ## Activation and completion
 
