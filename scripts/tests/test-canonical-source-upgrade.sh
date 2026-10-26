@@ -172,6 +172,41 @@ test "$(awk -F '\t' '$1=="business-site" {n++} END {print n+0}' "$APPROVED_IDENT
 jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
  .items[0].metadata.generation=3 | .items[0].status.observedGeneration=3 | .items[0].status.conditions[].observedGeneration=3' \
  "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
+cp "$upgrade_test_work/inventory.json" "$upgrade_test_work/replacement-ready.json"
+cp "$binding_file" "$upgrade_test_work/pending-binding.json"
+cp "$APPROVED_REVISIONS_FILE" "$upgrade_test_work/pending-revisions.tsv"
+cp "$APPROVED_IDENTITIES_FILE" "$upgrade_test_work/pending-identities.tsv"
+cp "$PUBLISH_BOOTSTRAP_FILE" "$upgrade_test_work/pending-bootstrap.json"
+# Ready/SourceVerified conditions do not establish which publisher policy was used.
+# Exercise the actual generator, preserving the transitional record and all outputs
+# on every refusal; reset fixture outputs so each pre-repair control is independent.
+unsafe_replacements=0
+for mutation in \
+ '.items[0].spec.verify.matchOIDCIdentity[0].issuer=".*"' \
+ '.items[0].spec.verify.matchOIDCIdentity[0].subject=".*"' \
+ '.items[0].spec.verify.provider="other"' \
+ 'del(.items[0].spec.verify)' \
+ '.items[0].spec.verify.matchOIDCIdentity += [{issuer:".*",subject:".*"}]' \
+ '.items[0].spec.verify.matchOIDCIdentity[0].subject="unapproved-publisher"' \
+ 'del(.items[0].metadata.uid)' \
+ 'del(.items[0].metadata.resourceVersion)'; do
+  jq "$mutation" "$upgrade_test_work/replacement-ready.json" >"$upgrade_test_work/inventory.json"
+  if (main) >"$upgrade_test_work/replacement-result" 2>&1; then
+    printf 'unsafe replacement accepted: %s\n' "$mutation" >&2
+    unsafe_replacements=$((unsafe_replacements + 1))
+  else
+    cmp "$upgrade_test_work/pending-binding.json" "$binding_file"
+    cmp "$upgrade_test_work/pending-revisions.tsv" "$APPROVED_REVISIONS_FILE"
+    cmp "$upgrade_test_work/pending-identities.tsv" "$APPROVED_IDENTITIES_FILE"
+    cmp "$upgrade_test_work/pending-bootstrap.json" "$PUBLISH_BOOTSTRAP_FILE"
+  fi
+  cp "$upgrade_test_work/pending-binding.json" "$binding_file"
+  cp "$upgrade_test_work/pending-revisions.tsv" "$APPROVED_REVISIONS_FILE"
+  cp "$upgrade_test_work/pending-identities.tsv" "$APPROVED_IDENTITIES_FILE"
+  cp "$upgrade_test_work/pending-bootstrap.json" "$PUBLISH_BOOTSTRAP_FILE"
+done
+[ "$unsafe_replacements" -eq 0 ] || { printf '%s unsafe replacement controls admitted\n' "$unsafe_replacements" >&2; exit 1; }
+cp "$upgrade_test_work/replacement-ready.json" "$upgrade_test_work/inventory.json"
 main >"$upgrade_test_work/generator-observed"
 test "$(jq -r '.bindings[0].kind' "$binding_file")" = published-binding
 jq -e '.bindings[0]|has("previousBinding")|not' "$binding_file" >/dev/null

@@ -235,10 +235,9 @@ canonical_source_inventory_state() (
   trap - EXIT
   local state_record="$1" state_inventory="$2"
   if [ "$(printf '%s\n' "$state_record" | jq -r .kind)" = published-upgrade ]; then
-    local next_record prior_record next_state prior_snapshot prior_uid prior_generation
+    local next_record prior_record prior_snapshot prior_uid prior_generation
     next_record="$(printf '%s\n' "$state_record" | jq -c 'del(.previousBinding,.previousObservation)|.kind="published-binding"')" || return 1
-    if next_state="$(canonical_source_inventory_state "$next_record" "$state_inventory")"; then
-      [ "$next_state" = observed ] || return 1
+    if canonical_source_observation "$next_record" "$state_inventory" >/dev/null; then
       printf 'observed\n'
       return
     fi
