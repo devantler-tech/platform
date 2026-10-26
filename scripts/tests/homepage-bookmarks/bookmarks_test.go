@@ -125,10 +125,19 @@ func TestRealConfigMapFromAnotherDirectory(t *testing.T) {
 	}
 }
 
-func TestStripeDashboardBookmark(t *testing.T) {
+func TestStripeDashboardService(t *testing.T) {
 	d := fixture(t, repository(t))
-	matches := 0
 	for _, group := range d.bookmarks {
+		for groupName, entries := range group.(map[string]any) {
+			for _, entry := range entries.([]any) {
+				if _, ok := entry.(map[string]any)["Stripe"]; ok {
+					t.Errorf("Stripe must be a Finance service, not a bookmark in %q", groupName)
+				}
+			}
+		}
+	}
+	matches := 0
+	for _, group := range d.services {
 		for groupName, entries := range group.(map[string]any) {
 			for _, entry := range entries.([]any) {
 				fields, ok := entry.(map[string]any)["Stripe"]
@@ -136,26 +145,24 @@ func TestStripeDashboardBookmark(t *testing.T) {
 					continue
 				}
 				matches++
-				if groupName != "Banking" {
-					t.Errorf("Stripe must appear in Banking, got %q", groupName)
+				if groupName != "Finance" {
+					t.Errorf("Stripe must appear in Finance, got %q", groupName)
 				}
-				bookmark := map[string]any{}
-				for _, field := range fields.([]any) {
-					for key, value := range field.(map[string]any) {
-						bookmark[key] = value
-					}
+				service, ok := fields.(map[string]any)
+				if !ok {
+					t.Fatalf("Stripe service must be a mapping, got %T", fields)
 				}
-				if bookmark["href"] != "https://dashboard.stripe.com" {
-					t.Errorf("Stripe must open its dashboard, got %v", bookmark["href"])
+				if service["href"] != "https://dashboard.stripe.com" {
+					t.Errorf("Stripe must open its dashboard, got %v", service["href"])
 				}
-				if icon, ok := bookmark["icon"].(string); !ok || icon == "" {
+				if icon, ok := service["icon"].(string); !ok || icon == "" {
 					t.Error("Stripe must have an icon")
 				}
 			}
 		}
 	}
 	if matches != 1 {
-		t.Errorf("want exactly one Stripe dashboard bookmark, got %d", matches)
+		t.Errorf("want exactly one Stripe dashboard service, got %d", matches)
 	}
 }
 
