@@ -83,6 +83,13 @@ case "$1" in
   ls)
     printf '%s\n' "$4" >>"${f}/listed"
     if [ -e "${f}/ls-rc" ]; then leak; exit "$(cat "${f}/ls-rc")"; fi
+    case "$4" in
+      store/platform-backups/cnpg/umami-db/|store/platform-backups/cnpg/coroot-db/|store/platform-backups/velero/prod/)
+        cat "${f}/other-ls"; exit 0 ;;
+    esac
+    if [ -e "${f}/change-second-list" ] && [ "$(wc -l <"${f}/listed" | tr -d ' ')" = 2 ]; then
+      printf '{"status":"success","type":"file","lastModified":"2026-09-20T00:00:00Z","size":10,"key":"wedding-db-20260909/base/20260901T030000/extra","etag":"xx"}\n' >>"${f}/ls"
+    fi
     cat "${f}/ls"
     exit 0
     ;;
@@ -90,6 +97,19 @@ case "$1" in
     printf '%s\n' "$2" >>"${f}/catted"
     if [ -e "${f}/cat-rc" ]; then leak; exit "$(cat "${f}/cat-rc")"; fi
     if [ -e "${f}/content" ]; then cat "${f}/content"; else printf 'bytes of %s' "${2##*/}"; fi
+    exit 0
+    ;;
+  rm)
+    if [ "$*" != 'rm --json --force --stdin' ] || [ ! -e "${f}/removal-enabled" ]; then
+      printf '%s\n' "$*" >>"${f}/forbidden"; exit 64
+    fi
+    while IFS= read -r target; do
+      printf '%s\n' "${target}" >>"${f}/removed"
+      key="${target#store/platform-backups/cnpg/wedding-db/}"
+      awk -v key="\"key\":\"${key}\"" 'index($0,key)==0' "${f}/ls" >"${f}/remaining"
+      mv "${f}/remaining" "${f}/ls"
+    done
+    if [ -e "${f}/rm-rc" ]; then leak; exit 1; fi
     exit 0
     ;;
 esac
@@ -127,6 +147,14 @@ manifest_env() {
 case "$1" in
   get)
     case "$2" in
+      schedules.velero.io|backupstoragelocations.velero.io)
+        cat "${k}/$2.json" ;;
+      backups.postgresql.cnpg.io|backups.velero.io)
+        jq --arg phase "$(cat "${k}/backup-phase" 2>/dev/null || printf completed)" '
+          .status = (if .apiVersion == "velero.io/v1" then
+            {phase:(if $phase == "completed" then "Completed" else $phase end),errors:0,startTimestamp:"2026-10-26T00:00:01Z",completionTimestamp:"2026-10-26T00:00:02Z"}
+          else {phase:$phase,method:"plugin",pluginMetadata:{clusterUID:"cluster-uid-1",name:"barman-cloud.cloudnative-pg.io"},backupId:"20261026T000001",endWal:"000000010000000000000001",startedAt:"2026-10-26T00:00:01Z",stoppedAt:"2026-10-26T00:00:02Z"} end)
+        ' "${k}/backup-${namespace}-$3.json" ;;
       pod)
         cat "${k}/phase-${namespace}" 2>/dev/null || printf 'Running'
         ;;
@@ -147,8 +175,16 @@ case "$1" in
     if [ "$2" = configmap ]; then
       exit 0
     fi
+    if [ "$3" != - ]; then
+      jq '.metadata.uid="backup-uid-1" | .metadata.creationTimestamp="2026-10-26T00:00:00Z"' "$3" >"${k}/created-backup.json"
+      backup_name="$(jq -r '.metadata.name' "${k}/created-backup.json")"
+      cp "${k}/created-backup.json" "${k}/backup-${namespace}-${backup_name}.json"
+      cat "${k}/created-backup.json"
+      exit 0
+    fi
     cat >"${k}/pod-${namespace}.yaml"
     ;;
+  wait) exit 0 ;;
   logs)
     if [ ! -e "${k}/never-ready-${namespace}" ]; then printf '==== COVERAGE POD READY ====\n'; fi
     ;;
@@ -162,12 +198,17 @@ case "$1" in
       cat "${k}/work-${namespace}/${2#/work/}"
       exit $?
     fi
-    [ "$1 $2" = '/tools/sh /coverage/coverage.sh' ] || exit 64
+    case "$1 $2" in
+      '/tools/sh /coverage/coverage.sh') script="${POD_SCRIPT}" ;;
+      '/tools/sh /coverage/remove.sh') script="${REMOVAL_SCRIPT}" ;;
+      *) exit 64 ;;
+    esac
     PATH="${FAKE_BIN}:${PATH}" FAKE_MC="${k}/mc-${namespace}" \
       ENDPOINT="$(manifest_env "${namespace}" ENDPOINT)" ROLE="$(manifest_env "${namespace}" ROLE)" \
       BUCKET="$(manifest_env "${namespace}" BUCKET)" PREFIX="$(manifest_env "${namespace}" PREFIX)" \
       WORK_DIR="${k}/work-${namespace}" CREDENTIALS_DIR="${k}/credentials" \
-      sh "${POD_SCRIPT}" "$3"
+      REMOVAL_CONFIRM="$(manifest_env "${namespace}" REMOVAL_CONFIRM)" \
+      sh "${script}" "${@:3}"
     ;;
   *) exit 64 ;;
 esac
@@ -208,6 +249,13 @@ new_case() {
   printf 'AKIDEXAMPLE' >"${k}/credentials/ACCESS_KEY_ID"
   printf 'secret-value' >"${k}/credentials/SECRET_ACCESS_KEY"
   cluster_json wedding-db-dedicated >"${k}/wedding-app-clusters.postgresql.cnpg.io-wedding-db.json"
+  for consumer in umami coroot; do
+    cluster_json "${consumer}-db" >"${k}/${consumer}-clusters.postgresql.cnpg.io-${consumer}-db.json"
+    store_json "s3://platform-backups/cnpg/${consumer}-db" "${consumer}-db-backup-r2" \
+      >"${k}/${consumer}-objectstores.barmancloud.cnpg.io-${consumer}-db.json"
+  done
+  printf '{"spec":{"template":{"storageLocation":"default","includedNamespaces":["*"]}}}\n' >"${k}/schedules.velero.io.json"
+  printf '{"spec":{"objectStorage":{"bucket":"platform-backups","prefix":"velero/prod"}},"status":{"phase":"Available"}}\n' >"${k}/backupstoragelocations.velero.io.json"
   store_json s3://wedding-db-backups/cnpg/wedding-db wedding-db-backup-r2-dedicated \
     >"${k}/wedding-app-objectstores.barmancloud.cnpg.io-wedding-db-dedicated.json"
   store_json s3://platform-backups/cnpg/umami-db umami-db-backup-r2 \
@@ -220,6 +268,7 @@ new_case() {
     record "${base}/data.tar.gz" 90000000 b2-6
     record "${wal}" 4000 c3
   } >"${k}/mc-umami/ls"
+  record 'existing-backup' 1200 abc >"${k}/mc-umami/other-ls"
   # The mirror uploaded the archive in a different number of parts, and the
   # dedicated store has archived more since the switch.
   {
@@ -233,9 +282,12 @@ new_case() {
 # run_case [runner arguments...] sets out, err and rc.
 run_case() {
   rc=0
-  FAKE_K="${k}" FAKE_BIN="${bin}" POD_SCRIPT="${pod_script}" KUBECTL="${bin}/kubectl" \
+  FAKE_K="${k}" FAKE_BIN="${bin}" POD_SCRIPT="${pod_script}" \
+    REMOVAL_SCRIPT="${root_dir}/scripts/remove-wedding-shared-backup-pod.sh" KUBECTL="${bin}/kubectl" \
     COVERAGE_EVALUATOR="${evaluator}" COVERAGE_BOOTSTRAP_CONFIG="${k}/config-map.yaml" \
-    COVERAGE_POLL_INTERVAL=0 COVERAGE_POLL_LIMIT=2 GITHUB_RUN_ID=77 GITHUB_RUN_ATTEMPT=1 \
+    COVERAGE_POLL_INTERVAL=0 COVERAGE_POLL_LIMIT=2 GITHUB_RUN_ID=77 GITHUB_RUN_ATTEMPT="${TEST_ATTEMPT:-1}" \
+    GITHUB_ACTIONS=true GITHUB_REPOSITORY=devantler-tech/platform GITHUB_EVENT_NAME=workflow_dispatch \
+    GITHUB_REF="${TEST_REF:-refs/heads/main}" WEDDING_SHARED_REMOVAL_CONFIRM="${TEST_CONFIRM:-remove-wedding-shared-backups-4481}" \
     bash "${runner}" "$@" >"${k}/out" 2>"${k}/err" || rc=$?
   out="$(cat "${k}/out")"
   err="$(cat "${k}/err")"
@@ -556,5 +608,123 @@ for image in mc_image tools_image; do
   [[ -n "${ours}" && "${ours}" == "${theirs}" ]] || fail "${image} differs from the mirror's pinned image"
 done
 printf 'PASS: the proof pins the same images as the catalogue mirror\n'
+
+# The explicit retirement path must remove only the proven object set, while
+# preserving the default proof's read-only behavior above.
+new_case
+touch "${k}/mc-umami/removal-enabled"
+run_case --remove-confirmed
+[[ "${rc}" -eq 0 ]] || fail "removal: expected exit 0, got ${rc}: ${err}"
+require_text "${out}" 'REMOVED: 3 proven shared Wedding objects; the prefix is empty.' 'removal'
+require_text "${out}" 'VERIFIED: all three unaffected consumers completed a fresh backup.' 'fresh backup proofs'
+for key in "${base}/backup.info" "${base}/data.tar.gz" "${wal}"; do
+  grep -qxF "store/platform-backups/cnpg/wedding-db/${key}" "${k}/mc-umami/removed" || fail 'removal missed a proven object'
+done
+[[ "$(wc -l <"${k}/mc-umami/removed" | tr -d ' ')" == 3 ]] || fail 'removal included an unproven object'
+[[ ! -e "${k}/mc-wedding-app/removed" ]] || fail 'removal touched the dedicated copy'
+require_cleaned 'removal'
+for namespace in umami coroot velero; do
+  [[ "$(find "${k}" -name "backup-${namespace}-*.json" | wc -l | tr -d ' ')" == 1 ]] || fail 'a consumer did not receive exactly one fresh backup'
+done
+
+new_case
+: >"${k}/mc-umami/ls"
+run_case --remove-confirmed
+[[ "${rc}" == 0 ]] || fail 'an empty-prefix continuation failed'
+require_text "${out}" 'VERIFIED: all three unaffected consumers completed a fresh backup.' 'empty-prefix continuation'
+[[ ! -e "${k}/mc-umami/removed" ]] || fail 'an empty-prefix continuation wrote to storage'
+
+new_case
+touch "${k}/mc-umami/removal-enabled"
+printf failed >"${k}/backup-phase"
+run_case --remove-confirmed
+[[ "${rc}" -eq 1 ]] || fail 'a failed fresh backup was accepted'
+refute_text "${out}" 'VERIFIED:' 'failed fresh backup'
+
+new_case
+touch "${k}/mc-umami/removal-enabled" "${k}/mc-umami/change-second-list"
+run_case --remove-confirmed
+[[ "${rc}" -eq 1 && ! -e "${k}/mc-umami/removed" ]] || fail 'a changed catalogue was removed'
+
+new_case
+: >"${k}/mc-umami/other-ls"
+touch "${k}/mc-umami/removal-enabled"
+run_case --remove-confirmed
+[[ "${rc}" -eq 1 && ! -e "${k}/mc-umami/removed" ]] || fail 'removal proceeded without the unaffected-backup positive controls'
+
+for bad in ref confirmation retry; do
+  new_case
+  case "${bad}" in
+    ref) TEST_REF=refs/heads/feature run_case --remove-confirmed ;;
+    confirmation) TEST_CONFIRM=no run_case --remove-confirmed ;;
+    retry) TEST_ATTEMPT=2 run_case --remove-confirmed ;;
+  esac
+  require_untouched "removal ${bad}"
+done
+
+new_case
+record "${later_wal}" 4301 f6 2026-09-20T00:00:00Z >>"${k}/mc-umami/ls"
+touch "${k}/mc-umami/removal-enabled"
+run_case --remove-confirmed
+[[ "${rc}" -eq 1 && ! -e "${k}/mc-umami/removed" ]] || fail 'an uncovered catalogue was removed'
+
+new_case
+touch "${k}/mc-umami/removal-enabled" "${k}/mc-umami/rm-rc"
+run_case --remove-confirmed
+[[ "${rc}" -eq 1 ]] || fail 'a failed removal was reported as successful'
+refute_text "${out}${err}" abc123 'removal error leaked the endpoint'
+printf 'PASS: removal is dispatch-only, requires current coverage, and targets only proven objects\n'
+
+# The real removal script consumes its entire input before writing. A valid
+# first line followed by an unsafe, duplicate or unlisted key must delete nothing.
+for bad in '../escape' "${base}/../data.tar.gz" 'wedding-db/base/unlisted' "${wal}"; do
+  new_case
+  touch "${k}/mc-umami/removal-enabled"
+  cp "${k}/mc-umami/ls" "${k}/work-umami/listing"
+  rc=0
+  printf '%s\n%s\n' "${wal}" "${bad}" >"${k}/plan"
+  PATH="${bin}:${PATH}" FAKE_MC="${k}/mc-umami" ROLE=shared BUCKET=platform-backups PREFIX=cnpg/wedding-db \
+    REMOVAL_CONFIRM=remove-wedding-shared-backups-4481 WORK_DIR="${k}/work-umami" \
+    sh "${root_dir}/scripts/remove-wedding-shared-backup-pod.sh" <"${k}/plan" >"${k}/out" 2>"${k}/err" || rc=$?
+  [[ "${rc}" -eq 1 && ! -e "${k}/mc-umami/removed" ]] || fail 'an unsafe complete plan caused a partial removal'
+done
+printf 'PASS: unsafe, duplicate and unlisted keys refuse the entire removal plan\n'
+
+# Run the actual workflow's first step, including its live restore-run metadata
+# decision, without providing a kubeconfig or any cloud credential.
+cat >"${bin}/gh" <<'FAKE'
+#!/bin/sh
+cat "${FAKE_K}/restore-run.json"
+FAKE
+chmod +x "${bin}/gh"
+workflow_guard="$(yq -r '.jobs.removal.steps[0].run' "${root_dir}/.github/workflows/remove-wedding-shared-backups.yaml")"
+for proof in current expired failed wrong-workflow wrong-branch retry; do
+  new_case
+  jq -n --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '
+    {repository:{full_name:"devantler-tech/platform"},path:".github/workflows/verify-wedding-dedicated-restore.yaml",
+      head_branch:"main",event:"workflow_dispatch",run_attempt:1,status:"completed",conclusion:"success",created_at:$date}
+  ' >"${k}/restore-run.json"
+  case "${proof}" in
+    expired) filter='.created_at="2020-01-01T00:00:00Z"' ;;
+    failed) filter='.conclusion="failure"' ;;
+    wrong-workflow) filter='.path=".github/workflows/ci.yaml"' ;;
+    wrong-branch) filter='.head_branch="feature"' ;;
+    retry) filter='.run_attempt=2' ;;
+    *) filter='.' ;;
+  esac
+  jq "${filter}" "${k}/restore-run.json" >"${k}/changed.json"
+  mv "${k}/changed.json" "${k}/restore-run.json"
+  rc=0
+  PATH="${bin}:${PATH}" FAKE_K="${k}" GITHUB_REPOSITORY=devantler-tech/platform \
+    GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF=refs/heads/main GITHUB_RUN_ATTEMPT=1 \
+    WEDDING_SHARED_REMOVAL_CONFIRM=remove-wedding-shared-backups-4481 RESTORE_PROOF_RUN=1234 \
+    bash -c "${workflow_guard}" >"${k}/guard-out" 2>"${k}/guard-err" || rc=$?
+  if [[ "${proof}" == current ]]; then
+    [[ "${rc}" == 0 ]] || fail 'a current successful dedicated restore was refused'
+  else
+    [[ "${rc}" != 0 ]] || fail 'an invalid dedicated restore admitted the retirement workflow'
+  fi
+done
+printf 'PASS: workflow admission requires a recent successful dedicated-only main restore\n'
 
 printf '\nAll %s cases passed.\n' "${cases_run}"

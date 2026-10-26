@@ -65,6 +65,20 @@ incomplete backup receipt. Record its backup ID and WAL segment, then confirm
 that the dedicated catalogue contains that completed backup and advancing WAL.
 Backup completion alone does not prove an isolated restore.
 
+The approved retirement for #4481 uses the dormant `Remove Retired Wedding
+Shared Backups` workflow on `main`, with
+`confirm=remove-wedding-shared-backups-4481` and the run ID of a successful
+`Verify Wedding Dedicated Restore` from the preceding 72 hours. A rerun attempt
+is refused. It repeats coverage, requires the entire shared object set to stay
+unchanged, then removes at most 10,000 exact objects under the retired prefix;
+it performs no recursive deletion or retention bypass. The normal coverage
+workflow remains read-only. Before and after removal it checks that the existing
+Umami, Coroot and Velero backup records remain present, then proves the Wedding
+prefix empty and requires a fresh completed backup from all three consumers.
+Keep #4481 open until the protected dispatch succeeds, its run-owned Pods and
+ConfigMaps are independently observed absent, and this runbook records the
+actual retirement receipt. A source merge alone does not retire backup data.
+
 ## Velero
 
 - Chart: `vmware-tanzu/velero` (HelmRepository at

@@ -1,0 +1,85 @@
+name: Remove Retired Wedding Shared Backups
+
+# One approved retirement (#4481), dormant until an explicit main dispatch.
+# Source CI and the merge queue never execute this workflow.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: remove-wedding-shared-backups-4481"
+        required: true
+        type: string
+      restore-proof-run:
+        description: "Successful dedicated-only restore workflow run from the last 72 hours"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  removal:
+    name: 💒 Retire only the proven shared Wedding objects
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment: prod
+    permissions:
+      contents: read
+      actions: read
+    env:
+      WEDDING_SHARED_REMOVAL_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require the approved first-attempt main dispatch
+        id: invocation
+        shell: bash
+        env:
+          RESTORE_PROOF_RUN: ${{ inputs.restore-proof-run }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform && "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
+            "${GITHUB_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 &&
+            "${WEDDING_SHARED_REMOVAL_CONFIRM}" == remove-wedding-shared-backups-4481 &&
+            "${RESTORE_PROOF_RUN}" =~ ^[1-9][0-9]*$ ]]
+          gh api --hostname github.com "repos/devantler-tech/platform/actions/runs/${RESTORE_PROOF_RUN}" |
+            jq -e '.repository.full_name == "devantler-tech/platform" and
+              .path == ".github/workflows/verify-wedding-dedicated-restore.yaml" and
+              .head_branch == "main" and .event == "workflow_dispatch" and .run_attempt == 1 and
+              .status == "completed" and .conclusion == "success" and
+              (now - (.created_at | fromdateiso8601) | . >= 0 and . <= 259200)' >/dev/null
+
+      - name: 📑 Checkout the reviewed dispatch revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🔑 Restore production kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}"
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" >~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: 🎯 Select stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+
+      - name: Prove coverage, remove the bounded object set and verify empty
+        run: bash scripts/verify-wedding-shared-backup-coverage.sh --remove-confirmed
