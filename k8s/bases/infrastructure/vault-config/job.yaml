@@ -1036,9 +1036,15 @@ spec:
               path "secret/data/apps/crossview/*" {
                 capabilities = ["create", "update", "read"]
               }
-              # Private mail preparation generates one durable credential.
+              # Private mail preparation preserves three durable credentials.
               # Exact-key read/seed only; no mailbox data or wildcard grant.
               path "secret/data/apps/private-mail/admin" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/private-mail/maintainer" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/data/apps/private-mail/agent" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1090,6 +1096,12 @@ spec:
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/private-mail/admin" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/private-mail/maintainer" {
+                capabilities = ["create", "update", "read"]
+              }
+              path "secret/metadata/apps/private-mail/agent" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {

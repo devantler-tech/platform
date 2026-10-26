@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+# Persistent identities are owned before serving and survive failed activation.
+resources:
+  - namespace.yaml
+  - persistent-volume-claim.yaml

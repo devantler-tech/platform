@@ -3,6 +3,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/apps/
+  # Own retained mail storage before the separate serving activation.
+  - ../../../bases/apps/private-mail-storage/
   # The product owns deploy/documentation; this production-only tenant registers
   # the signed source and an identity limited to its DNS endpoint resources.
   - khoist-documentation/

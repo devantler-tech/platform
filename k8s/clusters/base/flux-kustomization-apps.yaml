@@ -52,6 +52,22 @@ spec:
   # cluster with no ready instance still matches no `current` expression, stays
   # InProgress, and still fails the deploy.
   healthCheckExprs:
+    # The storage-only mail stage has no consumer: WFFC is correctly Pending.
+    # Its serving bundle removes this marker and must wait for Bound. Preserve
+    # normal binding waits for every other claim and for started provisioning.
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      failed: has(status.phase) && status.phase == 'Lost'
+      current: >-
+        !has(metadata.deletionTimestamp) && has(status.phase) &&
+        (status.phase == 'Bound' ||
+          (status.phase == 'Pending' &&
+           metadata.name == 'private-mail-data' && metadata.namespace == 'private-mail' &&
+           has(metadata.labels) && 'platform.devantler.tech/storage-stage' in metadata.labels &&
+           metadata.labels['platform.devantler.tech/storage-stage'] == 'prepared' &&
+           has(spec.storageClassName) && spec.storageClassName == 'longhorn-wffc' &&
+           !has(spec.volumeName) &&
+           (!has(metadata.annotations) || !('volume.kubernetes.io/selected-node' in metadata.annotations))))
     - apiVersion: postgresql.cnpg.io/v1
       kind: Cluster
       current: has(status.readyInstances) && status.readyInstances >= 1 && has(status.currentPrimary) && status.currentPrimary != ''
