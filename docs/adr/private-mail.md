@@ -238,6 +238,14 @@ revision while production mail administration remains disabled. Verify the
 normal protected deployment and the exact declared rules on every node before a
 separate revision enables administration.
 
+That prerequisite also owns the namespace and claim through the storage-only
+`k8s/bases/apps/private-mail-storage` bundle. It starts no process and exposes no
+service. Preparation and administration inherit those same persistent identities.
+When activation replaces the production storage-only reference, remove that direct
+reference so the inherited resources are declared only once. A failed activation
+can then return to a reviewed main that still owns the retained storage, keeping
+it managed without deleting data or weakening the orphan-ownership check.
+
 The production pipeline reconciles applications before its full node configuration
 update. Combining the prerequisite with an application that already needs the new
 node rule makes that rollout wait on itself. Separate reviewed revisions preserve

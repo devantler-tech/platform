@@ -3,13 +3,12 @@ kind: Kustomization
 # Deliberately absent from bases/apps/kustomization.yaml (#5288).
 # This preparation bundle serves only the internal recovery API, never mail.
 resources:
-  - namespace.yaml
+  - ../private-mail-storage/
   - password-admin.yaml
   - external-secret-generated-admin.yaml
   - push-secret-admin.yaml
   - external-secret-admin.yaml
   - config-map.yaml
-  - persistent-volume-claim.yaml
   - service-account.yaml
   - stateful-set.yaml
   - service.yaml
