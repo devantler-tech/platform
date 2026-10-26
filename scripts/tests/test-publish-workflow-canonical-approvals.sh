@@ -602,7 +602,6 @@ node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image 
 generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 coaching	k8s/bases/apps/ascoachingogvaner/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 wedding	k8s/bases/apps/wedding-app/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
-product-docs	k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml	.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
 
 # The starter moved to v8.0.0 before its generic consumers accepted that
@@ -633,6 +632,55 @@ admission	k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-im
 node-pull	talos/cluster/verify-first-party-images.yaml	.rules[] | select(.image == "ghcr.io/devantler-tech/*").keyless.subjectRegex
 generic-tenant	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	.spec.resources[] | select(.id == "ociRepository").template.spec.verify.matchOIDCIdentity[0].subject
 PROFILES
+
+# KHoist's current caller moves to v13.2.13, while its deployed documentation
+# still needs the legacy signer. The retired canonical revision must no longer
+# verify, and this approval must not admit that publisher for another consumer.
+product_source="$REPO_ROOT/k8s/providers/hetzner/apps/khoist-documentation/oci-repository.yaml"
+product_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$product_source")"
+product_issuer="$(yq -er '.spec.verify.matchOIDCIdentity[0].issuer' "$product_source")"
+while IFS=$'\t' read -r expected issuer identity; do
+  result=reject
+  if printf '%s\n' "$issuer" | grep -Eq -- "$product_issuer" &&
+    printf '%s\n' "$identity" | grep -Eq -- "$product_subject"; then
+    result=accept
+  fi
+  if [ "$result" = "$expected" ]; then
+    pass "KHoist transition: $expected $issuer $identity"
+  else
+    fail "KHoist transition: expected $expected for $issuer $identity, got $result"
+  fi
+done <<'IDENTITIES'
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+accept	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+reject	https://another-issuer.invalid	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134
+reject	https://tokenXactionsXgithubusercontentXcom	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134
+reject	https://token.actions.githubusercontent.com	https://github.com/another-org/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/xgithub/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@2df24600b1113e291b87e300b91e59c160446134
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v13.2.13
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@main
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df2460
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134-extra
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df90
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@v13.10.12
+reject	https://token.actions.githubusercontent.com	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@main
+IDENTITIES
+for other_source in \
+  k8s/bases/apps/ascoachingogvaner/oci-repository.yaml \
+  k8s/bases/apps/wedding-app/oci-repository.yaml \
+  k8s/providers/hetzner/apps/aws/oci-repository.yaml; do
+  other_subject="$(yq -er '.spec.verify.matchOIDCIdentity[0].subject' "$REPO_ROOT/$other_source")"
+  if printf '%s\n' 'https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@2df24600b1113e291b87e300b91e59c160446134' |
+    grep -Eq -- "$other_subject"; then
+    fail "KHoist approval admitted the publisher for $other_source"
+  else
+    pass "KHoist approval leaves $other_source unchanged"
+  fi
+done
 
 # The github-config v12 transition retains the independently verified v12.0.2
 # signer while admitting the new exact publisher. Retired and unrelated

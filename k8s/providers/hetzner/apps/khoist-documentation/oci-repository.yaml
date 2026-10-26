@@ -15,4 +15,4 @@ spec:
     provider: cosign
     matchOIDCIdentity:
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$'
+        subject: '^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328|\.github/\.github/workflows/publish-app\.yaml@(467f07582436a26b62cf4aa756423512f85ba0c0|2df24600b1113e291b87e300b91e59c160446134))$'
