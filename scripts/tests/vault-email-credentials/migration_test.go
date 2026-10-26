@@ -29,6 +29,7 @@ type apiFixture struct {
 	loseReply   bool
 }
 
+// credentials supplies synthetic records with extra fields that must survive copying.
 func credentials() map[string]map[string]any {
 	keys := map[string]map[string]any{}
 	for _, account := range []string{"admin", "maintainer", "agent"} {
@@ -40,6 +41,7 @@ func credentials() map[string]map[string]any {
 	return keys
 }
 
+// serve models KV v2 reads, conditional creation, races and uncertain replies.
 func (f *apiFixture) serve(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -125,6 +127,7 @@ func (f *apiFixture) serve(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"version": 1}})
 }
 
+// allowedKey rejects fixture requests outside the six declared migration paths.
 func allowedKey(key string) bool {
 	for _, prefix := range []string{"apps/private-mail/", "infrastructure/email/"} {
 		for _, account := range []string{"admin", "maintainer", "agent"} {
@@ -136,11 +139,13 @@ func allowedKey(key string) bool {
 	return false
 }
 
+// repositoryRoot binds fixtures to this test's checkout rather than the caller's directory.
 func repositoryRoot() string {
 	_, file, _, _ := runtime.Caller(0)
 	return filepath.Clean(filepath.Join(filepath.Dir(file), "../../.."))
 }
 
+// runMigration executes the canonical program against an isolated synthetic API.
 func runMigration(t *testing.T, fixture *apiFixture, mode string) (string, error) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(fixture.serve))
@@ -148,6 +153,7 @@ func runMigration(t *testing.T, fixture *apiFixture, mode string) (string, error
 	return runMigrationAt(t, server.URL, mode)
 }
 
+// runMigrationAt confines inputs and checks output privacy and scratch cleanup.
 func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 	t.Helper()
 	script, err := os.ReadFile(filepath.Join(repositoryRoot(), "scripts/prepare-email-credentials.sh"))
@@ -185,6 +191,7 @@ func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 	return string(out), runErr
 }
 
+// TestPlanIsReadOnlyAndCopyPreservesEveryCurrentField verifies copying and idempotent replay.
 func TestPlanIsReadOnlyAndCopyPreservesEveryCurrentField(t *testing.T) {
 	fixture := &apiFixture{keys: credentials()}
 	out, err := runMigration(t, fixture, "plan")
@@ -207,6 +214,7 @@ func TestPlanIsReadOnlyAndCopyPreservesEveryCurrentField(t *testing.T) {
 	}
 }
 
+// TestMigrationRefusesConflictsAndUnreadableState requires a deliberate refusal.
 func TestMigrationRefusesConflictsAndUnreadableState(t *testing.T) {
 	for _, name := range []string{"destination-conflict", "read-refused", "invalid-password", "numeric-field", "invalid-mount", "different-race", "source-rotation", "invalid-mode"} {
 		t.Run(name, func(t *testing.T) {
@@ -231,7 +239,7 @@ func TestMigrationRefusesConflictsAndUnreadableState(t *testing.T) {
 				mode = "replace"
 			}
 			out, err := runMigration(t, fixture, mode)
-			if err == nil || strings.Contains(out, "=PASS") {
+			if err == nil || !strings.Contains(out, "EMAIL_CUSTODY_PREPARATION=FAIL") {
 				t.Fatalf("uncertain state must fail closed: %s", out)
 			}
 			if name != "source-rotation" && fixture.writes != 0 {
@@ -241,6 +249,7 @@ func TestMigrationRefusesConflictsAndUnreadableState(t *testing.T) {
 	}
 }
 
+// TestConcurrentIdenticalCreationIsVerifiedWithoutOverwrite preserves another writer's value.
 func TestConcurrentIdenticalCreationIsVerifiedWithoutOverwrite(t *testing.T) {
 	fixture := &apiFixture{keys: credentials(), race: "same"}
 	out, err := runMigration(t, fixture, "copy")
@@ -249,6 +258,7 @@ func TestConcurrentIdenticalCreationIsVerifiedWithoutOverwrite(t *testing.T) {
 	}
 }
 
+// TestLostWriteReplyIsRecoveredByReadbackWithoutRotation recovers an uncertain commit.
 func TestLostWriteReplyIsRecoveredByReadbackWithoutRotation(t *testing.T) {
 	fixture := &apiFixture{keys: credentials(), loseReply: true}
 	if _, err := runMigration(t, fixture, "copy"); err == nil || fixture.writes != 1 {
@@ -265,6 +275,7 @@ func TestLostWriteReplyIsRecoveredByReadbackWithoutRotation(t *testing.T) {
 	}
 }
 
+// TestUnseededInstallationIsExplicitAndNeverCreatesCredentials prevents false migration proof.
 func TestUnseededInstallationIsExplicitAndNeverCreatesCredentials(t *testing.T) {
 	for _, missingMount := range []bool{false, true} {
 		t.Run(fmt.Sprint(missingMount), func(t *testing.T) {

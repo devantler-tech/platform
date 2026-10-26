@@ -19,6 +19,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// TestPinnedOpenBaoPreservesValuesAndVersions verifies CAS and replay on the deployed API version.
 func TestPinnedOpenBaoPreservesValuesAndVersions(t *testing.T) {
 	if os.Getenv("EMAIL_CREDENTIAL_NATIVE_TEST") != "1" {
 		t.Skip("real pinned OpenBao API proof runs in Linux CI")

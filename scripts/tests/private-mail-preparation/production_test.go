@@ -5,6 +5,7 @@ import (
 	"testing"
 )
 
+// TestProductionAdministrationUsesEncryptedSettings checks the production configuration boundary.
 func TestProductionAdministrationUsesEncryptedSettings(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	sts := object(t, objects, "StatefulSet", "private-mail")

@@ -17,6 +17,7 @@ type verificationStep struct {
 	With                   map[string]any
 }
 
+// verificationSteps validates the dispatch-only workflow and its execution boundary.
 func verificationSteps(t *testing.T) []verificationStep {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(repositoryRoot(), ".github/workflows/verify-email-credential-custody.yaml"))
@@ -50,6 +51,7 @@ func verificationSteps(t *testing.T) []verificationStep {
 	return job.Steps
 }
 
+// TestVerificationGuardRunsBeforeCheckoutOrSecrets executes permitted and refused dispatches.
 func TestVerificationGuardRunsBeforeCheckoutOrSecrets(t *testing.T) {
 	steps := verificationSteps(t)
 	guard := steps[0]
@@ -77,6 +79,7 @@ func TestVerificationGuardRunsBeforeCheckoutOrSecrets(t *testing.T) {
 	}
 }
 
+// TestVerificationWrapperRefusesIncompleteProofAndNeverCopies rejects unexamined or partial results.
 func TestVerificationWrapperRefusesIncompleteProofAndNeverCopies(t *testing.T) {
 	step := verificationSteps(t)[3]
 	if len(step.Env) != 3 || step.Env["KUBE_CONFIG"] != "${{ secrets.KUBE_CONFIG }}" || step.Env["HCLOUD_TOKEN"] != "${{ secrets.HCLOUD_TOKEN }}" || step.Env["EMAIL_CUSTODY_MODE"] != "plan" {

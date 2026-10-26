@@ -27,6 +27,7 @@ type bootstrapRuntime struct {
 	startup, shutdown                  time.Duration
 }
 
+// bootstrapCommand runs the bounded bootstrap lifecycle using private file inputs.
 func bootstrapCommand(args []string, log io.Writer) int {
 	f := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
@@ -62,6 +63,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 
 type boundedOutput struct{ bytes.Buffer }
 
+// Write retains only the configured amount of bootstrap diagnostics.
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 1048576 {
 		return 0, errConfiguration
@@ -202,6 +204,7 @@ prepared:
 	return nil
 }
 
+// stopOwned terminates the bootstrap child within the cleanup grace period.
 func stopOwned(child *exec.Cmd, done <-chan error, grace time.Duration) error {
 	select {
 	case <-done:
