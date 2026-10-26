@@ -12,7 +12,9 @@ config_script="$(yq -r '
   select(.kind == "Job" and .metadata.name == "vault-config") |
   .spec.template.spec.containers[] | select(.name == "vault-config") | .command[-1]
 ' - <<<"${rendered}")"
-[ -n "${config_script}" ] && [ "${config_script}" != null ] || fail 'missing rendered configuration script'
+if [ -z "${config_script}" ] || [ "${config_script}" = null ]; then
+  fail 'missing rendered configuration script'
+fi
 sh -n <<<"${config_script}"
 
 extract_payload() {
