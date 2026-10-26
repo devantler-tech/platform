@@ -10,7 +10,7 @@ tenant=k8s/providers/hetzner/apps/business-site/tenant.yaml
 mkdir -p "$tree/$(dirname "$graph")" "$tree/$(dirname "$tenant")" "$tree/scripts"
 cp "$attribution_repo_root/$graph" "$tree/$graph"
 cp "$attribution_repo_root/$tenant" "$tree/$tenant"
-jq '.bindings[0].kind="published-bootstrap"' "$attribution_repo_root/scripts/canonical-tenant-source-bindings.json" >"$tree/scripts/canonical-tenant-source-bindings.json"
+jq '.bindings |= map(del(.previousBinding,.previousObservation)|.kind="published-bootstrap")' "$attribution_repo_root/scripts/canonical-tenant-source-bindings.json" >"$tree/scripts/canonical-tenant-source-bindings.json"
 cp "$attribution_repo_root/scripts/publish-workflow-canonical-approvals.tsv" "$tree/scripts/"
 awk -F '\t' '$1!="business-site"' "$attribution_repo_root/scripts/publish-workflow-approved-revisions.identities.tsv" >"$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 discover() (

@@ -438,6 +438,11 @@ main() {
       canonical_pin="$(default_pin_resolver "$repo" "$workflow")" || exit 1
       [ "$canonical_pin" = "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" ] || { refuse "$repo: current publisher is outside the pinned admission"; exit 1; }
       case "$source_state" in
+        previous)
+          # Keep the last actual row, including absence before first observation.
+          canonical_previous="$(awk -F '\t' -v consumer="$repo" '$1==consumer {print}' "$IDENTITIES_OUTPUT")"
+          if [ -n "$canonical_previous" ]; then identities_rows="${identities_rows}${canonical_previous}"$'\n'; fi
+          ;;
         absent | pending)
           [ "$(printf '%s\n' "$canonical_record" | jq -r .kind)" = published-bootstrap ] || { refuse "$repo: observed publication cannot regress to bootstrap"; exit 1; }
           ;;
@@ -449,7 +454,7 @@ main() {
             canonical_date="${canonical_previous##*$'\t'}"
           fi
           identities_rows="${identities_rows}${canonical_tuple}"$'\t'"${canonical_date}"$'\n'
-          canonical_document="$(printf '%s\n' "$canonical_document" | jq --arg consumer "$repo" '.bindings |= map(if .consumer==$consumer then .kind="published-binding" else . end)')"
+          canonical_document="$(printf '%s\n' "$canonical_document" | jq --arg consumer "$repo" '.bindings |= map(if .consumer==$consumer then .kind="published-binding"|del(.previousBinding,.previousObservation) else . end)')"
           ;;
         *) refuse "$repo: unknown canonical source state"; exit 1 ;;
       esac

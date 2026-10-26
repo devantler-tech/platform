@@ -18,10 +18,7 @@ canonical_tenant_bindings() (
     def sha: type=="string" and test("^[0-9a-f]{40}$");
     def digest: type=="string" and test("^sha256:[0-9a-f]{64}$");
     def positive: type=="number" and .>0 and .<=999999999999999 and floor==.;
-    select(length==1) | .[0] |
-    select(type=="object" and keys==["bindings","schemaVersion"] and .schemaVersion==1) |
-    select(.bindings|type=="array" and length<=1) |
-    select(all(.bindings[];
+    def plain_binding:
       type=="object" and keys==["constructorSpecSha256","consumer","consumerRepository","kind","publication","sourceIdentity","sourcePath","tenantIdentity","workflow"] and
       (.constructorSpecSha256|type=="string" and test("^[0-9a-f]{64}$")) and
       .consumer=="business-site" and .consumerRepository=="devantler-tech/business-site" and
@@ -37,8 +34,26 @@ canonical_tenant_bindings() (
         (.gitTag|type=="string" and test("^v[0-9]+[.][0-9]+[.][0-9]+$")) and (.sourceSHA|sha) and
         .publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0" and
         (.verifiedOn|type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
-        (.workflowRunId|positive) and (.workflowRunAttempt|positive))
-    ))
+        (.workflowRunId|positive) and (.workflowRunAttempt|positive));
+    def upgrade_binding:
+      type=="object" and
+      keys==["constructorSpecSha256","consumer","consumerRepository","kind","previousBinding","previousObservation","publication","sourceIdentity","sourcePath","tenantIdentity","workflow"] and
+      .kind=="published-upgrade" and
+      ((del(.previousBinding,.previousObservation)|.kind="published-binding")|plain_binding) and
+      (.previousBinding|plain_binding) and
+      (.previousObservation|type=="object" and keys==["generation","observedOn","snapshotSha256","uidSha256"] and
+        (.generation|positive) and (.observedOn|type=="string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and
+        all(.snapshotSha256,.uidSha256; type=="string" and test("^[0-9a-f]{64}$"))) and
+      (. as $candidate | .previousBinding as $old |
+        ($candidate|del(.previousBinding,.previousObservation,.publication,.sourceIdentity,.kind))==
+        ($old|del(.publication,.sourceIdentity,.kind)) and
+        ($candidate.sourceIdentity|del(.digest))==($old.sourceIdentity|del(.digest)) and
+        $candidate.sourceIdentity.digest!=$old.sourceIdentity.digest and
+        $candidate.publication.publisherIdentity==$old.publication.publisherIdentity);
+    select(length==1) | .[0] |
+    select(type=="object" and keys==["bindings","schemaVersion"] and .schemaVersion==1) |
+    select(.bindings|type=="array" and length<=1) |
+    select(all(.bindings[]; plain_binding or upgrade_binding))
   ' "$file"
 )
 
@@ -192,12 +207,50 @@ canonical_publication_verify() (
     }' >/dev/null
 )
 
+# A preparation snapshot is current source verification, never application readiness.
+canonical_source_observation() (
+  set -euo pipefail
+  trap - EXIT
+  local observation_record="$1" observation_inventory="$2" observation_pin
+  [ "$(canonical_source_inventory_state "$observation_record" "$observation_inventory")" = observed ] || return 1
+  observation_pin="$(printf '%s\n' "$observation_record" | jq -er '.publication.publisherIdentity|split("@")[1]')" || return 1
+  jq -cSe --argjson binding "$observation_record" --arg pin "$observation_pin" '
+    def text: type=="string" and length>0 and length<=512 and (test("[[:cntrl:]]")|not);
+    [.items[]|select(.metadata.namespace==$binding.sourceIdentity.namespace and .metadata.name==$binding.sourceIdentity.name)] |
+    select(length==1)|.[0]|
+    select((.metadata.uid|text) and (.metadata.resourceVersion|text) and
+      .spec.verify=={provider:"cosign",matchOIDCIdentity:[{
+        issuer:"^https://token\\.actions\\.githubusercontent\\.com$",
+        subject:("^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@"+$pin+"$")}]}) |
+    {metadata:{uid:.metadata.uid,resourceVersion:.metadata.resourceVersion,generation:.metadata.generation},
+     spec:{url:.spec.url,ref:.spec.ref,verify:.spec.verify},status:{observedGeneration:.status.observedGeneration,
+       revision:.status.artifact.revision,conditions:([.status.conditions[]|select(.type=="Ready" or .type=="SourceVerified")|
+         {type,status,observedGeneration}]|sort_by(.type))}}' "$observation_inventory"
+)
+
 # A complete cluster listing distinguishes first publication from real source
 # verification. An existing observed binding can never regress to bootstrap.
 canonical_source_inventory_state() (
   set -euo pipefail
   trap - EXIT
   local state_record="$1" state_inventory="$2"
+  if [ "$(printf '%s\n' "$state_record" | jq -r .kind)" = published-upgrade ]; then
+    local next_record prior_record next_state prior_snapshot prior_uid prior_generation
+    next_record="$(printf '%s\n' "$state_record" | jq -c 'del(.previousBinding,.previousObservation)|.kind="published-binding"')" || return 1
+    if next_state="$(canonical_source_inventory_state "$next_record" "$state_inventory")"; then
+      [ "$next_state" = observed ] || return 1
+      printf 'observed\n'
+      return
+    fi
+    prior_record="$(printf '%s\n' "$state_record" | jq -c .previousBinding)" || return 1
+    prior_snapshot="$(canonical_source_observation "$prior_record" "$state_inventory")" || return 1
+    prior_uid="$(printf '%s\n' "$prior_snapshot" | jq -er .metadata.uid)" || return 1
+    prior_generation="$(printf '%s\n' "$prior_snapshot" | jq -er .metadata.generation)" || return 1
+    [ "$(printf '%s' "$prior_uid" | shasum -a 256 | awk '{print $1}')" = "$(printf '%s\n' "$state_record" | jq -r .previousObservation.uidSha256)" ] || return 1
+    [ "$prior_generation" = "$(printf '%s\n' "$state_record" | jq -r .previousObservation.generation)" ] || return 1
+    printf 'previous\n'
+    return
+  fi
   jq -cers --argjson binding "$state_record" '
     def text: type=="string" and length>0 and length<=512 and (test("[[:cntrl:]]")|not);
     def generation: type=="number" and .>0 and floor==.;
@@ -246,6 +299,10 @@ canonical_observation_consistent() (
   set -euo pipefail
   trap - EXIT
   local consistency_record="$1" identities="$2" expected actual
+  if [ "$(printf '%s\n' "$consistency_record" | jq -r .kind)" = published-upgrade ]; then
+    canonical_observation_consistent "$(printf '%s\n' "$consistency_record" | jq -c .previousBinding)" "$identities"
+    return
+  fi
   [ -f "$identities" ] && [ ! -L "$identities" ] || return 1
   [ "$(head -n1 "$identities")" = $'consumer\tworkflow\tapplied_tag\tapplied_digest\tapplied_publisher_identity\tmain_publisher_identity\tobserved_on' ] || return 1
   actual="$(awk -F '\t' '$1=="business-site" {if(NF!=7) exit 1; print}' "$identities")" || return 1
