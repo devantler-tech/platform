@@ -22,8 +22,8 @@
 # was found. There is no userInfo matching here, so background scanning stays on
 # and existing drift surfaces in the PolicyReports rather than only at admission.
 #
-# SERVICE groups only. The bookmark groups in the same layout block (GitHub,
-# Media, Banking, …) are intentionally absent: Homepage renders services and
+# SERVICE groups only. The bookmark groups in the same layout block (Internal
+# Developer Platform, Supply Chain, Streaming, …) are intentionally absent: Homepage renders services and
 # bookmarks as separate sections, so the config-map keeps the two name sets
 # distinct, and a service claiming a bookmark group's name would paint that
 # heading twice with different contents under each.
@@ -88,10 +88,11 @@ spec:
         message: >-
           A route with gethomepage.dev/enabled="true" must set
           gethomepage.dev/group to a service group declared in the Homepage
-          layout (k8s/bases/apps/homepage/config-map.yaml): Internal Developer
-          Platform, Kubernetes, Observability, Security, Diagnostics, Device
-          Management, Infrastructure as Code, Cloud, Network, Home, Finance,
-          Analytics, Data, Business, Products, Clients, Email, or Personal.
+          layout (k8s/bases/apps/homepage/config-map.yaml): Kubernetes,
+          Observability, Analytics, Security, Secrets Management, Governance,
+          Diagnostics, Device Management, Infrastructure as Code, Cloud,
+          Network, Home, Finance, Data, Business & Clients, Products, Clients,
+          Personal, or Email.
           An undeclared group still renders,
           but sorts below every declared group with a generic icon. Bookmark
           group names are deliberately not accepted here.
@@ -105,7 +106,15 @@ spec:
                 value:
                   - Kubernetes
                   - Observability
+                  - Analytics
+                  # TRANSITIONAL — still claimed by the OpenBao and Policy
+                  # Reporter routes. A route can only move to a group this LIVE
+                  # list already accepts, because Flux applies routes before
+                  # this policy, so they switch to Secrets Management and
+                  # Governance in a later deploy; then remove this entry.
                   - Security
+                  - Secrets Management
+                  - Governance
                   - Diagnostics
                   - Device Management
                   - Infrastructure as Code
@@ -113,10 +122,12 @@ spec:
                   - Network
                   - Home
                   - Finance
-                  - Analytics
                   - Data
-                  - Business
+                  - Business & Clients
                   - Products
+                  # TRANSITIONAL — still claimed by the ascoachingogvaner tenant
+                  # route. Remove it, with its layout entry, once that route
+                  # names Business & Clients.
                   - Clients
-                  - Email
                   - Personal
+                  - Email
