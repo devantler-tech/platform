@@ -10,6 +10,9 @@ resources:
   - password-umami-app-secret.yaml
   - password-umami-admin-password.yaml
   - password-umami-ascoachingogvaner-password.yaml
+  - password-crossview-db-password.yaml
+  - password-crossview-session-secret.yaml
+  - password-crossview-admin-password.yaml
   - external-secret-generated-fleetdm-mysql-root-password.yaml
   - push-secret-push-fleetdm-mysql-passwords.yaml
   - external-secret-generated-fleetdm-mysql-replication-password.yaml
@@ -26,6 +29,12 @@ resources:
   - push-secret-push-umami-admin-password.yaml
   - external-secret-generated-umami-ascoachingogvaner-password.yaml
   - push-secret-push-umami-ascoachingogvaner-password.yaml
+  - external-secret-generated-crossview-db-password.yaml
+  - push-secret-push-crossview-db-password.yaml
+  - external-secret-generated-crossview-session-secret.yaml
+  - push-secret-push-crossview-session-secret.yaml
+  - external-secret-generated-crossview-admin-password.yaml
+  - push-secret-push-crossview-admin-password.yaml
   - push-secret-seed-r2-credentials.yaml
   - push-secret-seed-wedding-db-backup-r2.yaml
   - push-secret-seed-github-app.yaml

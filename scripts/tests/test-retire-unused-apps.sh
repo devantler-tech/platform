@@ -212,9 +212,22 @@ run "${state}" STAY_ATTACHED=1
 expect 1 'Longhorn volumes did not detach' 'an attached Longhorn volume must stop the run'
 [ -f "${state}/${lh}/longhorn-system/pvc-backstage-3" ] || fail 'an attached Longhorn volume must survive'
 
+# Crossview's Vault seed chain stays declared until a later revision; its exact
+# objects do not block the retirement, but a near-miss name still does.
+seed_ids='"openbao_crossview-db-password_generators.external-secrets.io_Password",
+  "openbao_generated-crossview-session-secret_external-secrets.io_ExternalSecret",
+  "openbao_push-crossview-admin-password_external-secrets.io_PushSecret"'
+state="$(seed seed-near-miss "${deployed}")"
+jq ".status.inventory.entries += [{id: \"openbao_push-crossview-oidc-secret_external-secrets.io_PushSecret\", v: \"v1\"}]" \
+  "${state}/apps.json" >"${state}/infrastructure.json"
+run "${state}"
+expect 1 'still owns openbao_push-crossview-oidc-secret' 'a seed outside the retained chain must be refused'
+
 # The deployed removal retires everything in order and leaves only unrelated
 # storage behind.
 state="$(seed deployed "${deployed}")"
+jq "[${seed_ids}] as \$seed | .status.inventory.entries += [\$seed[] | {id: ., v: \"v1\"}]" \
+  "${state}/apps.json" >"${state}/infrastructure.json"
 run "${state}"
 expect 0 'PASS:' 'the deployed retirement must pass'
 order="$(awk '$1 == "delete" {print $2}' "${state}/calls" | uniq | tr '\n' ' ')"

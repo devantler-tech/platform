@@ -51,6 +51,10 @@ readonly releases=(crossview/crossview headlamp/headlamp)
 readonly clusters=(backstage/backstage-db)
 readonly namespaces=(crossview headlamp backstage)
 readonly retired_pattern='crossview|headlamp|backstage'
+# Crossview's Vault seed chain stays declared until this retirement has run, so
+# a healed failed deploy never regenerates credentials that Crossview's retained
+# database was initialised with. A later revision removes it (#5391).
+readonly retained_seed_pattern='^openbao_(generated-|push-)?crossview-(db-password|session-secret|admin-password)_'
 readonly longhorn_namespace=longhorn-system
 readonly summary_kinds=(
   configurationscansummaries.spdx.softwarecomposition.kubescape.io
@@ -139,8 +143,8 @@ for layer in infrastructure-controllers infrastructure apps; do
     (.status.inventory.entries | type == "array" and length > 0)
   ' <<<"${kustomization}" >/dev/null ||
     fail "the ${layer} Kustomization is not Ready for its current generation with a non-empty inventory"
-  owned="$(jq -r --arg p "${retired_pattern}" \
-    '[.status.inventory.entries[].id | select(test($p))] | join(" ")' <<<"${kustomization}")"
+  owned="$(jq -r --arg p "${retired_pattern}" --arg seed "${retained_seed_pattern}" \
+    '[.status.inventory.entries[].id | select(test($p) and (test($seed) | not))] | join(" ")' <<<"${kustomization}")"
   [ -z "${owned}" ] ||
     fail "the deployed ${layer} inventory still owns ${owned}; deploy the removal before retiring the leftovers"
 done
