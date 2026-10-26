@@ -20,16 +20,15 @@ self-hosted-mail result. The server's exact release, licensing, source and
 official deployment documentation were then inspected. An external relay remains
 a separate decision if direct outbound delivery cannot be established.
 
-## Preparation is disabled by default
+## Shared preparation resources
 
-The `k8s/bases/apps/private-mail` bundle is deliberately absent from both normal
-application overlays. Its explicit inclusion is the coarse deployment toggle.
-Production includes only the separate storage bundle; the preparation workload
-and credential generators remain off. Rendering the preparation bundle directly
-tests its enabled state. Provider-layer tests require inactive serving, with
-retained storage owned only in production.
+The `k8s/bases/apps/private-mail` bundle supplies the shared storage and
+initialization resources. The shared and local application layers omit mail;
+production includes this base through the administration bundle below. Rendering
+the base directly tests preparation, while the provider renders verify that only
+production enables normal administration.
 
-Even when included, this revision starts only the internal recovery management
+The preparation base alone starts only the internal recovery management
 API. It has no public Service or route, mail listener or outbound network grant.
 Only a setup workload in the same namespace can reach its management port. The
 server receives no Kubernetes API token. Its single local datastore owner is
@@ -46,6 +45,38 @@ or agent reads the credential as part of this preparation.
 The namespace and claim retain the platform's current prune protection. The
 claim is not a backup or restore proof. Preparation neither migrates nor receives
 messages, and must not be used as evidence that an existing volume is empty.
+
+## Administration opt-in
+
+The separate `k8s/bases/apps/private-mail-administration` bundle inherits the
+preparation resources. Production includes it with encrypted settings; the
+shared and local application layers keep mail disabled.
+Its initializer must finish and stop recovery before Kubernetes starts the
+normal Stalwart process. Both use the same immutable published bootstrap image.
+Only the initializer receives the private settings and account passwords;
+normal serving receives the datastore and certificate files. Each process has
+its own memory-backed temporary directory, and neither receives Kubernetes API
+credentials.
+
+Maintainer and agent passwords follow the existing administrator's durable
+generation pattern: create a cache once, push only if absent, then consume the
+value read back from OpenBao. Deleting a generator cache cannot rotate an
+existing account password. Missing settings, credentials or certificate files
+block startup. Production settings remain encrypted outside the shared bundle.
+The credential synchronizer receives exact-key seed and read permissions for
+all three durable credentials, with no mail-path wildcard, list or delete grant.
+Admission and node image verification route only the exact bootstrap image
+repository to its dedicated main-only publisher; other images keep their own
+signer requirements.
+
+The administration Service and HTTPS route select only normal management port
+8080. The network policy admits only gateway ingress there, explicitly denies
+recovery and prepared mail ports from every source, and retains all-egress
+denial. The route registers a Stalwart Homepage entry at its authenticated
+administration path. Inclusion prepares browser evaluation; it does not prove
+the Homepage entry, authentication or any production behavior until observed.
+Public mail, DNS migration, credential custody, history import and restoration
+remain separate activation requirements below.
 
 ## Activation and completion
 
@@ -87,12 +118,12 @@ Those remain separate maintainer-owned decisions.
 The owned bootstrap process uses recovery management port 18080, separate from
 normal administration on 8080. The pinned server supports a recovery port
 override but [binds it to every interface](https://github.com/stalwartlabs/stalwart/blob/v0.16.27/crates/common/src/config/server/listener.rs#L59-L84),
-so a future serving overlay must exclude 18080 from every Service and ingress
+so the administration overlay excludes 18080 from every Service and ingress
 grant, including during initialization and retries. Readiness alone is not that
 boundary. Bootstrap sets the override explicitly rather than inheriting it, and
-stops and collects its recovery child before permitting normal serving. The
-existing management-only preparation bundle remains internal and disabled;
-this separation does not activate a route, mail listener or migration.
+stops and collects its recovery child before permitting normal serving.
+Production exposes only normal administration after this clean recovery exit.
+Public mail transport and migration remain separate activation requirements.
 
 ## Prepared account configuration
 
@@ -262,6 +293,15 @@ node rule makes that rollout wait on itself. Separate reviewed revisions preserv
 the existing deployment sequence and signer isolation without a manual node
 configuration change. Public mail activation and migration retain their separate
 acceptance requirements.
+
+After the protected rollout, the dispatch-only **Verify Private Mail Storage
+Recovery** workflow checks the original failed deployment's ownership window.
+Run it from `main` with confirmation `verify-private-mail-storage-recovery`.
+It uses the existing production reader while holding the deployment lock, makes
+no cluster changes, and prints only a fixed verdict. Inventory, errors and
+temporary credential files are not published. A missing read or incomplete scan
+is unverified, never a pass. This verifies ownership recovery, not mail backup
+or restore acceptance.
 
 ## Sources
 
