@@ -121,8 +121,8 @@ data:
       # names are deliberately distinct from the service groups above — Homepage
       # renders services and bookmarks as separate sections, so a shared name
       # paints the same heading twice with different contents under each.
-      GitHub:
-        icon: si-github-#181717
+      Internal Developer Platform:
+        icon: mdi-hammer-wrench
       Security & Supply Chain:
         icon: mdi-shield-search
       Code Quality:
@@ -170,6 +170,17 @@ data:
             icon: mdi-heart-pulse
             href: https://healthchecks.io/
             description: External heartbeat monitoring.
+        # GitHub's org Insights, split into its two Actions views. They sit here
+        # rather than in a bookmark group because Observability is a service
+        # group, and a bookmark group may not reuse a service group's name.
+        - GitHub Actions Usage:
+            icon: si-githubactions-#2088FF
+            href: https://github.com/orgs/devantler-tech/actions/metrics/usage
+            description: Actions minutes by workflow, job, repository and runner.
+        - GitHub Actions Performance:
+            icon: si-githubactions-#2088FF
+            href: https://github.com/orgs/devantler-tech/actions/metrics/performance
+            description: Actions run times, queue times and failure rates.
     - Cloud:
         - Hetzner Cloud:
             icon: hetzner
@@ -217,35 +228,40 @@ data:
     # spec.service.apex.annotations).
   # Bookmarks are grouped by WHAT YOU GO THERE TO DO, matching how services.yaml
   # and the settings.yaml layout already group by function (Security, Cloud,
-  # Network, Finance, …) rather than by vendor. One console can therefore appear
-  # in more than one group — GitHub's org navigation sits under GitHub while its
-  # security overview sits under Security & Supply Chain, because that is where
-  # you look when the question is "what is vulnerable", not "where is the repo".
+  # Network, Finance, …) rather than by vendor. A console that serves several
+  # purposes is therefore split into its specific product views, each in the
+  # group for that purpose, never collected under a vendor group: GitHub's repos,
+  # pull requests and project board sit under Internal Developer Platform, its
+  # security overview under Security & Supply Chain, its Packages under Package
+  # Registries, and its Actions metrics under the Observability service group.
   #
   # Group names are deliberately DISTINCT from the service group names in
   # settings.yaml (Security, Kubernetes, Finance, …). Homepage renders services
   # and bookmarks as separate sections, so reusing a name paints the same heading
   # twice on one page with different contents under each.
   bookmarks.yaml: |
-    - GitHub:
-        - GitHub:
-            - icon: github-light
-              href: https://github.com
+    - Internal Developer Platform:
         - DevantlerTech:
             - icon: github-light
               href: https://github.com/devantler-tech
+        - Repositories:
+            - icon: mdi-source-repository-multiple
+              href: https://github.com/orgs/devantler-tech/repositories
+        - Pull Requests:
+            - icon: mdi-source-pull
+              href: https://github.com/pulls
         - Project Board:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/projects/5/views/1
-        - Insights:
-            - icon: si-github-#181717
-              href: https://github.com/orgs/devantler-tech/insights
-        - Actions Usage:
-            - icon: si-githubactions-#2088FF
-              href: https://github.com/orgs/devantler-tech/actions/metrics/usage
-        - Packages:
-            - icon: si-github-#181717
-              href: https://github.com/orgs/devantler-tech/packages
+        # No brand colour: Simple Icons' GitHub Copilot hex is #000000, which
+        # vanishes on the dark backdrop; uncoloured, it takes the theme gradient.
+        - Copilot Agents:
+            - icon: si-githubcopilot
+              href: https://github.com/copilot/agents
+        # mdi, not si-githubcodespaces: Simple Icons has no Codespaces slug (404).
+        - Codespaces:
+            - icon: mdi-cloud-braces
+              href: https://github.com/codespaces
     - Security & Supply Chain:
         - GitHub Security:
             - icon: si-github-#181717
@@ -286,6 +302,9 @@ data:
             - icon: si-kubernetes-#326CE5
               href: https://editor.networkpolicy.io
     - Package Registries:
+        - GitHub Packages:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/packages
         - Docker Hub:
             - icon: docker
               href: https://hub.docker.com
