@@ -32,7 +32,7 @@ trap cleanup EXIT
 base=http://127.0.0.1:18080
 prom=http://127.0.0.1:19090
 printf '%s\n' 'SYNTHETIC INTEGRATION EVIDENCE ONLY: no production resources, credentials or health claims.' >"${artifacts}/README.txt"
-# Verified against coroot/coroot v1.22.2 Dockerfile, config/flags.go,
+# Verified against coroot/coroot v1.28.1 Dockerfile, config/flags.go,
 # config/bootstrap.go, main.go and front/src/main.js. Do not guess API routes.
 for image in "${COROOT_IMAGE}" "${PROMETHEUS_IMAGE}" "${SERVER_IMAGE}"; do
   docker pull "${image}"
@@ -106,9 +106,9 @@ wait_json "${prom}/api/v1/query?query=platform_security_policy_total" \
 wait_json "${base}/api/user" \
   '.anonymous == true and .role == "Admin" and (.projects | length) == 1 and .projects[0].name == "default"' \
   "${artifacts}/user.json"
-# v1.22.2 has no --version option. main.go logs the compiled version before
+# v1.28.1 has no --version option. main.go logs the compiled version before
 # loading configuration; assert that real startup line after API readiness.
-docker logs "${prefix}-coroot" 2>&1 | grep -E 'version: 1\.22\.2([[:space:]]|$)' \
+docker logs "${prefix}-coroot" 2>&1 | grep -E 'version: 1\.28\.1([[:space:]]|$)' \
   >"${artifacts}/coroot-version.txt"
 # db/project.go PrometheusConfig adds this selector when using the global
 # backend. A successful unscoped Prometheus scrape alone cannot prove that the
@@ -160,7 +160,7 @@ while IFS= read -r definition; do
   name="$(jq -r '.name' <<<"${definition}")"
   id="$(jq -r --arg name "${name}" '.data[] | select(.name == $name) | .id | @uri' "${artifacts}/dashboards-2.json")"
   curl --silent --show-error --fail --max-time 30 "${collection}/${id}" >"${artifacts}/dashboard-${dashboard_index}.json"
-  jq -e --argjson desired "${definition}" '.data.name == $desired.name and .data.config == $desired.config' \
+  jq -e --argjson desired "${definition}" '.data.name == $desired.name and (.data.config | del(.. | .scope? | select(. == ""))) == $desired.config' \
     "${artifacts}/dashboard-${dashboard_index}.json" >/dev/null
   panel_index=0
   while IFS= read -r panel; do
