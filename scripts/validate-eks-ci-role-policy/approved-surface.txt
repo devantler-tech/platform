@@ -32,9 +32,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane 8faec319d400ced8ebc0341fa5496bcd9e578b02cd7b456b7d0beee9334c5d68
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|crossview|crossview 0ba0216c7029a85bd85503d3ed2dc75d2770ae51720d2b1c07bae258c703df22
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex c34e9d516d7791b50043ab355702e8be4741b5cdd015bcdc41c0d8aca27fd43d
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 3db343919ffde305fc4eb68664e0c12ecd8fe618b2f19f28b60b3413bf9237d7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 31c51b3b18a4d7dfbbe2fec098d6aad40f292dd29c6e91f0422217969ce24e45
 
@@ -45,8 +43,6 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger eea7d417849bbd7c141
 helm.toolkit.fluxcd.io/v2|HelmRelease|flagger-system|flagger-loadtester 41ddcdabe588958ecb1d6cbb4208ddb5dcc834c1bc380c944b01d90b39e516f2
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|flux-system|flux-operator 0cbdc24c2b42ef3da78473ccd608df4e01e94e83891b9da1e7c5f18473a67f1e
-
-helm.toolkit.fluxcd.io/v2|HelmRelease|headlamp|headlamp 3669bae2327733470971fdbae85d72f5b8de0a919d7b9cc5fa83e148e1624584
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|homepage|homepage 73c235e4a91bde46f5eeb0400fb986c47b52860d188f97822024b09fd4752b2a
 
@@ -171,12 +167,6 @@ rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-provider-unhealthy-a
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-alerter 2ff039b4399f755bb15112771e2586ac05d68b113313824972720f4a6e156147
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossplane-sync-exporter 89816b5cc430d16ae2fef6695022844c8658573eb5af90178ec8195c9601f1b1
-
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossview-cluster-reader bde9567eae5bc7a65684c0d641caf549802b897b5d8432b1ae9b47198ce519a3
-
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||crossview-view dbad690056de832fe5645d8de1c46f56f28ae2b6d445ab8c3b6eaa73dba9e0c9
-
-rbac.authorization.k8s.io/v1|ClusterRoleBinding||headlamp-cluster-reader a28f0fa0f4acdf218d12ed885232b294a919d70eb869e415d712f9e5faf16f1c
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||kubelet-serving-cert-approver 8597dac440c89e95680106666300851328ac807fb9a0c58164b70b099c8c35b7
 
@@ -328,7 +318,7 @@ rbac.authorization.k8s.io/v1|Role|longhorn-system|kyverno:background-controller:
 
 rbac.authorization.k8s.io/v1|Role|longhorn-system|longhorn-stale-node-cleanup bb761c018fb1648ee65a6ffe72e770e3cdf125b40a8774f11369f303beb85d50
 
-rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 208ea569644d0750f7ab9ca3e4d2fefcbd56e5fb2fc6b871b30a350393b1c4c3
+rbac.authorization.k8s.io/v1|Role|observability|cronjob-failure-alert 3b244783f53c17c55abfbae0a09973d244d258dbfbfdc8aa816539ae02bf4e6c
 
 rbac.authorization.k8s.io/v1|Role|observability|prune-protected-orphan-alert 7a815989a665e8c9d5f6434e51f3dde0e6e9116e05f195f1e56ed34cd7b3b1c2
 
@@ -360,8 +350,6 @@ source.toolkit.fluxcd.io/v1|HelmRepository|cnpg-system|cloudnative-pg 2ca8952aaa
 
 source.toolkit.fluxcd.io/v1|HelmRepository|crossplane-system|crossplane f47ce87b7611344b0d38ff450e6f789a60711bd657a2ff063253c5fcbd30e754
 
-source.toolkit.fluxcd.io/v1|HelmRepository|crossview|crossview 1eb08548cbf839307f56880f8ad2c1df8db9cc5c4743a8a5433fef9f27ccb6b3
-
 source.toolkit.fluxcd.io/v1|HelmRepository|dex|dex d251b34144fb4d376b47526e24b3520a1cc696159aa72f1a8c06fa67aadbda7f
 
 source.toolkit.fluxcd.io/v1|HelmRepository|external-dns|external-dns 81022de05d792a296ac5ce122fd92258c7cd7ac85ce62aa703aa12fdb0ac1326
@@ -369,8 +357,6 @@ source.toolkit.fluxcd.io/v1|HelmRepository|external-dns|external-dns 81022de05d7
 source.toolkit.fluxcd.io/v1|HelmRepository|external-secrets|external-secrets 1b37d24bf9b45fca6d06fa353858c4364e2e1fc5c526e066a4121a9c914c8386
 
 source.toolkit.fluxcd.io/v1|HelmRepository|flagger-system|flagger c486c0ac9521f94c378ab3b1b331a1c8b11b2e4852d5ba6c1829daec8e877fb9
-
-source.toolkit.fluxcd.io/v1|HelmRepository|headlamp|headlamp 2fb5eb66c735ba1560c74be0f5831119c4a58dabe877cf66e2d3cdf6344c189f
 
 source.toolkit.fluxcd.io/v1|HelmRepository|keda|keda 0ac84176333ac006ba8e534c1403ea7e7a8f5052860c87bb788eb55c3cfc331c
 
@@ -442,7 +428,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|world-at-ruin|world-at-ruin e85c1133b6
 
 v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a818a77793646c4fd54b4c3c8b1
 
-v1|ConfigMap|flux-system|variables-cluster e44f686f8632152eb22ee50f48dd608a69a8b2718ba420350808d12d78ddd755
+v1|ConfigMap|flux-system|variables-cluster 4dd0f78bf25a143540b8caec53295a4a4869c42df99d0b0f003a1ac86971a162
 
 v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
 

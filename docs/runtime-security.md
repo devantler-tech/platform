@@ -79,7 +79,7 @@ only when `alertCRD.installDefault` is true. Production declares that switch,
 [`install-default-runtime-rules.yaml`](../k8s/providers/hetzner/infrastructure/controllers/kubescape/patches/install-default-runtime-rules.yaml),
 so the agent keeps building profiles but raises no alerts: an empty alert route
 means nothing was checked. Turning the switch on adds exactly those two objects
-and sends alerts through the existing Alertmanager (Slack, Headlamp) and stdout
+and sends alerts through the existing Alertmanager (Slack) and stdout
 (Coroot) routes. `scripts/tests/test-kubescape-runtime-rules-switch.sh` renders
 the pinned chart in both states and refuses an undeclared switch, an on state
 that binds no enabled rule, and an on state that changes anything else (#4968).

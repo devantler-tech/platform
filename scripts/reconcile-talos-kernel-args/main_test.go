@@ -25,7 +25,6 @@ var workflowPinFixtures = []string{
 	".github/workflows/ci.yaml", ".github/workflows/cd.yaml", ".github/actions/deploy-prod/action.yml",
 	".github/workflows/validate-main.yaml", ".github/workflows/dr-rebuild.yaml",
 	".github/workflows/validate-image-verifier-liveness.yaml", ".github/workflows/prove-scoped-package-access.yaml",
-	".github/workflows/protect-backstage-storage.yaml",
 }
 
 func writeWorkflowPins(t *testing.T, version string) {

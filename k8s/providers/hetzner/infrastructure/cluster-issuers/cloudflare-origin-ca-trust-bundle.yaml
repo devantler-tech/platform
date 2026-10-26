@@ -1,8 +1,9 @@
 # Distributes the Cloudflare Origin ECC CA root + system CAs to all namespaces
-# as the ConfigMap "cloudflare-origin-ca". Required so that in-cluster clients
-# (e.g. Headlamp) can verify TLS connections to the Cilium gateway when CoreDNS
-# resolves *.platform.devantler.tech directly to the in-cluster service instead
-# of routing through Cloudflare's publicly-trusted edge.
+# as the ConfigMap "cloudflare-origin-ca", so that in-cluster clients can
+# verify TLS connections to the Cilium gateway when CoreDNS resolves
+# *.platform.devantler.tech directly to the in-cluster service instead of
+# routing through Cloudflare's publicly-trusted edge. No workload mounts it
+# today; Headlamp, its last consumer, was removed.
 apiVersion: trust.cert-manager.io/v1alpha1
 kind: Bundle
 metadata:

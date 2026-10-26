@@ -18,7 +18,7 @@ spec:
       # defaults it to false. Turning it on adds exactly those two objects and
       # nothing else (no RBAC, workload or CRD change). The binding covers every
       # pod outside `excludeNamespaces`, and alerts then flow to the existing
-      # Alertmanager (Slack, Headlamp) and stdout (Coroot) routes.
+      # Alertmanager (Slack) and stdout (Coroot) routes.
       #
       # It stays off until the rollout is decided: the anomaly rules depend on
       # complete application profiles, several workloads have only partial ones,

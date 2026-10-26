@@ -24,10 +24,9 @@ fold inputs are:
 | `charts/` | Carries the generated `Cluster` schema published from those types; earlier audits compared it, so it stays part of the set. |
 | `go.mod`, `go.sum` | Pin the Talos machinery that encodes the machine configuration. |
 
-`--check-pins` reads all explicit KSail pins in eight files: CI, CD, the production
-deployment action, direct-main validation, disaster recovery, and the three operational
-workflows that validate image-verifier liveness, prove scoped package access and protect
-retained Backstage storage. They must be explicit release versions and must all agree.
+`--check-pins` reads all explicit KSail pins in seven files: CI, CD, the production
+deployment action, direct-main validation, disaster recovery, and the two operational
+workflows that validate image-verifier liveness and prove scoped package access. They must be explicit release versions and must all agree.
 The disposable, non-Talos Cilium default-deny proof keeps its separately audited
 KSail 7.193.8 / Cilium image pairing. The caller inventory accounts for that
 independent profile without treating it as a deployment renderer.

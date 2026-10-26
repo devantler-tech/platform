@@ -10,9 +10,7 @@
 #
 # Four initial warnings are deliberately absent: Alertmanager and the Longhorn
 # CSI snapshotter get warm replicas, Origin CA Issuer is disabled, and #3818
-# removes the superseded OpenCost usage scraper. Crossview PostgreSQL is accepted
-# only after #3829 delivered a retained, three-node-replicated Longhorn volume
-# and live Coroot PostgreSQL collection.
+# removes the superseded OpenCost usage scraper.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -70,24 +68,6 @@ data:
         "reason": "platform#3812: telemetry exporter is off the serving path; a short scrape gap is acceptable"
       },
       {
-        "application": "crossview:Deployment:crossview",
-        "category": "Availability",
-        "type": "single-instance-app",
-        "reason": "platform#3812: low-criticality internal UI; fast rescheduling meets its recovery objective"
-      },
-      {
-        "application": "crossview:Deployment:crossview-postgres",
-        "category": "Availability",
-        "type": "single-instance-app",
-        "reason": "platform#3812: single-writer low-criticality database on retained cross-node storage; Kubernetes rescheduling meets its recovery objective"
-      },
-      {
-        "application": "crossview:Deployment:crossview-postgres",
-        "category": "Availability",
-        "type": "unreplicated-database",
-        "reason": "platform#3812: low-criticality dashboard database on a cross-node replicated Longhorn volume; pod rescheduling meets its recovery objective"
-      },
-      {
         "application": "kube-system:Deployment:descheduler",
         "category": "Availability",
         "type": "single-instance-app",
@@ -110,12 +90,6 @@ data:
         "category": "Availability",
         "type": "single-instance-app",
         "reason": "platform#3812: operator is off the serving path; the Flux controllers continue reconciling workloads"
-      },
-      {
-        "application": "headlamp:Deployment:headlamp",
-        "category": "Availability",
-        "type": "single-instance-app",
-        "reason": "platform#3812: operator-only UI; the Kubernetes API remains available during rescheduling"
       },
       {
         "application": "kube-system:Deployment:hubble-ui",
