@@ -10,12 +10,6 @@ resources:
   - khoist-documentation/
   # Fetch/verify the exact reviewed publication only; no tenant application.
   - business-site/
-  # Temporary database-only control, replication and monitoring for the protected
-  # retirement orphan. #4266 removes this after verified retained-data cleanup.
-  - retained-backstage-db/namespace.yaml
-  - retained-backstage-db/cilium-network-policy.yaml
-  - retained-backstage-db/password-coroot-monitor.yaml
-  - retained-backstage-db/external-secret-coroot-monitor.yaml
   # Prod-only tenant: the UniFi network managed declaratively through Crossplane
   # Managed Resources (providers/hetzner/apps/unifi/). Lives in the hetzner apps
   # overlay because its provider and the controller API it reaches are
@@ -65,7 +59,7 @@ patches:
   - target:
       group: postgresql.cnpg.io
       kind: Cluster
-      name: (backstage-db|umami-db)
+      name: umami-db
     patch: |
       - op: add
         path: /spec/priorityClassName

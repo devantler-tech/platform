@@ -1,15 +1,16 @@
-name: Retire Crossview and Headlamp Leftovers
+name: Retire Unused App Leftovers
 
-# One approved retirement (#2496), dormant until an explicit main dispatch.
-# Flux keeps prune-protected Namespaces, HelmReleases and claims after their
-# manifests leave Git; this deletes exactly those Crossview and Headlamp
-# leftovers once the removal is deployed. Source CI and the merge queue never
-# execute this workflow.
+# One approved retirement of Crossview, Headlamp (#2496) and the retained
+# Backstage database (#4266), dormant until an explicit main dispatch. Flux
+# keeps prune-protected Namespaces, HelmReleases, Clusters and claims after
+# their manifests leave Git, and Retain volumes keep their data; this deletes
+# exactly those leftovers once the removal is deployed. Source CI and the merge
+# queue never execute this workflow.
 on:
   workflow_dispatch:
     inputs:
       confirm:
-        description: "Type exactly: retire-crossview-headlamp-2496"
+        description: "Type exactly: retire-crossview-headlamp-backstage"
         required: true
         type: string
 
@@ -21,9 +22,9 @@ concurrency:
 
 jobs:
   retirement:
-    name: 🧹 Delete the retired UIs' protected leftovers
+    name: 🧹 Delete the retired apps' protected leftovers
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: prod
     permissions:
       contents: read
@@ -36,7 +37,7 @@ jobs:
           set -euo pipefail
           [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform && "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
             "${GITHUB_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 &&
-            "${RETIREMENT_CONFIRM}" == retire-crossview-headlamp-2496 ]]
+            "${RETIREMENT_CONFIRM}" == retire-crossview-headlamp-backstage ]]
 
       - name: 📑 Checkout the reviewed dispatch revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,4 +64,4 @@ jobs:
         run: ./scripts/use-prod-stable-api-endpoint.sh
 
       - name: Prove the removal deployed, delete the leftovers and verify none remain
-        run: bash scripts/retire-crossview-headlamp.sh
+        run: bash scripts/retire-unused-apps.sh
