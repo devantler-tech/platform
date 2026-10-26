@@ -163,7 +163,11 @@ jq -e --arg selection "github.event_name == 'pull_request' && needs.changes.outp
   (($job["continue-on-error"] // false) == false) and
   (["🐤 Validate staged OpenBao standby repair",
     "🔒 Validate Crossplane provider egress policy",
-    "✉️ Prove native mail accounts and recipient restrictions"] | all(.[];
+    "✉️ Prove native mail accounts and recipient restrictions",
+    "🔐 Validate Kyverno review admission boundaries",
+    "🗺️ Validate every unscanned namespace is reviewed",
+    "🔐 Validate the shared-publish-workflow pin guard",
+    "🩺 Validate declarative Coroot application health"] | all(.[];
       . as $name |
       ([$job.steps[] | select(.name == $name and
         .if == "needs.changes.outputs.k8s == '\''true'\''" and
@@ -198,4 +202,4 @@ for event in pull_request merge_group; do
     done
   done
 done
-echo 'PASS: all three manifest regressions run once and selected non-success outcomes are refused'
+echo 'PASS: all seven manifest regressions run once and selected non-success outcomes are refused'

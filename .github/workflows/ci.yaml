@@ -209,6 +209,8 @@ jobs:
               - 'scripts/tests/test-data-product-controller-trial.sh'
               - 'scripts/tests/test-data-product-ui-host.sh'
               - 'scripts/tests/test-data-product-ui-rollout.sh'
+              - 'scripts/tests/test-fixture-workers.sh'
+              - 'scripts/tests/lib/fixture-workers.lib.sh'
               - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
@@ -1820,7 +1822,8 @@ jobs:
           bash scripts/tests/test-data-product-controller-trial.sh
           shellcheck scripts/tests/test-data-product-ui-host.sh
           bash scripts/tests/test-data-product-ui-host.sh
-          shellcheck scripts/verify-data-product-ui-rollout.sh scripts/tests/test-data-product-ui-rollout.sh
+          shellcheck -x scripts/verify-data-product-ui-rollout.sh scripts/tests/test-data-product-ui-rollout.sh scripts/tests/lib/fixture-workers.lib.sh scripts/tests/test-fixture-workers.sh
+          bash scripts/tests/test-fixture-workers.sh
           bash scripts/tests/test-data-product-ui-rollout.sh
           shellcheck scripts/tests/test-data-product-runtime-digests.sh
           bash scripts/tests/test-data-product-runtime-digests.sh
@@ -2557,14 +2560,6 @@ jobs:
           shellcheck scripts/tests/test-coroot-alert-autosuppressor.sh
           bash scripts/tests/test-coroot-alert-autosuppressor.sh
 
-      - name: 🩺 Validate declarative Coroot application health
-        if: needs.changes.outputs.k8s == 'true'
-        # Exact reviewed app signals receive per-app thresholds; any novel log
-        # pattern resets its threshold so the Applications view fails visible.
-        run: |
-          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
-          bash scripts/tests/test-coroot-application-health-reconciler.sh
-
       - name: 📦 Validate Coroot helper image caching
         if: needs.changes.outputs.k8s == 'true'
         # A pinned digest on a warm node must not depend on Docker Hub token
@@ -2667,15 +2662,6 @@ jobs:
         # finding (#3545), plus the wiring that puts it before the promotion.
         run: bash scripts/tests/test-verify-matcher-accepts-digest.sh
 
-      - name: 🔐 Validate the shared-publish-workflow pin guard
-        if: needs.changes.outputs.k8s == 'true'
-        # The guard fails by PASSING: a widened cosign matcher still verifies, so
-        # nothing else in CI notices. This pins the shapes it must reject — above
-        # all the SHA-or-tag alternation removed in #3022, which is the exact
-        # prior contents of all eight subjects and would otherwise revert in
-        # silence — plus the floor and the wiring that reaches it.
-        run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
-
       - name: 🧷 Validate checkov skip reasons are quoted and intact
         if: needs.changes.outputs.k8s == 'true'
         # A `checkov.io/skipN` whose reason parses away still suppresses its
@@ -2767,18 +2753,6 @@ jobs:
         run: |
           bash scripts/guard-baseline-context-optin-scan-scope.sh
           bash scripts/tests/test-guard-baseline-context-optin-scan-scope.sh
-
-      - name: 🗺️ Validate every unscanned namespace is reviewed
-        if: needs.changes.outputs.k8s == 'true'
-        # A namespace in the operator's excludeNamespaces produces no scan result, and the
-        # posture score cannot tell that apart from a clean namespace. So the exclusions must
-        # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
-        # and a namespace can only leave scan coverage through a reviewed change (#3215).
-        # The base HelmRelease is the only place the field may be set: an overlay patch or a
-        # valuesFrom that sets it would narrow the deployed scope while this read the base.
-        run: |
-          bash scripts/guard-kubescape-scan-scope.sh
-          bash scripts/tests/test-guard-kubescape-scan-scope.sh
 
       - name: 🧮 Test the Kubescape result-coverage check
         if: needs.changes.outputs.k8s == 'true'
@@ -2974,15 +2948,6 @@ jobs:
           key: kubeconform-schema-cache-v1-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
-
-      - name: 🔐 Validate Kyverno review admission boundaries
-        if: needs.changes.outputs.k8s == 'true'
-        # Render the pinned chart and exercise its match conditions against an
-        # isolated real API server. Ordinary policy requests must still fail
-        # closed; only the three already-filtered virtual reviews skip dispatch.
-        run: |
-          shellcheck scripts/tests/test-kyverno-auth-reviews.sh
-          bash scripts/tests/test-kyverno-auth-reviews.sh
 
       - name: 🧠 Validate Kyverno admission VPA safety
         if: needs.changes.outputs.k8s == 'true'
@@ -3395,6 +3360,45 @@ jobs:
         run: |
           shellcheck scripts/tests/test-private-mail-configuration.sh
           bash scripts/tests/test-private-mail-configuration.sh
+
+      - name: 🔐 Validate Kyverno review admission boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        # Render the pinned chart and exercise its match conditions against an
+        # isolated real API server. Ordinary policy requests must still fail
+        # closed; only the three already-filtered virtual reviews skip dispatch.
+        run: |
+          shellcheck scripts/tests/test-kyverno-auth-reviews.sh
+          bash scripts/tests/test-kyverno-auth-reviews.sh
+
+      - name: 🗺️ Validate every unscanned namespace is reviewed
+        if: needs.changes.outputs.k8s == 'true'
+        # A namespace in the operator's excludeNamespaces produces no scan result, and the
+        # posture score cannot tell that apart from a clean namespace. So the exclusions must
+        # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
+        # and a namespace can only leave scan coverage through a reviewed change (#3215).
+        # The base HelmRelease is the only place the field may be set: an overlay patch or a
+        # valuesFrom that sets it would narrow the deployed scope while this read the base.
+        run: |
+          bash scripts/guard-kubescape-scan-scope.sh
+          bash scripts/tests/test-guard-kubescape-scan-scope.sh
+
+      - name: 🔐 Validate the shared-publish-workflow pin guard
+        if: needs.changes.outputs.k8s == 'true'
+        # The guard fails by PASSING: a widened cosign matcher still verifies, so
+        # nothing else in CI notices. This pins the shapes it must reject — above
+        # all the SHA-or-tag alternation removed in #3022, which is the exact
+        # prior contents of all eight subjects and would otherwise revert in
+        # silence — plus the floor and the wiring that reaches it.
+        run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
+
+      - name: 🩺 Validate declarative Coroot application health
+        if: needs.changes.outputs.k8s == 'true'
+        # Exact reviewed app signals receive per-app thresholds; any novel log
+        # pattern resets its threshold so the Applications view fails visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
+          bash scripts/tests/test-coroot-application-health-reconciler.sh
+
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
