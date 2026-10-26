@@ -3820,3 +3820,43 @@ exact-pinned source-only instances. These schema checks are not publisher approv
 or production onboarding; #5247 must establish concrete consumer attribution and
 canonical approval before that boundary can be extended. This record does not
 claim deployment, live source verification or application activation.
+
+## 2026-10-26 — Preserve Helm release defaults in CEL policies
+
+For #5357, the existing `helm-release-enable-tests` and
+`helm-release-remediation-retries` ClusterPolicies become MutatingPolicies.
+Against `14050f7321691e31940f2dcb5523136d00aca4ec`, the ledger replaces only
+those two identities. The enable-tests fingerprint moves from
+`b901c17066f33c909b144581a8fc6303bb47ee923f13f2b8b0d18d4f7a9f2f46` to
+`6fce3cb1f80d3cb86e7fc83da0772e640299774d072c9b4d477bbb7cdd78c038`;
+remediation-retries moves from
+`7b66f9deebbae96d866d80a780f251ab2a5fd8427337f4f215a6ca709af70d6b` to
+`8d2bfea94dd9cb569f2a1de97d401052630a2e9575c62d410bb2e19ef0f134be`.
+Every other ledger entry is unchanged.
+
+Twenty legacy/new policy cases preserve the kind-only match, opt-in labels,
+incoming UPDATE opt-outs, fixed test/retry values and unrelated settings.
+Targeted controls reject removal of the incoming-label conditions; all policy
+orders and repeated application preserve complete output. The already-migrated
+CRD default stays unchanged. This authorizes no new subject, verb, credential,
+publisher or permission grant. The authorization validator, its match rules and
+other ledger approvals are unchanged.
+
+Consumer discovery separately approves each complete rendered API/kind/spec
+surface by canonical JSON fingerprint, preserving every expression byte:
+`43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824`
+(enable-tests) and
+`691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17`
+(remediation-retries). A policy name alone supplies no approval. The new
+regressions reject 26 altered surfaces, including consumer-kind matching,
+side-effect expressions, changed patch paths and added evaluation fields;
+all other unevaluated CEL stays refused.
+
+The effective-policy CEL producer gate also requires each complete closed spec
+to equal its reviewed shape. Only patch token whitespace can vary, with escapes
+and whitespace inside quoted literals refused. Its two positives and 26
+schema-valid scope, condition, value-path, selector and evaluation ablations
+exercise the actual KSail validator; existing producer rules stay unchanged.
+
+These offline checks do not establish production deployment;
+the remaining policies in #4997 still need their own migrations.

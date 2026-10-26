@@ -1,6 +1,8 @@
 # TODO: Upstream `helm-release-enable-tests.yaml` to Kyverno policies repository.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Conditional parent creation and the fixed value are idempotent, including
+# while another version of this policy acts on the same admission request.
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: helm-release-enable-tests
   annotations:
@@ -11,17 +13,33 @@ metadata:
     policies.kyverno.io/description: >-
       This policy enables Helm tests for HelmRelease resources.
 spec:
-  rules:
-    - name: enable-helm-tests
-      match:
-        resources:
-          kinds:
-            - HelmRelease
-          selector:
-            matchLabels:
-              helm.toolkit.fluxcd.io/helm-test: "enabled"
-      mutate:
-        patchStrategicMerge:
-          spec:
-            test:
-              enable: true
+  failurePolicy: Fail
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        helm.toolkit.fluxcd.io/helm-test: "enabled"
+    resourceRules:
+      # Preserve the legacy kind-only match across API groups and plurals.
+      # The CEL kind condition prevents matching other resource kinds.
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["*"]
+  # The admission selector can match the previous object during UPDATE.
+  # Only the incoming object's opt-in permits changing its test settings.
+  matchConditions:
+    - name: helm-release-kind
+      expression: object.kind == 'HelmRelease'
+    - name: tests-enabled-on-incoming-object
+      expression: >-
+        has(object.metadata.labels) &&
+        'helm.toolkit.fluxcd.io/helm-test' in object.metadata.labels &&
+        object.metadata.labels['helm.toolkit.fluxcd.io/helm-test'] == 'enabled'
+  # JSON patches need no HelmRelease schema and preserve other test settings.
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec.test) && object.spec.test != null ? [] :
+            [JSONPatch{op: "add", path: "/spec/test", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/test/enable", value: true}]

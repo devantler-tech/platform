@@ -1,0 +1,31 @@
+# Opted-in Helm releases receive these defaults without changing other settings (#4997).
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: helm-release-enable-tests
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/flux/helm-release-enable-tests.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: helm-release-enable-tests
+    resources:
+      - controllers/enabled-empty
+      - controllers/enabled-existing
+      - controllers/enabled-one-parent
+      - controllers/enabled-null-parents
+      - controllers/same-kind-other-group
+    kind: HelmRelease
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: helm-release-enable-tests
+    resources:
+      - controllers/unlabelled
+      - controllers/disabled
+    kind: HelmRelease
+    result: skip
+  - policy: helm-release-enable-tests
+    resources:
+      - controllers/wrong-kind
+    kind: ConfigMap
+    result: skip

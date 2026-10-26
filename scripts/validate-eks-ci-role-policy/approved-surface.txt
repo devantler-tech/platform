@@ -132,10 +132,6 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|wedding-app|wedding-app 7ee82dc4494
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|world-at-ruin|world-at-ruin 9c3f8221e384c5bb93de6056be60f16f69de3b08898efc4f3760944f225d15b2
 
-kyverno.io/v1|ClusterPolicy||helm-release-enable-tests b901c17066f33c909b144581a8fc6303bb47ee923f13f2b8b0d18d4f7a9f2f46
-
-kyverno.io/v1|ClusterPolicy||helm-release-remediation-retries 7b66f9deebbae96d866d80a780f251ab2a5fd8427337f4f215a6ca709af70d6b
-
 pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-aws-iam 48e8bcc2257a1affdbdf936c4b871becc6f0fdc02bb40e27665d265f00c465b3
 
 pkg.crossplane.io/v1beta1|DeploymentRuntimeConfig||provider-family-aws 064adcc0f15a96fc4015b549214fd9edf1686f73b930a41ba1a5cd4b581d049d
@@ -158,7 +154,11 @@ policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-deployment 804637a8c0e29af0ffb
 
 policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-statefulset 91cde3f6d780f91211e596a9dcbc8aad4c624406c3ceef0001416d3eeff00a0d
 
+policies.kyverno.io/v1|MutatingPolicy||helm-release-enable-tests 6fce3cb1f80d3cb86e7fc83da0772e640299774d072c9b4d477bbb7cdd78c038
+
 policies.kyverno.io/v1|MutatingPolicy||helm-release-install-crds e4eff687fb6ed05f18ab75747073569c4cede6309f560dd10d17adcfc71da2df
+
+policies.kyverno.io/v1|MutatingPolicy||helm-release-remediation-retries 8d2bfea94dd9cb569f2a1de97d401052630a2e9575c62d410bb2e19ef0f134be
 
 rbac.authorization.k8s.io/v1|ClusterRoleBinding||ascoachingogvaner-external-dns 2aac6fc040557b155131fdc2ad9261f6ad2b337835915d7dcb50a3704e032478
 
