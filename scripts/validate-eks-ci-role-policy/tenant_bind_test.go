@@ -19,12 +19,30 @@ type tenantBindRole struct {
 	} `yaml:"rules"`
 }
 
+// tenantPullSecretCIContract requires all fixed policy suites and one enforced pull-secret check.
 func tenantPullSecretCIContract(wf workflow) error {
 	j, ok := wf.Jobs["validate-cluster-policies"]
 	needs, valid := j.needsOf()
 	if !ok || !valid || !slices.Equal(needs, []string{"changes"}) || errorIsTolerated(j.ContinueOnError) ||
 		strings.Join(strings.Fields(j.If), " ") != "github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'" {
 		return fmt.Errorf("lost selected policy job enforcement")
+	}
+	matrix, valid := j.Strategy.Matrix.(map[string]any)
+	if !valid {
+		return fmt.Errorf("lost literal policy matrix routing")
+	}
+	suites, valid := matrix["suite"].([]any)
+	want := map[string]bool{"fixtures": true, "tenant": true, "services": true, "placement": true, "storage": true, "observability": true}
+	if !valid || len(matrix) != 1 || len(suites) != len(want) ||
+		j.Strategy.FailFast != false || j.Strategy.MaxParallel != 3 {
+		return fmt.Errorf("lost complete policy matrix routing")
+	}
+	for _, item := range suites {
+		name, isString := item.(string)
+		if !isString || !want[name] {
+			return fmt.Errorf("unknown or duplicate policy suite")
+		}
+		delete(want, name)
 	}
 	count := 0
 	for _, s := range j.Steps {
@@ -35,7 +53,11 @@ func tenantPullSecretCIContract(wf workflow) error {
 		if shell == "" {
 			shell = wf.Defaults.Run.Shell
 		}
-		if s.Uses == "" && s.enforces() && shellKeepsErrexit(shell) {
+		if s.Run != "" && (errorIsTolerated(s.ContinueOnError) || !shellKeepsErrexit(shell)) {
+			return fmt.Errorf("policy suite can hide a failed command")
+		}
+		if s.Uses == "" && s.If == "matrix.suite == 'observability'" &&
+			!errorIsTolerated(s.ContinueOnError) && shellKeepsErrexit(shell) {
 			count += canonicalCommandCount(s.Run, "bash scripts/tests/test-tenant-kro-pull-secret.sh")
 		}
 	}
@@ -45,15 +67,23 @@ func tenantPullSecretCIContract(wf workflow) error {
 	return nil
 }
 
+// TestTenantPullSecretAdmissionRemainsInCI rejects mutations that omit, misroute or mask admission.
 func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 	wf := canonicalCIWorkflow(t)
 	if err := tenantPullSecretCIContract(wf); err != nil {
 		t.Fatal(err)
 	}
-	for _, mutation := range []string{"missing", "skip", "tolerate", "comment", "mask", "unsafe-shell", "job-skip", "job-tolerate"} {
+	for _, mutation := range []string{
+		"missing", "skip", "tolerate", "comment", "mask", "unsafe-shell", "job-skip", "job-tolerate",
+		"wrong-suite", "unconditional", "matrix-missing", "matrix-duplicate", "matrix-exclude", "matrix-unbounded", "matrix-cancel", "matrix-expression", "matrix-array", "matrix-null",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			w := canonicalCIWorkflow(t)
 			j := w.Jobs["validate-cluster-policies"]
+			matrix, ok := j.Strategy.Matrix.(map[string]any)
+			if !ok {
+				t.Fatal("native policy matrix is not a literal mapping")
+			}
 			found := 0
 			for i := range j.Steps {
 				s := &j.Steps[i]
@@ -78,6 +108,26 @@ func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 					j.If = "false"
 				case "job-tolerate":
 					j.ContinueOnError = true
+				case "wrong-suite":
+					s.If = "matrix.suite == 'unknown'"
+				case "unconditional":
+					s.If = ""
+				case "matrix-missing":
+					delete(matrix, "suite")
+				case "matrix-duplicate":
+					matrix["suite"] = []any{"fixtures", "tenant", "services", "placement", "storage", "storage"}
+				case "matrix-exclude":
+					matrix["exclude"] = []any{map[string]any{"suite": "observability"}}
+				case "matrix-unbounded":
+					j.Strategy.MaxParallel = 6
+				case "matrix-cancel":
+					j.Strategy.FailFast = true
+				case "matrix-expression":
+					j.Strategy.Matrix = "${{ fromJSON(needs.prepare.outputs.matrix) }}"
+				case "matrix-array":
+					j.Strategy.Matrix = []any{"fixtures"}
+				case "matrix-null":
+					j.Strategy.Matrix = nil
 				}
 			}
 			if found != 1 {
@@ -88,6 +138,78 @@ func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 				t.Fatal("admitted lost or neutralized native admission controls")
 			}
 		})
+	}
+}
+
+// TestPolicyMatrixRequiresSafeEffectiveShells checks failure propagation and shell-default precedence.
+func TestPolicyMatrixRequiresSafeEffectiveShells(t *testing.T) {
+	for _, scope := range []string{"step", "job", "workflow"} {
+		t.Run(scope, func(t *testing.T) {
+			wf := canonicalCIWorkflow(t)
+			j := wf.Jobs["validate-cluster-policies"]
+			switch scope {
+			case "step":
+				found := false
+				for i := range j.Steps {
+					if j.Steps[i].Run != "" && j.Steps[i].If == "matrix.suite == 'fixtures'" {
+						j.Steps[i].Shell = "bash {0}"
+						found = true
+					}
+				}
+				if !found {
+					t.Fatal("no real fixture-suite step selected")
+				}
+			case "job":
+				j.Defaults.Run.Shell = "bash {0}"
+			case "workflow":
+				wf.Defaults.Run.Shell = "bash {0}"
+			}
+			wf.Jobs["validate-cluster-policies"] = j
+			if tenantPullSecretCIContract(wf) == nil {
+				t.Fatal("accepted a native suite that can hide an earlier failure")
+			}
+		})
+	}
+
+	// A narrower safe default or explicit step shell must override an unsafe
+	// inherited default. Check the same precedence the real runner resolves.
+	for _, scope := range []string{"job", "step"} {
+		t.Run("safe-override-"+scope, func(t *testing.T) {
+			wf := canonicalCIWorkflow(t)
+			wf.Defaults.Run.Shell = "bash {0}"
+			j := wf.Jobs["validate-cluster-policies"]
+			if scope == "job" {
+				j.Defaults.Run.Shell = "bash"
+			} else {
+				j.Defaults.Run.Shell = "bash {0}"
+				for i := range j.Steps {
+					if j.Steps[i].Run != "" {
+						j.Steps[i].Shell = "bash"
+					}
+				}
+			}
+			wf.Jobs["validate-cluster-policies"] = j
+			if err := tenantPullSecretCIContract(wf); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// TestWorkflowParserAcceptsUnrelatedExpressionMatrix keeps valid unrelated workflows parseable.
+func TestWorkflowParserAcceptsUnrelatedExpressionMatrix(t *testing.T) {
+	const source = `on: pull_request
+jobs:
+  unrelated:
+    strategy:
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo fixture
+`
+	var wf workflow
+	if err := yaml.Unmarshal([]byte(source), &wf); err != nil {
+		t.Fatalf("valid expression matrix disabled the shared workflow parser: %v", err)
 	}
 }
 

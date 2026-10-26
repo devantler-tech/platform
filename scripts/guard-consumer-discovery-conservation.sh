@@ -752,6 +752,34 @@ while IFS=$'\t' read -r file label; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
       refuse "production render $label holds consumer generation or cloning that cannot be accounted for by a static build, so its consumers are UNKNOWN"
   done <<<"$generated"
+  # #5357: admit only the complete reviewed apiVersion/kind/spec surfaces for
+  # the two HelmRelease defaults after rendering. Canonical JSON includes every CEL expression,
+  # selector, operation and evaluation field, without whitespace normalization
+  # inside strings. An altered expression or added field cannot inherit an
+  # approval from the policy's name or its mutation paths. These patches touch
+  # only fixed test/install/upgrade defaults, never chart values or consumers.
+  if ! yq -o=json -I=0 '.. | select(type == "!!map" and .kind == "MutatingPolicy")
+      | {"apiVersion": .apiVersion, "kind": .kind, "spec": .spec}' "$file" |
+    jq -cS . >"$work/helm-default-candidates.jsonl"; then
+    refuse "could not read complete Helm default policy surfaces in $label, so its consumers are UNKNOWN"
+  fi
+  reviewed_defaults='[]'
+  while IFS= read -r candidate; do
+    if command -v sha256sum >/dev/null 2>&1; then
+      candidate_digest="$(printf '%s\n' "$candidate" | sha256sum)" || refuse 'could not fingerprint Helm default policy'
+    else
+      candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint Helm default policy'
+    fi
+    case "${candidate_digest%% *}" in
+      43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824 | \
+        691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17)
+        reviewed_defaults="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_defaults")" ||
+          refuse 'could not record the complete reviewed Helm default policy'
+        ;;
+    esac
+  done <"$work/helm-default-candidates.jsonl"
+  export REVIEWED_HELM_RELEASE_DEFAULTS="$reviewed_defaults"
+
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
   # The one reviewed shape (#5096) is a Kyverno MutatingPolicy whose every
@@ -786,6 +814,7 @@ while IFS=$'\t' read -r file label; do
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
         or .kind == "GeneratingPolicy"))
+      | {"apiVersion": .apiVersion, "kind": .kind, "spec": .spec} as $mutationSurface
       | select(((.kind == "MutatingPolicy"
         and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
         and (.spec | type) == "!!map"
@@ -876,7 +905,9 @@ while IFS=$'\t' read -r file label; do
           | [("deployments=" + strenv(REVIEWED_AUTO_VPA_DEPLOYMENT)),
             ("daemonsets=" + strenv(REVIEWED_AUTO_VPA_DAEMONSET)),
             ("statefulsets=" + strenv(REVIEWED_AUTO_VPA_STATEFULSET))]
-          | any_c(. == $generation))))
+          | any_c(. == $generation)))
+        or (strenv(REVIEWED_HELM_RELEASE_DEFAULTS) | from_json
+          | any_c((. | sort_keys(..) | to_json(0)) == ($mutationSurface | sort_keys(..) | to_json(0)))))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
