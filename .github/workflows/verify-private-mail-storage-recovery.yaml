@@ -73,7 +73,11 @@ jobs:
           export KUBECONFIG="$proof_dir/kubeconfig"
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
           unset KUBE_CONFIG
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >"$proof_dir/endpoint.log" 2>&1; then
+          if ! (
+            if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+              exit 1
+            fi
+          ) 2>"$proof_dir/endpoint.log"; then
             printf '%s\n' 'MAIL_STORAGE_RECOVERY=UNVERIFIED'
             exit 2
           fi
