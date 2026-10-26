@@ -13,19 +13,19 @@ spec:
   hostnames:
     - observability.platform.devantler.tech
 ---
-# A second declared group, on another namespace. Fails without its layout entry.
+# The group this change adds. Fails before the layout entry exists, passes after.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: infrastructure-as-code-group
-  namespace: github-config
+  namespace: crossview
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/name: GitHub Config
+    gethomepage.dev/name: Crossview
     gethomepage.dev/group: Infrastructure as Code
 spec:
   hostnames:
-    - github-config.platform.devantler.tech
+    - crossview.platform.devantler.tech
 ---
 # The exact drift that motivated the policy: an undeclared group, which Homepage
 # accepts silently and renders below the bookmark rail.
