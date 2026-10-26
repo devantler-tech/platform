@@ -10,7 +10,7 @@ fixture_pool_init "$scratch" 2
 cleanup() {
   local result=$? workers_result=0
   trap - EXIT
-  fixture_pool_finish >/dev/null || workers_result=$?
+  fixture_pool_finish >&2 || workers_result=$?
   rm -rf "${scratch}"
   if [[ "$result" == 0 ]]; then result=$workers_result; fi
   exit "$result"

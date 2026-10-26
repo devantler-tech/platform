@@ -121,4 +121,40 @@ for jobs in 0 3 unknown; do
   fi
   grep -q 'workers must be 1 or 2' "$work/jobs-$jobs.log"
 done
+# Exercise the real caller cleanup without running the long rollout suite.
+# A parent failure must retain its status and pending-worker diagnostics.
+sed -n '/^cleanup() {$/,/^}$/p' "$root/scripts/tests/test-data-product-ui-rollout.sh" >"$work/cleanup-body"
+[ "$(grep -c '^cleanup() {' "$work/cleanup-body")" = 1 ]
+cat >"$work/cleanup-driver" <<'CLEANUP'
+#!/usr/bin/env bash
+set -euo pipefail
+fixture_pool_finish() {
+  [ -d "$scratch" ] || return 98
+  printf 'pending-worker diagnostic\n'
+  return "$WORKER_RESULT"
+}
+CLEANUP
+cat "$work/cleanup-body" >>"$work/cleanup-driver"
+cat >>"$work/cleanup-driver" <<'CLEANUP'
+trap cleanup EXIT
+exit "$PARENT_RESULT"
+CLEANUP
+for parent_result in 0 11; do
+  for worker_result in 0 7; do
+    scratch="$work/cleanup-$parent_result-$worker_result"
+    mkdir "$scratch"
+    result=0 expected=$parent_result
+    if [ "$expected" = 0 ]; then expected=$worker_result; fi
+    scratch="$scratch" PARENT_RESULT="$parent_result" WORKER_RESULT="$worker_result" \
+      "$BASH" "$work/cleanup-driver" >"$work/cleanup-out" 2>"$work/cleanup-err" || result=$?
+    [ "$result" = "$expected" ] && [ ! -e "$scratch" ] && [ ! -s "$work/cleanup-out" ] || {
+      echo 'FAIL: caller cleanup lost exit status or shared scratch ordering' >&2
+      exit 1
+    }
+    grep -qxF 'pending-worker diagnostic' "$work/cleanup-err" || {
+      echo 'FAIL: caller cleanup discarded pending-worker diagnostics' >&2
+      exit 1
+    }
+  done
+done
 printf 'PASS: complete isolated workers; failures, early errors, missing/corrupt receipts, duplicate/unknown cases, interruption and invalid bounds refused\n'
