@@ -196,6 +196,24 @@ and inventory, and writes the candidate only after all checks pass. The existing
 `--consumer business-site --verify-only` mode remains evidence-only. Review the
 candidate and registration together; generating a file is not deployed acceptance.
 
+For a later source-only upgrade, use
+`scripts/bootstrap-tenant-source.sh --prepare-canonical-upgrade --tag <tag> --source-sha <sha> --digest <digest> --output /absolute/new-candidate-directory`
+with that same read-only context. The existing source must already be Ready and
+SourceVerified with its admitted digest and exact publisher constraint. The tool
+verifies the proposed publication, checks the source again, and generates two
+reviewable files in a new private directory. It never updates the checkout or
+cluster. Copy those generated files to their matching repository paths for review;
+do not hand-edit the generated admission or change its disabled application flags.
+
+The `published-upgrade` record retains the previous binding and a hashed source
+observation separately from the proposed publication. Discovery projects the new
+desired digest; regeneration preserves the last actual observation while the
+previous source remains verified. It records the replacement only after Flux has
+verified the new digest at its current generation, then removes the transitional
+record. A proposed version is never an applied version. Missing, ambiguous,
+recreated, stale or weakened previous sources fail preparation or regeneration;
+an upgrade never restores first-publication authority or enables an application.
+
 Before first verification, complete inventory may show the exact source absent
 or pending without an artifact. Regeneration emits no applied row for that state.
 Once the uniquely identified source is Ready and SourceVerified at its current

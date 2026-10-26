@@ -46,6 +46,30 @@ It never erases the observation or restores bootstrap authority. Conflicting
 record/observation states fail closed. Historical observation is not current
 readiness, and a failed read is not evidence of absence.
 
+## Source-only upgrades
+
+An existing source cannot use first-admission bootstrap again. An explicitly
+prepared `published-upgrade` binds a separately verified replacement publication
+and retains the previous binding plus a hashed, current source observation.
+Preparation validates complete discovery and the exact source verification
+constraint, observes the source twice, and rechecks the declaration, constructor
+and admission before creating a new private output directory. It never changes
+the checkout or cluster and never expands the approved publisher set.
+
+Raw and rendered discovery project the proposed digest. Until it is applied,
+regeneration accepts only the previously verified source with its recorded UID
+hash and generation, and preserves the previous observation row or its absence.
+It never labels the proposal as applied. Current-generation Ready/SourceVerified
+evidence for the proposed digest permits ordinary regeneration to replace the
+transitional record with `published-binding` and its actual observation row.
+Missing or inconsistent evidence never restores bootstrap authority. Both
+application flags, external DNS and SOPS remain disabled throughout this path.
+
+The maintained preparation command generates the admission and Tenant changes
+together for normal review. A failed output reservation cannot overwrite an
+existing directory or final symlink. Interrupted partial output is not a valid
+preparation result; only a successful complete invocation may be copied for review.
+
 ## Delivery boundary
 
 Source registration uses the normal reviewed production pipeline and fixed

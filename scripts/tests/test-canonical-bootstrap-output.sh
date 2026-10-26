@@ -33,8 +33,8 @@ fixture_output="$fixture/scripts/canonical-tenant-source-bindings.json"
 run_admission() {
   PUBLISH_KUBE_CONTEXT=fixture CANONICAL_APPROVALS_FILE="$fixture/scripts/publish-workflow-canonical-approvals.tsv" \
     bootstrap_tenant_source --admit-canonical-source --source-root "$fixture" \
-    --tag v1.0.3 --source-sha 498248e86e49024b72f3249b518e4dd1cef0104b \
-    --digest sha256:fa22e5796a39872feb8c75b5d56e2c6d68ff289230e2c5762f0bbfa0b30d6744
+    --tag "$(jq -r .gitTag "$test_work/receipt.json")" --source-sha "$(jq -r .sourceSHA "$test_work/receipt.json")" \
+    --digest "$(jq -r .digest "$test_work/receipt.json")"
 }
 printf '{"schemaVersion":1,"bindings":[]}\n' >"$fixture_output"
 if run_admission >"$test_work/result" 2>&1; then echo 'empty registry reported an unchanged admission' >&2; exit 1; fi

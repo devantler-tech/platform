@@ -12,6 +12,7 @@ import (
 
 var canonicalCICommands = map[string]string{
 	"bash scripts/tests/test-canonical-source-bootstrap.sh":        "validate-publication-generator",
+	"bash scripts/tests/test-canonical-source-upgrade.sh":          "validate-publication-generator",
 	"bash scripts/tests/test-canonical-constructor-attribution.sh": "validate-publication-generator",
 	"bash scripts/tests/test-canonical-generator-output.sh":        "validate-publication-generator",
 	"bash scripts/tests/test-canonical-bootstrap-output.sh":        "validate-publication-generator",
@@ -36,6 +37,7 @@ var canonicalCIPaths = []string{
 	"scripts/shared-publish-workflow-matchers.tsv",
 	"scripts/generate-publish-workflow-approved-revisions.sh",
 	"scripts/tests/test-canonical-source-bootstrap.sh",
+	"scripts/tests/test-canonical-source-upgrade.sh",
 	"scripts/tests/test-canonical-constructor-attribution.sh",
 	"scripts/tests/test-canonical-generator-output.sh",
 	"scripts/tests/test-canonical-bootstrap-output.sh",
