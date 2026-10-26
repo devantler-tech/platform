@@ -179,8 +179,8 @@ expect 1 'deployed infrastructure inventory still owns observability_crossview-l
 state="$(seed stale "${deployed}")"
 jq '.status.observedGeneration = 3' "${state}/apps.json" >"${state}/apps.tmp" && mv "${state}/apps.tmp" "${state}/apps.json"
 run "${state}"
-[ "${status}" -eq 1 ] && [ "$(deleted "${state}")" -eq 0 ] ||
-  fail "a stale apps Kustomization must be refused, got ${status}: ${output}"
+expect 1 'is not Ready for its current generation' 'a stale apps Kustomization must be refused'
+[ "$(deleted "${state}")" -eq 0 ] || fail 'a stale apps Kustomization must delete nothing'
 
 # An object of the same name that Flux apps does not own is never deleted.
 state="$(seed foreign "${deployed}")"
@@ -193,8 +193,8 @@ expect 1 'Cluster backstage/backstage-db is not owned' 'a foreign database must 
 # A failed read is UNKNOWN and never reads as "already gone".
 state="$(seed failed-read "${deployed}")"
 run "${state}" FAIL_READ=helmrelease
-[ "${status}" -eq 2 ] && [ "$(deleted "${state}")" -eq 0 ] ||
-  fail "a failed read must stop the run as UNKNOWN, got ${status}: ${output}"
+expect 2 'UNKNOWN: cannot read helmrelease' 'a failed read must stop the run as UNKNOWN'
+[ "$(deleted "${state}")" -eq 0 ] || fail 'a failed read must delete nothing'
 
 # The same holds for the storage listings and the final proof.
 for kind in pv "${lh}" clusterrolebinding; do
