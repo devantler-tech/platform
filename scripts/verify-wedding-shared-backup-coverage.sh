@@ -8,10 +8,12 @@
 # that pointed at it, so nothing applies retention to it any more and every
 # holder of the shared backup credential can still read it. Removing it is
 # irreversible, so the decision needs current evidence that nothing would be
-# lost. This is that evidence, and it is all this does.
+# lost. The default command supplies that evidence; retirement is a separate,
+# explicitly confirmed main-only command.
 #
-# READ ONLY. It lists both buckets and reads the objects it has to hash. It
-# never writes to or deletes from either bucket.
+# --confirm is READ ONLY. The separate --remove-confirmed path is restricted to
+# a confirmed, first-attempt main dispatch for #4481. It repeats this proof and
+# removes only its unchanged, bounded shared object set, then proves it empty.
 #
 # WHAT IT DOES, in order, refusing at the first thing it cannot prove:
 #   1. Confirms the wedding-db Cluster archives through wedding-db-dedicated with
@@ -30,8 +32,9 @@
 #      the dedicated store's 30-day retention.
 #   5. Repeats step 1.
 #
-# Exit status: 0 covered; 1 refused, failed or not covered. Needs --confirm,
-# because it starts pods beside two production backup credentials.
+# Exit status: 0 covered/empty, or removal and fresh consumer backups verified;
+# 1 refused, failed or not covered. --confirm starts the read-only proof beside
+# two production backup credentials; --remove-confirmed uses the stronger gate.
 
 set -euo pipefail
 
@@ -88,8 +91,18 @@ fail() {
   exit 1
 }
 
-[[ "$#" -eq 1 && "$1" == '--confirm' ]] ||
+[[ "$#" -eq 1 && ( "$1" == '--confirm' || "$1" == '--remove-confirmed' ) ]] ||
   fail 'refusing to run: use --confirm. The proof starts pods beside two production backup credentials. Nothing has been touched.'
+removal=false
+if [[ "$1" == '--remove-confirmed' ]]; then
+  [[ "${GITHUB_ACTIONS:-}" == true && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
+    "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${GITHUB_REF:-}" == refs/heads/main &&
+    "${GITHUB_RUN_ATTEMPT:-}" == 1 && "${GITHUB_RUN_ID:-}" =~ ^[0-9]+$ &&
+    "${WEDDING_SHARED_REMOVAL_CONFIRM:-}" == remove-wedding-shared-backups-4481 ]] ||
+    fail 'removal requires the confirmed first-attempt main dispatch; nothing has been touched'
+  removal=true
+fi
+readonly removal
 
 # A local run is named by its start time, so it never shares a name with an
 # earlier run's pod.
@@ -231,7 +244,12 @@ require_store "${shared_namespace}" "${shared_reference_store}" "s3://${shared_b
 # start_pod <namespace> <role> <secret> <bucket>
 start_pod() {
   local namespace="$1" role="$2" secret="$3" bucket="$4" manifest
-  kube "${namespace}" create configmap "${name}" --from-file="coverage.sh=${pod_script}" >/dev/null ||
+  local extra_script=() removal_confirm=''
+  if [[ "${removal}" == true && "${role}" == shared ]]; then
+    extra_script+=("--from-file=remove.sh=${root_dir}/scripts/remove-wedding-shared-backup-pod.sh")
+    removal_confirm=remove-wedding-shared-backups-4481
+  fi
+  kube "${namespace}" create configmap "${name}" --from-file="coverage.sh=${pod_script}" ${extra_script[@]+"${extra_script[@]}"} >/dev/null ||
     fail "could not stage the coverage script in ${namespace}"
   created+=("${namespace}/configmap")
 
@@ -334,6 +352,8 @@ spec:
           value: /work
         - name: MC_CONFIG_DIR
           value: /mc-config
+        - name: REMOVAL_CONFIRM
+          value: "__REMOVAL_CONFIRM__"
       resources:
         requests:
           cpu: 50m
@@ -365,6 +385,7 @@ MANIFEST
   manifest="${manifest//__ROLE__/${role}}"
   manifest="${manifest//__BUCKET__/${bucket}}"
   manifest="${manifest//__PREFIX__/${catalogue_prefix}}"
+  manifest="${manifest//__REMOVAL_CONFIRM__/${removal_confirm}}"
 
   printf '%s\n' "${manifest}" | kube "${namespace}" create -f - >/dev/null ||
     fail "could not start the ${role} pod"
@@ -420,6 +441,9 @@ if [[ "$(wc -l <"${work_dir}/shared" | tr -d ' ')" == 1 ]] &&
   grep -Eqx "\\{\"status\":\"success\",\"type\":\"listing-complete\",\"location\":\"${shared_bucket}/${catalogue_prefix}\",\"started\":\"[0-9TZ:-]+\",\"files\":0\\}" "${work_dir}/shared"; then
   require_retired
   printf 'EMPTY: the shared bucket holds no Wedding catalogue. There is nothing left to cover.\n'
+  if [[ "${removal}" == true ]]; then
+    bash "${root_dir}/scripts/verify-shared-backup-consumers.sh"
+  fi
   exit 0
 fi
 
@@ -438,6 +462,40 @@ jq -e '.covered == true and (.sharedObjects | type == "number" and . > 0)' \
   fail 'the evaluator summary is not a covered verdict'
 
 require_retired
+
+if [[ "${removal}" == true ]]; then
+  bash "${root_dir}/scripts/verify-shared-backup-consumers.sh" --preflight
+  # Coverage was evaluated completely above. Re-list the retired source after
+  # hashing, and require the entire object set and metadata to remain unchanged.
+  # No list or user-supplied prefix ever becomes a recursive deletion target.
+  in_pod "${shared_namespace}" list </dev/null || fail 'could not refresh the shared catalogue before removal'
+  collect "${shared_namespace}" listing shared-current
+  jq -s '[.[] | select(.type == "file") | {key,size,etag,lastModified}] | sort_by(.key)' \
+    "${work_dir}/shared" >"${work_dir}/before.json"
+  jq -s '[.[] | select(.type == "file") | {key,size,etag,lastModified}] | sort_by(.key)' \
+    "${work_dir}/shared-current" >"${work_dir}/current.json"
+  cmp -s "${work_dir}/before.json" "${work_dir}/current.json" || fail 'the shared catalogue changed after coverage; nothing was removed'
+  jq -e '
+    length > 0 and length <= 10000 and
+    all(.[]; (.key | test("^[A-Za-z0-9][A-Za-z0-9._-]*/(base|wals)/[A-Za-z0-9._/-]+$")) and
+      (.key | split("/") | all(.[]; . != "" and . != "." and . != "..")))
+  ' "${work_dir}/before.json" >/dev/null || fail 'the removal object set is outside its reviewed bounds'
+  jq -r '.[].key' "${work_dir}/before.json" >"${work_dir}/removal-keys"
+  require_retired
+  "${kubectl_bin}" --context "${context}" --namespace "${shared_namespace}" --request-timeout=25m \
+    exec -i "${name}" -c coverage -- /tools/sh /coverage/remove.sh <"${work_dir}/removal-keys" ||
+    fail 'removal failed; no successful retirement is claimed'
+  in_pod "${shared_namespace}" list </dev/null || fail 'could not verify the shared prefix after removal'
+  collect "${shared_namespace}" listing shared-after
+  jq -s -e --arg location "${shared_bucket}/${catalogue_prefix}" '
+    length == 1 and .[0].status == "success" and .[0].type == "listing-complete" and
+    .[0].location == $location and .[0].files == 0
+  ' "${work_dir}/shared-after" >/dev/null || fail 'the shared prefix is not proven empty after removal'
+  require_retired
+  printf 'REMOVED: %s proven shared Wedding objects; the prefix is empty.\n' "$(jq length "${work_dir}/before.json")"
+  bash "${root_dir}/scripts/verify-shared-backup-consumers.sh"
+  exit 0
+fi
 
 cat "${work_dir}/summary.json"
 printf 'COVERED: of the %s objects in the shared Wedding catalogue, the dedicated bucket holds %s with matching content.\n' \

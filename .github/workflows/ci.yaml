@@ -1017,7 +1017,7 @@ jobs:
       # covered, and pin the pod script to commands that only read.
       - name: 💒 Validate Wedding shared backup coverage proof
         run: |
-          shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
+          shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/remove-wedding-shared-backup-pod.sh scripts/verify-shared-backup-consumers.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
           bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
 
       - name: 💾 Validate two-stage PVC retirement

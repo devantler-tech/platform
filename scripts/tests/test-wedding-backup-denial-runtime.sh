@@ -43,6 +43,22 @@ docker run --rm --network none --read-only --user 65532:65532 \
   --cap-drop ALL --security-opt no-new-privileges --entrypoint /tools/sh \
   "${image}" -ec 'mc --version; for tool in sed grep awk sort tail sha256sum cut date cat sleep mkdir rm; do command -v "$tool" >/dev/null; done'
 
+# Exercise the retirement command's exact native flags with disposable local
+# files. No alias, object-store connection or cloud credential is available.
+docker run --rm --network none --read-only --user 65532:65532 \
+  --tmpfs /tmp:rw,nosuid,nodev,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
+  --entrypoint /tools/sh "${image}" -ec '
+    export MC_CONFIG_DIR=/tmp/mc
+    for tool in head wc tr sort timeout; do command -v "$tool" >/dev/null; done
+    mkdir -p /tmp/shared/cnpg/wedding-db /tmp/shared/cnpg/umami-db
+    printf old >/tmp/shared/cnpg/wedding-db/proven
+    printf keep >/tmp/shared/cnpg/umami-db/backup
+    printf "%s\n" /tmp/shared/cnpg/wedding-db/proven | timeout 30 mc rm --json --force --stdin
+    test ! -e /tmp/shared/cnpg/wedding-db/proven
+    test "$(cat /tmp/shared/cnpg/umami-db/backup)" = keep
+    printf "PASS: pinned mc removes only exact stdin targets\n"
+  '
+
 # Run the denial proof and the pinned mc against a refusing stub. Require that case to have run: it is skipped outside this image.
 denial_out="$(DENIAL_POD_RUNTIME_IMAGE="${image}" bash "${root_dir}/scripts/tests/test-verify-wedding-backup-denial.sh" 2>&1)" || {
   printf '%s\n' "${denial_out}" >&2
