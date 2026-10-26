@@ -135,8 +135,6 @@ data:
         icon: mdi-school
       Media:
         icon: mdi-play-circle-outline
-      Banking:
-        icon: mdi-bank-outline
   kubernetes.yaml: |
     mode: cluster
     gateway: true
@@ -203,6 +201,17 @@ data:
             icon: mdi-water-boiler
             href: https://stokercloud.dk/v3/
             description: NBE pellet boiler monitoring and control.
+    # External money consoles. Actual Budget joins this group from its own
+    # HTTPRoute's gethomepage.dev annotations (k8s/bases/apps/actual-budget).
+    - Finance:
+        - Stripe:
+            icon: si-stripe-#635BFF
+            href: https://dashboard.stripe.com
+            description: Payments, invoices and payouts.
+        - Enable Banking:
+            icon: mdi-bank-outline
+            href: https://enablebanking.com
+            description: Open-banking connections and consents.
     # The business site and the product documentation sites are served by
     # GitHub Pages, not this cluster, so they are listed statically. Business is
     # the company site; Products holds one documentation site per product. Client
@@ -337,13 +346,6 @@ data:
         - Reddit:
             - icon: si-reddit-#FF4500
               href: https://reddit.com
-    - Banking:
-        - Stripe:
-            - icon: si-stripe-#635BFF
-              href: https://dashboard.stripe.com
-        - Enable Banking:
-            - icon: mdi-bank-outline
-              href: https://enablebanking.com
   docker.yaml: ""
   # Theme: mirror https://devantler.tech. That site is Astro Starlight with the
   # stock dark palette — a gray ramp at hue 224 but only ~6-14% saturation, i.e.
