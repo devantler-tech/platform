@@ -62,6 +62,11 @@ generation pattern: create a cache once, push only if absent, then consume the
 value read back from OpenBao. Deleting a generator cache cannot rotate an
 existing account password. Missing settings, credentials or certificate files
 block startup. Production settings remain encrypted outside the shared bundle.
+The credential synchronizer receives exact-key seed and read permissions for
+all three durable credentials, with no mail-path wildcard, list or delete grant.
+Admission and node image verification route only the exact bootstrap image
+repository to its dedicated main-only publisher; other images keep their own
+signer requirements.
 
 The administration Service and HTTPS route select only normal management port
 8080. The network policy admits only gateway ingress there, explicitly denies

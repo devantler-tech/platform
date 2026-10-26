@@ -1200,7 +1200,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 8 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 9 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
@@ -1208,10 +1208,11 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	corootNodeAgentAttestorValid := false
 	analysisAttestorValid := false
 	warZoneAttestorValid := false
+	mailAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1234,6 +1235,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
 		case "publishwarzone":
 			warZoneAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/world-at-ruin/\\.github/workflows/server-cd\\.yaml@refs/tags/v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+		case "publishprivatemail":
+			mailAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-private-mail-bootstrap\\.yaml@refs/heads/main$"
 		}
 	}
 	validations, _ := spec["validations"].([]any)
@@ -1247,10 +1250,15 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesAnalysis := false
 	genericExcludesWarZone := false
 	dedicatedRoutesWarZone := false
+	genericExcludesMail := false
+	dedicatedRoutesMail := false
 	for _, rawValidation := range validations {
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesMail = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
 			genericExcludesWarZone = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone@')")
@@ -1292,8 +1300,14 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@')")
 		}
+		if strings.Contains(expression, "attestors.publishprivatemail") {
+			dedicatedRoutesMail = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
+		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!mailAttestorValid || !genericExcludesMail || !dedicatedRoutesMail ||
 		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
 		!genericExcludesStorage || !genericExcludesKubescapeNodeAgent || !genericExcludesCorootNodeAgent ||

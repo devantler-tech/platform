@@ -57,7 +57,7 @@
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed through eight signing routes:
+# signed through nine signing routes:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
@@ -75,10 +75,12 @@
 #      dedicated main-only publish-ksail-analysis-runner.yaml workflow.
 #   7. the private World at Ruin zone is signed by that repository's server-cd
 #      workflow on stable release tags only.
-#   8. the app images (wedding-app, ascoachingogvaner, …) are signed by the
+#   8. the mail bootstrap image is signed by this repository's dedicated
+#      publish-private-mail-bootstrap.yaml workflow on main.
+#   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow: legacy full-commit compatibility or an
 #      explicitly reviewed maintained revision, matching the app admission rule.
-# Talos evaluates rules in order, first match wins, so the seven specific rules
+# Talos evaluates rules in order, first match wins, so the eight specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
@@ -180,6 +182,11 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/world-at-ruin/\.github/workflows/server-cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$
+  # Exact mail bootstrap repository, before the ordinary app catch-all.
+  - image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
   # two reviewed maintained publisher revisions during the v8 transition (#5213).
   # Mutable refs, tags and other maintained commits are refused, as in the app

@@ -20,7 +20,8 @@ metadata:
       release pipeline on first-party container images at Pod admission:
       publish-app for app images, the platform's dedicated compatibility-image
       publishers, each Crossplane provider's own package workflow, KSail's
-      publish-ksail-analysis-runner.yaml workflow, and KSail's release workflow.
+      publish-ksail-analysis-runner.yaml workflow, the mail bootstrap publisher,
+      and KSail's release workflow.
       Each class is verified only against its own identity;
       third-party images admit unverified.
 spec:
@@ -109,6 +110,13 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/publish-ksail-analysis-runner\.yaml@refs/heads/main$
+    # Only the mail bootstrap repository accepts its dedicated main publisher.
+    - name: publishprivatemail
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
     # The private scripted zone trial has its own repository-owned release
     # workflow. This attestor is used only for that exact image repository.
     - name: publishwarzone
@@ -185,6 +193,9 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-coroot-node-agent' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@') &&
+          image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') &&
           image != 'ghcr.io/devantler-tech/ksail-analysis-runner' &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner:') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail-analysis-runner@'))
@@ -194,6 +205,17 @@ spec:
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, legacy full-commit identity or the explicitly
         approved maintained revision — a release tag is not accepted)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishprivatemail]))
+        .all(e, e > 0)
+      message: >-
+        mail bootstrap image is not signed by its main-only publisher;
+        other first-party images retain their existing signer.
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
