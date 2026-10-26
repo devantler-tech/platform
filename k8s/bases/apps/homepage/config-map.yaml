@@ -119,6 +119,8 @@ data:
         icon: mdi-book-open-page-variant
       Clients:
         icon: mdi-briefcase-account
+      Email:
+        icon: mdi-email-outline
       Personal:
         icon: mdi-web
       # Bookmark groups (bookmarks.yaml). Listing them here is what gives them a
