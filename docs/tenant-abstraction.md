@@ -191,6 +191,35 @@ a new production revocation mechanism.
 and `kubectl`-native with CRD-schema validation; no Helm/overlay stacking; the isolation posture is
 templated verbatim.
 
+### Public business-site configuration identity
+
+The maintained `vault-config` Job declares the `business-site` Kubernetes auth
+role for the same-named service account in only that namespace. Its sole token
+policy reads the exact KV-v2 disclosure entry used by the source-owned
+SecretStore; it grants no value writes, metadata listing or other application
+paths. The only other permissions are lookup and revocation of the token itself,
+which the pinned ESO client uses when reusing and closing its authenticated
+connection. These do not authorize lookup or revocation of another token. The
+default token policy is excluded and the lifetime is capped at one hour.
+The role uses the source store's existing Kubernetes token audience behavior;
+it does not guess a separate audience absent from that store. The pinned ESO
+2.13.0 Kubernetes connector passes the store's service-account audiences through
+to TokenRequest, without the `vault` default of its separate JWT connector.
+
+The tenant owner materializes and maintains the confirmed disclosure privately
+through the supported operator entry path. This role creates no value, enables
+no WebApp and grants no customer identity or payment access. Missing/unsafe
+projection refusal, actual ESO authentication and rotation, HTTPS staging and
+private-route closure remain live acceptance under #5247. Normal production
+reconciliation owns installation; a suspended deployment is not manually bypassed.
+
+`bash scripts/tests/test-business-disclosure-reader.sh` checks the actual rendered
+role/policy payload and eighteen invalid-payload controls without authenticating or
+reading any value. OpenBao supports the policy's native
+[JSON syntax](https://openbao.org/docs/concepts/policies/); the
+[Kubernetes role API](https://openbao.org/docs/api/auth/kubernetes/) defines the
+typed identity and token fields. Static checks are not live authorization proof.
+
 **Trade-offs** — KRO is pre-1.0 (`v1alpha1`), so the RGDs stay render-diffable and the controller sits
 in the platform chokepoint with explicit ordering; a CR of an RGD-defined kind cannot share a Flux
 Kustomization with the controller that installs its CRD (already handled by the layer split).

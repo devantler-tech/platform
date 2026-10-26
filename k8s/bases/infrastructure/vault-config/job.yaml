@@ -823,6 +823,24 @@ spec:
               }
               POLICY
 
+              # Public staging reads one owner-maintained entry. It has no
+              # value writer, metadata listing or shared infrastructure policy.
+              bao policy write app-business-site-disclosure-readonly - <<'BUSINESS_SITE_POLICY'
+              {
+                "path": {
+                  "secret/data/apps/business-site/public-disclosure": {
+                    "capabilities": ["read"]
+                  },
+                  "auth/token/lookup-self": {
+                    "capabilities": ["read"]
+                  },
+                  "auth/token/revoke-self": {
+                    "capabilities": ["update"]
+                  }
+                }
+              }
+              BUSINESS_SITE_POLICY
+
               bao policy write app-wedding-readonly - <<'POLICY'
               path "secret/data/apps/wedding-app/*" {
                 capabilities = ["read"]
@@ -1163,6 +1181,20 @@ spec:
                 bound_service_account_namespaces=aws \
                 policies=infra-aws-readonly \
                 ttl=1h
+
+              # The source-owned SecretStore uses only this namespaced identity.
+              # Explicit JSON preserves array/boolean types; no default policy is
+              # added to the one-entry reader. The tenant owner supplies values.
+              bao write auth/kubernetes/role/business-site - <<'BUSINESS_SITE_ROLE'
+              {
+                "bound_service_account_names": ["business-site"],
+                "bound_service_account_namespaces": ["business-site"],
+                "token_policies": ["app-business-site-disclosure-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              BUSINESS_SITE_ROLE
 
               # Dedicated tenant role for wedding-app. Authenticates the tenant's
               # own `wedding-app` ServiceAccount (used by its namespaced

@@ -180,6 +180,7 @@ jobs:
               - '.github/workflows/dr-rebuild.yaml'
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
+              - 'scripts/tests/test-business-disclosure-reader.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
@@ -2051,6 +2052,12 @@ jobs:
         # bound_claims is a map. Passing JSON-looking text as one CLI argument
         # serializes it as a string and leaves the role unenforced.
         run: bash scripts/tests/test-openbao-oidc-role.sh
+
+      - name: 🔐 Validate business disclosure reader
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-business-disclosure-reader.sh
+          bash scripts/tests/test-business-disclosure-reader.sh
 
       - name: 🐤 Validate staged OpenBao standby repair
         if: needs.changes.outputs.k8s == 'true'
