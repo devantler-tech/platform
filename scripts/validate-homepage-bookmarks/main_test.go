@@ -19,7 +19,38 @@ const validConfig = `data:
       Links: {}
   services.yaml: |
     - Apps: []
+  custom.css: ""
+  custom.js: ""
+  docker.yaml: ""
+  kubernetes.yaml: |
+    mode: cluster
+  proxmox.yaml: ""
+  widgets.yaml: |
+    - search: {}
 `
+
+func TestEveryHomepageConfigFileIsRequired(t *testing.T) {
+	for _, tc := range []struct {
+		name, config, diagnostic string
+		status                   int
+	}{
+		{"missing empty file", strings.Replace(validConfig, "  proxmox.yaml: \"\"\n", "", 1), "proxmox.yaml missing", 1},
+		{"missing stylesheet", strings.Replace(validConfig, "  custom.css: \"\"\n", "", 1), "custom.css missing", 1},
+		{"malformed widgets", strings.Replace(validConfig, "    - search: {}", "    - search: [", 1), "cannot parse widgets.yaml", 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "config.yaml")
+			if err := os.WriteFile(path, []byte(tc.config), 0600); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if status := run([]string{path, root}, &out); status != tc.status || !strings.Contains(out.String(), tc.diagnostic) {
+				t.Fatalf("status=%d output=%s", status, out.String())
+			}
+		})
+	}
+}
 
 func TestPartialAnnotationReadNeverPasses(t *testing.T) {
 	root := t.TempDir()

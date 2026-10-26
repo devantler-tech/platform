@@ -6,7 +6,10 @@ Optional arguments select a ConfigMap and the directory to inspect for discovere
 service groups. The defaults are the Homepage ConfigMap and `k8s/` in this repository.
 
 The validator checks icons, HTTPS links, duplicate bookmark names and groups,
-service-group collisions and layout coverage. Service groups come independently from embedded
+service-group collisions and layout coverage. It also requires a key for every
+file in Homepage's `src/skeleton` and parses each non-empty YAML file: the
+ConfigMap is Homepage's read-only config directory, edits hot-reload into the live
+pods without a canary analysis, and Homepage exits when a file it expects is missing. Service groups come independently from embedded
 `services.yaml` and discovery annotations, so the layout cannot validate itself.
 Every supported service-group key is examined; inline annotation comments are
 excluded from their YAML values. Empty coverage fails. Unsupported service-group

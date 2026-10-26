@@ -4,6 +4,13 @@ kind: ConfigMap
 metadata:
   name: homepage
   namespace: homepage
+  annotations:
+    # Opt out of Flagger's config tracking so edits hot-reload (see the volumes
+    # in helm-release.yaml). Tracked, Flagger copies this ConfigMap to
+    # `homepage-primary` and only refreshes that copy on a promotion, which also
+    # rolls every pod — so an edit waited for a full canary analysis and a
+    # restart, and reached nothing while a canary was failing.
+    flagger.app/config-tracking: "disabled"
 data:
   settings.yaml: |
     title: Platform
@@ -123,10 +130,10 @@ data:
       # paints the same heading twice with different contents under each.
       Internal Developer Platform:
         icon: mdi-hammer-wrench
-      Security & Supply Chain:
-        icon: mdi-shield-search
-      Code Quality:
+      Code Quality & Security:
         icon: mdi-code-braces-box
+      Supply Chain:
+        icon: mdi-shield-search
       Kubernetes Reference:
         icon: si-kubernetes-#326CE5
       Package Registries:
@@ -232,7 +239,7 @@ data:
   # purposes is therefore split into its specific product views, each in the
   # group for that purpose, never collected under a vendor group: GitHub's repos,
   # pull requests and project board sit under Internal Developer Platform, its
-  # security overview under Security & Supply Chain, its Packages under Package
+  # security overview under Code Quality & Security, its Packages under Package
   # Registries, and its Actions metrics under the Observability service group.
   #
   # Group names are deliberately DISTINCT from the service group names in
@@ -262,13 +269,20 @@ data:
         - Codespaces:
             - icon: mdi-cloud-braces
               href: https://github.com/codespaces
-    - Security & Supply Chain:
+    - Code Quality & Security:
+        - Codecov:
+            - icon: si-codecov-#F01F7A
+              href: https://app.codecov.io
+        - CodeRabbit:
+            - icon: si-coderabbit-#FF570A
+              href: https://app.coderabbit.ai
         - GitHub Security:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/security/overview
         - Codex Findings:
             - icon: si-openai-#412991
               href: https://chatgpt.com/codex/cloud/security/findings
+    - Supply Chain:
         # mdi, not si-stepsecurity: Simple Icons carries no `stepsecurity` slug
         # (nor does dashboard-icons), so the si- form 404s at the CDN and renders
         # as a blank tile. Homepage resolves icons in the browser at render time,
@@ -284,13 +298,6 @@ data:
         - Renovate:
             - icon: si-renovate-#007fa0
               href: https://developer.mend.io
-    - Code Quality:
-        - Codecov:
-            - icon: si-codecov-#F01F7A
-              href: https://app.codecov.io
-        - CodeRabbit:
-            - icon: si-coderabbit-#FF570A
-              href: https://app.coderabbit.ai
     - Kubernetes Reference:
         - ArtifactHUB:
             - icon: si-artifacthub-#417598
@@ -345,6 +352,11 @@ data:
             - icon: mdi-bank-outline
               href: https://enablebanking.com
   docker.yaml: ""
+  # Unused, but required: this ConfigMap is Homepage's read-only config
+  # directory, and Homepage exits at boot if any file it expects is missing
+  # (helm-release.yaml). Keep a key here for every file in Homepage's
+  # src/skeleton.
+  proxmox.yaml: ""
   # Theme: mirror https://devantler.tech. That site is Astro Starlight with the
   # stock dark palette — a gray ramp at hue 224 but only ~6-14% saturation, i.e.
   # a near-neutral, faintly-cool dark — and the accent swapped to a "Matrix"
