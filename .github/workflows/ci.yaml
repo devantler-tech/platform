@@ -181,6 +181,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-business-disclosure-reader.sh'
+              - 'scripts/tests/test-business-staging-hold.sh'
               - 'scripts/check-business-disclosure-reader/**'
               - 'scripts/tests/vault-backup-recovery/**'
               - 'scripts/tests/test-openbao-standby-canary.sh'
@@ -2144,6 +2145,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-business-disclosure-reader.sh
           bash scripts/tests/test-business-disclosure-reader.sh
+
+      - name: 🔒 Validate the public business staging hold
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-business-staging-hold.sh
+          bash scripts/tests/test-business-staging-hold.sh
 
       - name: 🧯 Validate daily and break-glass API boundaries
         if: needs.changes.outputs.k8s == 'true'

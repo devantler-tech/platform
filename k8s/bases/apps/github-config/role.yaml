@@ -43,6 +43,7 @@ rules:
       - branchprotections
       - repositoryrulesets
       - issuelabels
+      - repositorycustomproperties
     verbs:
       - get
       - list

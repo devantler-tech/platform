@@ -21,6 +21,9 @@ spec:
     - branchprotections.repo.github.m.upbound.io
     - repositoryrulesets.repo.github.m.upbound.io
     - issuelabels.repo.github.m.upbound.io
+    # Explicit custom-property assignments owned by the github-config tenant
+    # (devantler-tech/.github#773); organization schema remains a provider gap.
+    - repositorycustomproperties.repo.github.m.upbound.io
     # Org-level rulesets. Of the org's 20 org rules, the 10 provider-upjet-github
     # can express are adopted Observe-first in devantler-tech/.github
     # deploy/rulesets/ (+ a net-new tag-protection ruleset); the other 10
