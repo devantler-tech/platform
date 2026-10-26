@@ -15,6 +15,7 @@ results:
       - controllers/enabled-existing
       - controllers/enabled-one-parent
       - controllers/enabled-null-parents
+      - controllers/same-kind-other-group
     kind: HelmRelease
     result: pass
     patchedResources: patched-resources.yaml

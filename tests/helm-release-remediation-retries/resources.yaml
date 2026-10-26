@@ -81,6 +81,22 @@ spec:
     cleanupOnFail: true
     remediation: null
 ---
+apiVersion: other.example/v1
+kind: HelmRelease
+metadata:
+  name: same-kind-other-group
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

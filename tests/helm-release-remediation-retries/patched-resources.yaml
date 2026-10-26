@@ -100,6 +100,30 @@ spec:
       remediateLastFailure: true
       retries: 3
 ---
+apiVersion: other.example/v1
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+  name: same-kind-other-group
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install:
+    remediation:
+      remediateLastFailure: true
+      retries: 3
+  interval: 1h
+  upgrade:
+    remediation:
+      remediateLastFailure: true
+      retries: 3
+---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:

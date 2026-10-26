@@ -74,6 +74,24 @@ spec:
   test:
     enable: true
 ---
+apiVersion: other.example/v1
+kind: HelmRelease
+metadata:
+  labels:
+    helm.toolkit.fluxcd.io/helm-test: enabled
+  name: same-kind-other-group
+  namespace: controllers
+spec:
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  interval: 1h
+  test:
+    enable: true
+---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
 metadata:
