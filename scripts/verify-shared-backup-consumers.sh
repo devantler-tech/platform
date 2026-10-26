@@ -3,18 +3,24 @@
 # No credentials or backup contents are read into the runner output.
 set -euo pipefail
 fail() { printf 'shared-backup-consumers: %s\n' "$1" >&2; exit 1; }
-[[ "$#" == 0 && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
+[[ ( "$#" == 0 || ( "$#" == 1 && "$1" == --preflight ) ) && "${GITHUB_REPOSITORY:-}" == devantler-tech/platform &&
   "${GITHUB_EVENT_NAME:-}" == workflow_dispatch && "${GITHUB_REF:-}" == refs/heads/main &&
   "${GITHUB_RUN_ATTEMPT:-}" == 1 && "${GITHUB_RUN_ID:-}" =~ ^[1-9][0-9]*$ &&
   "${WEDDING_SHARED_REMOVAL_CONFIRM:-}" == remove-wedding-shared-backups-4481 ]] ||
   fail 'the confirmed first-attempt main dispatch is required'
+preflight=false
+[[ "$#" == 0 ]] || preflight=true
 umask 077
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+endpoint="$(sed -n 's/^  r2_endpoint: *//p' "${COVERAGE_BOOTSTRAP_CONFIG:-${root_dir}/k8s/bases/bootstrap/config-map.yaml}")"
+[[ "${endpoint}" =~ ^https://[a-z0-9][a-z0-9.-]*$ ]] || fail 'the reviewed backup endpoint could not be resolved'
 kube() { "${KUBECTL:-kubectl}" --context admin@prod --namespace "$1" --request-timeout=20s "${@:2}"; }
 read_object() { kube "$1" get "$2" "$3" -o json >"$4" 2>/dev/null || fail 'a backup prerequisite or receipt could not be read'; }
-for namespace in umami coroot; do
-  cluster="${namespace}-db"
+for consumer in umami:umami-db observability:coroot-db; do
+  namespace="${consumer%:*}"
+  cluster="${consumer#*:}"
   name="shared-retirement-${GITHUB_RUN_ID}-${cluster}"
   read_object "${namespace}" clusters.postgresql.cnpg.io "${cluster}" "${work}/cluster.json"
   jq -e --arg store "${cluster}" '
@@ -26,9 +32,12 @@ for namespace in umami coroot; do
   ' "${work}/cluster.json" >/dev/null || fail 'a shared database is not healthy and archiving'
   uid="$(jq -r '.metadata.uid' "${work}/cluster.json")"
   read_object "${namespace}" objectstores.barmancloud.cnpg.io "${cluster}" "${work}/store.json"
-  jq -e --arg path "s3://platform-backups/cnpg/${cluster}" '
-    .metadata.deletionTimestamp == null and .spec.configuration.destinationPath == $path
+  jq -e --arg path "s3://platform-backups/cnpg/${cluster}" --arg endpoint "${endpoint}" '
+    .metadata.deletionTimestamp == null and .spec.configuration.destinationPath == $path and
+    .spec.configuration.endpointURL == $endpoint
   ' "${work}/store.json" >/dev/null || fail 'a shared database backup destination changed'
+  kube "${namespace}" auth can-i create backups.postgresql.cnpg.io --quiet >/dev/null 2>&1 || fail 'a fresh shared database backup is not permitted'
+  [[ "${preflight}" == false ]] || continue
   jq -n --arg name "${name}" --arg ns "${namespace}" --arg cluster "${cluster}" '
     {apiVersion:"postgresql.cnpg.io/v1",kind:"Backup",metadata:{name:$name,namespace:$ns},
       spec:{cluster:{name:$cluster},method:"plugin",pluginConfiguration:{name:"barman-cloud.cloudnative-pg.io"},target:"primary"}}
@@ -54,14 +63,20 @@ for namespace in umami coroot; do
 done
 
 read_object velero backupstoragelocations.velero.io default "${work}/location.json"
-jq -e '.spec.objectStorage == {bucket:"platform-backups",prefix:"velero/prod"} and .status.phase == "Available"' \
+jq -e --arg endpoint "${endpoint}" '.spec.objectStorage == {bucket:"platform-backups",prefix:"velero/prod"} and
+  .spec.config.s3Url == $endpoint and .status.phase == "Available"' \
   "${work}/location.json" >/dev/null || fail 'the shared Velero backup location is not available at its reviewed destination'
-read_object velero schedules.velero.io daily-full "${work}/schedule.json"
+read_object velero schedules.velero.io velero-daily-full "${work}/schedule.json"
 name="shared-retirement-${GITHUB_RUN_ID}-velero"
 jq -e --arg name "${name}" '
   .spec.template | select(type == "object" and (.includedNamespaces | type == "array" and length > 0)) |
   {apiVersion:"velero.io/v1",kind:"Backup",metadata:{name:$name,namespace:"velero"},spec:(. + {storageLocation:"default"})}
 ' "${work}/schedule.json" >"${work}/request.json" || fail 'the normal Velero schedule could not supply a backup request'
+kube velero auth can-i create backups.velero.io --quiet >/dev/null 2>&1 || fail 'a fresh Velero backup is not permitted'
+if [[ "${preflight}" == true ]]; then
+  printf 'PREFLIGHT: all three backup consumers are available and permit a fresh backup.\n'
+  exit 0
+fi
 kube velero create -f "${work}/request.json" -o json >"${work}/created.json" 2>/dev/null || fail 'a fresh Velero backup could not be created'
 backup_uid="$(jq -er '.metadata.uid | select(type == "string" and length > 0)' "${work}/created.json")"
 kube velero wait "backups.velero.io/${name}" --for=jsonpath='{.status.phase}'=Completed --timeout=30m --request-timeout=31m >/dev/null 2>&1 || fail 'the fresh Velero backup did not complete'

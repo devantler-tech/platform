@@ -462,6 +462,7 @@ jq -e '.covered == true and (.sharedObjects | type == "number" and . > 0)' \
 require_retired
 
 if [[ "${removal}" == true ]]; then
+  bash "${root_dir}/scripts/verify-shared-backup-consumers.sh" --preflight
   # Coverage was evaluated completely above. Re-list the retired source after
   # hashing, and require the entire object set and metadata to remain unchanged.
   # No list or user-supplied prefix ever becomes a recursive deletion target.

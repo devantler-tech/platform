@@ -147,7 +147,10 @@ manifest_env() {
 case "$1" in
   get)
     case "$2" in
-      schedules.velero.io|backupstoragelocations.velero.io)
+      schedules.velero.io)
+        [ "$3" = velero-daily-full ] || exit 1
+        cat "${k}/$2.json" ;;
+      backupstoragelocations.velero.io)
         cat "${k}/$2.json" ;;
       backups.postgresql.cnpg.io|backups.velero.io)
         jq --arg phase "$(cat "${k}/backup-phase" 2>/dev/null || printf completed)" '
@@ -185,6 +188,7 @@ case "$1" in
     cat >"${k}/pod-${namespace}.yaml"
     ;;
   wait) exit 0 ;;
+  auth) [[ ! -e "${k}/backup-denied" ]] ;;
   logs)
     if [ ! -e "${k}/never-ready-${namespace}" ]; then printf '==== COVERAGE POD READY ====\n'; fi
     ;;
@@ -249,13 +253,13 @@ new_case() {
   printf 'AKIDEXAMPLE' >"${k}/credentials/ACCESS_KEY_ID"
   printf 'secret-value' >"${k}/credentials/SECRET_ACCESS_KEY"
   cluster_json wedding-db-dedicated >"${k}/wedding-app-clusters.postgresql.cnpg.io-wedding-db.json"
-  for consumer in umami coroot; do
-    cluster_json "${consumer}-db" >"${k}/${consumer}-clusters.postgresql.cnpg.io-${consumer}-db.json"
-    store_json "s3://platform-backups/cnpg/${consumer}-db" "${consumer}-db-backup-r2" \
-      >"${k}/${consumer}-objectstores.barmancloud.cnpg.io-${consumer}-db.json"
+  for consumer in umami:umami-db observability:coroot-db; do
+    cluster_json "${consumer#*:}" >"${k}/${consumer%:*}-clusters.postgresql.cnpg.io-${consumer#*:}.json"
+    store_json "s3://platform-backups/cnpg/${consumer#*:}" "${consumer#*:}-backup-r2" \
+      >"${k}/${consumer%:*}-objectstores.barmancloud.cnpg.io-${consumer#*:}.json"
   done
   printf '{"spec":{"template":{"storageLocation":"default","includedNamespaces":["*"]}}}\n' >"${k}/schedules.velero.io.json"
-  printf '{"spec":{"objectStorage":{"bucket":"platform-backups","prefix":"velero/prod"}},"status":{"phase":"Available"}}\n' >"${k}/backupstoragelocations.velero.io.json"
+  printf '{"spec":{"objectStorage":{"bucket":"platform-backups","prefix":"velero/prod"},"config":{"s3Url":"%s"}},"status":{"phase":"Available"}}\n' "${endpoint}" >"${k}/backupstoragelocations.velero.io.json"
   store_json s3://wedding-db-backups/cnpg/wedding-db wedding-db-backup-r2-dedicated \
     >"${k}/wedding-app-objectstores.barmancloud.cnpg.io-wedding-db-dedicated.json"
   store_json s3://platform-backups/cnpg/umami-db umami-db-backup-r2 \
@@ -623,7 +627,7 @@ done
 [[ "$(wc -l <"${k}/mc-umami/removed" | tr -d ' ')" == 3 ]] || fail 'removal included an unproven object'
 [[ ! -e "${k}/mc-wedding-app/removed" ]] || fail 'removal touched the dedicated copy'
 require_cleaned 'removal'
-for namespace in umami coroot velero; do
+for namespace in umami observability velero; do
   [[ "$(find "${k}" -name "backup-${namespace}-*.json" | wc -l | tr -d ' ')" == 1 ]] || fail 'a consumer did not receive exactly one fresh backup'
 done
 
@@ -651,6 +655,19 @@ new_case
 touch "${k}/mc-umami/removal-enabled"
 run_case --remove-confirmed
 [[ "${rc}" -eq 1 && ! -e "${k}/mc-umami/removed" ]] || fail 'removal proceeded without the unaffected-backup positive controls'
+
+for refusal in wrong-consumer-destination backup-denied missing-schedule; do
+  new_case
+  touch "${k}/mc-umami/removal-enabled"
+  case "${refusal}" in
+    wrong-consumer-destination)
+      store_json s3://another-bucket/cnpg/coroot-db coroot-db-backup-r2 >"${k}/observability-objectstores.barmancloud.cnpg.io-coroot-db.json" ;;
+    backup-denied) touch "${k}/backup-denied" ;;
+    missing-schedule) rm "${k}/schedules.velero.io.json" ;;
+  esac
+  run_case --remove-confirmed
+  [[ "${rc}" -eq 1 && ! -e "${k}/mc-umami/removed" ]] || fail 'a missing post-backup prerequisite was discovered only after removal'
+done
 
 for bad in ref confirmation retry; do
   new_case
