@@ -1044,7 +1044,7 @@ SH
 
 # Exact-current-head review regressions: admission, controller carriers and tag filters.
 regression_latest_findings() {
-  local root placement target field boundary want
+  local root placement target field boundary want suffix policy
   for field in url ref verify; do
     root="$(fixture "admission-$field")"
     cat >"$root/k8s/providers/prod/apps/mutation.yaml" <<'YAML'
@@ -1171,6 +1171,42 @@ YAML
       { printf 'FAIL: the %s variant did not change the reviewed MutatingPolicy\n' "$target" >&2; failures=$((failures + 1)); }
     printf '  - cel-mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
     expect_refusal "a $target MutatingPolicy is outside the reviewed shape" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
+  done
+
+  # #5357: the two complete reviewed default-policy surfaces are inert for
+  # consumer discovery. Any changed CEL, scope or extra evaluation field is
+  # outside that approval, even when the policy retains its reviewed name.
+  for suffix in enable-tests remediation-retries; do
+    root="$(fixture "reviewed-helm-default-$suffix")"
+    policy="$root/k8s/providers/prod/apps/helm-default.yaml"
+    cp "$REPO_ROOT/k8s/bases/infrastructure/cluster-policies/flux/helm-release-$suffix.yaml" "$policy"
+    printf '  - helm-default.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_pass "the reviewed $suffix default preserves consumer discovery" "$root" '2 consumer(s)'
+    for target in missing-kind source-kind no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-field foreign-api foreign-kind; do
+      root="$(fixture "reviewed-helm-default-$suffix-$target")"
+      policy="$root/k8s/providers/prod/apps/helm-default.yaml"
+      cp "$WORK/reviewed-helm-default-$suffix/k8s/providers/prod/apps/helm-default.yaml" "$policy"
+      case "$target" in
+        missing-kind) yq -i 'del(.spec.matchConditions[0])' "$policy" ;;
+        source-kind) yq -i '.spec.matchConditions[0].expression = "object.kind == '\''OCIRepository'\''"' "$policy" ;;
+        no-label) yq -i 'del(.spec.matchConstraints.objectSelector)' "$policy" ;;
+        condition-side-effect) yq -i '.spec.matchConditions[1].expression += " && http.Get(\"https://example.test\") != null"' "$policy" ;;
+        patch-side-effect) yq -i '.spec.mutations[0].jsonPatch.expression += " + resource.Get(\"v1\", \"configmaps\", \"default\", \"x\")"' "$policy" ;;
+        values-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("/spec/"; "/spec/values/")' "$policy" ;;
+        failure-policy) yq -i '.spec.failurePolicy = "Ignore"' "$policy" ;;
+        mutate-existing) yq -i '.spec.evaluation.mutateExisting.enabled = true' "$policy" ;;
+        target-constraints) yq -i '.spec.targetMatchConstraints.resourceRules = [{"apiGroups":["*"],"apiVersions":["*"],"operations":["UPDATE"],"resources":["*"]}]' "$policy" ;;
+        variables) yq -i '.spec.variables = [{"name":"effect","expression":"true"}]' "$policy" ;;
+        extra-field) yq -i '.spec.extra = "unreviewed"' "$policy" ;;
+        foreign-api) yq -i '.apiVersion = "policies.example.test/v1"' "$policy" ;;
+        foreign-kind) yq -i '.kind = "MutatingAdmissionPolicy"' "$policy" ;;
+      esac
+      if cmp -s "$WORK/reviewed-helm-default-$suffix/k8s/providers/prod/apps/helm-default.yaml" "$policy"; then
+        fail "the $suffix/$target control did not change its policy"
+      fi
+      printf '  - helm-default.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+      expect_refusal "a $suffix/$target default is outside its complete approval" "$root" 'unevaluated CEL admission mutation' 'consumers are UNKNOWN'
+    done
   done
 
   # #5102: the reviewed auto-vpa GeneratingPolicy shape passes; each variant

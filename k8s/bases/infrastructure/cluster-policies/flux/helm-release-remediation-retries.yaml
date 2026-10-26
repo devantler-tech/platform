@@ -1,6 +1,8 @@
 # TODO: Upstream `helm-release-remediation-retries.yaml` to Kyverno policies repository.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+# Fixed leaf assignments and conditional parent creation preserve other
+# settings and produce the same object when applied more than once.
+apiVersion: policies.kyverno.io/v1
+kind: MutatingPolicy
 metadata:
   name: helm-release-remediation-retries
   annotations:
@@ -15,23 +17,44 @@ metadata:
       times and then retry once more on the next reconciliation interval,
       preventing permanent stalling.
 spec:
-  rules:
-    - name: set-remediation-retries
-      match:
-        resources:
-          kinds:
-            - HelmRelease
-          selector:
-            matchLabels:
-              helm.toolkit.fluxcd.io/remediation: "enabled"
-      mutate:
-        patchStrategicMerge:
-          spec:
-            install:
-              remediation:
-                retries: 3
-                remediateLastFailure: true
-            upgrade:
-              remediation:
-                retries: 3
-                remediateLastFailure: true
+  failurePolicy: Fail
+  matchConstraints:
+    objectSelector:
+      matchLabels:
+        helm.toolkit.fluxcd.io/remediation: "enabled"
+    resourceRules:
+      # Preserve the legacy kind-only match; constrain kind explicitly below.
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["*"]
+  # Removing or disabling the incoming label stops mutation even when the
+  # admission selector still matches the previous object's enabled label.
+  matchConditions:
+    - name: helm-release-kind
+      expression: object.kind == 'HelmRelease'
+    - name: remediation-enabled-on-incoming-object
+      expression: >-
+        has(object.metadata.labels) &&
+        'helm.toolkit.fluxcd.io/remediation' in object.metadata.labels &&
+        object.metadata.labels['helm.toolkit.fluxcd.io/remediation'] == 'enabled'
+  # Create only absent/null parents, then replace just the four fixed leaves.
+  # JSON patches avoid a dependency on loading the HelmRelease CRD schema.
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          (has(object.spec.install) && object.spec.install != null ? [] :
+            [JSONPatch{op: "add", path: "/spec/install", value: {}}]) +
+          (has(object.spec.install) && object.spec.install != null &&
+            has(object.spec.install.remediation) && object.spec.install.remediation != null ? [] :
+            [JSONPatch{op: "add", path: "/spec/install/remediation", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/install/remediation/retries", value: 3},
+           JSONPatch{op: "add", path: "/spec/install/remediation/remediateLastFailure", value: true}] +
+          (has(object.spec.upgrade) && object.spec.upgrade != null ? [] :
+            [JSONPatch{op: "add", path: "/spec/upgrade", value: {}}]) +
+          (has(object.spec.upgrade) && object.spec.upgrade != null &&
+            has(object.spec.upgrade.remediation) && object.spec.upgrade.remediation != null ? [] :
+            [JSONPatch{op: "add", path: "/spec/upgrade/remediation", value: {}}]) +
+          [JSONPatch{op: "add", path: "/spec/upgrade/remediation/retries", value: 3},
+           JSONPatch{op: "add", path: "/spec/upgrade/remediation/remediateLastFailure", value: true}]

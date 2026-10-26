@@ -670,6 +670,9 @@ rules:
   # same three expressions are pinned in
   # scripts/guard-consumer-discovery-conservation.sh; a catalog change is
   # refused by both until it is reviewed here.
+  # #5357 adds only the two closed Helm-default specs. Their fixed patches
+  # may vary token whitespace, never quoted literal whitespace or escapes.
+  # Added variables, selectors or evaluation fields remain unreviewed.
   - name: reject-cel-policy-producers
     expression: >-
       !has(object.apiVersion) ||
@@ -687,6 +690,35 @@ rules:
          has(rule.resources) && rule.resources.size() > 0 &&
          rule.resources.all(resource,
            resource in ['policyreports', 'clusterpolicyreports']))) ||
+      (object.apiVersion == 'policies.kyverno.io/v1' &&
+       object.kind == 'MutatingPolicy' &&
+       has(object.spec) && has(object.spec.mutations) &&
+       object.spec.mutations.size() == 1 &&
+       has(object.spec.mutations[0].jsonPatch) &&
+       has(object.spec.mutations[0].jsonPatch.expression) &&
+       type(object.spec.mutations[0].jsonPatch.expression) == string &&
+       object.spec.mutations[0].jsonPatch.expression.matches(
+         '^[^"\\x5c]*("[^"\\x5c\\s]*"[^"\\x5c]*)*$') &&
+       [{"label":"helm.toolkit.fluxcd.io/helm-test","conditionName":"tests-enabled-on-incoming-object","conditionExpression":"has(object.metadata.labels) && 'helm.toolkit.fluxcd.io/helm-test' in object.metadata.labels && object.metadata.labels['helm.toolkit.fluxcd.io/helm-test'] == 'enabled'","patch":"(has(object.spec.test)&&object.spec.test!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/test\",value:{}}])+[JSONPatch{op:\"add\",path:\"/spec/test/enable\",value:true}]"},{"label":"helm.toolkit.fluxcd.io/remediation","conditionName":"remediation-enabled-on-incoming-object","conditionExpression":"has(object.metadata.labels) && 'helm.toolkit.fluxcd.io/remediation' in object.metadata.labels && object.metadata.labels['helm.toolkit.fluxcd.io/remediation'] == 'enabled'","patch":"(has(object.spec.install)&&object.spec.install!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/install\",value:{}}])+(has(object.spec.install)&&object.spec.install!=null&&has(object.spec.install.remediation)&&object.spec.install.remediation!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/install/remediation\",value:{}}])+[JSONPatch{op:\"add\",path:\"/spec/install/remediation/retries\",value:3},JSONPatch{op:\"add\",path:\"/spec/install/remediation/remediateLastFailure\",value:true}]+(has(object.spec.upgrade)&&object.spec.upgrade!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/upgrade\",value:{}}])+(has(object.spec.upgrade)&&object.spec.upgrade!=null&&has(object.spec.upgrade.remediation)&&object.spec.upgrade.remediation!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/upgrade/remediation\",value:{}}])+[JSONPatch{op:\"add\",path:\"/spec/upgrade/remediation/retries\",value:3},JSONPatch{op:\"add\",path:\"/spec/upgrade/remediation/remediateLastFailure\",value:true}]"}].exists(approved,
+         object.spec.mutations[0].jsonPatch.expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') == approved.patch &&
+         object.spec == {
+           'failurePolicy': 'Fail',
+           'matchConstraints': {
+             'objectSelector': {'matchLabels': {approved.label: 'enabled'}},
+             'resourceRules': [{
+               'apiGroups': ['*'], 'apiVersions': ['*'],
+               'operations': ['CREATE', 'UPDATE'], 'resources': ['*']
+             }]
+           },
+           'matchConditions': [
+             {'name': 'helm-release-kind', 'expression': "object.kind == 'HelmRelease'"},
+             {'name': approved.conditionName, 'expression': approved.conditionExpression}
+           ],
+           'mutations': [{
+             'patchType': 'JSONPatch',
+             'jsonPatch': {'expression': object.spec.mutations[0].jsonPatch.expression}
+           }]
+         })) ||
       (object.kind == 'MutatingPolicy' &&
        has(object.spec) &&
        !has(object.spec.targetMatchConstraints) &&

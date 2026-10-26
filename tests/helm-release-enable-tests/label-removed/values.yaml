@@ -1,0 +1,26 @@
+# Model an UPDATE whose previous object opted in but whose incoming label was removed or disabled.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Values
+metadata:
+  name: helm-release-enable-tests-label-removed
+globalValues:
+  request.operation: UPDATE
+policies:
+  - name: helm-release-enable-tests
+    resources:
+      - name: removed
+        values:
+          request.oldObject:
+            metadata:
+              name: removed
+              namespace: controllers
+              labels:
+                helm.toolkit.fluxcd.io/helm-test: enabled
+      - name: disabled
+        values:
+          request.oldObject:
+            metadata:
+              name: disabled
+              namespace: controllers
+              labels:
+                helm.toolkit.fluxcd.io/helm-test: enabled
