@@ -65,7 +65,7 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Not A Service Group
-    gethomepage.dev/group: Banking
+    gethomepage.dev/group: Package Registries
 spec:
   hostnames:
     - bookmark.platform.devantler.tech
@@ -120,7 +120,20 @@ spec:
   rules:
     - host: ingress.platform.devantler.tech
 ---
-# The site groups tenant routes use today.
+# The site groups tenant routes use today. Clients is TRANSITIONAL: it stays
+# accepted only until the last tenant route moves to Business & Clients.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: business-and-clients-group
+  namespace: client-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Business & Clients
+spec:
+  hostnames:
+    - business.platform.devantler.tech
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -170,3 +183,44 @@ metadata:
 spec:
   hostnames:
     - retired-personal.platform.devantler.tech
+---
+# The two groups Security is splitting into, as the platform's own routes will
+# use them. They must be accepted before those routes switch (Flux applies the
+# routes before this policy), so Security itself is still accepted meanwhile.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: secrets-management-group
+  namespace: openbao
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Secrets Management
+spec:
+  hostnames:
+    - vault.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: governance-group
+  namespace: policy-reporter
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Governance
+spec:
+  hostnames:
+    - policy-reporter.platform.devantler.tech
+---
+# The group Business & Clients replaced. No route claims it, so the layout no
+# longer declares it and admission refuses it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-business-group
+  namespace: client-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Business
+spec:
+  hostnames:
+    - retired-business.platform.devantler.tech
