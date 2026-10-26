@@ -16,6 +16,7 @@ concurrency:
 
 jobs:
   verify:
+    name: Verify retained mail storage recovery
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: prod

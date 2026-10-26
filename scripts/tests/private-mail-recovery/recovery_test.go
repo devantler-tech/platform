@@ -1,6 +1,7 @@
 package recovery_test
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,19 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+func commandExitCode(t *testing.T, err error) int {
+	t.Helper()
+	if err == nil {
+		return 0
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return exit.ExitCode()
+	}
+	t.Fatal(err)
+	return -1
+}
 
 func recoveryFixture(t *testing.T, reader string, ref string) (*exec.Cmd, string) {
 	t.Helper()
@@ -31,13 +45,13 @@ func recoveryFixture(t *testing.T, reader string, ref string) (*exec.Cmd, string
 		}
 	}
 	cmd := exec.Command("bash", filepath.Join(scripts, "verify-private-mail-storage-recovery.sh"))
-	cmd.Env = append(os.Environ(), "RUNNER_TEMP="+root,
-		"GITHUB_EVENT_NAME=workflow_dispatch", "GITHUB_REF="+ref,
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "RUNNER_TEMP=" + root,
+		"GITHUB_EVENT_NAME=workflow_dispatch", "GITHUB_REF=" + ref,
 		"GITHUB_SHA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		"PRIVATE_MAIL_RECOVERY_CONFIRM=verify-private-mail-storage-recovery",
-		"GITHUB_STEP_SUMMARY="+filepath.Join(root, "summary"),
+		"GITHUB_STEP_SUMMARY=" + filepath.Join(root, "summary"),
 		"FLUX_ORPHANS_SINCE=caller-selected-window", "FLUX_ORPHANS_CONTEXT=other-cluster",
-		"READER_TOUCHED="+filepath.Join(root, "reader-touched"))
+		"READER_TOUCHED=" + filepath.Join(root, "reader-touched")}
 	return cmd, root
 }
 
@@ -71,14 +85,7 @@ exit %d
 `, tt.footer, tt.readerExit)
 			cmd, root := recoveryFixture(t, reader, "refs/heads/main")
 			output, err := cmd.CombinedOutput()
-			code := 0
-			if err != nil {
-				if exit, ok := err.(*exec.ExitError); ok {
-					code = exit.ExitCode()
-				} else {
-					t.Fatal(err)
-				}
-			}
+			code := commandExitCode(t, err)
 			if code != tt.wantExit || string(output) != "MAIL_STORAGE_RECOVERY="+tt.verdict+"\n" {
 				t.Fatalf("verdict/exit mismatch: code=%d output=%q", code, output)
 			}
@@ -110,7 +117,7 @@ func TestRecoveryVerifierRefusesUnreviewedInvocationBeforeReadingCluster(t *test
 			cmd, root := recoveryFixture(t, `touch "$READER_TOUCHED"`, "refs/heads/main")
 			cmd.Env = append(cmd.Env, tt.environment)
 			output, err := cmd.CombinedOutput()
-			if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 2 || string(output) != "MAIL_STORAGE_RECOVERY=UNVERIFIED\n" {
+			if commandExitCode(t, err) != 2 || string(output) != "MAIL_STORAGE_RECOVERY=UNVERIFIED\n" {
 				t.Fatalf("unreviewed invocation must be refused: error=%v output=%q", err, output)
 			}
 			if _, err := os.Stat(filepath.Join(root, "reader-touched")); !os.IsNotExist(err) {
@@ -168,16 +175,9 @@ func TestRecoveryWorkflowRefusesUnreviewedCodeBeforeCheckout(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "-c", job.Steps[0].Run)
-			cmd.Env = append(os.Environ(), "GITHUB_EVENT_NAME="+tt.event, "GITHUB_REF="+tt.ref, "CONFIRM="+tt.confirm)
+			cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "GITHUB_EVENT_NAME=" + tt.event, "GITHUB_REF=" + tt.ref, "CONFIRM=" + tt.confirm}
 			_, err := cmd.CombinedOutput()
-			got := 0
-			if err != nil {
-				if exit, ok := err.(*exec.ExitError); ok {
-					got = exit.ExitCode()
-				} else {
-					t.Fatal(err)
-				}
-			}
+			got := commandExitCode(t, err)
 			if got != tt.want {
 				t.Fatalf("checkout guard exit=%d, want %d", got, tt.want)
 			}
