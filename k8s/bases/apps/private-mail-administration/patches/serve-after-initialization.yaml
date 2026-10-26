@@ -1,0 +1,153 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  template:
+    spec:
+      $patch: replace
+      serviceAccountName: private-mail
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 2000
+        runAsGroup: 2000
+        fsGroup: 2000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: configure
+          image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_BIND_SERVICE]
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions: {}
+          volumeMounts:
+            # The startup configuration is a file; leave the TLS directory
+            # outside the read-only ConfigMap projection.
+            - name: datastore
+              mountPath: /etc/stalwart/config.json
+              subPath: config.json
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/stalwart
+            - name: private-inputs
+              mountPath: /etc/private-mail
+              readOnly: true
+            - name: tls
+              mountPath: /etc/stalwart/tls
+              readOnly: true
+            - name: initialization-temporary
+              mountPath: /tmp
+      containers:
+        - name: private-mail
+          image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/stalwart"]
+          args: ["--config", "/etc/stalwart/config.json"]
+          ports:
+            - name: management
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz/live
+              port: management
+            periodSeconds: 5
+            failureThreshold: 24
+          readinessProbe:
+            httpGet:
+              path: /healthz/ready
+              port: management
+          livenessProbe:
+            httpGet:
+              path: /healthz/live
+              port: management
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+              add: [NET_BIND_SERVICE]
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions: {}
+          volumeMounts:
+            - name: datastore
+              mountPath: /etc/stalwart/config.json
+              subPath: config.json
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/stalwart
+            - name: tls
+              mountPath: /etc/stalwart/tls
+              readOnly: true
+            - name: temporary
+              mountPath: /tmp
+      volumes:
+        - name: datastore
+          configMap:
+            name: private-mail-datastore
+        - name: data
+          persistentVolumeClaim:
+            claimName: private-mail-data
+        - name: private-inputs
+          projected:
+            defaultMode: 0440
+            sources:
+              - secret:
+                  name: private-mail-settings
+                  items:
+                    - key: settings.json
+                      path: settings.json
+              - secret:
+                  name: private-mail-admin
+                  items:
+                    - key: password
+                      path: administrator-password
+              - secret:
+                  name: private-mail-maintainer
+                  items:
+                    - key: password
+                      path: maintainer-password
+              - secret:
+                  name: private-mail-agent
+                  items:
+                    - key: password
+                      path: agent-password
+        - name: tls
+          secret:
+            secretName: private-mail-tls
+            defaultMode: 0440
+        - name: initialization-temporary
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
+        - name: temporary
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

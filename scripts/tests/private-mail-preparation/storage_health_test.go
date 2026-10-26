@@ -62,6 +62,8 @@ func TestMailStorageHealthAcrossActivation(t *testing.T) {
 		{name: "status not observed"},
 		{name: "serving must bind", phase: "Pending", path: "k8s/bases/apps/private-mail"},
 		{name: "serving bound", phase: "Bound", path: "k8s/bases/apps/private-mail", want: true},
+		{name: "production serving must bind", phase: "Pending", path: "k8s/providers/hetzner/apps"},
+		{name: "production serving bound", phase: "Bound", path: "k8s/providers/hetzner/apps", want: true},
 		{name: "another name", phase: "Pending", mutate: func(m, _ map[string]any) { m["name"] = "other-data" }},
 		{name: "another namespace", phase: "Pending", mutate: func(m, _ map[string]any) { m["namespace"] = "other" }},
 		{name: "another storage class", phase: "Pending", mutate: func(_, s map[string]any) { s["storageClassName"] = "longhorn" }},
@@ -81,7 +83,7 @@ func TestMailStorageHealthAcrossActivation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			path := tt.path
 			if path == "" {
-				path = "k8s/providers/hetzner/apps"
+				path = "k8s/bases/apps/private-mail-storage"
 			}
 			claim := object(t, render(t, path), "PersistentVolumeClaim", "private-mail-data")
 			metadata, claimSpec := mapping(t, claim["metadata"]), mapping(t, claim["spec"])
