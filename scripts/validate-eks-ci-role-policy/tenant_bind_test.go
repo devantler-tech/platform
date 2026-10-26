@@ -26,6 +26,19 @@ func tenantPullSecretCIContract(wf workflow) error {
 		strings.Join(strings.Fields(j.If), " ") != "github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'" {
 		return fmt.Errorf("lost selected policy job enforcement")
 	}
+	suites, valid := j.Strategy.Matrix["suite"].([]any)
+	want := map[string]bool{"fixtures": true, "tenant": true, "services": true, "placement": true, "storage": true, "observability": true}
+	if !valid || len(j.Strategy.Matrix) != 1 || len(suites) != len(want) ||
+		j.Strategy.FailFast != false || j.Strategy.MaxParallel != 3 {
+		return fmt.Errorf("lost complete policy matrix routing")
+	}
+	for _, item := range suites {
+		name, isString := item.(string)
+		if !isString || !want[name] {
+			return fmt.Errorf("unknown or duplicate policy suite")
+		}
+		delete(want, name)
+	}
 	count := 0
 	for _, s := range j.Steps {
 		shell := s.Shell
@@ -35,7 +48,8 @@ func tenantPullSecretCIContract(wf workflow) error {
 		if shell == "" {
 			shell = wf.Defaults.Run.Shell
 		}
-		if s.Uses == "" && s.enforces() && shellKeepsErrexit(shell) {
+		if s.Uses == "" && s.If == "matrix.suite == 'observability'" &&
+			!errorIsTolerated(s.ContinueOnError) && shellKeepsErrexit(shell) {
 			count += canonicalCommandCount(s.Run, "bash scripts/tests/test-tenant-kro-pull-secret.sh")
 		}
 	}
@@ -50,7 +64,10 @@ func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 	if err := tenantPullSecretCIContract(wf); err != nil {
 		t.Fatal(err)
 	}
-	for _, mutation := range []string{"missing", "skip", "tolerate", "comment", "mask", "unsafe-shell", "job-skip", "job-tolerate"} {
+	for _, mutation := range []string{
+		"missing", "skip", "tolerate", "comment", "mask", "unsafe-shell", "job-skip", "job-tolerate",
+		"wrong-suite", "unconditional", "matrix-missing", "matrix-duplicate", "matrix-exclude", "matrix-unbounded", "matrix-cancel",
+	} {
 		t.Run(mutation, func(t *testing.T) {
 			w := canonicalCIWorkflow(t)
 			j := w.Jobs["validate-cluster-policies"]
@@ -78,6 +95,20 @@ func TestTenantPullSecretAdmissionRemainsInCI(t *testing.T) {
 					j.If = "false"
 				case "job-tolerate":
 					j.ContinueOnError = true
+				case "wrong-suite":
+					s.If = "matrix.suite == 'unknown'"
+				case "unconditional":
+					s.If = ""
+				case "matrix-missing":
+					delete(j.Strategy.Matrix, "suite")
+				case "matrix-duplicate":
+					j.Strategy.Matrix["suite"] = []any{"fixtures", "tenant", "services", "placement", "storage", "storage"}
+				case "matrix-exclude":
+					j.Strategy.Matrix["exclude"] = []any{map[string]any{"suite": "observability"}}
+				case "matrix-unbounded":
+					j.Strategy.MaxParallel = 6
+				case "matrix-cancel":
+					j.Strategy.FailFast = true
 				}
 			}
 			if found != 1 {

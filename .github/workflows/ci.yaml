@@ -2135,13 +2135,6 @@ jobs:
           shellcheck scripts/tests/test-business-disclosure-reader.sh
           bash scripts/tests/test-business-disclosure-reader.sh
 
-      - name: 🐤 Validate staged OpenBao standby repair
-        if: needs.changes.outputs.k8s == 'true'
-        run: |
-          shellcheck scripts/tests/test-openbao-standby-canary.sh
-          shellcheck scripts/tests/test-openbao-strategy-transition.sh
-          bash scripts/tests/test-openbao-standby-canary.sh
-
       - name: 🧯 Validate daily and break-glass API boundaries
         if: needs.changes.outputs.k8s == 'true'
         # Daily Kubernetes/Talos access must stay read-only, while the root
@@ -2982,14 +2975,6 @@ jobs:
           restore-keys: |
             kubeconform-schema-cache-v1-
 
-      - name: 🔒 Validate Crossplane provider egress policy
-        if: needs.changes.outputs.k8s == 'true'
-        # This test exercises KSail's in-process Helm renderer, so it must run
-        # after the pinned KSail setup and schema-cache restore above. The
-        # reviewed FQDN set must remain narrow while provider traffic stays on
-        # the direct L3/L4 path that completes upstream TLS handshakes.
-        run: bash scripts/tests/test-crossplane-egress-policy.sh
-
       - name: 🔐 Validate Kyverno review admission boundaries
         if: needs.changes.outputs.k8s == 'true'
         # Render the pinned chart and exercise its match conditions against an
@@ -3040,13 +3025,6 @@ jobs:
         run: |
           shellcheck scripts/tests/test-private-mail-server.sh
           bash scripts/tests/test-private-mail-server.sh
-
-      - name: ✉️ Prove native mail accounts and recipient restrictions
-        if: needs.changes.outputs.k8s == 'true'
-        timeout-minutes: 10
-        run: |
-          shellcheck scripts/tests/test-private-mail-configuration.sh
-          bash scripts/tests/test-private-mail-configuration.sh
 
       - name: 🛡️ Validate Kubescape self-hosted scan persistence
         if: needs.changes.outputs.k8s == 'true'
@@ -3350,6 +3328,73 @@ jobs:
         run: |
           shellcheck scripts/summarize-sarif-findings.sh
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
+
+  validate-manifest-regressions:
+    name: 🧪 Validate Independent Manifest Regressions
+    needs:
+      - changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: 📌 Install the reviewed YAML parser
+        if: needs.changes.outputs.k8s == 'true'
+        env:
+          GOBIN: ${{ runner.temp }}/platform-validation-tools
+        run: |
+          go install github.com/mikefarah/yq/v4@v4.54.1
+          printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
+          PATH="$GOBIN:$PATH" yq --version
+      - name: ⚖️ Read Kyverno CLI version
+        if: needs.changes.outputs.k8s == 'true'
+        id: kyverno-version
+        run: bash .github/scripts/kyverno-version.sh
+      - name: ⚖️ Install Kyverno CLI
+        if: needs.changes.outputs.k8s == 'true'
+        uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
+        with:
+          release: ${{ steps.kyverno-version.outputs.release }}
+      - name: ⚙️ Setup KSail
+        shell: bash
+        env:
+          # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
+          KSAIL_VERSION: "7.203.26"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/setup-ksail.sh
+      - name: 📥 Restore kubeconform schema cache
+        id: kubeconform-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ksail/kubeconform
+          key: kubeconform-schema-cache-v1-render-regressions-${{ github.run_id }}
+          restore-keys: |
+            kubeconform-schema-cache-v1-
+      - name: 🐤 Validate staged OpenBao standby repair
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-openbao-standby-canary.sh
+          shellcheck scripts/tests/test-openbao-strategy-transition.sh
+          bash scripts/tests/test-openbao-standby-canary.sh
+      - name: 🔒 Validate Crossplane provider egress policy
+        if: needs.changes.outputs.k8s == 'true'
+        run: bash scripts/tests/test-crossplane-egress-policy.sh
+      - name: ✉️ Prove native mail accounts and recipient restrictions
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 10
+        run: |
+          shellcheck scripts/tests/test-private-mail-configuration.sh
+          bash scripts/tests/test-private-mail-configuration.sh
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
@@ -4318,6 +4363,7 @@ jobs:
         changes,
         validate-repository-guards,
         validate-publication-generator,
+        validate-manifest-regressions,
         validate-go-regressions,
         validate-webapp-compiler,
         validate-consumer-discovery,
@@ -4418,6 +4464,7 @@ jobs:
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
             ${{ needs.validate-publication-generator.result }}
+            ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
             ${{ needs.validate-webapp-compiler.result }}
             ${{ needs.validate-consumer-discovery.result }}
@@ -4455,6 +4502,20 @@ jobs:
             echo "::error::Publication generator did not succeed ($GENERATOR_RESULT)"
             exit 1
           fi
+
+      - name: 🧪 Require selected manifest regressions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          SELECTED: ${{ needs.changes.outputs.k8s }}
+          REGRESSION_RESULT: ${{ needs.validate-manifest-regressions.result }}
+        run: |
+          case "$EVENT_NAME:$SELECTED:$REGRESSION_RESULT" in
+          pull_request:true:success | pull_request:false:skipped | merge_group:*:skipped) ;;
+          *)
+            printf 'Manifest regressions did not meet their selection/result boundary: %s:%s:%s\n' "$EVENT_NAME" "$SELECTED" "$REGRESSION_RESULT" >&2
+            exit 1
+            ;;
+          esac
 
       - name: 🧪 Require complete Go regressions
         env:

@@ -154,3 +154,48 @@ check merge_group true skipped 0
 check merge_group false skipped 0
 
 echo 'PASS: selected policy validation must succeed; intentional non-selection is accepted'
+
+jq -e --arg selection "github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'" '
+  . as $workflow |
+  .jobs["validate-manifest-regressions"] as $job |
+  ($job.needs == ["changes"]) and ($job.if == $selection) and
+  ($job.permissions == {contents: "read"}) and
+  (($job["continue-on-error"] // false) == false) and
+  (["🐤 Validate staged OpenBao standby repair",
+    "🔒 Validate Crossplane provider egress policy",
+    "✉️ Prove native mail accounts and recipient restrictions"] | all(.[];
+      . as $name |
+      ([$job.steps[] | select(.name == $name and
+        .if == "needs.changes.outputs.k8s == '\''true'\''" and
+        ((.["continue-on-error"] // false) == false) and
+        (.run | type == "string" and length > 0))] | length) == 1 and
+      ([$workflow.jobs.validate.steps[]? | select(.name == $name)] | length) == 0)) and
+  (.jobs["ci-required-checks"].needs | index("validate-manifest-regressions") != null)
+' "${work}/workflow.json" >/dev/null
+regression_step="$(jq -c '[.steps[] | select(.name == "🧪 Require selected manifest regressions")]' <<<"${gate}")"
+jq -e 'length == 1 and .[0].env == {
+  EVENT_NAME: "${{ github.event_name }}",
+  SELECTED: "${{ needs.changes.outputs.k8s }}",
+  REGRESSION_RESULT: "${{ needs.validate-manifest-regressions.result }}"
+} and (.[0] | has("if") | not)
+  and ((.[0]["continue-on-error"] // false) == false)
+  and (.[0].run | type == "string" and length > 0)' <<<"${regression_step}" >/dev/null
+jq -r '.[0].run' <<<"${regression_step}" >"${work}/regression-gate.sh"
+for event in pull_request merge_group; do
+  for selected in true false unknown ''; do
+    for result in success failure cancelled skipped pending unknown ''; do
+      expected=1 actual=0
+      case "$event:$selected:$result" in
+      pull_request:true:success | pull_request:false:skipped | merge_group:*:skipped) expected=0 ;;
+      esac
+      EVENT_NAME="$event" SELECTED="$selected" REGRESSION_RESULT="$result" \
+        bash -e "${work}/regression-gate.sh" >"${work}/regression-output" 2>&1 || actual=$?
+      if [ "$actual" -ne "$expected" ]; then
+        printf 'FAIL: manifest regressions event=%s selected=%s result=%s expected=%s actual=%s\n' \
+          "$event" "$selected" "$result" "$expected" "$actual" >&2
+        exit 1
+      fi
+    done
+  done
+done
+echo 'PASS: all three manifest regressions run once and selected non-success outcomes are refused'

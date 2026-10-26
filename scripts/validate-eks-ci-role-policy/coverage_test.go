@@ -58,6 +58,11 @@ type job struct {
 	ContinueOnError any         `yaml:"continue-on-error"`
 	Permissions     any         `yaml:"permissions"`
 	Defaults        runDefaults `yaml:"defaults"`
+	Strategy        struct {
+		Matrix      map[string]any `yaml:"matrix"`
+		FailFast    any            `yaml:"fail-fast"`
+		MaxParallel any            `yaml:"max-parallel"`
+	} `yaml:"strategy"`
 }
 
 type runDefaults struct {

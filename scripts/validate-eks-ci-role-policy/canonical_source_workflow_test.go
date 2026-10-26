@@ -3,20 +3,21 @@ package main
 import (
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 )
 
-var canonicalCICommands = []string{
-	"bash scripts/tests/test-canonical-source-bootstrap.sh",
-	"bash scripts/tests/test-canonical-constructor-attribution.sh",
-	"bash scripts/tests/test-canonical-generator-output.sh",
-	"bash scripts/tests/test-canonical-bootstrap-output.sh",
-	"bash scripts/tests/test-canonical-publisher-regeneration.sh",
-	"bash scripts/tests/test-tenant-source-discovery.sh",
-	"./scripts/guard-consumer-discovery-conservation.sh",
+var canonicalCICommands = map[string]string{
+	"bash scripts/tests/test-canonical-source-bootstrap.sh":        "validate-publication-generator",
+	"bash scripts/tests/test-canonical-constructor-attribution.sh": "validate-publication-generator",
+	"bash scripts/tests/test-canonical-generator-output.sh":        "validate-publication-generator",
+	"bash scripts/tests/test-canonical-bootstrap-output.sh":        "validate-publication-generator",
+	"bash scripts/tests/test-canonical-publisher-regeneration.sh":  "validate-publication-generator",
+	"bash scripts/tests/test-tenant-source-discovery.sh":           "validate-repository-guards",
+	"./scripts/guard-consumer-discovery-conservation.sh":           "validate-repository-guards",
 }
 
 var canonicalCIPaths = []string{
@@ -67,7 +68,8 @@ func canonicalCIWorkflow(t *testing.T) workflow {
 
 func mutateCanonicalCommand(t *testing.T, wf *workflow, command string, mutate func(*step)) {
 	t.Helper()
-	j := wf.Jobs["validate-repository-guards"]
+	owner := canonicalCICommands[command]
+	j := wf.Jobs[owner]
 	found := 0
 	for i := range j.Steps {
 		if strings.Contains(j.Steps[i].Run, command) {
@@ -78,7 +80,7 @@ func mutateCanonicalCommand(t *testing.T, wf *workflow, command string, mutate f
 	if found != 1 {
 		t.Fatalf("mutation requires exactly one native command block, got %d for %s", found, command)
 	}
-	wf.Jobs["validate-repository-guards"] = j
+	wf.Jobs[owner] = j
 }
 
 func mutateCanonicalFilter(t *testing.T, wf *workflow, mutate func(map[string][]string)) {
@@ -108,7 +110,7 @@ func mutateCanonicalFilter(t *testing.T, wf *workflow, mutate func(map[string][]
 }
 
 func TestCanonicalSourceCIRejectsLostOrNeutralizedCommands(t *testing.T) {
-	for _, command := range canonicalCICommands {
+	for command := range canonicalCICommands {
 		for name, replacement := range map[string]string{
 			"removed": "", "comment": "# " + command, "echo": "echo " + command,
 			"conditional": "if false; then " + command + "; fi",
@@ -278,31 +280,92 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 	for _, scope := range []string{"job", "step"} {
 		wf = canonicalCIWorkflow(t)
 		wf.Defaults.Run.Shell = "bash {0}"
-		j = wf.Jobs["validate-repository-guards"]
-		j.Defaults.Run.Shell = "bash"
-		if scope == "step" {
-			j.Defaults.Run.Shell = "bash {0}"
-		}
-		for i := range j.Steps {
+		for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
+			j = wf.Jobs[name]
+			j.Defaults.Run.Shell = "bash"
 			if scope == "step" {
-				j.Steps[i].Shell = "bash"
-			} else {
-				j.Steps[i].Shell = ""
+				j.Defaults.Run.Shell = "bash {0}"
 			}
+			for i := range j.Steps {
+				if scope == "step" {
+					j.Steps[i].Shell = "bash"
+				} else {
+					j.Steps[i].Shell = ""
+				}
+			}
+			wf.Jobs[name] = j
 		}
-		wf.Jobs["validate-repository-guards"] = j
 		if err := canonicalSourceCIContract(wf); err != nil {
 			t.Fatalf("rejected safe %s shell override: %v", scope, err)
 		}
 	}
 }
 
-func canonicalSourceCIContract(wf workflow) error {
-	guard, ok := wf.Jobs["validate-repository-guards"]
-	if !ok || guard.If != "" || errorIsTolerated(guard.ContinueOnError) {
-		return fmt.Errorf("canonical source contracts require the unconditional repository guard job")
+func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
+	for _, mutation := range []string{"missing", "conditional", "tolerated", "unsafe-shell", "deploy-prod", "ci-required-checks"} {
+		t.Run(mutation, func(t *testing.T) {
+			wf := canonicalCIWorkflow(t)
+			if err := canonicalSourceCIContract(wf); err != nil {
+				t.Fatalf("positive control: %v", err)
+			}
+			name := "validate-publication-generator"
+			j := wf.Jobs[name]
+			want := "require unconditional " + name
+			switch mutation {
+			case "missing":
+				delete(wf.Jobs, name)
+			case "conditional":
+				j.If = "false"
+				wf.Jobs[name] = j
+			case "tolerated":
+				j.ContinueOnError = true
+				wf.Jobs[name] = j
+			case "unsafe-shell":
+				j.Defaults.Run.Shell = "bash {0}"
+				wf.Jobs[name] = j
+				want = "canonical source CI must enforce exactly one"
+			default:
+				consumer := wf.Jobs[mutation]
+				needs, valid := consumer.needsOf()
+				if !valid || !slices.Contains(needs, name) {
+					t.Fatal("mutation must remove an actual required dependency")
+				}
+				kept := make([]any, 0, len(needs)-1)
+				for _, dependency := range needs {
+					if dependency != name {
+						kept = append(kept, dependency)
+					}
+				}
+				consumer.Needs = kept
+				wf.Jobs[mutation] = consumer
+				want = mutation + " must require the publication generator"
+			}
+			err := canonicalSourceCIContract(wf)
+			if err == nil {
+				t.Fatal("accepted lost generator enforcement")
+			}
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("wrong refusal: want %q in %v", want, err)
+			}
+		})
 	}
-	for _, command := range canonicalCICommands {
+}
+
+func canonicalSourceCIContract(wf workflow) error {
+	for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
+		guard, ok := wf.Jobs[name]
+		if !ok || guard.If != "" || errorIsTolerated(guard.ContinueOnError) {
+			return fmt.Errorf("canonical source contracts require unconditional %s", name)
+		}
+	}
+	for _, consumer := range []string{"deploy-prod", "ci-required-checks"} {
+		needs, valid := wf.Jobs[consumer].needsOf()
+		if !valid || !slices.Contains(needs, "validate-publication-generator") {
+			return fmt.Errorf("%s must require the publication generator", consumer)
+		}
+	}
+	for command, owner := range canonicalCICommands {
+		guard := wf.Jobs[owner]
 		count := 0
 		for _, s := range guard.Steps {
 			shell := s.Shell

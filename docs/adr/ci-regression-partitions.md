@@ -14,11 +14,22 @@ checkout, compiler and native tool setup. The other repository guards retain the
 unconditional steps, including the checks that independently protect CI wiring.
 Regressions that share one shell environment remain in the same step.
 
+Move the independent OpenBao standby, Crossplane egress and native-mail
+regressions out of the serial manifest job into one required PR job. Preserve
+their complete steps, timeouts and Kubernetes-path selection. Copy the pinned
+compiler, YAML parser, Kyverno, KSail and schema-cache restore prerequisites into
+the isolated checkout. This job has only read access to contents; SARIF upload
+remains in the existing manifest job. A distinct candidate cache key restores
+from the existing schema prefix; cached data never substitutes for evaluation.
+
 The existing selection predicates remain authoritative. The required aggregate
 consumes the complete matrix result and refuses failed, cancelled, missing or
 unexpectedly skipped selected validation. It explicitly requires generator
 success. Production deployment waits for both the generator and its existing
 merge-group prerequisites.
+The independent manifest-regression family remains PR-only, like its original
+execution. Required CI accepts success when selected and an intentional skip
+otherwise, rejecting unknown selection and every selected non-success result.
 
 ## Evidence and alternatives
 
@@ -26,6 +37,15 @@ Successful run [40272630712](https://github.com/devantler-tech/platform/actions/
 took 17m25s for repository guards and 21m06s for cluster policies. The generator
 controls occupied 7m48s of the serial guard job. Manifest validation took 14m14s;
 its unchanged duration and shared runner queues still bound overall feedback.
+
+The first [scheduling trial](https://github.com/devantler-tech/platform/actions/runs/40289350541)
+reduced the guard job to 9m32s and completed its longest policy suite in 12m09s.
+That attempt failed because existing validators assumed the old job locations;
+it is not evidence of a successful complete feedback loop. Its manifest job took
+17m22s. OpenBao standby, Crossplane egress and native mail accounted for 134s,
+143s and 129s respectively, motivating the additional independent job. The
+remaining validators now check the new owning jobs and their required
+dependencies, retaining the existing lost-command and bypass controls.
 
 [GitHub's matrix documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations)
 defines independent job combinations, fail-fast and concurrency limits. The
@@ -44,6 +64,8 @@ tests and increasing timeouts do not meet the feedback or coverage requirement.
 missing, duplicate and unknown suites, unselected and repeated regressions,
 ignored failures and premature cancellation. The generator and existing policy
 result controls exercise success and every selected non-success result.
+The additional manifest-regression boundary exercises selection, success,
+failure, cancellation, missing results and unexpected skips.
 
 Before accepting a scheduling edit, compare its complete command inventory and
 step inputs with the reviewed baseline. A passing partition check establishes
