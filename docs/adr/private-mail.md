@@ -294,6 +294,15 @@ the existing deployment sequence and signer isolation without a manual node
 configuration change. Public mail activation and migration retain their separate
 acceptance requirements.
 
+After the protected rollout, the dispatch-only **Verify Private Mail Storage
+Recovery** workflow checks the original failed deployment's ownership window.
+Run it from `main` with confirmation `verify-private-mail-storage-recovery`.
+It uses the existing production reader while holding the deployment lock, makes
+no cluster changes, and prints only a fixed verdict. Inventory, errors and
+temporary credential files are not published. A missing read or incomplete scan
+is unverified, never a pass. This verifies ownership recovery, not mail backup
+or restore acceptance.
+
 ## Sources
 
 - [Pinned release](https://github.com/stalwartlabs/stalwart/releases/tag/v0.16.27)
