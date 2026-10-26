@@ -10,7 +10,7 @@ COSIGN_VERSION="3.1.3"
 # cosign_checksums.txt: cosign-linux-amd64
 COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION="1.54.1"
+SYFT_VERSION="1.55.0"
 # syft_1.54.1_checksums.txt: syft_1.54.1_linux_amd64.tar.gz
 SYFT_SHA256="c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47"
 
