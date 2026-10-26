@@ -14,3 +14,13 @@ resources:
   - service.yaml
   - pod-disruption-budget.yaml
   - cilium-network-policy.yaml
+patches:
+  # A serving consumer must wait for binding, including during activation.
+  - target:
+      version: v1
+      kind: PersistentVolumeClaim
+      name: private-mail-data
+      namespace: private-mail
+    patch: |-
+      - op: remove
+        path: /metadata/labels/platform.devantler.tech~1storage-stage

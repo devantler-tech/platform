@@ -249,6 +249,13 @@ reference so the inherited resources are declared only once. A failed activation
 can then return to a reviewed main that still owns the retained storage, keeping
 it managed without deleting data or weakening the orphan-ownership check.
 
+The storage-only claim carries a `storage-stage: prepared` marker. Its explicit
+Flux health decision accepts Pending only for this exact claim on the default
+`longhorn-wffc` class before provisioning has selected a node or volume. Lost or
+terminating claims do not pass. The serving bundle removes the marker, so its
+claim must be Bound; all other claims retain their binding requirement. Health
+waiting remains enabled throughout, without changing the retained claim's spec.
+
 The production pipeline reconciles applications before its full node configuration
 update. Combining the prerequisite with an application that already needs the new
 node rule makes that rollout wait on itself. Separate reviewed revisions preserve

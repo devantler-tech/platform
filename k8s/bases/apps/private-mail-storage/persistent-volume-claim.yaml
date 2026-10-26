@@ -3,6 +3,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: private-mail-data
   namespace: private-mail
+  labels:
+    platform.devantler.tech/storage-stage: prepared
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
