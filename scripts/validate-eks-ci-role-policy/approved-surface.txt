@@ -314,7 +314,7 @@ rbac.authorization.k8s.io/v1|Role|data-product-controller|data-product-readiness
 
 rbac.authorization.k8s.io/v1|Role|data-product-controller|khoist-documentation 35e63ab8f23f3de55976023d5c6144ac5a3cd7ed5c0947f1c451d74cf4167bef
 
-rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources acb7434cc52dd53923f047d301c10d0e85ebfe5bb8c3ef8de67de24817e3e6b0
+rbac.authorization.k8s.io/v1|Role|github-config|github-config-managed-resources 07a7e586590a561fef323c6b988cb29850df5f0e58617d79e2250063c6a8fc2d
 
 rbac.authorization.k8s.io/v1|Role|kubelet-serving-cert-approver|leader-election:kubelet-serving-cert-approver b73fcea5da2f0aad8552ff6a168372a6d47e9f4fb967c7df741ba89708240c73
 
