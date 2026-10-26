@@ -999,6 +999,14 @@ jobs:
           shellcheck scripts/verify-wedding-shared-backup-coverage.sh scripts/verify-wedding-shared-backup-coverage-pod.sh scripts/remove-wedding-shared-backup-pod.sh scripts/verify-shared-backup-consumers.sh scripts/tests/test-verify-wedding-shared-backup-coverage.sh
           bash scripts/tests/test-verify-wedding-shared-backup-coverage.sh
 
+      # The Crossview and Headlamp leftovers are deleted on this script's word,
+      # and a deleted claim cannot be restored. These cases keep an undeployed
+      # removal, a foreign object, a failed read or a survivor from passing.
+      - name: 🧹 Validate the Crossview and Headlamp retirement
+        run: |
+          shellcheck scripts/retire-crossview-headlamp.sh scripts/tests/test-retire-crossview-headlamp.sh
+          bash scripts/tests/test-retire-crossview-headlamp.sh
+
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
         # deletionTimestamp survives queue eviction and main cannot undo it.
