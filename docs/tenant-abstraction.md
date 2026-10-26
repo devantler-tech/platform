@@ -214,11 +214,14 @@ private-route closure remain live acceptance under #5247. Normal production
 reconciliation owns installation; a suspended deployment is not manually bypassed.
 
 `bash scripts/tests/test-business-disclosure-reader.sh` checks the actual rendered
-role/policy payload and eighteen invalid-payload controls without authenticating or
+role/policy payload and twenty-two invalid-payload controls without authenticating or
 reading any value. OpenBao supports the policy's native
 [JSON syntax](https://openbao.org/docs/concepts/policies/); the
 [Kubernetes role API](https://openbao.org/docs/api/auth/kubernetes/) defines the
-typed identity and token fields. Static checks are not live authorization proof.
+typed identity and token fields. The bounded payload checker reuses the platform's
+strict JSON parser to refuse duplicate members and additional documents before
+decoding; its unit controls run with `go test ./scripts/check-business-disclosure-reader`.
+Static checks are not live authorization proof.
 
 **Trade-offs** — KRO is pre-1.0 (`v1alpha1`), so the RGDs stay render-diffable and the controller sits
 in the platform chokepoint with explicit ordering; a CR of an RGD-defined kind cannot share a Flux

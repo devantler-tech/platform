@@ -181,6 +181,7 @@ jobs:
               - '.github/workflows/validate-image-verifier-liveness.yaml'
               - 'scripts/tests/test-openbao-oidc-role.sh'
               - 'scripts/tests/test-business-disclosure-reader.sh'
+              - 'scripts/check-business-disclosure-reader/**'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'

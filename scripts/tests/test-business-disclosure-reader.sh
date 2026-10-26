@@ -4,6 +4,10 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
+binary_dir="$(mktemp -d)"
+readonly binary_dir
+trap 'rm -f "${binary_dir}/check"; rmdir "${binary_dir}"' EXIT
+(cd "${root_dir}" && GOTOOLCHAIN=local go build -o "${binary_dir}/check" ./scripts/check-business-disclosure-reader)
 
 fail() { printf 'FAIL: %s\n' "$1" >&2; exit 1; }
 
@@ -33,26 +37,27 @@ policy="$(extract_payload "bao policy write app-business-site-disclosure-readonl
   fail 'missing or duplicate dedicated policy write'
 
 valid_role() {
-  jq -e '. == {
-    "bound_service_account_names": ["business-site"],
-    "bound_service_account_namespaces": ["business-site"],
-    "token_policies": ["app-business-site-disclosure-readonly"],
-    "token_no_default_policy": true,
-    "token_ttl": 3600,
-    "token_max_ttl": 3600
-  }' >/dev/null <<<"$1"
+  "${binary_dir}/check" role >/dev/null 2>&1 <<<"$1"
 }
 
 valid_policy() {
-  jq -e '. == {"path": {
-    "secret/data/apps/business-site/public-disclosure": {"capabilities": ["read"]},
-    "auth/token/lookup-self": {"capabilities": ["read"]},
-    "auth/token/revoke-self": {"capabilities": ["update"]}
-  }}' >/dev/null <<<"$1"
+  "${binary_dir}/check" policy >/dev/null 2>&1 <<<"$1"
 }
 
 valid_role "${role}" || fail 'role must bind one exact identity and one read-only policy with a bounded lifetime'
 valid_policy "${policy}" || fail 'policy must read only the selected disclosure entry'
+
+for kind in role policy; do
+  if [ "${kind}" = role ]; then value="${role}"; else value="${policy}"; fi
+  if "valid_${kind}" "${value}
+${value}"; then fail 'multiple JSON documents were accepted'; fi
+  if [ "${kind}" = role ]; then
+    ambiguous='{"token_max_ttl":0,'"${value#*\{}"
+  else
+    ambiguous='{"path":{"secret/*":{"capabilities":["read","update"]}},'"${value#*\{}"
+  fi
+  if "valid_${kind}" "${ambiguous}"; then fail 'duplicate JSON members were accepted'; fi
+done
 
 for change in \
   '.bound_service_account_names = ["*"]' \
@@ -86,4 +91,4 @@ grep -Fq "'scripts/tests/test-business-disclosure-reader.sh'" "${root_dir}/.gith
 grep -Fq 'bash scripts/tests/test-business-disclosure-reader.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must execute this contract'
 
-printf 'PASS: rendered business disclosure identity and 18 invalid-payload controls\n'
+printf 'PASS: rendered business disclosure identity and 22 invalid-payload controls\n'
