@@ -13,6 +13,16 @@ import (
 const mailRepository = "ghcr.io/devantler-tech/platform-private-mail-bootstrap"
 const mailPublisher = "https://github.com/devantler-tech/platform/.github/workflows/publish-private-mail-bootstrap.yaml@refs/heads/main"
 
+func mailField[T any](t *testing.T, value any, keys ...string) T {
+	t.Helper()
+	raw := field(t, value, keys...)
+	result, ok := raw.(T)
+	if !ok {
+		t.Fatalf("mail integration field %v has unexpected type %T", keys, raw)
+	}
+	return result
+}
+
 func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 	args, _ := captureBaoWrite(t, "bao", "write", "auth/kubernetes/role/external-secrets")
 	hasSeedPolicy := false
@@ -53,19 +63,22 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 
 // Match the first node rule exactly as declared, including catch-all precedence.
 func TestPrivateMailImageUsesItsOwnExactNodeSigner(t *testing.T) {
-	rules := field(t, readYAML(t, "talos/cluster/verify-first-party-images.yaml"), "rules").([]any)
+	rules := mailField[[]any](t, readYAML(t, "talos/cluster/verify-first-party-images.yaml"), "rules")
 	for _, repository := range []string{mailRepository, mailRepository + "-other", "ghcr.io/devantler-tech/wedding-app"} {
 		t.Run(repository, func(t *testing.T) {
 			for _, rule := range rules {
-				match, err := path.Match(field(t, rule, "image").(string), repository)
+				match, err := path.Match(mailField[string](t, rule, "image"), repository)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if !match {
 					continue
 				}
-				equal(t, field(t, rule, "keyless", "issuer"), githubIssuer)
-				identity := regexp.MustCompile(field(t, rule, "keyless", "subjectRegex").(string))
+				equal(t, mailField[string](t, rule, "keyless", "issuer"), githubIssuer)
+				identity, err := regexp.Compile(mailField[string](t, rule, "keyless", "subjectRegex"))
+				if err != nil {
+					t.Fatal(err)
+				}
 				equal(t, identity.MatchString(mailPublisher), repository == mailRepository)
 				if repository == mailRepository {
 					for _, forbidden := range []string{
