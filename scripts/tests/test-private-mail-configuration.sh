@@ -54,16 +54,32 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 
 run_bootstrap() {
+  local rc stage=unknown
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
   # identity through bootstrap and every restart, as the deployment requires.
-  docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
+  if docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1
+    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1; then
+    return 0
+  else
+    rc=$?
+  fi
+  # Native output stays private. Report only a fixed stage derived from the
+  # initializer's controlled messages, including for expected refusal cases.
+  if grep -Fq 'policy readback:' "$scratch/bootstrap.log"; then
+    stage=policy-readback
+  elif grep -Fq 'native apply:' "$scratch/bootstrap.log"; then
+    stage=native-apply
+  elif grep -Fq 'initial inventory:' "$scratch/bootstrap.log"; then
+    stage=initial-inventory
+  fi
+  printf 'INITIALIZER_REFUSED_STAGE=%s\n' "$stage" >&2
+  return "$rc"
 }
 
 start_server() {

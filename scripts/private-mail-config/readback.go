@@ -257,6 +257,9 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 				var match map[string]any
 				for _, actual := range objects {
 					identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
+					if op.Object == "Tracer" && fields["@type"] == "Stdout" {
+						identity = actual["@type"] == "Stdout"
+					}
 					if op.Object == "Certificate" {
 						identity = policyMatches(fields["certificate"], actual["certificate"], "")
 					}
