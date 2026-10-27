@@ -58,7 +58,8 @@ for name in "${names[@]}"; do
   file="${STATE}/${kind}/${namespace}/${name}"
   case "${verb}" in
     get)
-      if [ "${kind}" = kustomization ]; then cat "${STATE}/${name}.json" 2>/dev/null || cat "${STATE}/apps.json"; elif [ -f "${file}" ]; then cat "${file}"; fi ;;
+      if [ "${kind}" = kustomization ] && [ -f "${STATE}/${name}.first.json" ]; then cat "${STATE}/${name}.first.json"; rm -f "${STATE}/${name}.first.json";
+      elif [ "${kind}" = kustomization ]; then cat "${STATE}/${name}.json" 2>/dev/null || cat "${STATE}/apps.json"; elif [ -f "${file}" ]; then cat "${file}"; fi ;;
     delete)
       [ -n "${KEEP:-}" ] && [ "${kind}/${name}" = "${KEEP}" ] && continue
       rm -f "${file}"
@@ -127,7 +128,7 @@ run() { # <state> [env...] -> sets status and output
   local state="$1"
   shift
   if output="$(env STATE="${state}" KUBECTL="${work_dir}/kubectl" RETIREMENT_POLL_SECONDS=0 \
-    RETIREMENT_POLL_ATTEMPTS=3 RETIREMENT_CONFIRM=retire-crossview-headlamp-backstage "$@" \
+    RETIREMENT_POLL_ATTEMPTS=3 RETIREMENT_SETTLE_SECONDS=0 RETIREMENT_SETTLE_ATTEMPTS=3 RETIREMENT_CONFIRM=retire-crossview-headlamp-backstage "$@" \
     bash "${script}" 2>&1)"; then
     status=0
   else
@@ -195,6 +196,14 @@ state="$(seed unrelated-health "${deployed}")"
 jq '.status.conditions = [{type: "Ready", status: "False", reason: "HealthCheckFailed"}]' "${state}/apps.json" >"${state}/apps.tmp" && mv "${state}/apps.tmp" "${state}/apps.json"
 run "${state}"
 expect 0 'an unrelated health check is failing' 'an unrelated health failure must not block the retirement'
+
+# A layer read mid-retry (Progressing) is sampled again until it settles.
+state="$(seed retrying "${deployed}")"
+jq '.status.conditions = [{type: "Ready", status: "False", reason: "HealthCheckFailed"}]' "${state}/apps.json" >"${state}/apps.tmp" && mv "${state}/apps.tmp" "${state}/apps.json"
+jq '.status.conditions = [{type: "Ready", status: "Unknown", reason: "Progressing"}]' "${state}/apps.json" >"${state}/apps.first.json"
+run "${state}"
+expect 0 'an unrelated health check is failing' 'a layer that settles after a retry must not block the retirement'
+[ "$(grep -c '^get kustomization apps' "${state}/calls")" -ge 2 ] || fail 'a Progressing layer must be sampled again'
 
 # An object of the same name that Flux apps does not own is never deleted.
 state="$(seed foreign "${deployed}")"

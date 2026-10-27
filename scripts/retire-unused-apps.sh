@@ -47,6 +47,12 @@ kubectl_bin="${KUBECTL:-kubectl}"
 poll_seconds="${RETIREMENT_POLL_SECONDS:-10}"
 poll_attempts="${RETIREMENT_POLL_ATTEMPTS:-90}"
 readonly kubectl_bin poll_seconds poll_attempts
+# A layer retrying an unrelated failing health check passes through a
+# Progressing phase every retry interval, so its state is sampled until it
+# settles rather than judged at one instant.
+settle_seconds="${RETIREMENT_SETTLE_SECONDS:-15}"
+settle_attempts="${RETIREMENT_SETTLE_ATTEMPTS:-40}"
+readonly settle_seconds settle_attempts
 readonly releases=(crossview/crossview headlamp/headlamp)
 readonly clusters=(backstage/backstage-db)
 readonly namespaces=(crossview headlamp backstage)
@@ -140,15 +146,21 @@ command -v jq >/dev/null || unknown 'jq is required'
 #    this retirement. Any other not-Ready reason, such as a failed build or
 #    apply, leaves the inventory unproven and is refused.
 for layer in infrastructure-controllers infrastructure apps; do
-  kustomization="$(k -n flux-system get kustomization "${layer}" -o json)" ||
-    unknown "cannot read the ${layer} Kustomization"
-  jq -e '
-    (.status.conditions // [] | any(.type == "Ready" and
-      (.status == "True" or (.status == "False" and .reason == "HealthCheckFailed")))) and
-    .status.observedGeneration == .metadata.generation and
-    (.status.inventory.entries | type == "array" and length > 0)
-  ' <<<"${kustomization}" >/dev/null ||
-    fail "the ${layer} Kustomization has not applied its current generation with a non-empty inventory"
+  attempt=0
+  while :; do
+    kustomization="$(k -n flux-system get kustomization "${layer}" -o json)" ||
+      unknown "cannot read the ${layer} Kustomization"
+    jq -e '
+      (.status.conditions // [] | any(.type == "Ready" and
+        (.status == "True" or (.status == "False" and .reason == "HealthCheckFailed")))) and
+      .status.observedGeneration == .metadata.generation and
+      (.status.inventory.entries | type == "array" and length > 0)
+    ' <<<"${kustomization}" >/dev/null && break
+    attempt=$((attempt + 1))
+    [ "${attempt}" -lt "${settle_attempts}" ] ||
+      fail "the ${layer} Kustomization has not applied its current generation with a non-empty inventory"
+    sleep "${settle_seconds}"
+  done
   if jq -e '.status.conditions // [] | any(.type == "Ready" and .status == "False")' <<<"${kustomization}" >/dev/null; then
     printf 'Note: the %s Kustomization applied its revision but an unrelated health check is failing\n' "${layer}"
   fi

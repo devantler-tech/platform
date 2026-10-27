@@ -33,7 +33,7 @@ func TestAdvisoryAcceptancePinsReviewedRelease(t *testing.T) {
 		}
 	}
 	for _, r := range m.Require {
-		if r.Mod.Path == "github.com/kyverno/kyverno" && r.Mod.Version == "v1.19.1" {
+		if r.Mod.Path == "github.com/kyverno/kyverno" && r.Mod.Version == "v1.19.2" {
 			return
 		}
 	}
