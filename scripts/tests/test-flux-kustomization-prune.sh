@@ -20,6 +20,7 @@ readonly root_dir
 readonly unifi_kustomization="${root_dir}/k8s/providers/hetzner/apps/unifi/flux-kustomization.yaml"
 readonly unifi_role="${root_dir}/k8s/providers/hetzner/apps/unifi/role.yaml"
 readonly unifi_policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-policies.yaml"
+readonly unifi_policy_dir="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices"
 readonly tenant_rgd="${root_dir}/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
 readonly retained_policies='Observe,Create,Update,LateInitialize'
 readonly observe_annotation="platform.devantler.tech/unifi-management"
@@ -294,6 +295,21 @@ for rule in apply-without-delete observe-only-is-observe prune-only-without-dele
   policy_resources="$(printf '%s\n' "${policy_kinds}" | cut -d/ -f3 | tr '[:upper:]' '[:lower:]' | sed 's/$/s/' | sort -u)"
   [[ "${policy_resources}" == "${role_resources}" ]] ||
     fail "rule ${rule} guards [${policy_resources//$'\n'/ }] but the unifi Role grants [${role_resources//$'\n'/ }]"
+done
+
+# During the staged migration both APIs enforce the same group/resource pairs.
+# Check each replacement independently: comparing only the union would let one
+# guard silently miss a granted resource, and separate group/resource sets
+# would miss a pair accidentally assigned to the wrong API group.
+legacy_pairs="$(printf '%s\n' "${policy_kinds}" | awk -F/ '{ print $1 "/" tolower($3) "s" }' | sort -u)"
+for policy in restrict-unifi-apply-management-policies restrict-unifi-observe-only restrict-unifi-prune-management-policies; do
+  policy_pairs="$(UNIFI_POLICY="${policy}" yq eval -r '
+    select(.kind == "ValidatingPolicy" and .metadata.name == strenv(UNIFI_POLICY)) |
+    .spec.matchConstraints.resourceRules[] |
+    (.apiGroups | join(",")) + "/" + (.resources | join(","))
+  ' "${unifi_policy_dir}/${policy}.yaml" | sed '/^$/d' | sort -u)"
+  [[ -n "${policy_pairs}" && "${policy_pairs}" == "${legacy_pairs}" ]] ||
+    fail "replacement ${policy} guards [${policy_pairs//$'\n'/ }] but the legacy scope is [${legacy_pairs//$'\n'/ }]"
 done
 
 printf 'flux kustomization prune: %s pruning, unifi retention holds on %s fixture resources\n' \
