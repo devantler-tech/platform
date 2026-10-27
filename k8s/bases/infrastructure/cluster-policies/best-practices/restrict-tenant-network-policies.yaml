@@ -122,7 +122,12 @@
 # Without this a tenant would simply PATCH the generated floor into a permissive
 # body, leaving the object present and the namespace open.
 #
-# Scope and carve-outs: only ksail-generated tenant namespaces (labelled
+# The business-site staging hold additionally reserves one exact name in its
+# exact namespace, including DELETE, without depending on namespace labels.
+# Reserved names refuse tenant UPDATE even when an old platform-authored body
+# already fails that rule for the tenant identity.
+#
+# General scope and carve-outs: only generated tenant namespaces (labelled
 # app.kubernetes.io/managed-by: ksail), so the 50+ platform CiliumNetworkPolicies
 # are untouched. Two applying identities are excluded — flux-system's
 # kustomize-controller, which applies what the PLATFORM ships into a tenant
@@ -510,6 +515,17 @@ spec:
                   - key: app.kubernetes.io/managed-by
                     operator: In
                     values: [ksail, kro]
+          # Install the hold before enabling the application; tenant SSA/prune
+          # must not remove that platform control. Scope its name to this one
+          # namespace, independently of mutable namespace labels.
+          - resources:
+              kinds:
+                - CiliumNetworkPolicy
+              names:
+                - business-site-staging-hold
+              namespaces:
+                - business-site
+              operations: [CREATE, UPDATE, DELETE]
       exclude:
         any:
           - subjects:
@@ -525,11 +541,16 @@ spec:
         # if a future Kyverno stops honouring that field, a rule with no action
         # of its own defaults to Audit and these violations would be ADMITTED.
         failureAction: Enforce
+        # A platform-created reserved object already violates this rule when
+        # evaluated as a tenant. Do not exempt later tenant updates merely
+        # because that old object would also have been refused for that actor.
+        allowExistingViolations: false
         message: >-
           `default-deny`, `allow-dns` and `allow-cnpg-operator` are generated and
           re-synchronised by the
           platform (cluster-policies/best-practices/add-default-deny.yaml) and
-          are reserved names. Add your allow-list as a separate policy — Cilium
+          are reserved names. `business-site-staging-hold` in `business-site`
+          is also a platform-owned rollout control. Add your allow-list as a separate policy — Cilium
           unions allow rules, so a policy of your own is additive and does not
           need to replace the floor.
         deny: {}

@@ -5,8 +5,9 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml"
 tests="${repo_root}/tests/restrict-tenant-network-policies"
-output_file="$(mktemp)"
-trap 'rm -f "${output_file}"' EXIT
+work_dir="$(mktemp -d)"
+output_file="${work_dir}/output"
+trap 'rm -rf -- "${work_dir}"' EXIT
 
 # `kyverno test` treats a rule that matches nothing as Excluded, and an Excluded
 # row satisfies `result: fail` too — so the declarative test can pass vacuously
@@ -14,11 +15,12 @@ trap 'rm -f "${output_file}"' EXIT
 # gate, asserting the exact allow/deny counts rather than an exit code.
 apply() {
   local resources="$1" values="$2" userinfo="$3"
+  apply_status=0
   kyverno apply "${policy}" \
     --resource "${resources}" \
     --values-file "${values}" \
     --userinfo "${userinfo}" \
-    --remove-color >"${output_file}" 2>&1 || true
+    --remove-color >"${output_file}" 2>&1 || apply_status=$?
 }
 
 expect_summary() {
@@ -113,6 +115,61 @@ if [[ "${top_level}" != "absent" ]]; then
   echo "::error::spec.validationFailureAction is deprecated; enforcement must be rule-level"
   exit 1
 fi
+
+# The public staging hold is controlled by the platform before application
+# reconciliation is enabled. Check the real policy and committed hold, retaining
+# all ordinary tenant/floor fixtures above. A nonmatching rule cannot satisfy an
+# exact one-denial summary; permitted actors must also return a successful exit.
+hold="${repo_root}/k8s/providers/hetzner/apps/business-site/cilium-network-policy-staging-hold.yaml"
+yq '.namespaceSelector += [{"name":"business-site","labels":{"app.kubernetes.io/managed-by":"kro"}}]' \
+  "${tests}/values.yaml" >"${work_dir}/hold-values.yaml"
+cat >"${work_dir}/hold-tenant.yaml" <<'USER'
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: fictional-business-tenant
+userInfo:
+  username: system:serviceaccount:business-site:business-site
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:business-site
+    - system:authenticated
+USER
+for operation in CREATE UPDATE DELETE; do
+  yq ".globalValues.\"request.operation\" = \"${operation}\"" \
+    "${work_dir}/hold-values.yaml" >"${work_dir}/operation.yaml"
+  apply "${hold}" "${work_dir}/operation.yaml" "${work_dir}/hold-tenant.yaml"
+  expect_summary "pass: 4, fail: 1, warn: 0, error: 0, skip: 0" "tenant staging hold ${operation}"
+  [[ "${apply_status}" -eq 1 ]] || { echo "staging denial did not fail admission" >&2; exit 1; }
+  for author in platform-author kyverno-author; do
+    apply "${hold}" "${work_dir}/operation.yaml" "${tests}/${author}/user-info.yaml"
+    expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" "platform staging hold ${operation}"
+    [[ "${apply_status}" -eq 0 ]] || { echo "trusted platform operation failed" >&2; exit 1; }
+  done
+done
+# A controller name in a tenant namespace does not inherit the platform carve-out.
+yq '.userInfo.username = "system:serviceaccount:business-site:kustomize-controller"' \
+  "${work_dir}/hold-tenant.yaml" >"${work_dir}/spoofed-controller.yaml"
+apply "${hold}" "${work_dir}/hold-values.yaml" "${work_dir}/spoofed-controller.yaml"
+expect_summary "pass: 4, fail: 1, warn: 0, error: 0, skip: 0" "tenant cannot borrow a controller name"
+[[ "${apply_status}" -eq 1 ]] || exit 1
+# Reserve only this name in this namespace; other ordinary policies stay usable.
+for change in '.metadata.namespace = "other-tenant"' '.metadata.name = "tenant-allow-gateway"'; do
+  yq "${change}" "${hold}" >"${work_dir}/ordinary-policy.yaml"
+  apply "${work_dir}/ordinary-policy.yaml" "${work_dir}/hold-values.yaml" "${work_dir}/hold-tenant.yaml"
+  expect_summary "pass: 4, fail: 0, warn: 0, error: 0, skip: 0" "ordinary tenant policy"
+  [[ "${apply_status}" -eq 0 ]] || exit 1
+done
+# The same reserved-owner rule protects the generated floor. An old body that
+# is invalid for a tenant must not exempt that tenant's subsequent UPDATE.
+yq '.globalValues."request.operation" = "UPDATE"' \
+  "${tests}/kyverno-author/values.yaml" >"${work_dir}/floor-update.yaml"
+apply "${tests}/kyverno-author/resources.yaml" "${work_dir}/floor-update.yaml" "${tests}/user-info.yaml"
+expect_summary "pass: 8, fail: 3, warn: 0, error: 0, skip: 4" "reserved floor UPDATE ownership"
+[[ "${apply_status}" -eq 1 ]] || exit 1
+apply "${tests}/kyverno-author/resources.yaml" "${work_dir}/floor-update.yaml" "${tests}/kyverno-author/user-info.yaml"
+expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" "generated floor controller UPDATE"
+[[ "${apply_status}" -eq 0 ]] || exit 1
 
 echo "Tenant CiliumNetworkPolicy policy enforced the expected boundary, and both"
 echo "platform carve-outs were proven to depend on the applying identity."
