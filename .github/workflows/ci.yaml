@@ -293,6 +293,7 @@ jobs:
               # fixtures and its system-namespace exclusion test (#5130).
               - 'tests/auto-vpa-generating-policy-*/**'
               - 'scripts/tests/test-auto-vpa-generating-policy-exclusion.sh'
+              - 'scripts/tests/test-auto-vpa-generating-policy-ownership.sh'
               - 'scripts/tests/test-audit-privileged-rbac.sh'
               # Renders the charts whose roles that policy excludes and applies the
               # policy to their RBAC, so a chart bump fails its own PR (#3792).
@@ -1004,6 +1005,11 @@ jobs:
         run: |
           shellcheck scripts/retire-unused-apps.sh scripts/tests/test-retire-unused-apps.sh
           bash scripts/tests/test-retire-unused-apps.sh
+
+      - name: Validate generated autoscaler cleanup
+        run: |
+          shellcheck scripts/cleanup-orphan-generated-vpas.sh scripts/tests/test-cleanup-orphan-generated-vpas.sh
+          bash scripts/tests/test-cleanup-orphan-generated-vpas.sh
 
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
@@ -1829,6 +1835,8 @@ jobs:
           bash scripts/tests/test-tetragon-agent-priority.sh
           shellcheck scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
           bash scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
+          shellcheck scripts/tests/test-auto-vpa-generating-policy-ownership.sh
+          bash scripts/tests/test-auto-vpa-generating-policy-ownership.sh
           shellcheck scripts/tests/test-arc-controller-availability.sh
           bash scripts/tests/test-arc-controller-availability.sh
           shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
