@@ -512,4 +512,15 @@ done
 if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
   echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
 fi
-echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS and account restrictions'
+# The new transport policy is opt-in. Exercise native persisted readback in
+# both directions without changing the fixture's identities or mailbox data.
+for forwarded in true false; do
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  jq --argjson enabled "$forwarded" '.useForwardedClientIP=$enabled' \
+    "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
+  mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+  run_bootstrap
+  start_server serving
+done
+echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS, account restrictions and forwarding rollback'

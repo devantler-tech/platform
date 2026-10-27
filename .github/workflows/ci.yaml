@@ -144,6 +144,7 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'scripts/tests/private-mail-preparation/**'
+              - 'scripts/tests/ingress-client-address/**'
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
@@ -3323,6 +3324,13 @@ jobs:
         run: |
           shellcheck scripts/tests/test-private-mail-configuration.sh
           bash scripts/tests/test-private-mail-configuration.sh
+
+      - name: ✉️ Prove native gateway client identity boundaries
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 5
+        env:
+          EMAIL_CLIENT_IDENTITY_NATIVE_TEST: '1'
+        run: go test -count=1 -v ./scripts/tests/ingress-client-address
 
       - name: 🔐 Validate Kyverno review admission boundaries
         if: needs.changes.outputs.k8s == 'true'
