@@ -22,7 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var accessNow = time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+var accessNow = time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 
 // TestSupportedProbeMinorTracksDesiredKubernetes prevents a pin bump leaving the observer stale.
 func TestSupportedProbeMinorTracksDesiredKubernetes(t *testing.T) {
@@ -175,12 +175,16 @@ func TestEmbeddedAccessProbeUsesRealHTTPAndOnlyTheTwoReadMethods(t *testing.T) {
 								t.Error("unbounded query")
 							}
 						} else {
-							if len(arguments) != 2 || !reflect.DeepEqual(arguments["properties"], []any{"address", "expiresAt"}) || arguments["#ids"] == nil {
+							properties := []any{"address", "expiresAt"}
+							if method == "x:BlockedIp/get" {
+								properties = append(properties, "reason", "createdAt")
+							}
+							if len(arguments) != 2 || !reflect.DeepEqual(arguments["properties"], properties) || arguments["#ids"] == nil {
 								t.Error("unapproved get")
 							}
 						}
 					}
-					_, _ = w.Write(nativeSecurityState(t))
+					_, _ = w.Write(nativeBlockMetadata(t))
 				default:
 					t.Error("unapproved URL")
 					w.WriteHeader(404)
@@ -198,7 +202,11 @@ func TestEmbeddedAccessProbeUsesRealHTTPAndOnlyTheTwoReadMethods(t *testing.T) {
 			if e != nil || stderr.Len() != 0 {
 				t.Fatalf("embedded probe failed: %v", e)
 			}
-			got, e := decodeAccess(b, netip.MustParseAddr("192.0.2.10"), accessNow)
+			got, e := decodeAccess(b, netip.MustParseAddr("192.0.2.30"), accessNow)
+			detail, detailError := decodeBlockDetails(b, netip.MustParseAddr("192.0.2.30"), time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC), accessNow)
+			if detailError != nil || detail.Reason != "RCPT_TO_FAILURE" || detail.Scope != "SINGLE_IP" {
+				t.Fatalf("actual HTTP block metadata %v/%v", detail, detailError)
+			}
 			expectedPaths := "ALL_LOCAL_TARGETS_HTTP_200"
 			if status == 503 {
 				expectedPaths = "LOOPBACK_PATH_FAILED"
@@ -219,8 +227,25 @@ func nativeSecurityState(t *testing.T) []byte {
 	}
 	return b
 }
+func nativeBlockMetadata(t *testing.T) []byte {
+	t.Helper()
+	b, e := os.ReadFile("testdata/native-block-metadata.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	return b
+}
 func securityStateFor(t *testing.T, allow, block []any) []byte {
 	t.Helper()
+	for _, value := range block {
+		entry := value.(map[string]any)
+		if _, ok := entry["reason"]; !ok {
+			entry["reason"] = "manual"
+		}
+		if _, ok := entry["createdAt"]; !ok {
+			entry["createdAt"] = "2026-10-24T12:00:00Z"
+		}
+	}
 	query := func(entries []any) map[string]any {
 		ids := []string{}
 		for _, entry := range entries {
@@ -309,6 +334,7 @@ func TestSecurityStateRefusesPartialOrAmbiguousResponses(t *testing.T) {
 // accessPod supplies the real projection shape with documentation-only IPs.
 func accessPod(t *testing.T) []byte {
 	return changePod(t, fixturePod(t), func(p map[string]any) {
+		p["metadata"].(map[string]any)["creationTimestamp"] = "2026-10-25T00:00:00Z"
 		status := p["status"].(map[string]any)
 		status["podIP"] = "192.0.2.20"
 		status["hostIP"] = "192.0.2.10"
@@ -343,7 +369,7 @@ func accessMeasurement(t *testing.T, security []byte) []byte {
 
 // TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv exercises the complete collector.
 func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t *testing.T) {
-	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast"} {
+	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast", "metadata-missing", "pod-creation-changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			pod := accessPod(t)
 			after := append([]byte(nil), pod...)
@@ -357,6 +383,8 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 			measured := accessMeasurement(t, securityStateFor(t, []any{}, []any{}))
 			switch scenario {
 			case "blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.10", nil)}))
+			case "metadata-missing":
 				measured = accessMeasurement(t, nativeSecurityState(t))
 			case "cilium-blocked":
 				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.30", nil)}))
@@ -372,6 +400,8 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 				after = []byte(strings.Replace(string(after), `"restartCount":0`, `"restartCount":1`, 1))
 			case "addresses-changed":
 				after = []byte(strings.Replace(string(after), "192.0.2.20", "192.0.2.21", 1))
+			case "pod-creation-changed":
+				after = changePod(t, after, func(p map[string]any) { p["metadata"].(map[string]any)["creationTimestamp"] = "2026-10-25T00:01:00Z" })
 			case "map-changed":
 				afterCM = []byte(strings.Replace(string(cm), `"7"`, `"8"`, 1))
 			case "secret-changed":

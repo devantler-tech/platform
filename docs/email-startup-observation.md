@@ -71,8 +71,9 @@ Only after verifying the target does the protected workflow read the two named
 settings and administrator Secrets. The administrator input retains its existing
 `credential` and `password` keys; only `password` is extracted for authentication.
 Missing or extra keys are inconclusive. It authenticates the fixed loopback API with
-the existing administrator, requesting only allowed/blocked address and expiry
-fields. Credentials travel in memory and stdin, never command arguments,
+the existing administrator, requesting allowed address/expiry and blocked
+address/reason/creation/expiry fields. Credentials travel in memory and stdin,
+never command arguments,
 exported environment, files or artifacts. Native stdout/stderr is captured
 privately; public output contains only the classifications below. The observer
 never changes access rules or application data.
@@ -112,6 +113,24 @@ in-memory security cache. The API read is a bounded observation, not an atomic
 transaction over concurrently changing application state. Allow rules override
 matching blocks, and expired entries are excluded. No classification establishes
 sustained recovery or authorizes clearing a block.
+
+For an effective Cilium candidate match, four additional fixed outputs describe
+the stored rule: `MAIL_CILIUM_BLOCK_REASON` (`RCPT_TO_FAILURE`, `AUTH_FAILURE`,
+`LOITERING`, `PORT_SCANNING`, `MANUAL` or `OTHER`), `MAIL_CILIUM_BLOCK_SCOPE`
+(`SINGLE_IP` or `NETWORK_PREFIX`), `MAIL_CILIUM_BLOCK_EXPIRY` (`FINITE` or
+`NO_EXPIRY`) and `MAIL_CILIUM_BLOCK_CREATION` (`BEFORE_CURRENT_POD` or
+`DURING_CURRENT_POD`). Creation is compared with the Pod API's creation timestamp,
+which must also remain unchanged. Dates, addresses and object IDs are never
+printed. A host-length prefix counts as a single IP.
+
+Multiple active matching rules produce `MULTIPLE_MATCHES` on all four fields;
+an absent or allow-overridden match produces `NOT_APPLICABLE`. Missing metadata,
+an unknown reason or an invalid/future creation time is inconclusive, including
+when it belongs to an unmatched rule in the requested inventory. Expired entries
+are excluded after validating their metadata. The stored reason is administrator
+editable and does not attest an author or an automatic event. Its timestamp is
+also a stored observation, not evidence of an actual kubelet connection. These
+categories guide the next investigation and authorize no access-rule change.
 
 The native response fixture was captured from checksum-verified Stalwart 0.16.27
 with a synthetic store and a deliberately blocked documentation address.
