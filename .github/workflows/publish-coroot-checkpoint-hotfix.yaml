@@ -1,0 +1,214 @@
+name: Publish Coroot Checkpoint Hotfix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-coroot-checkpoint-hotfix.yaml
+      - k8s/bases/infrastructure/coroot/coroot-v1.28.1-checkpoint-record.patch
+      - k8s/bases/infrastructure/coroot/CorootCheckpoint.Dockerfile
+      - k8s/bases/infrastructure/coroot/cluster-agent-v1.11.7-checkpoint-record.patch
+      - k8s/bases/infrastructure/coroot/CorootClusterAgentCheckpoint.Dockerfile
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-coroot-checkpoint-hotfix.yaml
+      - k8s/bases/infrastructure/coroot/coroot-v1.28.1-checkpoint-record.patch
+      - k8s/bases/infrastructure/coroot/CorootCheckpoint.Dockerfile
+      - k8s/bases/infrastructure/coroot/cluster-agent-v1.11.7-checkpoint-record.patch
+      - k8s/bases/infrastructure/coroot/CorootClusterAgentCheckpoint.Dockerfile
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: server
+            repository: coroot/coroot
+            source: 15137ef2f43e01d0a87245e44b937b25515e0afe
+            patch: coroot-v1.28.1-checkpoint-record.patch
+            dockerfile: CorootCheckpoint.Dockerfile
+            image: platform-coroot
+            version: v1.28.1-checkpoints.1
+          - component: collector
+            repository: coroot/coroot-cluster-agent
+            source: 4291458563fa8ea55615e23e0f11412db79742b6
+            patch: cluster-agent-v1.11.7-checkpoint-record.patch
+            dockerfile: CorootClusterAgentCheckpoint.Dockerfile
+            image: platform-coroot-cluster-agent
+            version: v1.11.7-checkpoints.1
+    env:
+      IMAGE: ghcr.io/devantler-tech/${{ matrix.image }}
+      IMAGE_TAG: ${{ matrix.version }}-${{ github.sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact upstream release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.source }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Apply reviewed release patch
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ matrix.source }}
+          HOTFIX_PATCH: ${{ github.workspace }}/k8s/bases/infrastructure/coroot/${{ matrix.patch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        with:
+          driver: docker-container
+
+      - name: Build without publishing tested release image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./upstream
+          file: ./k8s/bases/infrastructure/coroot/${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: VERSION=${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.coroot-checkpoint.upstream-revision=${{ matrix.source }}
+
+  publish:
+    name: Publish and sign ${{ matrix.component }}
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: server
+            repository: coroot/coroot
+            source: 15137ef2f43e01d0a87245e44b937b25515e0afe
+            patch: coroot-v1.28.1-checkpoint-record.patch
+            dockerfile: CorootCheckpoint.Dockerfile
+            image: platform-coroot
+            version: v1.28.1-checkpoints.1
+          - component: collector
+            repository: coroot/coroot-cluster-agent
+            source: 4291458563fa8ea55615e23e0f11412db79742b6
+            patch: cluster-agent-v1.11.7-checkpoint-record.patch
+            dockerfile: CorootClusterAgentCheckpoint.Dockerfile
+            image: platform-coroot-cluster-agent
+            version: v1.11.7-checkpoints.1
+    env:
+      IMAGE: ghcr.io/devantler-tech/${{ matrix.image }}
+      IMAGE_TAG: ${{ matrix.version }}-${{ github.sha }}
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact upstream release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ matrix.repository }}
+          ref: ${{ matrix.source }}
+          path: upstream
+          persist-credentials: false
+
+      - name: Apply reviewed release patch
+        working-directory: upstream
+        env:
+          EXPECTED_SOURCE_COMMIT: ${{ matrix.source }}
+          HOTFIX_PATCH: ${{ github.workspace }}/k8s/bases/infrastructure/coroot/${{ matrix.patch }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          git apply --check "${HOTFIX_PATCH}"
+          git apply "${HOTFIX_PATCH}"
+          git diff --check
+
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        with:
+          driver: docker-container
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push tested release image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./upstream
+          file: ./k8s/bases/infrastructure/coroot/${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: VERSION=${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.coroot-checkpoint.upstream-revision=${{ matrix.source }}
+
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+
+      - name: Sign and verify published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
+          printf 'Published signed image: %s@%s\n' "${IMAGE}" "${DIGEST}"
