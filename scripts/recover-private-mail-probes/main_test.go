@@ -158,6 +158,15 @@ func TestRefuseUnsafeOrUnprovenRecovery(t *testing.T) {
 			s.Spec.Template.Spec.Containers[0].Image = "other:latest"
 			f.objects[setKey] = s
 		},
+		"lookalike-image-registry": func(f *fakeClient) {
+			s := f.objects[setKey].(statefulSet)
+			p := f.objects[podKey].(mailPod)
+			image := "ghcrXio/devantler-tech/platform-private-mail-bootstrap@sha256:" + strings.Repeat("a", 64)
+			s.Spec.Template.Spec.Containers[0].Image = image
+			p.Spec.Containers[0].Image = image
+			f.objects[setKey] = s
+			f.objects[podKey] = p
+		},
 		"incorrect-desired-probe": func(f *fakeClient) {
 			s := f.objects[setKey].(statefulSet)
 			s.Spec.Template.Spec.Containers[0].ReadinessProbe = &probe{}

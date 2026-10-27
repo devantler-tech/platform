@@ -26,7 +26,7 @@ const (
 
 var errNotEligible = errors.New("not the obsolete mail probe transition")
 var digestPattern = regexp.MustCompile("^sha256:[0-9a-f]{64}$")
-var imagePattern = regexp.MustCompile("^ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:[0-9a-f]{64}$")
+var imagePattern = regexp.MustCompile(`^ghcr\.io/devantler-tech/platform-private-mail-bootstrap@sha256:[0-9a-f]{64}$`)
 
 type owner struct {
 	Kind, Name, UID string
