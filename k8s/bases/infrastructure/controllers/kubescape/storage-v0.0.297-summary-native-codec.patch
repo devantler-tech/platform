@@ -1,28 +1,16 @@
 diff --git a/pkg/registry/file/summary_metadata_repair.go b/pkg/registry/file/summary_metadata_repair.go
-index 3f044057..de8e2381 100644
+index 3f044057cba5614fdbcca8104f27cdb086641d29..de8e238132fd0c45ceda47f08013b6a6b07e7e87 100644
 --- a/pkg/registry/file/summary_metadata_repair.go
 +++ b/pkg/registry/file/summary_metadata_repair.go
-@@ -13,8 +13,11 @@ import (
- 	"strings"
- 	"time"
- 
+@@ -15,0 +16 @@ import (
 +	"github.com/kubescape/storage/pkg/apis/softwarecomposition"
- 	"github.com/kubescape/storage/pkg/apis/softwarecomposition/v1beta1"
- 	"github.com/spf13/afero"
+@@ -17,0 +19,2 @@ import (
 +	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 +	"k8s.io/apimachinery/pkg/runtime"
- 	"k8s.io/apimachinery/pkg/util/validation"
- 	"zombiezen.com/go/sqlite"
- 	"zombiezen.com/go/sqlite/sqlitemigration"
-@@ -114,12 +117,33 @@ func (s *StorageImpl) reconcileSummaryBeforeUpdate(ctx context.Context, conn *sq
- 	return nil
- }
- 
+@@ -117 +120 @@ func (s *StorageImpl) reconcileSummaryBeforeUpdate(ctx context.Context, conn *sq
 -func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string, conn *sqlite.Conn, row summaryMetadataRow) (*v1beta1.VulnerabilityManifestSummary, error) {
 +func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string, conn *sqlite.Conn, row summaryMetadataRow) (runtime.Object, error) {
- 	if len(validation.IsDNS1123Label(row.namespace)) != 0 || len(validation.IsDNS1123Subdomain(row.name)) != 0 {
- 		return nil, fmt.Errorf("invalid summary key")
- 	}
+@@ -121,2 +124,23 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	var listed, stored v1beta1.VulnerabilityManifestSummary
 -	if err := json.Unmarshal([]byte(row.metadata), &listed); err != nil {
 +	var shape map[string]json.RawMessage
@@ -48,42 +36,20 @@ index 3f044057..de8e2381 100644
 +		listedObject, storedObject, listed, stored = l, s, &l.ObjectMeta, &s.ObjectMeta
 +	}
 +	if err := json.Unmarshal([]byte(row.metadata), listedObject); err != nil {
- 		return nil, err
- 	}
- 	if listed.Name != row.name || listed.Namespace != row.namespace || listed.UID == "" || listed.CreationTimestamp.IsZero() {
-@@ -157,7 +181,7 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
- 	}
- 	// Summaries are small metadata documents; malformed oversized payloads are
- 	// refused rather than allocating without a bound during service startup.
+@@ -160 +184 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(&stored)
 +	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(storedObject)
- 	closeErr := f.Close()
- 	if err != nil {
- 		return nil, err
-@@ -190,7 +214,7 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
- 	if err != nil || newScan < oldScan || newScan > time.Now().Add(5*time.Minute).Unix() {
- 		return nil, fmt.Errorf("invalid retained scan time")
- 	}
+@@ -193 +217 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	metadata := extractFields(&stored, []string{"ObjectMeta", "SchemaVersion"})
 +	metadata := extractFields(storedObject, []string{"ObjectMeta", "SchemaVersion"})
- 	encoded, err := json.Marshal(metadata)
- 	if err != nil {
- 		return nil, err
-@@ -207,5 +231,5 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
- 	if conn.Changes() != 1 {
- 		return nil, fmt.Errorf("metadata changed during reconciliation")
- 	}
+@@ -210 +234 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	return &stored, nil
 +	return storedObject, nil
- }
 diff --git a/pkg/registry/file/summary_metadata_repair_test.go b/pkg/registry/file/summary_metadata_repair_test.go
-index 5f0ee570..b7b312ad 100644
+index 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717..b7b312ad120c5e68b4c6bdb90c41d8f5474be457 100644
 --- a/pkg/registry/file/summary_metadata_repair_test.go
 +++ b/pkg/registry/file/summary_metadata_repair_test.go
-@@ -43,6 +43,14 @@ type summaryRepairFixture struct {
- // Leave the real payload at version 2 and its SQLite metadata at version 1 by
- // rejecting the metadata write after saveObject has finished writing the payload.
- func newSplitSummary(t *testing.T) summaryRepairFixture {
+@@ -45,0 +46,8 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
 +	return newSplitSummaryObject(t, &v1beta1.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
 +		Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
 +		CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
@@ -92,31 +58,16 @@ index 5f0ee570..b7b312ad 100644
 +}
 +
 +func newSplitSummaryObject(t *testing.T, obj runtime.Object) summaryRepairFixture {
- 	t.Helper()
- 	root := t.TempDir()
- 	pool := NewPool(filepath.Join(root, "metadata.sq3"), 2)
-@@ -53,16 +61,11 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
- 	fs := afero.NewOsFs()
- 	require.NoError(t, softwarecomposition.AddToScheme(scheme.Scheme))
- 	s := NewStorageImpl(fs, root, pool, nil, scheme.Scheme).(*StorageImpl)
+@@ -56,5 +63,0 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
 -	obj := &v1beta1.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
 -		Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
 -		CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
 -		Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800", "kubescape.io/tool-version": "v1.32.0"},
 -	}}
- 	require.NoError(t, s.saveObject(conn, summaryRepairKey, obj, nil, ""))
- 	oldMetadata, err := ReadMetadata(conn, summaryRepairKey)
- 	require.NoError(t, err)
- 	require.NoError(t, sqlitex.Execute(conn, `CREATE TRIGGER reject_summary_write BEFORE INSERT ON metadata BEGIN SELECT RAISE(FAIL, 'injected metadata failure'); END;`, nil))
+@@ -65 +68 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
 -	obj.Annotations["kubescape.io/timestamp"] = "1788307200"
 +	obj.(metav1.Object).GetAnnotations()["kubescape.io/timestamp"] = "1788307200"
- 	require.ErrorContains(t, s.saveObject(conn, summaryRepairKey, obj, nil, ""), "injected metadata failure")
- 	require.NoError(t, sqlitex.Execute(conn, `DROP TRIGGER reject_summary_write;`, nil))
- 	payload, err := afero.ReadFile(fs, filepath.Join(root, summaryRepairKey)+GobExt)
-@@ -70,6 +73,153 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
- 	return summaryRepairFixture{fs, root, pool, s, conn, oldMetadata, payload}
- }
- 
+@@ -72,0 +76,147 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
 +func TestSummaryMetadataRepairInternalStorageCodec(t *testing.T) {
 +	for _, test := range []struct {
 +		name                        string
@@ -264,6 +215,3 @@ index 5f0ee570..b7b312ad 100644
 +	}
 +}
 +
- func TestSummaryMetadataRepairPreservesPayloadAndAllowsScannerUpdate(t *testing.T) {
- 	f := newSplitSummary(t)
- 	report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)

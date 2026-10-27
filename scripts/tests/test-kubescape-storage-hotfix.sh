@@ -206,9 +206,9 @@ for job in verify publish; do
   ' "${workflow}")" || fail "could not read how the ${job} job applies its patches"
   # The literal shell variables are the contract.
   # shellcheck disable=SC2016
-  apply_order="$(grep -E '^\s*git apply "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR|NATIVE_CODEC)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
+  apply_order="$(grep -E '^\s*git apply( --unidiff-zero)? "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR|NATIVE_CODEC)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
   # shellcheck disable=SC2016
-  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" gitapply"${NATIVE_CODEC_PATCH}" ' ]] ||
+  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" gitapply--unidiff-zero"${NATIVE_CODEC_PATCH}" ' ]] ||
     fail "the ${job} job must apply compatibility, cleanup, summary repair and native codec patches in order, once each"
   [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '8' ]] ||
     fail "the ${job} job must run exactly one check and one apply for each of the four patches"
@@ -219,7 +219,7 @@ for job in verify publish; do
   grep -qF 'git apply --check "${SUMMARY_REPAIR_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the summary repair patch before applying it"
   # shellcheck disable=SC2016
-  grep -qF 'git apply --check "${NATIVE_CODEC_PATCH}"' <<<"${job_script}" ||\
+  grep -qF 'git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"' <<<"${job_script}" ||\
     fail "the ${job} job must check the native codec patch before applying it"
 done
 for trigger in pull_request push; do

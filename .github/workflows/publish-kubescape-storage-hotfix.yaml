@@ -84,8 +84,13 @@ jobs:
           git apply "${CLEANUP_PATCH}"
           git apply --check "${SUMMARY_REPAIR_PATCH}"
           git apply "${SUMMARY_REPAIR_PATCH}"
-          git apply --check "${NATIVE_CODEC_PATCH}"
-          git apply "${NATIVE_CODEC_PATCH}"
+          # Bind the exact preimage and result of the generated zero-context patch.
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 3f044057cba5614fdbcca8104f27cdb086641d29
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
+          git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = de8e238132fd0c45ceda47f08013b6a6b07e7e87
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = b7b312ad120c5e68b4c6bdb90c41d8f5474be457
           git diff --check
           go test -race ./pkg/registry/file
 
@@ -145,8 +150,13 @@ jobs:
           git apply "${CLEANUP_PATCH}"
           git apply --check "${SUMMARY_REPAIR_PATCH}"
           git apply "${SUMMARY_REPAIR_PATCH}"
-          git apply --check "${NATIVE_CODEC_PATCH}"
-          git apply "${NATIVE_CODEC_PATCH}"
+          # Bind the exact preimage and result of the generated zero-context patch.
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 3f044057cba5614fdbcca8104f27cdb086641d29
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
+          git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = de8e238132fd0c45ceda47f08013b6a6b07e7e87
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = b7b312ad120c5e68b4c6bdb90c41d8f5474be457
           git diff --check
 
       - name: Set up Buildx container driver
