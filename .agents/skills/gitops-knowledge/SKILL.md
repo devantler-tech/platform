@@ -4,9 +4,9 @@ description: |
 license: Apache-2.0
 metadata:
     github-path: skills/gitops-knowledge
-    github-ref: refs/tags/v0.3.0
+    github-ref: refs/tags/v0.4.0
     github-repo: https://github.com/fluxcd/agent-skills
-    github-tree-sha: d2ac2832df36d71727c39e1740db43760180d215
+    github-tree-sha: 51871054237119b83bedda9df029a69b0a647d1e
     internal: true
 name: gitops-knowledge
 ---
@@ -59,7 +59,7 @@ The field index for each CRD is `assets/schemas/<kind>-<group>-<version>.fields.
 | ArtifactGenerator | source.extensions.fluxcd.io/v1beta1 | source-watcher | `references/sources.md` |
 | Kustomization | kustomize.toolkit.fluxcd.io/v1 | kustomize-controller | `references/kustomization.md` |
 | HelmRelease | helm.toolkit.fluxcd.io/v2 | helm-controller | `references/helmrelease.md` |
-| Provider, Alert | notification.toolkit.fluxcd.io/v1beta3 | notification-controller | `references/notifications.md` |
+| Provider, Alert | notification.toolkit.fluxcd.io/v1 | notification-controller | `references/notifications.md` |
 | Receiver | notification.toolkit.fluxcd.io/v1 | notification-controller | `references/notifications.md` |
 | ImageRepository, ImagePolicy | image.toolkit.fluxcd.io/v1 | image-reflector-controller | `references/image-automation.md` |
 | ImageUpdateAutomation | image.toolkit.fluxcd.io/v1 | image-automation-controller | `references/image-automation.md` |
@@ -69,7 +69,7 @@ The field index for each CRD is `assets/schemas/<kind>-<group>-<version>.fields.
 | Repository structure, monorepo vs multi-repo, OCI-based fleet management | `references/repo-patterns.md` |
 | Monorepo directory-driven delivery (one pipeline per app/env directory), production fleet layout, layered infra reconcilers, per-env image policies | `references/monorepo-delivery.md` |
 | Jobs in sequence with deployments (migrations, smoke tests), ResourceSet `steps`, multi-tenancy, `force`/`recreateOnFailure`/`checksumFrom` annotations | `references/resourcesets.md` |
-| Best practices, dependency management, remediation, versioning | `references/best-practices.md` |
+| Best practices, dependency management, remediation, versioning, SPIFFE mTLS, object identity | `references/best-practices.md` |
 | Gitless GitOps, Flux OCI artifacts, `flux push artifact`, registry-based delivery | `references/gitless-gitops.md` |
 | Gitless image automation (ResourceSet + OCIArtifactTag) | `references/gitless-image-automation.md` |
 | Flux CLI and plugins: `flux schema` discover/validate/extract, local rendering with `flux build` and `flux operator build`, overlay debugging | `references/flux-cli.md` |
@@ -198,7 +198,8 @@ spec:
 ```
 
 For HTTPS Helm repositories use `HelmRepository` + `HelmRelease` with `spec.chart.spec`
-(`chart`, `version: "3.x"`, `sourceRef`) instead of `chartRef` — see `references/helmrelease.md`.
+(`chart`, `version: "3.x"`, `sourceRef`) instead of `chartRef`. For an OCI chart owned by one HelmRelease,
+2.10+ also allows `spec.chart.kind: OCIRepository` — see `references/helmrelease.md`.
 
 ### 3. FluxInstance with OCI Sync (Gitless GitOps)
 
@@ -253,7 +254,7 @@ and the `reconcileEvery` annotation — load `references/resourcesets.md`.
 
 ### 6. Notifications
 
-`Provider` + `Alert` (`v1beta3`) for outgoing notifications, `Receiver` (`v1`) for incoming
+`Provider` + `Alert` (`v1`) for outgoing notifications, `Receiver` (`v1`) for incoming
 webhooks. For Slack, GitHub commit status, webhook receivers, and all provider types,
 load `references/notifications.md`.
 
@@ -264,7 +265,7 @@ load `references/notifications.md`.
 - Go templates `{{ }}` are only used in ImageUpdateAutomation `.spec.git.commit.messageTemplate`
 
 **Mutual exclusivity:**
-- HelmRelease: `spec.chart.spec` and `spec.chartRef` are mutually exclusive
+- HelmRelease: `spec.chart` and `spec.chartRef` are mutually exclusive
 - FluxInstance: only one per cluster, must be named `flux`
 
 **HelmRelease strategy fields:**

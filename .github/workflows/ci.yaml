@@ -379,6 +379,9 @@ jobs:
               - 'scripts/measure-datapath-cpu-throttling.sh'
               - 'scripts/tests/test-measure-datapath-cpu-throttling.sh'
               - '.github/workflows/measure-datapath-cpu-throttling.yaml'
+              - 'scripts/read-cilium-api-limiter.sh'
+              - 'scripts/tests/test-read-cilium-api-limiter.sh'
+              - '.github/workflows/read-cilium-api-limiter.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -2315,6 +2318,12 @@ jobs:
         run: |
           shellcheck scripts/measure-datapath-cpu-throttling.sh scripts/tests/test-measure-datapath-cpu-throttling.sh
           bash scripts/tests/test-measure-datapath-cpu-throttling.sh
+
+      - name: Validate finite Cilium API limiter reads
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/read-cilium-api-limiter.sh scripts/tests/test-read-cilium-api-limiter.sh
+          bash scripts/tests/test-read-cilium-api-limiter.sh
 
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'

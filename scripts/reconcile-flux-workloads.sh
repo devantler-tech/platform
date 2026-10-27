@@ -17,8 +17,9 @@
 # a broken artifact out of production:
 #
 #   * a reconcile that succeeds is never retried;
-#   * a reconcile that fails while the control plane did NOT restart is a genuine
-#     failure and fails the deploy immediately, with no second attempt;
+#   * an unchanged control plane normally leaves a failed reconcile failed;
+#     the fixed mail-probe transition can earn one further reconcile only after
+#     its conditional replacement verifies readiness and retained storage;
 #   * only positive evidence that THIS deploy restarted the control plane — a
 #     Deployment generation that advanced across the reconcile — buys exactly one
 #     further attempt, after that rollout has been waited out.
@@ -143,6 +144,16 @@ if [[ -z "${before}" || -z "${after}" ]]; then
 fi
 
 if [[ "${before}" == "${after}" ]]; then
+  if [[ -n "${MAIL_PROBE_ROLLOUT_DIGEST:-}" ]]; then
+    if go run ./scripts/recover-private-mail-probes; then
+      printf 'The obsolete mail probe Pod was replaced and verified; reconciling once more.\n' >&2
+      set +e
+      reconcile
+      reconcile_status=$?
+      set -e
+      exit "${reconcile_status}"
+    fi
+  fi
   printf 'Reconciliation failed and the Flux control plane did not restart, so this is a genuine failure — not retrying.\n' >&2
   exit "${reconcile_status}"
 fi

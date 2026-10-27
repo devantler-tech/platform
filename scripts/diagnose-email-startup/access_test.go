@@ -22,7 +22,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var accessNow = time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+var accessNow = time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC)
 
 // TestSupportedProbeMinorTracksDesiredKubernetes prevents a pin bump leaving the observer stale.
 func TestSupportedProbeMinorTracksDesiredKubernetes(t *testing.T) {
@@ -175,12 +175,16 @@ func TestEmbeddedAccessProbeUsesRealHTTPAndOnlyTheTwoReadMethods(t *testing.T) {
 								t.Error("unbounded query")
 							}
 						} else {
-							if len(arguments) != 2 || !reflect.DeepEqual(arguments["properties"], []any{"address", "expiresAt"}) || arguments["#ids"] == nil {
+							properties := []any{"address", "expiresAt"}
+							if method == "x:BlockedIp/get" {
+								properties = append(properties, "reason", "createdAt")
+							}
+							if len(arguments) != 2 || !reflect.DeepEqual(arguments["properties"], properties) || arguments["#ids"] == nil {
 								t.Error("unapproved get")
 							}
 						}
 					}
-					_, _ = w.Write(nativeSecurityState(t))
+					_, _ = w.Write(nativeBlockMetadata(t))
 				default:
 					t.Error("unapproved URL")
 					w.WriteHeader(404)
@@ -198,7 +202,11 @@ func TestEmbeddedAccessProbeUsesRealHTTPAndOnlyTheTwoReadMethods(t *testing.T) {
 			if e != nil || stderr.Len() != 0 {
 				t.Fatalf("embedded probe failed: %v", e)
 			}
-			got, e := decodeAccess(b, netip.MustParseAddr("192.0.2.10"), accessNow)
+			got, e := decodeAccess(b, netip.MustParseAddr("192.0.2.30"), accessNow)
+			detail, detailError := decodeBlockDetails(b, netip.MustParseAddr("192.0.2.30"), time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC), accessNow)
+			if detailError != nil || detail.Reason != "RCPT_TO_FAILURE" || detail.Scope != "SINGLE_IP" {
+				t.Fatalf("actual HTTP block metadata %v/%v", detail, detailError)
+			}
 			expectedPaths := "ALL_LOCAL_TARGETS_HTTP_200"
 			if status == 503 {
 				expectedPaths = "LOOPBACK_PATH_FAILED"
@@ -219,8 +227,25 @@ func nativeSecurityState(t *testing.T) []byte {
 	}
 	return b
 }
+func nativeBlockMetadata(t *testing.T) []byte {
+	t.Helper()
+	b, e := os.ReadFile("testdata/native-block-metadata.json")
+	if e != nil {
+		t.Fatal(e)
+	}
+	return b
+}
 func securityStateFor(t *testing.T, allow, block []any) []byte {
 	t.Helper()
+	for _, value := range block {
+		entry := value.(map[string]any)
+		if _, ok := entry["reason"]; !ok {
+			entry["reason"] = "manual"
+		}
+		if _, ok := entry["createdAt"]; !ok {
+			entry["createdAt"] = "2026-10-24T12:00:00Z"
+		}
+	}
 	query := func(entries []any) map[string]any {
 		ids := []string{}
 		for _, entry := range entries {
@@ -309,6 +334,7 @@ func TestSecurityStateRefusesPartialOrAmbiguousResponses(t *testing.T) {
 // accessPod supplies the real projection shape with documentation-only IPs.
 func accessPod(t *testing.T) []byte {
 	return changePod(t, fixturePod(t), func(p map[string]any) {
+		p["metadata"].(map[string]any)["creationTimestamp"] = "2026-10-25T00:00:00Z"
 		status := p["status"].(map[string]any)
 		status["podIP"] = "192.0.2.20"
 		status["hostIP"] = "192.0.2.10"
@@ -343,7 +369,7 @@ func accessMeasurement(t *testing.T, security []byte) []byte {
 
 // TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv exercises the complete collector.
 func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t *testing.T) {
-	for _, scenario := range []string{"healthy", "blocked", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced"} {
+	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast", "metadata-missing", "pod-creation-changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			pod := accessPod(t)
 			after := append([]byte(nil), pod...)
@@ -357,13 +383,25 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 			measured := accessMeasurement(t, securityStateFor(t, []any{}, []any{}))
 			switch scenario {
 			case "blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.10", nil)}))
+			case "metadata-missing":
 				measured = accessMeasurement(t, nativeSecurityState(t))
+			case "cilium-blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.30", nil)}))
+			case "cilium-cidr-blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.28/30", nil)}))
+			case "cilium-allow-override":
+				measured = accessMeasurement(t, securityStateFor(t, []any{accessEntry("192.0.2.30", nil)}, []any{accessEntry("192.0.2.28/30", nil)}))
+			case "cilium-expired":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.30", "2026-10-26T00:00:00Z")}))
 			case "pod-replaced":
 				after = []byte(strings.Replace(string(after), "000000000001", "000000000009", 1))
 			case "restarted":
 				after = []byte(strings.Replace(string(after), `"restartCount":0`, `"restartCount":1`, 1))
 			case "addresses-changed":
 				after = []byte(strings.Replace(string(after), "192.0.2.20", "192.0.2.21", 1))
+			case "pod-creation-changed":
+				after = changePod(t, after, func(p map[string]any) { p["metadata"].(map[string]any)["creationTimestamp"] = "2026-10-25T00:01:00Z" })
 			case "map-changed":
 				afterCM = []byte(strings.Replace(string(cm), `"7"`, `"8"`, 1))
 			case "secret-changed":
@@ -377,7 +415,7 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					p["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["env"] = []any{map[string]any{"name": "BASH_ENV", "value": "/tmp/unreviewed"}}
 				})
 			}
-			calls, execs := 0, 0
+			calls, execs, ciliumReads := 0, 0, 0
 			fake := func(_ context.Context, args ...string) ([]byte, error) {
 				calls++
 				if len(args) < 7 || !reflect.DeepEqual(args[:3], []string{"--context", "admin@prod", "--request-timeout=10s"}) || args[3] != "get" {
@@ -387,6 +425,48 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					return nil, errors.New("PRIVATE_ERROR")
 				}
 				switch args[4] {
+				case "ciliumnode":
+					ciliumReads++
+					if args[5] != "synthetic-node" {
+						t.Fatal("unbound CiliumNode read")
+					}
+					if scenario == "cilium-missing" {
+						return nil, errors.New("not found")
+					}
+					uid, owner, address, version, host := "00000000-0000-0000-0000-000000000007", "00000000-0000-0000-0000-000000000005", "192.0.2.30", "77", "192.0.2.10"
+					if scenario == "cilium-foreign-node" {
+						owner = "00000000-0000-0000-0000-000000000009"
+					}
+					if scenario == "cilium-replaced" && execs > 0 {
+						uid = "00000000-0000-0000-0000-000000000008"
+					}
+					if scenario == "cilium-address-changed" && execs > 0 {
+						address = "192.0.2.31"
+					}
+					if scenario == "cilium-version-changed" && execs > 0 {
+						version = "78"
+					}
+					if scenario == "cilium-host-mismatch" {
+						host = "192.0.2.11"
+					}
+					if scenario == "cilium-pod-address" {
+						address = "192.0.2.20"
+					}
+					if scenario == "cilium-host-address" {
+						address = "192.0.2.10"
+					}
+					if scenario == "cilium-non-unicast" {
+						address = "127.0.0.1"
+					}
+					addresses := []any{map[string]any{"type": "InternalIP", "ip": host}, map[string]any{"type": "CiliumInternalIP", "ip": address}}
+					if scenario == "cilium-ambiguous" {
+						addresses = append(addresses, map[string]any{"type": "CiliumInternalIP", "ip": "192.0.2.31"})
+					}
+					if scenario == "cilium-malformed" {
+						return []byte(`{"metadata":null}`), nil
+					}
+					b, _ := json.Marshal(map[string]any{"metadata": map[string]any{"name": "synthetic-node", "uid": uid, "resourceVersion": version, "ownerReferences": []any{map[string]any{"apiVersion": "v1", "kind": "Node", "name": "synthetic-node", "uid": owner}}}, "spec": map[string]any{"addresses": addresses}})
+					return b, nil
 				case "node":
 					if args[5] != "synthetic-node" {
 						t.Fatal("unbound node read")
@@ -442,17 +522,32 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 				return measured, nil
 			}
 			got, e := collectAccess(context.Background(), fake, send, func(context.Context) error { t.Fatal("unexpected wait"); return nil }, func() time.Time { return accessNow })
-			if scenario == "healthy" || scenario == "blocked" {
+			if scenario == "healthy" || scenario == "blocked" || scenario == "cilium-blocked" || scenario == "cilium-cidr-blocked" || scenario == "cilium-allow-override" || scenario == "cilium-expired" {
 				if e != nil || got.Paths != "ALL_LOCAL_TARGETS_HTTP_200" || !got.Ready {
 					t.Fatalf("valid collection %v/%v", got, e)
 				}
 				if (got.Access == "STORED_HOST_BLOCK_MATCH") != (scenario == "blocked") {
 					t.Fatalf("block result %s", got.Access)
 				}
+				if ciliumReads != 2 {
+					t.Fatalf("Cilium source candidate was not bound before and after: %d reads", ciliumReads)
+				}
+				want := "NO_ACTIVE_STORED_BLOCKS"
+				switch scenario {
+				case "blocked":
+					want = "OTHER_ACTIVE_STORED_BLOCKS"
+				case "cilium-blocked", "cilium-cidr-blocked":
+					want = "STORED_CILIUM_BLOCK_MATCH"
+				case "cilium-allow-override":
+					want = "STORED_CILIUM_ALLOW_OVERRIDE"
+				}
+				if got.CiliumAccess != want {
+					t.Fatalf("Cilium classification %q, want %q", got.CiliumAccess, want)
+				}
 			} else if e == nil {
 				t.Fatalf("unsafe %s accepted: %v", scenario, got)
 			}
-			if execs > 1 || calls > 10 {
+			if execs > 1 || calls > 12 {
 				t.Fatalf("unbounded reads/execs %d/%d", calls, execs)
 			}
 		})
