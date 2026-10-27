@@ -185,6 +185,8 @@ jobs:
               - 'scripts/tests/test-business-disclosure-reader.sh'
               - 'scripts/tests/test-business-staging-hold.sh'
               - 'scripts/check-business-disclosure-reader/**'
+              - 'scripts/openbao-backup-recovery/**'
+              - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
@@ -3317,6 +3319,14 @@ jobs:
           shellcheck scripts/tests/test-openbao-standby-canary.sh
           shellcheck scripts/tests/test-openbao-strategy-transition.sh
           bash scripts/tests/test-openbao-standby-canary.sh
+      - name: 🔐 Prove isolated snapshot recovery on the matching server
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 8
+        env:
+          OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: '1'
+        run: |
+          shellcheck scripts/run-openbao-backup-sandbox.sh
+          go test -count=1 -v ./scripts/openbao-backup-recovery
       - name: 🔒 Validate Crossplane provider egress policy
         if: needs.changes.outputs.k8s == 'true'
         run: bash scripts/tests/test-crossplane-egress-policy.sh
