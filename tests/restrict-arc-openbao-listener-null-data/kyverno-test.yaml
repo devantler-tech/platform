@@ -4,12 +4,11 @@ kind: Test
 metadata:
   name: restrict-arc-openbao-listener-null-data
 policies:
-  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener-settings.yaml
 resources:
   - resources.yaml
 results:
-  - policy: restrict-arc-openbao-listener
-    rule: public-listener-settings-only
+  - policy: restrict-arc-openbao-listener-settings
     resources:
       - openbao/arc-openbao-listener
     kind: ConfigMap
