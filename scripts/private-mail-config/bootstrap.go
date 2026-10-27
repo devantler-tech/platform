@@ -27,12 +27,13 @@ type bootstrapRuntime struct {
 	startup, shutdown                  time.Duration
 }
 
+// bootstrapCommand runs the bounded bootstrap lifecycle using private file inputs.
 func bootstrapCommand(args []string, log io.Writer) int {
 	f := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "/etc/private-mail", "mounted private inputs")
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid arguments.")
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid arguments.")
 		return 2
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -41,7 +42,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	defer timeout()
 	applicationDigest, err := pinnedApplicationDigest()
 	if err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid administration asset metadata.")
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid administration asset metadata.")
 		return 2
 	}
 	runtime := bootstrapRuntime{
@@ -51,10 +52,10 @@ func bootstrapCommand(args []string, log io.Writer) int {
 		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap failed; serving must remain stopped.", err)
+		_, _ = fmt.Fprintln(log, "Email bootstrap failed; serving must remain stopped.", err)
 		return 2
 	}
-	if _, err := fmt.Fprintln(log, "Private mail configuration verified; recovery process stopped."); err != nil {
+	if _, err := fmt.Fprintln(log, "Email configuration verified; recovery process stopped."); err != nil {
 		return 2
 	}
 	return 0
@@ -62,6 +63,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 
 type boundedOutput struct{ bytes.Buffer }
 
+// Write retains only the configured amount of bootstrap diagnostics.
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 1048576 {
 		return 0, errConfiguration
@@ -202,6 +204,7 @@ prepared:
 	return nil
 }
 
+// stopOwned terminates the bootstrap child within the cleanup grace period.
 func stopOwned(child *exec.Cmd, done <-chan error, grace time.Duration) error {
 	select {
 	case <-done:

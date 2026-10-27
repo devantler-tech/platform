@@ -1,42 +1,11 @@
 ---
-# ADOPTED from devantler-tech/kyverno-policies
-# policies/best-practices/auto-vpa-generating-policy.yaml at 44ed118 (#5130), which
-# registers three GeneratingPolicy objects in one file. The platform keeps one
-# resource per file, so it is split into auto-vpa-deployment.yaml (which also
-# carries the catalog's own header), auto-vpa-statefulset.yaml and
-# auto-vpa-daemonset.yaml. Each policy is copied verbatim except for one marked
-# PLATFORM ADDITION: a namespaceSelector that keeps it out of the system
-# namespaces, where prod runs static VPAs of its own. The generate
-# expressions must stay byte-for-byte the catalog's (whitespace aside): both static
-# producer guards pin them (scripts/guard-consumer-discovery-conservation.sh and
-# scripts/tests/crossplane-egress-policy-rules.yaml). The catalog's classic
-# ClusterPolicy form names its VPAs <name>, not <name>-<kind>, so it must never run
-# beside these: every workload would get two VPAs.
-#
-# The catalog's header follows. Here "the root kustomization.yaml" means this
-# folder's kustomization.yaml, and the repository keeps no classic file to roll back
-# to. "Under the same name" below is not true here: the classic VPA is <name> and
-# this one is <name>-deployment, so running both forms gives every workload two VPAs.
-#
-# The catalog's auto-vpa: a port of the classic policies/best-practices/auto-vpa.yaml
-# ClusterPolicy rules to the GeneratingPolicy API, which Kyverno keeps after classic
-# ClusterPolicy generate rules are retired. The classic ClusterPolicy is a separate file.
-#
-# THIS IS THE REGISTERED FORM in the root kustomization.yaml. The classic file stays in the
-# repository, unregistered, as the rollback form until every consumer has migrated: never
-# apply both to one cluster, because both generate a VerticalPodAutoscaler for the same
-# workload under the same name. The README's "Migrating to the GeneratingPolicy form"
-# section is the consumer rollout and rollback procedure.
-#
-# Split into one policy per workload kind, mirroring the classic policy's three rules:
-# GeneratingPolicy applies spec.matchConstraints to the whole policy, so three kinds with
-# three different VPA bodies cannot share one policy without branching inside CEL.
-#
-# FLOOR: Kyverno 1.19.0. On 1.18.x spec.evaluation.generateExisting is schema-accepted but
-# does not fire for PRE-EXISTING workloads (kyverno/kyverno#15722, a regression against the
-# classic rule; fixed by kyverno/kyverno#16041 for 1.19.0 and never backported), so an
-# existing workload would get its VPA only on its next CREATE/UPDATE admission. The
-# minversion annotations below declare that floor.
+# Ownership metadata backported from devantler-tech/kyverno-policies
+# policies/best-practices/auto-vpa-generating-policy.yaml at
+# 8a36995dcf62df42448f494e024681533ebbe48a (#5408).
+# Keep this consumer's existing <name>-deployment naming and namespace exclusion.
+# The upstream required-UID expression is inlined so the existing closed producer
+# contract still permits no CEL variables. Sizing and update modes are unchanged.
+# Both consumer-discovery guards pin the complete resulting expression.
 apiVersion: policies.kyverno.io/v1
 kind: GeneratingPolicy
 metadata:
@@ -90,8 +59,14 @@ spec:
               "apiVersion": dyn("autoscaling.k8s.io/v1"),
               "kind": dyn("VerticalPodAutoscaler"),
               "metadata": dyn({
-                "name": string(object.metadata.name) + "-deployment",
-                "namespace": string(object.metadata.namespace)
+                "name": dyn(string(object.metadata.name) + "-deployment"),
+                "namespace": dyn(string(object.metadata.namespace)),
+                "ownerReferences": dyn([{
+                  "apiVersion": "apps/v1",
+                  "kind": "Deployment",
+                  "name": string(object.metadata.name),
+                  "uid": string([object.metadata.uid].filter(uid, type(uid) == string && size(uid) > 0)[0])
+                }])
               }),
               "spec": dyn({
                 "targetRef": dyn({

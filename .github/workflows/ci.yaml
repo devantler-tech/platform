@@ -144,6 +144,9 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'scripts/tests/private-mail-preparation/**'
+              - 'scripts/tests/vault-email-credentials/**'
+              - 'scripts/prepare-email-credentials.sh'
+              - '.github/workflows/verify-email-credential-custody.yaml'
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
@@ -182,6 +185,8 @@ jobs:
               - 'scripts/tests/test-business-disclosure-reader.sh'
               - 'scripts/tests/test-business-staging-hold.sh'
               - 'scripts/check-business-disclosure-reader/**'
+              - 'scripts/openbao-backup-recovery/**'
+              - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
@@ -293,6 +298,7 @@ jobs:
               # fixtures and its system-namespace exclusion test (#5130).
               - 'tests/auto-vpa-generating-policy-*/**'
               - 'scripts/tests/test-auto-vpa-generating-policy-exclusion.sh'
+              - 'scripts/tests/test-auto-vpa-generating-policy-ownership.sh'
               - 'scripts/tests/test-audit-privileged-rbac.sh'
               # Renders the charts whose roles that policy excludes and applies the
               # policy to their RBAC, so a chart bump fails its own PR (#3792).
@@ -1007,6 +1013,11 @@ jobs:
         run: |
           shellcheck scripts/retire-unused-apps.sh scripts/tests/test-retire-unused-apps.sh
           bash scripts/tests/test-retire-unused-apps.sh
+
+      - name: Validate generated autoscaler cleanup
+        run: |
+          shellcheck scripts/cleanup-orphan-generated-vpas.sh scripts/tests/test-cleanup-orphan-generated-vpas.sh
+          bash scripts/tests/test-cleanup-orphan-generated-vpas.sh
 
       - name: 💾 Validate two-stage PVC retirement
         # A merge-group artifact is speculative, but a PVC deletion is not: its
@@ -1832,6 +1843,8 @@ jobs:
           bash scripts/tests/test-tetragon-agent-priority.sh
           shellcheck scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
           bash scripts/tests/test-auto-vpa-generating-policy-exclusion.sh
+          shellcheck scripts/tests/test-auto-vpa-generating-policy-ownership.sh
+          bash scripts/tests/test-auto-vpa-generating-policy-ownership.sh
           shellcheck scripts/tests/test-arc-controller-availability.sh
           bash scripts/tests/test-arc-controller-availability.sh
           shellcheck scripts/tests/test-provider-drc-pod-seccomp.sh
@@ -3314,9 +3327,23 @@ jobs:
           shellcheck scripts/tests/test-openbao-standby-canary.sh
           shellcheck scripts/tests/test-openbao-strategy-transition.sh
           bash scripts/tests/test-openbao-standby-canary.sh
+      - name: 🔐 Prove isolated snapshot recovery on the matching server
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 8
+        env:
+          OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: '1'
+        run: |
+          shellcheck scripts/run-openbao-backup-sandbox.sh
+          go test -count=1 -v ./scripts/openbao-backup-recovery
       - name: 🔒 Validate Crossplane provider egress policy
         if: needs.changes.outputs.k8s == 'true'
         run: bash scripts/tests/test-crossplane-egress-policy.sh
+      - name: ✉️ Verify Email credential custody against pinned OpenBao
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 5
+        env:
+          EMAIL_CREDENTIAL_NATIVE_TEST: '1'
+        run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 10
