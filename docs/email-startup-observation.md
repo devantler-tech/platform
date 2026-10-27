@@ -85,15 +85,28 @@ silently stops at the server's configured get limit, so it is insufficient proof
 Pod identity, targets, public configuration and both Secret identities/versions
 are checked again after the single exec. An unsuccessful exec is never retried.
 
+The probe observer also reads the Pod's named CiliumNode before and after the
+sample. Its sole Node owner must match the bound Node UID, its internal address
+must match Pod status's host address, and it must have exactly one distinct,
+unicast `CiliumInternalIP` of the Pod's address family. The CiliumNode UID,
+resource version and candidate address must remain unchanged. Missing,
+ambiguous or changed metadata makes the whole sample inconclusive. This adds
+two fixed metadata reads; it does not execute a command in a Cilium container.
+
 Public output contains `MAIL_PROBE_PATHS` (`ALL_LOCAL_TARGETS_HTTP_200`,
 `LOOPBACK_PATH_FAILED` or `POD_ADDRESS_PATH_FAILED`), `MAIL_ACCESS_STATE`
 (`STORED_HOST_BLOCK_MATCH`, `STORED_HOST_ALLOW_OVERRIDE`,
-`NO_ACTIVE_STORED_BLOCKS` or `OTHER_ACTIVE_STORED_BLOCKS`) and
+`NO_ACTIVE_STORED_BLOCKS` or `OTHER_ACTIVE_STORED_BLOCKS`),
+`MAIL_CILIUM_ACCESS_STATE` (`STORED_CILIUM_BLOCK_MATCH`,
+`STORED_CILIUM_ALLOW_OVERRIDE`, `NO_ACTIVE_STORED_BLOCKS` or
+`OTHER_ACTIVE_STORED_BLOCKS`) and
 `MAIL_KUBERNETES_READY` (`TRUE` or `FALSE`). A guard or collection failure emits
 only `MAIL_PROBE_STATE=INCONCLUSIVE` and exits three. An observed problem exits
 one; a ready sample with successful targets and no active stored blocks exits zero.
 
-The host address is a candidate from bound Pod status. A stored rule match does
+The host address is a candidate from bound Pod status; the Cilium local address
+is a separate routing candidate. Both are classified against the same complete
+API response at the same observation time. A stored rule match does
 not establish the source of a failed kubelet connection or attest the application's
 in-memory security cache. The API read is a bounded observation, not an atomic
 transaction over concurrently changing application state. Allow rules override
