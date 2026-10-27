@@ -343,7 +343,7 @@ func accessMeasurement(t *testing.T, security []byte) []byte {
 
 // TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv exercises the complete collector.
 func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t *testing.T) {
-	for _, scenario := range []string{"healthy", "blocked", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced"} {
+	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast"} {
 		t.Run(scenario, func(t *testing.T) {
 			pod := accessPod(t)
 			after := append([]byte(nil), pod...)
@@ -358,6 +358,14 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 			switch scenario {
 			case "blocked":
 				measured = accessMeasurement(t, nativeSecurityState(t))
+			case "cilium-blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.30", nil)}))
+			case "cilium-cidr-blocked":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.28/30", nil)}))
+			case "cilium-allow-override":
+				measured = accessMeasurement(t, securityStateFor(t, []any{accessEntry("192.0.2.30", nil)}, []any{accessEntry("192.0.2.28/30", nil)}))
+			case "cilium-expired":
+				measured = accessMeasurement(t, securityStateFor(t, []any{}, []any{accessEntry("192.0.2.30", "2026-10-26T00:00:00Z")}))
 			case "pod-replaced":
 				after = []byte(strings.Replace(string(after), "000000000001", "000000000009", 1))
 			case "restarted":
@@ -377,7 +385,7 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					p["spec"].(map[string]any)["containers"].([]any)[0].(map[string]any)["env"] = []any{map[string]any{"name": "BASH_ENV", "value": "/tmp/unreviewed"}}
 				})
 			}
-			calls, execs := 0, 0
+			calls, execs, ciliumReads := 0, 0, 0
 			fake := func(_ context.Context, args ...string) ([]byte, error) {
 				calls++
 				if len(args) < 7 || !reflect.DeepEqual(args[:3], []string{"--context", "admin@prod", "--request-timeout=10s"}) || args[3] != "get" {
@@ -387,6 +395,48 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					return nil, errors.New("PRIVATE_ERROR")
 				}
 				switch args[4] {
+				case "ciliumnode":
+					ciliumReads++
+					if args[5] != "synthetic-node" {
+						t.Fatal("unbound CiliumNode read")
+					}
+					if scenario == "cilium-missing" {
+						return nil, errors.New("not found")
+					}
+					uid, owner, address, version, host := "00000000-0000-0000-0000-000000000007", "00000000-0000-0000-0000-000000000005", "192.0.2.30", "77", "192.0.2.10"
+					if scenario == "cilium-foreign-node" {
+						owner = "00000000-0000-0000-0000-000000000009"
+					}
+					if scenario == "cilium-replaced" && execs > 0 {
+						uid = "00000000-0000-0000-0000-000000000008"
+					}
+					if scenario == "cilium-address-changed" && execs > 0 {
+						address = "192.0.2.31"
+					}
+					if scenario == "cilium-version-changed" && execs > 0 {
+						version = "78"
+					}
+					if scenario == "cilium-host-mismatch" {
+						host = "192.0.2.11"
+					}
+					if scenario == "cilium-pod-address" {
+						address = "192.0.2.20"
+					}
+					if scenario == "cilium-host-address" {
+						address = "192.0.2.10"
+					}
+					if scenario == "cilium-non-unicast" {
+						address = "127.0.0.1"
+					}
+					addresses := []any{map[string]any{"type": "InternalIP", "ip": host}, map[string]any{"type": "CiliumInternalIP", "ip": address}}
+					if scenario == "cilium-ambiguous" {
+						addresses = append(addresses, map[string]any{"type": "CiliumInternalIP", "ip": "192.0.2.31"})
+					}
+					if scenario == "cilium-malformed" {
+						return []byte(`{"metadata":null}`), nil
+					}
+					b, _ := json.Marshal(map[string]any{"metadata": map[string]any{"name": "synthetic-node", "uid": uid, "resourceVersion": version, "ownerReferences": []any{map[string]any{"apiVersion": "v1", "kind": "Node", "name": "synthetic-node", "uid": owner}}}, "spec": map[string]any{"addresses": addresses}})
+					return b, nil
 				case "node":
 					if args[5] != "synthetic-node" {
 						t.Fatal("unbound node read")
@@ -442,17 +492,32 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 				return measured, nil
 			}
 			got, e := collectAccess(context.Background(), fake, send, func(context.Context) error { t.Fatal("unexpected wait"); return nil }, func() time.Time { return accessNow })
-			if scenario == "healthy" || scenario == "blocked" {
+			if scenario == "healthy" || scenario == "blocked" || scenario == "cilium-blocked" || scenario == "cilium-cidr-blocked" || scenario == "cilium-allow-override" || scenario == "cilium-expired" {
 				if e != nil || got.Paths != "ALL_LOCAL_TARGETS_HTTP_200" || !got.Ready {
 					t.Fatalf("valid collection %v/%v", got, e)
 				}
 				if (got.Access == "STORED_HOST_BLOCK_MATCH") != (scenario == "blocked") {
 					t.Fatalf("block result %s", got.Access)
 				}
+				if ciliumReads != 2 {
+					t.Fatalf("Cilium source candidate was not bound before and after: %d reads", ciliumReads)
+				}
+				want := "NO_ACTIVE_STORED_BLOCKS"
+				switch scenario {
+				case "blocked":
+					want = "OTHER_ACTIVE_STORED_BLOCKS"
+				case "cilium-blocked", "cilium-cidr-blocked":
+					want = "STORED_CILIUM_BLOCK_MATCH"
+				case "cilium-allow-override":
+					want = "STORED_CILIUM_ALLOW_OVERRIDE"
+				}
+				if got.CiliumAccess != want {
+					t.Fatalf("Cilium classification %q, want %q", got.CiliumAccess, want)
+				}
 			} else if e == nil {
 				t.Fatalf("unsafe %s accepted: %v", scenario, got)
 			}
-			if execs > 1 || calls > 10 {
+			if execs > 1 || calls > 12 {
 				t.Fatalf("unbounded reads/execs %d/%d", calls, execs)
 			}
 		})
