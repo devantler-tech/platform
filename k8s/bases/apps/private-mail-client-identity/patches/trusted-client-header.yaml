@@ -1,0 +1,11 @@
+- op: add
+  path: /spec/rules/0/filters/-
+  value:
+    type: RequestHeaderModifier
+    requestHeaderModifier:
+      set:
+        - name: Forwarded
+          value: 'for="%DOWNSTREAM_REMOTE_ADDRESS_WITHOUT_PORT%"'
+      remove:
+        - X-Forwarded-For
+        - X-Real-IP
