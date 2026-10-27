@@ -67,6 +67,7 @@ export ROOT="$root" PATH="$work/bin:$PATH"
 export GITHUB_REPOSITORY=devantler-tech/platform GITHUB_REF=refs/heads/main
 export GITHUB_EVENT_NAME=workflow_dispatch GITHUB_RUN_ATTEMPT=1
 export VPA_CLEANUP_CONFIRM=cleanup-orphan-generated-vpas
+# Check one API scenario's exit status, deletion outcome and public-output privacy.
 run_case() {
   local scenario="$1" mode="$2" expected="$3" deleted="$4" rc=0
   export CASE="$work/$scenario-$mode" SCENARIO="$scenario"

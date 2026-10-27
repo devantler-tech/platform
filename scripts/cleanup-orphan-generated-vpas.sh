@@ -5,7 +5,9 @@
 # All API errors are private; public logs contain aggregate counts only.
 set -euo pipefail
 umask 077
+# Stop on a proven safety refusal before attempting any further deletion.
 fail() { printf 'REFUSED: %s\n' "$1" >&2; exit 1; }
+# Report incomplete evidence distinctly from a proven absence or safe result.
 unknown() { printf 'UNKNOWN: %s\n' "$1" >&2; exit 2; }
 mode="${1:-assess}"
 [[ "$#" -le 1 && ( "$mode" == assess || "$mode" == apply ) ]] || fail 'invalid operation'
@@ -18,6 +20,7 @@ mode="${1:-assess}"
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+# Use the workflow's fixed production identity, a finite deadline and private errors.
 k() { kubectl --context admin@prod --request-timeout=10s "$@" 2>/dev/null; }
 readonly resource=verticalpodautoscalers.autoscaling.k8s.io
 
