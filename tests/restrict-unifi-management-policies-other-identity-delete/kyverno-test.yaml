@@ -5,14 +5,13 @@ metadata:
   name: restrict-unifi-management-policies-other-identity-delete
 policies:
   - >-
-    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-policies.yaml
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-validating-policies.yaml
 resources:
   - resources.yaml
 variables: values.yaml
 userinfo: user-info.yaml
 results:
-  - policy: restrict-unifi-management-policies
-    rule: prune-only-without-delete
+  - policy: restrict-unifi-prune-management-policies
     resources:
       - unifi/wildcard
     kind: Record

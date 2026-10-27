@@ -5,14 +5,13 @@ metadata:
   name: restrict-unifi-management-policies-update
 policies:
   - >-
-    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-policies.yaml
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-validating-policies.yaml
 resources:
   - ../restrict-unifi-management-policies-apply/resources.yaml
 variables: values.yaml
 userinfo: ../restrict-unifi-management-policies-apply/user-info.yaml
 results:
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       - unifi/retained
       - unifi/observing
@@ -20,7 +19,6 @@ results:
     kind: Record
     result: pass
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       # An empty list is falsy, so it reads as the "*" default: refused.
       - unifi/omitted
@@ -28,39 +26,33 @@ results:
     kind: Record
     result: fail
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       - unifi/delete-restored
     kind: Client
     result: fail
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       - unifi/wildcard
     kind: TrafficRoute
     result: fail
-  - policy: restrict-unifi-management-policies
-    rule: observe-only-is-observe
+  - policy: restrict-unifi-observe-only
     resources:
       - unifi/observing
     kind: Record
     result: pass
-  - policy: restrict-unifi-management-policies
-    rule: observe-only-is-observe
+  - policy: restrict-unifi-observe-only
     resources:
       - unifi/observe-only-widened
       - unifi/observe-only-empty
     kind: Record
     result: fail
-  - policy: restrict-unifi-management-policies
-    rule: observe-only-is-observe
+  - policy: restrict-unifi-observe-only
     resources:
       - unifi/retained
       - unifi/omitted
     kind: Record
     result: skip
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       - unifi/empty
       - unifi/null-list
@@ -68,19 +60,16 @@ results:
     kind: Record
     result: fail
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       - unifi/wrong-group
     kind: Client
     result: skip
   - policy: restrict-unifi-management-policies
-    rule: apply-without-delete
     resources:
       - other/other-namespace
     kind: Record
     result: skip
-  - policy: restrict-unifi-management-policies
-    rule: observe-only-is-observe
+  - policy: restrict-unifi-observe-only
     resources:
       - unifi/empty
       - unifi/null-list
@@ -88,8 +77,7 @@ results:
       - other/other-namespace
     kind: Record
     result: skip
-  - policy: restrict-unifi-management-policies
-    rule: observe-only-is-observe
+  - policy: restrict-unifi-observe-only
     resources:
       - unifi/wrong-group
     kind: Client
