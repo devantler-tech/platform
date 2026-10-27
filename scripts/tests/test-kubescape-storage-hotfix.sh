@@ -11,7 +11,7 @@ readonly summary_repair_patch_file="${root_dir}/k8s/bases/infrastructure/control
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
-readonly image_tag='v0.0.297-sqlite-contention.7-b6c585af18f3b32cc3fbb6228ab39af765f94abf@sha256:1adc507780a6fc288f01af7fa2d6e093d815776ca8836fc27450f687fe0d5fbc'
+readonly image_tag='v0.0.297-sqlite-contention.8-a56a2cf3b4a10ce5352f19e9a8e9da106373b00f@sha256:7aac1d2edfb2442d98b692c52ae33b2f5f3d39748233cd43f885d54020e2840e'
 
 fail() {
   printf 'FAIL: %s\n' "$1" >&2
