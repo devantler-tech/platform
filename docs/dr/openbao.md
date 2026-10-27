@@ -182,6 +182,27 @@ comes first so the claims can be deleted and then recreated empty. A
 StatefulSet uses the `OnDelete` update strategy, so a restart changes the
 pod template but recreates no pod.
 
+## Prove recovery before moving Email credentials
+
+After the snapshot repair has deployed and its replacement-storage job has
+completed, dispatch **Verify OpenBao Backup Recovery** from current `main`.
+The confirmation input must be exactly `verify-openbao-backup-recovery`.
+It uses the protected production environment and the shared deployment lock.
+
+The workflow downloads a fresh, complete snapshot from the existing independent
+backup store and binds that download to the listed object. It reads the three
+original Email credential records, then ends its production connection before
+restoring in a disposable, non-root, network-disabled server. It verifies all
+record fields and a fresh unseal with the retained recovery key. Production
+storage, credentials and backup objects are never changed by this verification.
+Private inputs and diagnostic logs stay in temporary RAM storage; the workflow
+publishes only a fixed verdict and removes its owned runtime resources.
+
+Only `OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3` establishes this
+three-record proof. A missing, stale, truncated, changed or mismatched backup
+refuses success. This proof must be expanded before retiring additional records;
+it does not by itself authorize credential migration or legacy-copy removal.
+
 ## References
 
 - [OpenBao Seal/Unseal](https://openbao.org/docs/concepts/seal/)
