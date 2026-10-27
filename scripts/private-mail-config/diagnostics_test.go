@@ -87,16 +87,20 @@ func TestDiagnosticReadbackUsesTaggedIdentity(t *testing.T) {
 					return
 				}
 				var method, tag string
-				json.Unmarshal(request.Calls[0][0], &method)
-				json.Unmarshal(request.Calls[0][2], &tag)
+				if json.Unmarshal(request.Calls[0][0], &method) != nil || json.Unmarshal(request.Calls[0][2], &tag) != nil {
+					t.Error("invalid tracer method or response tag")
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
 				var result any
-				if method == "x:Tracer/query" {
+				switch method {
+				case "x:Tracer/query":
 					ids := []string{"console-id"}
 					if test == "duplicate-console" {
 						ids = append(ids, "other-id")
 					}
 					result = map[string]any{"ids": ids, "total": len(ids), "position": 0}
-				} else if method == "x:Tracer/get" {
+				case "x:Tracer/get":
 					actual := map[string]any{"id": "console-id", "@type": "Stdout", "enable": true, "level": "info", "eventsPolicy": "include", "events": map[string]any{"server.startup": true}}
 					if test == "different-type" {
 						actual["@type"] = "Log"
@@ -114,11 +118,13 @@ func TestDiagnosticReadbackUsesTaggedIdentity(t *testing.T) {
 						list = append(list, duplicate)
 					}
 					result = map[string]any{"list": list, "notFound": []string{}}
-				} else {
+				default:
 					w.WriteHeader(400)
 					return
 				}
-				json.NewEncoder(w).Encode(map[string]any{"methodResponses": []any{[]any{method, result, tag}}})
+				if err := json.NewEncoder(w).Encode(map[string]any{"methodResponses": []any{[]any{method, result, tag}}}); err != nil {
+					t.Errorf("encode tracer response: %v", err)
+				}
 			}))
 			defer server.Close()
 			m := management{url: server.URL, password: "synthetic-only", client: server.Client()}
