@@ -90,13 +90,6 @@ data:
       # for the sites rather than the cluster.
       Analytics:
         icon: si-umami
-      # TRANSITIONAL — OpenBao and Policy Reporter still name Security. Flux
-      # applies their routes before it updates the Kyverno allow-list, so a route
-      # may only switch to a group the LIVE allow-list already accepts: switch
-      # them to Secrets Management and Governance in a later deploy, then retire
-      # Security.
-      Security:
-        icon: mdi-shield-lock
       Secrets Management:
         icon: mdi-key-chain
       # Policy and compliance posture: what is allowed to run, and how it scores.
@@ -130,12 +123,6 @@ data:
         icon: mdi-briefcase
       Products:
         icon: mdi-book-open-page-variant
-      # TRANSITIONAL — retire once the ascoachingogvaner tenant route names
-      # Business & Clients. A route naming a group missing from the Kyverno
-      # allow-list is rejected at admission, so the group must stay declared
-      # until no route claims it.
-      Clients:
-        icon: mdi-briefcase-account
       Email:
         icon: mdi-email-outline
       Personal:

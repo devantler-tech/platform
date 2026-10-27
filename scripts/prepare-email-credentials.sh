@@ -141,4 +141,3 @@ for account in admin maintainer agent; do
   cmp -s "$work/source.json" "$work/source-after.json" || fail
 done
 report
-

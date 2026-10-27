@@ -12,12 +12,11 @@ resources:
   # registration is repaired. Flux reconciles the controller with its watch
   # scope limited to arc-runners; the organization pool stays outside aggregates.
   - ../../../../bases/infrastructure/controllers/actions-runner-controller/
-  # Prod-only: a minimal Alertmanager scoped to Kubescape runtime-detection
-  # alerts. The Headlamp Kubescape plugin's "Runtime Detection > Alerts" tab
-  # reads ONLY from a Prometheus Alertmanager (GET /api/v2/alerts), which the
-  # Coroot migration removed from the cluster; this reintroduces one, fed by the
-  # node-agent (kubescape/patches/ below) and routing to Slack. See its
-  # helm-release.yaml header. Prod-only (runtimeDetection is off on docker/local).
+  # Prod-only: a minimal Alertmanager for pushed alerts. The Kubescape
+  # node-agent can push runtime-detection alerts only to a Prometheus
+  # Alertmanager, which the Coroot migration removed from the cluster; this
+  # reintroduces one, fed by the node-agent (kubescape/patches/ below) and
+  # routing to Slack. See its helm-release.yaml header. Prod-only (runtimeDetection is off on docker/local).
   - alertmanager/
   # Cilium is supplied by the base controller aggregate. Authentication must
   # be scoped inside each workload's narrow allow rule: an empty
@@ -156,7 +155,7 @@ patches:
   - path: ksail-operator/patches/enable-oidc.yaml
   # Prod-only: point the Kubescape node-agent's runtime-detection alerts at the
   # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
-  # fanning them out to the Headlamp plugin, Slack, and Coroot — see file.
+  # fanning them out to Slack and Coroot — see file.
   - path: kubescape/patches/route-runtime-detection-alerts.yaml
   # Prod-only release switch for the node-agent's default detection rules
   # (#4968). OFF: runtime detection runs with no rules until it is turned on.

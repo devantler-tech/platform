@@ -7,6 +7,7 @@ readonly root_dir
 readonly workflow="${root_dir}/.github/workflows/publish-kubescape-storage-hotfix.yaml"
 readonly patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch"
 readonly cleanup_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"
+readonly summary_repair_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
@@ -21,6 +22,7 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 [[ -f "${workflow}" ]] || fail 'the Kubescape storage compatibility-image workflow is missing'
 [[ -f "${patch_file}" ]] || fail 'the Kubescape storage compatibility patch is missing'
 [[ -f "${cleanup_patch_file}" ]] || fail 'the Kubescape storage scan-record cleanup patch is missing'
+[[ -f "${summary_repair_patch_file}" ]] || fail 'the Kubescape summary-metadata repair patch is missing'
 
 [[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
   fail 'the hotfix workflow must deny permissions by default'
@@ -37,8 +39,8 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.7-${{ github.sha }}' ]] ||
-  fail 'the workflow image tag must identify the scan-record cleanup revision'
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.8-${{ github.sha }}' ]] ||
+  fail 'the workflow image tag must identify the summary-metadata repair revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
   fail 'the workflow must check out the upstream storage source explicitly'
@@ -50,8 +52,8 @@ grep -qF 'persist-credentials: false' "${workflow}" ||
   fail 'workflow checkouts must not persist credentials'
 grep -qF 'git apply --check' "${workflow}" ||
   fail 'the compatibility patch must be checked before application'
-grep -qF 'go test ./pkg/registry/file' "${workflow}" ||
-  fail 'the patched upstream storage package must run its tests before publish'
+grep -qF 'go test -race ./pkg/registry/file' "${workflow}" ||
+  fail 'the patched upstream storage package must run its tests with race detection before publish'
 # Identity is the action path; the commit pin is asserted separately below. Binding identity to one
 # specific SHA made every reviewed version bump read as a missing step, so dependency automation
 # could never update these actions and a present, correctly pinned step was reported as absent.
@@ -189,31 +191,39 @@ if grep -qF 'ImmediateTransaction' "${patch_file}"; then
   fail 'read-heavy profile transactions must not reserve SQLite write access before their write phase'
 fi
 
-# Both patches must reach the tested source and the published image, in the same order.
+# All patches must reach the tested source and the published image, in the same order.
 [[ "$(yq -er '.env.CLEANUP_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch' ]] ||
   fail 'the workflow must apply the reviewed scan-record cleanup patch'
+[[ "$(yq -er '.env.SUMMARY_REPAIR_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch' ]] ||
+  fail 'the workflow must apply the reviewed summary-metadata repair patch'
 for job in verify publish; do
   job_script="$(JOB="${job}" yq -er '
     [.jobs[strenv(JOB)].steps[] | select((.run // "") | contains("git apply")) | .run] | join("\n")
   ' "${workflow}")" || fail "could not read how the ${job} job applies its patches"
   # The literal shell variables are the contract.
   # shellcheck disable=SC2016
-  apply_order="$(grep -E '^\s*git apply "\$\{(HOTFIX|CLEANUP)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
+  apply_order="$(grep -E '^\s*git apply "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
   # shellcheck disable=SC2016
-  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" ' ]] ||
-    fail "the ${job} job must apply the compatibility patch and then the cleanup patch, once each"
-  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '4' ]] ||
-    fail "the ${job} job must run exactly one check and one apply for each of the two patches"
+  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" ' ]] ||
+    fail "the ${job} job must apply compatibility, cleanup and summary repair patches in order, once each"
+  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '6' ]] ||
+    fail "the ${job} job must run exactly one check and one apply for each of the three patches"
   # shellcheck disable=SC2016
   grep -qF 'git apply --check "${CLEANUP_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the cleanup patch before applying it"
+  # shellcheck disable=SC2016
+  grep -qF 'git apply --check "${SUMMARY_REPAIR_PATCH}"' <<<"${job_script}" ||
+    fail "the ${job} job must check the summary repair patch before applying it"
 done
 for trigger in pull_request push; do
   TRIGGER="${trigger}" yq -e '
     .on[strenv(TRIGGER)].paths |
-    contains(["k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch"])
+    contains([
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch",
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch"
+    ])
   ' "${workflow}" >/dev/null ||
-    fail "a cleanup patch change must start the workflow on ${trigger}"
+    fail "a cleanup or summary repair patch change must start the workflow on ${trigger}"
 done
 
 [[ "$(grep -c '^diff --git ' "${cleanup_patch_file}")" == '5' ]] ||

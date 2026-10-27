@@ -445,17 +445,6 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
-    "id":"monitor-secret-race",
-    "suppressed":false,
-    "resolved_at":null,
-    "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:crossview:Deployment:external-secrets",
-    "details":[
-      {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" already exists"},
-      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
-    ]
-  },
-  {
     "id":"openbao-snapshot-device-race",
     "suppressed":false,
     "resolved_at":null,
@@ -577,17 +566,6 @@ cat >"${event_dir}/alerts.json" <<'JSON'
     ]
   },
   {
-    "id":"near-match-secret",
-    "suppressed":false,
-    "resolved_at":null,
-    "rule_id":"kubernetes-events",
-    "application_id":"95rsc5yp:crossview:Deployment:external-secrets",
-    "details":[
-      {"name":"Event message","value":"secrets \"crossview-postgres-coroot-monitor\" is forbidden"},
-      {"name":"Labels","value":"cluster=\"platform\"\nkind=\"ExternalSecret\"\nname=\"crossview-postgres-coroot-monitor\"\nnamespace=\"crossview\"\nreason=\"UpdateFailed\"\nsource=\"external-secrets\""}
-    ]
-  },
-  {
     "id":"near-match-snapshot-device",
     "suppressed":false,
     "resolved_at":null,
@@ -636,7 +614,7 @@ JSON
 run_scenario "${event_dir}" >/dev/null
 [ -f "${event_dir}/suppressed.json" ] ||
   fail "the exact by-design Kubernetes lifecycle events were not suppressed"
-jq -e '.ids | sort == ["flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-health-canceled-milliseconds", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "monitor-secret-race", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
+jq -e '.ids | sort == ["flux-build-canceled", "flux-dryrun-canceled", "flux-health-canceled", "flux-health-canceled-milliseconds", "flux-status-canceled", "longhorn-clone-awaiting-healthy", "longhorn-volume-failed-delete", "openbao-snapshot-device-race", "snapshot-content-cleanup"]' \
   "${event_dir}/suppressed.json" >/dev/null || {
   jq -c '.ids | sort' "${event_dir}/suppressed.json" >&2
   fail "the event exemptions were broader than their exact label and message contracts"

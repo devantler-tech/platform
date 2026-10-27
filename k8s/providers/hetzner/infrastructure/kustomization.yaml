@@ -38,6 +38,9 @@ resources:
   # keep serving while it waits for the token.
   - external-dns/
   - vault-seed/
+  # Retain replacement snapshot storage before any Job starts consuming it.
+  # The original claim remains intact throughout recovery (#5376).
+  - vault-backup-recovery/
   # Prod-only FinOps: a Kyverno ClusterPolicy that biases pod scheduling toward
   # the static baseline workers and away from the autoscaler nodes, so the
   # cost-optimized `autoscale-cx*` pools stay idle and scale to zero. Lives in
@@ -122,10 +125,6 @@ resources:
   - coroot/service-account-stranded-autoscaler-node-alerter.yaml
   - coroot/cluster-role-stranded-autoscaler-node-alerter.yaml
   - coroot/cluster-role-binding-stranded-autoscaler-node-alerter.yaml
-  # Prod-only: alerts through Alertmanager when Crossview cannot read its admin
-  # or any other user: the schema is missing or the database is unreachable,
-  # while its probe stays green (#3315). See the file header.
-  - coroot/cron-job-crossview-login-alerter.yaml
   # Prod-only: the CloudNativePG datastore + backup wiring that lets the Coroot
   # SERVER run HA (replicas: 2 — set in the coroot-patch below). The operator
   # only honours replicas > 1 when spec.postgres is set, so this Postgres is the

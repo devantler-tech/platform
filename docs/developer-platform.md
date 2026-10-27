@@ -32,10 +32,10 @@ policy acted only while the journal existed. The
 [lifecycle decision](adr/backstage-retirement-lifecycle.md) keeps the record of
 how it worked.
 
-The portal's database and its storage are retained in the `backstage` namespace
-(`k8s/providers/hetzner/apps/retained-backstage-db`). The **Protect Retained
-Backstage Storage** workflow and `internal/portalstorage` still guard them. Whether that
-data is kept or retired is decided separately
-([#5122](https://github.com/devantler-tech/platform/issues/5122)), and
-[#4266](https://github.com/devantler-tech/platform/issues/4266) stays open until
-then.
+The portal's retained database was no longer needed. On 26 October 2026 the
+maintainer decided to delete it rather than keep a recovery copy, which closes
+the open retention question
+([#5122](https://github.com/devantler-tech/platform/issues/5122)). The one-off
+**Retire Unused App Leftovers** workflow deletes the database, its claims, their
+retained volumes and the `backstage` namespace
+([#4266](https://github.com/devantler-tech/platform/issues/4266)).

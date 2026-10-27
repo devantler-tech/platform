@@ -1,8 +1,10 @@
 # Backstage retirement lifecycle
 
 - **Status:** Completed. The stateless retirement finished on 18 October 2026 (#5042), and its
-  tooling and admission fence were removed in #5159. This record is kept for reference; the
-  retained database and its storage protection are unchanged (#5122).
+  tooling and admission fence were removed in #5159. This record is kept for reference. On
+  26 October 2026 the maintainer decided to delete the retained database instead of keeping
+  it (#5122); its storage protection was removed and the data is deleted with the other
+  retired apps' leftovers (#4266).
 
 ## Decision
 

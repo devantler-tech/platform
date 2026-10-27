@@ -58,11 +58,9 @@ data:
   tetragon_operator_replicas: "2"
   # Always-on UIs (the KEDA HTTPScaledObjects that used to scale these to zero
   # were removed). Static single replica each; auto-vpa right-sizes them at idle
-  # so they stay cheap. headlamp: OIDC login state is in-memory per pod, so a 2nd
-  # pod would break the callback — must stay single (see validate-replica-floor).
-  # whoami: diagnostic echo, one replica is plenty. fleetdm: disabled in prod
-  # since 2026-06-03, so this var is idle until re-enable.
-  headlamp_replicas: "1"
+  # so they stay cheap. whoami: diagnostic echo, one replica is plenty.
+  # fleetdm: disabled in prod since 2026-06-03, so this var is idle until
+  # re-enable.
   whoami_replicas: "1"
   fleetdm_replicas: "1"
   # Standalone MySQL (no replication). The bitnami replication topology causes

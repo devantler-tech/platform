@@ -112,7 +112,7 @@ backup from the prerequisites is the last-resort recovery path (`restore-drill.m
   flow above is the plugin-free equivalent of `kubectl cnpg destroy`.
 - Longhorn volumes are replicated across storage nodes and are **not** Hetzner servers, so this
   migration does not consume hcloud server-quota slots.
-- Non-CNPG longhorn PVCs (`kubescape-storage`, `headlamp`, `actual-budget`) can be migrated with
+- Non-CNPG longhorn PVCs (`kubescape-storage`, `actual-budget`) can be migrated with
   the same delete-PVC-after-backup pattern **only** where the workload can tolerate recreation
   from a backup — they have no built-in replica to re-clone from, so back up first and treat each
   individually.
