@@ -4,6 +4,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: vault-snapshots-recovery
   namespace: openbao
+  labels:
+    backup.platform.devantler.tech/volume-data: independently-mirrored
   annotations:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:

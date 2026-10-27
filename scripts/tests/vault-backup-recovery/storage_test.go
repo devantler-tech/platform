@@ -69,6 +69,9 @@ func TestCutoverPreservesOldStorageAndUsesRetainedReplacement(t *testing.T) {
 		}
 		if name == "vault-snapshots-recovery" {
 			labels, _ := metadata["labels"].(map[string]any)
+			if labels["backup.platform.devantler.tech/volume-data"] != "independently-mirrored" {
+				t.Fatal("active snapshot storage must use the existing independently mirrored backup route")
+			}
 			if _, marked := labels["platform.devantler.tech/storage-stage"]; marked {
 				t.Fatal("active recovery storage must leave the prepared-only health exemption")
 			}
