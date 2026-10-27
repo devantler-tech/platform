@@ -3,3 +3,23 @@ kind: Kustomization
 resources:
   - ../../../../bases/apps/private-mail-administration
   - secret-settings.enc.yaml
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    patch: |-
+      apiVersion: apps/v1
+      kind: StatefulSet
+      metadata:
+        name: private-mail
+        namespace: private-mail
+      spec:
+        template:
+          metadata:
+            annotations:
+              # Re-run the existing exclusive initializer once. Its last
+              # completed run predates the current startup failure.
+              platform.devantler.tech/initialization-revision: startup-recovery-20261027-1
