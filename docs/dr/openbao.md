@@ -6,7 +6,7 @@ OpenBao runs as a raft (Integrated Storage) cluster. Three artifacts make it
 recoverable:
 
 1. **Raft snapshots** — the `vault-snapshot` CronJob saves a
-   `bao operator raft snapshot` to the `vault-snapshots` PVC daily (newest 14
+   `bao operator raft snapshot` daily (newest 14
    kept) and mirrors them to the S3 backup target under `openbao-snapshots/`
    (Cloudflare R2 in prod, MinIO locally). The mirror exists because Velero's
    file-system backup only captures volumes mounted by *running* pods —
@@ -30,6 +30,36 @@ installed before it starts. It selects the newest `.snap` object by name and
 downloads only that object. Missing projected credentials or an empty or
 unreachable mirror listing leave the scratch volume empty. When recovery needs
 a snapshot and none is available, the restore guard refuses re-initialization.
+
+## Snapshot storage and verification
+
+Production's initial and scheduled snapshot jobs use the retained
+`vault-snapshots-recovery` claim. The original `vault-snapshots` claim remains
+protected and unmodified. Local deployments keep their original claim. Active
+claims must bind; the temporary preparation marker no longer bypasses readiness.
+
+The snapshot container completes before the mirror starts. The mirror copies
+without remote removal, then downloads each nonempty snapshot and compares its
+SHA-256 with the local bytes. A failed or partial GET fails the run, including a
+GET that delivers a complete body and then returns an error. Production requires
+the projected backup credentials; an empty source also fails. Fresh local
+bootstrap can report `VAULT_SNAPSHOT_REMOTE=UNSEEDED` until credentials arrive.
+
+The fixed `VAULT_SNAPSHOT_REMOTE=VERIFIED count=N` verdict requires matching
+downloaded bytes for every snapshot and successful age-based retention. Retention
+starts after upload and readback; the mirror never uses `--remove`. Credentials,
+client configuration and copied static tools use bounded memory-backed volumes.
+The existing concurrency exclusion, execution deadlines and snapshot resources
+remain in place.
+
+Only the snapshot init container receives the explicitly projected Kubernetes
+token used for its existing OpenBao login. Automatic token mounting is disabled;
+the static-tool installer and remote mirror receive no Kubernetes identity.
+
+Complete recovery acceptance with an isolated restore of the new off-cluster
+snapshot and verification of its credential records using the matching recovery
+keys. Keep #5376 open until that native restore proof is observed, before moving
+Email credentials or retiring legacy custody.
 
 ## Recovery Scenarios
 

@@ -211,6 +211,20 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
+    target:
+      group: batch
+      version: v1
+      kind: Job
+      name: vault-snapshot-init
+      namespace: openbao
+  - path: vault-backup-recovery/patches/use-recovery-storage-for-daily-snapshot.yaml
+    target:
+      group: batch
+      version: v1
+      kind: CronJob
+      name: vault-snapshot
+      namespace: openbao
   # UniFi exists only on Hetzner and applies Crossplane Managed Resources whose
   # default deletion policy cascades to live network objects. Keep its deliberate
   # non-pruning exception in this provider overlay so the shared admission policy
