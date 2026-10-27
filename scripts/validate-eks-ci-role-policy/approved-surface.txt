@@ -144,11 +144,11 @@ pkg.crossplane.io/v1|Provider||provider-upjet-unifi 717c7d2fb334ff6a7742dba46856
 
 pkg.crossplane.io/v1|Provider||upbound-provider-family-aws 64c7d602bf7460b7a38657a49539f5fa945ef8216be5e4296dddd04f69a944f8
 
-policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-daemonset 28dd85d6dedce48c3d60055aad47da956107a320ec6d06e594452253a72d13dc
+policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-daemonset 6f099d23ae62bfa0edb816b2cf15efef99a33beb137e3ce82ea92e133676e28d
 
-policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-deployment 804637a8c0e29af0ffb16e9fff9bd03fb25192676abf04ce500dbb5372bb082b
+policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-deployment 99b7770d4b156520f5ca58cfe6f1f756d2d1da98eeeb12a07e4d1b4093554865
 
-policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-statefulset 91cde3f6d780f91211e596a9dcbc8aad4c624406c3ceef0001416d3eeff00a0d
+policies.kyverno.io/v1|GeneratingPolicy||auto-vpa-statefulset 5c94d40212f54a6106e1a2f1027cbcaa216db4cc09e5099c2213bbc37d959697
 
 policies.kyverno.io/v1|MutatingPolicy||helm-release-enable-tests 6fce3cb1f80d3cb86e7fc83da0772e640299774d072c9b4d477bbb7cdd78c038
 
