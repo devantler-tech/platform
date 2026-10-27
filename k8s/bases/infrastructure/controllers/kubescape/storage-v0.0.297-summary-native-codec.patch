@@ -1,0 +1,269 @@
+diff --git a/pkg/registry/file/summary_metadata_repair.go b/pkg/registry/file/summary_metadata_repair.go
+index 3f044057..de8e2381 100644
+--- a/pkg/registry/file/summary_metadata_repair.go
++++ b/pkg/registry/file/summary_metadata_repair.go
+@@ -13,8 +13,11 @@ import (
+ 	"strings"
+ 	"time"
+ 
++	"github.com/kubescape/storage/pkg/apis/softwarecomposition"
+ 	"github.com/kubescape/storage/pkg/apis/softwarecomposition/v1beta1"
+ 	"github.com/spf13/afero"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/runtime"
+ 	"k8s.io/apimachinery/pkg/util/validation"
+ 	"zombiezen.com/go/sqlite"
+ 	"zombiezen.com/go/sqlite/sqlitemigration"
+@@ -114,12 +117,33 @@ func (s *StorageImpl) reconcileSummaryBeforeUpdate(ctx context.Context, conn *sq
+ 	return nil
+ }
+ 
+-func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string, conn *sqlite.Conn, row summaryMetadataRow) (*v1beta1.VulnerabilityManifestSummary, error) {
++func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string, conn *sqlite.Conn, row summaryMetadataRow) (runtime.Object, error) {
+ 	if len(validation.IsDNS1123Label(row.namespace)) != 0 || len(validation.IsDNS1123Subdomain(row.name)) != 0 {
+ 		return nil, fmt.Errorf("invalid summary key")
+ 	}
+-	var listed, stored v1beta1.VulnerabilityManifestSummary
+-	if err := json.Unmarshal([]byte(row.metadata), &listed); err != nil {
++	var shape map[string]json.RawMessage
++	if err := json.Unmarshal([]byte(row.metadata), &shape); err != nil {
++		return nil, err
++	}
++	// The registry stores the internal type, whose ObjectMeta is flattened in
++	// SQLite JSON. Versioned objects use a metadata wrapper. Keep the concrete
++	// type for decoding, metadata writes and watch events; never convert the
++	// retained payload or guess between conflicting metadata representations.
++	var listedObject, storedObject runtime.Object
++	var listed, stored *metav1.ObjectMeta
++	if _, wrapped := shape["metadata"]; wrapped {
++		for _, field := range []string{"name", "generateName", "namespace", "selfLink", "uid", "resourceVersion", "generation", "creationTimestamp", "deletionTimestamp", "deletionGracePeriodSeconds", "labels", "annotations", "ownerReferences", "finalizers", "managedFields"} {
++			if _, flattened := shape[field]; flattened {
++				return nil, fmt.Errorf("ambiguous summary metadata codec")
++			}
++		}
++		l, s := &v1beta1.VulnerabilityManifestSummary{}, &v1beta1.VulnerabilityManifestSummary{}
++		listedObject, storedObject, listed, stored = l, s, &l.ObjectMeta, &s.ObjectMeta
++	} else {
++		l, s := &softwarecomposition.VulnerabilityManifestSummary{}, &softwarecomposition.VulnerabilityManifestSummary{}
++		listedObject, storedObject, listed, stored = l, s, &l.ObjectMeta, &s.ObjectMeta
++	}
++	if err := json.Unmarshal([]byte(row.metadata), listedObject); err != nil {
+ 		return nil, err
+ 	}
+ 	if listed.Name != row.name || listed.Namespace != row.namespace || listed.UID == "" || listed.CreationTimestamp.IsZero() {
+@@ -157,7 +181,7 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
+ 	}
+ 	// Summaries are small metadata documents; malformed oversized payloads are
+ 	// refused rather than allocating without a bound during service startup.
+-	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(&stored)
++	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(storedObject)
+ 	closeErr := f.Close()
+ 	if err != nil {
+ 		return nil, err
+@@ -190,7 +214,7 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
+ 	if err != nil || newScan < oldScan || newScan > time.Now().Add(5*time.Minute).Unix() {
+ 		return nil, fmt.Errorf("invalid retained scan time")
+ 	}
+-	metadata := extractFields(&stored, []string{"ObjectMeta", "SchemaVersion"})
++	metadata := extractFields(storedObject, []string{"ObjectMeta", "SchemaVersion"})
+ 	encoded, err := json.Marshal(metadata)
+ 	if err != nil {
+ 		return nil, err
+@@ -207,5 +231,5 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
+ 	if conn.Changes() != 1 {
+ 		return nil, fmt.Errorf("metadata changed during reconciliation")
+ 	}
+-	return &stored, nil
++	return storedObject, nil
+ }
+diff --git a/pkg/registry/file/summary_metadata_repair_test.go b/pkg/registry/file/summary_metadata_repair_test.go
+index 5f0ee570..b7b312ad 100644
+--- a/pkg/registry/file/summary_metadata_repair_test.go
++++ b/pkg/registry/file/summary_metadata_repair_test.go
+@@ -43,6 +43,14 @@ type summaryRepairFixture struct {
+ // Leave the real payload at version 2 and its SQLite metadata at version 1 by
+ // rejecting the metadata write after saveObject has finished writing the payload.
+ func newSplitSummary(t *testing.T) summaryRepairFixture {
++	return newSplitSummaryObject(t, &v1beta1.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
++		Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
++		CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
++		Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800", "kubescape.io/tool-version": "v1.32.0"},
++	}})
++}
++
++func newSplitSummaryObject(t *testing.T, obj runtime.Object) summaryRepairFixture {
+ 	t.Helper()
+ 	root := t.TempDir()
+ 	pool := NewPool(filepath.Join(root, "metadata.sq3"), 2)
+@@ -53,16 +61,11 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
+ 	fs := afero.NewOsFs()
+ 	require.NoError(t, softwarecomposition.AddToScheme(scheme.Scheme))
+ 	s := NewStorageImpl(fs, root, pool, nil, scheme.Scheme).(*StorageImpl)
+-	obj := &v1beta1.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
+-		Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
+-		CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
+-		Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800", "kubescape.io/tool-version": "v1.32.0"},
+-	}}
+ 	require.NoError(t, s.saveObject(conn, summaryRepairKey, obj, nil, ""))
+ 	oldMetadata, err := ReadMetadata(conn, summaryRepairKey)
+ 	require.NoError(t, err)
+ 	require.NoError(t, sqlitex.Execute(conn, `CREATE TRIGGER reject_summary_write BEFORE INSERT ON metadata BEGIN SELECT RAISE(FAIL, 'injected metadata failure'); END;`, nil))
+-	obj.Annotations["kubescape.io/timestamp"] = "1788307200"
++	obj.(metav1.Object).GetAnnotations()["kubescape.io/timestamp"] = "1788307200"
+ 	require.ErrorContains(t, s.saveObject(conn, summaryRepairKey, obj, nil, ""), "injected metadata failure")
+ 	require.NoError(t, sqlitex.Execute(conn, `DROP TRIGGER reject_summary_write;`, nil))
+ 	payload, err := afero.ReadFile(fs, filepath.Join(root, summaryRepairKey)+GobExt)
+@@ -70,6 +73,153 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
+ 	return summaryRepairFixture{fs, root, pool, s, conn, oldMetadata, payload}
+ }
+ 
++func TestSummaryMetadataRepairInternalStorageCodec(t *testing.T) {
++	for _, test := range []struct {
++		name                        string
++		coherent                    bool
++		repaired, unchanged         int
++		beforeVersion, afterVersion string
++	}{
++		{"split native metadata", false, 1, 0, "2", "3"},
++		{"coherent native metadata", true, 0, 1, "3", "4"},
++	} {
++		t.Run(test.name, func(t *testing.T) {
++			// The API registry's NewFunc returns the internal type. Its ObjectMeta
++			// is flattened in SQLite JSON, unlike the versioned API's wrapper.
++			obj := &softwarecomposition.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
++				Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
++				CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
++				Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800", "kubescape.io/tool-version": "v1.32.0"},
++			}}
++			f := newSplitSummaryObject(t, obj)
++			if test.coherent {
++				require.NoError(t, f.store.saveObject(f.conn, summaryRepairKey, obj, nil, ""))
++			}
++			before, err := ReadMetadata(f.conn, summaryRepairKey)
++			require.NoError(t, err)
++			var shape map[string]json.RawMessage
++			require.NoError(t, json.Unmarshal(before, &shape))
++			require.Contains(t, shape, "name")
++			require.NotContains(t, shape, "metadata")
++			payload, err := afero.ReadFile(f.fs, filepath.Join(f.root, summaryRepairKey)+GobExt)
++			require.NoError(t, err)
++			report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++			require.NoError(t, err)
++			require.Equal(t, SummaryMetadataRepairReport{Examined: 1, Repaired: test.repaired, Unchanged: test.unchanged}, report)
++			after, err := ReadMetadata(f.conn, summaryRepairKey)
++			require.NoError(t, err)
++			var listed softwarecomposition.VulnerabilityManifestSummary
++			require.NoError(t, json.Unmarshal(after, &listed))
++			require.Equal(t, test.beforeVersion, listed.ResourceVersion)
++			require.Equal(t, types.UID("retained-identity"), listed.UID)
++			require.Equal(t, "1788307200", listed.Annotations["kubescape.io/timestamp"])
++			retained, err := afero.ReadFile(f.fs, filepath.Join(f.root, summaryRepairKey)+GobExt)
++			require.NoError(t, err)
++			require.Equal(t, payload, retained, "reconciliation must preserve the native payload")
++			out := &softwarecomposition.VulnerabilityManifestSummary{}
++			require.NoError(t, f.store.GuaranteedUpdate(context.Background(), summaryRepairKey, out, false, nil,
++				func(input runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
++					current := input.(*softwarecomposition.VulnerabilityManifestSummary).DeepCopy()
++					current.Annotations["kubescape.io/timestamp"] = "1788393600"
++					return current, nil, nil
++				}, &listed))
++			require.Equal(t, test.afterVersion, out.ResourceVersion)
++		})
++	}
++}
++
++func TestSummaryMetadataRepairRefusesAmbiguousCodec(t *testing.T) {
++	f := newSplitSummary(t)
++	var shape map[string]json.RawMessage
++	require.NoError(t, json.Unmarshal(f.oldMetadata, &shape))
++	shape["uid"] = json.RawMessage(`"shadow-identity"`)
++	before, err := json.Marshal(shape)
++	require.NoError(t, err)
++	require.NoError(t, WriteJSON(f.conn, summaryRepairKey, before))
++	report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++	require.Error(t, err)
++	require.Equal(t, 1, report.Refused)
++	require.Zero(t, report.Repaired)
++	after, err := ReadMetadata(f.conn, summaryRepairKey)
++	require.NoError(t, err)
++	require.Equal(t, before, after)
++}
++
++func TestSummaryMetadataRepairRefusesUnprovenInternalRecords(t *testing.T) {
++	for _, change := range []string{"replacement UID", "creation time", "metadata ahead", "backward scan", "future scan"} {
++		t.Run(change, func(t *testing.T) {
++			obj := &softwarecomposition.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
++				Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
++				CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
++				Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800"},
++			}}
++			f := newSplitSummaryObject(t, obj)
++			var listed softwarecomposition.VulnerabilityManifestSummary
++			require.NoError(t, json.Unmarshal(f.oldMetadata, &listed))
++			switch change {
++			case "replacement UID":
++				listed.UID = "replacement"
++			case "creation time":
++				listed.CreationTimestamp = metav1.Now()
++			case "metadata ahead":
++				listed.ResourceVersion = "3"
++			case "backward scan":
++				listed.Annotations["kubescape.io/timestamp"] = "1788393600"
++			case "future scan":
++				obj.Annotations["kubescape.io/timestamp"] = fmt.Sprint(time.Now().Add(time.Hour).Unix())
++				// Preserve the one-version split with a future-dated payload.
++				var buf bytes.Buffer
++				require.NoError(t, gob.NewEncoder(&buf).Encode(obj))
++				require.NoError(t, afero.WriteFile(f.fs, filepath.Join(f.root, summaryRepairKey)+GobExt, buf.Bytes(), 0600))
++			}
++			require.NoError(t, writeMetadata(f.conn, summaryRepairKey, &listed))
++			before, err := ReadMetadata(f.conn, summaryRepairKey)
++			require.NoError(t, err)
++			path := filepath.Join(f.root, summaryRepairKey) + GobExt
++			payload, err := afero.ReadFile(f.fs, path)
++			require.NoError(t, err)
++			report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++			require.Error(t, err)
++			require.Equal(t, SummaryMetadataRepairReport{Examined: 1, Refused: 1}, report)
++			after, err := ReadMetadata(f.conn, summaryRepairKey)
++			require.NoError(t, err)
++			require.Equal(t, before, after)
++			retained, err := afero.ReadFile(f.fs, path)
++			require.NoError(t, err)
++			require.Equal(t, payload, retained)
++		})
++	}
++}
++
++func TestSummaryMetadataRetryPublishesInternalWatchObject(t *testing.T) {
++	obj := &softwarecomposition.VulnerabilityManifestSummary{ObjectMeta: metav1.ObjectMeta{
++		Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
++		CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)),
++		Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800"},
++	}}
++	f := newSplitSummaryObject(t, obj)
++	w, err := f.store.Watch(context.Background(), "/spdx.softwarecomposition.kubescape.io/vulnerabilitymanifestsummaries", storage.ListOptions{ResourceVersion: softwarecomposition.ResourceVersionFullSpec})
++	require.NoError(t, err)
++	defer w.Stop()
++	out := &softwarecomposition.VulnerabilityManifestSummary{}
++	err = f.store.GuaranteedUpdate(context.Background(), summaryRepairKey, out, false, nil,
++		func(input runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
++			current := input.(*softwarecomposition.VulnerabilityManifestSummary)
++			require.Equal(t, "2", current.ResourceVersion)
++			return nil, nil, apierrors.NewConflict(schema.GroupResource{Resource: "vulnerabilitymanifestsummaries"}, current.Name, fmt.Errorf("stale scanner version"))
++		}, nil)
++	require.True(t, apierrors.IsConflict(err), "repair must not accept a stale scanner write")
++	select {
++	case event := <-w.ResultChan():
++		current, ok := event.Object.(*softwarecomposition.VulnerabilityManifestSummary)
++		require.True(t, ok, "the API watch must retain its internal runtime type")
++		require.Equal(t, "2", current.ResourceVersion)
++		require.Equal(t, types.UID("retained-identity"), current.UID)
++	case <-time.After(5 * time.Second):
++		t.Fatal("the repaired summary was not published to existing watches")
++	}
++}
++
+ func TestSummaryMetadataRepairPreservesPayloadAndAllowsScannerUpdate(t *testing.T) {
+ 	f := newSplitSummary(t)
+ 	report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
