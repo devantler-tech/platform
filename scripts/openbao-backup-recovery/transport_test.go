@@ -59,6 +59,11 @@ func TestSandboxWrapperBindsCleanupAndFiltersPrivateOutput(t *testing.T) {
 	for _, test := range []string{"lost-start-reply", "foreign-owner", "unreadable-cleanup", "private-output"} {
 		t.Run(test, func(t *testing.T) {
 			dir := t.TempDir()
+			// testing.TempDir's numbered child uses 0777 before the host umask;
+			// satisfy the production handoff's explicit 0700 ownership boundary.
+			if os.Chmod(dir, 0700) != nil {
+				t.Fatal("cannot make the synthetic handoff private")
+			}
 			bin := filepath.Join(dir, "bin")
 			if os.Mkdir(bin, 0700) != nil {
 				t.Fatal("cannot prepare fixture tools")
@@ -71,6 +76,7 @@ func TestSandboxWrapperBindsCleanupAndFiltersPrivateOutput(t *testing.T) {
 set -euo pipefail
 case "$1" in
 run)
+  printf '%s\n' reached > "$FIXTURE_DIR/reached"
   while [[ $# -gt 0 ]]; do
     if [[ $1 == --label ]]; then printf '%s' "${2#*=}" > "$FIXTURE_DIR/nonce"; fi
     shift
@@ -93,6 +99,9 @@ esac
 			command := exec.Command("bash", filepath.Join(root, "scripts/run-openbao-backup-sandbox.sh"), "verify", dir, verifier)
 			command.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "FIXTURE_DIR="+dir, "FIXTURE_CASE="+test)
 			out, err := command.CombinedOutput()
+			if _, err := os.Stat(filepath.Join(dir, "reached")); err != nil {
+				t.Fatal("fixture did not reach the intended Docker boundary")
+			}
 			if err == nil || strings.Contains(string(out), "PRIVATE_SYNTHETIC") || strings.Contains(string(out), "=PASS") {
 				t.Fatalf("unsafe wrapper verdict: %v %s", err, out)
 			}
