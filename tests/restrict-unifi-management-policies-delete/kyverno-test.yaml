@@ -30,3 +30,28 @@ results:
       - unifi/delete-restored
     kind: TrafficRoute
     result: fail
+  - policy: restrict-unifi-management-policies
+    rule: prune-only-without-delete
+    resources:
+      - unifi/empty
+      - unifi/null-list
+    kind: Record
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: prune-only-without-delete
+    resources:
+      - unifi/beta-wildcard
+    kind: Client
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: prune-only-without-delete
+    resources:
+      - unifi/wrong-group
+    kind: Client
+    result: skip
+  - policy: restrict-unifi-management-policies
+    rule: prune-only-without-delete
+    resources:
+      - other/other-namespace
+    kind: Record
+    result: skip

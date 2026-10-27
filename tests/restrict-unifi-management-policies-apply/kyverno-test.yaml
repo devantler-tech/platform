@@ -59,3 +59,38 @@ results:
       - unifi/omitted
     kind: Record
     result: skip
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      - unifi/empty
+      - unifi/null-list
+      - unifi/beta-wildcard
+    kind: Record
+    result: fail
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      - unifi/wrong-group
+    kind: Client
+    result: skip
+  - policy: restrict-unifi-management-policies
+    rule: apply-without-delete
+    resources:
+      - other/other-namespace
+    kind: Record
+    result: skip
+  - policy: restrict-unifi-management-policies
+    rule: observe-only-is-observe
+    resources:
+      - unifi/empty
+      - unifi/null-list
+      - unifi/beta-wildcard
+      - other/other-namespace
+    kind: Record
+    result: skip
+  - policy: restrict-unifi-management-policies
+    rule: observe-only-is-observe
+    resources:
+      - unifi/wrong-group
+    kind: Client
+    result: skip
