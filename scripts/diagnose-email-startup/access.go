@@ -23,6 +23,7 @@ var accessProbe string
 type inputExecutor func(context.Context, []byte, ...string) ([]byte, error)
 type accessResult struct {
 	Paths, Access, CiliumAccess string
+	Block                       blockDetails
 	Ready                       bool
 }
 type accessObservation struct {
@@ -390,12 +391,17 @@ func effectiveHostBlock(raw []byte, host netip.Addr, now time.Time) (string, err
 				ID        *string `json:"id,omitempty"`
 				Address   string  `json:"address"`
 				ExpiresAt *string `json:"expiresAt"`
+				Reason    *string `json:"reason,omitempty"`
+				CreatedAt *string `json:"createdAt,omitempty"`
 			}
 			var fields map[string]json.RawMessage
 			if strictJSON(entry, &value) != nil || json.Unmarshal(entry, &fields) != nil || value.Address == "" || value.ID == nil || !remaining[*value.ID] {
 				return "", bad
 			}
 			delete(remaining, *value.ID)
+			if tag == "allow" && (fields["reason"] != nil || fields["createdAt"] != nil) {
+				return "", bad
+			}
 			if _, ok := fields["expiresAt"]; !ok {
 				return "", bad
 			}
@@ -471,6 +477,7 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	fail := func() (accessResult, error) { return accessResult{}, errors.New("inconclusive") }
 	var before binding
 	var addresses accessAddresses
+	var createdBefore time.Time
 	found := false
 	for attempt := 0; attempt < 11; attempt++ {
 		raw, e := request(ctx, run, "get", "pod", "private-mail-0", "-n", "private-mail", "-o", "json")
@@ -482,6 +489,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 			return fail()
 		}
 		if running {
+			createdBefore, e = podCreationTime(raw)
+			if e != nil {
+				return fail()
+			}
 			addresses, e = bindAddresses(raw)
 			if e != nil {
 				return fail()
@@ -570,6 +581,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 		return fail()
 	}
 	result.CiliumAccess = ciliumResult.Access
+	result.Block, e = decodeBlockDetails(raw, ciliumBefore.Address, createdBefore, observedAt)
+	if e != nil {
+		return fail()
+	}
 	switch result.CiliumAccess {
 	case "STORED_HOST_BLOCK_MATCH":
 		result.CiliumAccess = "STORED_CILIUM_BLOCK_MATCH"
@@ -586,6 +601,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	}
 	afterAddresses, e := bindAddresses(raw)
 	if e != nil || afterAddresses != addresses {
+		return fail()
+	}
+	createdAfter, e := podCreationTime(raw)
+	if e != nil || !createdAfter.Equal(createdBefore) {
 		return fail()
 	}
 	nodeAfter, e := readNode()
@@ -627,7 +646,7 @@ func runAccessEntry(ctx context.Context, env func(string) string, run executor, 
 	if result.Ready {
 		ready = "TRUE"
 	}
-	line := fmt.Sprintf("MAIL_PROBE_PATHS=%s\nMAIL_ACCESS_STATE=%s\nMAIL_CILIUM_ACCESS_STATE=%s\nMAIL_KUBERNETES_READY=%s\n", result.Paths, result.Access, result.CiliumAccess, ready)
+	line := fmt.Sprintf("MAIL_PROBE_PATHS=%s\nMAIL_ACCESS_STATE=%s\nMAIL_CILIUM_ACCESS_STATE=%s\nMAIL_CILIUM_BLOCK_REASON=%s\nMAIL_CILIUM_BLOCK_SCOPE=%s\nMAIL_CILIUM_BLOCK_EXPIRY=%s\nMAIL_CILIUM_BLOCK_CREATION=%s\nMAIL_KUBERNETES_READY=%s\n", result.Paths, result.Access, result.CiliumAccess, result.Block.Reason, result.Block.Scope, result.Block.Expiry, result.Block.Creation, ready)
 	if n, e := io.WriteString(out, line); e != nil || n != len(line) {
 		return 3
 	}
