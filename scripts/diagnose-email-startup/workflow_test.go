@@ -49,6 +49,7 @@ func readObservationWorkflow(t *testing.T) observationWorkflow {
 	return w
 }
 
+// TestWorkflowKeepsManualMainGuardBeforeCredentials executes the shipped dispatch guard in isolation.
 func TestWorkflowKeepsManualMainGuardBeforeCredentials(t *testing.T) {
 	w := readObservationWorkflow(t)
 	if len(w.On) != 1 || w.On["workflow_dispatch"] == nil || w.Permissions == nil || len(w.Permissions) != 0 ||
@@ -98,6 +99,7 @@ func TestWorkflowKeepsManualMainGuardBeforeCredentials(t *testing.T) {
 	}
 }
 
+// TestWorkflowKeepsCredentialValuesAndHelperErrorsPrivate executes both success and error shell paths.
 func TestWorkflowKeepsCredentialValuesAndHelperErrorsPrivate(t *testing.T) {
 	step := readObservationWorkflow(t).Jobs["observe"].Steps[5]
 	for _, scenario := range []string{"healthy", "endpoint-fails", "empty-config", "oversized-config"} {
@@ -154,6 +156,7 @@ func TestWorkflowKeepsCredentialValuesAndHelperErrorsPrivate(t *testing.T) {
 	}
 }
 
+// TestAPIErrorsCannotEscapeToPublicOutput confines private response and error payloads.
 func TestAPIErrorsCannotEscapeToPublicOutput(t *testing.T) {
 	var out bytes.Buffer
 	code := runEntry(context.Background(), admittedEnvironment, func(context.Context, ...string) ([]byte, error) {
@@ -164,6 +167,7 @@ func TestAPIErrorsCannotEscapeToPublicOutput(t *testing.T) {
 	}
 }
 
+// TestWaitingForAContainerIsFiniteAndNeverExecutes bounds waiting without probing an unready process.
 func TestWaitingForAContainerIsFiniteAndNeverExecutes(t *testing.T) {
 	p := changePod(t, fixturePod(t), func(p map[string]any) {
 		p["status"].(map[string]any)["containerStatuses"].([]any)[0].(map[string]any)["state"] = map[string]any{"waiting": map[string]any{"reason": "SyntheticBackoff"}}

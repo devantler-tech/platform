@@ -84,9 +84,9 @@ jobs:
           export KUBECONFIG="$proof_dir/kubeconfig"
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
           unset KUBE_CONFIG
-          if ! ./scripts/use-prod-stable-api-endpoint.sh >"$proof_dir/endpoint.stdout" 2>"$proof_dir/endpoint.stderr"; then
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
             printf '%s\n' 'MAIL_STARTUP_SAMPLE=INCONCLUSIVE'
             exit 3
-          fi
+          fi 2>"$proof_dir/endpoint.stderr"
           unset HCLOUD_TOKEN
           "$RUNNER_TEMP/observe-email-startup"

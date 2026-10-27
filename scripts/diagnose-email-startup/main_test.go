@@ -17,6 +17,7 @@ func goodMeasurement() measurement {
 		LockDevice: 2049, LockInode: 42, WriteLocks: []string{"08:01:42"}, ManagementListeners: 1, LocalHealth: 200}
 }
 
+// TestClassifyObservedPhases checks the ordered, public startup classifications.
 func TestClassifyObservedPhases(t *testing.T) {
 	cases := []struct {
 		name, want     string
@@ -44,6 +45,7 @@ func TestClassifyObservedPhases(t *testing.T) {
 	}
 }
 
+// TestLinuxDeviceIdentityIncludesHighMinorBits preserves complete Linux device identities.
 func TestLinuxDeviceIdentityIncludesHighMinorBits(t *testing.T) {
 	for _, tc := range []struct {
 		device uint64
@@ -95,6 +97,7 @@ func fixtureMap(t *testing.T) []byte {
 	return b
 }
 
+// TestObservationBindsCompleteReadsAndOneFixedExec rejects replacement and incomplete evidence.
 func TestObservationBindsCompleteReadsAndOneFixedExec(t *testing.T) {
 	baseline := fixturePod(t)
 	for _, scenario := range []string{"healthy", "pod-replaced", "container-replaced", "restarted", "map-changed", "exec-failed", "partial-json", "extra-field", "unexpected-image", "api-failed"} {
@@ -191,6 +194,7 @@ func TestObservationBindsCompleteReadsAndOneFixedExec(t *testing.T) {
 	}
 }
 
+// TestDispatchGuardAndOutputDoNotExposeAPIData refuses every invalid dispatch before API access.
 func TestDispatchGuardAndOutputDoNotExposeAPIData(t *testing.T) {
 	for _, key := range []string{"GITHUB_REPOSITORY", "GITHUB_EVENT_NAME", "GITHUB_REF", "GITHUB_RUN_ATTEMPT", "MAIL_STARTUP_CONFIRM"} {
 		t.Run(key, func(t *testing.T) {
@@ -208,6 +212,7 @@ func TestDispatchGuardAndOutputDoNotExposeAPIData(t *testing.T) {
 	}
 }
 
+// TestMalformedOrUnboundedMeasurementsAreInconclusive refuses incomplete observation schemas.
 func TestMalformedOrUnboundedMeasurementsAreInconclusive(t *testing.T) {
 	for _, body := range []string{"", `{}`, `null`, strings.Repeat("x", maxOutput+1), `{"local_health":200} {}`} {
 		if _, e := decodeMeasurement([]byte(body)); e == nil {
@@ -216,6 +221,7 @@ func TestMalformedOrUnboundedMeasurementsAreInconclusive(t *testing.T) {
 	}
 }
 
+// TestDuplicateNullAndInvalidMeasurementFieldsAreRefused prevents ambiguous successful measurements.
 func TestDuplicateNullAndInvalidMeasurementFieldsAreRefused(t *testing.T) {
 	b, e := json.Marshal(goodMeasurement())
 	if e != nil {
@@ -236,6 +242,7 @@ func TestDuplicateNullAndInvalidMeasurementFieldsAreRefused(t *testing.T) {
 	}
 }
 
+// TestAPIBufferRefusesTruncation preserves a hard response limit without silent truncation.
 func TestAPIBufferRefusesTruncation(t *testing.T) {
 	b := boundedBuffer{limit: 4}
 	if n, e := b.Write([]byte("test")); n != 4 || e != nil {
@@ -282,6 +289,7 @@ func (w failedWriter) Write(p []byte) (int, error) {
 	return 0, io.ErrClosedPipe
 }
 
+// TestFailedPublicOutputCannotSucceed makes log write failures inconclusive.
 func TestFailedPublicOutputCannotSucceed(t *testing.T) {
 	for _, short := range []bool{false, true} {
 		if code := runEntry(context.Background(), admittedEnvironment, healthyExecutor(t), nil, failedWriter{short: short}); code != 3 {
