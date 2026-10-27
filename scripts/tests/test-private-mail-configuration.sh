@@ -162,6 +162,32 @@ apply_plan() {
   native_cli apply --file /proof/plan.ndjson --json >"$scratch/apply.jsonl" 2>"$scratch/apply.err"
   jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/apply.jsonl" >/dev/null
 }
+verify_rendered_self_checks() {
+  local probe arg status rewritten i
+  local -a check_command=() refused_command=()
+  kubectl kustomize "$root/k8s/bases/apps/private-mail-administration" >"$scratch/health-render.yaml"
+  yq -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "private-mail").spec.template.spec.containers[] | select(.name == "private-mail")' \
+    "$scratch/health-render.yaml" >"$scratch/health-container.json"
+  for probe in startupProbe readinessProbe livenessProbe; do
+    jq -e --arg probe "$probe" '.[$probe].exec.command | type=="array" and length>0 and all(.[];type=="string")' "$scratch/health-container.json" >/dev/null
+    check_command=()
+    while IFS= read -r -d '' arg; do check_command+=("$arg"); done < <(jq -j --arg probe "$probe" '.[$probe].exec.command[] | ., "\u0000"' "$scratch/health-container.json")
+    docker exec "$name" "${check_command[@]}" >"$scratch/$probe.stdout" 2>"$scratch/$probe.stderr"
+    [ ! -s "$scratch/$probe.stdout" ] || { echo 'FAIL: a self-check printed response content' >&2; exit 1; }
+    refused_command=("${check_command[@]}")
+    rewritten=0
+    for i in "${!refused_command[@]}"; do
+      refused_command[i]="${refused_command[i]//127.0.0.1:8080/127.0.0.1:1}"
+      if [[ "${refused_command[i]}" != "${check_command[i]}" ]]; then rewritten=$((rewritten+1)); fi
+    done
+    [ "$rewritten" = 1 ] || { echo 'FAIL: self-check lacks its unique loopback target' >&2; exit 1; }
+    status=0
+    docker exec "$name" "${refused_command[@]}" >"$scratch/$probe-refused.stdout" 2>"$scratch/$probe-refused.stderr" || status=$?
+    [ "$status" = 7 ] || { echo 'FAIL: the native connection-refusal control was not observed' >&2; exit 1; }
+    docker exec "$name" "${check_command[@]}" >"$scratch/$probe-recovered.stdout" 2>"$scratch/$probe-recovered.stderr"
+  done
+  echo 'PASS: actual rendered self-checks accept native health and reject an unreachable endpoint'
+}
 run_bootstrap
 # The actual pinned server must honor the recovery override while keeping the
 # normal Service's port closed. Probe from a separate network client, without
@@ -181,6 +207,14 @@ apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
+# Permanent client rules are outside configuration ownership and must survive
+# both configuration replay and the later complete initializer re-entry.
+printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"protected-probe":{"address":"192.0.2.30","reason":"portScanning"},"protected-control":{"address":"192.0.2.31","reason":"manual"}}}' >"$scratch/protected-blocks.ndjson"
+native_cli apply --file /proof/protected-blocks.ndjson --json >"$scratch/protected-blocks-apply.jsonl" 2>"$scratch/protected-blocks-apply.err"
+jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/protected-blocks-apply.jsonl" >/dev/null
+native_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/protected-blocks-before.jsonl"
+jq -sS 'sort_by(.id)' "$scratch/protected-blocks-before.jsonl" >"$scratch/protected-blocks-before.json"
+jq -e 'length==2 and ([.[].address]|sort)==["192.0.2.30","192.0.2.31"] and ([.[].id]|unique|length)==2 and all(.[];.id!="" and has("expiresAt") and .expiresAt==null)' "$scratch/protected-blocks-before.json" >/dev/null
 
 # Primary addresses and aliases share a namespace across Users, Groups and
 # MailingLists. Free only the owned aliases before creating each negative.
@@ -302,8 +336,11 @@ native_cli update Domain "$domain_id" --file /proof/restore-alias-patch.json >"$
 
 # Seed a previously wider permission and an extra expression branch. Replay
 # must clear both maps rather than preserving keys absent from the new plan.
+# Also suspend the managed administrator: replay must restore its inherited
+# access, proved by the regular administrator's requests after serving starts.
 printf '%s\n' '{"@type":"upsert","object":"Domain","matchOn":["name"],"value":{"domain":{"name":"example.test"}}}' \
   '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"agents":{"@type":"User","name":"agents","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{"jmapEmailImport":true,"jmapEmailCreate":true}}}}}' \
+  '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"administrator":{"@type":"User","name":"operator","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{},"disabledPermissions":{}}}}}' \
   '{"@type":"update","object":"MtaStageRcpt","value":{"rewrite":{"match":{"9":{"if":"true","then":"'"'"'operator@example.test'"'"'"}}}}}' >"$scratch/wider.ndjson"
 native_cli apply --file /proof/wider.ndjson --json >"$scratch/wider-apply.jsonl" 2>"$scratch/wider-apply.err"
 prepare_plan "$scratch/replay.ndjson"
@@ -324,6 +361,7 @@ jq -e '.methodResponses[0][1].total==4' "$scratch/inputs/listener-inventory.json
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
+verify_rendered_self_checks
 agent_password=$(cat "$scratch/inputs/agent-password")
 human_password=$(cat "$scratch/inputs/maintainer-password")
 administrator_password=$(cat "$scratch/inputs/administrator-password")
@@ -458,6 +496,9 @@ run_bootstrap
 start_server preparation
 inventory
 jq -e --arg id "$maintainer_id" '.methodResponses[10][1].list|map(select(.id==$id))|length==1 and (.[0].aliases|length)==2' "$scratch/inputs/listener-inventory.json" >/dev/null
+native_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/protected-blocks-after.jsonl"
+jq -sS '[.[]|select(.address=="192.0.2.30" or .address=="192.0.2.31")]|sort_by(.id)' "$scratch/protected-blocks-after.jsonl" >"$scratch/protected-blocks-after.json"
+cmp "$scratch/protected-blocks-before.json" "$scratch/protected-blocks-after.json"
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
