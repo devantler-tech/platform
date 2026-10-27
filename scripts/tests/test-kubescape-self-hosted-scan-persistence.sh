@@ -319,14 +319,21 @@ readonly node_agent_profile_reader_count
 # v0.3.566 invalidates exception label caches through informers. Chart 1.40.5
 # grants only get on these objects, so an image-only upgrade would continuously
 # fail to list/watch and could keep stale selector decisions until cache expiry.
-while IFS='|' read -r api_group resource; do
-  label_watch_allowed="$(API_GROUP="${api_group}" RESOURCE="${resource}" yq ea -er '
+label_watch_access() {
+  local chart_file="$1" api_group="$2" resource="$3"
+  API_GROUP="${api_group}" RESOURCE="${resource}" yq ea -r '
     select(.kind == "ClusterRole" and .metadata.name == "kubevuln") |
     [.rules[] |
-      select(.apiGroups | contains([strenv(API_GROUP)])) |
-      select(.resources | contains([strenv(RESOURCE)])) |
-      .verbs[]] | unique | contains(["get", "list", "watch"])
-  ' "${postrendered_chart}")" || fail "could not inspect kubevuln ${resource} label-watch access"
+      select(.apiGroups[] == strenv(API_GROUP)) |
+      select(.resources[] == strenv(RESOURCE)) |
+      .verbs[] | select(. == "get" or . == "list" or . == "watch")]
+    | unique | sort | join(",") == "get,list,watch"
+  ' "${chart_file}"
+}
+
+while IFS='|' read -r api_group resource; do
+  label_watch_allowed="$(label_watch_access "${postrendered_chart}" "${api_group}" "${resource}")" ||
+    fail "could not inspect kubevuln ${resource} label-watch access"
   [[ "${label_watch_allowed}" == 'true' ]] ||
     fail "kubevuln must be able to read/watch ${resource} labels for exception cache invalidation"
 done <<'LABEL_WATCHES'
@@ -340,6 +347,29 @@ apps|daemonsets
 batch|jobs
 batch|cronjobs
 LABEL_WATCHES
+
+# Exercise the complete rendered role with three invalid permission variants.
+# A subresource, another API group or a verb suffix cannot authorize this informer.
+readonly invalid_watch_resource="${chart_dir}/invalid-label-watch-resource.yaml"
+yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
+  (.rules[].resources[] | select(. == "deployments")) = "deployments/status")' \
+  "${postrendered_chart}" >"${invalid_watch_resource}" || fail 'could not construct the subresource control'
+[[ "$(label_watch_access "${invalid_watch_resource}" apps deployments)" == false ]] ||
+  fail 'the label-watch guard accepted a subresource instead of deployments'
+
+readonly invalid_watch_group="${chart_dir}/invalid-label-watch-group.yaml"
+yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
+  (.rules[].apiGroups[] | select(. == "apps")) = "apps.example.invalid")' \
+  "${postrendered_chart}" >"${invalid_watch_group}" || fail 'could not construct the API-group control'
+[[ "$(label_watch_access "${invalid_watch_group}" apps deployments)" == false ]] ||
+  fail 'the label-watch guard accepted another API group instead of apps'
+
+readonly invalid_watch_verb="${chart_dir}/invalid-label-watch-verb.yaml"
+yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
+  (.rules[].verbs[] | select(. == "watch")) = "watchStatus")' \
+  "${postrendered_chart}" >"${invalid_watch_verb}" || fail 'could not construct the verb control'
+[[ "$(label_watch_access "${invalid_watch_verb}" apps deployments)" == false ]] ||
+  fail 'the label-watch guard accepted a verb suffix instead of watch'
 
 rendered_posture_schedule="$(yq ea -er '
   select(.kind == "CronJob" and .metadata.name == "kubescape-scheduler") |
