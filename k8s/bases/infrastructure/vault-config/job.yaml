@@ -697,14 +697,12 @@ spec:
               # by the explicit retirement (#2496), so nothing can need these
               # credentials any more. Their PushSecrets never delete the remote
               # copies, so destroy every version plus the metadata here.
-              # Idempotent: a later run finds nothing to remove.
+              # Deleting absent metadata succeeds, so a later run is a no-op;
+              # any other error fails the Job (set -e) instead of reading as
+              # "already retired".
               for retired in apps/crossview/db apps/crossview/app apps/crossview/admin; do
-                if bao kv metadata get -mount=secret "$retired" >/dev/null 2>&1; then
-                  echo "Retiring secret/$retired..."
-                  bao kv metadata delete -mount=secret "$retired"
-                else
-                  echo "No secret at secret/$retired (already retired)."
-                fi
+                echo "Retiring secret/$retired..."
+                bao kv metadata delete -mount=secret "$retired"
               done
 
               # --- 2. Enable Kubernetes auth ---
