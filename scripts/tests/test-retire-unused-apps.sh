@@ -179,8 +179,22 @@ expect 1 'deployed infrastructure inventory still owns observability_crossview-l
 state="$(seed stale "${deployed}")"
 jq '.status.observedGeneration = 3' "${state}/apps.json" >"${state}/apps.tmp" && mv "${state}/apps.tmp" "${state}/apps.json"
 run "${state}"
-expect 1 'is not Ready for its current generation' 'a stale apps Kustomization must be refused'
+expect 1 'has not applied its current generation' 'a stale apps Kustomization must be refused'
 [ "$(deleted "${state}")" -eq 0 ] || fail 'a stale apps Kustomization must delete nothing'
+
+# A failed build or apply leaves the inventory unproven, so it is refused.
+state="$(seed apply-failed "${deployed}")"
+jq '.status.conditions = [{type: "Ready", status: "False", reason: "ReconciliationFailed"}]' "${state}/apps.json" >"${state}/apps.tmp" && mv "${state}/apps.tmp" "${state}/apps.json"
+run "${state}"
+expect 1 'has not applied its current generation' 'a failed apply must be refused'
+[ "$(deleted "${state}")" -eq 0 ] || fail 'a failed apply must delete nothing'
+
+# An unrelated workload failing its health check does not block the retirement:
+# the apply succeeded, so the inventory still proves the removal deployed.
+state="$(seed unrelated-health "${deployed}")"
+jq '.status.conditions = [{type: "Ready", status: "False", reason: "HealthCheckFailed"}]' "${state}/apps.json" >"${state}/apps.tmp" && mv "${state}/apps.tmp" "${state}/apps.json"
+run "${state}"
+expect 0 'an unrelated health check is failing' 'an unrelated health failure must not block the retirement'
 
 # An object of the same name that Flux apps does not own is never deleted.
 state="$(seed foreign "${deployed}")"
