@@ -80,6 +80,7 @@ func run() error {
 	decoder := json.NewDecoder(os.Stdin)
 	decoder.DisallowUnknownFields()
 	count := 0
+	decisionControls := 0
 	for {
 		var f fixture
 		if err := decoder.Decode(&f); err == io.EOF {
@@ -91,9 +92,15 @@ func run() error {
 			return fmt.Errorf("%s: %w", f.Label, err)
 		}
 		count++
+		if f.Expected != "skip" {
+			decisionControls++
+		}
 	}
 	if count == 0 {
 		return fmt.Errorf("no admission controls executed")
+	}
+	if decisionControls == 0 {
+		return fmt.Errorf("no non-skip admission controls executed")
 	}
 	fmt.Printf("Tenant WebApp boundary: %d explicit Kyverno engine controls passed.\n", count)
 	return nil
@@ -101,7 +108,7 @@ func run() error {
 
 func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) error {
 	policy, ok := policies[f.Policy]
-	if !ok || f.Label == "" || f.Actor == "" || (f.Expected != "pass" && f.Expected != "fail" && f.Expected != "error") {
+	if !ok || f.Label == "" || f.Actor == "" || (f.Expected != "pass" && f.Expected != "fail" && f.Expected != "error" && f.Expected != "skip") {
 		return fmt.Errorf("incomplete fixture")
 	}
 	if (f.LookupFailure != "" && f.LookupFailure != "forbidden") || (f.Expected == "error" && policy.GetFailurePolicy(false) != registrationv1.Fail) {
@@ -117,7 +124,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 	if target == nil {
 		target = f.OldObject
 	}
-	resources := map[string]string{"WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets"}
+	resources := map[string]string{"WebApp": "webapps", "Deployment": "deployments", "Service": "services", "HTTPRoute": "httproutes", "ExternalSecret": "externalsecrets", "SecretStore": "secretstores", "PushSecret": "pushsecrets", "ConfigMap": "configmaps"}
 	gvk := target.GroupVersionKind()
 	resource, ok := resources[gvk.Kind]
 	if !ok || gvk.Version == "" {
@@ -171,6 +178,7 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 		return fmt.Errorf("policy did not evaluate: %+v", response.Policies)
 	}
 	failed, evaluationError := false, false
+	skipped := 0
 	for _, rule := range response.Policies[0].Rules {
 		switch rule.Status() {
 		case engineapi.RuleStatusPass:
@@ -178,9 +186,22 @@ func evaluate(f fixture, policies map[string]*policiesv1beta1.ValidatingPolicy) 
 			failed = true
 		case engineapi.RuleStatusError:
 			evaluationError = true
+		case engineapi.RuleStatusSkip:
+			// Compatibility controls must name a real, deliberate condition
+			// skip. Missing matches and unexpected skips still fail the driver.
+			if f.Expected != "skip" || rule.SkipReason() != engineapi.SkipReasonMatchConditions {
+				return fmt.Errorf("unexpected rule skip: %s", rule.Message())
+			}
+			skipped++
 		default:
 			return fmt.Errorf("unexpected rule status %s: %s", rule.Status(), rule.Message())
 		}
+	}
+	if f.Expected == "skip" {
+		if skipped != len(response.Policies[0].Rules) {
+			return fmt.Errorf("expected only explicit match-condition skips, got %+v", response.Policies[0].Rules)
+		}
+		return nil
 	}
 	if (f.Expected == "error" && !evaluationError) || (f.Expected != "error" && evaluationError) || (f.Expected != "error" && failed != (f.Expected == "fail")) {
 		return fmt.Errorf("expected %s, failed=%v error=%v: %+v", f.Expected, failed, evaluationError, response.Policies[0].Rules)

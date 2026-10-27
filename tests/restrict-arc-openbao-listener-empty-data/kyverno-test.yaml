@@ -1,0 +1,16 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-openbao-listener-empty-data
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-arc-openbao-listener
+    rule: public-listener-settings-only
+    resources:
+      - openbao/arc-openbao-listener
+    kind: ConfigMap
+    result: fail

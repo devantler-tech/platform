@@ -1,0 +1,21 @@
+# UPDATE fixtures supply the same old/new object. Preserve the legacy
+# grandfathering skip for an existing violation; distinct transitions require
+# the native admission driver because the CLI deliberately clones the object.
+# Pins the ClusterPolicy's behaviour before its ValidatingPolicy rewrite (#4995):
+# binaryData beside the audited listener is denied.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-openbao-listener-binary-data-update
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener.yaml
+resources:
+  - ../restrict-arc-openbao-listener-binary-data/resources.yaml
+variables: ../restrict-arc-openbao-listener-update/values.yaml
+results:
+  - policy: restrict-arc-openbao-listener
+    rule: public-listener-settings-only
+    resources:
+      - openbao/arc-openbao-listener
+    kind: ConfigMap
+    result: skip
