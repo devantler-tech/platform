@@ -3,9 +3,9 @@
 # Many controllers, sidecars, and init containers do not expose health
 # endpoints. Adding probes to upstream charts is impractical and they
 # typically have their own readiness mechanisms (leader election, watch
-# loops). App namespaces (headlamp, homepage) are included because their
-# charts deploy init containers and sidecars that lack probe endpoints,
-# while main application containers have probes configured.
+# loops). The homepage app namespace is included because its chart deploys
+# init containers and sidecars that lack probe endpoints, while the main
+# application container has probes configured.
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:
@@ -41,7 +41,6 @@ spec:
             - reloader
             - external-dns
             - kubelet-serving-cert-approver
-            - headlamp
             - kubevirt
             - cdi
             - dex
@@ -51,7 +50,7 @@ spec:
             # workloads genuinely lack probe endpoints (verified failing C-0018 /
             # C-0056 in the cluster Kubescape operator): the external-secrets
             # operator/webhook/cert-controller and the Crossplane control-plane
-            # (core, rbac-manager, provider pods). crossview / ksail-operator /
-            # flagger DO configure probes, so they are deliberately NOT listed.
+            # (core, rbac-manager, provider pods). ksail-operator / flagger DO
+            # configure probes, so they are deliberately NOT listed.
             - external-secrets
             - crossplane-system

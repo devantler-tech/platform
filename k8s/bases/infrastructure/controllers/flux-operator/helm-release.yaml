@@ -16,11 +16,8 @@ spec:
   timeout: 10m
   values:
     web:
-      # The Flux Operator's bundled Status web UI is disabled: Flux is surfaced
-      # in-cluster through Headlamp's `headlamp_flux` plugin (see
-      # bases/apps/headlamp), so a standalone Flux dashboard is redundant. This
-      # release is the operator/reconciler only and must stay running at all
-      # times.
+      # The Flux Operator's bundled Status web UI is disabled: this release is
+      # the operator/reconciler only and must stay running at all times.
       enabled: false
   # Give the operator container the uid AND gid its own image declares, so
   # Kubescape C-0013 (non-root containers) passes on its own terms rather than

@@ -3877,3 +3877,38 @@ The exact rendered fingerprint becomes
 its surface-ledger entry becomes
 `0cfe2fc47fa5c5ad7e0b696476d22361dc09ab095913995aca08c301156b2c3e`.
 All other approvals and validation rules remain unchanged.
+
+## 2026-10-26 — Retire Crossview and Headlamp
+
+For #2496, on the maintainer's direction, both unused cluster UIs leave the
+platform; KSail's web UI takes over their role (devantler-tech/ksail#5827 and
+devantler-tech/ksail#8011). Against `ef018aa140a64f7cf3e0c112b591bd9933536108`,
+the ledger loses seven entries and changes three. No entry is added.
+
+Removed: HelmReleases crossview/crossview and headlamp/headlamp, their
+HelmRepositories, and the ClusterRoleBindings crossview-cluster-reader,
+crossview-view and headlamp-cluster-reader. The two bindings to `view` and
+`cluster-reader` were the only grants to the apps' ServiceAccounts, so removing
+them withdraws access and grants none. The core fingerprints for the two
+Crossview bindings leave the expected-hash table with them.
+
+Changed: HelmRelease dex/dex moves from
+`c34e9d516d7791b50043ab355702e8be4741b5cdd015bcdc41c0d8aca27fd43d` to
+`3db343919ffde305fc4eb68664e0c12ecd8fe618b2f19f28b60b3413bf9237d7` by losing
+the four callback addresses of the retired hosts; no client, connector, team
+or remaining callback changes. Role
+observability/cronjob-failure-alert moves from
+`208ea569644d0750f7ab9ca3e4d2fefcbd56e5fb2fc6b871b30a350393b1c4c3` to
+`3b244783f53c17c55abfbae0a09973d244d258dbfbfdc8aa816539ae02bf4e6c` because
+its `resourceNames` lose the retired Crossview login sensor; verbs and
+resources are unchanged. ConfigMap flux-system/variables-cluster moves from
+`e44f686f8632152eb22ee50f48dd608a69a8b2718ba420350808d12d78ddd755` to
+`4dd0f78bf25a143540b8caec53295a4a4869c42df99d0b0f003a1ac86971a162` by losing
+the unused `headlamp_replicas` value.
+
+The ledger was recomputed with the existing surface evaluator using kubectl
+v1.37.1 / Kustomize v5.8.1, which is not the approved renderer; the required CI
+job re-renders with the approved kubectl v1.36.2 / Kustomize v5.8.1 and is the
+authority. This record does not claim deployment, nor deletion of the
+prune-protected namespaces, releases and retained claim that stay live until
+they are removed explicitly.
