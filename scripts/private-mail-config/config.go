@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-var errConfiguration = errors.New("private mail configuration is incomplete or invalid")
+var errConfiguration = errors.New("email configuration is incomplete or invalid")
 
 type settings struct {
 	Domain            string   `json:"domain"`
@@ -29,6 +29,7 @@ var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:
 var localPattern = regexp.MustCompile(`^[a-z][a-z0-9._-]{0,31}$`)
 var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
 
+// render builds staged settings and account changes from validated private inputs.
 func render(v inputs) ([]byte, error) {
 	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
 		return nil, errConfiguration
@@ -68,6 +69,9 @@ func render(v inputs) ([]byte, error) {
 		return map[string]any{"@type": "User", "name": name, "domainId": "#domain", "credentials": map[string]any{"0": map[string]any{"@type": "Password", "secret": password}}, "roles": map[string]any{"@type": role}}
 	}
 	administrator := account(v.Administrator, v.administratorPassword, "Admin")
+	// Replaying the local baseline must recover its managed administrator even
+	// after a later identity cutover has suspended the ordinary account.
+	administrator["permissions"] = map[string]any{"@type": "Inherit"}
 	maintainer := account(v.Maintainer, v.maintainerPassword, "User")
 	if v.MaintainerAliases != nil {
 		maintainer["aliases"] = receivingAliases(v.MaintainerAliases, "#domain")
@@ -87,6 +91,9 @@ func render(v inputs) ([]byte, error) {
 		return map[string]any{"@type": "update", "object": object, "value": value}
 	}
 	operations := []map[string]any{
+		// Declare the existing local authentication state explicitly. A main
+		// recovery must clear a later external directory rather than retain it.
+		update("Authentication", map[string]any{"directoryId": nil}),
 		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, "isEnabled": true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
 		upsert("Account", []string{"name", "domainId"}, map[string]any{"administrator": administrator, "maintainer": maintainer, "agents": agents}),
 		// Address the exact ID returned by the upsert and replace the whole
