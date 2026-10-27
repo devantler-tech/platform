@@ -5,7 +5,11 @@ metadata:
   name: restrict-unifi-management-policies-delete
 policies:
   - >-
-    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-validating-policies.yaml
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-apply-management-policies.yaml
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-observe-only.yaml
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-prune-management-policies.yaml
 resources:
   - resources.yaml
 variables: values.yaml

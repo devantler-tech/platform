@@ -35,7 +35,7 @@
   "restrict-unifi-management-policies/apply-without-delete": "Enforce",
   "restrict-unifi-management-policies/observe-only-is-observe": "Enforce",
   "restrict-unifi-management-policies/prune-only-without-delete": "Enforce",
-  "restrict-unifi-management-policies": "Enforce",
+  "restrict-unifi-apply-management-policies": "Enforce",
   "restrict-unifi-observe-only": "Enforce",
   "restrict-unifi-prune-management-policies": "Enforce",
   "validate-host-restrictions": "Enforce",

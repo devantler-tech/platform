@@ -33,7 +33,9 @@ resources:
   - best-practices/restrict-webapp-child-deletion.yaml
   - best-practices/restrict-unifi-management-policies.yaml
   # Retain the legacy guard until all three replacements are deployed Ready.
-  - best-practices/restrict-unifi-management-validating-policies.yaml
+  - best-practices/restrict-unifi-apply-management-policies.yaml
+  - best-practices/restrict-unifi-observe-only.yaml
+  - best-practices/restrict-unifi-prune-management-policies.yaml
   - best-practices/set-observability-dns-ndots.yaml
   - best-practices/validate-host-restrictions.yaml
   - best-practices/validate-pdb-drain-safe.yaml

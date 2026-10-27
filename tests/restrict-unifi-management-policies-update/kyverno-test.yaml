@@ -5,32 +5,36 @@ metadata:
   name: restrict-unifi-management-policies-update
 policies:
   - >-
-    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-validating-policies.yaml
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-apply-management-policies.yaml
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-observe-only.yaml
+  - >-
+    ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-prune-management-policies.yaml
 resources:
   - ../restrict-unifi-management-policies-apply/resources.yaml
 variables: values.yaml
 userinfo: ../restrict-unifi-management-policies-apply/user-info.yaml
 results:
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       - unifi/retained
       - unifi/observing
       - unifi/observe-only-widened
     kind: Record
     result: pass
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       # An empty list is falsy, so it reads as the "*" default: refused.
       - unifi/omitted
       - unifi/observe-only-empty
     kind: Record
     result: fail
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       - unifi/delete-restored
     kind: Client
     result: fail
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       - unifi/wildcard
     kind: TrafficRoute
@@ -52,19 +56,19 @@ results:
       - unifi/omitted
     kind: Record
     result: skip
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       - unifi/empty
       - unifi/null-list
       - unifi/beta-wildcard
     kind: Record
     result: fail
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       - unifi/wrong-group
     kind: Client
     result: skip
-  - policy: restrict-unifi-management-policies
+  - policy: restrict-unifi-apply-management-policies
     resources:
       - other/other-namespace
     kind: Record
