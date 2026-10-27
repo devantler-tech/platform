@@ -1,0 +1,92 @@
+name: Read Email Startup State
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: read-email-startup-state"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  observe:
+    name: Observe existing Email startup state
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    env:
+      MAIL_STARTUP_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform &&
+             "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
+             "${GITHUB_REF}" == refs/heads/main &&
+             "${GITHUB_RUN_ATTEMPT}" == 1 &&
+             "${MAIL_STARTUP_CONFIRM}" == read-email-startup-state ]]
+
+      - name: Checkout the reviewed dispatch revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the reviewed observer before restoring credentials
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/observe-email-startup" ./scripts/diagnose-email-startup
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/email-observation-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/email-observation-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/email-observation-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/email-observation-tools" >> "$GITHUB_PATH"
+
+      - name: Observe the existing serving container
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          if [[ -z "$KUBE_CONFIG" || ${#KUBE_CONFIG} -gt 1048576 ]]; then
+            printf '%s\n' 'MAIL_STARTUP_SAMPLE=INCONCLUSIVE'
+            exit 3
+          fi
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/email-startup-context.XXXXXX")"
+          trap 'rm -rf "$proof_dir"' EXIT
+          export KUBECONFIG="$proof_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >"$proof_dir/endpoint.stdout" 2>"$proof_dir/endpoint.stderr"; then
+            printf '%s\n' 'MAIL_STARTUP_SAMPLE=INCONCLUSIVE'
+            exit 3
+          fi
+          unset HCLOUD_TOKEN
+          "$RUNNER_TEMP/observe-email-startup"
