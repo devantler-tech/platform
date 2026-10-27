@@ -20,8 +20,12 @@ the prevention is deployed. Dispatch it from main with mode assess first and
 confirmation cleanup-orphan-generated-vpas. Review its aggregate result, then
 dispatch mode apply with the same confirmation. A rerun requires a fresh dispatch.
 
-Apply compares all three deployed generators with the reviewed dispatch revision
-before considering deletion. The complete census is limited to 250 VPAs. Only
+Apply renders the reviewed dispatch revision's production infrastructure and
+compares all three complete deployed generators with that render before
+considering deletion. This retains exact expression comparison after Kustomize's
+multiline-scalar serialization; it does not strip or normalize CEL text. A failed
+render, missing or duplicate generator, or empty expression list stops cleanup.
+The complete census is limited to 250 VPAs. Only
 autoscalers with consistent Kyverno policy and trigger provenance are eligible;
 objects with owner references, finalizers, deletion in progress or an existing
 target are preserved. An existing target is preserved even when its UID differs
