@@ -210,7 +210,7 @@ rbac.authorization.k8s.io/v1|ClusterRole||crossplane-provider-unhealthy-alert 6a
 
 rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-alerter faf47ab2d737acd58c26bbf7aa3b46f23e5b22fc52aed6acd0fcf7f434fc431f
 
-rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-exporter 603cec5b91944155ef37677bc46e02dc418ed5e71ad7c3e843ea9b794766fa36
+rbac.authorization.k8s.io/v1|ClusterRole||crossplane-sync-exporter a37e34740575edf8bbd47070e60c94ea4362d3d4d6cb6e1258643f1fdc421239
 
 rbac.authorization.k8s.io/v1|ClusterRole||events:kubelet-serving-cert-approver 89efaa35b7428e392e7562ac0500ad4352ea56a2b3f8228772c6edc2ef09f84f
 
