@@ -52,6 +52,10 @@ client configuration and copied static tools use bounded memory-backed volumes.
 The existing concurrency exclusion, execution deadlines and snapshot resources
 remain in place.
 
+Only the snapshot init container receives the explicitly projected Kubernetes
+token used for its existing OpenBao login. Automatic token mounting is disabled;
+the static-tool installer and remote mirror receive no Kubernetes identity.
+
 Complete recovery acceptance with an isolated restore of the new off-cluster
 snapshot and verification of its credential records using the matching recovery
 keys. Keep #5376 open until that native restore proof is observed, before moving

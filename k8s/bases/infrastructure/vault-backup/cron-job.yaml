@@ -75,11 +75,9 @@ spec:
             app: vault-snapshot
         spec:
           serviceAccountName: vault-snapshot
-          # The token IS this pod's credential: the snapshot container reads
-          # /var/run/secrets/kubernetes.io/serviceaccount/token and presents it
-          # as the `jwt` for `auth/kubernetes/login`. Left at the mount-by-default
-          # value rather than set explicitly — an explicit `true` reads identically
-          # to Kubernetes and trips Kubescape C-0034.
+          # Only the authenticating snapshot container receives a short-lived
+          # projected token. The tool installer and remote mirror need no identity.
+          automountServiceAccountToken: false
           restartPolicy: OnFailure
           # The full restricted-PSS context is set explicitly (not left to the
           # add-security-context Kyverno mutation) so the pod stays hardened
@@ -110,6 +108,13 @@ spec:
               emptyDir:
                 medium: Memory
                 sizeLimit: 8Mi
+            - name: kubernetes-identity
+              projected:
+                defaultMode: 0440
+                sources:
+                  - serviceAccountToken:
+                      path: token
+                      expirationSeconds: 3600
           initContainers:
             - name: install-mirror-tools
               image: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
@@ -167,6 +172,9 @@ spec:
               volumeMounts:
                 - name: snapshots
                   mountPath: /snapshots
+                - name: kubernetes-identity
+                  mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+                  readOnly: true
               command:
                 - /bin/sh
                 - -ec
