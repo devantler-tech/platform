@@ -430,6 +430,7 @@ grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 # Prime the native application cache with a previous unversioned bundle. An
 # upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
+docker logs "$name" >"$scratch/smtp-auth-server.log" 2>&1
 docker rm "$name" >/dev/null
 mkdir "$scratch/stale-assets" "$scratch/stale-source"
 printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
@@ -484,15 +485,23 @@ for alias in former-a former-b; do
   cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
 done
 docker logs "$name" >"$scratch/server.log" 2>&1
-if ! grep -Fq 'server.startup' "$scratch/server.log"; then
-  echo 'FAIL: normal serving produced no startup diagnostic event' >&2; exit 1
-fi
-for secret in "$scratch/inputs/"*-password; do
-  if grep -Fq -f "$secret" "$scratch/server.log"; then
-    echo 'FAIL: a generated fixture credential appeared in server logs' >&2; exit 1
+for log in "$scratch/smtp-auth-server.log" "$scratch/server.log"; do
+  if ! grep -Fq 'server.startup' "$log"; then
+    echo 'FAIL: normal serving produced no startup diagnostic event' >&2; exit 1
+  fi
+  for secret in "$scratch/inputs/"*-password; do
+    if grep -Fq -f "$secret" "$log"; then
+      echo 'FAIL: a generated fixture credential appeared in server logs' >&2; exit 1
+    fi
+  done
+  if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$log"; then
+    echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
+  fi
+  if grep -Eqi '(^|[^[:alnum:]_-])(smtp|imap|jmap|auth|oauth|message|queue|delivery|http|websocket)\.[[:alnum:]_-]+' "$log"; then
+    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2; exit 1
+  fi
+  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'private-canary' "$log"; then
+    echo 'FAIL: private fixture message content appeared in server logs' >&2; exit 1
   fi
 done
-if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
-  echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
-fi
 echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS and account restrictions'
