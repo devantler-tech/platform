@@ -11,7 +11,7 @@ task_pod_url="http://$task_pod_ip:8080"
 # This source image was verified to include curl. No request follows redirects.
 probe() {
   local task_status
-  task_status="$(curl --disable --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' --http1.1 --header 'Connection: close' --header 'Accept: */*' --user-agent 'kube-probe/v1.36.2' --connect-timeout 1 --max-time 1 --proto '=http' "$1" 2>/dev/null)" || task_status=000
+  task_status="$(curl --disable --noproxy '*' --silent --output /dev/null --write-out '%{http_code}' --http1.1 --header 'Connection: close' --header 'Accept: */*' --user-agent 'kube-probe/1.36' --connect-timeout 1 --max-time 1 --proto '=http' "$1" 2>/dev/null)" || task_status=000
   [[ "$task_status" =~ ^[0-9]{3}$ ]]
   printf '%d' "$((10#$task_status))"
 }

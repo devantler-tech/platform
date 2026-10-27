@@ -45,6 +45,24 @@ type accessAddresses struct{ Pod, Host netip.Addr }
 var readerName = regexp.MustCompile(`^[a-z][a-z0-9._+-]{0,63}$`)
 var readerDomain = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{0,251}[a-z0-9]$`)
 var readerPassword = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
+var supportedKubelet = regexp.MustCompile(`^v1\.36\.[0-9]+$`)
+var nodeName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$`)
+
+type probeNode struct{ UID, Version string }
+
+// bindProbeNode matches the real kubelet minor that supplies kube-probe/1.36.
+func bindProbeNode(raw []byte, name string) (probeNode, error) {
+	var n struct {
+		Metadata metadata
+		Status   struct {
+			NodeInfo struct{ KubeletVersion string }
+		}
+	}
+	if !nodeName.MatchString(name) || uniqueJSON(raw) != nil || json.Unmarshal(raw, &n) != nil || n.Metadata.Name != name || !uuidPattern.MatchString(n.Metadata.UID) || !supportedKubelet.MatchString(n.Status.NodeInfo.KubeletVersion) {
+		return probeNode{}, errors.New("unsupported probe node")
+	}
+	return probeNode{UID: n.Metadata.UID, Version: n.Status.NodeInfo.KubeletVersion}, nil
+}
 
 // uniqueJSON refuses duplicate keys, truncated input and excessive nesting.
 func uniqueJSON(b []byte) error {
@@ -181,7 +199,19 @@ func decodeSecret(raw []byte, name, key string) ([]byte, secretBinding, error) {
 	bad := errors.New("invalid credential input")
 	if uniqueJSON(raw) != nil || json.Unmarshal(raw, &s) != nil ||
 		s.Metadata.Name != name || s.Metadata.Namespace != "private-mail" || !uuidPattern.MatchString(s.Metadata.UID) || s.Metadata.ResourceVersion == "" ||
-		len(s.Data) != 1 || len(s.Data[key]) == 0 || len(s.Data[key]) > 4096 {
+		len(s.Data[key]) == 0 || len(s.Data[key]) > 4096 {
+		return nil, secretBinding{}, bad
+	}
+	switch {
+	case name == "private-mail-settings" && key == "settings.json":
+		if len(s.Data) != 1 {
+			return nil, secretBinding{}, bad
+		}
+	case name == "private-mail-admin" && key == "password":
+		if len(s.Data) != 2 || len(s.Data["credential"]) == 0 || len(s.Data["credential"]) > 4096 {
+			return nil, secretBinding{}, bad
+		}
+	default:
 		return nil, secretBinding{}, bad
 	}
 	return s.Data[key], secretBinding{Metadata: s.Metadata, Digest: hashBytes(s.Data[key])}, nil
@@ -418,6 +448,20 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if !found {
 		return fail()
 	}
+	if !nodeName.MatchString(before.Node) {
+		return fail()
+	}
+	readNode := func() (probeNode, error) {
+		raw, e := request(ctx, run, "get", "node", before.Node, "-o", "json")
+		if e != nil {
+			return probeNode{}, e
+		}
+		return bindProbeNode(raw, before.Node)
+	}
+	nodeBefore, e := readNode()
+	if e != nil {
+		return fail()
+	}
 	readMap := func() (configMap, error) {
 		raw, e := request(ctx, run, "get", "configmap", "private-mail-datastore", "-n", "private-mail", "-o", "json")
 		if e != nil {
@@ -470,6 +514,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	}
 	afterAddresses, e := bindAddresses(raw)
 	if e != nil || afterAddresses != addresses {
+		return fail()
+	}
+	nodeAfter, e := readNode()
+	if e != nil || nodeAfter != nodeBefore {
 		return fail()
 	}
 	afterMap, e := readMap()

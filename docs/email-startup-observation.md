@@ -60,12 +60,17 @@ deployment lock and retains the fixed serving image, command, mount and runtime
 binding. The serving container must have no environment entries or imports,
 preventing a shell startup hook from observing its stdin.
 
-This observer sends the existing one-second HTTP/1.1 health requests, with
-Kubernetes probe headers, to loopback and the bound Pod address. These requests
+This observer sends the existing one-second HTTP/1.1 health requests, with the
+native Kubernetes 1.36 `kube-probe/1.36` User-Agent, to loopback and the bound Pod address. The bound
+node must run a supported stable 1.36 kubelet before and after the observation;
+a changed node identity or version is inconclusive. The header follows the
+kubelet minor, independently of the Kubernetes client version. These requests
 originate inside the Pod; they do not reproduce a kubelet's actual network path.
 
 Only after verifying the target does the protected workflow read the two named
-settings and administrator Secrets. It authenticates the fixed loopback API with
+settings and administrator Secrets. The administrator input retains its existing
+`credential` and `password` keys; only `password` is extracted for authentication.
+Missing or extra keys are inconclusive. It authenticates the fixed loopback API with
 the existing administrator, requesting only allowed/blocked address and expiry
 fields. Credentials travel in memory and stdin, never command arguments,
 exported environment, files or artifacts. Native stdout/stderr is captured

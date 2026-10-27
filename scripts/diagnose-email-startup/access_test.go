@@ -18,9 +18,58 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 var accessNow = time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+
+// TestSupportedProbeMinorTracksDesiredKubernetes prevents a pin bump leaving the observer stale.
+func TestSupportedProbeMinorTracksDesiredKubernetes(t *testing.T) {
+	b, e := os.ReadFile("../../ksail.prod.yaml")
+	if e != nil {
+		t.Fatal(e)
+	}
+	var desired struct {
+		Spec struct {
+			Cluster struct {
+				KubernetesVersion string `yaml:"kubernetesVersion"`
+			}
+		}
+	}
+	if yaml.Unmarshal(b, &desired) != nil || !supportedKubelet.MatchString(desired.Spec.Cluster.KubernetesVersion) {
+		t.Fatal("desired Kubernetes minor requires a reviewed probe header update")
+	}
+}
+
+// TestAdministratorShapeRetainsOnlyTheRequestedPassword rejects absent and extra fields.
+func TestAdministratorShapeRetainsOnlyTheRequestedPassword(t *testing.T) {
+	password := []byte(strings.Repeat("S", 64))
+	raw := accessSecret(t, "private-mail-admin", "password", password)
+	value, _, e := decodeSecret(raw, "private-mail-admin", "password")
+	if e != nil || !bytes.Equal(value, password) {
+		t.Fatal("existing two-key administrator Secret was rejected")
+	}
+	for _, scenario := range []string{"missing-credential", "extra-key", "missing-password"} {
+		var object map[string]any
+		if json.Unmarshal(raw, &object) != nil {
+			t.Fatal("invalid fixture")
+		}
+		data := object["data"].(map[string]any)
+		switch scenario {
+		case "missing-credential":
+			delete(data, "credential")
+		case "extra-key":
+			data["unexpected"] = base64.StdEncoding.EncodeToString([]byte("PRIVATE_UNUSED"))
+		case "missing-password":
+			delete(data, "password")
+		}
+		bad, _ := json.Marshal(object)
+		if _, _, e := decodeSecret(bad, "private-mail-admin", "password"); e == nil {
+			t.Fatalf("unsafe Secret shape accepted: %s", scenario)
+		}
+	}
+}
 
 // TestQueryAndGetIdentityAgreementRefusesSilentTruncation covers the server's implicit get limit.
 func TestQueryAndGetIdentityAgreementRefusesSilentTruncation(t *testing.T) {
@@ -82,7 +131,7 @@ func TestEmbeddedAccessProbeUsesRealHTTPAndOnlyTheTwoReadMethods(t *testing.T) {
 				requests.Add(1)
 				switch r.URL.Path {
 				case "/healthz/live", "/healthz/ready":
-					if r.Method != "GET" || r.Header.Get("Authorization") != "" || r.Header.Get("User-Agent") != "kube-probe/v1.36.2" || r.Header.Get("Accept") != "*/*" || !r.Close {
+					if r.Method != "GET" || r.Header.Get("Authorization") != "" || r.Header.Get("User-Agent") != "kube-probe/1.36" || r.Header.Get("Accept") != "*/*" || !r.Close {
 						t.Error("health request differs from fixed probe")
 					}
 					w.WriteHeader(status)
@@ -273,7 +322,11 @@ func accessPod(t *testing.T) []byte {
 }
 func accessSecret(t *testing.T, name, key string, data []byte) []byte {
 	t.Helper()
-	b, e := json.Marshal(map[string]any{"metadata": map[string]any{"name": name, "namespace": "private-mail", "uid": "00000000-0000-0000-0000-000000000004", "resourceVersion": "123"}, "data": map[string][]byte{key: data}})
+	values := map[string][]byte{key: data}
+	if name == "private-mail-admin" {
+		values["credential"] = append([]byte("admin:"), data...)
+	}
+	b, e := json.Marshal(map[string]any{"metadata": map[string]any{"name": name, "namespace": "private-mail", "uid": "00000000-0000-0000-0000-000000000004", "resourceVersion": "123"}, "data": values})
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -290,7 +343,7 @@ func accessMeasurement(t *testing.T, security []byte) []byte {
 
 // TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv exercises the complete collector.
 func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t *testing.T) {
-	for _, scenario := range []string{"healthy", "blocked", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env"} {
+	for _, scenario := range []string{"healthy", "blocked", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced"} {
 		t.Run(scenario, func(t *testing.T) {
 			pod := accessPod(t)
 			after := append([]byte(nil), pod...)
@@ -327,13 +380,26 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 			calls, execs := 0, 0
 			fake := func(_ context.Context, args ...string) ([]byte, error) {
 				calls++
-				if len(args) < 8 || !reflect.DeepEqual(args[:3], []string{"--context", "admin@prod", "--request-timeout=10s"}) || args[3] != "get" {
+				if len(args) < 7 || !reflect.DeepEqual(args[:3], []string{"--context", "admin@prod", "--request-timeout=10s"}) || args[3] != "get" {
 					t.Fatalf("unexpected request %q", args)
 				}
 				if scenario == "read-failed" {
 					return nil, errors.New("PRIVATE_ERROR")
 				}
 				switch args[4] {
+				case "node":
+					if args[5] != "synthetic-node" {
+						t.Fatal("unbound node read")
+					}
+					uid, version := "00000000-0000-0000-0000-000000000005", "v1.36.4"
+					if scenario == "kubelet-minor-drift" {
+						version = "v1.37.0"
+					}
+					if scenario == "node-replaced" && execs > 0 {
+						uid = "00000000-0000-0000-0000-000000000006"
+					}
+					b, _ := json.Marshal(map[string]any{"metadata": map[string]any{"name": "synthetic-node", "uid": uid}, "status": map[string]any{"nodeInfo": map[string]any{"kubeletVersion": version}}})
+					return b, nil
 				case "pod":
 					if execs > 0 {
 						return after, nil
@@ -386,7 +452,7 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 			} else if e == nil {
 				t.Fatalf("unsafe %s accepted: %v", scenario, got)
 			}
-			if execs > 1 || calls > 8 {
+			if execs > 1 || calls > 10 {
 				t.Fatalf("unbounded reads/execs %d/%d", calls, execs)
 			}
 		})
