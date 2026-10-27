@@ -60,12 +60,15 @@ deployment lock and retains the fixed serving image, command, mount and runtime
 binding. The serving container must have no environment entries or imports,
 preventing a shell startup hook from observing its stdin.
 
-This observer sends the existing one-second HTTP/1.1 health requests, with the
-native Kubernetes 1.36 `kube-probe/1.36` User-Agent, to loopback and the bound Pod address. The bound
+This observer sends one-second HTTP/1.1 health requests, with the native
+Kubernetes 1.36 `kube-probe/1.36` User-Agent, to loopback and the bound Pod address
+for investigating node-originating HTTP traffic. The bound
 node must run a supported stable 1.36 kubelet before and after the observation;
 a changed node identity or version is inconclusive. The header follows the
 kubelet minor, independently of the Kubernetes client version. These requests
 originate inside the Pod; they do not reproduce a kubelet's actual network path.
+The serving self-checks described below execute locally, so these diagnostic
+requests do not reproduce their process execution either.
 
 Only after verifying the target does the protected workflow read the two named
 settings and administrator Secrets. The administrator input retains its existing
@@ -137,3 +140,56 @@ with a synthetic store and a deliberately blocked documentation address.
 Regressions exercise the actual embedded shell over HTTP, complete native
 query/get schemas, expiry/override precedence, credential framing, dispatch
 guards and changed runtime/input identities. Production requires a bound result.
+
+## Serving self-checks
+
+Startup, readiness and liveness execute the existing health endpoints over
+`127.0.0.1`. Each command starts with an empty environment, uses the image's
+Bash and curl, requires HTTP 200 and gives the HTTP request one second. Kubernetes
+allows two seconds for process execution, including that request deadline. The
+startup period and failure budget remain five seconds and 24 failures.
+
+This binds application self-checks to the serving process while its client-address
+security state remains effective. Deployment acceptance also requires sustained
+readiness, external reachability and authenticated administration. Native checks
+exercise the rendered commands and verify that initialization replay retains
+permanent client rules and existing application data.
+
+## Replacing the obsolete probe Pod
+
+An unready Pod can hold an `OrderedReady` StatefulSet on its old revision after
+the template changes, as described in the [Kubernetes rollout guidance](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#forced-rollback).
+The protected merge-group deployment handles only the transition from this
+service's old HTTP probes to its reviewed local self-checks. It runs inside the
+existing production deployment lock after a failed reconciliation.
+
+The recovery requires the newly published digest to be adopted and verified,
+one unchanged-image serving replica, an old unready revision with repeated
+restarts, and the existing bound claim with retained storage and no Pod owner.
+It re-reads those observations before requesting one graceful Pod deletion with
+both [Kubernetes identity preconditions](https://kubernetes.io/docs/reference/kubernetes-api/definitions/delete-options-v1-meta/).
+It neither changes storage nor relaxes the client access rules.
+
+The replacement must have a new identity, the intended revision and probes,
+and report ready while the same claim remains bound to the same volume. The
+StatefulSet must finish observing that revision, and the application layer must
+report both ready and healthy for the same published artifact with no active
+reconciliation. Pod readiness alone does not establish that Flux has evaluated
+the recovered application layer. Recovery allows up to six minutes for storage
+attachment, startup and controller acknowledgement; the probe failure budget is
+unchanged.
+Unreadable or changed observations, conflicting deletion and timeout fail closed.
+Only verified recovery permits one further full reconciliation; any remaining
+failure still fails the deployment. Ordinary delivery, recovery and DR receive
+no general Pod-replacement permission from this path.
+
+A failed rollback can leave the StatefulSet's last successful revision pointing
+at the intended probes while its actual Pod runs the obsolete HTTP checks.
+Eligibility therefore binds the actual owned Pod revision and probe contract;
+the last successful revision alone does not identify what is currently running.
+
+The tests exercise refusal and retained-identity cases, the actual kubectl
+request body, and both conflicting and matching deletion requests against the
+existing isolated Kubernetes 1.36.2 API-server fixture. That fixture runs no
+scheduler, kubelet or mail process. Sustained production readiness and external,
+authenticated administration remain separate deployment acceptance criteria.
