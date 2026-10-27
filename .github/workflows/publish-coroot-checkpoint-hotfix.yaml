@@ -197,8 +197,8 @@ jobs:
             org.opencontainers.image.version=${{ env.IMAGE_TAG }}
             io.devantler.coroot-checkpoint.upstream-revision=${{ matrix.source }}
 
-      - name: Set up Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
 
       - name: Sign and verify published digest
         env:
