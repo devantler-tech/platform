@@ -8,17 +8,14 @@ metadata:
 spec:
   # WHY THIS EXISTS (prod-only). The platform's general alerting was migrated off
   # the kube-prometheus-stack onto Coroot (docs/dr/alerting.md), so there is no
-  # Alertmanager in the cluster. But the Kubescape node-agent's runtime-detection
-  # alerts have exactly one first-class dashboard — the Headlamp Kubescape
-  # plugin's "Runtime Detection > Alerts" tab — and that tab reads ONLY from a
-  # Prometheus Alertmanager `GET /api/v2/alerts` (filtered on
-  # alertname="KubescapeRuleViolated"); it cannot read Kubescape storage CRs and
-  # cannot query Coroot's Prometheus (a metrics store, not an Alertmanager). So a
-  # minimal Alertmanager cluster is reintroduced here — scoped to the kubescape
-  # namespace and to runtime alerts only, NOT a general re-adoption of the
-  # Prometheus stack. The service both RECEIVES the node-agent's pushed alerts
-  # (POST /api/v2/alerts, wired via the nodeAgent.config.alertManagerExporterUrls
-  # patch in ../kubescape/patches/) and SERVES them to the Headlamp plugin (GET),
+  # Alertmanager in the cluster. But the Kubescape node-agent can only push its
+  # runtime-detection alerts to a Prometheus Alertmanager, and Coroot's
+  # Prometheus is a metrics store, not an Alertmanager. So a minimal Alertmanager
+  # cluster is reintroduced here — scoped to the kubescape namespace and to
+  # pushed alerts only, NOT a general re-adoption of the Prometheus stack. The
+  # service RECEIVES the node-agent's pushed alerts (POST /api/v2/alerts, wired
+  # via the nodeAgent.config.alertManagerExporterUrls patch in
+  # ../kubescape/patches/) and the platform's alerting CronJobs' alerts,
   # and routes them to Slack (slack_configs → the shared incoming-webhook). The
   # third destination, Coroot, is fed independently by the node-agent's stdout
   # exporter (Coroot's eBPF log capture surfaces the alerts in its Logs view;
@@ -56,8 +53,8 @@ spec:
   values:
     # Deterministic in-cluster names. Producers post to every peer through the
     # headless Service (alertmanager-N.alertmanager-headless.kubescape.svc:9093),
-    # because received alerts are not replicated between peers; the Headlamp
-    # plugin reads through the Service alertmanager.kubescape.svc:9093.
+    # because received alerts are not replicated between peers; readers use the
+    # Service alertmanager.kubescape.svc:9093.
     fullnameOverride: alertmanager
     replicaCount: 2
     # Keep the two peers on distinct nodes. The cluster-wide spread-pods policy

@@ -130,10 +130,10 @@ metadata:
   namespace: platform-ns
 spec:
   hostnames:
-    - headlamp.platform.devantler.tech
+    - whoami.platform.devantler.tech
   rules:
     - backendRefs:
-        - name: headlamp
+        - name: whoami
           port: 80
 ---
 # CONTROL for the platform-author carve-out: byte-identical to the route in

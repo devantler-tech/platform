@@ -134,6 +134,22 @@ Metadata agreement alone establishes storage coherence, not scan freshness, a pa
 result, or complete coverage. Keep the remaining missing and stale results tracked in #4263. The
 detector stays read-only; it performs none of these repairs.
 
+The revision 8 compatibility-image publisher adds a bounded, non-destructive repair. Before
+the API server and background writers start, it reads only vulnerability-summary metadata
+and the corresponding payloads. It accepts the same UID, name, namespace and creation time,
+an intact regular payload file, and a payload exactly one version ahead with a non-decreasing
+scan timestamp. A conditional SQLite update replaces only the exact observed metadata row.
+Missing or corrupt payloads, links, replacement objects, invalid versions and concurrent metadata
+changes are refused and reported. Payload bytes and scan times are retained. The same check runs
+under the summary's write lock before later scanner updates, so a failed metadata write can be
+recovered on retry without accepting a stale client's update.
+
+Publication does not deploy this image. Before a separate immutable image-pin change, verify
+its signed digest, a recovery path for the retained store and the repeated split observations.
+Preserve the chart's single-writer `Recreate` rollout. After deployment, retain the reconciliation
+receipt, compare both ordinary API reads, observe a successful scanner update and run the complete
+coverage check. A refusal or a remaining missing, stale or unpaired result keeps #4263 open.
+
 CI has no cluster, so it runs only the fixture test
 (`scripts/tests/test-check-kubescape-result-coverage.sh`). The test includes the negative control:
 one expected result removed from a passing set must fail.

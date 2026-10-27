@@ -39,7 +39,7 @@ acceptances_file="${work_root}/risks.json"
 yq e -r '.data."risks.json"' "${acceptances_manifest}" >"${acceptances_file}"
 
 jq -e '
-  type == "array" and length == 41 and
+  type == "array" and length == 37 and
   all(.[] | select(has("application"));
     (.application | type == "string") and
     (.application | split(":") | length == 3) and
@@ -77,13 +77,10 @@ expected_applications=(
   'crossplane-system:Deployment:crossplane'
   'crossplane-system:Deployment:crossplane-rbac-manager'
   'observability:Deployment:crossplane-sync-exporter'
-  'crossview:Deployment:crossview'
-  'crossview:Deployment:crossview-postgres'
   'kube-system:Deployment:descheduler'
   'external-dns:Deployment:external-dns'
   'ascoachingogvaner:Deployment:external-dns'
   'flux-system:Deployment:flux-operator'
-  'headlamp:Deployment:headlamp'
   'kube-system:Deployment:hubble-ui'
   'longhorn-system:Deployment:longhorn-driver-deployer'
   'longhorn-system:InstanceManager:instance-manager-0c0363730e10c9272de1f53e608f8860'
@@ -111,20 +108,6 @@ for application in "${expected_applications[@]}"; do
     'any(.[]; .application == $application)' "${acceptances_file}" >/dev/null ||
     fail "missing reviewed risk acceptance for ${application}"
 done
-
-if ! jq -e '
-  . as $acceptances |
-  ["unreplicated-database", "single-instance-app"] |
-  all(.[]; . as $type |
-    any($acceptances[];
-      .application == "crossview:Deployment:crossview-postgres" and
-      .category == "Availability" and
-      .type == $type
-    )
-  )
-' "${acceptances_file}" >/dev/null; then
-  fail 'Crossview PostgreSQL must bind both reviewed availability risks exactly'
-fi
 
 if ! jq -e '
   any(.[];
@@ -184,16 +167,16 @@ fi
 
 setup_scenario() {
   local name="$1" mode="$2" dir
-  local crossview_reason
+  local whoami_reason
   dir="${work_root}/${name}"
   mkdir -p "${dir}/bin"
-  crossview_reason="$(jq -r '.[] | select(.application == "crossview:Deployment:crossview") | .reason' "${acceptances_file}")"
+  whoami_reason="$(jq -r '.[] | select(.application == "whoami:Deployment:whoami") | .reason' "${acceptances_file}")"
 
   jq -n '{data:{projects:[{id:"95rsc5yp",name:"platform"}]}}' >"${dir}/user.json"
   if [ "${mode}" = 'normal' ]; then
-    jq -n --arg crossview_reason "${crossview_reason}" '{data:{risks:[
+    jq -n --arg whoami_reason "${whoami_reason}" '{data:{risks:[
       {application_id:"95rsc5yp:actual-budget:Deployment:actual-budget-actualbudget",key:{category:"Availability",type:"single-instance-app"}},
-      {application_id:"95rsc5yp:crossview:Deployment:crossview",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:$crossview_reason}},
+      {application_id:"95rsc5yp:whoami:Deployment:whoami",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:$whoami_reason}},
       {application_id:"95rsc5yp:retired:Deployment:old-tool",key:{category:"Availability",type:"single-instance-app"},dismissal:{reason:"manual dismissal outside GitOps"}},
       {application_id:"95rsc5yp:new-service:Deployment:new-service",key:{category:"Availability",type:"single-instance-app"}},
       {application_id:"95rsc5yp:database:StatefulSet:database",key:{category:"Security",type:"db-internet-exposure"},dismissal:{reason:"owned by a separate security policy"}}
