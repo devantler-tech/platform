@@ -3,6 +3,49 @@
 set -Eeuo pipefail
 trap 'printf "FAIL: native mail proof stopped at line %s\n" "$LINENO" >&2' ERR
 umask 077
+assert_diagnostic_log_privacy() {
+  local log=$1 secret
+  shift
+  if ! grep -Fq 'server.startup' "$log"; then
+    echo 'FAIL: normal serving produced no startup diagnostic event' >&2; return 1
+  fi
+  for secret in "$@"; do
+    if grep -Fq -f "$secret" "$log"; then
+      echo 'FAIL: a generated fixture credential appeared in server logs' >&2; return 1
+    fi
+  done
+  if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$log"; then
+    echo 'FAIL: a recovery credential appeared in server logs' >&2; return 1
+  fi
+  if grep -Eqi '(^|[^[:alnum:]_-])(smtp|imap|jmap|auth|oauth|message|message-ingest|queue|delivery|http|websocket)\.[[:alnum:]_-]+' "$log"; then
+    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2; return 1
+  fi
+  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'private-canary' "$log"; then
+    echo 'FAIL: private fixture message content appeared in server logs' >&2; return 1
+  fi
+}
+test_diagnostic_log_privacy() (
+  local proof
+  proof=$(mktemp -d)
+  trap 'rm -rf "$proof"' EXIT
+  printf 'server.startup\n' >"$proof/log"
+  assert_diagnostic_log_privacy "$proof/log"
+  printf 'message-ingest.ham message not in the listed canaries\n' >>"$proof/log"
+  if assert_diagnostic_log_privacy "$proof/log" >"$proof/result" 2>&1; then
+    echo 'FAIL: diagnostic privacy check accepted an unlisted message-ingest event' >&2
+    exit 1
+  fi
+  grep -Fq 'excluded message or authentication events' "$proof/result"
+  printf 'server.startup\nprivate-canary\n' >"$proof/log"
+  if assert_diagnostic_log_privacy "$proof/log" >"$proof/result" 2>&1; then
+    echo 'FAIL: diagnostic privacy check accepted a listed message canary' >&2
+    exit 1
+  fi
+  grep -Fq 'private fixture message content' "$proof/result"
+  echo 'PASS: diagnostic log privacy controls'
+)
+test_diagnostic_log_privacy
+if [ "${1:-}" = --test-log-privacy ]; then exit 0; fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture_user="$(id -u):$(id -g)"
 [ "$(id -u)" != 0 ] || { echo 'FAIL: native mail proof requires an unprivileged fixture user' >&2; exit 1; }
@@ -527,22 +570,6 @@ for alias in former-a former-b; do
 done
 docker logs "$name" >"$scratch/server.log" 2>&1
 for log in "$scratch/smtp-auth-server.log" "$scratch/server.log"; do
-  if ! grep -Fq 'server.startup' "$log"; then
-    echo 'FAIL: normal serving produced no startup diagnostic event' >&2; exit 1
-  fi
-  for secret in "$scratch/inputs/"*-password; do
-    if grep -Fq -f "$secret" "$log"; then
-      echo 'FAIL: a generated fixture credential appeared in server logs' >&2; exit 1
-    fi
-  done
-  if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$log"; then
-    echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
-  fi
-  if grep -Eqi '(^|[^[:alnum:]_-])(smtp|imap|jmap|auth|oauth|message|queue|delivery|http|websocket)\.[[:alnum:]_-]+' "$log"; then
-    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2; exit 1
-  fi
-  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'private-canary' "$log"; then
-    echo 'FAIL: private fixture message content appeared in server logs' >&2; exit 1
-  fi
+  assert_diagnostic_log_privacy "$log" "$scratch/inputs/"*-password
 done
 echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS and account restrictions'
