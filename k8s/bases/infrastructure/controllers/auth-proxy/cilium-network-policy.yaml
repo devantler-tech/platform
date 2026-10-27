@@ -38,14 +38,6 @@ spec:
         - ports:
             - port: "5006"
               protocol: TCP
-    # Crossview upstream (cluster resource explorer; Service :80 -> pod :3001).
-    - toEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: crossview
-      toPorts:
-        - ports:
-            - port: "3001"
-              protocol: TCP
     # Homepage upstream
     - toEndpoints:
         - matchLabels:

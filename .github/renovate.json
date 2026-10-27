@@ -131,18 +131,7 @@
     },
     {
       "customType": "regex",
-      "description": "Track the bundled Postgres image tag pinned for the Crossview app's chart-bundled database (k8s/bases/apps/crossview/helm-release.yaml). The crossview chart defaults database.image.tag to `latest`; pinning it lives in the Flux HelmRelease's inline spec.values, which the built-in flux manager (chart version only) and the kubernetes/helm-values managers (values.yaml files only) never see — so a custom manager is the only way to keep the pin current. Matches the `# renovate:` comment and the tag line that follows it, resolving from the docker datasource (Docker Hub library/postgres).",
-      "managerFilePatterns": [
-        "/^k8s/bases/apps/crossview/helm-release\\.ya?ml$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+tag:\\s*\"(?<currentValue>[^\"]+)\""
-      ],
-      "versioningTemplate": "docker"
-    },
-    {
-      "customType": "regex",
-      "description": "Track the PostgreSQL operand image pinned on the platform-owned CloudNativePG Clusters (coroot-db, umami-db — each a cluster.yaml). These pin spec.imageName explicitly instead of riding the CNPG operator default because the latest GA operator (v1.29.1) still defaults to postgresql:18.3-system-trixie — a now-frozen tag (last rebuilt 2026-05-11) carrying fixable base-OS CVEs (openssl/libssl3, libgnutls30, libc6, python3.13) — and the default only advances to 18.4 in the not-yet-GA v1.30, so the built-in flux manager bumping the cloudnative-pg operator chart does NOT clear them. spec.imageName lives in the Cluster CR (not a chart version or a values.yaml), so the flux, kubernetes, and helm-values managers never see it; a custom manager is the only way to keep it current. Matches the `# renovate:` comment and the imageName line that follows it (mirroring the crossview manager above), resolving from the docker datasource (ghcr.io/cloudnative-pg/postgresql); docker versioning tracks the 18.4-system-trixie -> 18.5-system-trixie minor line while preserving the -system-trixie flavor suffix. The tenant-owned wedding-db pins its own imageName in the external wedding-app artifact and is intentionally not covered here. NOTE (platform#2149): this manager's file pattern originally targeted a `postgres-cluster.yaml` filename that has never existed in this repo — the actual files are `cluster.yaml` — so the manager silently matched nothing since it was authored; fixed to the real filename.",
+      "description": "Track the PostgreSQL operand image pinned on the platform-owned CloudNativePG Clusters (coroot-db, umami-db — each a cluster.yaml). These pin spec.imageName explicitly instead of riding the CNPG operator default because the latest GA operator (v1.29.1) still defaults to postgresql:18.3-system-trixie — a now-frozen tag (last rebuilt 2026-05-11) carrying fixable base-OS CVEs (openssl/libssl3, libgnutls30, libc6, python3.13) — and the default only advances to 18.4 in the not-yet-GA v1.30, so the built-in flux manager bumping the cloudnative-pg operator chart does NOT clear them. spec.imageName lives in the Cluster CR (not a chart version or a values.yaml), so the flux, kubernetes, and helm-values managers never see it; a custom manager is the only way to keep it current. Matches the `# renovate:` comment and the imageName line that follows it, resolving from the docker datasource (ghcr.io/cloudnative-pg/postgresql); docker versioning tracks the 18.4-system-trixie -> 18.5-system-trixie minor line while preserving the -system-trixie flavor suffix. The tenant-owned wedding-db pins its own imageName in the external wedding-app artifact and is intentionally not covered here. NOTE (platform#2149): this manager's file pattern originally targeted a `postgres-cluster.yaml` filename that has never existed in this repo — the actual files are `cluster.yaml` — so the manager silently matched nothing since it was authored; fixed to the real filename.",
       "managerFilePatterns": ["/(^|/)cluster\\.ya?ml$/"],
       "matchStrings": [
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+imageName:\\s*\\S+:(?<currentValue>\\S+)"
@@ -320,13 +309,6 @@
       "description": "velero-plugin-for-aws is HARD-PINNED at v1.14.0 (k8s/bases/infrastructure/controllers/velero/helm-release.yaml): v1.14.1's AWS SDK update serializes the always-set-but-empty PutObject Tagging field as a literal empty x-amz-tagging header, which Cloudflare R2 rejects with 501 NotImplemented — every backup then fails at the final metadata upload. v1.14.2 was deployed without that fix and reproduced the outage, so allow only v1.14.0 until a maintainer explicitly verifies a released upstream fix (velero-io/velero-plugin-for-aws#299 / #303) against R2 and intentionally relaxes this rule; CI cannot catch the regression because the system-test cluster has no R2 backend. automerge:false placed last so it overrides the minor/patch automerge defaults above.",
       "matchPackageNames": ["velero/velero-plugin-for-aws"],
       "allowedVersions": "/^v?1\\.14\\.0$/",
-      "automerge": false
-    },
-    {
-      "description": "headlamp is HARD-PINNED at 0.42.0 (k8s/bases/apps/headlamp/helm-release.yaml): 0.43.0 introduced an in-cluster OIDC login regression in Safari, and the same broken popup handoff was reproduced after upgrading to 0.44.0 — the session cookie succeeds, but Safari ITP suppresses the cross-window localStorage storage event after the popup's cross-site Dex/GitHub hops, so the popup never redirects its opener (upstream kubernetes-sigs/headlamp#6353; fix PR #6355 unmerged; tracked in #2438). Keep the last Safari-verified release until a released upstream fix is manually verified end-to-end; automerge:false placed last so an unverified Headlamp update cannot inherit the minor/patch automerge defaults above.",
-      "matchDatasources": ["helm"],
-      "matchPackageNames": ["headlamp"],
-      "allowedVersions": "/^v?0\\.42\\.0$/",
       "automerge": false
     },
     {

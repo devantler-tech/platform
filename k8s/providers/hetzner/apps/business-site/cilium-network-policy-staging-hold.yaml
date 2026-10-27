@@ -1,0 +1,19 @@
+# Install before enabling application reconciliation. Gateway traffic stays
+# denied even when the signed application package adds its normal ingress allow.
+# Node-origin health probes and the application's existing egress are unchanged.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: business-site-staging-hold
+  namespace: business-site
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: business-site
+  ingressDeny:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP

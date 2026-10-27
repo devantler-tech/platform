@@ -40,22 +40,6 @@ data:
           rule: "Host(`budget.${domain}`)"
           entryPoints: ["web"]
           service: actual-budget
-        # Crossview also has native OIDC, but the outer oauth2-proxy hop keeps
-        # its cluster-wide read surface restricted to the maintainer team.
-        crossview:
-          rule: "Host(`crossview.${domain}`)"
-          entryPoints: ["web"]
-          # Crossview builds its OIDC redirect_uri from the incoming request
-          # rather than from OIDC_CALLBACK_URL -- proven in prod: with the env
-          # set to the https public callback it still sent http://. Every hop in
-          # front of it is plaintext (Gateway terminates TLS, then oauth2-proxy,
-          # then this entryPoint), and Traefik sets X-Forwarded-Proto from its
-          # OWN entryPoint scheme, so without this the app sees http and Dex
-          # rejects the redirect_uri it did not register. This router is only
-          # ever reached through the public HTTPS Gateway, so asserting https
-          # here states a fact about the traffic, not a preference.
-          middlewares: ["forwarded-proto-https"]
-          service: crossview
         # Kyverno Policy Reporter UI. Prod-only (the app lives in the
         # `infrastructure` layer, pulled in full only by the hetzner overlay), so
         # this router is inert on local/CI -- no HTTPRoute sends
@@ -114,10 +98,6 @@ data:
           loadBalancer:
             servers:
               - url: "http://ksail-operator.ksail-operator.svc.cluster.local:8080"
-        crossview:
-          loadBalancer:
-            servers:
-              - url: "http://crossview-service.crossview.svc.cluster.local:80"
         # Policy Reporter UI (policy-reporter-ui Service :8080). Prod-only and
         # inert on local (the policy-reporter namespace has no pods there).
         policy-reporter:

@@ -2,7 +2,7 @@
 #
 # Fail when a Crossplane Provider's NAME stops agreeing with the two places that
 # depend on it: the name Crossplane derives from its package, and the Kubescape
-# secret-reader exceptions that match its generated ClusterRole by regex.
+# secret-reader exception that matches its generated ClusterRole by regex.
 #
 # WHY THE NAME MATTERS (platform#3454, a live prod outage).
 #
@@ -26,17 +26,17 @@
 #
 # Crossplane names a provider's generated RBAC after the provider REVISION —
 # `crossplane:provider:<provider-name>-<package-hash>:system` — so the provider name
-# is a prefix of a cluster-scoped ClusterRole name. Two Kubescape exception lists
-# match that ClusterRole by anchored regex to suppress C-0015 ("List Kubernetes
-# secrets") for providers that read credential Secrets by design. Renaming a provider
-# without updating both regexes does not fail anything: the manifests still build, the
-# provider still runs, and the only symptom is a C-0015 finding reappearing days later
-# with no obvious cause. The two lists are kept in sync BY HAND (their own headers say
-# so), which is exactly the arrangement that drifts.
+# is a prefix of a cluster-scoped ClusterRole name. The Kubescape secret-reader
+# exception matches that ClusterRole by anchored regex to suppress C-0015 ("List
+# Kubernetes secrets") for providers that read credential Secrets by design. Renaming
+# a provider without updating its regex does not fail anything: the manifests still
+# build, the provider still runs, and the only symptom is a C-0015 finding reappearing
+# days later with no obvious cause. The list is kept BY HAND, which is exactly the
+# arrangement that drifts.
 #
 # 🔴 FAIL CLOSED. Every input this guard cannot read is exit 2, never a quiet pass.
-# An empty provider set compared against empty exception files is the failure mode
-# that makes a guard look green forever, so the provider set and both exception files
+# An empty provider set compared against an empty exception file is the failure mode
+# that makes a guard look green forever, so the provider set and the exception file
 # are required to be non-empty before any comparison happens.
 #
 # 🔴 SCOPE BY apiVersion, NOT BY `kind: Provider`. `notification.toolkit.fluxcd.io`
@@ -46,7 +46,8 @@
 #
 # Exit codes:
 #   0  every pkg.crossplane.io Provider is canonically named (or explicitly
-#      dispositioned below) and carries its ClusterRole regex in both exception lists
+#      dispositioned below) and carries its ClusterRole regex in the secret-reader
+#      exception
 #   1  a drift was found
 #   2  an input could not be read, or a required set was empty
 
@@ -55,7 +56,6 @@ set -euo pipefail
 root="${1:-k8s}"
 
 secret_reader="$root/bases/infrastructure/cluster-security-exceptions/secret-reader-rbac.yaml"
-headlamp_mirror="$root/bases/infrastructure/controllers/kubescape/config-map-headlamp-exceptions.yaml"
 
 die() {
   printf 'guard-crossplane-provider-name-parity: %s\n' "$1" >&2
@@ -64,9 +64,7 @@ die() {
 
 [ -d "$root" ] || die "root '$root' is not a directory"
 [ -r "$secret_reader" ] || die "cannot read the secret-reader exception '$secret_reader'"
-[ -r "$headlamp_mirror" ] || die "cannot read the Headlamp exception mirror '$headlamp_mirror'"
 [ -s "$secret_reader" ] || die "the secret-reader exception '$secret_reader' is empty"
-[ -s "$headlamp_mirror" ] || die "the Headlamp exception mirror '$headlamp_mirror' is empty"
 
 # Providers deliberately NOT carrying their derived name. Each is safe ONLY while no
 # installed package declares it as a dependency: nothing resolves them by name today,
@@ -166,14 +164,12 @@ while IFS="$(printf '\t')" read -r name pkg file; do
   fi
 
   regex="^crossplane:provider:${name}-[0-9a-f]+:system\$"
-  for f in "$secret_reader" "$headlamp_mirror"; do
-    if ! grep -qF -- "$regex" "$f"; then
-      printf 'guard-crossplane-provider-name-parity: %s has no secret-reader exception entry in %s\n' "$name" "$f" >&2
-      printf '  Expected the anchored ClusterRole pattern: %s\n' "$regex" >&2
-      printf '  Crossplane names provider RBAC after the revision, so renaming a provider silently orphans its exception and C-0015 reappears with no failing check.\n' >&2
-      status=1
-    fi
-  done
+  if ! grep -qF -- "$regex" "$secret_reader"; then
+    printf 'guard-crossplane-provider-name-parity: %s has no secret-reader exception entry in %s\n' "$name" "$secret_reader" >&2
+    printf '  Expected the anchored ClusterRole pattern: %s\n' "$regex" >&2
+    printf '  Crossplane names provider RBAC after the revision, so renaming a provider silently orphans its exception and C-0015 reappears with no failing check.\n' >&2
+    status=1
+  fi
 done <<EOF
 $providers
 EOF
@@ -185,4 +181,4 @@ if [ "$status" -ne 0 ]; then
   exit 1
 fi
 
-printf 'guard-crossplane-provider-name-parity: OK — %d Crossplane Provider(s) checked; names agree with their derived names and both exception lists\n' "$checked"
+printf 'guard-crossplane-provider-name-parity: OK — %d Crossplane Provider(s) checked; names agree with their derived names and the secret-reader exception\n' "$checked"
