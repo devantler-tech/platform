@@ -148,7 +148,11 @@ func TestSnapshotTransportNeverForwardsSignedReads(t *testing.T) {
 		}
 		return (&net.Dialer{}).DialContext(ctx, network, address)
 	}
-	response, err := client.Get("http://recovery-fixture.invalid/")
+	request, err := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://recovery-fixture.invalid/", nil)
+	if err != nil {
+		t.Fatal("could not prepare local transport request")
+	}
+	response, err := client.Do(request)
 	if err != nil {
 		t.Fatal("could not exercise local transport")
 	}

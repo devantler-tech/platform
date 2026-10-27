@@ -115,6 +115,7 @@ jobs:
           wait "$forward_pid" 2>/dev/null || true
           forward_pid=''
           unset OPENBAO_RECOVERY_DIR KUBECONFIG
+          rm -- "$proof_dir/kubeconfig"
           image=$("$binary" image) || fail
           if ! docker pull "$image" > "$proof_dir/pull.log" 2>&1; then fail; fi
           if ! bash scripts/run-openbao-backup-sandbox.sh verify "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then fail; fi

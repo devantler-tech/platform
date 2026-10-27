@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -91,7 +92,10 @@ func downloadSnapshot(ctx context.Context, client *http.Client, t target, start,
 		}
 	}
 	decoder := xml.NewDecoder(bytes.NewReader(b))
-	if decoder.Decode(&listing) != nil || decoder.Decode(new(any)) != io.EOF || listing.XMLName.Local != "ListBucketResult" || (listing.XMLName.Space != "" && listing.XMLName.Space != "http://s3.amazonaws.com/doc/2006-03-01/") || listing.Name != t.Bucket || listing.Prefix != snapshotPrefix || listing.IsTruncated == nil || *listing.IsTruncated || listing.NextContinuationToken != "" || listing.KeyCount == nil || *listing.KeyCount != len(listing.Contents) || listing.MaxKeys == nil || *listing.MaxKeys != 256 || len(listing.Contents) == 0 || len(listing.Contents) > 256 {
+	if decoder.Decode(&listing) != nil {
+		return nil, errEvidence
+	}
+	if !errors.Is(decoder.Decode(new(any)), io.EOF) || listing.XMLName.Local != "ListBucketResult" || (listing.XMLName.Space != "" && listing.XMLName.Space != "http://s3.amazonaws.com/doc/2006-03-01/") || listing.Name != t.Bucket || listing.Prefix != snapshotPrefix || listing.IsTruncated == nil || *listing.IsTruncated || listing.NextContinuationToken != "" || listing.KeyCount == nil || *listing.KeyCount != len(listing.Contents) || listing.MaxKeys == nil || *listing.MaxKeys != 256 || len(listing.Contents) == 0 || len(listing.Contents) > 256 {
 		return nil, errEvidence
 	}
 	etags := map[string]string{}
@@ -102,7 +106,7 @@ func downloadSnapshot(ctx context.Context, client *http.Client, t target, start,
 			return nil, errEvidence
 		}
 		key := strings.TrimPrefix(item.Key, snapshotPrefix)
-		if encoder.Encode(snapshotObject{Status: "success", Type: "file", Key: key, Size: item.Size, LastModified: item.LastModified}) != nil {
+		if err := encoder.Encode(snapshotObject{Status: "success", Type: "file", Key: key, Size: item.Size, LastModified: item.LastModified}); err != nil {
 			return nil, errEvidence
 		}
 		etags[key] = item.ETag
@@ -142,7 +146,7 @@ func recoveryObject(ctx context.Context, kind, namespace, name string) ([]byte, 
 	if !allowedRecoveryObject(kind, namespace, name) {
 		return nil, errEvidence
 	}
-	command := exec.CommandContext(ctx, "kubectl", "--context=admin@prod", "--request-timeout=20s", "--namespace="+namespace, "get", kind, name, "--output=json")
+	command := exec.CommandContext(ctx, "kubectl", "--context=admin@prod", "--request-timeout=20s", "--namespace", namespace, "get", kind, name, "--output=json")
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = io.Discard
@@ -153,11 +157,12 @@ func recoveryObject(ctx context.Context, kind, namespace, name string) ([]byte, 
 }
 
 func recoveryDirectory(dir string) bool {
-	if runtime.GOOS != "linux" || os.Getuid() == 0 || !strings.HasPrefix(dir, "/dev/shm/") || filepath.Clean(dir) != dir {
+	uid := os.Getuid()
+	if runtime.GOOS != "linux" || uid <= 0 || !strings.HasPrefix(dir, "/dev/shm/") || filepath.Clean(dir) != dir {
 		return false
 	}
-	real, err := filepath.EvalSymlinks(dir)
-	if err != nil || real != dir {
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil || resolvedDir != dir {
 		return false
 	}
 	info, err := os.Lstat(dir)
@@ -165,7 +170,7 @@ func recoveryDirectory(dir string) bool {
 		return false
 	}
 	owner, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || owner.Uid != uint32(os.Getuid()) {
+	if !ok || uint64(owner.Uid) != uint64(uid) {
 		return false
 	}
 	var fs syscall.Statfs_t
