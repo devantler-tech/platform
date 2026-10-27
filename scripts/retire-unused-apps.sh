@@ -47,6 +47,12 @@ kubectl_bin="${KUBECTL:-kubectl}"
 poll_seconds="${RETIREMENT_POLL_SECONDS:-10}"
 poll_attempts="${RETIREMENT_POLL_ATTEMPTS:-90}"
 readonly kubectl_bin poll_seconds poll_attempts
+# A layer retrying an unrelated failing health check passes through a
+# Progressing phase every retry interval, so its state is sampled until it
+# settles rather than judged at one instant.
+settle_seconds="${RETIREMENT_SETTLE_SECONDS:-15}"
+settle_attempts="${RETIREMENT_SETTLE_ATTEMPTS:-40}"
+readonly settle_seconds settle_attempts
 readonly releases=(crossview/crossview headlamp/headlamp)
 readonly clusters=(backstage/backstage-db)
 readonly namespaces=(crossview headlamp backstage)
@@ -133,16 +139,31 @@ delete_owned() { # <description> <timeout> <kubectl get/delete args...>
 command -v jq >/dev/null || unknown 'jq is required'
 
 # 0. The removal is deployed: every layer that carried part of an app applies
-#    its current revision without owning anything of them.
+#    its current revision without owning anything of them. Flux records a
+#    layer's inventory right after a successful apply, before health checks,
+#    so a layer whose only failure is HealthCheckFailed still proves what its
+#    current revision applied; an unrelated unhealthy workload must not block
+#    this retirement. Any other not-Ready reason, such as a failed build or
+#    apply, leaves the inventory unproven and is refused.
 for layer in infrastructure-controllers infrastructure apps; do
-  kustomization="$(k -n flux-system get kustomization "${layer}" -o json)" ||
-    unknown "cannot read the ${layer} Kustomization"
-  jq -e '
-    (.status.conditions // [] | any(.type == "Ready" and .status == "True")) and
-    .status.observedGeneration == .metadata.generation and
-    (.status.inventory.entries | type == "array" and length > 0)
-  ' <<<"${kustomization}" >/dev/null ||
-    fail "the ${layer} Kustomization is not Ready for its current generation with a non-empty inventory"
+  attempt=0
+  while :; do
+    kustomization="$(k -n flux-system get kustomization "${layer}" -o json)" ||
+      unknown "cannot read the ${layer} Kustomization"
+    jq -e '
+      (.status.conditions // [] | any(.type == "Ready" and
+        (.status == "True" or (.status == "False" and .reason == "HealthCheckFailed")))) and
+      .status.observedGeneration == .metadata.generation and
+      (.status.inventory.entries | type == "array" and length > 0)
+    ' <<<"${kustomization}" >/dev/null && break
+    attempt=$((attempt + 1))
+    [ "${attempt}" -lt "${settle_attempts}" ] ||
+      fail "the ${layer} Kustomization has not applied its current generation with a non-empty inventory"
+    sleep "${settle_seconds}"
+  done
+  if jq -e '.status.conditions // [] | any(.type == "Ready" and .status == "False")' <<<"${kustomization}" >/dev/null; then
+    printf 'Note: the %s Kustomization applied its revision but an unrelated health check is failing\n' "${layer}"
+  fi
   owned="$(jq -r --arg p "${retired_pattern}" --arg seed "${retained_seed_pattern}" \
     '[.status.inventory.entries[].id | select(test($p) and (test($seed) | not))] | join(" ")' <<<"${kustomization}")"
   [ -z "${owned}" ] ||
