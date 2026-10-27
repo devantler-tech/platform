@@ -126,6 +126,25 @@ require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (INVALID_JSON).' ]] || {
   printf 'FAIL: malformed JSON was not classified: %s\n' "${output}" >&2; exit 1;
 }
+# Successful CLI exits can still carry no measurement. Keep those distinct from
+# malformed JSON, but refuse all of them before publishing any samples.
+while IFS='|' read -r expected response; do
+  reset_fixture
+  printf '%b' "${response}" >"${fixture}/metrics.json"
+  require_inconclusive
+  [[ "${output}" == "INCONCLUSIVE: an agent metric read failed (${expected})." ]] || {
+    printf 'FAIL: expected %s response classification: %s\n' "${expected}" "${output}" >&2; exit 1;
+  }
+done <<'RESPONSES'
+EMPTY_OUTPUT|
+EMPTY_OUTPUT|\n \t\n
+JSON_NULL|null
+JSON_NULL| \n null \t\n
+MULTIPLE_JSON_VALUES|[]\n[]
+MULTIPLE_JSON_VALUES|null\n[]
+MULTIPLE_JSON_VALUES|[]\nnull
+INVALID_JSON|[]\nPRIVATE_MALFORMED
+RESPONSES
 while IFS='|' read -r expected exit_code message; do
   reset_fixture
   printf 'PRIVATE_ERROR https://198.51.100.9:6443 %s\n' "${message}" >"${fixture}/stderr"
