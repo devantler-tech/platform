@@ -3,6 +3,7 @@ package health
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -27,7 +28,9 @@ type healthProbe struct {
 
 func renderedChecks(t *testing.T) map[string]healthProbe {
 	t.Helper()
-	b, err := exec.Command("kubectl", "kustomize", "../../k8s/bases/apps/private-mail-administration").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	b, err := exec.CommandContext(ctx, "kubectl", "kustomize", "../../k8s/bases/apps/private-mail-administration").Output()
 	if err != nil {
 		t.Fatalf("render administration: %v", err)
 	}
@@ -50,7 +53,7 @@ func renderedChecks(t *testing.T) map[string]healthProbe {
 				}
 			}
 		}
-		if err = d.Decode(&object); err == io.EOF {
+		if err = d.Decode(&object); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			t.Fatal(err)
@@ -71,7 +74,7 @@ func renderedChecks(t *testing.T) map[string]healthProbe {
 		t.Fatal("missing serving health checks")
 	}
 	for name, p := range checks {
-		if p.Exec == nil || len(p.Exec.Command) == 0 || p.HTTPGet != nil {
+		if p.Exec == nil || len(p.Exec.Command) < 3 || p.Exec.Command[0] != "/usr/bin/env" || p.Exec.Command[1] != "-i" || p.HTTPGet != nil {
 			t.Fatalf("%s self-check still depends on the client-facing network path", name)
 		}
 		if p.TimeoutSeconds != 2 {
@@ -97,7 +100,7 @@ func runCheck(t *testing.T, p healthProbe, target string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+	cmd := exec.CommandContext(ctx, "/usr/bin/env", args[1:]...)
 	hook := filepath.Join(t.TempDir(), "untrusted-shell-hook")
 	if err := os.WriteFile(hook, []byte("exit 97\n"), 0600); err != nil {
 		t.Fatal(err)
@@ -167,7 +170,10 @@ func TestRenderedMailSelfCheckOutcomes(t *testing.T) {
 			})
 		}
 		t.Run(name+"/connection-refused", func(t *testing.T) {
-			l, err := net.Listen("tcp4", "127.0.0.1:0")
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var listenConfig net.ListenConfig
+			l, err := listenConfig.Listen(ctx, "tcp4", "127.0.0.1:0")
 			if err != nil {
 				t.Fatal(err)
 			}
