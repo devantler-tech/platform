@@ -417,3 +417,5 @@ spec:
     gatewayAPI:
       enabled: true
       enableAlpn: true
+      # Keep the receiving side explicit for a verified rollback baseline.
+      enableProxyProtocol: false
