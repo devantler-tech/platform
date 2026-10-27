@@ -51,14 +51,17 @@ func TestAPIRefusesExternalOriginsRedirectsAndIncompleteHealth(t *testing.T) {
 
 // TestSandboxWrapperBindsCleanupAndFiltersPrivateOutput exercises lost start replies.
 func TestSandboxWrapperBindsCleanupAndFiltersPrivateOutput(t *testing.T) {
-	if runtime.GOOS != "linux" || os.Getuid() == 0 {
-		t.Skip("actual Linux wrapper runs in CI")
+	if os.Getuid() == 0 {
+		t.Skip("wrapper requires a non-root caller")
 	}
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
-	for _, test := range []string{"lost-start-reply", "foreign-owner", "unreadable-cleanup", "private-output"} {
+	for _, test := range []string{"lost-start-reply", "foreign-owner", "unreadable-cleanup", "private-output", "valid-result-unreadable-cleanup"} {
 		t.Run(test, func(t *testing.T) {
-			dir := t.TempDir()
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal("cannot resolve the synthetic handoff")
+			}
 			// testing.TempDir's numbered child uses 0777 before the host umask;
 			// satisfy the production handoff's explicit 0700 ownership boundary.
 			if os.Chmod(dir, 0700) != nil {
@@ -67,6 +70,17 @@ func TestSandboxWrapperBindsCleanupAndFiltersPrivateOutput(t *testing.T) {
 			bin := filepath.Join(dir, "bin")
 			if os.Mkdir(bin, 0700) != nil {
 				t.Fatal("cannot prepare fixture tools")
+			}
+			// Adapt platform metadata for this synthetic Docker-boundary fixture.
+			// The separate real-container proof still requires native Linux.
+			if runtime.GOOS == "darwin" {
+				if os.WriteFile(filepath.Join(bin, "uname"), []byte("#!/bin/sh\n[ \"$1\" = -s ] || exit 91\nprintf '%s\\n' Linux\n"), 0700) != nil {
+					t.Fatal("cannot prepare fixture platform metadata")
+				}
+				statShim := "#!/bin/sh\n[ \"$1\" = -c ] || exit 91\ncase \"$2\" in %a) exec /usr/bin/stat -f %Lp \"$3\";; %u) exec /usr/bin/stat -f %u \"$3\";; *) exit 92;; esac\n"
+				if os.WriteFile(filepath.Join(bin, "stat"), []byte(statShim), 0700) != nil {
+					t.Fatal("cannot prepare fixture file metadata")
+				}
 			}
 			verifier := filepath.Join(dir, "verifier")
 			if os.WriteFile(verifier, []byte("#!/bin/sh\nprintf '%s\\n' '"+serverImage+"'\n"), 0700) != nil {
@@ -81,11 +95,12 @@ run)
     if [[ $1 == --label ]]; then printf '%s' "${2#*=}" > "$FIXTURE_DIR/nonce"; fi
     shift
   done
+  if [[ $FIXTURE_CASE == valid-result-unreadable-cleanup ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'; exit 0; fi
   if [[ $FIXTURE_CASE == private-output ]]; then printf '%s\n' 'PRIVATE_SYNTHETIC_PAYLOAD'; exit 0; fi
   printf '%s\n' 'PRIVATE_SYNTHETIC_ERROR' >&2
   exit 1;;
 container)
-  [[ $FIXTURE_CASE != unreadable-cleanup ]] || exit 1
+  [[ $FIXTURE_CASE != unreadable-cleanup && $FIXTURE_CASE != valid-result-unreadable-cleanup ]] || exit 1
   printf '%064d\n' 0;;
 inspect)
   if [[ $FIXTURE_CASE == foreign-owner ]]; then printf '%s\n' foreign; else cat "$FIXTURE_DIR/nonce"; fi;;

@@ -16,6 +16,7 @@ image=$("$binary" image) || fail
 nonce=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 [[ $nonce =~ ^[a-f0-9]{32}$ ]] || fail
 name="openbao-recovery-$nonce"
+validated_result=''
 
 cleanup() {
   local rc=$? ids label
@@ -33,6 +34,12 @@ cleanup() {
       printf '%s\n' 'OPENBAO_BACKUP_CLEANUP=UNVERIFIED' >&2
       [[ $rc != 0 ]] || rc=2
     fi
+  fi
+  if [[ $rc == 0 && -n "$validated_result" ]]; then
+    printf '%s\n' "$validated_result"
+  elif [[ $rc == 0 ]]; then
+    printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=runtime' >&2
+    rc=2
   fi
   exit "$rc"
 }
@@ -59,9 +66,9 @@ rc=0
 docker "${arguments[@]}" "$image" "$mode" >"$proof_dir/sandbox-result" 2>"$proof_dir/sandbox-error.log" || rc=$?
 result=$(cat "$proof_dir/sandbox-result")
 if [[ $rc == 0 && $mode == fixture && $result == OPENBAO_BACKUP_FIXTURE=PASS ]]; then
-  printf '%s\n' "$result"
+  validated_result=$result
 elif [[ $rc == 0 && $mode == verify && $result == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]]; then
-  printf '%s\n' "$result"
+  validated_result=$result
 else
   # All container and API diagnostics remain private. Only a fixed helper
   # refusal vocabulary is permitted in public output.
