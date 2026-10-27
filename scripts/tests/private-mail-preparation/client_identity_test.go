@@ -5,6 +5,10 @@ import "testing"
 func TestClientIdentityBundleReplacesUntrustedForwardingHeaders(t *testing.T) {
 	objects := render(t, "k8s/bases/apps/private-mail-client-identity")
 	route := object(t, objects, "HTTPRoute", "private-mail")
+	annotations := mapping(t, mapping(t, route["metadata"])["annotations"])
+	if annotations["external-dns.kubernetes.io/cloudflare-proxied"] != "false" {
+		t.Fatal("the Email opt-in must select its directly reachable origin rather than a shared HTTP proxy")
+	}
 	rules := sequence(t, mapping(t, route["spec"])["rules"])
 	if len(rules) != 1 {
 		t.Fatal("client identity must cover the entire administration route")
@@ -50,6 +54,10 @@ func TestClientIdentityBundleReplacesUntrustedForwardingHeaders(t *testing.T) {
 func TestClientIdentityRemainsInactiveInProduction(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	route := object(t, objects, "HTTPRoute", "private-mail")
+	annotations := mapping(t, mapping(t, route["metadata"])["annotations"])
+	if annotations["external-dns.kubernetes.io/cloudflare-proxied"] != nil {
+		t.Fatal("prepared DNS must not change production before activation")
+	}
 	for _, value := range sequence(t, mapping(t, route["spec"])["rules"]) {
 		for _, filter := range sequence(t, mapping(t, value)["filters"]) {
 			if mapping(t, filter)["type"] == "RequestHeaderModifier" {

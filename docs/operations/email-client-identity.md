@@ -28,11 +28,14 @@ synthetic backend. This proves the native Envoy behavior and prepared header
 policy. It does not execute Cilium's controller or prove a production route.
 
 This policy identifies the transport peer. An upstream HTTP proxy can still make
-that peer a shared proxy address. Resolve the Email hostname's complete proxy
-chain and declarative DNS ownership before activation; preserving a transport
-peer alone does not establish the end-user address. Any upstream client metadata
-must have its own verified trust boundary. Do not trust it merely because a
-header is present.
+that peer a shared proxy address. The optional bundle therefore also selects
+DNS-only operation for the Email route using its existing Platform ExternalDNS
+owner. It does not alter the controller's global Cloudflare setting. The
+controller owns application-hostname records; bootstrap resources retain their
+separate Cloudflare repository owner. Observe actual DNS convergence and valid
+origin TLS before treating a transport peer as the end user. Any remaining
+upstream client metadata needs its own verified trust boundary; a header's
+presence is not evidence of trust.
 
 Before activation, require all of these in a separate reviewed revision:
 
@@ -42,7 +45,8 @@ Before activation, require all of these in a separate reviewed revision:
    A local skip or unavailable Docker daemon is not native evidence.
 3. Publish and verify the new immutable bootstrap image through its existing
    main-only publisher before selecting that image in production.
-4. Bind the provider's transport envelope to the gateway receiver, retain zero
+4. Verify the Email record's DNS-only state, origin TLS and cache convergence.
+   Bind the provider's transport envelope to the gateway receiver, retain zero
    trusted HTTP forwarding hops, and verify that only the approved load balancer
    can reach that receiver. Reject forged metadata and untrusted direct paths.
 5. Select the client-identity bundle and matching encrypted opt-in together.

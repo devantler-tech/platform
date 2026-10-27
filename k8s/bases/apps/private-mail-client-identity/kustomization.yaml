@@ -8,3 +8,8 @@ patches:
       name: private-mail
       namespace: private-mail
     path: patches/trusted-client-header.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/use-direct-email-dns.yaml
