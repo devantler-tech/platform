@@ -15,3 +15,6 @@ spec:
       load-balancer.hetzner.cloud/type: ${hetzner_lb_type}
       load-balancer.hetzner.cloud/use-private-ip: "true"
       load-balancer.hetzner.cloud/name: platform-gateway
+      # Removing this annotation can retain a previously enabled provider value.
+      # An explicit false is required for the disabled rollback baseline.
+      load-balancer.hetzner.cloud/uses-proxyprotocol: "false"
