@@ -68,6 +68,15 @@ func loadInputs(dir string) (inputs, error) {
 			return fail()
 		}
 		seen[name] = true
+		if name == "useForwardedClientIP" {
+			value, decodeErr := d.Token()
+			forwarded, valid := value.(bool)
+			if decodeErr != nil || !valid {
+				return fail()
+			}
+			v.UseForwardedClientIP = forwarded
+			continue
+		}
 		if name == "maintainerAliases" {
 			var value json.RawMessage
 			if d.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &v.MaintainerAliases) != nil || v.MaintainerAliases == nil {

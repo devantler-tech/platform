@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,8 +18,20 @@ func TestForwardedClientIdentityRequiresExplicitOptInAndRollsBack(t *testing.T) 
 		{"explicit rollback", `{"useForwardedClientIP":false}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			v := fixture()
-			if err := json.Unmarshal([]byte(tc.setting), &v.settings); err != nil {
+			dir := bootstrapInputs(t)
+			path := filepath.Join(dir, "settings.json")
+			base, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.setting != `{}` {
+				base = []byte(strings.TrimSuffix(string(base), "}") + "," + tc.setting[1:])
+			}
+			if err := os.WriteFile(path, base, 0600); err != nil {
+				t.Fatal(err)
+			}
+			v, err := loadInputs(dir)
+			if err != nil {
 				t.Fatal(err)
 			}
 			plan, err := render(v)
@@ -39,6 +53,26 @@ func TestForwardedClientIdentityRequiresExplicitOptInAndRollsBack(t *testing.T) 
 			}
 			if seen != 1 {
 				t.Fatalf("expected one explicit HTTP policy, got %d", seen)
+			}
+		})
+	}
+}
+
+func TestForwardedClientIdentityRejectsMalformedPrivateSettings(t *testing.T) {
+	for _, value := range []string{`null`, `"true"`, `1`, `{}`, `[]`, `true,"useForwardedClientIP":false`} {
+		t.Run(value, func(t *testing.T) {
+			dir := bootstrapInputs(t)
+			path := filepath.Join(dir, "settings.json")
+			base, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := strings.TrimSuffix(string(base), "}") + `,"useForwardedClientIP":` + value + `}`
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadInputs(dir); err == nil {
+				t.Fatal("malformed or repeated forwarding policy accepted")
 			}
 		})
 	}
