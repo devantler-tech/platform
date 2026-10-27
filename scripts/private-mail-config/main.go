@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 )
 
+// privateInput reads a bounded input without including its contents in errors.
 func privateInput(dir, name string, limit int64) (data []byte, result error) {
 	// Projected Kubernetes Secrets use symlinks; require the resolved target to
 	// remain under the private input directory rather than rejecting projections.
@@ -46,6 +47,7 @@ func privateInput(dir, name string, limit int64) (data []byte, result error) {
 	return b, nil
 }
 
+// loadInputs validates the settings and credential files needed for configuration.
 func loadInputs(dir string) (inputs, error) {
 	var v inputs
 	fail := func() (inputs, error) { return inputs{}, errConfiguration }
@@ -115,6 +117,7 @@ func loadInputs(dir string) (inputs, error) {
 	return v, nil
 }
 
+// command handles the Email configuration CLI without echoing private input values.
 func command(args []string, log io.Writer) int {
 	if len(args) > 0 && args[0] == "bootstrap" {
 		return bootstrapCommand(args[1:], log)
@@ -153,10 +156,11 @@ func command(args []string, log io.Writer) int {
 		_ = os.Remove(*output)
 		return fail()
 	}
-	if _, err = fmt.Fprintln(log, "Private mail plan prepared; activation is separate."); err != nil {
+	if _, err = fmt.Fprintln(log, "Email plan prepared; activation is separate."); err != nil {
 		return 2
 	}
 	return 0
 }
 
+// main preserves the configuration command's exit status.
 func main() { os.Exit(command(os.Args[1:], os.Stderr)) }

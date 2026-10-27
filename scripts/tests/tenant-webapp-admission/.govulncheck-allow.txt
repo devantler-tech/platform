@@ -1,6 +1,6 @@
-# Exact-ID database-range adjudication for Kyverno v1.19.1 ONLY; platform#5154
+# Exact-ID database-range adjudication for Kyverno v1.19.2 ONLY; platform#5154
 # removes these after the Go records are corrected. The module remains scanned.
-# Primary repository-scoped upstream advisories re-read 2026-10-21:
+# Primary repository-scoped upstream advisories and Go records re-read 2026-10-26:
 # GHSA-qr4g-8hrp-c4rw: patched_versions=1.18.0.
 # GHSA-cvq5-hhx3-f99p: patched_versions=1.17.2.
 # GHSA-459x-q9hg-4gpq: vulnerable_version_range=< v1.13.4 (no fixing-tag claim).

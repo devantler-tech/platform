@@ -54,6 +54,7 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 
 run_bootstrap() {
+  local bootstrap_status=0 bootstrap_stage
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
   # identity through bootstrap and every restart, as the deployment requires.
   docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
@@ -63,7 +64,18 @@ run_bootstrap() {
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1
+    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1 || bootstrap_status=$?
+  if [ "$bootstrap_status" != 0 ]; then
+    # Emit fixed stage labels only. Native diagnostics and fixture credentials
+    # stay in the private scratch directory, never the hosted job output.
+    for bootstrap_stage in 'initial inventory' 'native apply' 'policy readback'; do
+      if grep -Fq "$bootstrap_stage:" "$scratch/bootstrap.log"; then
+        printf 'NATIVE_BOOTSTRAP_FAILURE_STAGE=%s\n' "$bootstrap_stage" >&2
+      fi
+    done
+    printf 'NATIVE_BOOTSTRAP_FAILURE_CALLER=%s EXIT=%s\n' "${BASH_LINENO[0]}" "$bootstrap_status" >&2
+  fi
+  return "$bootstrap_status"
 }
 
 start_server() {
@@ -336,8 +348,11 @@ native_cli update Domain "$domain_id" --file /proof/restore-alias-patch.json >"$
 
 # Seed a previously wider permission and an extra expression branch. Replay
 # must clear both maps rather than preserving keys absent from the new plan.
+# Also suspend the managed administrator: replay must restore its inherited
+# access, proved by the regular administrator's requests after serving starts.
 printf '%s\n' '{"@type":"upsert","object":"Domain","matchOn":["name"],"value":{"domain":{"name":"example.test"}}}' \
   '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"agents":{"@type":"User","name":"agents","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{"jmapEmailImport":true,"jmapEmailCreate":true}}}}}' \
+  '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"administrator":{"@type":"User","name":"operator","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{},"disabledPermissions":{}}}}}' \
   '{"@type":"update","object":"MtaStageRcpt","value":{"rewrite":{"match":{"9":{"if":"true","then":"'"'"'operator@example.test'"'"'"}}}}}' >"$scratch/wider.ndjson"
 native_cli apply --file /proof/wider.ndjson --json >"$scratch/wider-apply.jsonl" 2>"$scratch/wider-apply.err"
 prepare_plan "$scratch/replay.ndjson"
