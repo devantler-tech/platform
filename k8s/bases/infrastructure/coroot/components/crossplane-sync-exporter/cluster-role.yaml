@@ -47,8 +47,11 @@ rules:
     resources:
       - branchprotections
       - defaultbranches
+      - environmentdeploymentpolicies
+      - environments
       - issuelabels
       - repositories
+      - repositorycustomproperties
       - repositoryrulesets
     verbs:
       - get
