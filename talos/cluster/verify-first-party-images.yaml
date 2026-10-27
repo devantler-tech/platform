@@ -188,10 +188,10 @@ rules:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
-  # two reviewed maintained publisher revisions during the v8 transition (#5213).
+  # reviewed maintained publisher revisions (v8.0.0 #5213, v13.2.15 #5404).
   # Mutable refs, tags and other maintained commits are refused, as in the app
   # admission policy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$
+      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0|f5d078cc4b04ecb15432ed4e34cba1142a6279d4))$
