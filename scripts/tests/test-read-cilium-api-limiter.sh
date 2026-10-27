@@ -20,6 +20,10 @@ case "$*" in
     touch "${FIXTURE}/read-once"
     ;;
   'exec --namespace kube-system cilium-abcde --container cilium-agent -- cilium-dbg metrics list --output json --match-pattern ^cilium_api_limiter_')
+    if [[ -f "${FIXTURE}/stderr" ]]; then
+      cat "${FIXTURE}/stderr" >&2
+      exit "$(cat "${FIXTURE}/exit-code")"
+    fi
     if [[ -f "${FIXTURE}/denied" ]]; then
       printf 'PRIVATE_ERROR https://198.51.100.9:6443\n' >&2
       exit 1
@@ -119,12 +123,42 @@ done
 reset_fixture
 printf '{malformed' >"${fixture}/metrics.json"
 require_inconclusive
+[[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (INVALID_JSON).' ]] || {
+  printf 'FAIL: malformed JSON was not classified: %s\n' "${output}" >&2; exit 1;
+}
+while IFS='|' read -r expected exit_code message; do
+  reset_fixture
+  printf 'PRIVATE_ERROR https://198.51.100.9:6443 %s\n' "${message}" >"${fixture}/stderr"
+  printf '%s\n' "${exit_code}" >"${fixture}/exit-code"
+  require_inconclusive
+  [[ "${output}" == "INCONCLUSIVE: an agent metric read failed (${expected})." ]] || {
+    printf 'FAIL: expected %s classification: %s\n' "${expected}" "${output}" >&2; exit 1;
+  }
+done <<'CASES'
+DEADLINE_EXCEEDED|124|context deadline exceeded
+ACCESS_DENIED|1|Error from server (Forbidden): pods is forbidden
+CLI_REJECTED|1|Error: unknown flag: --match-pattern
+HIVE_SOCKET_UNAVAILABLE|1|dial unix /var/run/cilium/shell.sock: connect: no such file or directory
+JSON_ENCODING_FAILED|1|json: unsupported value: NaN
+JSON_ENCODING_FAILED|1|json: unsupported value: +Inf
+TRANSPORT_FAILURE|1|error: error upgrading connection: backend unavailable
+COMMAND_FAILED|1|unclassified synthetic failure
+CASES
+reset_fixture
+printf '%8192sPRIVATE_ERROR Forbidden\n' '' >"${fixture}/stderr"
+printf '1\n' >"${fixture}/exit-code"
+require_inconclusive
+[[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (COMMAND_FAILED).' ]] || {
+  printf 'FAIL: classification read beyond the private prefix bound\n' >&2; exit 1;
+}
 reset_fixture
 touch "${fixture}/denied"
 require_inconclusive
+[[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (COMMAND_FAILED).' ]] || exit 1
 reset_fixture
 printf '%1048577s' '' >"${fixture}/metrics.json"
 require_inconclusive
+[[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (OUTPUT_LIMIT).' ]] || exit 1
 workflow="${root_dir}/.github/workflows/read-cilium-api-limiter.yaml"
 [[ -f "${workflow}" ]] || { printf 'FAIL: reviewed dispatch workflow missing\n' >&2; exit 1; }
 [[ "$(yq -r '.on | keys | join(",")' "${workflow}")" == workflow_dispatch ]] || exit 1
