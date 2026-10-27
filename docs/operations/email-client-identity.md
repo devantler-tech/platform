@@ -27,6 +27,13 @@ identity headers; a request without the transport envelope must not reach the
 synthetic backend. This proves the native Envoy behavior and prepared header
 policy. It does not execute Cilium's controller or prove a production route.
 
+This policy identifies the transport peer. An upstream HTTP proxy can still make
+that peer a shared proxy address. Resolve the Email hostname's complete proxy
+chain and declarative DNS ownership before activation; preserving a transport
+peer alone does not establish the end-user address. Any upstream client metadata
+must have its own verified trust boundary. Do not trust it merely because a
+header is present.
+
 Before activation, require all of these in a separate reviewed revision:
 
 1. Deploy and verify the paired disabled transport baseline from #5450. Removing

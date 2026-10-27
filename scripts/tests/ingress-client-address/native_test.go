@@ -37,7 +37,7 @@ type headerPatch struct {
 
 func fixtureConfiguration(t *testing.T, listenerPort, backendPort int) []byte {
 	t.Helper()
-	data, err := os.ReadFile("../../../k8s/bases/apps/private-mail-client-identity/trusted-client-header.yaml")
+	data, err := os.ReadFile("../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

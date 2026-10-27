@@ -7,4 +7,4 @@ patches:
       kind: HTTPRoute
       name: private-mail
       namespace: private-mail
-    path: trusted-client-header.yaml
+    path: patches/trusted-client-header.yaml
