@@ -7,13 +7,12 @@ kind: Kustomization
 #
 # To enable one or more apps locally, replace `resources: []` below with the
 # entries you want (and add the matching `patches:` block for any app that has
-# one — currently actual-budget and headlamp), then run:
+# one — currently actual-budget), then run:
 #   ksail workload push && ksail workload reconcile
 #
 # Available apps (copy the lines you need):
 #   resources:
 #     - ../../../bases/apps/actual-budget/   # also add the actual-budget patch below
-#     - ../../../bases/apps/headlamp/        # also add the headlamp patch below
 #     - ../../../bases/apps/homepage/
 #     - ../../../bases/apps/whoami/
 #
@@ -23,11 +22,6 @@ kind: Kustomization
 #         name: actual-budget
 #         namespace: actual-budget
 #       path: actual-budget/patches/shrink-persistence.yaml
-#     - target:
-#         kind: HelmRelease
-#         name: headlamp
-#         namespace: headlamp
-#       path: headlamp/patches/trust-platform-ca.yaml
 #
 # Tenant RGD pilot (#1932 step 3) — opt-in like the apps above. Enabling it has
 # the KRO controller expand ascoachingogvaner's full control-plane skeleton from

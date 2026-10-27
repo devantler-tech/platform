@@ -16,10 +16,9 @@ spec:
     matchLabels:
       app.kubernetes.io/name: alertmanager
   ingress:
-    # The Headlamp Kubescape plugin reads GET /api/v2/alerts through the
-    # Kubernetes API server's Service proxy (/api/v1/namespaces/kubescape/
-    # services/alertmanager:9093/proxy/...), so the connection to :9093
-    # originates from the API server. Mirror the entity set the base
+    # Reads of GET /api/v2/alerts through the Kubernetes API server's Service
+    # proxy (/api/v1/namespaces/kubescape/services/alertmanager:9093/proxy/...)
+    # originate from the API server. Mirror the entity set the base
     # allow-kubescape policy uses for the webhook/host-scanner ports.
     - fromEntities:
         - kube-apiserver
@@ -48,16 +47,6 @@ spec:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: observability
             app: stranded-autoscaler-node-alerter
-      toPorts:
-        - ports:
-            - port: "9093"
-              protocol: TCP
-    # The crossview-login-alerter CronJob (observability) POSTs /api/v2/alerts
-    # the same way when Crossview's database has lost its schema (#3315).
-    - fromEndpoints:
-        - matchLabels:
-            k8s:io.kubernetes.pod.namespace: observability
-            app: crossview-login-alerter
       toPorts:
         - ports:
             - port: "9093"

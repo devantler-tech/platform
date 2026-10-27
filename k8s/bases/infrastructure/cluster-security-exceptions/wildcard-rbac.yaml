@@ -21,9 +21,8 @@
 #     velero-server Role. The chart's RBAC is all-or-nothing (no scoped mode) and
 #     restore must create/patch arbitrary resource kinds.
 #
-# NOT exempted (intentionally): Headlamp is fixed at the root (its SA is scoped to
-# the read-only cluster-reader role in k8s/bases/apps/headlamp/helm-release.yaml),
-# and longhorn-support-bundle is a transient diagnostic SA created on demand.
+# NOT exempted (intentionally): longhorn-support-bundle is a transient diagnostic
+# SA created on demand.
 apiVersion: kubescape.io/v1beta1
 kind: ClusterSecurityException
 metadata:

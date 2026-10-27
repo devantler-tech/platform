@@ -93,7 +93,7 @@ See `.github/workflows/` for the exact names.
 - `k8s/bases/infrastructure/` — Cilium, cert-manager, Kyverno, alerting configs,
   OpenBao vault, External Secrets Operator, ClusterSecretStore, vault-config Job,
   vault-seed PushSecrets, vault-backup CronJob.
-- `k8s/bases/apps/` — reference applications (homepage, whoami, headlamp).
+- `k8s/bases/apps/` — reference applications (homepage, whoami).
 - `k8s/providers/{docker,hetzner}/` — provider-specific assembly of bases.
 
 Changes here are "platform changes" — upstream them instead of forking them.

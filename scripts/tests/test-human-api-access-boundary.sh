@@ -4,7 +4,6 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-readonly crossview_dir="${root_dir}/k8s/bases/apps/crossview"
 readonly cluster_reader="${root_dir}/k8s/bases/infrastructure/cluster-roles/cluster-reader.yaml"
 readonly ci_workflow="${root_dir}/.github/workflows/ci.yaml"
 readonly kubectl_guide="${root_dir}/docs/oidc-kubectl.md"
@@ -65,57 +64,15 @@ for boundary_input in 'docs/oidc-kubectl.md' 'docs/talos-access.md'; do
     fail "${boundary_input} is asserted here, so it must also trigger this test"
 done
 
-rendered_manifests="$(mktemp)"
-trap 'rm -f "${rendered_manifests}"' EXIT
-kubectl kustomize "${crossview_dir}" >"${rendered_manifests}" ||
-  fail 'the Crossview base must render'
-
-yq eval -e '
-  select(.kind == "HelmRelease" and .metadata.name == "crossview") |
-  .spec.values.rbac.create == false
-' "${rendered_manifests}" >/dev/null ||
-  fail 'Crossview must disable the chart-owned wildcard ClusterRole'
-
-# Disabling the chart's RBAC leaves its ServiceAccount in place — the chart gates
-# that on `serviceAccount.create`, which stays true — so these bindings are what
-# give the Crossview backend its read-only surface.
-for binding in crossview-view crossview-cluster-reader; do
-  expected_role="${binding#crossview-}"
-  BINDING="${binding}" EXPECTED_ROLE="${expected_role}" yq eval -e '
-    select(.kind == "ClusterRoleBinding" and .metadata.name == strenv(BINDING)) |
-    .roleRef.kind == "ClusterRole" and
-    .roleRef.name == strenv(EXPECTED_ROLE) and
-    (.subjects | length) == 1 and
-    .subjects[0].kind == "ServiceAccount" and
-    .subjects[0].name == "crossview-sa" and
-    .subjects[0].namespace == "crossview"
-  ' "${rendered_manifests}" >/dev/null ||
-    fail "${binding} must bind only crossview-sa to ${expected_role}"
-done
-
-[ "$(count_selected '
-  select(.kind == "RoleBinding" or .kind == "ClusterRoleBinding") |
-  .subjects[]? |
-  select(.kind != "ServiceAccount")
-' "${rendered_manifests}")" -eq 0 ] ||
-  fail 'Crossview must bind only ServiceAccount subjects — no human User or Group identity'
-
-[ "$(count_selected "
-  select(.kind == \"Role\" or .kind == \"ClusterRole\") |
-  .rules[]? |
-  ${secret_grant_selector}
-" "${rendered_manifests}")" -eq 0 ] ||
-  fail 'Crossview must not carry a direct Secret or wildcard core-resource grant'
-
 [ "$(count_selected "
   .rules[] |
   ${secret_grant_selector}
 " "${cluster_reader}")" -eq 0 ] ||
   fail 'cluster-reader must keep Secrets outside its read surface'
 
-# Excluding Secrets is only half the boundary: both the daily OIDC identity and
-# Crossview bind this role, so a rule gaining any mutating verb would breach it
-# while still naming only safe resources.
+# Excluding Secrets is only half the boundary: the daily OIDC identity binds
+# this role, so a rule gaining any mutating verb would breach it while still
+# naming only safe resources.
 [ "$(count_selected "
   .rules[] |
   select((((.verbs // []) - ${read_only_verbs}) | length) > 0)

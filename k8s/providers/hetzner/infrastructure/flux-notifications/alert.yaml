@@ -107,9 +107,6 @@ spec:
       namespace: crossplane-system
     - kind: HelmRelease
       name: "*"
-      namespace: crossview
-    - kind: HelmRelease
-      name: "*"
       namespace: data-product-controller
     - kind: HelmRelease
       name: "*"
@@ -126,9 +123,6 @@ spec:
     - kind: HelmRelease
       name: "*"
       namespace: flux-system
-    - kind: HelmRelease
-      name: "*"
-      namespace: headlamp
     - kind: HelmRelease
       name: "*"
       namespace: homepage
