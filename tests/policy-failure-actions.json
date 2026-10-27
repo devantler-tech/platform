@@ -51,5 +51,6 @@
   "restrict-arc-retirement/fence-credential-recreation": "Enforce",
   "restrict-arc-retirement/fence-retired-secret": "Enforce",
   "restrict-arc-retirement/preserve-retirement-journal": "Enforce",
-  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce"
+  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce",
+  "restrict-arc-openbao-listener-settings": "Enforce"
 }
