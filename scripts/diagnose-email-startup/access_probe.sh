@@ -21,13 +21,14 @@ task_live_pod="$(probe "$task_pod_url/healthz/live")"
 task_ready_pod="$(probe "$task_pod_url/healthz/ready")"
 printf '{"live_loopback":%s,"ready_loopback":%s,"live_pod":%s,"ready_pod":%s,"security":' "$task_live_loopback" "$task_ready_loopback" "$task_live_pod" "$task_ready_pod"
 # The authorization is shell memory and curl stdin, never argv, environment or a file.
-# Only address/expiry are requested. No configuration, account, log or mail is read.
+# Only address/expiry and blocked reason/creation metadata are requested.
+# No configuration, account, log or mail is read.
 curl --disable --noproxy '*' --silent --fail --show-error --http1.1 --connect-timeout 1 --max-time 2 --max-filesize 65536 --proto '=http' --config - <<CONFIG
 url = "http://127.0.0.1:8080/jmap"
 request = "POST"
 header = "Authorization: Basic $task_authorization"
 header = "Content-Type: application/json"
-data = "{\"using\":[\"urn:ietf:params:jmap:core\",\"urn:stalwart:jmap\"],\"methodCalls\":[[\"x:AllowedIp/query\",{\"limit\":257,\"calculateTotal\":true},\"allowIds\"],[\"x:AllowedIp/get\",{\"#ids\":{\"resultOf\":\"allowIds\",\"name\":\"x:AllowedIp/query\",\"path\":\"/ids\"},\"properties\":[\"address\",\"expiresAt\"]},\"allow\"],[\"x:BlockedIp/query\",{\"limit\":257,\"calculateTotal\":true},\"blockIds\"],[\"x:BlockedIp/get\",{\"#ids\":{\"resultOf\":\"blockIds\",\"name\":\"x:BlockedIp/query\",\"path\":\"/ids\"},\"properties\":[\"address\",\"expiresAt\"]},\"block\"]]}"
+data = "{\"using\":[\"urn:ietf:params:jmap:core\",\"urn:stalwart:jmap\"],\"methodCalls\":[[\"x:AllowedIp/query\",{\"limit\":257,\"calculateTotal\":true},\"allowIds\"],[\"x:AllowedIp/get\",{\"#ids\":{\"resultOf\":\"allowIds\",\"name\":\"x:AllowedIp/query\",\"path\":\"/ids\"},\"properties\":[\"address\",\"expiresAt\"]},\"allow\"],[\"x:BlockedIp/query\",{\"limit\":257,\"calculateTotal\":true},\"blockIds\"],[\"x:BlockedIp/get\",{\"#ids\":{\"resultOf\":\"blockIds\",\"name\":\"x:BlockedIp/query\",\"path\":\"/ids\"},\"properties\":[\"address\",\"expiresAt\",\"reason\",\"createdAt\"]},\"block\"]]}"
 CONFIG
 unset task_authorization
 printf '}\n'

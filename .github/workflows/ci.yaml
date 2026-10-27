@@ -144,6 +144,9 @@ jobs:
             k8s:
               - 'k8s/**'
               - 'scripts/tests/private-mail-preparation/**'
+              - 'scripts/tests/vault-email-credentials/**'
+              - 'scripts/prepare-email-credentials.sh'
+              - '.github/workflows/verify-email-credential-custody.yaml'
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
@@ -379,6 +382,9 @@ jobs:
               - 'scripts/measure-datapath-cpu-throttling.sh'
               - 'scripts/tests/test-measure-datapath-cpu-throttling.sh'
               - '.github/workflows/measure-datapath-cpu-throttling.yaml'
+              - 'scripts/read-cilium-api-limiter.sh'
+              - 'scripts/tests/test-read-cilium-api-limiter.sh'
+              - '.github/workflows/read-cilium-api-limiter.yaml'
               - 'scripts/generate-kubescape-exceptions/**'
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
@@ -2306,6 +2312,12 @@ jobs:
           shellcheck scripts/measure-datapath-cpu-throttling.sh scripts/tests/test-measure-datapath-cpu-throttling.sh
           bash scripts/tests/test-measure-datapath-cpu-throttling.sh
 
+      - name: Validate finite Cilium API limiter reads
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/read-cilium-api-limiter.sh scripts/tests/test-read-cilium-api-limiter.sh
+          bash scripts/tests/test-read-cilium-api-limiter.sh
+
       - name: 🔐 Validate Cilium mutual-auth policy scope
         if: needs.changes.outputs.k8s == 'true'
         # An authentication stanza is still an allow rule. Reject a cluster-wide
@@ -3298,6 +3310,12 @@ jobs:
       - name: 🔒 Validate Crossplane provider egress policy
         if: needs.changes.outputs.k8s == 'true'
         run: bash scripts/tests/test-crossplane-egress-policy.sh
+      - name: ✉️ Verify Email credential custody against pinned OpenBao
+        if: needs.changes.outputs.k8s == 'true'
+        timeout-minutes: 5
+        env:
+          EMAIL_CREDENTIAL_NATIVE_TEST: '1'
+        run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 10

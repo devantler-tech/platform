@@ -22,8 +22,9 @@ var accessProbe string
 
 type inputExecutor func(context.Context, []byte, ...string) ([]byte, error)
 type accessResult struct {
-	Paths, Access string
-	Ready         bool
+	Paths, Access, CiliumAccess string
+	Block                       blockDetails
+	Ready                       bool
 }
 type accessObservation struct {
 	LiveLoopback  *int            `json:"live_loopback"`
@@ -49,6 +50,55 @@ var supportedKubelet = regexp.MustCompile(`^v1\.36\.[0-9]+$`)
 var nodeName = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$`)
 
 type probeNode struct{ UID, Version string }
+
+type ciliumCandidate struct {
+	UID, ResourceVersion string
+	Address              netip.Addr
+}
+
+// bindCiliumCandidate binds one local Cilium address to the already bound Node.
+// It identifies a routing candidate, not an observed connection source.
+func bindCiliumCandidate(raw []byte, name, nodeUID string, addresses accessAddresses) (ciliumCandidate, error) {
+	var n struct {
+		Metadata struct {
+			Name, UID, ResourceVersion string
+			OwnerReferences            []struct{ APIVersion, Kind, Name, UID string }
+		}
+		Spec struct{ Addresses []struct{ Type, IP string } }
+	}
+	bad := errors.New("invalid Cilium source candidate")
+	if uniqueJSON(raw) != nil || json.Unmarshal(raw, &n) != nil || n.Metadata.Name != name || !uuidPattern.MatchString(n.Metadata.UID) || n.Metadata.ResourceVersion == "" || len(n.Metadata.OwnerReferences) != 1 {
+		return ciliumCandidate{}, bad
+	}
+	owner := n.Metadata.OwnerReferences[0]
+	if owner.APIVersion != "v1" || owner.Kind != "Node" || owner.Name != name || owner.UID != nodeUID {
+		return ciliumCandidate{}, bad
+	}
+	var local netip.Addr
+	hostCount, localCount := 0, 0
+	for _, entry := range n.Spec.Addresses {
+		switch entry.Type {
+		case "InternalIP", "CiliumInternalIP":
+			ip, e := netip.ParseAddr(entry.IP)
+			if e != nil || !ip.IsGlobalUnicast() || ip.Is4In6() || ip.Zone() != "" || ip.Is4() != addresses.Pod.Is4() {
+				return ciliumCandidate{}, bad
+			}
+			if entry.Type == "InternalIP" {
+				hostCount++
+				if ip != addresses.Host {
+					return ciliumCandidate{}, bad
+				}
+			} else {
+				localCount++
+				local = ip
+			}
+		}
+	}
+	if hostCount != 1 || localCount != 1 || local == addresses.Pod || local == addresses.Host {
+		return ciliumCandidate{}, bad
+	}
+	return ciliumCandidate{UID: n.Metadata.UID, ResourceVersion: n.Metadata.ResourceVersion, Address: local}, nil
+}
 
 // bindProbeNode matches the real kubelet minor that supplies kube-probe/1.36.
 func bindProbeNode(raw []byte, name string) (probeNode, error) {
@@ -341,12 +391,17 @@ func effectiveHostBlock(raw []byte, host netip.Addr, now time.Time) (string, err
 				ID        *string `json:"id,omitempty"`
 				Address   string  `json:"address"`
 				ExpiresAt *string `json:"expiresAt"`
+				Reason    *string `json:"reason,omitempty"`
+				CreatedAt *string `json:"createdAt,omitempty"`
 			}
 			var fields map[string]json.RawMessage
 			if strictJSON(entry, &value) != nil || json.Unmarshal(entry, &fields) != nil || value.Address == "" || value.ID == nil || !remaining[*value.ID] {
 				return "", bad
 			}
 			delete(remaining, *value.ID)
+			if tag == "allow" && (fields["reason"] != nil || fields["createdAt"] != nil) {
+				return "", bad
+			}
 			if _, ok := fields["expiresAt"]; !ok {
 				return "", bad
 			}
@@ -422,6 +477,7 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	fail := func() (accessResult, error) { return accessResult{}, errors.New("inconclusive") }
 	var before binding
 	var addresses accessAddresses
+	var createdBefore time.Time
 	found := false
 	for attempt := 0; attempt < 11; attempt++ {
 		raw, e := request(ctx, run, "get", "pod", "private-mail-0", "-n", "private-mail", "-o", "json")
@@ -433,6 +489,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 			return fail()
 		}
 		if running {
+			createdBefore, e = podCreationTime(raw)
+			if e != nil {
+				return fail()
+			}
 			addresses, e = bindAddresses(raw)
 			if e != nil {
 				return fail()
@@ -459,6 +519,17 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 		return bindProbeNode(raw, before.Node)
 	}
 	nodeBefore, e := readNode()
+	if e != nil {
+		return fail()
+	}
+	readCilium := func() (ciliumCandidate, error) {
+		raw, e := request(ctx, run, "get", "ciliumnode", before.Node, "-o", "json")
+		if e != nil {
+			return ciliumCandidate{}, e
+		}
+		return bindCiliumCandidate(raw, before.Node, nodeBefore.UID, addresses)
+	}
+	ciliumBefore, e := readCilium()
 	if e != nil {
 		return fail()
 	}
@@ -500,9 +571,25 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if e != nil {
 		return fail()
 	}
-	result, e := decodeAccess(raw, addresses.Host, now())
+	observedAt := now()
+	result, e := decodeAccess(raw, addresses.Host, observedAt)
 	if e != nil {
 		return fail()
+	}
+	ciliumResult, e := decodeAccess(raw, ciliumBefore.Address, observedAt)
+	if e != nil {
+		return fail()
+	}
+	result.CiliumAccess = ciliumResult.Access
+	result.Block, e = decodeBlockDetails(raw, ciliumBefore.Address, createdBefore, observedAt)
+	if e != nil {
+		return fail()
+	}
+	switch result.CiliumAccess {
+	case "STORED_HOST_BLOCK_MATCH":
+		result.CiliumAccess = "STORED_CILIUM_BLOCK_MATCH"
+	case "STORED_HOST_ALLOW_OVERRIDE":
+		result.CiliumAccess = "STORED_CILIUM_ALLOW_OVERRIDE"
 	}
 	raw, e = request(ctx, run, "get", "pod", "private-mail-0", "-n", "private-mail", "-o", "json")
 	if e != nil {
@@ -516,8 +603,16 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if e != nil || afterAddresses != addresses {
 		return fail()
 	}
+	createdAfter, e := podCreationTime(raw)
+	if e != nil || !createdAfter.Equal(createdBefore) {
+		return fail()
+	}
 	nodeAfter, e := readNode()
 	if e != nil || nodeAfter != nodeBefore {
+		return fail()
+	}
+	ciliumAfter, e := readCilium()
+	if e != nil || ciliumAfter != ciliumBefore {
 		return fail()
 	}
 	afterMap, e := readMap()
@@ -551,7 +646,7 @@ func runAccessEntry(ctx context.Context, env func(string) string, run executor, 
 	if result.Ready {
 		ready = "TRUE"
 	}
-	line := fmt.Sprintf("MAIL_PROBE_PATHS=%s\nMAIL_ACCESS_STATE=%s\nMAIL_KUBERNETES_READY=%s\n", result.Paths, result.Access, ready)
+	line := fmt.Sprintf("MAIL_PROBE_PATHS=%s\nMAIL_ACCESS_STATE=%s\nMAIL_CILIUM_ACCESS_STATE=%s\nMAIL_CILIUM_BLOCK_REASON=%s\nMAIL_CILIUM_BLOCK_SCOPE=%s\nMAIL_CILIUM_BLOCK_EXPIRY=%s\nMAIL_CILIUM_BLOCK_CREATION=%s\nMAIL_KUBERNETES_READY=%s\n", result.Paths, result.Access, result.CiliumAccess, result.Block.Reason, result.Block.Scope, result.Block.Expiry, result.Block.Creation, ready)
 	if n, e := io.WriteString(out, line); e != nil || n != len(line) {
 		return 3
 	}
