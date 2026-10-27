@@ -56,6 +56,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/openbao-recovery-tools"
           install -m 0755 "$kubectl_path" "$RUNNER_TEMP/openbao-recovery-tools/kubectl"
           printf '%s\n' "$RUNNER_TEMP/openbao-recovery-tools" >> "$GITHUB_PATH"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/openbao-recovery-tools/verifier" ./scripts/openbao-backup-recovery
 
       - name: Read the fixed backup inputs and prove isolated recovery
         shell: bash
@@ -82,7 +83,6 @@ jobs:
           }
           trap cleanup EXIT
           binary="$RUNNER_TEMP/openbao-recovery-tools/verifier"
-          if ! CGO_ENABLED=0 go build -trimpath -o "$binary" ./scripts/openbao-backup-recovery > "$proof_dir/build.log" 2>&1; then fail; fi
           [[ -n "$KUBE_CONFIG" && ${#KUBE_CONFIG} -le 1048576 ]] || fail
           export KUBECONFIG="$proof_dir/kubeconfig"
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"

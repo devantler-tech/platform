@@ -70,6 +70,9 @@ func TestProductionRecoveryRefusesBranchBeforeCheckoutOrCredentials(t *testing.T
 		}
 	}
 	run := job.Steps[4]
+	if strings.Contains(run.Run, "go build") || !strings.Contains(job.Steps[3].Run, "go build") {
+		t.Fatal("the build must run before the production credential environment is injected")
+	}
 	if len(run.Env) != 2 || run.Env["KUBE_CONFIG"] != "${{ secrets.KUBE_CONFIG }}" || run.Env["HCLOUD_TOKEN"] != "${{ secrets.HCLOUD_TOKEN }}" || strings.Contains(run.Run, "upload-artifact") {
 		t.Fatal("recovery reader credential boundary changed")
 	}

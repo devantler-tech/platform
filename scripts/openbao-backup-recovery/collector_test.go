@@ -57,6 +57,9 @@ func TestIndependentSnapshotReadRequiresSignedFreshBoundedBytes(t *testing.T) {
 				listing += "<unexpected/>"
 			}
 			client := &http.Client{Transport: fixtureTransport(func(r *http.Request) (*http.Response, error) {
+				if r.Header.Get("X-Amz-Content-Sha256") != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" {
+					t.Fatal("S3 read is missing the required empty-payload hash header")
+				}
 				if r.Method != http.MethodGet || r.URL.Host != strings.Repeat("c", 32)+".r2.cloudflarestorage.com" || !strings.Contains(r.Header.Get("Authorization"), "AWS4-HMAC-SHA256 Credential="+strings.Repeat("d", 32)+"/") {
 					t.Fatal("request escaped its signed read-only origin")
 				}

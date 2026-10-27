@@ -48,7 +48,10 @@ func signedRead(ctx context.Context, client *http.Client, t target, path string,
 		req.Header.Set("If-Match", etag)
 	}
 	sum := sha256.Sum256(nil)
-	if v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID: t.AccessKey, SecretAccessKey: t.SecretKey}, req, hex.EncodeToString(sum[:]), "s3", "auto", time.Now().UTC()) != nil {
+	payloadHash := hex.EncodeToString(sum[:])
+	// SignHTTP uses this hash for signing but does not add S3's required header.
+	req.Header.Set("X-Amz-Content-Sha256", payloadHash)
+	if v4.NewSigner().SignHTTP(ctx, aws.Credentials{AccessKeyID: t.AccessKey, SecretAccessKey: t.SecretKey}, req, payloadHash, "s3", "auto", time.Now().UTC()) != nil {
 		return nil, nil, errEvidence
 	}
 	response, err := client.Do(req)
