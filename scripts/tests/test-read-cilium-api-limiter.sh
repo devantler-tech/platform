@@ -1,0 +1,148 @@
+#!/usr/bin/env bash
+# Offline behavioural controls for the reviewed production diagnostic (#4329).
+set -euo pipefail
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+work_dir="$(mktemp -d)"
+trap 'rm -rf "${work_dir}"' EXIT
+mkdir -p "${work_dir}/bin"
+cat >"${work_dir}/bin/kubectl" <<'FAKE'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${FIXTURE}/calls"
+[[ "$1 $2 $3 $4" == '--context admin@prod --request-timeout 15s' ]] || exit 92
+shift 4
+case "$*" in
+  'get daemonset cilium --namespace kube-system --output json') cat "${FIXTURE}/ds.json" ;;
+  'get pods --namespace kube-system --selector k8s-app=cilium --output json')
+    if [[ -f "${FIXTURE}/read-once" && -f "${FIXTURE}/after.json" ]]; then
+      cat "${FIXTURE}/after.json"
+    else cat "${FIXTURE}/pods.json"; fi
+    touch "${FIXTURE}/read-once"
+    ;;
+  'exec --namespace kube-system cilium-abcde --container cilium-agent -- cilium-dbg metrics list --output json --match-pattern ^cilium_api_limiter_')
+    if [[ -f "${FIXTURE}/denied" ]]; then
+      printf 'PRIVATE_ERROR https://198.51.100.9:6443\n' >&2
+      exit 1
+    fi
+    cat "${FIXTURE}/metrics.json"
+    ;;
+  *) touch "${FIXTURE}/unexpected"; exit 93 ;;
+esac
+FAKE
+cat >"${work_dir}/bin/sleep" <<'FAKE'
+#!/usr/bin/env bash
+[[ "$*" == 15 ]] || exit 94
+FAKE
+chmod +x "${work_dir}/bin/kubectl" "${work_dir}/bin/sleep"
+
+reset_fixture() {
+  rm -rf "${work_dir}/fixture"
+  mkdir "${work_dir}/fixture"
+  fixture="${work_dir}/fixture"
+  jq -n '{metadata:{uid:"11111111-1111-1111-1111-111111111111",generation:1},
+    spec:{template:{spec:{containers:[{name:"cilium-agent",image:"quay.io/cilium/cilium:v1.20.3"}]}}},
+    status:{observedGeneration:1,desiredNumberScheduled:1,updatedNumberScheduled:1,numberAvailable:1,numberMisscheduled:0}}' >"${fixture}/ds.json"
+  jq -n '{items:[{metadata:{name:"cilium-abcde",uid:"22222222-2222-2222-2222-222222222222",
+    namespace:"kube-system",ownerReferences:[{kind:"DaemonSet",name:"cilium",uid:"11111111-1111-1111-1111-111111111111",controller:true}]},
+    spec:{nodeName:"PRIVATE_NODE",containers:[{name:"cilium-agent",image:"quay.io/cilium/cilium:v1.20.3"}]},
+    status:{phase:"Running",containerStatuses:[{name:"cilium-agent",ready:true,restartCount:0,
+      containerID:"containerd://PRIVATE_CONTAINER",imageID:"quay.io/cilium/cilium@sha256:PRIVATE_DIGEST",state:{running:{startedAt:"2026-10-26T20:00:00Z"}}}]}}]}' >"${fixture}/pods.json"
+  jq -n '[
+    {n:"processing_duration_seconds",v:["mean","estimated"]},
+    {n:"wait_duration_seconds",v:["mean","max","min"]},
+    {n:"requests_in_flight",v:["in-flight","limit"]},
+    {n:"rate_limit",v:["limit","burst"]},
+    {n:"adjustment_factor",v:[""]}
+    ] | [ .[] | .n as $n | .v[] | {name:("cilium_api_limiter_"+$n),labels:({api_call:"endpoint-create"} + (if . == "" then {} else {value:.} end)),value:0.125} ]
+    + [{name:"cilium_api_limiter_processed_requests_total",labels:{api_call:"endpoint-create",outcome:"success",return_code:"200"},value:300},
+       {name:"cilium_api_limiter_processed_requests_total",labels:{api_call:"endpoint-create",outcome:"fail",return_code:"500"},value:2},
+       {name:"PRIVATE_METRIC",labels:{private:"PRIVATE_LABEL"},value:999}]' >"${fixture}/metrics.json"
+}
+run_read() {
+  rc=0
+  output="$(FIXTURE="${fixture}" PATH="${work_dir}/bin:${PATH}" bash "${root_dir}/scripts/read-cilium-api-limiter.sh" "$@" 2>&1)" || rc=$?
+  if [[ -f "${fixture}/unexpected" ]]; then printf 'FAIL: unexpected command\n' >&2; exit 1; fi
+  if [[ "${output}" == *PRIVATE* || "${output}" == *198.51.100.9* || "${output}" == *cilium-abcde* ]]; then
+    printf 'FAIL: private fixture data escaped\n' >&2; exit 1
+  fi
+}
+require_inconclusive() {
+  run_read --context admin@prod
+  [[ "${rc}" -eq 3 && "${output}" == INCONCLUSIVE:* && "${output}" != *MEASURED* ]] || {
+    printf 'FAIL: expected INCONCLUSIVE: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+  }
+}
+
+reset_fixture
+run_read --context admin@prod
+[[ "${rc}" -eq 0 && "${output}" == *MEASURED* && "${output}" == *processed_requests_total*302* ]] || {
+  printf 'FAIL: passing control: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+}
+[[ "$(grep -c '^--context.* exec ' "${fixture}/calls")" -eq 5 ]] || exit 1
+
+# Usage must reach neither Kubernetes nor sleep.
+for args in '' '--context' '--context reader@prod' '--context admin@prod --window 1'; do
+  reset_fixture
+  # shellcheck disable=SC2086
+  run_read ${args}
+  [[ "${rc}" -eq 1 && ! -f "${fixture}/calls" ]] || exit 1
+done
+
+for mutation in '.status.numberAvailable=0' '.status.observedGeneration=0' '.status.desiredNumberScheduled=0'; do
+  reset_fixture
+  jq "${mutation}" "${fixture}/ds.json" >"${fixture}/new.json"
+  mv "${fixture}/new.json" "${fixture}/ds.json"
+  require_inconclusive
+done
+for mutation in '.items=[]' '.items[0].status.containerStatuses[0].ready=false' \
+  '.items[0].metadata.ownerReferences[0].uid="foreign"' '.items[0].metadata.deletionTimestamp="2026-10-27T00:00:00Z"' \
+  '.items[0].spec.containers[0].image="quay.io/cilium/cilium:v1.19.0"'; do
+  reset_fixture
+  jq "${mutation}" "${fixture}/pods.json" >"${fixture}/new.json"
+  mv "${fixture}/new.json" "${fixture}/pods.json"
+  require_inconclusive
+done
+for mutation in '.items[0].metadata.uid="33333333-3333-3333-3333-333333333333"' \
+  '.items[0].status.containerStatuses[0].restartCount=1' '.items[0].spec.nodeName="PRIVATE_REPLACEMENT"'; do
+  reset_fixture
+  jq "${mutation}" "${fixture}/pods.json" >"${fixture}/after.json"
+  require_inconclusive
+done
+for mutation in '.[0].value=-1' '.[0].value="PRIVATE_VALUE"' '.[0].labels.value="PRIVATE_VALUE"' \
+  '.[0].labels.private="PRIVATE_LABEL"' '.[0].name="cilium_api_limiter_wait_duration_seconds"' \
+  '.[0].labels.api_call="endpoint-delete"' '.[0].value=1e300' '.[0]=.[1]' '.[0:9]' '[]'; do
+  reset_fixture
+  jq "${mutation}" "${fixture}/metrics.json" >"${fixture}/new.json"
+  mv "${fixture}/new.json" "${fixture}/metrics.json"
+  require_inconclusive
+done
+reset_fixture
+printf '{malformed' >"${fixture}/metrics.json"
+require_inconclusive
+reset_fixture
+touch "${fixture}/denied"
+require_inconclusive
+reset_fixture
+printf '%1048577s' '' >"${fixture}/metrics.json"
+require_inconclusive
+workflow="${root_dir}/.github/workflows/read-cilium-api-limiter.yaml"
+[[ -f "${workflow}" ]] || { printf 'FAIL: reviewed dispatch workflow missing\n' >&2; exit 1; }
+[[ "$(yq -r '.on | keys | join(",")' "${workflow}")" == workflow_dispatch ]] || exit 1
+[[ "$(yq -r '.permissions | length' "${workflow}")" == 0 ]] || exit 1
+[[ "$(yq -r '.jobs.read.permissions | keys | join(",")' "${workflow}")" == contents ]] || exit 1
+[[ "$(yq -r '.jobs.read.permissions.contents' "${workflow}")" == read ]] || exit 1
+[[ "$(yq -r '.jobs.read.environment' "${workflow}")" == prod ]] || exit 1
+[[ "$(yq -r '.jobs.read.steps[1].with.persist-credentials' "${workflow}")" == false ]] || exit 1
+[[ "$(yq -r '.jobs.read.steps[1].with.ref' "${workflow}")" == "\${{ github.sha }}" ]] || exit 1
+[[ "$(yq -r '.jobs.read.steps[-1].run' "${workflow}")" == './scripts/read-cilium-api-limiter.sh --context admin@prod' ]] || exit 1
+[[ "$(yq -r '.concurrency.group' "${workflow}")" == prod-deploy ]] || exit 1
+[[ "$(yq -r '.jobs.read.timeout-minutes' "${workflow}")" -ge 60 ]] || exit 1
+guard="$(yq -r '.jobs.read.steps[0].run' "${workflow}")"
+RUN_REF=refs/heads/main bash -c "${guard}" >/dev/null
+if RUN_REF=refs/heads/unreviewed bash -c "${guard}" >/dev/null 2>&1; then exit 1; fi
+guard="$(yq -r '.jobs.read.steps[2].run' "${workflow}")"
+CONFIRM=read-production-cilium-api-limiter bash -c "${guard}" >/dev/null
+if CONFIRM=incorrect bash -c "${guard}" >/dev/null 2>&1; then exit 1; fi
+[[ "$(yq -r '.jobs.read.steps[3].env.KUBE_CONFIG' "${workflow}")" == "\${{ secrets.KUBE_CONFIG }}" ]] || exit 1
+[[ "$(yq -r '.jobs.read.steps[4].run' "${workflow}")" == './scripts/use-prod-stable-api-endpoint.sh >/dev/null' ]] || exit 1
+printf 'read-cilium-api-limiter: complete samples, fixed reads, privacy and failure controls passed.\n'
