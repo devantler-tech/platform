@@ -51,3 +51,57 @@ Native Linux regression coverage acquires only an owned temporary POSIX lock and
 checks its real kernel identity. Other tests exercise the actual embedded probe
 and workflow shell steps with synthetic files and credentials, including
 replacement identities, finite waiting and private-output refusal.
+
+## Compare health requests and stored access rules
+
+**Read Email Probe State** is a separate opt-in workflow. Dispatch it from reviewed
+`main`, first attempt only, with `read-email-probe-state`. It shares the production
+deployment lock and retains the fixed serving image, command, mount and runtime
+binding. The serving container must have no environment entries or imports,
+preventing a shell startup hook from observing its stdin.
+
+This observer sends the existing one-second HTTP/1.1 health requests, with the
+native Kubernetes 1.36 `kube-probe/1.36` User-Agent, to loopback and the bound Pod address. The bound
+node must run a supported stable 1.36 kubelet before and after the observation;
+a changed node identity or version is inconclusive. The header follows the
+kubelet minor, independently of the Kubernetes client version. These requests
+originate inside the Pod; they do not reproduce a kubelet's actual network path.
+
+Only after verifying the target does the protected workflow read the two named
+settings and administrator Secrets. The administrator input retains its existing
+`credential` and `password` keys; only `password` is extracted for authentication.
+Missing or extra keys are inconclusive. It authenticates the fixed loopback API with
+the existing administrator, requesting only allowed/blocked address and expiry
+fields. Credentials travel in memory and stdin, never command arguments,
+exported environment, files or artifacts. Native stdout/stderr is captured
+privately; public output contains only the classifications below. The observer
+never changes access rules or application data.
+
+The request queries both address inventories with totals and a fixed limit,
+then fetches only those IDs. The decoder refuses incomplete pages, totals over
+256, missing or duplicate IDs, failed methods, missing objects, unrequested
+fields, invalid expiry data and responses over 64 KiB. A bare get-all call
+silently stops at the server's configured get limit, so it is insufficient proof.
+Pod identity, targets, public configuration and both Secret identities/versions
+are checked again after the single exec. An unsuccessful exec is never retried.
+
+Public output contains `MAIL_PROBE_PATHS` (`ALL_LOCAL_TARGETS_HTTP_200`,
+`LOOPBACK_PATH_FAILED` or `POD_ADDRESS_PATH_FAILED`), `MAIL_ACCESS_STATE`
+(`STORED_HOST_BLOCK_MATCH`, `STORED_HOST_ALLOW_OVERRIDE`,
+`NO_ACTIVE_STORED_BLOCKS` or `OTHER_ACTIVE_STORED_BLOCKS`) and
+`MAIL_KUBERNETES_READY` (`TRUE` or `FALSE`). A guard or collection failure emits
+only `MAIL_PROBE_STATE=INCONCLUSIVE` and exits three. An observed problem exits
+one; a ready sample with successful targets and no active stored blocks exits zero.
+
+The host address is a candidate from bound Pod status. A stored rule match does
+not establish the source of a failed kubelet connection or attest the application's
+in-memory security cache. The API read is a bounded observation, not an atomic
+transaction over concurrently changing application state. Allow rules override
+matching blocks, and expired entries are excluded. No classification establishes
+sustained recovery or authorizes clearing a block.
+
+The native response fixture was captured from checksum-verified Stalwart 0.16.27
+with a synthetic store and a deliberately blocked documentation address.
+Regressions exercise the actual embedded shell over HTTP, complete native
+query/get schemas, expiry/override precedence, credential framing, dispatch
+guards and changed runtime/input identities. Production requires a bound result.

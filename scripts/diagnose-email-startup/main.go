@@ -48,6 +48,7 @@ type metadata struct{ Name, Namespace, UID, ResourceVersion string }
 type container struct {
 	Name, Image   string
 	Command, Args []string
+	Env, EnvFrom  []json.RawMessage
 	VolumeMounts  []struct {
 		Name, MountPath, SubPath string
 		ReadOnly                 bool
@@ -209,7 +210,7 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 	}
 	c := p.Spec.Containers[0]
 	if c.Name != "private-mail" || c.Image != approvedImage || !reflect.DeepEqual(c.Command, []string{"/usr/local/bin/stalwart"}) ||
-		!reflect.DeepEqual(c.Args, []string{"--config", "/etc/stalwart/config.json"}) {
+		!reflect.DeepEqual(c.Args, []string{"--config", "/etc/stalwart/config.json"}) || len(c.Env) != 0 || len(c.EnvFrom) != 0 {
 		return binding{}, false, false, invalid
 	}
 	mounted := false
@@ -358,12 +359,21 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 
 // execute captures bounded stdout and suppresses all native error payloads.
 func execute(ctx context.Context, args ...string) ([]byte, error) {
+	return executeInput(ctx, nil, args...)
+}
+
+// executeInput keeps credential-bearing stdin out of arguments, files and output.
+func executeInput(ctx context.Context, input []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd.Stdin = bytes.NewReader(input)
 	limit := maxAPIOutput
 	if len(args) > 3 && args[3] == "exec" {
 		limit = maxOutput
+		if input != nil {
+			limit = maxAccessOutput
+		}
 	}
 	out := &boundedBuffer{limit: limit}
 	cmd.Stdout = out
@@ -390,7 +400,12 @@ func wait(ctx context.Context) error {
 // main gives the entire observation a finite five-minute lifetime.
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	code := runEntry(ctx, os.Getenv, execute, wait, os.Stdout)
+	var code int
+	if os.Getenv("MAIL_ACCESS_CONFIRM") != "" {
+		code = runAccessEntry(ctx, os.Getenv, execute, executeInput, wait, os.Stdout)
+	} else {
+		code = runEntry(ctx, os.Getenv, execute, wait, os.Stdout)
+	}
 	cancel()
 	os.Exit(code)
 }
