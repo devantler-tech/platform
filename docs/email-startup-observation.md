@@ -154,3 +154,31 @@ security state remains effective. Deployment acceptance also requires sustained
 readiness, external reachability and authenticated administration. Native checks
 exercise the rendered commands and verify that initialization replay retains
 permanent client rules and existing application data.
+
+## Replacing the obsolete probe Pod
+
+An unready Pod can hold an `OrderedReady` StatefulSet on its old revision after
+the template changes, as described in the [Kubernetes rollout guidance](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/#forced-rollback).
+The protected merge-group deployment handles only the transition from this
+service's old HTTP probes to its reviewed local self-checks. It runs inside the
+existing production deployment lock after a failed reconciliation.
+
+The recovery requires the newly published digest to be adopted and verified,
+one unchanged-image serving replica, an old unready revision with repeated
+restarts, and the existing bound claim with retained storage and no Pod owner.
+It re-reads those observations before requesting one graceful Pod deletion with
+both [Kubernetes identity preconditions](https://kubernetes.io/docs/reference/kubernetes-api/definitions/delete-options-v1-meta/).
+It neither changes storage nor relaxes the client access rules.
+
+The replacement must have a new identity, the intended revision and probes,
+and report ready while the same claim remains bound to the same volume.
+Unreadable or changed observations, conflicting deletion and timeout fail closed.
+Only verified recovery permits one further full reconciliation; any remaining
+failure still fails the deployment. Ordinary delivery, recovery and DR receive
+no general Pod-replacement permission from this path.
+
+The tests exercise refusal and retained-identity cases, the actual kubectl
+request body, and both conflicting and matching deletion requests against the
+existing isolated Kubernetes 1.36.2 API-server fixture. That fixture runs no
+scheduler, kubelet or mail process. Sustained production readiness and external,
+authenticated administration remain separate deployment acceptance criteria.
