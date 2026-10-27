@@ -1036,7 +1036,7 @@ spec:
               path "secret/data/apps/crossview/*" {
                 capabilities = ["create", "update", "read"]
               }
-              # Private mail preparation preserves three durable credentials.
+              # Company Email preparation preserves three durable credentials.
               # Exact-key read/seed only; no mailbox data or wildcard grant.
               path "secret/data/apps/private-mail/admin" {
                 capabilities = ["create", "update", "read"]
