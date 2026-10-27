@@ -60,12 +60,15 @@ deployment lock and retains the fixed serving image, command, mount and runtime
 binding. The serving container must have no environment entries or imports,
 preventing a shell startup hook from observing its stdin.
 
-This observer sends the existing one-second HTTP/1.1 health requests, with the
-native Kubernetes 1.36 `kube-probe/1.36` User-Agent, to loopback and the bound Pod address. The bound
+This observer sends one-second HTTP/1.1 health requests, with the native
+Kubernetes 1.36 `kube-probe/1.36` User-Agent, to loopback and the bound Pod address
+for investigating node-originating HTTP traffic. The bound
 node must run a supported stable 1.36 kubelet before and after the observation;
 a changed node identity or version is inconclusive. The header follows the
 kubelet minor, independently of the Kubernetes client version. These requests
 originate inside the Pod; they do not reproduce a kubelet's actual network path.
+The serving self-checks described below execute locally, so these diagnostic
+requests do not reproduce their process execution either.
 
 Only after verifying the target does the protected workflow read the two named
 settings and administrator Secrets. The administrator input retains its existing
@@ -137,3 +140,17 @@ with a synthetic store and a deliberately blocked documentation address.
 Regressions exercise the actual embedded shell over HTTP, complete native
 query/get schemas, expiry/override precedence, credential framing, dispatch
 guards and changed runtime/input identities. Production requires a bound result.
+
+## Serving self-checks
+
+Startup, readiness and liveness execute the existing health endpoints over
+`127.0.0.1`. Each command starts with an empty environment, uses the image's
+Bash and curl, requires HTTP 200 and gives the HTTP request one second. Kubernetes
+allows two seconds for process execution, including that request deadline. The
+startup period and failure budget remain five seconds and 24 failures.
+
+This binds application self-checks to the serving process while its client-address
+security state remains effective. Deployment acceptance also requires sustained
+readiness, external reachability and authenticated administration. Native checks
+exercise the rendered commands and verify that initialization replay retains
+permanent client rules and existing application data.
