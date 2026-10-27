@@ -42,7 +42,7 @@ func TestSnapshotSelectionRejectsUnexaminedAndStaleEvidence(t *testing.T) {
 func TestRecordComparisonRequiresAllThreeCompleteValues(t *testing.T) {
 	expected := map[string]json.RawMessage{}
 	for _, key := range credentialPaths {
-		expected[key] = json.RawMessage(`{"username":"fixture","password":"synthetic-only","extra":"retained"}`)
+		expected[key] = json.RawMessage(`{"username":"fixture","password":"` + strings.Repeat("s", 48) + `","extra":"retained"}`)
 	}
 	for _, tc := range []struct {
 		name   string
@@ -52,10 +52,10 @@ func TestRecordComparisonRequiresAllThreeCompleteValues(t *testing.T) {
 		{"complete", func(map[string]json.RawMessage) {}, true},
 		{"missing record", func(v map[string]json.RawMessage) { delete(v, credentialPaths[0]) }, false},
 		{"different password", func(v map[string]json.RawMessage) {
-			v[credentialPaths[1]] = json.RawMessage(`{"username":"fixture","password":"changed","extra":"retained"}`)
+			v[credentialPaths[1]] = json.RawMessage(`{"username":"fixture","password":"` + strings.Repeat("d", 48) + `","extra":"retained"}`)
 		}, false},
 		{"lost extra field", func(v map[string]json.RawMessage) {
-			v[credentialPaths[1]] = json.RawMessage(`{"username":"fixture","password":"synthetic-only"}`)
+			v[credentialPaths[1]] = json.RawMessage(`{"username":"fixture","password":"` + strings.Repeat("s", 48) + `"}`)
 		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,6 +68,19 @@ func TestRecordComparisonRequiresAllThreeCompleteValues(t *testing.T) {
 				t.Fatal("incorrect complete-record verdict")
 			}
 		})
+	}
+}
+
+// TestPlaceholderCredentialsCannotCountAsRecovered rejects unseeded inputs.
+func TestPlaceholderCredentialsCannotCountAsRecovered(t *testing.T) {
+	for _, password := range []string{"", "REPLACE_AFTER_INIT", "short", strings.Repeat("s", 40) + "\n"} {
+		raw, err := json.Marshal(map[string]string{"username": "fixture", "password": password})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := recordValue(raw); ok {
+			t.Fatal("unseeded or malformed credential counted as recovered")
+		}
 	}
 }
 

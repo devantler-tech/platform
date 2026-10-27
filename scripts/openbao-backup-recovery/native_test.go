@@ -77,7 +77,7 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 				if err != nil || json.Unmarshal(b, &records) != nil {
 					t.Fatal("invalid synthetic records")
 				}
-				records[credentialPaths[1]] = json.RawMessage(`{"username":"changed-synthetic-user","password":"changed-synthetic-value","retainedField":"synthetic-fixture"}`)
+				records[credentialPaths[1]] = json.RawMessage(`{"username":"changed-synthetic-user","password":"` + strings.Repeat("d", 48) + `","retainedField":"synthetic-fixture"}`)
 				b, err = json.Marshal(records)
 				if err != nil || os.WriteFile(filepath.Join(dir, "expected.json"), b, 0600) != nil {
 					t.Fatal("could not change synthetic expected record")

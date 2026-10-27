@@ -40,7 +40,7 @@ trap cleanup EXIT
 
 arguments=(run --rm --name "$name" --label "platform.devantler.tech/recovery-proof=$nonce"
   --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges
-  --memory=2g --cpus=1 --pids-limit=128 --user "$(id -u):$(id -g)"
+  --memory=2g --cpus=1 --pids-limit=128 --ulimit core=0:0 --user "$(id -u):$(id -g)"
   --tmpfs "/work:rw,nosuid,nodev,noexec,size=768m,mode=0700,uid=$(id -u),gid=$(id -g)"
   --tmpfs "/openbao/audit:rw,nosuid,nodev,noexec,size=64m,mode=0700,uid=$(id -u),gid=$(id -g)"
   # Shadow the image's declared VOLUMEs; never create disk-backed anonymous

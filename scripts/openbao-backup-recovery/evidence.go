@@ -80,6 +80,11 @@ func recordValue(raw json.RawMessage) (map[string]any, bool) {
 			return nil, false
 		}
 	}
+	username := v["username"].(string)
+	password := v["password"].(string)
+	if !regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,254}$`).MatchString(username) || !regexp.MustCompile(`^[!-~]{40,256}$`).MatchString(password) || strings.HasPrefix(password, "REPLACE_") || strings.HasPrefix(password, "CHANGE_ME") {
+		return nil, false
+	}
 	return v, true
 }
 
