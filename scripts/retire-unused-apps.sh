@@ -133,16 +133,25 @@ delete_owned() { # <description> <timeout> <kubectl get/delete args...>
 command -v jq >/dev/null || unknown 'jq is required'
 
 # 0. The removal is deployed: every layer that carried part of an app applies
-#    its current revision without owning anything of them.
+#    its current revision without owning anything of them. Flux records a
+#    layer's inventory right after a successful apply, before health checks,
+#    so a layer whose only failure is HealthCheckFailed still proves what its
+#    current revision applied; an unrelated unhealthy workload must not block
+#    this retirement. Any other not-Ready reason, such as a failed build or
+#    apply, leaves the inventory unproven and is refused.
 for layer in infrastructure-controllers infrastructure apps; do
   kustomization="$(k -n flux-system get kustomization "${layer}" -o json)" ||
     unknown "cannot read the ${layer} Kustomization"
   jq -e '
-    (.status.conditions // [] | any(.type == "Ready" and .status == "True")) and
+    (.status.conditions // [] | any(.type == "Ready" and
+      (.status == "True" or (.status == "False" and .reason == "HealthCheckFailed")))) and
     .status.observedGeneration == .metadata.generation and
     (.status.inventory.entries | type == "array" and length > 0)
   ' <<<"${kustomization}" >/dev/null ||
-    fail "the ${layer} Kustomization is not Ready for its current generation with a non-empty inventory"
+    fail "the ${layer} Kustomization has not applied its current generation with a non-empty inventory"
+  if jq -e '.status.conditions // [] | any(.type == "Ready" and .status == "False")' <<<"${kustomization}" >/dev/null; then
+    printf 'Note: the %s Kustomization applied its revision but an unrelated health check is failing\n' "${layer}"
+  fi
   owned="$(jq -r --arg p "${retired_pattern}" --arg seed "${retained_seed_pattern}" \
     '[.status.inventory.entries[].id | select(test($p) and (test($seed) | not))] | join(" ")' <<<"${kustomization}")"
   [ -z "${owned}" ] ||
