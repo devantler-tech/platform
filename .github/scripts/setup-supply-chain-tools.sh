@@ -6,7 +6,7 @@ set -euo pipefail
 # using the named release's published checksums. A version-only Renovate bump
 # fails closed; a downloaded checksum never replaces a reviewed local pin.
 # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-COSIGN_VERSION="3.1.3"
+COSIGN_VERSION="3.1.4"
 # cosign_checksums.txt: cosign-linux-amd64
 COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
