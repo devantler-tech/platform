@@ -87,6 +87,18 @@ func render(v inputs) ([]byte, error) {
 		return map[string]any{"@type": "update", "object": object, "value": value}
 	}
 	operations := []map[string]any{
+		// Match the tagged variant so replay keeps the same console tracer. A
+		// second matching tracer is refused by the native CLI, never chosen by age.
+		upsert("Tracer", []string{"@type"}, map[string]any{"email-console": map[string]any{
+			"@type": "Stdout", "enable": true, "level": "info", "lossy": false,
+			"buffered": false, "ansi": false, "multiline": false, "eventsPolicy": "include",
+			"events": map[string]bool{
+				"server.startup": true, "server.shutdown": true, "server.startup-error": true, "server.thread-error": true,
+				"network.listen-start": true, "network.listen-stop": true, "network.listen-error": true, "network.bind-error": true,
+				"resource.error": true, "resource.not-found": true, "resource.bad-parameters": true, "resource.application-unpacked": true,
+				"store.rocksdb-error": true,
+			},
+		}}),
 		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, "isEnabled": true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
 		upsert("Account", []string{"name", "domainId"}, map[string]any{"administrator": administrator, "maintainer": maintainer, "agents": agents}),
 		// Address the exact ID returned by the upsert and replace the whole

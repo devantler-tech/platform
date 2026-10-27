@@ -181,6 +181,7 @@ apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
+native_cli query Tracer --fields id --json >"$scratch/tracers-before.jsonl"
 
 # Primary addresses and aliases share a namespace across Users, Groups and
 # MailingLists. Free only the owned aliases before creating each negative.
@@ -314,7 +315,8 @@ jq -e '.rewrite.match|keys|sort==["0","1"]' "$scratch/rcpt.json" >/dev/null
 native_cli query Account --fields id --json >"$scratch/accounts-after.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-after.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-after.jsonl"
-for object in accounts certificates applications; do
+native_cli query Tracer --fields id --json >"$scratch/tracers-after.jsonl"
+for object in accounts certificates applications tracers; do
   jq -s '[.[].id]|sort' "$scratch/$object-before.jsonl" >"$scratch/before.ids"
   jq -s '[.[].id]|sort' "$scratch/$object-after.jsonl" >"$scratch/after.ids"
   cmp "$scratch/before.ids" "$scratch/after.ids"
@@ -466,6 +468,9 @@ for alias in former-a former-b; do
   cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
 done
 docker logs "$name" >"$scratch/server.log" 2>&1
+if ! grep -Fq 'server.startup' "$scratch/server.log"; then
+  echo 'FAIL: normal serving produced no startup diagnostic event' >&2; exit 1
+fi
 for secret in "$scratch/inputs/"*-password; do
   if grep -Fq -f "$secret" "$scratch/server.log"; then
     echo 'FAIL: a generated fixture credential appeared in server logs' >&2; exit 1

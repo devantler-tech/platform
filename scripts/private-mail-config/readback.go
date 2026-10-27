@@ -91,7 +91,7 @@ func policyMatches(want, actual any, key string) bool {
 		return receivingAliasesMatch(want, actual)
 	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
