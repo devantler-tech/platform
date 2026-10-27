@@ -3895,23 +3895,3 @@ job re-renders with the approved kubectl v1.36.2 / Kustomize v5.8.1 and is the
 authority. This record does not claim deployment, nor deletion of the
 prune-protected namespaces, releases and retained claim that stay live until
 they are removed explicitly.
-
-## 27 October 2026 — generated VPA ownership (#5408)
-
-The three auto-VPA GeneratingPolicies now bind owner references to the matched
-workload's actual UID, kind, name and namespace. This backports the reviewed
-ownership fix from kyverno-policies 8a36995 while retaining the Platform's existing
-names, namespace exclusions, update modes and resource bounds. It adds no RBAC
-grant, controller flag, blockOwnerDeletion flag, CEL variable or resource read.
-
-Only the three corresponding ledger entries change. The approved kubectl v1.36.2
-renderer reported the following replacement fingerprints:
-
-- auto-vpa-daemonset: 6f099d23ae62bfa0edb816b2cf15efef99a33beb137e3ce82ea92e133676e28d
-- auto-vpa-deployment: 99b7770d4b156520f5ca58cfe6f1f756d2d1da98eeeb12a07e4d1b4093554865
-- auto-vpa-statefulset: 5c94d40212f54a6106e1a2f1027cbcaa216db4cc09e5099c2213bbc37d959697
-
-Both consumer discovery guards continue to admit only the complete reviewed
-generator expressions and reject altered owner and target identities. Local
-fixtures prove generation and same-name replacement binding. Deployment, garbage
-collection and the separate bounded legacy cleanup still require live evidence.
