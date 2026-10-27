@@ -22,6 +22,7 @@ const (
 	podKey    = "pod"
 	claimKey  = "claim"
 	sourceKey = "source"
+	appsKey   = "apps"
 )
 
 var errNotEligible = errors.New("not the obsolete mail probe transition")
@@ -113,6 +114,19 @@ type artifactSource struct {
 	Status   struct {
 		Artifact   struct{ Revision string }
 		Conditions []condition
+	}
+}
+type applicationGate struct {
+	Metadata metadata
+	Spec     struct {
+		Wait      bool
+		Path      string
+		SourceRef struct{ Kind, Name, Namespace string }
+	}
+	Status struct {
+		ObservedGeneration  int64
+		LastAppliedRevision string
+		Conditions          []condition
 	}
 }
 type checks struct{ Startup, Ready, Live *probe }
@@ -210,6 +224,7 @@ type snapshot struct {
 	Pod    mailPod
 	Claim  persistentClaim
 	Source artifactSource
+	Apps   applicationGate
 }
 
 func readSnapshot(ctx context.Context, c clusterClient) (snapshot, error) {
@@ -217,7 +232,7 @@ func readSnapshot(ctx context.Context, c clusterClient) (snapshot, error) {
 	for _, item := range []struct {
 		key string
 		out any
-	}{{setKey, &s.Set}, {podKey, &s.Pod}, {claimKey, &s.Claim}, {sourceKey, &s.Source}} {
+	}{{setKey, &s.Set}, {podKey, &s.Pod}, {claimKey, &s.Claim}, {sourceKey, &s.Source}, {appsKey, &s.Apps}} {
 		found, err := c.read(ctx, item.key, item.out)
 		if err != nil {
 			return s, errors.New("recovery observation unavailable")
@@ -245,6 +260,35 @@ func validSource(source artifactSource, digest string) bool {
 	}
 	return true
 }
+
+// validApps binds the health gate to the reviewed application layer and source.
+func validApps(apps applicationGate) bool {
+	return apps.Metadata.Name == "apps" && apps.Metadata.Namespace == "flux-system" && apps.Metadata.UID != "" && apps.Metadata.ResourceVersion != "" && apps.Metadata.Generation > 0 && apps.Metadata.DeletionTimestamp == nil && apps.Spec.Wait && apps.Spec.Path == "providers/hetzner/apps" && apps.Spec.SourceRef.Kind == "OCIRepository" && apps.Spec.SourceRef.Name == "flux-system" && (apps.Spec.SourceRef.Namespace == "" || apps.Spec.SourceRef.Namespace == "flux-system")
+}
+
+// appsCurrent requires successful health for this artifact at the current generation.
+func appsCurrent(apps applicationGate, digest string) bool {
+	if !validApps(apps) || apps.Status.ObservedGeneration != apps.Metadata.Generation || apps.Status.LastAppliedRevision != "latest@"+digest {
+		return false
+	}
+	for _, kind := range []string{"Ready", "Healthy"} {
+		count, current := 0, false
+		for _, c := range apps.Status.Conditions {
+			if (c.Type == "Reconciling" || c.Type == "Stalled") && c.Status == "True" {
+				return false
+			}
+			if c.Type == kind {
+				count++
+				current = c.Status == "True" && c.ObservedGeneration == apps.Metadata.Generation
+			}
+		}
+		if count != 1 || !current {
+			return false
+		}
+	}
+	return true
+}
+
 func ownedPod(p mailPod, set statefulSet) bool {
 	if p.Metadata.Name != "private-mail-0" || p.Metadata.Namespace != "private-mail" || p.Metadata.UID == "" || p.Metadata.ResourceVersion == "" || p.Metadata.DeletionTimestamp != nil {
 		return false
@@ -273,17 +317,17 @@ func validClaim(c persistentClaim) bool {
 }
 func eligible(s snapshot, want checks, digest string, now time.Time) bool {
 	set, p := s.Set, s.Pod
-	if !validSource(s.Source, digest) || !validClaim(s.Claim) || set.Metadata.Name != "private-mail" || set.Metadata.Namespace != "private-mail" || set.Metadata.UID == "" || set.Metadata.ResourceVersion == "" || set.Metadata.DeletionTimestamp != nil || set.Metadata.Generation < 1 || set.Status.ObservedGeneration != set.Metadata.Generation {
+	if !validSource(s.Source, digest) || !validClaim(s.Claim) || !validApps(s.Apps) || set.Metadata.Name != "private-mail" || set.Metadata.Namespace != "private-mail" || set.Metadata.UID == "" || set.Metadata.ResourceVersion == "" || set.Metadata.DeletionTimestamp != nil || set.Metadata.Generation < 1 || set.Status.ObservedGeneration != set.Metadata.Generation {
 		return false
 	}
-	if set.Spec.Replicas == nil || *set.Spec.Replicas != 1 || set.Status.Replicas != 1 || set.Status.ReadyReplicas != 0 || set.Status.UpdatedReplicas != 0 || set.Status.CurrentRevision == "" || set.Status.UpdateRevision == "" || set.Status.CurrentRevision == set.Status.UpdateRevision {
+	if set.Spec.Replicas == nil || *set.Spec.Replicas != 1 || set.Status.Replicas != 1 || set.Status.ReadyReplicas != 0 || set.Status.UpdatedReplicas != 0 || set.Status.CurrentRevision == "" || set.Status.UpdateRevision == "" {
 		return false
 	}
 	if set.Spec.PodManagementPolicy != "OrderedReady" || set.Spec.UpdateStrategy.Type != "RollingUpdate" || set.Spec.UpdateStrategy.RollingUpdate == nil || set.Spec.UpdateStrategy.RollingUpdate.Partition != 0 || len(set.Spec.VolumeClaimTemplates) != 0 {
 		return false
 	}
 	retention := set.Spec.PersistentVolumeClaimRetentionPolicy
-	if retention.WhenDeleted != "Retain" || retention.WhenScaled != "Retain" || !usesClaim(set.Spec.Template.Spec) || !ownedPod(p, set) || p.Metadata.Labels["controller-revision-hash"] != set.Status.CurrentRevision {
+	if retention.WhenDeleted != "Retain" || retention.WhenScaled != "Retain" || !usesClaim(set.Spec.Template.Spec) || !ownedPod(p, set) || p.Metadata.Labels["controller-revision-hash"] == "" || p.Metadata.Labels["controller-revision-hash"] == set.Status.UpdateRevision {
 		return false
 	}
 	desired, ok := serving(set.Spec.Template.Spec)
@@ -322,7 +366,7 @@ func recoverPod(ctx context.Context, c clusterClient, want checks, digest string
 	if err != nil {
 		return err
 	}
-	if !eligible(current, want, digest, now()) || current.Set.Metadata.UID != before.Set.Metadata.UID || current.Set.Metadata.Generation != before.Set.Metadata.Generation || current.Set.Status.UpdateRevision != before.Set.Status.UpdateRevision || current.Pod.Metadata.UID != before.Pod.Metadata.UID || current.Pod.Metadata.ResourceVersion != before.Pod.Metadata.ResourceVersion || current.Claim.Metadata.UID != before.Claim.Metadata.UID || current.Claim.Spec.VolumeName != before.Claim.Spec.VolumeName || current.Source.Metadata.UID != before.Source.Metadata.UID {
+	if !eligible(current, want, digest, now()) || current.Set.Metadata.UID != before.Set.Metadata.UID || current.Set.Metadata.Generation != before.Set.Metadata.Generation || current.Set.Status.UpdateRevision != before.Set.Status.UpdateRevision || current.Pod.Metadata.UID != before.Pod.Metadata.UID || current.Pod.Metadata.ResourceVersion != before.Pod.Metadata.ResourceVersion || current.Claim.Metadata.UID != before.Claim.Metadata.UID || current.Claim.Spec.VolumeName != before.Claim.Spec.VolumeName || current.Source.Metadata.UID != before.Source.Metadata.UID || current.Apps.Metadata.UID != before.Apps.Metadata.UID || current.Apps.Metadata.Generation != before.Apps.Metadata.Generation {
 		return errors.New("recovery observations changed")
 	}
 	if err = c.deletePod(ctx, current.Pod.Metadata.UID, current.Pod.Metadata.ResourceVersion); err != nil {
@@ -339,16 +383,17 @@ func recoverPod(ctx context.Context, c clusterClient, want checks, digest string
 			var set statefulSet
 			var claim persistentClaim
 			var source artifactSource
+			var apps applicationGate
 			for _, item := range []struct {
 				key string
 				out any
-			}{{setKey, &set}, {claimKey, &claim}, {sourceKey, &source}} {
+			}{{setKey, &set}, {claimKey, &claim}, {sourceKey, &source}, {appsKey, &apps}} {
 				exists, err := c.read(ctx, item.key, item.out)
 				if err != nil || !exists {
 					return errors.New("replacement verification unavailable")
 				}
 			}
-			if !validSource(source, digest) || source.Metadata.UID != current.Source.Metadata.UID || set.Metadata.UID != current.Set.Metadata.UID || set.Metadata.Generation != current.Set.Metadata.Generation || set.Status.UpdateRevision != current.Set.Status.UpdateRevision || !validClaim(claim) || claim.Metadata.UID != current.Claim.Metadata.UID || claim.Spec.VolumeName != current.Claim.Spec.VolumeName {
+			if !validSource(source, digest) || source.Metadata.UID != current.Source.Metadata.UID || set.Metadata.UID != current.Set.Metadata.UID || set.Metadata.Generation != current.Set.Metadata.Generation || set.Status.UpdateRevision != current.Set.Status.UpdateRevision || !validClaim(claim) || claim.Metadata.UID != current.Claim.Metadata.UID || claim.Spec.VolumeName != current.Claim.Spec.VolumeName || !validApps(apps) || apps.Metadata.UID != current.Apps.Metadata.UID || apps.Metadata.Generation != current.Apps.Metadata.Generation {
 				return errors.New("source, workload or retained claim changed")
 			}
 			servingContainer, ok := serving(pod.Spec)
@@ -367,7 +412,8 @@ func recoverPod(ctx context.Context, c clusterClient, want checks, digest string
 					containerReady = status.Ready
 				}
 			}
-			if ready && containerReady {
+			setCurrent := set.Status.ObservedGeneration == set.Metadata.Generation && set.Status.Replicas == 1 && set.Status.ReadyReplicas == 1 && set.Status.UpdatedReplicas == 1 && set.Status.CurrentRevision == set.Status.UpdateRevision
+			if ready && containerReady && setCurrent && appsCurrent(apps, digest) {
 				return nil
 			}
 		}
@@ -411,6 +457,7 @@ func (c commandClient) read(ctx context.Context, key string, out any) (bool, err
 		podKey:    {"pod", "private-mail-0", "-n", "private-mail"},
 		claimKey:  {"pvc", "private-mail-data", "-n", "private-mail"},
 		sourceKey: {"ocirepository.source.toolkit.fluxcd.io", "flux-system", "-n", "flux-system"},
+		appsKey:   {"kustomization.kustomize.toolkit.fluxcd.io", "apps", "-n", "flux-system"},
 	}
 	target, ok := targets[key]
 	if !ok {
@@ -470,7 +517,7 @@ func main() {
 		fmt.Println("MAIL_PROBE_ROLLOUT=UNVERIFIED")
 		os.Exit(2)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	err = recoverPod(ctx, commandClient{}, want, digest, time.Now)
 	if errors.Is(err, errNotEligible) {

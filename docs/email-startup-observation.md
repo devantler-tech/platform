@@ -171,11 +171,22 @@ both [Kubernetes identity preconditions](https://kubernetes.io/docs/reference/ku
 It neither changes storage nor relaxes the client access rules.
 
 The replacement must have a new identity, the intended revision and probes,
-and report ready while the same claim remains bound to the same volume.
+and report ready while the same claim remains bound to the same volume. The
+StatefulSet must finish observing that revision, and the application layer must
+report both ready and healthy for the same published artifact with no active
+reconciliation. Pod readiness alone does not establish that Flux has evaluated
+the recovered application layer. Recovery allows up to six minutes for storage
+attachment, startup and controller acknowledgement; the probe failure budget is
+unchanged.
 Unreadable or changed observations, conflicting deletion and timeout fail closed.
 Only verified recovery permits one further full reconciliation; any remaining
 failure still fails the deployment. Ordinary delivery, recovery and DR receive
 no general Pod-replacement permission from this path.
+
+A failed rollback can leave the StatefulSet's last successful revision pointing
+at the intended probes while its actual Pod runs the obsolete HTTP checks.
+Eligibility therefore binds the actual owned Pod revision and probe contract;
+the last successful revision alone does not identify what is currently running.
 
 The tests exercise refusal and retained-identity cases, the actual kubectl
 request body, and both conflicting and matching deletion requests against the

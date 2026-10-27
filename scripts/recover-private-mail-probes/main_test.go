@@ -61,8 +61,16 @@ func fixture(t *testing.T) (*fakeClient, checks) {
 	source := artifactSource{Metadata: metadata{Name: "flux-system", Namespace: "flux-system", UID: "44444444-4444-4444-8444-444444444444", ResourceVersion: "40", Generation: 7}}
 	source.Status.Artifact.Revision = "latest@sha256:" + strings.Repeat("b", 64)
 	source.Status.Conditions = []condition{{Type: "Ready", Status: "True", ObservedGeneration: 7}, {Type: "SourceVerified", Status: "True", ObservedGeneration: 7}}
-	f := &fakeClient{objects: map[string]any{setKey: set, podKey: pod, claimKey: claim, sourceKey: source}}
+	f := &fakeClient{objects: map[string]any{setKey: set, podKey: pod, claimKey: claim, sourceKey: source, "apps": appsFixture()}}
 	return f, expected
+}
+
+func appsFixture() map[string]any {
+	return map[string]any{
+		"metadata": map[string]any{"name": "apps", "namespace": "flux-system", "uid": "77777777-7777-4777-8777-777777777777", "resourceVersion": "60", "generation": 24},
+		"spec":     map[string]any{"wait": true, "path": "providers/hetzner/apps", "sourceRef": map[string]any{"kind": "OCIRepository", "name": "flux-system"}},
+		"status":   map[string]any{"observedGeneration": 24, "lastAppliedRevision": "latest@sha256:" + strings.Repeat("c", 64), "conditions": []condition{{Type: "Ready", Status: "False", ObservedGeneration: 24}, {Type: "Healthy", Status: "False", ObservedGeneration: 24}}},
+	}
 }
 
 type fakeClient struct {
@@ -75,10 +83,14 @@ type fakeClient struct {
 	beforeDelete               func(*fakeClient)
 	reads                      int
 	failRead                   bool
+	onRead                     func(*fakeClient, string)
 }
 
 func (f *fakeClient) read(_ context.Context, key string, out any) (bool, error) {
 	f.reads++
+	if f.onRead != nil {
+		f.onRead(f, key)
+	}
 	if f.failRead {
 		return false, fmt.Errorf("read unavailable")
 	}
@@ -115,6 +127,12 @@ func (f *fakeClient) deletePod(_ context.Context, uid, version string) error {
 	old.Status.Conditions = []condition{{Type: "Ready", Status: "True", LastTransitionTime: time.Now().UTC()}}
 	old.Status.ContainerStatuses = []containerStatus{{Name: "private-mail", Ready: true}}
 	f.objects[podKey] = old
+	set.Status.ReadyReplicas = 1
+	set.Status.UpdatedReplicas = 1
+	set.Status.CurrentRevision = set.Status.UpdateRevision
+	f.objects[setKey] = set
+	apps := f.objects["apps"].(map[string]any)
+	apps["status"] = map[string]any{"observedGeneration": 24, "lastAppliedRevision": "latest@sha256:" + strings.Repeat("b", 64), "conditions": []condition{{Type: "Ready", Status: "True", ObservedGeneration: 24}, {Type: "Healthy", Status: "True", ObservedGeneration: 24}}}
 	if f.afterDelete != nil {
 		f.afterDelete(f)
 	}
@@ -135,12 +153,99 @@ func TestRecoverOnlyObsoleteProbePod(t *testing.T) {
 	}
 }
 
+func TestRecoverAfterFailedRollback(t *testing.T) {
+	f, want := fixture(t)
+	set := f.objects[setKey].(statefulSet)
+	// The previous successful revision can already be the intended revision
+	// while a failed rollback leaves the actual Pod on the obsolete HTTP checks.
+	set.Status.CurrentRevision = set.Status.UpdateRevision
+	f.objects[setKey] = set
+	if err := recoverPod(context.Background(), f, want, "sha256:"+strings.Repeat("b", 64), time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if f.deletes != 1 {
+		t.Fatal("the obsolete rollback Pod was not conditionally replaced")
+	}
+}
+
+func TestRecoveryWaitsForControllerAndFluxAcknowledgement(t *testing.T) {
+	f, want := fixture(t)
+	setReads, appsReads := 0, 0
+	f.afterDelete = func(f *fakeClient) {
+		set := f.objects[setKey].(statefulSet)
+		set.Status.ReadyReplicas = 0
+		f.objects[setKey] = set
+		f.objects["apps"] = appsFixture()
+	}
+	f.onRead = func(f *fakeClient, key string) {
+		if f.deletes == 0 {
+			return
+		}
+		if key == setKey {
+			setReads++
+			if setReads >= 2 {
+				set := f.objects[setKey].(statefulSet)
+				set.Status.ReadyReplicas = 1
+				f.objects[setKey] = set
+			}
+		}
+		if key == "apps" {
+			appsReads++
+			if appsReads >= 2 {
+				apps := f.objects["apps"].(map[string]any)
+				apps["status"] = map[string]any{"observedGeneration": 24, "lastAppliedRevision": "latest@sha256:" + strings.Repeat("b", 64), "conditions": []condition{{Type: "Ready", Status: "True", ObservedGeneration: 24}, {Type: "Healthy", Status: "True", ObservedGeneration: 24}}}
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	if err := recoverPod(ctx, f, want, "sha256:"+strings.Repeat("b", 64), time.Now); err != nil {
+		t.Fatal(err)
+	}
+	if setReads < 2 || appsReads < 2 || f.deletes != 1 {
+		t.Fatalf("recovery returned before controller acknowledgement: set=%d apps=%d deletes=%d", setReads, appsReads, f.deletes)
+	}
+}
+
+func TestRecoveryRefusesStaleOrUnhealthyFluxResult(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"previous-artifact": func(a map[string]any) {
+			a["status"].(map[string]any)["lastAppliedRevision"] = "latest@sha256:" + strings.Repeat("c", 64)
+		},
+		"unobserved-generation": func(a map[string]any) { a["status"].(map[string]any)["observedGeneration"] = 23 },
+		"old-ready-condition": func(a map[string]any) {
+			a["status"].(map[string]any)["conditions"] = []condition{{Type: "Ready", Status: "True", ObservedGeneration: 23}, {Type: "Healthy", Status: "True", ObservedGeneration: 23}}
+		},
+		"still-unhealthy": func(a map[string]any) {
+			a["status"].(map[string]any)["conditions"] = []condition{{Type: "Ready", Status: "False", ObservedGeneration: 24}, {Type: "Healthy", Status: "False", ObservedGeneration: 24}}
+		},
+		"still-reconciling": func(a map[string]any) {
+			a["status"].(map[string]any)["conditions"] = []condition{{Type: "Ready", Status: "True", ObservedGeneration: 24}, {Type: "Healthy", Status: "True", ObservedGeneration: 24}, {Type: "Reconciling", Status: "True", ObservedGeneration: 24}}
+		},
+	}
+	for name, mutate := range cases {
+		t.Run(name, func(t *testing.T) {
+			f, want := fixture(t)
+			f.afterDelete = func(f *fakeClient) { mutate(f.objects["apps"].(map[string]any)) }
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+			defer cancel()
+			if err := recoverPod(ctx, f, want, "sha256:"+strings.Repeat("b", 64), time.Now); err == nil {
+				t.Fatal("stale or unhealthy Flux result accepted")
+			}
+		})
+	}
+}
+
 func TestRefuseUnsafeOrUnprovenRecovery(t *testing.T) {
 	cases := map[string]func(*fakeClient){
 		"already-current": func(f *fakeClient) {
 			s := f.objects[setKey].(statefulSet)
 			s.Status.CurrentRevision = s.Status.UpdateRevision
+			s.Status.UpdatedReplicas = 1
+			p := f.objects[podKey].(mailPod)
+			p.Metadata.Labels["controller-revision-hash"] = s.Status.UpdateRevision
 			f.objects[setKey] = s
+			f.objects[podKey] = p
 		},
 		"desired-not-observed": func(f *fakeClient) {
 			s := f.objects[setKey].(statefulSet)
@@ -218,6 +323,14 @@ func TestRefuseUnsafeOrUnprovenRecovery(t *testing.T) {
 			s.Status.Artifact.Revision = "latest@sha256:" + strings.Repeat("c", 64)
 			f.objects[sourceKey] = s
 		},
+		"missing-application-gate":    func(f *fakeClient) { delete(f.objects, "apps") },
+		"application-health-disabled": func(f *fakeClient) { f.objects["apps"].(map[string]any)["spec"].(map[string]any)["wait"] = false },
+		"different-application-layer": func(f *fakeClient) {
+			f.objects["apps"].(map[string]any)["spec"].(map[string]any)["path"] = "other/apps"
+		},
+		"different-application-source": func(f *fakeClient) {
+			f.objects["apps"].(map[string]any)["spec"].(map[string]any)["sourceRef"] = map[string]any{"kind": "OCIRepository", "name": "other"}
+		},
 		"failed-read": func(f *fakeClient) { f.failRead = true },
 	}
 	for name, mutate := range cases {
@@ -261,7 +374,7 @@ func TestDeletionConflictDoesNotRetry(t *testing.T) {
 }
 
 func TestReplacementAndStorageMustBeVerified(t *testing.T) {
-	for _, scenario := range []string{"unready", "claim-replaced", "source-changed"} {
+	for _, scenario := range []string{"unready", "claim-replaced", "source-changed", "application-replaced", "application-generation-changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			f, want := fixture(t)
 			f.afterDelete = func(f *fakeClient) {
@@ -278,6 +391,10 @@ func TestReplacementAndStorageMustBeVerified(t *testing.T) {
 					s := f.objects[sourceKey].(artifactSource)
 					s.Status.Artifact.Revision = "latest@sha256:" + strings.Repeat("c", 64)
 					f.objects[sourceKey] = s
+				case "application-replaced":
+					f.objects["apps"].(map[string]any)["metadata"].(map[string]any)["uid"] = "66666666-6666-4666-8666-666666666666"
+				case "application-generation-changed":
+					f.objects["apps"].(map[string]any)["metadata"].(map[string]any)["generation"] = 25
 				}
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
