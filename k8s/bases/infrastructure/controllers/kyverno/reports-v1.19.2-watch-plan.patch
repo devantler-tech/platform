@@ -1,193 +1,221 @@
 diff --git a/go.mod b/go.mod
-index e2016bd1ee6f52bc69a93702dbe02c4a617cbfd8..d5ee2338d3182619192d26378da38399cd885057 100644
+index e2016bd..d5ee233 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -404 +404 @@ require (
 -	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 // indirect
 +	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772
 diff --git a/pkg/controllers/report/resource/controller.go b/pkg/controllers/report/resource/controller.go
-index b692ecb1e35f582b34501289165256721efaa80e..5ef49946825183e6a51dcf051d8026dc7f5e38f8 100644
+index b692ecb..1a90bf1 100644
 --- a/pkg/controllers/report/resource/controller.go
 +++ b/pkg/controllers/report/resource/controller.go
 @@ -4,0 +5 @@ import (
 +	"errors"
 @@ -12,0 +14 @@ import (
 +	celpolicies "github.com/kyverno/kyverno/pkg/cel/policies"
-@@ -400,2 +402,5 @@ func (c *controller) startWatcher(ctx context.Context, logger logr.Logger, gvr s
+@@ -400,2 +402,6 @@ func (c *controller) startWatcher(ctx context.Context, logger logr.Logger, gvr s
 -func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchResources, autogenMatchConstraints []*admissionregistrationv1.MatchResources, restMapper meta.RESTMapper) []string {
 -	kinds := admissionpolicy.GetKinds(matchConstraints, restMapper)
 +func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchResources, autogenMatchConstraints []*admissionregistrationv1.MatchResources, restMapper meta.RESTMapper, conditions ...string) ([]string, error) {
 +	kinds, err := getWatchKinds(matchConstraints, restMapper, conditions...)
++	var resolutionErrors []error
 +	if err != nil {
-+		return nil, err
++		resolutionErrors = append(resolutionErrors, err)
 +	}
-@@ -403 +408,7 @@ func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchRe
+@@ -403 +409,7 @@ func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchRe
 -		kinds = append(kinds, admissionpolicy.GetKinds(autogenMatchConstraint, restMapper)...)
 +		// Autogen targets retain their own expanded kinds; a parent kind equality
 +		// must never remove generated controller or custom-resource targets.
 +		autogenKinds, err := getWatchKinds(autogenMatchConstraint, restMapper)
 +		if err != nil {
-+			return nil, err
++			resolutionErrors = append(resolutionErrors, err)
 +		}
 +		kinds = append(kinds, autogenKinds...)
-@@ -405 +416 @@ func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchRe
+@@ -405 +417 @@ func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchRe
 -	return kinds
-+	return kinds, nil
-@@ -419 +430 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
++	return kinds, errors.Join(resolutionErrors...)
+@@ -419 +431,2 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -	kinds := utils.BuildKindSet(logger, utils.RemoveNonValidationPolicies(append(clusterPolicies, policies...)...)...)
++	var watchErrors []error
 +	kinds := utils.BuildKindSet(logger, utils.RemoveNonValidationPolicies(utils.RemoveNonBackgroundPolicies(append(clusterPolicies, policies...)...)...)...)
-@@ -423 +434,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -423 +436,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +		if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+			return err
++			watchErrors = append(watchErrors, err)
 +		}
-@@ -436 +449,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -436 +451,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := admissionpolicy.GetKinds(policy.Spec.MatchConstraints, restMapper)
 +			kinds, err := getWatchKinds(policy.Spec.MatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -439 +455,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -439 +457,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -450 +468,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -450 +470,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := admissionpolicy.GetKinds(converted, restMapper)
 +			kinds, err := getWatchKinds(converted, restMapper, betaMatchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -453 +474,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -453 +476,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -464 +487,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -464 +489,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := admissionpolicy.GetKinds(converted, restMapper)
 +			kinds, err := getWatchKinds(converted, restMapper, betaMatchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -467 +493,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -467 +495,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -486 +514,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -486 +516,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := admissionpolicy.GetKinds(converted, restMapper)
 +			kinds, err := getWatchKinds(converted, restMapper, alphaMatchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -489 +520,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -489 +522,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -499 +532 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -499 +534 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		for _, policy := range vpols {
 +		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(vpols) {
-@@ -504 +537,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -504 +539,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
 +			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -507 +543,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -507 +545,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -517 +555 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -517 +557 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		for _, policy := range vpols {
 +		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(vpols) {
-@@ -522 +560,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -522 +562,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
 +			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -525 +566,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -525 +568,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -535 +578 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -535 +580 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		for _, policy := range mpols {
 +		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(mpols) {
-@@ -540 +583,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -540 +585,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
 +			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -543 +589,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -543 +591,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -553 +601 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -553 +603 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		for _, policy := range mpols {
 +		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(mpols) {
-@@ -558 +606,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -558 +608,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
 +			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -561 +612,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -561 +614,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -571 +624 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -571 +626 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		for _, policy := range ivpols {
 +		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(ivpols) {
-@@ -576 +629,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -576 +631,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
 +			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -579 +635,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -579 +637,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -589 +647 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -589 +649 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -		for _, policy := range ivpols {
 +		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(ivpols) {
-@@ -594 +652,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -594 +654,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
 +			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
 +			if err != nil {
-+				return err
++				watchErrors = append(watchErrors, err)
 +			}
-@@ -597 +658,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -597 +660,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
 +				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
-+					return err
++					watchErrors = append(watchErrors, err)
 +				}
-@@ -600,0 +664 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
-+	var watchErrors []error
-@@ -610,0 +675 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -610,0 +676 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 +				watchErrors = append(watchErrors, fmt.Errorf("start watcher for %s: %w", gvr, err))
-@@ -626 +691 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -626 +692 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -	return nil
 +	return errors.Join(watchErrors...)
-@@ -629 +694 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+@@ -629 +695 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
 -func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string, gvrMap map[schema.GroupVersionKind]schema.GroupVersionResource) {
 +func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string, gvrMap map[schema.GroupVersionKind]schema.GroupVersionResource) error {
-@@ -632,0 +698 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
-+		return err
-@@ -643 +709 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
+@@ -630,0 +697 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
++	var mappingErrors []error
+@@ -633,14 +700,14 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
+-	} else {
+-		for gvrs, api := range gvrss {
+-			if gvrs.SubResource == "" {
+-				gvk := schema.GroupVersionKind{Group: gvrs.Group, Version: gvrs.Version, Kind: gvrs.Kind}
+-				if !reportutils.IsGvkSupported(gvk) {
+-					logger.V(2).Info("kind is not supported", "gvk", gvk)
+-				} else {
+-					if slices.Contains(api.Verbs, "list") && slices.Contains(api.Verbs, "watch") {
+-						gvrMap[gvk] = gvrs.GroupVersionResource()
+-					} else {
 -						logger.V(2).Info("list/watch not supported for kind", "kind", kind)
-+						return fmt.Errorf("list/watch not supported for background kind %s", kind)
-@@ -648,0 +715 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
-+	return nil
+-					}
+-				}
+-			}
++		mappingErrors = append(mappingErrors, err)
++	}
++	for gvrs, api := range gvrss {
++		if gvrs.SubResource != "" {
++			continue
++		}
++		gvk := schema.GroupVersionKind{Group: gvrs.Group, Version: gvrs.Version, Kind: gvrs.Kind}
++		if !reportutils.IsGvkSupported(gvk) {
++			logger.V(2).Info("kind is not supported", "gvk", gvk)
++			continue
++		}
++		if !slices.Contains(api.Verbs, "list") || !slices.Contains(api.Verbs, "watch") {
++			mappingErrors = append(mappingErrors, fmt.Errorf("list/watch not supported for background kind %s", kind))
++			continue
+@@ -647,0 +715 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
++		gvrMap[gvk] = gvrs.GroupVersionResource()
+@@ -648,0 +717 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
++	return errors.Join(mappingErrors...)
 diff --git a/pkg/controllers/report/resource/controller_test.go b/pkg/controllers/report/resource/controller_test.go
-index 80d5966fa8561e35e0ccc8ce7fae2823cec649e5..2a7cb97c718c1901305dadef8f50765ca466d507 100644
+index 80d5966..2a7cb97 100644
 --- a/pkg/controllers/report/resource/controller_test.go
 +++ b/pkg/controllers/report/resource/controller_test.go
 @@ -48 +48 @@ func TestKindsFromPolicyAndAutogen(t *testing.T) {
@@ -202,13 +230,14 @@ index 80d5966fa8561e35e0ccc8ce7fae2823cec649e5..2a7cb97c718c1901305dadef8f50765c
 +			assert.NilError(t, err)
 diff --git a/pkg/controllers/report/resource/watch_kinds.go b/pkg/controllers/report/resource/watch_kinds.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..f964821528ce907f18193c5bf97f587adb9f8843
+index 0000000..a484da5
 --- /dev/null
 +++ b/pkg/controllers/report/resource/watch_kinds.go
-@@ -0,0 +1,159 @@
+@@ -0,0 +1,164 @@
 +package resource
 +
 +import (
++	"errors"
 +	"fmt"
 +	"strings"
 +
@@ -291,9 +320,11 @@ index 0000000000000000000000000000000000000000..f964821528ce907f18193c5bf97f587a
 +		return nil, nil
 +	}
 +	kinds := sets.New[string]()
++	var planningErrors []error
 +	for _, rule := range match.ResourceRules {
 +		if len(rule.APIGroups) == 0 || len(rule.APIVersions) == 0 || len(rule.Resources) == 0 {
-+			return nil, fmt.Errorf("incomplete resource rule in background watch plan")
++			planningErrors = append(planningErrors, fmt.Errorf("incomplete resource rule in background watch plan"))
++			continue
 +		}
 +		for _, group := range rule.APIGroups {
 +			for _, version := range rule.APIVersions {
@@ -316,7 +347,8 @@ index 0000000000000000000000000000000000000000..f964821528ce907f18193c5bf97f587a
 +					}
 +					resources, err := mapper.ResourcesFor(lookup)
 +					if err != nil {
-+						return nil, fmt.Errorf("resolve background resource %s/%s/%s: %w", group, version, resource, err)
++						planningErrors = append(planningErrors, fmt.Errorf("resolve background resource %s/%s/%s: %w", group, version, resource, err))
++						continue
 +					}
 +					matched := false
 +					for _, resolved := range resources {
@@ -326,20 +358,21 @@ index 0000000000000000000000000000000000000000..f964821528ce907f18193c5bf97f587a
 +						matched = true
 +						gvk, err := mapper.KindFor(resolved)
 +						if err != nil {
-+							return nil, err
++							planningErrors = append(planningErrors, err)
++							continue
 +						}
 +						if !constrained || gvk.Kind == required {
 +							kinds.Insert(watchKindSelector(gvk.Group, gvk.Version, gvk.Kind, subresource))
 +						}
 +					}
 +					if !matched {
-+						return nil, fmt.Errorf("no exact discovery match for background resource %s/%s/%s", group, version, resource)
++						planningErrors = append(planningErrors, fmt.Errorf("no exact discovery match for background resource %s/%s/%s", group, version, resource))
 +					}
 +				}
 +			}
 +		}
 +	}
-+	return sets.List(kinds), nil
++	return sets.List(kinds), errors.Join(planningErrors...)
 +}
 +
 +func matchConditionExpressions(conditions []admissionregistrationv1.MatchCondition) []string {
@@ -367,10 +400,10 @@ index 0000000000000000000000000000000000000000..f964821528ce907f18193c5bf97f587a
 +}
 diff --git a/pkg/controllers/report/resource/watch_plan_test.go b/pkg/controllers/report/resource/watch_plan_test.go
 new file mode 100644
-index 0000000000000000000000000000000000000000..634c703e95e80ce35769a72002e2445c51acca88
+index 0000000..0c1b3b1
 --- /dev/null
 +++ b/pkg/controllers/report/resource/watch_plan_test.go
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,339 @@
 +package resource
 +
 +import (
@@ -677,4 +710,36 @@ index 0000000000000000000000000000000000000000..634c703e95e80ce35769a72002e2445c
 +	default:
 +		t.Fatal("removed policy watcher did not emit its lifecycle event")
 +	}
++}
++
++func TestWatchPlanDiscoveryFailureReconcilesHealthyCoverage(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t, classicWatchPolicy(t, "removed-helm", "helm.toolkit.fluxcd.io/v2/HelmRelease", true))
++	require.NoError(t, c.Warmup(t.Context()))
++	_, _, _, existed := c.GetResourceHash("helm-uid")
++	require.True(t, existed)
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(classicWatchPolicy(t, "healthy-pods", "Pod", true)))
++	require.NoError(t, indexer.Add(classicWatchPolicy(t, "unavailable-kind", "NotRegistered", true)))
++	c.cpolLister = kyvernov1listers.NewClusterPolicyLister(indexer)
++	require.Error(t, c.Warmup(t.Context()), "incomplete discovery must remain an error")
++	_, _, _, present := c.GetResourceHash("sample-uid")
++	require.True(t, present, "healthy policies must still start their watchers")
++	_, _, _, retained := c.GetResourceHash("helm-uid")
++	require.False(t, retained, "removed policies must still release obsolete watchers")
++	require.Len(t, c.dynamicWatchers, 1)
++}
++
++func TestWatchPlanMixedPolicyKeepsResolvedResources(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t)
++	var policy policiesv1beta1.ValidatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"mixed-policy","resourceVersion":"1"},"spec":{"evaluation":{"background":{"enabled":true}},"matchConstraints":{"resourceRules":[{"apiGroups":[""],"apiVersions":["v1"],"operations":["CREATE"],"resources":["notregistered","pods"]}]}}}`), &policy))
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.vpolLister = policiesv1beta1listers.NewValidatingPolicyLister(indexer)
++	require.Error(t, c.Warmup(t.Context()), "the unresolved resource must remain an error")
++	_, _, _, present := c.GetResourceHash("sample-uid")
++	require.True(t, present, "resolved resources in the same policy must still be watched")
++	require.Len(t, c.dynamicWatchers, 1)
 +}
