@@ -1,5 +1,5 @@
 diff --git a/pkg/registry/file/summary_metadata_repair.go b/pkg/registry/file/summary_metadata_repair.go
-index 3f044057cba5614fdbcca8104f27cdb086641d29..de8e238132fd0c45ceda47f08013b6a6b07e7e87 100644
+index 3f044057cba5614fdbcca8104f27cdb086641d29..8e0b39495ccf9d24de543443fec7169b36cadc5a 100644
 --- a/pkg/registry/file/summary_metadata_repair.go
 +++ b/pkg/registry/file/summary_metadata_repair.go
 @@ -15,0 +16 @@ import (
@@ -39,14 +39,21 @@ index 3f044057cba5614fdbcca8104f27cdb086641d29..de8e238132fd0c45ceda47f08013b6a6
 @@ -160 +184 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(&stored)
 +	err = gob.NewDecoder(io.LimitReader(f, 8<<20)).Decode(storedObject)
-@@ -193 +217 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
+@@ -168 +192,5 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
+-	if stored.Name != row.name || stored.Namespace != row.namespace || stored.UID != listed.UID || !stored.CreationTimestamp.Equal(&listed.CreationTimestamp) {
++	// Metadata JSON uses Kubernetes RFC3339 second precision, while Gob retains
++	// nanoseconds. Compare the retained time through that same metadata codec;
++	// do not alter the payload or relax UID, name, namespace or version checks.
++	storedCreated := stored.CreationTimestamp.Rfc3339Copy()
++	if stored.Name != row.name || stored.Namespace != row.namespace || stored.UID != listed.UID || !storedCreated.Equal(&listed.CreationTimestamp) {
+@@ -193 +221 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	metadata := extractFields(&stored, []string{"ObjectMeta", "SchemaVersion"})
 +	metadata := extractFields(storedObject, []string{"ObjectMeta", "SchemaVersion"})
-@@ -210 +234 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
+@@ -210 +238 @@ func reconcileSummaryMetadataRow(ctx context.Context, fs afero.Fs, root string,
 -	return &stored, nil
 +	return storedObject, nil
 diff --git a/pkg/registry/file/summary_metadata_repair_test.go b/pkg/registry/file/summary_metadata_repair_test.go
-index 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717..b7b312ad120c5e68b4c6bdb90c41d8f5474be457 100644
+index 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717..24ef7781d710ce92453fed46ec92b0dd52830f89 100644
 --- a/pkg/registry/file/summary_metadata_repair_test.go
 +++ b/pkg/registry/file/summary_metadata_repair_test.go
 @@ -45,0 +46,8 @@ func newSplitSummary(t *testing.T) summaryRepairFixture {
@@ -215,3 +222,63 @@ index 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717..b7b312ad120c5e68b4c6bdb90c41d8f5
 +	}
 +}
 +
+@@ -243,0 +394,59 @@ func TestSummaryMetadataRetryRepairsSplitBeforeVersionConflict(t *testing.T) {
++
++// Metadata JSON and retained Gob payloads must agree at Kubernetes' wire precision.
++// saveObject preserves fractional seconds in Gob but metav1.Time JSON emits whole seconds.
++func TestSummaryMetadataRepairCreationTimestampWirePrecision(t *testing.T) {
++	for _, native := range []bool{false, true} {
++		for _, coherent := range []bool{false, true} {
++			t.Run(fmt.Sprintf("native=%t/coherent=%t", native, coherent), func(t *testing.T) {
++				meta := metav1.ObjectMeta{
++					Name: "deployment-example-app", Namespace: "example", UID: types.UID("retained-identity"),
++					CreationTimestamp: metav1.NewTime(time.Date(2026, 9, 1, 0, 0, 0, 123456789, time.UTC)),
++					Annotations:       map[string]string{"kubescape.io/timestamp": "1788220800"},
++				}
++				var obj runtime.Object = &v1beta1.VulnerabilityManifestSummary{ObjectMeta: meta}
++				if native {
++					obj = &softwarecomposition.VulnerabilityManifestSummary{ObjectMeta: meta}
++				}
++				f := newSplitSummaryObject(t, obj)
++				if coherent {
++					require.NoError(t, f.store.saveObject(f.conn, summaryRepairKey, obj, nil, ""))
++				}
++				payload, err := afero.ReadFile(f.fs, filepath.Join(f.root, summaryRepairKey)+GobExt)
++				require.NoError(t, err)
++				report, err := ReconcileVulnerabilitySummaryMetadata(context.Background(), f.fs, f.root, f.pool)
++				require.NoError(t, err)
++				if coherent {
++					require.Equal(t, SummaryMetadataRepairReport{Examined: 1, Unchanged: 1}, report)
++				} else {
++					require.Equal(t, SummaryMetadataRepairReport{Examined: 1, Repaired: 1}, report)
++				}
++				retained, err := afero.ReadFile(f.fs, filepath.Join(f.root, summaryRepairKey)+GobExt)
++				require.NoError(t, err)
++				require.Equal(t, payload, retained, "the fractional timestamp in the retained payload must stay intact")
++				metadata, err := ReadMetadata(f.conn, summaryRepairKey)
++				require.NoError(t, err)
++				var listed metav1.Object
++				if native {
++					listed = &softwarecomposition.VulnerabilityManifestSummary{}
++				} else {
++					listed = &v1beta1.VulnerabilityManifestSummary{}
++				}
++				require.NoError(t, json.Unmarshal(metadata, listed))
++				require.Equal(t, types.UID("retained-identity"), listed.GetUID())
++				require.Equal(t, "2026-09-01T00:00:00Z", listed.GetCreationTimestamp().UTC().Format(time.RFC3339Nano))
++				out := obj.DeepCopyObject()
++				require.NoError(t, f.store.GuaranteedUpdate(context.Background(), summaryRepairKey, out, false, nil,
++					func(input runtime.Object, _ storage.ResponseMeta) (runtime.Object, *uint64, error) {
++						current := input.DeepCopyObject()
++						current.(metav1.Object).GetAnnotations()["kubescape.io/timestamp"] = "1788393600"
++						return current, nil, nil
++					}, listed.(runtime.Object)))
++				if coherent {
++					require.Equal(t, "4", out.(metav1.Object).GetResourceVersion())
++				} else {
++					require.Equal(t, "3", out.(metav1.Object).GetResourceVersion())
++				}
++			})
++		}
++	}
++}
