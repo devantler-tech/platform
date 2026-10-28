@@ -126,6 +126,7 @@ esac
 				"scripts/run-openbao-backup-sandbox.sh": `#!/bin/bash
 set -eu
 [[ $1 == verify && $2 == /dev/shm/email-custody-copy.* && $3 == "$RUNNER_TEMP/verify-openbao-recovery" ]] || exit 91
+[[ ! -e "$2/kubeconfig" && $KUBECONFIG != "$2/"* ]] || exit 91
 [[ $SYNTHETIC_CASE != restore-failure ]] || exit 7
 if [[ $SYNTHETIC_CASE == restore-format ]]; then printf '%s\n' synthetic-private-restore; else
  touch "$SYNTHETIC_CASE_DIR/restored"
@@ -169,6 +170,9 @@ esac
 			if scratch, readErr := os.ReadFile(filepath.Join(dir, "scratch")); readErr == nil {
 				if _, statErr := os.Stat(string(scratch)); !os.IsNotExist(statErr) {
 					t.Fatal("private recovery scratch was not removed")
+				}
+				if _, statErr := os.Stat(filepath.Dir(string(scratch))); !os.IsNotExist(statErr) {
+					t.Fatal("private live-connection scratch was not removed")
 				}
 			}
 		})
