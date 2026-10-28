@@ -1,0 +1,9 @@
+- op: test
+  path: /spec/ports/0/name
+  value: management
+- op: test
+  path: /spec/ports/0/targetPort
+  value: management
+- op: replace
+  path: /spec/ports/0/targetPort
+  value: client-proxy
