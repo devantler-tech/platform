@@ -14,6 +14,20 @@ type ingressObservation struct {
 	Public200, Public503 int
 }
 
+func ingressFlowFilter(destination netip.Addr) ([]byte, error) {
+	// Cilium v1.20.3 monitor API: trace type 4, to-endpoint subtype 0.
+	// Native TCP flag filters require the listed bits; a false ACK bit would
+	// not exclude ACK packets. SYN, reply direction and the receiver port are
+	// constrained here; the strict wire parser independently refuses SYN+ACK.
+	return json.Marshal(map[string]any{
+		"destination_ip": []string{destination.String()}, "destination_pod": []string{"private-mail/private-mail-0"},
+		"destination_port": []string{"8080"}, "protocol": []string{"tcp"}, "source_identity": []uint32{8},
+		"tcp_flags": []map[string]bool{{"SYN": true}}, "reply": []bool{false},
+		"verdict": []string{"FORWARDED"}, "traffic_direction": []string{"INGRESS"},
+		"event_type": []map[string]any{{"type": 4, "match_sub_type": true, "sub_type": 0}},
+	})
+}
+
 func ingressDaemonUID(raw []byte) (string, error) {
 	fields := map[string][]string{"": {"apiVersion", "kind", "metadata"}, "metadata": {"name", "namespace", "uid", "deletionTimestamp"}}
 	if len(raw) == 0 || len(raw) > maxAPIOutput || strictjson.Validate(raw, fields) != nil {
@@ -84,10 +98,7 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 	if since.IsZero() || !until.After(since) || until.Sub(since) > 45*time.Second {
 		return refuse()
 	}
-	filter, err := json.Marshal(map[string]any{
-		"destination_ip": []string{addresses.Pod.String()}, "destination_pod": []string{"private-mail/private-mail-0"},
-		"destination_port": []string{"8080"}, "protocol": []string{"tcp"}, "source_identity": []uint32{8},
-	})
+	filter, err := ingressFlowFilter(addresses.Pod)
 	if err != nil {
 		return refuse()
 	}

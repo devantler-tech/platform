@@ -45,7 +45,7 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 					return nil, errors.New("unexpected native operation")
 				}
 				var actual, expected any
-				if json.Unmarshal([]byte(args[21]), &actual) != nil || json.Unmarshal([]byte(`{"destination_ip":["10.244.2.2"],"destination_pod":["private-mail/private-mail-0"],"destination_port":["8080"],"protocol":["tcp"],"source_identity":[8]}`), &expected) != nil || !reflect.DeepEqual(actual, expected) {
+				if json.Unmarshal([]byte(args[21]), &actual) != nil || json.Unmarshal([]byte(`{"destination_ip":["10.244.2.2"],"destination_pod":["private-mail/private-mail-0"],"destination_port":["8080"],"protocol":["tcp"],"source_identity":[8],"tcp_flags":[{"SYN":true}],"reply":[false],"verdict":["FORWARDED"],"traffic_direction":["INGRESS"],"event_type":[{"type":4,"match_sub_type":true,"sub_type":0}]}`), &expected) != nil || !reflect.DeepEqual(actual, expected) {
 					return nil, errors.New("unexpected filter")
 				}
 				executions++
