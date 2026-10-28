@@ -756,6 +756,21 @@ jobs:
   # Repository-wide guards run unconditionally alongside changes, render production and run
   # ShellCheck. Deployment and the required gate both wait for this job's success.
   # kubectl is pinned and checksum-verified; yq and jq come from the ubuntu-latest runner.
+  test-publish-release-recovery:
+    name: 🩹 Validate the release recovery build
+    permissions: {}
+    uses: ./.github/workflows/release-recovery-offline-fixture.yaml
+    with:
+      enable-recovery: true
+      offline-test: true
+
+  # Default-off is a PR observation; do not add its intentionally skipped job to the production needs.
+  test-publish-release-recovery-disabled:
+    if: github.event_name == 'pull_request'
+    name: 🩹 Validate default-off release recovery
+    permissions: {}
+    uses: ./.github/workflows/release-recovery-offline-fixture.yaml
+
   validate-repository-guards:
     name: 🛡️ Validate Repository Guards
     runs-on: ubuntu-latest
@@ -792,6 +807,9 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
 
+      - name: 🩹 Validate the release recovery boundary
+        run: bash scripts/tests/test-release-recovery.sh
+
       - name: 💾 Validate storage audit regressions
         run: |
           go test ./scripts/audit-storage-retention
@@ -799,7 +817,7 @@ jobs:
 
       - name: 💾 Require bounded OpenBao expansion transport controls
         env:
-          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
+          AUDIT_REQUIRE_NATIVE_CONTROL: "1"
         run: go test -race -count=1 ./scripts/expand-openbao-audit
 
       - name: 🧯 Validate private recovery field extraction
@@ -972,12 +990,12 @@ jobs:
         # Use the checksum-verified native Helm above, on PRs and merge groups.
         # The consumer regression must never skip when Helm is unavailable.
         env:
-          KYVERNO_LOG_REQUIRE_NATIVE: '1'
+          KYVERNO_LOG_REQUIRE_NATIVE: "1"
         run: go test -race -count=1 ./scripts/tests/kyverno-logs
 
       - name: 🗃️ Validate Fleet preparation and server images
         env:
-          FLEETDM_REQUIRE_NATIVE: '1'
+          FLEETDM_REQUIRE_NATIVE: "1"
         run: |
           FLEETDM_HELM_BIN="$KYVERNO_LOG_HELM_BIN"
           export FLEETDM_HELM_BIN
@@ -1174,7 +1192,7 @@ jobs:
       # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
       - name: 🔐 Validate the approved-revisions guard
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: |
           shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
           shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
@@ -1190,7 +1208,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       # The scheduled regeneration (#3552, third child of #3308) runs the generator and
@@ -3332,7 +3350,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 8
         env:
-          OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: '1'
+          OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: "1"
         run: |
           shellcheck scripts/run-openbao-backup-sandbox.sh
           go test -count=1 -v ./scripts/openbao-backup-recovery
@@ -3343,7 +3361,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 5
         env:
-          EMAIL_CREDENTIAL_NATIVE_TEST: '1'
+          EMAIL_CREDENTIAL_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
         if: needs.changes.outputs.k8s == 'true'
@@ -3356,7 +3374,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 5
         env:
-          EMAIL_CLIENT_IDENTITY_NATIVE_TEST: '1'
+          EMAIL_CLIENT_IDENTITY_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/ingress-client-address
 
       - name: 🔐 Validate Kyverno review admission boundaries
@@ -3396,7 +3414,6 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
           bash scripts/tests/test-coroot-application-health-reconciler.sh
-
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
@@ -4002,6 +4019,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
@@ -4142,7 +4160,13 @@ jobs:
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main after an unsuccessful or evicted merge-group deploy)
-    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]
+    needs:
+      [
+        changes,
+        deploy-prod,
+        validate-publication-contract,
+        merge-group-queue-membership,
+      ]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
@@ -4364,6 +4388,8 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        test-publish-release-recovery,
+        test-publish-release-recovery-disabled,
         validate-publication-generator,
         validate-manifest-regressions,
         validate-go-regressions,
@@ -4465,6 +4491,8 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
+            ${{ needs.test-publish-release-recovery.result }}
+            ${{ needs.test-publish-release-recovery-disabled.result }}
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
