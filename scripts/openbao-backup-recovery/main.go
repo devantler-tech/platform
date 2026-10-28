@@ -317,7 +317,14 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 		if _, err := rand.Read(random); err != nil {
 			return stageError("fixture")
 		}
-		data := map[string]any{"username": fmt.Sprintf("synthetic-%d", i), "password": hex.EncodeToString(random), "retainedField": "synthetic-fixture"}
+		// Keep a declared password-only record alongside enriched records, so
+		// native restoration proves both minimum-schema admission and retention
+		// of every optional field.
+		data := map[string]any{"password": hex.EncodeToString(random)}
+		if i > 0 {
+			data["username"] = fmt.Sprintf("synthetic-%d", i)
+			data["retainedField"] = "synthetic-fixture"
+		}
 		raw, err := json.Marshal(data)
 		if err != nil {
 			return stageError("fixture")
@@ -410,10 +417,22 @@ audit "file" {
 	return a.restore(ctx, root, "/proof")
 }
 
+// inputFailureStage renders only closed diagnostic codes, never error content.
+func inputFailureStage(err error) string {
+	var known stageError
+	if errors.As(err, &known) {
+		switch known {
+		case "private-workspace", "snapshot-job-read", "snapshot-job-admission", "live-health", "deployment-inputs", "backup-target", "recovery-inputs", "live-records", "snapshot-download", "private-handoff":
+			return string(known)
+		}
+	}
+	return "collection"
+}
+
 func main() {
 	if len(os.Args) == 2 && os.Args[1] == "collect" {
-		if collectRecoveryInputs(os.Getenv("OPENBAO_RECOVERY_DIR")) != nil {
-			fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_INPUTS=UNVERIFIED")
+		if err := collectRecoveryInputs(os.Getenv("OPENBAO_RECOVERY_DIR")); err != nil {
+			fmt.Fprintf(os.Stderr, "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=%s\n", inputFailureStage(err))
 			os.Exit(2)
 		}
 		fmt.Println("OPENBAO_BACKUP_INPUTS=PASS")
