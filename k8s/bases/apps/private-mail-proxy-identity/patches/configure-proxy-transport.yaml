@@ -1,0 +1,12 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  template:
+    spec:
+      initContainers:
+        - name: configure
+          args:
+            - --proxy-client-ip=true

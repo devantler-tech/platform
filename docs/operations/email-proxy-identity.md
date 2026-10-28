@@ -24,6 +24,14 @@ trusted set explicitly in both directions, so replaying false clears a previous
 enabled setting. The unused local listener remains declared during rollback;
 it is never an externally exposed endpoint.
 
+The opt-in bundle declares `--proxy-client-ip=true` on the initializer. This
+non-secret deployment option overrides the legacy JSON setting without reading
+or rewriting encrypted repository settings. Both plan generation and the full
+bootstrap lifecycle accept `--proxy-client-ip=false` for an explicit rollback.
+Omitting the option retains the legacy setting, and conflicting HTTP forwarding
+still refuses initialization. A rollback must declare false when legacy private
+configuration was already enabled; removing an override alone does not clear it.
+
 Before activation, require current-head native Caddy/Stalwart and pinned Envoy
 proof, correct real-client identity through the deployed provider, refusal of
 forged/ambiguous/direct untrusted requests, unchanged retained access rules,
@@ -34,7 +42,8 @@ requests direct DNS through its existing declarative owner. No browser DNS
 change is part of this preparation.
 
 Rollback restores the explicit disabled provider and receiver settings, selects
-the administration bundle and replays `useProxyClientIP: false`. Retain data,
+the administration bundle and declares `--proxy-client-ip=false` on its initializer
+when an enabled legacy setting also needs overriding. Retain data,
 credentials and client access rules throughout. A successful source test is not
 production identity or recovery evidence.
 

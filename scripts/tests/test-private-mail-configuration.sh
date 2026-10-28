@@ -73,7 +73,7 @@ run_bootstrap() {
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1 || bootstrap_status=$?
+    "$name-bootstrap-image" "$@" >"$scratch/bootstrap.log" 2>&1 || bootstrap_status=$?
   if [ "$bootstrap_status" != 0 ]; then
     # Emit fixed stage labels only. Native diagnostics and fixture credentials
     # stay in the private scratch directory, never the hosted job output.
@@ -554,6 +554,9 @@ for forwarded in true false; do
   jq --argjson enabled "$forwarded" '.useForwardedClientIP=$enabled' \
     "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
   mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+  if [ "$forwarded" = true ] && run_bootstrap --proxy-client-ip=true; then
+    echo 'FAIL: bootstrap combined HTTP and transport identity modes' >&2; exit 1
+  fi
   run_bootstrap
   start_server serving
 done
@@ -570,10 +573,12 @@ jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/proxy-bl
 for proxy_enabled in true false; do
   docker stop --time 30 "$name" >/dev/null
   docker rm "$name" >/dev/null
-  jq --argjson enabled "$proxy_enabled" '.useForwardedClientIP=false | .useProxyClientIP=$enabled' \
+  jq '.useForwardedClientIP=false | .useProxyClientIP=false' \
     "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
   mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
-  run_bootstrap
+  cp "$scratch/inputs/settings.json" "$scratch/proxy-settings-before.json"
+  run_bootstrap --proxy-client-ip="$proxy_enabled"
+  cmp "$scratch/proxy-settings-before.json" "$scratch/inputs/settings.json"
   start_server serving
   if [ "$proxy_enabled" = false ]; then
     docker exec "$name" /usr/bin/curl --disable --noproxy '*' --fail --silent --show-error \

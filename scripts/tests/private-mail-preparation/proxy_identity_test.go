@@ -10,6 +10,14 @@ func TestProxyIdentityKeepsNativeBackendFencedAndProxyCredentialless(t *testing.
 		t.Fatal("existing administration service must target only the client proxy")
 	}
 	pod := mapping(t, mapping(t, mapping(t, object(t, objects, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
+	initializers := sequence(t, pod["initContainers"])
+	if len(initializers) != 1 {
+		t.Fatal("proxy configuration must retain the single managed initializer")
+	}
+	args := sequence(t, mapping(t, initializers[0])["args"])
+	if len(args) != 1 || args[0] != "--proxy-client-ip=true" {
+		t.Fatal("the opt-in must declare transport activation without rewriting private settings")
+	}
 	var proxy map[string]any
 	var nativeImage any
 	for _, item := range sequence(t, pod["containers"]) {
