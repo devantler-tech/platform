@@ -64,8 +64,18 @@ func backupTarget(base, cluster, secret, keys []byte) (target, error) {
 	return result, nil
 }
 
-// freshJobWindow requires a recently completed consumer of the replacement storage.
-func freshJobWindow(raw []byte, now time.Time) (time.Time, time.Time, error) {
+// freshRecoveryWindow requires a recently completed consumer of the replacement storage.
+func freshRecoveryWindow(raw []byte, now time.Time) (time.Time, time.Time, error) {
+	// Active custody can be newer than the one-time copy's snapshot. Its full
+	// records must survive an actual restore from the newest bounded independent
+	// backup, with no user-supplied producer window. Legacy copy keeps its exact
+	// completed-job binding below.
+	if canonicalRecoverySet() {
+		if len(raw) != 0 || now.IsZero() {
+			return time.Time{}, time.Time{}, errEvidence
+		}
+		return now.Add(-24 * time.Hour), now.Add(5 * time.Minute), nil
+	}
 	var job struct {
 		Kind     string `json:"kind"`
 		Metadata struct {

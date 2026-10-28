@@ -77,7 +77,7 @@ func TestFreshSnapshotRequiresCompletedReplacementJob(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, _, err = freshJobWindow(encoded, now)
+			_, _, err = freshRecoveryWindow(encoded, now)
 			if (err == nil) != (test == "complete") {
 				t.Fatal("incorrect fresh-job verdict")
 			}

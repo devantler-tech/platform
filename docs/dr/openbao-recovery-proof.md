@@ -11,8 +11,14 @@ storage destination before downloading its exact archive with an immutable
 conditional read. Archive size and expansion are bounded. Only the fixed recovery
 resource is decoded in memory; nothing is extracted to the host filesystem.
 Duplicate or conflicting resource copies, incomplete gzip data, bad checksums
-and unrelated locations refuse success. The data snapshot retains its separate
-freshness requirement from the repaired snapshot job.
+and unrelated locations refuse success. Legacy custody-copy evidence retains its
+specific completed snapshot-job window. Active canonical recovery instead reads
+the newest independent snapshot from the complete bounded listing within the
+last 24 hours, with at most five minutes of clock skew. It does not accept a
+producer window from an input or fall back to an older matching snapshot. This
+allows a completed backup to cover records created after the one-time copy's
+snapshot. Every selected canonical record must still survive the actual restore;
+a recent snapshot that lacks a copied record is not recovery evidence.
 
 The verifier starts the pinned server release in a fresh, network-disabled
 container. The container runs as the non-root runner user, with a read-only root
