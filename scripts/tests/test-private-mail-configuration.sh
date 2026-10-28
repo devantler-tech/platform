@@ -379,7 +379,7 @@ for object in accounts certificates applications; do
   cmp "$scratch/before.ids" "$scratch/after.ids"
 done
 inventory
-jq -e '.methodResponses[0][1].total==4' "$scratch/inputs/listener-inventory.json" >/dev/null
+jq -e '.methodResponses[0][1].total==5 and ([.methodResponses[1][1].list[].name]|sort)==["client-proxy","imaps","management","smtp-inbound","submission"]' "$scratch/inputs/listener-inventory.json" >/dev/null
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
