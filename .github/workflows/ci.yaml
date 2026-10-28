@@ -3315,7 +3315,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -3577,7 +3577,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
+        uses: devantler-tech/.github/actions/validate-naming@d513d0069c20cd8f037c0cb42eadf73268ac14f4 # v14.0.0
 
       - name: Confirm naming validation completed
         env:
