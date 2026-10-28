@@ -145,6 +145,11 @@ changes are refused and reported. Payload bytes and scan times are retained. The
 under the summary's write lock before later scanner updates, so a failed metadata write can be
 recovered on retry without accepting a stale client's update.
 
+The revision 10 publisher compares retained creation times at the second-level precision used by
+Kubernetes metadata JSON. Gob retains fractional seconds, so comparing its timestamp directly
+with a JSON metadata row can falsely report an identity change. The comparison keeps the payload
+intact and retains the name, namespace, UID, version-direction and scan-time guards.
+
 Publication does not deploy this image. Before a separate immutable image-pin change, verify
 its signed digest, a recovery path for the retained store and the repeated split observations.
 Preserve the chart's single-writer `Recreate` rollout. After deployment, retain the reconciliation

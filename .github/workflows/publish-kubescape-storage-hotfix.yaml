@@ -30,7 +30,7 @@ concurrency:
 env:
   KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
-  IMAGE_TAG: v0.0.297-sqlite-contention.9-${{ github.sha }}
+  IMAGE_TAG: v0.0.297-sqlite-contention.10-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
   CLEANUP_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
   SUMMARY_REPAIR_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
@@ -89,8 +89,8 @@ jobs:
           test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
           git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
           git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
-          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = de8e238132fd0c45ceda47f08013b6a6b07e7e87
-          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = b7b312ad120c5e68b4c6bdb90c41d8f5474be457
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
           git diff --check
           go test -race ./pkg/registry/file
 
@@ -155,8 +155,8 @@ jobs:
           test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
           git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
           git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
-          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = de8e238132fd0c45ceda47f08013b6a6b07e7e87
-          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = b7b312ad120c5e68b4c6bdb90c41d8f5474be457
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
           git diff --check
 
       - name: Set up Buildx container driver
