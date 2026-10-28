@@ -73,3 +73,17 @@ totals. It never deletes the legacy records or switches consumers. The existing
 `Verify Email Credential Custody` workflow remains a read-only plan. Storage-key
 generation, consumer switching and encrypted-volume activation are separate
 operations after their own recovery coverage is verified.
+
+Production explicitly uses retained credential custody: its overlay removes
+the three Email PushSecrets while retaining the durable ExternalSecret readers.
+Regenerated local caches therefore cannot create a missing canonical record
+after an older backup is restored. Restore OpenBao first, then run the guarded
+legacy custody copy when the restored backup predates the move. A conflicting
+canonical value remains a refusal; do not delete history to make copying pass.
+
+The fresh-install administration base still generates and seeds all three
+accounts automatically with `IfNotExists` and retained remote history. Use that
+fresh bootstrap bundle only for an explicitly declared new installation, never
+while an existing installation awaits restoration. A fresh production bootstrap
+must restore the retained-custody overlay before routine operation. Missing
+records or regenerated caches alone never establish fresh-install intent.
