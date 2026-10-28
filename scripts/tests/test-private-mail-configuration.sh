@@ -457,6 +457,9 @@ jq -cn --arg id "$maintainer_id" '{using:["urn:ietf:params:jmap:core","urn:stalw
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
   --header 'Content-Type: application/json' --data-binary @/proof/primary-restriction.json "http://$name:8080/jmap" >"$scratch/primary-restriction-result.json"
 jq -e --arg id "$maintainer_id" '.methodResponses[0][1].updated|has($id)' "$scratch/primary-restriction-result.json" >/dev/null
+primary_status=$(docker exec -i "$name" curl --disable --noproxy '*' --silent --show-error --max-time 10 \
+  --config - --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/jmap/session <"$scratch/human.curl")
+[ "$primary_status" = 403 ]
 cp "$scratch/inputs/maintainer-password" "$scratch/old-maintainer-password"
 openssl rand -hex 32 | tr -d '\n' >"$scratch/inputs/maintainer-password"
 human_password=$(cat "$scratch/inputs/maintainer-password")
@@ -470,7 +473,7 @@ jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/client-replay-result
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/client.curl "http://$name:8080/jmap/session" >"$scratch/client-after-replay.json"
 primary_status=$(docker exec -i "$name" curl --disable --noproxy '*' --silent --show-error --max-time 10 \
   --config - --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/jmap/session <"$scratch/human.curl")
-[ "$primary_status" = 401 ]
+[ "$primary_status" = 403 ]
 jq -cn --arg id "$maintainer_id" '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[["x:Account/set",{update:{($id):{"credentials/0/allowedIps":{}}}},"restore"]]}' >"$scratch/primary-restore.json"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
   --header 'Content-Type: application/json' --data-binary @/proof/primary-restore.json "http://$name:8080/jmap" >"$scratch/primary-restore-result.json"
@@ -591,16 +594,30 @@ native_cli apply --file /proof/primary-expiry.ndjson --json >"$scratch/primary-e
 jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/primary-expiry-result.jsonl" >/dev/null
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
+# Expiration keeps the primary credential usable for password recovery, but
+# downgrades its permissions. Bind the negative to a query that succeeds again
+# after restoring the expiry, rather than assuming session sign-in is refused.
+primary_account=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/rotated-primary-session.json")
+jq -cn --arg account "$primary_account" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account},"query"]]}' >"$scratch/expiry-query.json"
+start_server serving
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-before-bootstrap.json"
+jq -e '.methodResponses[0][0]=="error" and .methodResponses[0][1].type=="forbidden"' "$scratch/expiry-before-bootstrap.json" >/dev/null
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
 run_bootstrap
 start_server serving
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/client.curl "http://$name:8080/jmap/session" >"$scratch/client-after-bootstrap.json"
-primary_status=$(docker exec -i "$name" curl --disable --noproxy '*' --silent --show-error --max-time 10 \
-  --config - --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/jmap/session <"$scratch/human.curl")
-[ "$primary_status" = 401 ]
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-after-bootstrap.json"
+jq -e '.methodResponses[0][0]=="error" and .methodResponses[0][1].type=="forbidden"' "$scratch/expiry-after-bootstrap.json" >/dev/null
 jq -cn --arg id "$maintainer_id" '{"@type":"update",object:"Account",id:$id,value:{"credentials/0/expiresAt":null}}' >"$scratch/primary-expiry-restore.ndjson"
 administration_cli apply --file /proof/primary-expiry-restore.ndjson --json >"$scratch/primary-expiry-restore-result.jsonl" 2>"$scratch/primary-expiry-restore.err"
 jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/primary-expiry-restore-result.jsonl" >/dev/null
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl "http://$name:8080/jmap/session" >"$scratch/primary-after-bootstrap.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-restored.json"
+jq -e '.methodResponses[0][0]=="Email/query"' "$scratch/expiry-restored.json" >/dev/null
 echo 'PASS: native client credential and primary expiration survive complete initializer re-entry'
 protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/refreshed-interface.html"
 if grep -q 'previous-ui-cache-canary' "$scratch/refreshed-interface.html"; then
