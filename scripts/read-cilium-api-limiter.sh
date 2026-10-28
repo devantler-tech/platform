@@ -18,14 +18,60 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "${work_dir}"' EXIT
 inconclusive() { printf 'INCONCLUSIVE: %s\n' "$1"; exit 3; }
 
-# Bound every stream and request. Neither failed kubectl output nor parser diagnostics are public.
+# Bound JSON responses and requests. Neither failed kubectl output nor parser diagnostics are public.
 read_json() {
   local destination="$1"
+  local json_shape
+  local -a read_status
   shift
-  if ! timeout 20s kubectl --context admin@prod --request-timeout 15s "$@" \
-    2>"${work_dir}/read.stderr" | head -c 1048577 >"${destination}"; then return 1; fi
-  [[ "$(wc -c <"${destination}")" -le 1048576 ]] &&
-    jq -e -s 'length==1 and .[0]!=null' "${destination}" >/dev/null 2>&1
+  read_failure=COMMAND_FAILED
+  if timeout 20s kubectl --context admin@prod --request-timeout 15s "$@" \
+    2>"${work_dir}/read.stderr" | head -c 1048577 >"${destination}"; then
+    read_status=("${PIPESTATUS[@]}")
+  else
+    read_status=("${PIPESTATUS[@]}")
+  fi
+  if [[ "$(wc -c <"${destination}")" -gt 1048576 ]]; then
+    read_failure=OUTPUT_LIMIT
+    return 1
+  fi
+  if [[ "${read_status[0]}" -ne 0 || "${read_status[1]}" -ne 0 ]]; then
+    # Classify a bounded private prefix; publish only fixed constants, never matched text.
+    head -c 8192 "${work_dir}/read.stderr" >"${work_dir}/read.stderr.prefix"
+    if [[ "${read_status[0]}" -eq 124 ]]; then
+      read_failure=DEADLINE_EXCEEDED
+    elif LC_ALL=C grep -Eqi 'forbidden|unauthorized|you must be logged in' "${work_dir}/read.stderr.prefix"; then
+      read_failure=ACCESS_DENIED
+    elif LC_ALL=C grep -Eqi '(unknown|unrecognized) (flag|command)|flag provided but not defined' "${work_dir}/read.stderr.prefix"; then
+      read_failure=CLI_REJECTED
+    elif LC_ALL=C grep -Eq 'dial unix /var/run/cilium/shell\.sock:' "${work_dir}/read.stderr.prefix"; then
+      read_failure=HIVE_SOCKET_UNAVAILABLE
+    elif LC_ALL=C grep -Eq 'json: unsupported value: (NaN|[+-]?Inf)' "${work_dir}/read.stderr.prefix"; then
+      read_failure=JSON_ENCODING_FAILED
+    elif LC_ALL=C grep -Eqi 'unable to connect to the server|error dialing backend|error upgrading connection|i/o timeout|connection (reset|refused)|no route to host|tls handshake timeout|unexpected EOF' "${work_dir}/read.stderr.prefix"; then
+      read_failure=TRANSPORT_FAILURE
+    fi
+    return 1
+  fi
+  # Slurping distinguishes valid JSON null and an empty stream from parse errors.
+  # None is a measurement; only the fixed classification leaves the private file.
+  if ! json_shape="$(jq -r -s '
+    if length==0 then "EMPTY_OUTPUT"
+    elif length>1 then "MULTIPLE_JSON_VALUES"
+    elif .[0]==null then "JSON_NULL"
+    else "OK" end
+  ' "${destination}" 2>/dev/null)"; then
+    read_failure=INVALID_JSON
+    return 1
+  fi
+  case "${json_shape}" in
+    OK) ;;
+    EMPTY_OUTPUT | MULTIPLE_JSON_VALUES | JSON_NULL)
+      read_failure="${json_shape}"
+      return 1
+      ;;
+    *) read_failure=INVALID_JSON; return 1 ;;
+  esac
 }
 roster() {
   local prefix="$1"
@@ -77,7 +123,7 @@ for sample in 1 2 3 4 5; do
     agent=$((agent + 1))
     read_json "${work_dir}/metrics" exec --namespace kube-system "${pod}" --container cilium-agent \
       -- cilium-dbg metrics list --output json --match-pattern '^cilium_api_limiter_' ||
-      inconclusive 'an agent metric read failed.'
+      inconclusive "an agent metric read failed (${read_failure})."
     captured_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if ! jq -e -c --argjson sample "${sample}" --argjson agent "${agent}" --arg time "${captured_at}" '
       def metric_key: .name+"/"+(.labels.value//"");

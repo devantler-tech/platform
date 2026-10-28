@@ -35,7 +35,8 @@ how it worked.
 The portal's retained database was no longer needed. On 26 October 2026 the
 maintainer decided to delete it rather than keep a recovery copy, which closes
 the open retention question
-([#5122](https://github.com/devantler-tech/platform/issues/5122)). The one-off
-**Retire Unused App Leftovers** workflow deletes the database, its claims, their
+([#5122](https://github.com/devantler-tech/platform/issues/5122)). A one-off
+**Retire Unused App Leftovers** workflow deleted the database, its claims, their
 retained volumes and the `backstage` namespace
-([#4266](https://github.com/devantler-tech/platform/issues/4266)).
+([#4266](https://github.com/devantler-tech/platform/issues/4266)) and was then
+removed ([#5391](https://github.com/devantler-tech/platform/issues/5391)).

@@ -13,12 +13,13 @@ import (
 var errConfiguration = errors.New("email configuration is incomplete or invalid")
 
 type settings struct {
-	Domain            string   `json:"domain"`
-	Hostname          string   `json:"hostname"`
-	Maintainer        string   `json:"maintainer"`
-	Agent             string   `json:"agent"`
-	Administrator     string   `json:"administrator"`
-	MaintainerAliases []string `json:"maintainerAliases,omitempty"`
+	Domain               string   `json:"domain"`
+	Hostname             string   `json:"hostname"`
+	Maintainer           string   `json:"maintainer"`
+	Agent                string   `json:"agent"`
+	Administrator        string   `json:"administrator"`
+	MaintainerAliases    []string `json:"maintainerAliases,omitempty"`
+	UseForwardedClientIP bool     `json:"useForwardedClientIP,omitempty"`
 }
 type inputs struct {
 	settings
@@ -142,7 +143,7 @@ func render(v inputs) ([]byte, error) {
 		}),
 		// The server's upload endpoint does not honor the JMAP mutation permission
 		// list. This dedicated IMAP/SMTP service denies it for every account.
-		update("Http", map[string]any{"allowedEndpoints": map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"}, "useXForwarded": false, "usePermissiveCors": false}),
+		update("Http", map[string]any{"allowedEndpoints": map[string]any{"match": map[string]any{"0": map[string]any{"if": "starts_with(path, '/jmap/upload/')", "then": "403"}}, "else": "200"}, "useXForwarded": v.UseForwardedClientIP, "usePermissiveCors": false}),
 		upsert("Application", []string{"description"}, map[string]any{"webadmin": map[string]any{
 			"description": "Stalwart Web Interface", "enabled": true,
 			"resourceUrl": "file://" + applicationAssetPath(applicationDigest), "autoUpdateFrequency": int64(30 * 24 * 60 * 60 * 1000),

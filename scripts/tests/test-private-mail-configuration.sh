@@ -97,32 +97,28 @@ docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 
 run_bootstrap() {
-  local rc stage=unknown
+  local bootstrap_status=0 bootstrap_stage
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
   # identity through bootstrap and every restart, as the deployment requires.
-  if docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
+  docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1; then
-    return 0
-  else
-    rc=$?
+    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1 || bootstrap_status=$?
+  if [ "$bootstrap_status" != 0 ]; then
+    # Emit fixed stage labels only. Native diagnostics and fixture credentials
+    # stay in the private scratch directory, never the hosted job output.
+    for bootstrap_stage in 'initial inventory' 'native apply' 'policy readback'; do
+      if grep -Fq "$bootstrap_stage:" "$scratch/bootstrap.log"; then
+        printf 'NATIVE_BOOTSTRAP_FAILURE_STAGE=%s\n' "$bootstrap_stage" >&2
+      fi
+    done
+    printf 'NATIVE_BOOTSTRAP_FAILURE_CALLER=%s EXIT=%s\n' "${BASH_LINENO[0]}" "$bootstrap_status" >&2
   fi
-  # Native output stays private. Report only a fixed stage derived from the
-  # initializer's controlled messages, including for expected refusal cases.
-  if grep -Fq 'policy readback:' "$scratch/bootstrap.log"; then
-    stage=policy-readback
-  elif grep -Fq 'native apply:' "$scratch/bootstrap.log"; then
-    stage=native-apply
-  elif grep -Fq 'initial inventory:' "$scratch/bootstrap.log"; then
-    stage=initial-inventory
-  fi
-  printf 'INITIALIZER_REFUSED_STAGE=%s\n' "$stage" >&2
-  return "$rc"
+  return "$bootstrap_status"
 }
 
 start_server() {
@@ -572,4 +568,18 @@ docker logs "$name" >"$scratch/server.log" 2>&1
 for log in "$scratch/smtp-auth-server.log" "$scratch/server.log"; do
   assert_diagnostic_log_privacy "$log" "$scratch/inputs/"*-password
 done
-echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS and account restrictions'
+if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
+  echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
+fi
+# The new transport policy is opt-in. Exercise native persisted readback in
+# both directions without changing the fixture's identities or mailbox data.
+for forwarded in true false; do
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  jq --argjson enabled "$forwarded" '.useForwardedClientIP=$enabled' \
+    "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
+  mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+  run_bootstrap
+  start_server serving
+done
+echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS, account restrictions and forwarding rollback'
