@@ -96,9 +96,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      contents: read
-      packages: write
-      id-token: write
+      contents: read # checkout repository
+      packages: write # push the image to GHCR
+      id-token: write # obtain the keyless cosign signing certificate
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
