@@ -939,6 +939,11 @@ jobs:
           shellcheck scripts/tests/test-webapp-compiler.sh scripts/tests/test-webapp-compiler-wiring.sh
           bash scripts/tests/test-webapp-compiler-wiring.sh
 
+      - name: 🔒 Validate scoped migration runtime publisher
+        run: |
+          shellcheck scripts/tests/test-kyverno-migration-runtime.sh
+          bash scripts/tests/test-kyverno-migration-runtime.sh
+
       - name: 🛡️ Validate preserved policy failure actions
         run: |
           go test ./scripts/validate-policy-actions
