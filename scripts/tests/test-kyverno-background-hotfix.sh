@@ -16,7 +16,7 @@ fail() { printf 'FAIL: background hotfix: %s\n' "$1" >&2; exit 1; }
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
    "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'publish only tested main pushes'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
-   "$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == f800e2778a0fdf3e724757591857fb332d45698a &&
+   "$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 52bd71206733efbd2a2ce86595315c9706ada94a &&
    "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-background ]] || fail 'source or destination changed'
 # This expression belongs to GitHub, not the shell.
 # shellcheck disable=SC2016
@@ -38,10 +38,28 @@ for job in verify publish; do
 done
 grep -Fq -- '--certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-background-hotfix.yaml@refs/heads/main"' "$workflow" || fail 'publisher certificate identity changed'
 grep -Fq -- '--certificate-oidc-issuer "https://token.actions.githubusercontent.com"' "$workflow" || fail 'publisher issuer changed'
-expected_headers='diff --git a/pkg/background/gpol/downstream_absent_test.go b/pkg/background/gpol/downstream_absent_test.go
-diff --git a/pkg/background/gpol/dynamic_watcher.go b/pkg/background/gpol/dynamic_watcher.go'
-[[ "$(grep '^diff --git ' "$patch")" == "$expected_headers" ]] || fail 'patch must contain only the reviewed implementation and regressions'
-grep -Fq 'go test -mod=readonly -race ./pkg/background/...' "$dockerfile" || fail 'real affected package race tests missing'
+expected_headers='diff --git a/cmd/internal/registry_security_test.go b/cmd/internal/registry_security_test.go
+diff --git a/go.mod b/go.mod
+diff --git a/go.sum b/go.sum
+diff --git a/pkg/background/gpol/downstream_absent_test.go b/pkg/background/gpol/downstream_absent_test.go
+diff --git a/pkg/background/gpol/dynamic_watcher.go b/pkg/background/gpol/dynamic_watcher.go
+diff --git a/third_party/docker-credential-acr-env/COMPATIBILITY.md b/third_party/docker-credential-acr-env/COMPATIBILITY.md
+diff --git a/third_party/docker-credential-acr-env/LICENSE b/third_party/docker-credential-acr-env/LICENSE
+diff --git a/third_party/docker-credential-acr-env/go.mod b/third_party/docker-credential-acr-env/go.mod
+diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/helper.go b/third_party/docker-credential-acr-env/pkg/credhelper/helper.go
+diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go b/third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go
+diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go b/third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go
+diff --git a/third_party/docker-credential-acr-env/pkg/registry/const.go b/third_party/docker-credential-acr-env/pkg/registry/const.go
+diff --git a/third_party/docker-credential-acr-env/pkg/registry/registry.go b/third_party/docker-credential-acr-env/pkg/registry/registry.go
+diff --git a/third_party/docker-credential-acr-env/pkg/token/token.go b/third_party/docker-credential-acr-env/pkg/token/token.go'
+[[ "$(grep '^diff --git ' "$patch")" == "$expected_headers" ]] || fail 'patch must contain only the reviewed implementation, security backport and regressions'
+grep -Fq 'go test -mod=readonly -race ./pkg/background/... ./cmd/internal/...' "$dockerfile" || fail 'real affected package race tests missing'
+grep -Fq './pkg/image/... ./pkg/tracing/... ./pkg/metrics/...' "$dockerfile" || fail 'dependency compatibility coverage missing'
+grep -Fxq 'COPY third_party/docker-credential-acr-env/ ./third_party/docker-credential-acr-env/' "$dockerfile" || fail 'local security dependency missing before module download'
+grep -Fxq '    github.com/chrismellard/docker-credential-acr-env/pkg/credhelper' "$dockerfile" || fail 'credential entry boundary regressions missing'
+grep -Fxq 'FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder' "$dockerfile" || fail 'builder must use the reviewed patched Go release'
+# shellcheck disable=SC2016
+grep -Fq 'test "$(go version /out/background-controller)" = "/out/background-controller: go1.26.10"' "$dockerfile" || fail 'compiled controller toolchain proof missing'
 grep -Fq 'FROM reg.kyverno.io/kyverno/background-controller:v1.19.2@sha256:c46e124f21ef8a6bb4b48de57106808b1007edcd5ddd4ff7df5d23b9efa60ce2' "$dockerfile" || fail 'runtime release pin changed'
 grep -Fq 'RUN ["/ko-app/background-controller", "--help"]' "$dockerfile" || fail 'real executable check missing'
 grep -Fq 'scripts/tests/test-kyverno-background-hotfix.sh' "$root/.github/workflows/ci.yaml" || fail 'required CI does not run this guard'

@@ -23,7 +23,7 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: f800e2778a0fdf3e724757591857fb332d45698a
+  PATCHED_SOURCE_TREE: 52bd71206733efbd2a2ce86595315c9706ada94a
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-background
   IMAGE_TAG: v1.19.2-downstream-cleanup.1-${{ github.sha }}
 
@@ -63,8 +63,16 @@ jobs:
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
-          git add -- pkg/background/gpol/dynamic_watcher.go \
-            pkg/background/gpol/downstream_absent_test.go
+          git add -- go.mod go.sum cmd/internal/registry_security_test.go \
+            pkg/background/gpol/dynamic_watcher.go pkg/background/gpol/downstream_absent_test.go \
+            third_party/docker-credential-acr-env/COMPATIBILITY.md \
+            third_party/docker-credential-acr-env/LICENSE third_party/docker-credential-acr-env/go.mod \
+            third_party/docker-credential-acr-env/pkg/credhelper/helper.go \
+            third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go \
+            third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go \
+            third_party/docker-credential-acr-env/pkg/registry/const.go \
+            third_party/docker-credential-acr-env/pkg/registry/registry.go \
+            third_party/docker-credential-acr-env/pkg/token/token.go
           test "$(git write-tree)" = "${PATCHED_SOURCE_TREE}"
 
       - name: Set up Buildx container driver
@@ -128,8 +136,16 @@ jobs:
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
-          git add -- pkg/background/gpol/dynamic_watcher.go \
-            pkg/background/gpol/downstream_absent_test.go
+          git add -- go.mod go.sum cmd/internal/registry_security_test.go \
+            pkg/background/gpol/dynamic_watcher.go pkg/background/gpol/downstream_absent_test.go \
+            third_party/docker-credential-acr-env/COMPATIBILITY.md \
+            third_party/docker-credential-acr-env/LICENSE third_party/docker-credential-acr-env/go.mod \
+            third_party/docker-credential-acr-env/pkg/credhelper/helper.go \
+            third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go \
+            third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go \
+            third_party/docker-credential-acr-env/pkg/registry/const.go \
+            third_party/docker-credential-acr-env/pkg/registry/registry.go \
+            third_party/docker-credential-acr-env/pkg/token/token.go
           test "$(git write-tree)" = "${PATCHED_SOURCE_TREE}"
 
       - name: Set up Buildx container driver
