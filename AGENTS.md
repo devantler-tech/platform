@@ -650,11 +650,11 @@ never owns the claims a controller creates, such as CloudNativePG instance
 claims, so removing a manifest leaves them in place, and a `Retain` volume and
 its storage-backend volume outlive the claim. Retiring that data is an explicit,
 reviewed deletion of the owning resource, its claims, their volumes and the
-backend volumes. The one-off `Retire Unused App Leftovers` workflow does this
-for the retired Backstage database on the maintainer's decision of 26 October
-2026 (#4266), together with the Crossview and Headlamp leftovers (#2496). No
-required opt-out is removed from a managed manifest or an existing protected
-object.
+backend volumes. A one-off `Retire Unused App Leftovers` workflow did this for
+the retired Backstage database on the maintainer's decision of 26 October 2026
+(#4266), together with the Crossview and Headlamp leftovers (#2496), and was
+removed once its run proved nothing remained (#5391). No required opt-out is
+removed from a managed manifest or an existing protected object.
 
 This is the rule in force today, and it is being replaced.
 [`docs/adr/storage-retention.md`](docs/adr/storage-retention.md) records the decision
