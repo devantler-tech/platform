@@ -155,6 +155,10 @@ func runMigration(t *testing.T, fixture *apiFixture, mode string) (string, error
 
 // runMigrationAt confines inputs and checks output privacy and scratch cleanup.
 func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
+	return runMigrationAtExpected(t, serverURL, mode, credentials())
+}
+
+func runMigrationAtExpected(t *testing.T, serverURL, mode string, expected any) (string, error) {
 	t.Helper()
 	script, err := os.ReadFile(filepath.Join(repositoryRoot(), "scripts/prepare-email-credentials.sh"))
 	if err != nil {
@@ -169,11 +173,18 @@ func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 			t.Fatal(err)
 		}
 	}
+	if expected != nil {
+		data, marshalErr := json.Marshal(expected)
+		if marshalErr != nil || os.WriteFile(filepath.Join(dir, "expected.json"), data, 0600) != nil {
+			t.Fatal("could not prepare synthetic recovered records")
+		}
+	}
 	environment := []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "LC_ALL=C",
 		"BAO_ADDR=" + serverURL, "EMAIL_CUSTODY_MODE=" + mode,
 		"EMAIL_CUSTODY_TOKEN_FILE=" + filepath.Join(dir, "token"),
 		"EMAIL_CUSTODY_WORK_DIR=" + dir,
+		"EMAIL_CUSTODY_EXPECTED_FILE=" + filepath.Join(dir, "expected.json"),
 	}
 	command := exec.Command("bash", "-eu", filepath.Join(dir, "prepare.sh"))
 	command.Env = environment
@@ -185,10 +196,52 @@ func runMigrationAt(t *testing.T, serverURL, mode string) (string, error) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 2 {
+	wantEntries := 2
+	if expected != nil {
+		wantEntries++
+	}
+	if len(entries) != wantEntries {
 		t.Fatal("credential scratch material survived the operation")
 	}
 	return string(out), runErr
+}
+
+// A rotation after recovery must refuse every write, including when only the
+// last account differs. The copied set must be the one actually restored.
+func TestCopyBindsEverySourceToRecoveredRecordsBeforeWriting(t *testing.T) {
+	for _, test := range []string{"matching", "rotated-admin", "rotated-maintainer", "rotated-agent", "missing-input", "missing-record", "extra-record", "changed-extra-field"} {
+		t.Run(test, func(t *testing.T) {
+			fixture := &apiFixture{keys: credentials()}
+			expected := credentials()
+			switch test {
+			case "rotated-admin", "rotated-maintainer", "rotated-agent":
+				account := strings.TrimPrefix(test, "rotated-")
+				fixture.keys["apps/private-mail/"+account]["password"] = strings.Repeat("Z", 48)
+			case "missing-input":
+				expected = nil
+			case "missing-record":
+				delete(expected, "apps/private-mail/agent")
+			case "extra-record":
+				expected["apps/private-mail/other"] = map[string]any{"password": strings.Repeat("Z", 48)}
+			case "changed-extra-field":
+				fixture.keys["apps/private-mail/agent"]["recovery"] = map[string]any{"preserve": false}
+			}
+			server := httptest.NewServer(http.HandlerFunc(fixture.serve))
+			defer server.Close()
+			var input any = expected
+			if expected == nil {
+				input = nil
+			}
+			out, err := runMigrationAtExpected(t, server.URL, "copy", input)
+			if test == "matching" {
+				if err != nil || fixture.writes != 3 || !strings.Contains(out, "=VERIFIED") {
+					t.Fatalf("matching recoverable records were refused: %v %s", err, out)
+				}
+			} else if err == nil || fixture.writes != 0 || !strings.Contains(out, "=FAIL") {
+				t.Fatalf("copy accepted values outside the restored set or wrote before complete comparison: writes=%d %v %s", fixture.writes, err, out)
+			}
+		})
+	}
 }
 
 // TestPlanIsReadOnlyAndCopyPreservesEveryCurrentField verifies copying and idempotent replay.

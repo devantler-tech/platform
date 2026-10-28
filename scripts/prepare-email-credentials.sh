@@ -92,6 +92,31 @@ if ! jq -e '.data["secret/"] | .type == "kv" and .options.version == "2"' \
   fail
 fi
 
+# Copy only the complete record set already restored by the independent proof.
+# Compare all accounts before the first write, then compare each fresh source
+# again immediately before its conditional copy. Plan mode stays read-only.
+if [ "$mode" = copy ]; then
+  expected_file=${EMAIL_CUSTODY_EXPECTED_FILE:-}
+  [ -n "$expected_file" ] && [ -f "$expected_file" ] && [ ! -L "$expected_file" ] || fail
+  [ "$(wc -c < "$expected_file")" -le 1048576 ] || fail
+  if ! jq -ceS -s 'select(length == 1) | .[0] |
+      select(type == "object") |
+      select(keys == ["apps/private-mail/admin", "apps/private-mail/agent", "apps/private-mail/maintainer"]) |
+      select(all(.[]; type == "object" and all(..; type != "number") and
+        (.password | type == "string" and test("^[A-Za-z0-9]{40,128}$"))))' \
+      "$expected_file" > "$work/expected.json" 2> "$work/json-error"; then
+    fail
+  fi
+  for account in admin maintainer agent; do
+    if ! jq -ceS --arg path "apps/private-mail/$account" '.[$path]' \
+        "$work/expected.json" > "$work/expected-$account.json" 2> "$work/json-error"; then
+      fail
+    fi
+    read_record "apps/private-mail/$account" "$work/source.json" || fail
+    cmp -s "$work/source.json" "$work/expected-$account.json" || fail
+  done
+fi
+
 for account in admin maintainer agent; do
   source_path=apps/private-mail/$account
   destination_path=infrastructure/email/$account
@@ -101,6 +126,10 @@ for account in admin maintainer agent; do
     source_present=true
   else
     [ "$?" = 4 ] || fail
+  fi
+  if [ "$mode" = copy ]; then
+    [ "$source_present" = true ] || fail
+    cmp -s "$work/source.json" "$work/expected-$account.json" || fail
   fi
   if read_record "$destination_path" "$work/destination.json"; then
     destination_present=true

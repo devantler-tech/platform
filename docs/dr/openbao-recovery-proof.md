@@ -49,3 +49,14 @@ Do not run production handoffs manually through this staging wrapper. The review
 main-only workflow must obtain the fixed inputs, enforce private RAM custody and
 freshness, bind the running server version, and record the final production proof
 before #5513 can close or operational custody changes proceed.
+
+The separate `Copy Email Credential Custody` workflow repeats this complete
+independent recovery before copying any existing Email credential. It accepts
+only a confirmed first-attempt dispatch from reviewed main and uses private
+memory for the recovered credentials. The copy helper conditionally creates
+only the three fixed infrastructure records, compares complete source and
+destination values, rereads the sources, and refuses conflicts or incomplete
+totals. It never deletes the legacy records or switches consumers. The existing
+`Verify Email Credential Custody` workflow remains a read-only plan. Storage-key
+generation, consumer switching and encrypted-volume activation are separate
+operations after their own recovery coverage is verified.
