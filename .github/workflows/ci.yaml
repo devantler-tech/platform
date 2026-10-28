@@ -592,6 +592,8 @@ jobs:
               - 'scripts/generate-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-canonical-publisher-regeneration.sh'
+              - 'scripts/run-publication-generator-tests.sh'
+              - 'scripts/tests/test-run-publication-generator-tests.sh'
               - 'scripts/publish-workflow-approved-revisions.identities.tsv'
               # The scheduled regeneration workflow and its contract test — both halves, so a
               # PR that edits only the workflow (a widened token grant, an interpolated branch,
