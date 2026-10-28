@@ -592,6 +592,8 @@ jobs:
               - 'scripts/generate-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-publish-workflow-approved-revisions.sh'
               - 'scripts/tests/test-canonical-publisher-regeneration.sh'
+              - 'scripts/run-publication-generator-tests.sh'
+              - 'scripts/tests/test-run-publication-generator-tests.sh'
               - 'scripts/publish-workflow-approved-revisions.identities.tsv'
               # The scheduled regeneration workflow and its contract test — both halves, so a
               # PR that edits only the workflow (a widened token grant, an interpolated branch,
@@ -1479,21 +1481,15 @@ jobs:
           # -x: the generator SOURCES the report, and without it SC1091 is reported and the run exits 1.
           shellcheck -x scripts/generate-publish-workflow-approved-revisions.sh
           shellcheck -x scripts/tests/test-publish-workflow-approved-revisions.sh
-          bash scripts/tests/test-publish-workflow-approved-revisions.sh
           shellcheck -x scripts/bootstrap-tenant-source.sh scripts/tenant-publication-binding.lib.sh scripts/tests/test-tenant-publication-binding.sh scripts/tests/test-bootstrap-tenant-source.sh
-          bash scripts/tests/test-tenant-publication-binding.sh
-          bash scripts/tests/test-bootstrap-tenant-source.sh
           shellcheck -x scripts/canonical-tenant-source.lib.sh scripts/tests/test-canonical-source-bootstrap.sh scripts/tests/test-canonical-bootstrap-output.sh
-          bash scripts/tests/test-canonical-source-bootstrap.sh
           shellcheck -x scripts/tests/test-canonical-source-upgrade.sh
-          bash scripts/tests/test-canonical-source-upgrade.sh
           shellcheck -x scripts/tests/test-canonical-constructor-attribution.sh
-          bash scripts/tests/test-canonical-constructor-attribution.sh
           shellcheck -x scripts/tests/test-canonical-generator-output.sh
-          bash scripts/tests/test-canonical-generator-output.sh
-          bash scripts/tests/test-canonical-bootstrap-output.sh
           shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
-          bash scripts/tests/test-canonical-publisher-regeneration.sh
+          shellcheck scripts/run-publication-generator-tests.sh scripts/tests/test-run-publication-generator-tests.sh
+          bash scripts/tests/test-run-publication-generator-tests.sh
+          bash scripts/run-publication-generator-tests.sh --jobs 2
 
   validate-consumer-discovery:
     name: 🔐 Validate Consumer Discovery Regressions
