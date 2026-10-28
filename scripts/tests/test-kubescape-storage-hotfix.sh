@@ -41,7 +41,7 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.9-${{ github.sha }}' ]] ||
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v0.0.297-sqlite-contention.10-${{ github.sha }}' ]] ||
   fail 'the workflow image tag must identify the native-metadata codec repair revision'
 
 grep -qF 'repository: kubescape/storage' "${workflow}" ||
