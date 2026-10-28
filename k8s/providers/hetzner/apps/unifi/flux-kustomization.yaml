@@ -38,7 +38,7 @@ spec:
   # Flux appends these patches to the source's own root kustomization, whose
   # commonAnnotations and transformers run after them, so the render alone
   # cannot stop a source putting Delete back. The
-  # restrict-unifi-management-policies Kyverno policy enforces the outcome at
+  # UniFi apply, observe-only and prune ValidatingPolicy guards enforce the outcome at
   # admission for the unifi ServiceAccount, on apply and on prune.
   #
   # The two patches split every managed resource by one annotation, so each gets
