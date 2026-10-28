@@ -11,7 +11,11 @@ volume contents; it does not protect against a running server, a cluster
 administrator, memory access or interception outside the service's TLS boundary.
 Application-level backups require their own encryption and recovery proof.
 
-The operational passphrase resolves from the declared Email record in OpenBao.
+The operational passphrase resolves from the declared Email record in OpenBao
+through a namespaced store and a dedicated role. That role is bound only to the
+existing Email service identity and reads only this key record, with no account
+credential access, writes, metadata enumeration or default policy. The shared
+External Secrets role gains no permission.
 The bundle never generates a replacement when that record is missing. External
 Secrets materializes the CSI-required Kubernetes Secret, retained independently
 of its controller object and immutable once created. A changed source value

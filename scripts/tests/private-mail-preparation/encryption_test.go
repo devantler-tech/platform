@@ -9,8 +9,8 @@ import (
 // boundary rather than inferring encryption from a claim or class name.
 func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	objects := render(t, "k8s/bases/apps/email-encrypted-storage")
-	if len(objects) != 3 {
-		t.Fatal("storage preparation must contain only a key binding, class and replacement claim")
+	if len(objects) != 4 {
+		t.Fatal("storage preparation must contain only its scoped store, key binding, class and replacement claim")
 	}
 	class := object(t, objects, "StorageClass", "email-encrypted")
 	if class["provisioner"] != "driver.longhorn.io" || class["reclaimPolicy"] != "Retain" || class["volumeBindingMode"] != "WaitForFirstConsumer" || class["allowVolumeExpansion"] != true {
@@ -38,8 +38,14 @@ func TestEncryptedReplacementKeepsKeysOutsideTheWorkload(t *testing.T) {
 	}
 
 	key := mapping(t, object(t, objects, "ExternalSecret", "email-storage-key")["spec"])
-	if !reflect.DeepEqual(key["secretStoreRef"], map[string]any{"kind": "ClusterSecretStore", "name": "openbao"}) {
-		t.Fatal("operational key must resolve from the established secrets service")
+	if !reflect.DeepEqual(key["secretStoreRef"], map[string]any{"kind": "SecretStore", "name": "email-storage"}) {
+		t.Fatal("operational key must resolve through its dedicated namespaced store")
+	}
+	store := mapping(t, object(t, objects, "SecretStore", "email-storage")["spec"])
+	vault := mapping(t, mapping(t, store["provider"])["vault"])
+	auth := mapping(t, mapping(t, vault["auth"])["kubernetes"])
+	if auth["role"] != "email-storage" || !reflect.DeepEqual(auth["serviceAccountRef"], map[string]any{"name": "private-mail"}) {
+		t.Fatal("key store must authenticate using only the existing namespaced Email identity")
 	}
 	target := mapping(t, key["target"])
 	if target["name"] != "email-storage-key" || target["creationPolicy"] != "Orphan" || target["deletionPolicy"] != "Retain" || target["immutable"] != true {
@@ -75,7 +81,7 @@ func TestEncryptedPreparationCannotSwitchTheExistingMailbox(t *testing.T) {
 	for _, path := range []string{"k8s/providers/hetzner/apps", "k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
 			metadata := mapping(t, o["metadata"])
-			for _, name := range []string{"email-storage-key", "email-encrypted", "email-data-encrypted"} {
+			for _, name := range []string{"email-storage", "email-storage-key", "email-encrypted", "email-data-encrypted"} {
 				if metadata["name"] == name {
 					t.Fatalf("encrypted storage must remain unselected until recovery and migration proof: %s", path)
 				}

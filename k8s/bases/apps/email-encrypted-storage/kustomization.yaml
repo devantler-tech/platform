@@ -3,6 +3,7 @@ kind: Kustomization
 # Preparation only. The retained Email namespace must already exist. No workload
 # selects this claim until independent key recovery and migration are proven.
 resources:
+  - secret-store.yaml
   - external-secret.yaml
   - storage-class.yaml
   - persistent-volume-claim.yaml
