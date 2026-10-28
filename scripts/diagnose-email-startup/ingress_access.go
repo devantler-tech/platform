@@ -24,7 +24,7 @@ func ingressHTTPClient() *http.Client {
 }
 
 func probeIngressPublic(ctx context.Context, client *http.Client) (int, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://mail.platform.devantler.tech/health/ready", nil)
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://mail.platform.devantler.tech/healthz/ready", nil)
 	if err != nil {
 		return 0, errIngressEvidence
 	}

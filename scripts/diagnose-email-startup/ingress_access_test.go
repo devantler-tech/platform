@@ -5,9 +5,12 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 type ingressRoundTrip func(*http.Request) (*http.Response, error)
@@ -15,13 +18,43 @@ type ingressRoundTrip func(*http.Request) (*http.Response, error)
 func (f ingressRoundTrip) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestIngressPublicProbeHasFixedTargetAndRefusesRedirectsOrLargeBodies(t *testing.T) {
+	raw, err := os.ReadFile("../../k8s/bases/apps/private-mail/stateful-set.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workload struct {
+		Spec struct {
+			Template struct {
+				Spec struct {
+					Containers []struct {
+						Name           string
+						ReadinessProbe struct {
+							HTTPGet struct{ Path string } `yaml:"httpGet"`
+						} `yaml:"readinessProbe"`
+					}
+				}
+			}
+		}
+	}
+	if yaml.Unmarshal(raw, &workload) != nil {
+		t.Fatal("unreadable declared readiness probe")
+	}
+	readinessPath := ""
+	for _, container := range workload.Spec.Template.Spec.Containers {
+		if container.Name == "private-mail" {
+			readinessPath = container.ReadinessProbe.HTTPGet.Path
+		}
+	}
+	if readinessPath == "" {
+		t.Fatal("declared Email readiness probe is missing")
+	}
 	for _, mode := range []string{"200", "503", "redirect", "oversized", "other-status"} {
 		t.Run(mode, func(t *testing.T) {
 			calls := 0
 			client := ingressHTTPClient()
 			client.Transport = ingressRoundTrip(func(r *http.Request) (*http.Response, error) {
 				calls++
-				if r.URL.String() != "https://mail.platform.devantler.tech/health/ready" || r.Method != "GET" || len(r.Header) != 0 {
+				if r.URL.Scheme != "https" || r.URL.Host != "mail.platform.devantler.tech" || r.URL.Path != readinessPath || r.URL.RawQuery != "" || r.Method != "GET" || len(r.Header) != 0 {
 					t.Fatal("probe target or credential boundary changed")
 				}
 				code, body := 200, "ok"
