@@ -123,6 +123,15 @@ native_cli() {
     --env STALWART_PASSWORD=private-mail-recovery-fixture-only \
     --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
 }
+administration_cli() {
+  # The serving process has no fallback recovery user. Exercise the managed
+  # administrator for inspection and disposable records while it is serving.
+  docker run --rm --interactive --user "$fixture_user" --network "$network" --cap-drop ALL --security-opt no-new-privileges:true \
+    --workdir /proof/cli-home --env HOME=/proof/cli-home --env TMPDIR=/proof/cli-home \
+    --env "STALWART_URL=http://$name:8080" --env STALWART_USER=operator@example.test \
+    --env "STALWART_PASSWORD=$administrator_password" \
+    --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
+}
 protocol_curl() {
   # Keep protocol clients in the isolated network. An internal bridge need not
   # expose host port bindings, and a separate client retains non-loopback checks.
@@ -552,10 +561,10 @@ done
 # Prove the maintained proxy against the real pinned mail server. These are
 # disposable identities on the existing internal fixture network, not a claim
 # about production Gateway trust or Cilium network-policy enforcement.
-native_cli query AllowedIp --fields id,address --json >"$scratch/allowed-before.jsonl"
+administration_cli query AllowedIp --fields id,address --json >"$scratch/allowed-before.jsonl"
 jq -sS 'sort_by(.id)' "$scratch/allowed-before.jsonl" >"$scratch/allowed-before.json"
 printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"proxy-client":{"address":"198.51.100.9","reason":"manual"},"proxy-client-ipv6":{"address":"2001:db8::9","reason":"manual"}}}' >"$scratch/proxy-block.ndjson"
-native_cli apply --file /proof/proxy-block.ndjson --json >"$scratch/proxy-block-apply.jsonl" 2>"$scratch/proxy-block-apply.err"
+administration_cli apply --file /proof/proxy-block.ndjson --json >"$scratch/proxy-block-apply.jsonl" 2>"$scratch/proxy-block-apply.err"
 jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/proxy-block-apply.jsonl" >/dev/null
 
 for proxy_enabled in true false; do
@@ -625,10 +634,10 @@ for proxy_enabled in true false; do
   if grep -Fq 'email-proxy-private-canary' "$scratch/proxy-runtime.log"; then
     echo 'FAIL: private request metadata reached the proxy log' >&2; exit 1
   fi
-  native_cli query AllowedIp --fields id,address --json >"$scratch/allowed-after.jsonl"
+  administration_cli query AllowedIp --fields id,address --json >"$scratch/allowed-after.jsonl"
   jq -sS 'sort_by(.id)' "$scratch/allowed-after.jsonl" >"$scratch/allowed-after.json"
   cmp "$scratch/allowed-before.json" "$scratch/allowed-after.json"
-  native_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/proxy-retained-blocks.jsonl"
+  administration_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/proxy-retained-blocks.jsonl"
   jq -sS '[.[]|select(.address=="192.0.2.30" or .address=="192.0.2.31")]|sort_by(.id)' "$scratch/proxy-retained-blocks.jsonl" >"$scratch/proxy-retained-blocks.json"
   cmp "$scratch/protected-blocks-before.json" "$scratch/proxy-retained-blocks.json"
   docker rm -fv "$proxy_name" >/dev/null
