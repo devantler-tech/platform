@@ -1,5 +1,5 @@
 diff --git a/ebpftracer/tls.go b/ebpftracer/tls.go
-index 771b96a..a1f63af 100644
+index 771b96abdd91e91abbaa21e0069e0648cd541967..a1f63af8aae5175f2147fa761df82d8fe4e2d750 100644
 --- a/ebpftracer/tls.go
 +++ b/ebpftracer/tls.go
 @@ -25,6 +25,19 @@ var silentErrors = []string{
@@ -35,7 +35,7 @@ index 771b96a..a1f63af 100644
  		}
 diff --git a/ebpftracer/tls_test.go b/ebpftracer/tls_test.go
 new file mode 100644
-index 0000000..1e9a55c
+index 0000000000000000000000000000000000000000..1e9a55c1f8f466ae50abfd7b28f3aa4a9eb481ed
 --- /dev/null
 +++ b/ebpftracer/tls_test.go
 @@ -0,0 +1,24 @@
@@ -64,7 +64,7 @@ index 0000000..1e9a55c
 +	}
 +}
 diff --git a/ebpftracer/tracer.go b/ebpftracer/tracer.go
-index de1e336..74d54c4 100644
+index de1e3368f749622c4d5989df5a6cbfcde0799632..0486768ca305a113f0b4dbd8465f17ca5d3509bb 100644
 --- a/ebpftracer/tracer.go
 +++ b/ebpftracer/tracer.go
 @@ -29,7 +29,10 @@ import (
@@ -89,7 +89,7 @@ index de1e336..74d54c4 100644
  
  	pageSize := os.Getpagesize()
 diff --git a/ebpftracer/tracer_test.go b/ebpftracer/tracer_test.go
-index c8cf7cc..d9e1ef1 100644
+index c8cf7cc0449b0a48af0aeeb57f30df2010980608..286e99357227f5b78de654b97d79f6b6058ca32c 100644
 --- a/ebpftracer/tracer_test.go
 +++ b/ebpftracer/tracer_test.go
 @@ -31,6 +31,10 @@ func skipIfNotVM(t *testing.T) {
@@ -104,10 +104,10 @@ index c8cf7cc..d9e1ef1 100644
  	skipIfNotVM(t)
  	src := `
 diff --git a/logs/journald_reader.go b/logs/journald_reader.go
-index 803286a..159e77a 100644
+index 803286af6cafea5c4337ecaa6a2668a656432dfc..cb2a242e2052ba39a0a5f697eaf7d9a5b848e987 100644
 --- a/logs/journald_reader.go
 +++ b/logs/journald_reader.go
-@@ -6,6 +6,7 @@ package logs
+@@ -4,6 +4,7 @@ package logs
  
  import (
  	"fmt"
@@ -115,7 +115,7 @@ index 803286a..159e77a 100644
  	"strings"
  	"sync"
  	"time"
-@@ -32,16 +33,20 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+@@ -32,7 +33,11 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
  	var err error
  	for _, journalPath := range journalPaths {
  		if r.journal, err = sdjournal.NewJournalFromDir(journalPath); err != nil {
@@ -128,8 +128,7 @@ index 803286a..159e77a 100644
  			continue
  		}
  		usage, err := r.journal.GetUsage()
- 		if err != nil {
- 			klog.Errorf("failed to read journal disk space usage at %s: %s", journalPath, err)
+@@ -41,7 +46,7 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
  			continue
  		}
  		if usage == 0 {
@@ -140,7 +139,7 @@ index 803286a..159e77a 100644
  		}
 diff --git a/logs/journald_reader_test.go b/logs/journald_reader_test.go
 new file mode 100644
-index 0000000..3b36901
+index 0000000000000000000000000000000000000000..64ad6d7863100deed63a737aad86c1b8b4c5d65f
 --- /dev/null
 +++ b/logs/journald_reader_test.go
 @@ -0,0 +1,28 @@
@@ -173,7 +172,7 @@ index 0000000..3b36901
 +	}
 +}
 diff --git a/node/collector.go b/node/collector.go
-index 202eeea..707cc9f 100644
+index 202eeea8ab62b81171055f20437962370dfbe7ee..707cc9f44954c3ca3d4918c4d47ae5bd54f8e2ec 100644
 --- a/node/collector.go
 +++ b/node/collector.go
 @@ -14,11 +14,7 @@ type Collector struct {
@@ -210,7 +209,7 @@ index 202eeea..707cc9f 100644
  }
 diff --git a/node/collector_test.go b/node/collector_test.go
 new file mode 100644
-index 0000000..e288a5b
+index 0000000000000000000000000000000000000000..e288a5b9c33efb0344809e25d47bca2d031b36ee
 --- /dev/null
 +++ b/node/collector_test.go
 @@ -0,0 +1,35 @@
@@ -248,4 +247,392 @@ index 0000000..e288a5b
 +	if md.Provider != metadata.CloudProviderAWS {
 +		t.Fatalf("provider = %q, want %q", md.Provider, metadata.CloudProviderAWS)
 +	}
++}
+diff --git a/node/net_dump_linux_test.go b/node/net_dump_linux_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..10a0bff40d2046b70228dda5f010907c37de3fc6
+--- /dev/null
++++ b/node/net_dump_linux_test.go
+@@ -0,0 +1,120 @@
++package node
++
++import (
++	"errors"
++	"net"
++	"testing"
++
++	"github.com/vishvananda/netlink"
++	"github.com/vishvananda/netlink/nl"
++	"golang.org/x/sys/unix"
++)
++
++// scriptedNetlinkDump supplies partial and complete kernel responses without
++// changing the host network namespace or requiring elevated test permissions.
++type scriptedNetlinkDump struct {
++	links     func() ([]netlink.Link, error)
++	addresses func(netlink.Link, int) ([]netlink.Addr, error)
++}
++
++func (s scriptedNetlinkDump) LinkList() ([]netlink.Link, error) {
++	return s.links()
++}
++
++func (s scriptedNetlinkDump) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
++	return s.addresses(link, family)
++}
++
++// TestNetDeviceDumpRecovery exercises both production API call sites and proves
++// partial interface or address data never escapes a failed dump.
++func TestNetDeviceDumpRecovery(t *testing.T) {
++	permission := errors.New("permission denied")
++	for _, tc := range []struct {
++		name     string
++		stage    string
++		failures int
++		err      error
++		wantErr  error
++	}{
++		{name: "links recover", stage: "links", failures: 1, err: nl.ErrDumpInterrupted},
++		{name: "addresses recover", stage: "addresses", failures: 1, err: nl.ErrDumpInterrupted},
++		{name: "links exhausted", stage: "links", failures: 3, err: nl.ErrDumpInterrupted, wantErr: nl.ErrDumpInterrupted},
++		{name: "addresses exhausted", stage: "addresses", failures: 3, err: nl.ErrDumpInterrupted, wantErr: nl.ErrDumpInterrupted},
++		{name: "links refuse unrelated", stage: "links", failures: 1, err: permission, wantErr: permission},
++		{name: "addresses refuse unrelated", stage: "addresses", failures: 1, err: permission, wantErr: permission},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			linkCalls, addressCalls := 0, 0
++			goodLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{
++				Name: "eth0", OperState: netlink.OperUp,
++				Statistics: &netlink.LinkStatistics{RxBytes: 12, TxBytes: 34, RxPackets: 5, TxPackets: 6},
++			}}
++			partialLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth99"}}
++			handle := scriptedNetlinkDump{
++				links: func() ([]netlink.Link, error) {
++					linkCalls++
++					if tc.stage == "links" && linkCalls <= tc.failures {
++						return []netlink.Link{partialLink}, tc.err
++					}
++					return []netlink.Link{goodLink}, nil
++				},
++				addresses: func(link netlink.Link, _ int) ([]netlink.Addr, error) {
++					addressCalls++
++					if link != goodLink {
++						t.Fatal("address lookup consumed a partial link response")
++					}
++					if tc.stage == "addresses" && addressCalls <= tc.failures {
++						return []netlink.Addr{{IPNet: &net.IPNet{IP: net.ParseIP("203.0.113.9").To4(), Mask: net.CIDRMask(24, 32)}}}, tc.err
++					}
++					return []netlink.Addr{{IPNet: &net.IPNet{IP: net.ParseIP("192.0.2.3").To4(), Mask: net.CIDRMask(24, 32)}}}, nil
++				},
++			}
++			got, err := netDevicesFromHandle(handle)
++			if !errors.Is(err, tc.wantErr) {
++				t.Fatalf("error = %v, want %v", err, tc.wantErr)
++			}
++			if tc.wantErr != nil {
++				if got != nil {
++					t.Fatalf("partial network snapshot escaped with error: %v", got)
++				}
++			} else if len(got) != 1 || got[0].Name != "eth0" || got[0].Up != 1 || got[0].RxBytes != 12 || len(got[0].IPPrefixes) != 1 || got[0].IPPrefixes[0].IP().String() != "192.0.2.3" {
++				t.Fatalf("not the complete final network snapshot: %v", got)
++			}
++			calls := linkCalls
++			if tc.stage == "addresses" {
++				calls = addressCalls
++			}
++			wantCalls := tc.failures
++			if tc.wantErr == nil {
++				wantCalls++
++			}
++			if calls != wantCalls {
++				t.Fatalf("API calls = %d, want %d", calls, wantCalls)
++			}
++		})
++	}
++}
++
++// TestNetDeviceDumpReadsRealKernel runs the production collection path against
++// read-only route-netlink queries in the test process's existing namespace.
++func TestNetDeviceDumpReadsRealKernel(t *testing.T) {
++	handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
++	if err != nil {
++		t.Fatal("cannot open the read-only route-netlink handle:", err)
++	}
++	defer handle.Delete()
++	devices, err := netDevicesFromHandle(handle)
++	if err != nil {
++		t.Fatal("cannot collect a complete real-kernel network snapshot:", err)
++	}
++	if len(devices) == 0 {
++		t.Fatal("the Linux validation runner returned no supported network interface")
++	}
++	seen := make(map[string]bool)
++	for _, device := range devices {
++		if device.Name == "" || seen[device.Name] {
++			t.Fatal("the real-kernel snapshot contains an empty or duplicate interface")
++		}
++		seen[device.Name] = true
++	}
++}
+diff --git a/node/net_dump_retry.go b/node/net_dump_retry.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..f2a1e95e7462174301722ff84c1d0db24fd04e5d
+--- /dev/null
++++ b/node/net_dump_retry.go
+@@ -0,0 +1,21 @@
++package node
++
++import "errors"
++
++// retryNetlinkDump reads one complete kernel dump. Interrupted snapshots must
++// never contribute data to a later successful attempt.
++func retryNetlinkDump[T any](read func() (T, error), interrupted error) (T, error) {
++	var zero T
++	var err error
++	for attempt := 0; attempt < 3; attempt++ {
++		var result T
++		result, err = read()
++		if err == nil {
++			return result, nil
++		}
++		if !errors.Is(err, interrupted) {
++			return zero, err
++		}
++	}
++	return zero, err
++}
+diff --git a/node/net_dump_retry_test.go b/node/net_dump_retry_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..765deda67cbd6fbc3fb542c5809e564a419cf069
+--- /dev/null
++++ b/node/net_dump_retry_test.go
+@@ -0,0 +1,55 @@
++package node
++
++import (
++	"errors"
++	"fmt"
++	"reflect"
++	"testing"
++)
++
++// TestRetryNetlinkDump requires a complete result, a bounded recovery attempt,
++// and immediate propagation of errors unrelated to interrupted kernel dumps.
++func TestRetryNetlinkDump(t *testing.T) {
++	interrupted := errors.New("interrupted kernel dump")
++	permission := errors.New("permission denied")
++	lookalike := errors.New(interrupted.Error())
++	for _, tc := range []struct {
++		name      string
++		failures  []error
++		wantCalls int
++		wantError error
++	}{
++		{name: "complete first result", wantCalls: 1},
++		{name: "recover one interruption", failures: []error{interrupted}, wantCalls: 2},
++		{name: "recover wrapped interruption", failures: []error{fmt.Errorf("dump: %w", interrupted)}, wantCalls: 2},
++		{name: "recover final bounded attempt", failures: []error{interrupted, interrupted}, wantCalls: 3},
++		{name: "exhausted interruption", failures: []error{interrupted, interrupted, interrupted}, wantCalls: 3, wantError: interrupted},
++		{name: "unrelated error", failures: []error{permission}, wantCalls: 1, wantError: permission},
++		{name: "unrelated error after interruption", failures: []error{interrupted, permission}, wantCalls: 2, wantError: permission},
++		{name: "text alone is not interruption", failures: []error{lookalike}, wantCalls: 1, wantError: lookalike},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			calls := 0
++			got, err := retryNetlinkDump(func() ([]int, error) {
++				calls++
++				if calls <= len(tc.failures) {
++					return []int{99}, tc.failures[calls-1]
++				}
++				return []int{1, 2}, nil
++			}, interrupted)
++			if calls != tc.wantCalls {
++				t.Errorf("read calls = %d, want %d", calls, tc.wantCalls)
++			}
++			if !errors.Is(err, tc.wantError) {
++				t.Errorf("error = %v, want %v", err, tc.wantError)
++			}
++			if tc.wantError != nil {
++				if got != nil {
++					t.Errorf("partial data escaped with error: %v", got)
++				}
++			} else if !reflect.DeepEqual(got, []int{1, 2}) {
++				t.Errorf("result = %v, want complete snapshot [1 2]", got)
++			}
++		})
++	}
++}
+diff --git a/node/net_linux.go b/node/net_linux.go
+dissimilarity index 4%
+index 4dd66c12298b9884d291b586d4cabe88645fe4a5..46a11f119c56f5b4e04e262eadd2966b52dd1ee8 100644
+--- a/node/net_linux.go
++++ b/node/net_linux.go
+@@ -1,77 +1,91 @@
+-package node
+-
+-import (
+-	"regexp"
+-	"strings"
+-
+-	"github.com/coroot/coroot-node-agent/proc"
+-	"github.com/vishvananda/netlink"
+-	"golang.org/x/sys/unix"
+-	"inet.af/netaddr"
+-)
+-
+-var netDeviceFilterRe = regexp.MustCompile(`^(en(p\d+)?p\d+s\d+(f\d+)?|eth\d+|eno\d+|ens\d+|em\d+|bond\d+|p\d+p\d+|enx[0-9a-f]+|br\d+|vmbr\d+)`)
+-
+-func netDeviceFilter(name string) bool {
+-	return netDeviceFilterRe.MatchString(strings.ToLower(name))
+-}
+-
+-type NetDeviceInfo struct {
+-	Name       string
+-	Up         float64
+-	IPPrefixes []netaddr.IPPrefix
+-	RxBytes    float64
+-	TxBytes    float64
+-	RxPackets  float64
+-	TxPackets  float64
+-}
+-
+-func NetDevices() ([]NetDeviceInfo, error) {
+-	hostNs, err := proc.GetHostNetNs()
+-	if err != nil {
+-		return nil, err
+-	}
+-	defer hostNs.Close()
+-	h, err := netlink.NewHandleAt(hostNs)
+-	if err != nil {
+-		return nil, err
+-	}
+-	defer h.Delete()
+-	links, err := h.LinkList()
+-	if err != nil {
+-		return nil, err
+-	}
+-	var res []NetDeviceInfo
+-	for _, link := range links {
+-		attrs := link.Attrs()
+-		if !netDeviceFilter(attrs.Name) {
+-			continue
+-		}
+-		info := NetDeviceInfo{
+-			Name:      attrs.Name,
+-			RxBytes:   float64(attrs.Statistics.RxBytes),
+-			TxBytes:   float64(attrs.Statistics.TxBytes),
+-			RxPackets: float64(attrs.Statistics.RxPackets),
+-			TxPackets: float64(attrs.Statistics.TxPackets),
+-		}
+-		if attrs.OperState == netlink.OperUp {
+-			info.Up = 1
+-		}
+-
+-		addrs, err := h.AddrList(link, unix.AF_UNSPEC)
+-		if err != nil {
+-			return nil, err
+-		}
+-		for _, addr := range addrs {
+-			ip := addr.IP
+-			if ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsLinkLocalMulticast() {
+-				continue
+-			}
+-			if prefix, ok := netaddr.FromStdIPNet(addr.IPNet); ok {
+-				info.IPPrefixes = append(info.IPPrefixes, prefix)
+-			}
+-		}
+-		res = append(res, info)
+-	}
+-	return res, nil
+-}
++package node
++
++import (
++	"regexp"
++	"strings"
++
++	"github.com/coroot/coroot-node-agent/proc"
++	"github.com/vishvananda/netlink"
++	"github.com/vishvananda/netlink/nl"
++	"golang.org/x/sys/unix"
++	"inet.af/netaddr"
++)
++
++var netDeviceFilterRe = regexp.MustCompile(`^(en(p\d+)?p\d+s\d+(f\d+)?|eth\d+|eno\d+|ens\d+|em\d+|bond\d+|p\d+p\d+|enx[0-9a-f]+|br\d+|vmbr\d+)`)
++
++func netDeviceFilter(name string) bool {
++	return netDeviceFilterRe.MatchString(strings.ToLower(name))
++}
++
++type NetDeviceInfo struct {
++	Name       string
++	Up         float64
++	IPPrefixes []netaddr.IPPrefix
++	RxBytes    float64
++	TxBytes    float64
++	RxPackets  float64
++	TxPackets  float64
++}
++
++func NetDevices() ([]NetDeviceInfo, error) {
++	hostNs, err := proc.GetHostNetNs()
++	if err != nil {
++		return nil, err
++	}
++	defer hostNs.Close()
++	h, err := netlink.NewHandleAt(hostNs)
++	if err != nil {
++		return nil, err
++	}
++	defer h.Delete()
++	return netDevicesFromHandle(h)
++}
++
++type netDeviceDumpHandle interface {
++	LinkList() ([]netlink.Link, error)
++	AddrList(netlink.Link, int) ([]netlink.Addr, error)
++}
++
++// netDevicesFromHandle publishes only complete link and address dumps. Kernel
++// interruption gets a bounded retry; persistent and unrelated errors propagate.
++func netDevicesFromHandle(h netDeviceDumpHandle) ([]NetDeviceInfo, error) {
++	links, err := retryNetlinkDump(h.LinkList, nl.ErrDumpInterrupted)
++	if err != nil {
++		return nil, err
++	}
++	var res []NetDeviceInfo
++	for _, link := range links {
++		attrs := link.Attrs()
++		if !netDeviceFilter(attrs.Name) {
++			continue
++		}
++		info := NetDeviceInfo{
++			Name:      attrs.Name,
++			RxBytes:   float64(attrs.Statistics.RxBytes),
++			TxBytes:   float64(attrs.Statistics.TxBytes),
++			RxPackets: float64(attrs.Statistics.RxPackets),
++			TxPackets: float64(attrs.Statistics.TxPackets),
++		}
++		if attrs.OperState == netlink.OperUp {
++			info.Up = 1
++		}
++
++		addrs, err := retryNetlinkDump(func() ([]netlink.Addr, error) {
++			return h.AddrList(link, unix.AF_UNSPEC)
++		}, nl.ErrDumpInterrupted)
++		if err != nil {
++			return nil, err
++		}
++		for _, addr := range addrs {
++			ip := addr.IP
++			if ip.IsLinkLocalUnicast() || ip.IsMulticast() || ip.IsLinkLocalMulticast() {
++				continue
++			}
++			if prefix, ok := netaddr.FromStdIPNet(addr.IPNet); ok {
++				info.IPPrefixes = append(info.IPPrefixes, prefix)
++			}
++		}
++		res = append(res, info)
++	}
++	return res, nil
 +}
