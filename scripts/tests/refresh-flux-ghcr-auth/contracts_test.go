@@ -699,6 +699,8 @@ func TestTalosRegistryAuthUsesSupportedTalosDocument(t *testing.T) {
 	requireNotContains(t, registryAuth, "\n---\n")
 }
 
+// TestImageVerificationUsesOneSlowFailClosedPolicy binds each dedicated publisher
+// to its exact repository while retaining the shared policy's fail-closed limits.
 func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 	policyPath := "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 	policy := readRepositoryFile(t, policyPath)

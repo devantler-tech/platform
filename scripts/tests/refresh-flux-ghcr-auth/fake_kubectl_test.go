@@ -1188,6 +1188,9 @@ func fakeKubectlGetFluxControllerPods(namespace string) int {
 	return 0
 }
 
+// fakeKubectlPatchConsolidatedImageValidatingPolicy rejects bridge patches that
+// lose a dedicated publisher, its exact route, or the general route's exclusion.
+// It persists only a complete policy so later fake reads cannot mask a bad patch.
 func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile string) int {
 	if argumentAfter(args, "imagevalidatingpolicy.policies.kyverno.io") != "verify-app-images" ||
 		!containsArg(args, "--type=merge") || patchFile == "" {
