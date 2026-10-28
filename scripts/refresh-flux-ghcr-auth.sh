@@ -1365,6 +1365,8 @@ if [[ "${report_fences}" == "true" || "${recover_fences}" == "true" ]]; then
 fi
 
 # Force an ESO resource to reconcile and observe a post-annotation Ready edge.
+# Callers handle failure conditionally, which disables Bash's implicit errexit
+# inside this function. Never consume an API response whose command failed.
 force_sync_resource() {
   local kind="$1"
   local namespace="$2"
@@ -1382,8 +1384,13 @@ force_sync_resource() {
     --namespace "${namespace}" \
     get "${kind}" "${name}" \
     -o json \
-    >"${before_file}"
-  before_refresh="$(jq -r '.status.refreshTime // ""' "${before_file}")"
+    >"${before_file}" || return 1
+  before_refresh="$(jq -ser '
+    if length == 1 and (.[0] | type) == "object" then
+      (.[0].status.refreshTime // "")
+      | if type == "string" then . else error("invalid refresh time") end
+    else error("invalid initial resource response") end
+  ' "${before_file}")" || return 1
   stamp="$(date -u +%Y%m%dT%H%M%SZ)-$$-${RANDOM}"
 
   kubectl \
@@ -1393,9 +1400,14 @@ force_sync_resource() {
     "force-sync=${stamp}" \
     --overwrite \
     -o json \
-    >"${annotated_file}"
-  annotated_resource_version="$(jq -er '.metadata.resourceVersion' \
-    "${annotated_file}")"
+    >"${annotated_file}" || return 1
+  annotated_resource_version="$(jq -ser '
+    if length == 1
+      and (.[0].metadata.resourceVersion | type) == "string"
+      and (.[0].metadata.resourceVersion | length) > 0 then
+      .[0].metadata.resourceVersion
+    else error("invalid annotation acknowledgement") end
+  ' "${annotated_file}")" || return 1
 
   for ((attempt = 1; attempt <= SYNC_ATTEMPTS; attempt++)); do
     kubectl \
@@ -1403,7 +1415,7 @@ force_sync_resource() {
       --namespace "${namespace}" \
       get "${kind}" "${name}" \
       -o json \
-      >"${current_file}"
+      >"${current_file}" || return 1
     if jq -e \
       --arg before "${before_refresh}" \
       --arg annotated_resource_version "${annotated_resource_version}" '

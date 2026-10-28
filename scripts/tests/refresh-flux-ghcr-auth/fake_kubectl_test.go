@@ -3455,6 +3455,14 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 	}
 	if containsSequence(args, "get", kind, name) {
 		markerName := kind + "-" + namespace + "-" + name
+		fault := os.Getenv("FAKE_FANOUT_FAULT")
+		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
+		annotated := markerExists(markerName + "-annotated")
+		if faultSelected && fault == "malformed-initial-read" && !annotated {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			fmt.Println("not-json")
+			return 0
+		}
 		ready := "True"
 		if resource == os.Getenv("FAKE_UNRECONCILED_FANOUT_RESOURCE") {
 			ready = "False"
@@ -3478,11 +3486,25 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 				"syncedResourceVersion": "1-fixture",
 			},
 		}))
+		if faultSelected && ((fault == "failed-initial-read" && !annotated) ||
+			(fault == "failed-completion-read" && annotated)) {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			return commandFailure(92, "synthetic forced-refresh read failed after plausible output")
+		}
 		return 0
 	}
 	if containsSequence(args, "annotate", kind, name) {
 		appendEnvFile("FANOUT_LOG", resource+"\n")
 		appendEnvFile("OPERATION_LOG", "fanout:"+resource+"\n")
+		fault := os.Getenv("FAKE_FANOUT_FAULT")
+		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
+		if faultSelected && (fault == "refused-annotation" || fault == "refused-annotation-with-output") {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			if fault == "refused-annotation-with-output" {
+				fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
+			}
+			return commandFailure(92, "synthetic forced-refresh annotation refused")
+		}
 		markerName := kind + "-" + namespace + "-" + name
 		touchMarker(markerName + "-annotated")
 		if resource != os.Getenv("FAKE_SYNC_STALL_RESOURCE") {
@@ -3493,7 +3515,27 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 				setMarkerContent("vault-seed-value", markerContent("variables-secret-value"))
 			}
 		}
-		fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
+		acknowledgement := `{"metadata":{"resourceVersion":"2"}}`
+		if faultSelected {
+			switch fault {
+			case "empty-acknowledgement":
+				acknowledgement = ""
+			case "malformed-acknowledgement":
+				acknowledgement = "not-json"
+			case "missing-acknowledgement-version":
+				acknowledgement = `{"metadata":{}}`
+			case "empty-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":""}}`
+			case "null-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":null}}`
+			case "numeric-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":2}}`
+			}
+			if acknowledgement != `{"metadata":{"resourceVersion":"2"}}` {
+				appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			}
+		}
+		fmt.Println(acknowledgement)
 		return 0
 	}
 	return commandFailure(91, "unexpected fanout resource invocation")
