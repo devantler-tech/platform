@@ -843,7 +843,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Exercise the default-off condition and refusal controls
-        run: bash scripts/tests/test-release-recovery.sh
+        run: |
+          shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh
+          bash scripts/tests/test-release-recovery.sh
 
   validate-repository-guards:
     name: 🛡️ Validate Repository Guards
@@ -882,7 +884,9 @@ jobs:
           kubectl version --client
 
       - name: 🩹 Validate the release recovery boundary
-        run: bash scripts/tests/test-release-recovery.sh
+        run: |
+          shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh
+          bash scripts/tests/test-release-recovery.sh
 
       - name: 💾 Validate storage audit regressions
         run: |

@@ -19,6 +19,7 @@ jq -n --slurpfile w "$work/workflow.json" --slurpfile c "$work/ci.json" '{w:$w[0
 cat >"$work/guard.jq" <<'JQ'
   .w as $w | .c as $c | $w.jobs.recover as $j | $j.steps as $s | $w.jobs["offline-test"] as $o |
   def ordinary: .if == null and .["continue-on-error"] == null;
+  def recoveryContractRun: .run == "shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh\nbash scripts/tests/test-release-recovery.sh\n";
   def writer: .if == "steps.read-admission.outputs.missing == 'true'" and .["continue-on-error"] == null;
   def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"f558e3ababb474ac0e6f27d988ce8c876a525196"} and
     (.run | contains("[[ \"$CATALOGUE_REPOSITORY\" == devantler-tech/.github && \"$CATALOGUE_SHA\" =~ ^[0-9a-f]{40}$ ]]")) and
@@ -59,13 +60,13 @@ cat >"$work/guard.jq" <<'JQ'
   ([$o.steps[] | tostring | select(test("secrets\\.|outputs\\.token|github\\.token"))] | length == 0) and ([$o.steps[] | select(.env.GH_TOKEN != null)] | length == 0) and
   ($o.steps[4].run | contains("unset GH_TOKEN GITHUB_TOKEN")) and
   $c.jobs["test-publish-release-recovery"] == ($o|del(.if)|.name="🩹 Validate the release recovery build") and
-  ($c.jobs["test-publish-release-recovery-disabled"] | .if=="github.event_name == 'pull_request'" and .permissions=={contents:"read"} and .["runs-on"]=="ubuntu-latest" and .secrets==null and .uses==null and .["continue-on-error"]==null and (.steps|length)==2 and (.steps|all(ordinary)) and (.steps[0].uses | test("^actions/checkout@[a-f0-9]{40}$")) and .steps[0].with["persist-credentials"]==false and .steps[1].with==null and .steps[1].run=="bash scripts/tests/test-release-recovery.sh") and
+  ($c.jobs["test-publish-release-recovery-disabled"] | .if=="github.event_name == 'pull_request'" and .permissions=={contents:"read"} and .["runs-on"]=="ubuntu-latest" and .secrets==null and .uses==null and .["continue-on-error"]==null and (.steps|length)==2 and (.steps|all(ordinary)) and (.steps[0].uses | test("^actions/checkout@[a-f0-9]{40}$")) and .steps[0].with["persist-credentials"]==false and .steps[1].with==null and (.steps[1] | recoveryContractRun)) and
   (["test-publish-release-recovery","test-publish-release-recovery-disabled"] | all(. as $job |
     ($c.jobs["ci-required-checks"].needs | index($job) != null) and
     ($c.jobs["ci-required-checks"].steps | any((.with["job-results"] // "") | contains("needs." + $job + ".result"))))) and
   $c.jobs["test-publish-release-recovery-disabled"].if == "github.event_name == 'pull_request'" and
   ($c.jobs["deploy-prod"].needs | index("test-publish-release-recovery") != null) and
-  ($c.jobs["validate-repository-guards"].steps | any(.run == "bash scripts/tests/test-release-recovery.sh" and ordinary))
+  ($c.jobs["validate-repository-guards"].steps | any(recoveryContractRun and ordinary))
 JQ
 jq -e -f "$work/guard.jq" "$work/bundle.json" >/dev/null || fail 'workflow authority, provenance or required coverage is unsafe'
 # An ordinary immutable checkout update must not require changing this guard.
@@ -136,7 +137,10 @@ for mutation in \
   '.c.jobs["test-publish-release-recovery-disabled"].steps[1].with["enable-recovery"]=true' \
   '.c.jobs["ci-required-checks"].needs |= map(select(. != "test-publish-release-recovery"))' \
   '.c.jobs["ci-required-checks"].steps |= map(if .with["job-results"] then .with["job-results"] |= sub("needs.test-publish-release-recovery-disabled.result"; "") else . end)' \
-  '.c.jobs["validate-repository-guards"].steps |= map(select(.run != "bash scripts/tests/test-release-recovery.sh"))' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[1].run="bash scripts/tests/test-release-recovery.sh"' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[1].run="shellcheck scripts/tests/test-release-recovery.sh\nbash scripts/tests/test-release-recovery.sh\n"' \
+  '.c.jobs["validate-repository-guards"].steps |= map(if .name == "🩹 Validate the release recovery boundary" then .run="bash scripts/tests/test-release-recovery.sh" else . end)' \
+  '.c.jobs["validate-repository-guards"].steps |= map(select(.name != "🩹 Validate the release recovery boundary"))' \
   '.c.jobs["test-publish-release-recovery"].uses="./.github/workflows/publish-release-recovery.yaml"'; do
   jq "$mutation" "$work/bundle.json" >"$work/mutated.json"
   if jq -e -f "$work/guard.jq" "$work/mutated.json" >/dev/null; then fail "accepted mutation: $mutation"; fi
