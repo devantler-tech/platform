@@ -91,7 +91,7 @@ func policyMatches(want, actual any, key string) bool {
 		return receivingAliasesMatch(want, actual)
 	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -257,6 +257,9 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 				var match map[string]any
 				for _, actual := range objects {
 					identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
+					if op.Object == "Tracer" && fields["@type"] == "Stdout" {
+						identity = actual["@type"] == "Stdout"
+					}
 					if op.Object == "Certificate" {
 						identity = policyMatches(fields["certificate"], actual["certificate"], "")
 					}

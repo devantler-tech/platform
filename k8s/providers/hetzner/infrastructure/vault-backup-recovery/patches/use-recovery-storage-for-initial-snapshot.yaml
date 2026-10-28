@@ -1,0 +1,23 @@
+# Guarded patch operations, not a second incomplete workload.
+# Test names and existing values before replacing an indexed field.
+- op: test
+  path: /spec/template/spec/volumes/0/name
+  value: snapshots
+- op: test
+  path: /spec/template/spec/volumes/0/persistentVolumeClaim/claimName
+  value: vault-snapshots
+- op: replace
+  path: /spec/template/spec/volumes/0/persistentVolumeClaim/claimName
+  value: vault-snapshots-recovery
+- op: test
+  path: /spec/template/spec/containers/0/name
+  value: mirror
+- op: test
+  path: /spec/template/spec/containers/0/env/1/name
+  value: REQUIRE_REMOTE_SNAPSHOT
+- op: test
+  path: /spec/template/spec/containers/0/env/1/value
+  value: "false"
+- op: replace
+  path: /spec/template/spec/containers/0/env/1/value
+  value: "true"

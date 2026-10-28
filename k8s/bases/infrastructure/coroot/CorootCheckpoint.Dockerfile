@@ -1,4 +1,4 @@
-FROM docker.io/library/node:24-bookworm@sha256:f9b3548b20b15b705b66aeecaeac7dd690c73d5e4661357aac02e60e3d38c88a AS frontend
+FROM docker.io/library/node:26-bookworm@sha256:155f6779f557f863b16a6b77b3443b52f7dde209643eff9896d661bbd6829840 AS frontend
 WORKDIR /src/front
 COPY front/package.json front/package-lock.json ./
 RUN npm ci
