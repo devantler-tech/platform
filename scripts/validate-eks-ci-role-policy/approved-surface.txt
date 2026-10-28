@@ -68,7 +68,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 726a055d85d504dbb77a9d713dbd898b469ce9a069530523fb89afe36d0ae2f2
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 9337fa8f666f46ac0c4d1e868696f0095316ca869c891b3b9fc03e30c60bb72d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 96afd304ffb1fc5dfcbdca6a7e8a29006735e1ad40a992edd4cc3b03568208ee
 
@@ -116,7 +116,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap df15a74c32342
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92e331e29ddaa022dccd94ed0c8d7195f8703e20403267c73874593d3
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 348150139f81e73e5f6eea1bb8a60efd779fb4aa020b4bdf4179ffdf3fd23220
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0cfe2fc47fa5c5ad7e0b696476d22361dc09ab095913995aca08c301156b2c3e
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
 
@@ -330,7 +330,7 @@ rbac.authorization.k8s.io/v1|Role|umami|kyverno:background-controller:mutate-uma
 
 rbac.authorization.k8s.io/v1|Role|umami|umami-provision-tenants acd94d4b7b034d6feafb4a9a32a7f57b88421bb9e21f6304fb6f0b5ba3e96662
 
-rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources 5012f601b75e3f9b69b5bb0f4de33fab3ef2346b3899d0f3b6785769690a736a
+rbac.authorization.k8s.io/v1|Role|unifi|unifi-managed-resources a9a1f9ca2e6e1154227db67291d54ac4e19a8dcb136843679e8bc0605180a0cd
 
 rbac.authorization.k8s.io/v1|Role|velero|velero-maintenance-oom-alert 062076b82e1a6bb9af4b6f647f2d297cbe683e70792b05f1f34c1ed881a7981f
 

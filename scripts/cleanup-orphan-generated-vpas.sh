@@ -25,11 +25,21 @@ k() { kubectl --context admin@prod --request-timeout=10s "$@" 2>/dev/null; }
 readonly resource=verticalpodautoscalers.autoscaling.k8s.io
 
 # Do not clean up before the reviewed prevention is deployed. Compare the
-# complete generator, including the required real UID expression, to Git.
+# complete generator, including the required real UID expression, to the
+# reviewed production render. Kustomize can reserialize multiline CEL scalars;
+# comparing raw source strings would reject the deployed prevention.
 if [[ "$mode" == apply ]]; then
+  kubectl kustomize "$root/k8s/providers/hetzner/infrastructure" >"$work/reviewed.yaml" 2>/dev/null ||
+    unknown 'cannot render the reviewed production policies'
   for kind in deployment statefulset daemonset; do
-    yq -o=json '.spec.generate' "$root/k8s/bases/infrastructure/cluster-policies/best-practices/auto-vpa-$kind.yaml" >"$work/expected.json" 2>/dev/null ||
-      unknown 'cannot read the reviewed generator'
+    if ! yq -o=json "select(.kind == \"GeneratingPolicy\" and .metadata.name == \"auto-vpa-$kind\") | .spec.generate" \
+      "$work/reviewed.yaml" 2>/dev/null |
+      jq -ces 'if length==1 and (.[0] | type=="array" and length>0 and
+        all(.[]; type=="object" and (.expression | type=="string" and length>0)))
+        then .[0] else error("incomplete reviewed generator") end' \
+        >"$work/expected.json" 2>/dev/null; then
+      unknown 'cannot read exactly one complete reviewed generator'
+    fi
     k get generatingpolicies.policies.kyverno.io "auto-vpa-$kind" -o json >"$work/policy.json" ||
       unknown 'cannot read the deployed generator'
     jq -e --slurpfile expected "$work/expected.json" '.spec.generate == $expected[0]' "$work/policy.json" >/dev/null 2>&1 ||

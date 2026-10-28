@@ -21,6 +21,7 @@ inconclusive() { printf 'INCONCLUSIVE: %s\n' "$1"; exit 3; }
 # Bound JSON responses and requests. Neither failed kubectl output nor parser diagnostics are public.
 read_json() {
   local destination="$1"
+  local json_shape
   local -a read_status
   shift
   read_failure=COMMAND_FAILED
@@ -52,10 +53,25 @@ read_json() {
     fi
     return 1
   fi
-  if ! jq -e -s 'length==1 and .[0]!=null' "${destination}" >/dev/null 2>&1; then
+  # Slurping distinguishes valid JSON null and an empty stream from parse errors.
+  # None is a measurement; only the fixed classification leaves the private file.
+  if ! json_shape="$(jq -r -s '
+    if length==0 then "EMPTY_OUTPUT"
+    elif length>1 then "MULTIPLE_JSON_VALUES"
+    elif .[0]==null then "JSON_NULL"
+    else "OK" end
+  ' "${destination}" 2>/dev/null)"; then
     read_failure=INVALID_JSON
     return 1
   fi
+  case "${json_shape}" in
+    OK) ;;
+    EMPTY_OUTPUT | MULTIPLE_JSON_VALUES | JSON_NULL)
+      read_failure="${json_shape}"
+      return 1
+      ;;
+    *) read_failure=INVALID_JSON; return 1 ;;
+  esac
 }
 roster() {
   local prefix="$1"

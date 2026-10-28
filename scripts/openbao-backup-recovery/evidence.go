@@ -104,12 +104,16 @@ func recordsEqual(expected, actual map[string]json.RawMessage) bool {
 }
 
 // privateInput refuses links, special files, shared permissions and truncated reads.
-func privateInput(path string, limit int64) ([]byte, error) {
+func privateInput(path string, limit int64) (result []byte, resultErr error) {
 	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, errEvidence
 	}
-	defer f.Close()
+	defer func() {
+		if f.Close() != nil {
+			result, resultErr = nil, errEvidence
+		}
+	}()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 || info.Size() <= 0 || info.Size() > limit {
 		return nil, errEvidence

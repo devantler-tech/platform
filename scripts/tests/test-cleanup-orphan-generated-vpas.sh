@@ -6,6 +6,10 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/bin"
+# Use the real offline production render as the API representation. Raw source
+# scalars can change serialization when Kustomize emits them.
+kubectl kustomize "$root/k8s/providers/hetzner/infrastructure" >"$work/rendered.yaml"
+export VPA_TEST_RENDER="$work/rendered.yaml"
 cat >"$work/base.json" <<'JSON'
 {"apiVersion":"autoscaling.k8s.io/v1","kind":"VerticalPodAutoscaler","metadata":{"name":"old-deployment","namespace":"apps-ns","uid":"00000000-0000-0000-0000-000000000001","resourceVersion":"42","labels":{"app.kubernetes.io/managed-by":"kyverno","generate.kyverno.io/policy-name":"auto-vpa-deployment","generate.kyverno.io/trigger-group":"apps","generate.kyverno.io/trigger-version":"v1","generate.kyverno.io/trigger-kind":"Deployment","generate.kyverno.io/trigger-name":"old","generate.kyverno.io/trigger-namespace":"apps-ns","generate.kyverno.io/trigger-uid":"00000000-0000-0000-0000-000000000002"}},"spec":{"targetRef":{"apiVersion":"apps/v1","kind":"Deployment","name":"old"}}}
 JSON
@@ -17,6 +21,18 @@ while [[ "$1" == --* ]]; do
   if [[ "$1" == --context ]]; then shift 2; else shift; fi
 done
 verb="$1"; shift
+if [[ "$verb" == kustomize ]]; then
+  [[ "$SCENARIO" != render-failed ]] || exit 1
+  case "$SCENARIO" in
+    render-missing) yq 'select(.kind != "GeneratingPolicy" or .metadata.name != "auto-vpa-deployment")' "$VPA_TEST_RENDER" ;;
+    render-duplicate) cat "$VPA_TEST_RENDER" "$VPA_TEST_RENDER" ;;
+    render-malformed) printf ': invalid: [\n' ;;
+    render-empty) yq '.spec.generate=[]' "$VPA_TEST_RENDER" ;;
+    render-empty-entry) yq '.spec.generate=[{}]' "$VPA_TEST_RENDER" ;;
+    *) cat "$VPA_TEST_RENDER" ;;
+  esac
+  exit 0
+fi
 if [[ "$verb" == delete ]]; then
   [[ "$*" == --raw\ /apis/autoscaling.k8s.io/v1/namespaces/apps-ns/verticalpodautoscalers/old-deployment\ --filename\ * ]] || exit 80
   jq -e '.apiVersion=="v1" and .kind=="DeleteOptions" and .preconditions.uid=="00000000-0000-0000-0000-000000000001" and .preconditions.resourceVersion=="42"' "${@: -1}" >/dev/null
@@ -30,7 +46,7 @@ if [[ "$resource" == generatingpolicies.policies.kyverno.io ]]; then
   if [[ "$SCENARIO" == undeployed ]]; then
     printf '{"spec":{"generate":[]}}'
   else
-    yq -o=json '.' "$ROOT/k8s/bases/infrastructure/cluster-policies/best-practices/$1.yaml"
+    yq -o=json "select(.kind == \"GeneratingPolicy\" and .metadata.name == \"$1\")" "$VPA_TEST_RENDER"
   fi
 elif [[ "$resource" == verticalpodautoscalers.autoscaling.k8s.io && "$1" == --all-namespaces ]]; then
   [[ "$SCENARIO" != bad-list ]] || { printf '{"items":null}'; exit 0; }
@@ -91,7 +107,7 @@ run_case orphan apply 0 yes
 run_case live apply 0 no
 run_case replacement apply 0 no
 run_case owned apply 0 no
-for scenario in forbidden bad-list partial-read malformed-target; do run_case "$scenario" apply 2 no; done
+for scenario in forbidden bad-list partial-read malformed-target render-failed render-missing render-duplicate render-malformed render-empty render-empty-entry; do run_case "$scenario" apply 2 no; done
 for scenario in wrong-label wrong-target invalid-uid changed-uid changed-version target-returned undeployed; do run_case "$scenario" apply 1 no; done
 run_case delete-failed apply 2 no
 run_case leftover apply 1 yes

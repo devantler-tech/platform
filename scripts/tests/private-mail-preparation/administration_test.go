@@ -175,8 +175,8 @@ func TestAdministrationExposesOnlyNormalManagement(t *testing.T) {
 	route := object(t, objects, "HTTPRoute", "private-mail")
 	meta := mapping(t, route["metadata"])
 	annotations := mapping(t, meta["annotations"])
-	if annotations["gethomepage.dev/enabled"] != "true" || annotations["gethomepage.dev/name"] != "Email" || annotations["gethomepage.dev/href"] != "https://mail.${domain}/admin" {
-		t.Fatal("the serving route must register a usable Email Homepage entry")
+	if annotations["gethomepage.dev/enabled"] != "true" || annotations["gethomepage.dev/name"] != "Stalwart" || annotations["gethomepage.dev/href"] != "https://mail.${domain}/admin" {
+		t.Fatal("the serving route must register a usable Stalwart Homepage entry")
 	}
 	if !reflect.DeepEqual(mapping(t, route["spec"])["hostnames"], []any{"mail.${domain}"}) {
 		t.Fatal("administration and its Homepage link must use the same hostname")

@@ -43,4 +43,9 @@ require (
 	google.golang.org/grpc v1.83.2 // indirect
 )
 
-require github.com/google/go-github/v88 v88.0.0
+require (
+	github.com/aws/aws-sdk-go-v2 v1.47.3
+	github.com/google/go-github/v88 v88.0.0
+)
+
+require github.com/aws/smithy-go v1.28.5 // indirect

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -36,8 +37,21 @@ type headerPatch struct {
 }
 
 func fixtureConfiguration(t *testing.T, listenerPort, backendPort int) []byte {
+	return fixtureConfigurationFor(t, "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml", listenerPort, backendPort)
+}
+
+func fixtureConfigurationFor(t *testing.T, policyPath string, listenerPort, backendPort int) []byte {
 	t.Helper()
-	data, err := os.ReadFile("../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml")
+	var data []byte
+	var err error
+	switch policyPath {
+	case "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml":
+		data, err = os.ReadFile("../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml")
+	case "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml":
+		data, err = os.ReadFile("../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml")
+	default:
+		t.Fatal("unreviewed client identity policy")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +130,23 @@ func TestClientIdentityFixtureUsesTheAuditedControllerRelease(t *testing.T) {
 }
 
 func TestNativeGatewayReplacesSpoofedClientIdentity(t *testing.T) {
+	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml", "Forwarded")
+}
+
+func TestNativeProxyGatewayReplacesSpoofedClientIdentity(t *testing.T) {
+	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml", "X-Forwarded-For")
+}
+
+func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) {
+	t.Helper()
 	if os.Getenv("EMAIL_CLIENT_IDENTITY_NATIVE_TEST") != "1" {
 		t.Skip("opt-in native Linux container proof")
 	}
 	if runtime.GOOS != "linux" {
 		t.Fatal("native proof requires a Linux host, not only a Linux Docker daemon")
+	}
+	if os.Getuid() <= 0 || os.Getgid() < 0 {
+		t.Fatal("native proof requires an unprivileged fixture user")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -160,7 +186,7 @@ func TestNativeGatewayReplacesSpoofedClientIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	config := filepath.Join(t.TempDir(), "envoy.json")
-	if err := os.WriteFile(config, fixtureConfiguration(t, port, backendPort), 0o644); err != nil {
+	if err := os.WriteFile(config, fixtureConfigurationFor(t, policyPath, port, backendPort), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("pull", pins.Image)
@@ -172,7 +198,7 @@ func TestNativeGatewayReplacesSpoofedClientIdentity(t *testing.T) {
 			t.Errorf("owned native fixture cleanup failed: %v: %.1000s", err, out)
 		}
 	})
-	run("run", "--detach", "--name", name, "--network", "host", "--read-only", "--user", "65532:65532", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--cpus", "1", "--memory", "256m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--mount", "type=bind,source="+config+",target=/fixture.json,readonly", "--entrypoint", "/usr/bin/cilium-envoy", pins.Image, "-c", "/fixture.json", "--concurrency", "1", "--disable-hot-restart", "--log-level", "error")
+	run("run", "--detach", "--name", name, "--network", "host", "--read-only", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--cpus", "1", "--memory", "256m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--mount", "type=bind,source="+config+",target=/fixture.json,readonly", "--entrypoint", "/usr/bin/cilium-envoy", pins.Image, "-c", "/fixture.json", "--concurrency", "1", "--disable-hot-restart", "--log-level", "error")
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	deadline := time.Now().Add(20 * time.Second)
 	for {
@@ -194,18 +220,39 @@ func TestNativeGatewayReplacesSpoofedClientIdentity(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = conn.Close() })
 		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
-		_, err = fmt.Fprintf(conn, "%sGET /admin/ HTTP/1.1\r\nHost: mail.example.test\r\nConnection: close\r\nForwarded: for=203.0.113.20\r\nForwarded: for=203.0.113.21\r\nX-Forwarded-For: 203.0.113.22, 203.0.113.23\r\nX-Real-IP: 203.0.113.24\r\nX-Envoy-External-Address: 203.0.113.25\r\n\r\n", prefix)
+		_, err = fmt.Fprintf(conn, "%sGET /admin/ HTTP/1.1\r\nHost: mail.example.test\r\nConnection: close\r\nForwarded: for=203.0.113.20\r\nForwarded: for=203.0.113.21\r\nX-Forwarded-For: 203.0.113.22, 203.0.113.23\r\nX-Forwarded-For: invalid-source\r\nX-Real-IP: 203.0.113.24\r\nX-Envoy-External-Address: 203.0.113.25\r\n\r\n", prefix)
 		if err != nil {
 			return nil, err
 		}
 		return http.ReadResponse(bufio.NewReader(conn), nil)
 	}
-	for _, tc := range []struct{ protocol, source, destination string }{
-		{"TCP4", "198.51.100.9", "192.0.2.9"},
-		{"TCP6", "2001:db8::9", "2001:db8::10"},
+	for _, tc := range []struct{ version, protocol, source, destination string }{
+		{"v1", "TCP4", "198.51.100.9", "192.0.2.9"},
+		{"v1", "TCP6", "2001:db8::9", "2001:db8::10"},
+		{"v2", "TCP4", "198.51.100.9", "192.0.2.9"},
+		{"v2", "TCP6", "2001:db8::9", "2001:db8::10"},
+		{"v1", "TCP4", "10.20.30.40", "192.0.2.9"},
+		{"v1", "TCP6", "fd00::9", "2001:db8::10"},
+		{"v2", "TCP4", "10.20.30.40", "192.0.2.9"},
+		{"v2", "TCP6", "fd00::9", "2001:db8::10"},
 	} {
-		t.Run(tc.protocol, func(t *testing.T) {
-			response, err := request(fmt.Sprintf("PROXY %s %s %s 4242 443\r\n", tc.protocol, tc.source, tc.destination))
+		t.Run(tc.version+"/"+tc.protocol, func(t *testing.T) {
+			prefix := fmt.Sprintf("PROXY %s %s %s 4242 443\r\n", tc.protocol, tc.source, tc.destination)
+			if tc.version == "v2" {
+				source, destination, family := net.ParseIP(tc.source).To16(), net.ParseIP(tc.destination).To16(), byte(0x21)
+				payloadLength := uint16(36)
+				if tc.protocol == "TCP4" {
+					source, destination, family = source.To4(), destination.To4(), 0x11
+					payloadLength = 12
+				}
+				payload := append(append([]byte{}, source...), destination...)
+				payload = binary.BigEndian.AppendUint16(payload, 4242)
+				payload = binary.BigEndian.AppendUint16(payload, 443)
+				header := append([]byte("\r\n\r\n\x00\r\nQUIT\n"), 0x21, family)
+				header = binary.BigEndian.AppendUint16(header, payloadLength)
+				prefix = string(append(header, payload...))
+			}
+			response, err := request(prefix)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -218,8 +265,12 @@ func TestNativeGatewayReplacesSpoofedClientIdentity(t *testing.T) {
 			if response.StatusCode != http.StatusOK || json.NewDecoder(response.Body).Decode(&headers) != nil {
 				t.Fatal("trusted transport did not reach the synthetic backend")
 			}
-			values := headers.Values("Forwarded")
-			if len(values) != 1 || values[0] != `for="`+tc.source+`"` || headers.Get("X-Forwarded-For") != "" || headers.Get("X-Real-IP") != "" {
+			otherHeader, wanted := "Forwarded", tc.source
+			if identityHeader == "Forwarded" {
+				otherHeader, wanted = "X-Forwarded-For", `for="`+tc.source+`"`
+			}
+			values := headers.Values(identityHeader)
+			if len(values) != 1 || values[0] != wanted || headers.Get(otherHeader) != "" || headers.Get("X-Real-IP") != "" {
 				t.Fatal("untrusted forwarding metadata changed the canonical client identity")
 			}
 		})

@@ -411,6 +411,14 @@ audit "file" {
 }
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "collect" {
+		if collectRecoveryInputs(os.Getenv("OPENBAO_RECOVERY_DIR")) != nil {
+			fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_INPUTS=UNVERIFIED")
+			os.Exit(2)
+		}
+		fmt.Println("OPENBAO_BACKUP_INPUTS=PASS")
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "image" {
 		fmt.Println(serverImage)
 		return

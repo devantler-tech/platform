@@ -1,0 +1,29 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: email-encrypted
+  annotations:
+    kustomize.toolkit.fluxcd.io/prune: disabled
+provisioner: driver.longhorn.io
+allowVolumeExpansion: true
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  encrypted: "true"
+  numberOfReplicas: "3"
+  staleReplicaTimeout: "30"
+  fromBackup: ""
+  fsType: ext4
+  dataLocality: disabled
+  unmapMarkSnapChainRemoved: ignored
+  disableRevisionCounter: "true"
+  dataEngine: v1
+  backupTargetName: default
+  # Longhorn 1.13 uses node-side references for staging, publishing and expansion.
+  # The key is not mounted in Email and no controller-side reference is added.
+  csi.storage.k8s.io/node-stage-secret-name: email-storage-key
+  csi.storage.k8s.io/node-stage-secret-namespace: private-mail
+  csi.storage.k8s.io/node-publish-secret-name: email-storage-key
+  csi.storage.k8s.io/node-publish-secret-namespace: private-mail
+  csi.storage.k8s.io/node-expand-secret-name: email-storage-key
+  csi.storage.k8s.io/node-expand-secret-namespace: private-mail

@@ -1,0 +1,270 @@
+name: 🩹 Publish Release Recovery
+
+# Platform-owned recovery for the captured tag-only incidents (#4839).
+# Engine: devantler-tech/.github v13.4.0, f558e3ababb474ac0e6f27d988ce8c876a525196.
+# The boundary test and generated offline fixture guard this wrapper.
+# enable-recovery remains temporary until the protected rollout in .github#603 is verified.
+# confirm-publication is permanent operator consent.
+on:
+  workflow_dispatch:
+    inputs:
+      enable-recovery:
+        description: "Temporary rollout flag; recovery is skipped unless true"
+        type: boolean
+        default: false
+      confirm-publication:
+        description: "Explicit operator consent to publish the missing release; required on every run"
+        type: boolean
+        default: false
+      offline-test:
+        description: "Build the publisher and check its credential refusal without any production credential"
+        type: boolean
+        default: false
+      tag:
+        description: "Existing stable version tag, such as v1.2.3"
+        type: string
+        required: true
+      source-sha:
+        description: "Full original source commit SHA"
+        type: string
+        required: true
+      run-id:
+        description: "Original failed release workflow run ID"
+        type: string
+        required: true
+      run-attempt:
+        description: "Original failed release workflow attempt"
+        type: string
+        required: true
+      producer-ref:
+        description: "Original catalogue create-release workflow path at its full commit SHA"
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  recover:
+    if: inputs.enable-recovery && !inputs.offline-test
+    name: Publish the missing release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Share the normal release queue so recovery never overlaps a release of the same repository.
+    concurrency:
+      group: create-release-${{ github.repository }}-${{ github.ref }}
+      cancel-in-progress: false
+      queue: max
+    permissions: {}
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: 🔎 Admit manual, confirmed default-branch invocation
+        id: admit
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          CONFIRMATION: ${{ inputs.confirm-publication }}
+          REPOSITORY: ${{ github.repository }}
+          PRIVATE: ${{ github.event.repository.private }}
+          CURRENT_REF: ${{ github.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$EVENT_NAME" == workflow_dispatch && "$CONFIRMATION" == true ]] || {
+            echo '::error::publication requires a manual dispatch with confirm-publication set to true' >&2
+            exit 1
+          }
+          [[ "$REPOSITORY" == devantler-tech/platform && -n "$DEFAULT_BRANCH" && "$CURRENT_REF" == "refs/heads/$DEFAULT_BRANCH" && "$PRIVATE" == false &&
+            "$REPOSITORY" =~ ^devantler-tech/[A-Za-z0-9_.-]{1,100}$ &&
+            "$REPOSITORY" != devantler-tech/. && "$REPOSITORY" != devantler-tech/.. ]] || {
+            echo '::error::recovery requires the default branch of one public portfolio repository' >&2
+            exit 1
+          }
+          printf 'name=%s\n' "${REPOSITORY#devantler-tech/}" >> "$GITHUB_OUTPUT"
+      - name: 📑 Download immutable recovery source
+        shell: bash
+        env:
+          CATALOGUE_REPOSITORY: devantler-tech/.github
+          CATALOGUE_SHA: f558e3ababb474ac0e6f27d988ce8c876a525196
+        run: |
+          set -euo pipefail
+          [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::invalid catalogue source' >&2
+            exit 1
+          }
+          env -i PATH="$PATH" curl --disable --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 --retry 3 \
+            --output "$RUNNER_TEMP/recovery.tar.gz" \
+            "https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA"
+          mkdir .devantler-tech-recovery
+          tar --extract --gzip --file="$RUNNER_TEMP/recovery.tar.gz" \
+            --strip-components=1 --directory=.devantler-tech-recovery
+          for source_file in go.mod main.go cmd/publish-release-recovery/main.go; do
+            [[ -f ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" &&
+              ! -L ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" ]] || {
+              echo '::error::incomplete recovery source' >&2
+              exit 1
+            }
+          done
+      - name: 📦 Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+          cache: false
+      - name: 🔨 Build before obtaining credentials
+        env:
+          GOWORK: "off"
+          GOFLAGS: ""
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/inspect-release-recovery" .
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/publish-release-recovery" ./cmd/publish-release-recovery
+      - name: 🔑 Obtain repository-scoped read-only token
+        id: read-token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: devantler-tech
+          repositories: ${{ steps.admit.outputs.name }}
+          permission-contents: read
+          permission-actions: read
+      - name: 🔎 Admit the incident without write authority
+        id: read-admission
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.read-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+          PRODUCER_REF: ${{ inputs.producer-ref }}
+        run: |
+          set -euo pipefail
+          "./.devantler-tech-recovery/inspect-release-recovery" \
+            --repository "$REPOSITORY" --tag "$TAG" --source-sha "$SOURCE_SHA" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" --producer-ref "$PRODUCER_REF" \
+            > "$RUNNER_TEMP/release-diagnosis.json"
+          cat "$RUNNER_TEMP/release-diagnosis.json"
+          diagnosis="$(jq -er '.diagnosis' "$RUNNER_TEMP/release-diagnosis.json")"
+          case "$diagnosis" in
+            missing-github-release) missing=true ;;
+            github-release-present)
+              missing=false
+              echo '::notice::a matching published release already exists; no writer credential was requested'
+              ;;
+            *)
+              echo '::error::unrecognized diagnosis' >&2
+              exit 1
+              ;;
+          esac
+          printf 'diagnosis=%s\nmissing=%s\n' "$diagnosis" "$missing" >> "$GITHUB_OUTPUT"
+      - name: 🔑 Obtain repository-scoped publication token
+        id: write-token
+        if: steps.read-admission.outputs.missing == 'true'
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: devantler-tech
+          repositories: ${{ steps.admit.outputs.name }}
+          permission-contents: write
+          permission-actions: read
+      - name: 🩹 Publish the missing release once
+        id: publish
+        if: steps.read-admission.outputs.missing == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.write-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          RUN_ID: ${{ inputs.run-id }}
+          RUN_ATTEMPT: ${{ inputs.run-attempt }}
+          PRODUCER_REF: ${{ inputs.producer-ref }}
+        run: |
+          set -euo pipefail
+          "./.devantler-tech-recovery/publish-release-recovery" \
+            --repository "$REPOSITORY" --tag "$TAG" --source-sha "$SOURCE_SHA" \
+            --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" --producer-ref "$PRODUCER_REF" \
+            > "$RUNNER_TEMP/release-publication.json"
+          cat "$RUNNER_TEMP/release-publication.json"
+
+  offline-test:
+    if: inputs.enable-recovery && inputs.offline-test
+    name: Offline recovery build and credential refusal
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: 🛡️ Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: 📑 Download immutable recovery source
+        shell: bash
+        env:
+          CATALOGUE_REPOSITORY: devantler-tech/.github
+          CATALOGUE_SHA: f558e3ababb474ac0e6f27d988ce8c876a525196
+        run: |
+          set -euo pipefail
+          [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::invalid catalogue source' >&2
+            exit 1
+          }
+          env -i PATH="$PATH" curl --disable --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 --retry 3 \
+            --output "$RUNNER_TEMP/recovery.tar.gz" \
+            "https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA"
+          mkdir .devantler-tech-recovery
+          tar --extract --gzip --file="$RUNNER_TEMP/recovery.tar.gz" \
+            --strip-components=1 --directory=.devantler-tech-recovery
+          for source_file in go.mod main.go cmd/publish-release-recovery/main.go; do
+            [[ -f ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" &&
+              ! -L ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" ]] || {
+              echo '::error::incomplete recovery source' >&2
+              exit 1
+            }
+          done
+      - name: 📦 Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+          cache: false
+      - name: 🔨 Build without credentials
+        env:
+          GOWORK: "off"
+          GOFLAGS: ""
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/inspect-release-recovery" .
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/publish-release-recovery" ./cmd/publish-release-recovery
+      - name: 🧪 Refuse publication without a credential
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset GH_TOKEN GITHUB_TOKEN
+          if "./.devantler-tech-recovery/publish-release-recovery" \
+            --repository devantler-tech/platform --tag v1.2.3 --source-sha "$(printf 'a%.0s' {1..40})" \
+            --run-id 1 --run-attempt 1 \
+            --producer-ref "devantler-tech/.github/.github/workflows/create-release.yaml@$(printf 'b%.0s' {1..40})" \
+            > "$RUNNER_TEMP/refusal.out" 2> "$RUNNER_TEMP/refusal.err"; then
+            echo '::error::the publisher ran without a credential' >&2
+            exit 1
+          fi
+          grep -Fq 'a non-empty GH_TOKEN without whitespace is required' "$RUNNER_TEMP/refusal.err" || {
+            echo '::error::the publisher stopped for an unexpected reason' >&2
+            cat "$RUNNER_TEMP/refusal.err" >&2
+            exit 1
+          }
+          [[ ! -s "$RUNNER_TEMP/refusal.out" ]] || {
+            echo '::error::the refused publisher printed a result' >&2
+            exit 1
+          }
