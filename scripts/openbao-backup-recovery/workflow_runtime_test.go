@@ -26,7 +26,7 @@ func TestRecoveryWorkflowExcludesClusterCredentials(t *testing.T) {
 		t.Fatal("cannot read guarded recovery workflow")
 	}
 	body := workflow.Jobs["verify"].Steps[4].Run
-	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "private-collection-stage", "private-result", "restore-stage", "private-restore-stage", "changed-main", "missing-cluster-config"} {
+	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "private-collection-stage", "private-result", "restore-stage", "restore-runtime-stage", "private-restore-stage", "changed-main", "missing-cluster-config"} {
 		t.Run(tc, func(t *testing.T) {
 			dir, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -76,8 +76,9 @@ printf '%s' reached > "$FIXTURE_DIR/sandbox-started"
 [[ $1 == verify ]] || exit 91
 if [[ -e $2/kubeconfig ]]; then printf '%s' exposed > "$FIXTURE_DIR/kubeconfig-exposed"; printf '%s\n' PRIVATE_SYNTHETIC_CLUSTER_CREDENTIAL >&2; exit 91; fi
 for name in root-token unseal-key expected.json snapshot.snap; do [[ -s $2/$name ]] || exit 91; done
-if [[ $FIXTURE_CASE == restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=unseal'; exit 91; fi
-if [[ $FIXTURE_CASE == private-restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=PRIVATE_SYNTHETIC_PAYLOAD'; exit 91; fi
+if [[ $FIXTURE_CASE == restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=unseal' >&2; exit 91; fi
+if [[ $FIXTURE_CASE == restore-runtime-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=runtime' >&2; exit 91; fi
+if [[ $FIXTURE_CASE == private-restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=PRIVATE_SYNTHETIC_PAYLOAD' >&2; exit 91; fi
 if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; else printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'; fi
 `,
 			}
@@ -111,6 +112,9 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 			if tc == "restore-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_RESTORE=FAIL stage=unseal") {
 				t.Fatal("workflow hid the safe restoration failure stage")
 			}
+			if tc == "restore-runtime-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_RESTORE=FAIL stage=runtime") {
+				t.Fatal("workflow hid the wrapper's bounded runtime refusal")
+			}
 			if tc != "matching" && !strings.Contains(string(out), "OPENBAO_BACKUP_STAGE=") {
 				t.Fatal("workflow did not identify its bounded phase of refusal")
 			}
@@ -124,7 +128,7 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 				}
 			}
 			_, sandboxErr := os.Stat(filepath.Join(dir, "sandbox-started"))
-			if (sandboxErr == nil) != (tc == "matching" || tc == "private-result" || tc == "restore-stage" || tc == "private-restore-stage") {
+			if (sandboxErr == nil) != (tc == "matching" || tc == "private-result" || tc == "restore-stage" || tc == "restore-runtime-stage" || tc == "private-restore-stage") {
 				t.Fatal("workflow reached sandbox after a refused collection or stale main")
 			}
 		})

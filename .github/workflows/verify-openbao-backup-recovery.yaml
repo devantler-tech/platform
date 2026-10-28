@@ -136,7 +136,7 @@ jobs:
           if ! docker pull "$image" > "$proof_dir/pull.log" 2>&1; then fail; fi
           stage=isolated-restore
           if ! bash scripts/run-openbao-backup-sandbox.sh verify "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then
-            grep -E '^OPENBAO_BACKUP_RESTORE=FAIL stage=(mode|sandbox|server|initialization|inputs|snapshot|restore|seal|unseal|records|membership|restored_state|fixture|verification)$' "$proof_dir/verification-result" >&2 || true
+            grep -E '^OPENBAO_BACKUP_RESTORE=FAIL stage=(mode|sandbox|server|initialization|inputs|snapshot|restore|seal|unseal|records|membership|restored_state|fixture|verification|runtime)$' "$proof_dir/verification.log" >&2 || true
             fail
           fi
           stage=proof-format
