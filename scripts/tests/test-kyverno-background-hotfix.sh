@@ -16,6 +16,7 @@ fail() { printf 'FAIL: background hotfix: %s\n' "$1" >&2; exit 1; }
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
    "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'publish only tested main pushes'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
+   "$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == f800e2778a0fdf3e724757591857fb332d45698a &&
    "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-background ]] || fail 'source or destination changed'
 # This expression belongs to GitHub, not the shell.
 # shellcheck disable=SC2016
@@ -24,6 +25,14 @@ while IFS= read -r action; do
   [[ "$action" =~ @[0-9a-f]{40}$ ]] || fail 'action must be commit-pinned'
 done < <(yq -r '.jobs[].steps[]|select(has("uses"))|.uses' "$workflow")
 for job in verify publish; do
+  # Match an executable line rather than a comment or a check in the other job.
+  # shellcheck disable=SC2016
+  JOB="$job" yq -e '
+    [.jobs[strenv(JOB)].steps[] | select(."working-directory" == "upstream")
+     | select((.run // "" | split("\n")
+       | map(select(. == "test \"$(git write-tree)\" = \"${PATCHED_SOURCE_TREE}\""))
+       | length) == 1)] | length == 1
+  ' "$workflow" >/dev/null || fail "patched source tree check missing or duplicated in $job"
   JOB="$job" yq -e '[.jobs[strenv(JOB)].steps[] | select(.with.repository == "kyverno/kyverno" and .with.ref == "e63308f1e16c05cd009ac4864be6ec25c66b49be" and .with."persist-credentials" == false)] | length == 1' "$workflow" >/dev/null || fail 'upstream checkout not exact'
   JOB="$job" yq -e '[.jobs[strenv(JOB)].steps[] | select(.with.file == "./k8s/bases/infrastructure/controllers/kyverno/BackgroundDownstreamCleanup.Dockerfile" and .with.provenance == "mode=max" and .with.sbom == true)] | length == 1' "$workflow" >/dev/null || fail 'tested build provenance missing'
 done
