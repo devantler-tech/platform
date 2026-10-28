@@ -1447,7 +1447,7 @@ verify_consumer_secret() {
     --namespace "${namespace}" \
     get secret ghcr-auth \
     -o json \
-    >"${secret_file}"
+    >"${secret_file}" || return 1
   if ! jq -er '.data[".dockerconfigjson"] | @base64d' \
     "${secret_file}" \
     >"${decoded_file}" 2>/dev/null ||
@@ -7203,6 +7203,7 @@ stage_fanout_before_talos \
   "${pull_revision}" \
   "${KSAIL_OPERATOR_IMAGE}" \
   "${talos_stage_result_file}" \
+  "${KUBE_CONTEXT}" \
   "${prepublish_fanout_namespaces[@]}"
 resume_flux_policy_handoff
 resume_flux_policy_parent

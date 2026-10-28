@@ -3478,14 +3478,70 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 		if markerExists(markerName) {
 			resourceVersion = "3"
 		}
+		uid := kind + "-" + namespace + "-" + name + "-uid"
+		kindName := "ExternalSecret"
+		if kind == "pushsecret" {
+			kindName = "PushSecret"
+		}
+		spec := map[string]any{"refreshInterval": "1h"}
+		syncedVersion := "1-fixture"
+		periodicCount := 0
+		periodicFault := ""
+		if kind == "externalsecret" && wordListContains(os.Getenv("FAKE_PERIODIC_FANOUT_NAMESPACES"), namespace) {
+			periodicCount = parseInt(markerContent("periodic-reads-"+namespace), 0) + 1
+			setMarkerContent("periodic-reads-"+namespace, strconv.Itoa(periodicCount))
+			appendEnvFile("OPERATION_LOG", fmt.Sprintf("periodic-read:%s:%d\n", namespace, periodicCount))
+			if namespace == os.Getenv("FAKE_PERIODIC_FAULT_NAMESPACE") {
+				periodicFault = os.Getenv("FAKE_PERIODIC_FAULT")
+			}
+			spec["refreshInterval"] = "1m"
+			spec["refreshPolicy"] = "Periodic"
+			initial := markerContent("periodic-initial-refresh-" + namespace)
+			if initial == "" {
+				initial = time.Now().UTC().Add(-5 * time.Second).Format(time.RFC3339)
+				setMarkerContent("periodic-initial-refresh-"+namespace, initial)
+			}
+			refreshTime = initial
+			resourceVersion = strconv.Itoa(20 + periodicCount)
+			if periodicCount > 1 {
+				refreshTime = time.Now().UTC().Add(time.Duration(periodicCount) * time.Second).Format(time.RFC3339)
+				if periodicFault != "" {
+					appendEnvFile("OPERATION_LOG", "periodic-fault:"+namespace+":"+periodicFault+"\n")
+				}
+				switch periodicFault {
+				case "same-refresh":
+					refreshTime = initial
+				case "replaced-uid":
+					uid += "-replacement"
+				case "spec-drift":
+					spec["target"] = map[string]any{"name": "different-target"}
+				case "unready":
+					ready = "False"
+				case "stale-generation":
+					syncedVersion = "0-fixture"
+				case "future-refresh":
+					refreshTime = time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339)
+				}
+			}
+			if periodicFault == "wrong-policy" {
+				spec["refreshPolicy"] = "OnChange"
+				appendEnvFile("OPERATION_LOG", "periodic-fault:"+namespace+":"+periodicFault+"\n")
+			}
+		}
 		fmt.Println(encodeJSON(map[string]any{
-			"metadata": map[string]any{"resourceVersion": resourceVersion, "generation": 1},
+			"apiVersion": "external-secrets.io/v1",
+			"kind":       kindName,
+			"metadata":   map[string]any{"name": name, "namespace": namespace, "uid": uid, "resourceVersion": resourceVersion, "generation": 1},
+			"spec":       spec,
 			"status": map[string]any{
 				"refreshTime":           refreshTime,
 				"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
-				"syncedResourceVersion": "1-fixture",
+				"syncedResourceVersion": syncedVersion,
 			},
 		}))
+		if periodicCount > 1 && periodicFault == "read-failure" {
+			return commandFailure(92, "synthetic periodic read failed after plausible output")
+		}
 		if faultSelected && ((fault == "failed-initial-read" && !annotated) ||
 			(fault == "failed-completion-read" && annotated)) {
 			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
@@ -3496,6 +3552,9 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 	if containsSequence(args, "annotate", kind, name) {
 		appendEnvFile("FANOUT_LOG", resource+"\n")
 		appendEnvFile("OPERATION_LOG", "fanout:"+resource+"\n")
+		if kind == "externalsecret" && wordListContains(os.Getenv("FAKE_PERIODIC_FANOUT_NAMESPACES"), namespace) {
+			return commandFailure(92, "synthetic tenant boundary rejects direct refresh update")
+		}
 		fault := os.Getenv("FAKE_FANOUT_FAULT")
 		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
 		if faultSelected && (fault == "refused-annotation" || fault == "refused-annotation-with-output") {
@@ -3569,6 +3628,9 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 	fmt.Println(encodeJSON(map[string]any{
 		"data": map[string]any{".dockerconfigjson": encoded},
 	}))
+	if namespace == os.Getenv("FAKE_CONSUMER_READ_FAIL_NAMESPACE") && variablesPatchCount > 0 {
+		return commandFailure(92, "synthetic consumer read failed after plausible output")
+	}
 	return 0
 }
 
