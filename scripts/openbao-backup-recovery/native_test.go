@@ -14,6 +14,15 @@ import (
 
 // TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery exercises actual Raft state.
 func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
+	testPinnedRecovery(t, "")
+}
+
+func TestPinnedServerRestoresCanonicalEmailCredentials(t *testing.T) {
+	testPinnedRecovery(t, "-email")
+}
+
+func testPinnedRecovery(t *testing.T, suffix string) {
+	t.Helper()
 	if os.Getenv("OPENBAO_BACKUP_RECOVERY_NATIVE_TEST") != "1" {
 		t.Skip("actual pinned server proof runs in Linux CI")
 	}
@@ -45,7 +54,7 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	if out, err := run("fixture", fixture); err != nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_FIXTURE=PASS" {
+	if out, err := run("fixture"+suffix, fixture); err != nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_FIXTURE=PASS" {
 		t.Fatalf("native synthetic snapshot creation failed: %v %s", err, out)
 	}
 	rootToken, err := privateInput(filepath.Join(fixture, "root-token"), 16384)
@@ -69,7 +78,7 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 			t.Fatal("could not remove original synthetic credentials")
 		}
 	}
-	for _, test := range []string{"matching", "corrupt-snapshot", "different-record", "wrong-unseal-key"} {
+	for _, test := range []string{"matching", "corrupt-snapshot", "different-record", "wrong-unseal-key", "wrong-custody-scope"} {
 		t.Run(test, func(t *testing.T) {
 			dir, err := os.MkdirTemp("/dev/shm", "openbao-recovery-case-")
 			if err != nil {
@@ -117,19 +126,42 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 				if err != nil || json.Unmarshal(b, &records) != nil {
 					t.Fatal("invalid synthetic records")
 				}
-				records[credentialPaths[1]] = json.RawMessage(`{"username":"changed-synthetic-user","password":"` + strings.Repeat("d", 48) + `","retainedField":"synthetic-fixture"}`)
+				path := "apps/private-mail/maintainer"
+				if suffix == "-email" {
+					path = "infrastructure/email/maintainer"
+				}
+				records[path] = json.RawMessage(`{"username":"changed-synthetic-user","password":"` + strings.Repeat("d", 48) + `","retainedField":"synthetic-fixture"}`)
 				b, err = json.Marshal(records)
 				if err != nil || os.WriteFile(filepath.Join(dir, "expected.json"), b, 0600) != nil {
 					t.Fatal("could not change synthetic expected record")
 				}
+			case "wrong-custody-scope":
+				b, err := os.ReadFile(filepath.Join(dir, "expected.json"))
+				var records map[string]json.RawMessage
+				if err != nil || json.Unmarshal(b, &records) != nil {
+					t.Fatal("invalid synthetic records")
+				}
+				wrongScope := map[string]json.RawMessage{}
+				for key, value := range records {
+					if suffix == "-email" {
+						key = strings.Replace(key, "infrastructure/email/", "apps/private-mail/", 1)
+					} else {
+						key = strings.Replace(key, "apps/private-mail/", "infrastructure/email/", 1)
+					}
+					wrongScope[key] = value
+				}
+				b, err = json.Marshal(wrongScope)
+				if err != nil || os.WriteFile(filepath.Join(dir, "expected.json"), b, 0600) != nil {
+					t.Fatal("could not change synthetic custody scope")
+				}
 			}
-			out, err := run("verify", dir)
+			out, err := run("verify"+suffix, dir)
 			if test == "matching" {
 				if err != nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3" {
 					t.Fatalf("actual snapshot restoration not proven: %v %s", err, out)
 				}
 			} else {
-				stage := map[string]string{"corrupt-snapshot": "restore", "different-record": "records", "wrong-unseal-key": "unseal"}[test]
+				stage := map[string]string{"corrupt-snapshot": "restore", "different-record": "records", "wrong-unseal-key": "unseal", "wrong-custody-scope": "inputs"}[test]
 				if err == nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_RESTORE=FAIL stage="+stage {
 					t.Fatalf("native refusal did not prove its intended failure: %v %s", err, out)
 				}
