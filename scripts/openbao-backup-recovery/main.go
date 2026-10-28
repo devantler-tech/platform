@@ -312,13 +312,19 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 		return stageError("fixture")
 	}
 	expected := map[string]json.RawMessage{}
-	for _, path := range credentialPaths {
+	for i, path := range credentialPaths {
 		random := make([]byte, 32)
 		if _, err := rand.Read(random); err != nil {
 			return stageError("fixture")
 		}
-		// Match the password-only values seeded by the declared Email PushSecrets.
+		// Keep a declared password-only record alongside enriched records, so
+		// native restoration proves both minimum-schema admission and retention
+		// of every optional field.
 		data := map[string]any{"password": hex.EncodeToString(random)}
+		if i > 0 {
+			data["username"] = fmt.Sprintf("synthetic-%d", i)
+			data["retainedField"] = "synthetic-fixture"
+		}
 		raw, err := json.Marshal(data)
 		if err != nil {
 			return stageError("fixture")
