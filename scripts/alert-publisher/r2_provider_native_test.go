@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"testing"
@@ -39,6 +40,20 @@ type nativeR2LostAcknowledgement struct {
 	writes int
 }
 
+type nativeR2Preconditions struct {
+	r2ObjectAPI
+	refused int
+}
+
+func (c *nativeR2Preconditions) PutObject(ctx context.Context, input *s3.PutObjectInput, options ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	result, err := c.r2ObjectAPI.PutObject(ctx, input, options...)
+	var response interface{ HTTPStatusCode() int }
+	if errors.As(err, &response) && response.HTTPStatusCode() == http.StatusPreconditionFailed {
+		c.refused++
+	}
+	return result, err
+}
+
 func (c *nativeR2LostAcknowledgement) PutObject(ctx context.Context, input *s3.PutObjectInput, options ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	c.writes++
 	result, err := c.r2ObjectAPI.PutObject(ctx, input, options...)
@@ -52,12 +67,14 @@ func (c *nativeR2LostAcknowledgement) PutObject(ctx context.Context, input *s3.P
 
 func TestR2NativeProviderConflictLostResponseAndProcessExit(t *testing.T) {
 	store := nativeR2ProofStore(t)
+	preconditions := &nativeR2Preconditions{r2ObjectAPI: store.client}
+	store.client = preconditions
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if store.Initialize(ctx) != nil {
 		t.Fatal("native create-once proof failed; do not retry or replace the object")
 	}
-	if store.Initialize(ctx) == nil {
+	if store.Initialize(ctx) == nil || preconditions.refused != 1 {
 		t.Fatal("provider accepted a second create-once initialization")
 	}
 	read := func() (journalSession, journal) {
@@ -75,7 +92,7 @@ func TestR2NativeProviderConflictLostResponseAndProcessExit(t *testing.T) {
 	}
 	winner, state := read()
 	stale, _ := read()
-	if winner.Save(ctx, state) != nil || stale.Save(ctx, state) == nil || stale.Save(ctx, state) == nil {
+	if winner.Save(ctx, state) != nil || stale.Save(ctx, state) == nil || stale.Save(ctx, state) == nil || preconditions.refused != 2 {
 		t.Fatal("native conditional conflict or poisoned-session refusal failed")
 	}
 	uncertain, state := read()
