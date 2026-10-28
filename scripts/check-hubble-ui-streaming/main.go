@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"os"
@@ -171,8 +173,8 @@ func exercise(ctx context.Context, image, config string, wantEarly bool) (result
 	}
 	indexBody, readErr := io.ReadAll(io.LimitReader(index.Body, 1024*1024))
 	_ = index.Body.Close()
-	if readErr != nil || index.StatusCode != http.StatusOK || !bytes.Contains(bytes.ToLower(indexBody), []byte("<html")) {
-		return errors.New("the ordinary UI frontend no longer serves its HTML entry point")
+	if !validFrontendIndex(index.StatusCode, index.Header.Get("Content-Type"), indexBody, readErr) {
+		return fmt.Errorf("frontend entry point did not match the pinned image: status=%d content-type=%q", index.StatusCode, index.Header.Get("Content-Type"))
 	}
 	request := func(path string) (*http.Response, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://127.0.0.1:8081"+path, strings.NewReader(`{"fixture":true}`))
@@ -249,4 +251,20 @@ func exercise(ctx context.Context, image, config string, wantEarly bool) (result
 		}
 	}
 	return nil
+}
+
+func validFrontendIndex(status int, contentType string, body []byte, readErr error) bool {
+	if readErr != nil || status != http.StatusOK {
+		return false
+	}
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil || mediaType != "text/html" {
+		return false
+	}
+	// /app/index.html from the chart's immutable v0.13.6 frontend image
+	// (sha256:049a80a03585c043d0c3121bdc518c72b0fd42bae07e4bcce0fdb8f1e88041d0).
+	// The released minifier omits the optional opening html tag. Verify its
+	// exact entry point instead of accepting an arbitrary HTML-looking body.
+	digest := sha256.Sum256(body)
+	return hex.EncodeToString(digest[:]) == "c93d8bfc9217a3fb3d91a7a1672191641efe7a6aa046dfd7f03818fc7f3a87ff"
 }
