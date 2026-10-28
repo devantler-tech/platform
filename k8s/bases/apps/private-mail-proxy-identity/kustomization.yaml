@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../private-mail-administration
+configMapGenerator:
+  - name: email-client-proxy
+    namespace: private-mail
+    files:
+      - Caddyfile
+patches:
+  - path: patches/client-proxy.yaml
+  - path: patches/isolate-client-proxy.yaml
+  - target:
+      version: v1
+      kind: Service
+      name: private-mail
+      namespace: private-mail
+    path: patches/service.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/trusted-client-header.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/use-direct-email-dns.yaml

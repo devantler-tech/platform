@@ -1,0 +1,44 @@
+{
+  admin off
+  persist_config off
+  auto_https off
+  log default {
+    level WARN
+    format filter {
+      wrap json
+      fields {
+        request delete
+      }
+    }
+  }
+  servers {
+    trusted_proxies static private_ranges
+    trusted_proxies_strict
+    client_ip_headers X-Forwarded-For
+    protocols h1
+  }
+}
+http://:8081 {
+  # This network check supplements the required gateway-only Cilium identity.
+  # Other private pods still have no network-policy access to this listener.
+  @untrusted not remote_ip private_ranges
+  respond @untrusted 403
+  # The placeholder joins duplicate fields. Equality to the parsed canonical
+  # client rejects a missing/malformed address, a chain and duplicate values.
+  @invalid not expression {header.X-Forwarded-For} == {client_ip}
+  respond @invalid 400
+  reverse_proxy http://127.0.0.1:18081 {
+    header_up -Forwarded
+    header_up -X-Forwarded-For
+    header_up -X-Real-IP
+    transport http {
+      proxy_protocol v2
+      # A connection carries one client's identity. Never pool it across users.
+      keepalive off
+      versions 1.1
+      dial_timeout 1s
+      response_header_timeout 60s
+      network_proxy none
+    }
+  }
+}

@@ -1,0 +1,30 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  ingress:
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports:
+            - port: "8081"
+              protocol: TCP
+  ingressDeny:
+    - fromEntities:
+        - all
+      toPorts:
+        - ports:
+            - port: "8080"
+              protocol: TCP
+            - port: "18080"
+              protocol: TCP
+            - port: "18081"
+              protocol: TCP
+            - port: "1025"
+              protocol: TCP
+            - port: "1587"
+              protocol: TCP
+            - port: "1993"
+              protocol: TCP

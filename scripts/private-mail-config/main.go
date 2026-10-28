@@ -68,13 +68,17 @@ func loadInputs(dir string) (inputs, error) {
 			return fail()
 		}
 		seen[name] = true
-		if name == "useForwardedClientIP" {
+		if name == "useForwardedClientIP" || name == "useProxyClientIP" {
 			value, decodeErr := d.Token()
 			forwarded, valid := value.(bool)
 			if decodeErr != nil || !valid {
 				return fail()
 			}
-			v.UseForwardedClientIP = forwarded
+			if name == "useForwardedClientIP" {
+				v.UseForwardedClientIP = forwarded
+			} else {
+				v.UseProxyClientIP = forwarded
+			}
 			continue
 		}
 		if name == "maintainerAliases" {

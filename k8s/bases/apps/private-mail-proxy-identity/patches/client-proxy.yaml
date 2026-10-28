@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  template:
+    spec:
+      containers:
+        - name: client-proxy
+          image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
+          imagePullPolicy: IfNotPresent
+          command: ["/usr/local/bin/caddy"]
+          args: ["run", "--config", "/etc/email-client-proxy/Caddyfile", "--adapter", "caddyfile"]
+          ports:
+            - name: client-proxy
+              containerPort: 8081
+          startupProbe:
+            exec:
+              command:
+                - /usr/bin/env
+                - -i
+                - /bin/bash
+                - --noprofile
+                - --norc
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  code=$(/usr/bin/curl --disable --noproxy '*' --http1.1 \
+                    --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                    --header 'X-Forwarded-For: 127.0.0.1' \
+                    --connect-timeout 1 --max-time 1 http://127.0.0.1:8081/healthz/ready)
+                  [[ "$code" == 200 ]]
+            failureThreshold: 24
+            periodSeconds: 5
+            timeoutSeconds: 2
+          readinessProbe:
+            exec:
+              command:
+                - /usr/bin/env
+                - -i
+                - /bin/bash
+                - --noprofile
+                - --norc
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  code=$(/usr/bin/curl --disable --noproxy '*' --http1.1 \
+                    --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                    --header 'X-Forwarded-For: 127.0.0.1' \
+                    --connect-timeout 1 --max-time 1 http://127.0.0.1:8081/healthz/ready)
+                  [[ "$code" == 200 ]]
+            timeoutSeconds: 2
+          livenessProbe:
+            exec:
+              command:
+                - /usr/bin/env
+                - -i
+                - /bin/bash
+                - --noprofile
+                - --norc
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  code=$(/usr/bin/curl --disable --noproxy '*' --http1.1 \
+                    --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                    --connect-timeout 1 --max-time 1 http://127.0.0.1:8081/healthz/live)
+                  [[ "$code" == 400 ]]
+            timeoutSeconds: 2
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 64Mi
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
+            seLinuxOptions: {}
+          volumeMounts:
+            - name: client-proxy-config
+              mountPath: /etc/email-client-proxy
+              readOnly: true
+      volumes:
+        - name: client-proxy-config
+          configMap:
+            name: email-client-proxy

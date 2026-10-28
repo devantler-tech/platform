@@ -9,12 +9,17 @@ fixture_user="$(id -u):$(id -g)"
 scratch="$(mktemp -d)"
 name="mail-config-$(basename "$scratch" | tr '[:upper:]' '[:lower:]')"
 network="${name}-network"
+proxy_name="${name}-client-proxy"
+proxy_started=0
 server='ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c'
 cli='ghcr.io/stalwartlabs/cli:1.0.13@sha256:9a1e07307d6f890a193322c4b737fc0868405f0f8486a19922cbf362f43884fd'
 cleanup() {
   local rc=$? cleanup_rc=0
   trap - EXIT
   docker rm -fv "$name" > /dev/null 2>&1 || cleanup_rc=1
+  if [ "$proxy_started" = 1 ]; then
+    docker rm -fv "$proxy_name" > /dev/null 2>&1 || cleanup_rc=1
+  fi
   docker network rm "$network" > /dev/null 2>&1 || cleanup_rc=1
   docker image rm "$name-bootstrap-image" > /dev/null 2>&1 || cleanup_rc=1
   rm -rf "$scratch"
@@ -50,8 +55,12 @@ docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log
 }
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
-  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE' >"$scratch/image-assets.txt"
+  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE; test -r /usr/local/share/licenses/caddy/LICENSE' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
+docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
+  --security-opt no-new-privileges:true --entrypoint /usr/local/bin/caddy \
+  "$name-bootstrap-image" version >"$scratch/client-proxy-version.txt"
+grep -Eq '^v2\.11\.7([[:space:]]|$)' "$scratch/client-proxy-version.txt"
 
 run_bootstrap() {
   local bootstrap_status=0 bootstrap_stage
@@ -176,27 +185,28 @@ apply_plan() {
 }
 verify_rendered_self_checks() {
   local probe arg status rewritten i
+  local bundle=${1:-private-mail-administration} container=${2:-private-mail} target=${3:-$name} loopback=${4:-127.0.0.1:8080}
   local -a check_command=() refused_command=()
-  kubectl kustomize "$root/k8s/bases/apps/private-mail-administration" >"$scratch/health-render.yaml"
-  yq -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "private-mail").spec.template.spec.containers[] | select(.name == "private-mail")' \
+  kubectl kustomize "$root/k8s/bases/apps/$bundle" >"$scratch/health-render.yaml"
+  CONTAINER_NAME="$container" yq -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "private-mail").spec.template.spec.containers[] | select(.name == strenv(CONTAINER_NAME))' \
     "$scratch/health-render.yaml" >"$scratch/health-container.json"
   for probe in startupProbe readinessProbe livenessProbe; do
     jq -e --arg probe "$probe" '.[$probe].exec.command | type=="array" and length>0 and all(.[];type=="string")' "$scratch/health-container.json" >/dev/null
     check_command=()
     while IFS= read -r -d '' arg; do check_command+=("$arg"); done < <(jq -j --arg probe "$probe" '.[$probe].exec.command[] | ., "\u0000"' "$scratch/health-container.json")
-    docker exec "$name" "${check_command[@]}" >"$scratch/$probe.stdout" 2>"$scratch/$probe.stderr"
+    docker exec "$target" "${check_command[@]}" >"$scratch/$probe.stdout" 2>"$scratch/$probe.stderr"
     [ ! -s "$scratch/$probe.stdout" ] || { echo 'FAIL: a self-check printed response content' >&2; exit 1; }
     refused_command=("${check_command[@]}")
     rewritten=0
     for i in "${!refused_command[@]}"; do
-      refused_command[i]="${refused_command[i]//127.0.0.1:8080/127.0.0.1:1}"
+      refused_command[i]="${refused_command[i]//$loopback/127.0.0.1:1}"
       if [[ "${refused_command[i]}" != "${check_command[i]}" ]]; then rewritten=$((rewritten+1)); fi
     done
     [ "$rewritten" = 1 ] || { echo 'FAIL: self-check lacks its unique loopback target' >&2; exit 1; }
     status=0
-    docker exec "$name" "${refused_command[@]}" >"$scratch/$probe-refused.stdout" 2>"$scratch/$probe-refused.stderr" || status=$?
+    docker exec "$target" "${refused_command[@]}" >"$scratch/$probe-refused.stdout" 2>"$scratch/$probe-refused.stderr" || status=$?
     [ "$status" = 7 ] || { echo 'FAIL: the native connection-refusal control was not observed' >&2; exit 1; }
-    docker exec "$name" "${check_command[@]}" >"$scratch/$probe-recovered.stdout" 2>"$scratch/$probe-recovered.stderr"
+    docker exec "$target" "${check_command[@]}" >"$scratch/$probe-recovered.stdout" 2>"$scratch/$probe-recovered.stderr"
   done
   echo 'PASS: actual rendered self-checks accept native health and reject an unreachable endpoint'
 }
@@ -538,4 +548,90 @@ for forwarded in true false; do
   run_bootstrap
   start_server serving
 done
-echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS, account restrictions and forwarding rollback'
+
+# Prove the maintained proxy against the real pinned mail server. These are
+# disposable identities on the existing internal fixture network, not a claim
+# about production Gateway trust or Cilium network-policy enforcement.
+native_cli query AllowedIp --fields id,address --json >"$scratch/allowed-before.jsonl"
+jq -sS 'sort_by(.id)' "$scratch/allowed-before.jsonl" >"$scratch/allowed-before.json"
+printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"proxy-client":{"address":"198.51.100.9","reason":"manual"}}}' >"$scratch/proxy-block.ndjson"
+native_cli apply --file /proof/proxy-block.ndjson --json >"$scratch/proxy-block-apply.jsonl" 2>"$scratch/proxy-block-apply.err"
+jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/proxy-block-apply.jsonl" >/dev/null
+
+for proxy_enabled in true false; do
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  jq --argjson enabled "$proxy_enabled" '.useForwardedClientIP=false | .useProxyClientIP=$enabled' \
+    "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
+  mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+  run_bootstrap
+  start_server serving
+  if [ "$proxy_enabled" = false ]; then
+    docker exec "$name" /usr/bin/curl --disable --noproxy '*' --fail --silent --show-error \
+      --max-time 3 http://127.0.0.1:18081/healthz/ready >/dev/null
+    continue
+  fi
+
+  # Native direct access cannot skip the required PROXY envelope.
+  direct_status=0
+  docker exec "$name" /usr/bin/curl --disable --noproxy '*' --silent \
+    --max-time 3 http://127.0.0.1:18081/healthz/ready >"$scratch/proxy-direct.out" 2>"$scratch/proxy-direct.err" || direct_status=$?
+  [ "$direct_status" != 0 ] || { echo 'FAIL: native proxy listener accepted a request without its transport envelope' >&2; exit 1; }
+
+  cp "$root/k8s/bases/apps/private-mail-proxy-identity/Caddyfile" "$scratch/ClientProxy.Caddyfile"
+  proxy_started=1
+  docker run --detach --name "$proxy_name" --network "container:$name" --read-only \
+    --user "$fixture_user" --cpus 1 --memory 128m --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --mount "type=bind,source=$scratch/ClientProxy.Caddyfile,target=/etc/email-client-proxy/Caddyfile,readonly" \
+    --entrypoint /usr/local/bin/caddy "$name-bootstrap-image" \
+    run --config /etc/email-client-proxy/Caddyfile --adapter caddyfile >"$scratch/proxy-start.out" 2>"$scratch/proxy-start.err"
+  proxy_ready=0
+  for ((attempt=0; attempt<30; attempt++)); do
+    if docker exec "$proxy_name" /usr/bin/curl --disable --noproxy '*' --fail --silent \
+      --max-time 2 --header 'X-Forwarded-For: 127.0.0.1' http://127.0.0.1:8081/healthz/ready >/dev/null 2>&1; then
+      proxy_ready=1; break
+    fi
+    sleep 1
+  done
+  [ "$proxy_ready" = 1 ] || { echo 'FAIL: native proxy-to-mail health did not become ready' >&2; exit 1; }
+  verify_rendered_self_checks private-mail-proxy-identity client-proxy "$proxy_name" 127.0.0.1:8081
+
+  for client_ip in 198.51.100.9 198.51.100.10 2001:db8::9; do
+    expected=200
+    [ "$client_ip" != 198.51.100.9 ] || expected=502
+    status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
+      --header "X-Forwarded-For: $client_ip" --header 'Forwarded: for=203.0.113.22' \
+      --header 'X-Real-IP: 203.0.113.23' --header 'X-Email-Private-Canary: email-proxy-private-canary' \
+      "http://$name:8081/healthz/ready?private=email-proxy-private-canary")
+    [ "$status" = "$expected" ] || { echo 'FAIL: native mail ban or per-client identity did not survive proxying' >&2; exit 1; }
+  done
+  for malformed in missing duplicate chain invalid invalid-ipv6; do
+    header_args=()
+    case "$malformed" in
+      duplicate) header_args=(--header 'X-Forwarded-For: 198.51.100.9' --header 'X-Forwarded-For: 198.51.100.10') ;;
+      chain) header_args=(--header 'X-Forwarded-For: 198.51.100.9, 198.51.100.10') ;;
+      invalid) header_args=(--header 'X-Forwarded-For: 999.999.999.999') ;;
+      invalid-ipv6) header_args=(--header 'X-Forwarded-For: ::::') ;;
+    esac
+    status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
+      "${header_args[@]}" "http://$name:8081/healthz/ready")
+    [ "$status" = 400 ] || { echo 'FAIL: native proxy accepted missing or ambiguous identity metadata' >&2; exit 1; }
+  done
+  protocol_curl --fail --silent --show-error --max-time 5 --config /proof/administrator.curl \
+    --header 'X-Forwarded-For: 198.51.100.10' "http://$name:8081/jmap/session" >"$scratch/proxy-administrator-session.json"
+  jq -e '.accounts|type=="object" and length>0' "$scratch/proxy-administrator-session.json" >/dev/null
+  docker logs "$proxy_name" >"$scratch/proxy-runtime.log" 2>&1
+  if grep -Fq 'email-proxy-private-canary' "$scratch/proxy-runtime.log"; then
+    echo 'FAIL: private request metadata reached the proxy log' >&2; exit 1
+  fi
+  native_cli query AllowedIp --fields id,address --json >"$scratch/allowed-after.jsonl"
+  jq -sS 'sort_by(.id)' "$scratch/allowed-after.jsonl" >"$scratch/allowed-after.json"
+  cmp "$scratch/allowed-before.json" "$scratch/allowed-after.json"
+  native_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/proxy-retained-blocks.jsonl"
+  jq -sS '[.[]|select(.address=="192.0.2.30" or .address=="192.0.2.31")]|sort_by(.id)' "$scratch/proxy-retained-blocks.jsonl" >"$scratch/proxy-retained-blocks.json"
+  cmp "$scratch/protected-blocks-before.json" "$scratch/proxy-retained-blocks.json"
+  docker rm -fv "$proxy_name" >/dev/null
+  proxy_started=0
+done
+echo 'PASS: native mail configuration, receiving continuity, ownership refusal, cached UI upgrade, replay, TLS, account restrictions, per-client proxy bans and explicit rollback'
