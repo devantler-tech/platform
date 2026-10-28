@@ -62,9 +62,9 @@ func run(image, baseline, candidate string) error {
 	}
 	for _, fixture := range []struct {
 		name, config string
-		early        bool
-	}{{"original-buffering-control", baseline, false}, {"streaming-correction", candidate, true}} {
-		if err := exercise(ctx, image, fixture.config, fixture.early); err != nil {
+		spool        bool
+	}{{"original-buffering-control", baseline, true}, {"streaming-correction", candidate, false}} {
+		if err := exercise(ctx, image, fixture.config, fixture.spool); err != nil {
 			return fmt.Errorf("%s: %w", fixture.name, err)
 		}
 		fmt.Printf("PASS: %s preserves requests, complete responses, health and upstream failures\n", fixture.name)
@@ -72,7 +72,7 @@ func run(image, baseline, candidate string) error {
 	return nil
 }
 
-func exercise(ctx context.Context, image, config string, wantEarly bool) (resultErr error) {
+func exercise(ctx context.Context, image, config string, wantSpool bool) (resultErr error) {
 	config, err := filepath.Abs(config)
 	if err != nil {
 		return err
@@ -93,7 +93,7 @@ func exercise(ctx context.Context, image, config string, wantEarly bool) (result
 	finish := func() { releaseOnce.Do(func() { close(release) }) }
 	defer finish()
 	requestErrors := make(chan error, 2)
-	payload := bytes.Repeat([]byte("complete-stream-fixture\n"), 128*1024)
+	payload := bytes.Repeat([]byte("complete-stream-fixture\n"), (32*1024*1024)/len("complete-stream-fixture\n"))
 	upstream := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, readErr := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if readErr != nil || r.Method != http.MethodPost || string(body) != `{"fixture":true}` ||
@@ -145,7 +145,21 @@ func exercise(ctx context.Context, image, config string, wantEarly bool) (result
 			resultErr = errors.Join(resultErr, fmt.Errorf("fixture container cleanup: %w", err))
 		}
 	}()
-	client := &http.Client{Timeout: 15 * time.Second}
+	transport := &http.Transport{DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+		conn, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, network, address)
+		if err != nil {
+			return nil, err
+		}
+		// Bound the downstream receive window so the original proxy cannot hide
+		// the whole response in the client socket during the deliberate pause.
+		if err := conn.(*net.TCPConn).SetReadBuffer(128 * 1024); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("bound fixture receive buffer: %w", err)
+		}
+		return conn, nil
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Timeout: 15 * time.Second, Transport: transport}
 	ready := false
 	for deadline := time.Now().Add(15 * time.Second); time.Now().Before(deadline); {
 		resp, err := client.Get("http://127.0.0.1:8081/healthz")
@@ -223,12 +237,20 @@ func exercise(ctx context.Context, image, config string, wantEarly bool) (result
 	if observed.err != nil || string(observed.body) != prefix || observed.response.StatusCode != http.StatusOK {
 		return fmt.Errorf("stream prefix or response changed: %v", observed.err)
 	}
+	if !early {
+		return errors.New("first chunk did not arrive before upstream completion")
+	}
+	// Both configurations can flush a short prefix promptly. The reported
+	// regression is disk spooling when the producer outruns the reader: release
+	// the large body, pause downstream reads, then verify every response byte.
+	select {
+	case <-time.After(time.Second):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	rest, err := io.ReadAll(io.LimitReader(observed.response.Body, int64(len(payload)+1)))
 	if err != nil || !bytes.Equal(rest, payload) {
 		return fmt.Errorf("the complete large response was not preserved: %v", err)
-	}
-	if early != wantEarly {
-		return fmt.Errorf("first chunk before upstream completion: got %t, want %t", early, wantEarly)
 	}
 	resp, err := request("/api/fixture-error")
 	if err != nil {
@@ -244,11 +266,12 @@ func exercise(ctx context.Context, image, config string, wantEarly bool) (result
 		return err
 	default:
 	}
-	if wantEarly {
-		logs, err := docker(ctx, "logs", name)
-		if err != nil || bytes.Contains(logs, []byte("buffered to a temporary file")) {
-			return fmt.Errorf("streaming configuration still spilled its response: %v", err)
-		}
+	logs, err := docker(ctx, "logs", name)
+	if err != nil {
+		return err
+	}
+	if spooled := bytes.Contains(logs, []byte("buffered to a temporary file")); spooled != wantSpool {
+		return fmt.Errorf("temporary-file buffering under a slow reader: got %t, want %t", spooled, wantSpool)
 	}
 	return nil
 }
