@@ -1,9 +1,18 @@
 # Isolated credential recovery proof
 
-This tool prepares the restore portion of #5407. It does not download a production
-backup, read production credentials, or authorize a custody migration. The
-main-only read workflow and a fresh remote-backup observation remain separate
-required delivery work.
+The main-only verification workflow reads the fixed deployment facts and a fresh
+off-cluster snapshot. Recovery credentials come from a completed Velero resource
+backup at the same declared storage destination. It never reads the running
+service's recovery-key Secret. Moving credential custody remains a separate
+operation after the complete recovery proof passes.
+
+The reader binds the backup namespace, resource coverage, completion window and
+storage destination before downloading its exact archive with an immutable
+conditional read. Archive size and expansion are bounded. Only the fixed recovery
+resource is decoded in memory; nothing is extracted to the host filesystem.
+Duplicate or conflicting resource copies, incomplete gzip data, bad checksums
+and unrelated locations refuse success. The data snapshot retains its separate
+freshness requirement from the repaired snapshot job.
 
 The verifier starts the pinned server release in a fresh, network-disabled
 container. The container runs as the non-root runner user, with a read-only root
@@ -28,14 +37,15 @@ vocabulary and retains client diagnostics privately. Cleanup binds an owned
 container to a random label before removing it, including a lost start response.
 An unreadable cleanup result is explicitly unverified.
 
-CI creates a synthetic snapshot with the actual pinned server. It requires
-successful restoration, rejects a corrupted snapshot, rejects an altered expected
-record, and rejects a wrong unseal key. Local tests without the explicit native
-test setting skip that container exercise and are not evidence that a restore
-worked.
+CI creates a synthetic snapshot with the actual pinned server, archives its
+recovery credentials and removes the original credential files. Every restore
+obtains its credentials from the archive reader. It requires successful
+restoration, rejects a corrupted snapshot, rejects an altered expected record,
+and rejects an archived wrong unseal key. Local tests without the explicit native
+test setting skip that container exercise and are not evidence that a restore worked.
 
 Do not point this program at production: it has no configurable API address.
 Do not run production handoffs manually through this staging wrapper. The reviewed
 main-only workflow must obtain the fixed inputs, enforce private RAM custody and
 freshness, bind the running server version, and record the final production proof
-before #5407 or #5376 can close.
+before #5513 can close or operational custody changes proceed.

@@ -21,7 +21,7 @@ cat >"$work/guard.jq" <<'JQ'
   def ordinary: .if == null and .["continue-on-error"] == null;
   def recoveryContractRun: .run == "shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh\nbash scripts/tests/test-release-recovery.sh\n";
   def writer: .if == "steps.read-admission.outputs.missing == 'true'" and .["continue-on-error"] == null;
-  def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"f558e3ababb474ac0e6f27d988ce8c876a525196"} and
+  def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"0b137510d139bbf62e479d9610b0db17c972bc2b"} and
     (.run | contains("[[ \"$CATALOGUE_REPOSITORY\" == devantler-tech/.github && \"$CATALOGUE_SHA\" =~ ^[0-9a-f]{40}$ ]]")) and
     (.run | contains("env -i PATH=\"$PATH\" curl --disable")) and
     (.run | contains("https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA")) and
@@ -39,7 +39,7 @@ cat >"$work/guard.jq" <<'JQ'
   ($w.jobs | keys) == ["offline-test","recover"] and
   $j.if == "inputs.enable-recovery && !inputs.offline-test" and $j.permissions == {} and $j.needs == null and
   $j.concurrency == {group:"create-release-${{ github.repository }}-${{ github.ref }}","cancel-in-progress":false,queue:"max"} and
-  ($s | length == 9) and ($s[0:7] | all(ordinary)) and ($s[7:9] | all(writer)) and
+  ($s | length == 10) and ($s[0:7] | all(ordinary)) and ($s[7:10] | all(writer)) and
   ($s[0].uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and $s[0].with["egress-policy"] == "audit" and
   $s[1].id == "admit" and
   $s[1].env == {EVENT_NAME:"${{ github.event_name }}",CONFIRMATION:"${{ inputs.confirm-publication }}",REPOSITORY:"${{ github.repository }}",PRIVATE:"${{ github.event.repository.private }}",CURRENT_REF:"${{ github.ref }}",DEFAULT_BRANCH:"${{ github.event.repository.default_branch }}"} and
@@ -49,10 +49,14 @@ cat >"$work/guard.jq" <<'JQ'
   ($s[5].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[5].id == "read-token" and $s[5].with == token("read") and
   $s[6].id == "read-admission" and $s[6].env == ({GH_TOKEN:"${{ steps.read-token.outputs.token }}"} + incident) and
   ($s[6].run | contains("\"./.devantler-tech-recovery/inspect-release-recovery\"")) and
-  ($s[7].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[7].id == "write-token" and $s[7].with == token("write") and
-  $s[8].id == "publish" and $s[8].env == ({GH_TOKEN:"${{ steps.write-token.outputs.token }}"} + incident) and
-  ($s[8].run | contains("\"./.devantler-tech-recovery/publish-release-recovery\"")) and
-  ([$s[] | select(.env.GH_TOKEN != null) | .id] == ["read-admission","publish"]) and
+  $s[7].id == "read-only-refusal" and $s[7].uses == null and $s[7].with == null and $s[7].shell == "bash" and
+  $s[7].env == {GH_TOKEN:"${{ steps.read-token.outputs.token }}",REPOSITORY:"${{ github.repository }}",DEFAULT_BRANCH:"${{ github.event.repository.default_branch }}"} and
+  ($s[7].run | contains("env -i PATH=\"$PATH\" curl --disable")) and
+  ($s[7].run | contains("https://api.github.com/repos/$REPOSITORY/releases/generate-notes")) and
+  ($s[8].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[8].id == "write-token" and $s[8].with == token("write") and
+  $s[9].id == "publish" and $s[9].env == ({GH_TOKEN:"${{ steps.write-token.outputs.token }}"} + incident) and
+  ($s[9].run | contains("\"./.devantler-tech-recovery/publish-release-recovery\"")) and
+  ([$s[] | select(.env.GH_TOKEN != null) | .id] == ["read-admission","read-only-refusal","publish"]) and
   $o.if == "inputs.enable-recovery && inputs.offline-test" and $o.permissions == {} and
   ($o.steps | length == 5 and all(ordinary)) and
   ($o.steps[0].uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and
@@ -69,6 +73,8 @@ cat >"$work/guard.jq" <<'JQ'
   ($c.jobs["validate-repository-guards"].steps | any(recoveryContractRun and ordinary))
 JQ
 jq -e -f "$work/guard.jq" "$work/bundle.json" >/dev/null || fail 'workflow authority, provenance or required coverage is unsafe'
+shellcheck "$root/scripts/tests/test-release-writer-refusal.sh"
+bash "$root/scripts/tests/test-release-writer-refusal.sh" "$workflow"
 # An ordinary immutable checkout update must not require changing this guard.
 jq '.c.jobs["test-publish-release-recovery-disabled"].steps[0].uses="actions/checkout@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$work/bundle.json" >"$work/checkout-update.json"
 jq -e -f "$work/guard.jq" "$work/checkout-update.json" >/dev/null || fail 'a SHA-pinned checkout update was refused'
@@ -109,16 +115,22 @@ for mutation in \
   '.w.jobs.recover.steps[2].env.CATALOGUE_SHA="main"' \
   '.w.jobs.recover.steps[3].with.cache=true' \
   '.w.jobs.recover.steps[4].env.GOFLAGS="-toolexec=untrusted"' \
-  '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[5],.[4],.[6],.[7],.[8]]' \
-  '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[4],.[7],.[6],.[5],.[8]]' \
+  '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[5],.[4],.[6],.[7],.[8],.[9]]' \
+  '.w.jobs.recover.steps |= [.[0],.[1],.[2],.[3],.[4],.[8],.[6],.[7],.[5],.[9]]' \
   '.w.jobs.recover.steps[5].with["permission-contents"]="write"' \
   '.w.jobs.recover.steps[5].with.repositories=null' \
   '.w.jobs.recover.steps[6].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
   '.w.jobs.recover.steps[7].if=null' \
-  '.w.jobs.recover.steps[7].with["permission-issues"]="write"' \
-  '.w.jobs.recover.steps[7].with.repositories=null' \
-  '.w.jobs.recover.steps[8].env.GH_TOKEN="${{ github.token }}"' \
-  '.w.jobs.recover.steps[8].env.REPOSITORY="${{ inputs.tag }}"' \
+  '.w.jobs.recover.steps[7].env.GH_TOKEN="${{ steps.write-token.outputs.token }}"' \
+  '.w.jobs.recover.steps[7].env.DEFAULT_BRANCH="${{ inputs.tag }}"' \
+  '.w.jobs.recover.steps[7].if="false"' \
+  '.w.jobs.recover.steps[7]["continue-on-error"]=true' \
+  '.w.jobs.recover.steps |= map(select(.id != "read-only-refusal"))' \
+  '.w.jobs.recover.steps[8].if=null' \
+  '.w.jobs.recover.steps[8].with["permission-issues"]="write"' \
+  '.w.jobs.recover.steps[8].with.repositories=null' \
+  '.w.jobs.recover.steps[9].env.GH_TOKEN="${{ github.token }}"' \
+  '.w.jobs.recover.steps[9].env.REPOSITORY="${{ inputs.tag }}"' \
   '.w.jobs["offline-test"].if="inputs.offline-test"' \
   '.w.jobs["offline-test"].steps[4].env={GH_TOKEN:"${{ secrets.APP_PRIVATE_KEY }}"}' \
   '.c.jobs["test-publish-release-recovery"].if="false"' \

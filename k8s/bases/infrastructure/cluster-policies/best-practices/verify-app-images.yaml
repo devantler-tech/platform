@@ -104,6 +104,13 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-node-agent-hotfix\.yaml@refs/heads/main$
+    # Only the two checkpoint compatibility repositories use this publisher.
+    - name: publishcorootcheckpoint
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-checkpoint-hotfix\.yaml@refs/heads/main$
     - name: publishksailanalysis
       cosign:
         keyless:
@@ -193,6 +200,12 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-coroot-node-agent' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@') &&
+          image != 'ghcr.io/devantler-tech/platform-coroot' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot@') &&
+          image != 'ghcr.io/devantler-tech/platform-coroot-cluster-agent' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent@') &&
           image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') &&
@@ -271,6 +284,20 @@ spec:
       message: >-
         KSail analysis runner image is not signed by the KSail repository's
         dedicated main-branch publisher (keyless cosign)
+    - expression: >-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-coroot' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot@') ||
+          image == 'ghcr.io/devantler-tech/platform-coroot-cluster-agent' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-coroot-cluster-agent@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishcorootcheckpoint]))
+        .all(e, e > 0)
+      message: >-
+        Coroot checkpoint compatibility image is not signed by its main-only
+        publisher; other first-party images retain their existing signer.
     - expression: >-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))

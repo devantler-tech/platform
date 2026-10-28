@@ -20,10 +20,12 @@ type settings struct {
 	Administrator        string   `json:"administrator"`
 	MaintainerAliases    []string `json:"maintainerAliases,omitempty"`
 	UseForwardedClientIP bool     `json:"useForwardedClientIP,omitempty"`
+	UseProxyClientIP     bool     `json:"useProxyClientIP,omitempty"`
 }
 type inputs struct {
 	settings
 	administratorPassword, maintainerPassword, agentPassword string
+	accountIDs                                               map[string]string
 }
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -32,6 +34,9 @@ var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
 
 // render builds staged settings and account changes from validated private inputs.
 func render(v inputs) ([]byte, error) {
+	if v.UseForwardedClientIP && v.UseProxyClientIP {
+		return nil, errConfiguration
+	}
 	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
 		return nil, errConfiguration
 	}
@@ -78,6 +83,28 @@ func render(v inputs) ([]byte, error) {
 		maintainer["aliases"] = receivingAliases(v.MaintainerAliases, "#domain")
 	}
 	agents := account(v.Agent, v.agentPassword, "User")
+	newAccounts := map[string]any{}
+	var accountUpdates []map[string]any
+	for _, item := range []struct {
+		ref, name, password string
+		value               map[string]any
+	}{
+		{"administrator", v.Administrator, v.administratorPassword, administrator},
+		{"maintainer", v.Maintainer, v.maintainerPassword, maintainer},
+		{"agents", v.Agent, v.agentPassword, agents},
+	} {
+		if id := v.accountIDs[item.name]; id != "" {
+			delete(item.value, "credentials")
+			item.value["credentials/0/secret"] = item.password
+			accountUpdates = append(accountUpdates, map[string]any{"@type": "update", "object": "Account", "id": id, "value": item.value})
+		} else {
+			newAccounts[item.ref] = item.value
+		}
+	}
+	agentID := v.accountIDs[v.Agent]
+	if agentID == "" {
+		agentID = "#agents"
+	}
 	permissions := map[string]bool{}
 	for _, name := range []string{"authenticate", "emailSend", "emailReceive", "jmapMailboxGet", "jmapMailboxChanges", "jmapMailboxQuery", "jmapMailboxQueryChanges", "jmapThreadGet", "jmapThreadChanges", "jmapEmailGet", "jmapEmailChanges", "jmapEmailQuery", "jmapEmailQueryChanges", "jmapBlobGet"} {
 		permissions[name] = true
@@ -85,6 +112,14 @@ func render(v inputs) ([]byte, error) {
 	listener := func(name, protocol, bind string, tls, implicit bool) map[string]any {
 		return map[string]any{"name": name, "protocol": protocol, "bind": map[string]bool{bind: true}, "useTls": tls, "tlsImplicit": implicit}
 	}
+	clientProxy := listener("client-proxy", "http", "127.0.0.1:18081", false, false)
+	proxyTrust := map[string]bool{}
+	if v.UseProxyClientIP {
+		proxyTrust["127.0.0.1"] = true
+	}
+	// Only this dedicated local listener consumes a transport identity. Do not
+	// exempt a shared intermediary through global proxy or allowed-IP settings.
+	clientProxy["overrideProxyTrustedNetworks"] = proxyTrust
 	upsert := func(object string, match []string, value any) map[string]any {
 		return map[string]any{"@type": "upsert", "object": object, "matchOn": match, "value": value}
 	}
@@ -108,22 +143,28 @@ func render(v inputs) ([]byte, error) {
 		// recovery must clear a later external directory rather than retain it.
 		update("Authentication", map[string]any{"directoryId": nil}),
 		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, "isEnabled": true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
-		upsert("Account", []string{"name", "domainId"}, map[string]any{"administrator": administrator, "maintainer": maintainer, "agents": agents}),
+	}
+	if len(newAccounts) != 0 {
+		operations = append(operations, map[string]any{"@type": "create", "object": "Account", "value": newAccounts})
+	}
+	operations = append(operations, accountUpdates...)
+	operations = append(operations, []map[string]any{
 		// Address the exact ID returned by the upsert and replace the whole
 		// tagged permission object; a second upsert can reuse a stale lookup.
-		map[string]any{"@type": "update", "object": "Account", "id": "#agents", "value": map[string]any{"permissions": map[string]any{"@type": "Replace", "enabledPermissions": permissions, "disabledPermissions": map[string]bool{}}}},
+		map[string]any{"@type": "update", "object": "Account", "id": agentID, "value": map[string]any{"permissions": map[string]any{"@type": "Replace", "enabledPermissions": permissions, "disabledPermissions": map[string]bool{}}}},
 		upsert("Certificate", []string{"certificate"}, map[string]any{"mail-tls": map[string]any{
 			"certificate": map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.crt"},
 			"privateKey":  map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.key"},
 		}}),
-		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls"}),
+		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls", "proxyTrustedNetworks": map[string]bool{}}),
 		// Named listeners are prepared while the recovery-only process ignores them.
 		// Public activation separately removes recovery mode and supplies TLS files.
 		upsert("NetworkListener", []string{"name"}, map[string]any{
-			"management": listener("management", "http", "0.0.0.0:8080", false, false),
-			"inbound":    listener("smtp-inbound", "smtp", "0.0.0.0:1025", true, false),
-			"submission": listener("submission", "smtp", "0.0.0.0:1587", true, false),
-			"imap":       listener("imaps", "imap", "0.0.0.0:1993", true, true),
+			"client-proxy": clientProxy,
+			"management":   listener("management", "http", "0.0.0.0:8080", false, false),
+			"inbound":      listener("smtp-inbound", "smtp", "0.0.0.0:1025", true, false),
+			"submission":   listener("submission", "smtp", "0.0.0.0:1587", true, false),
+			"imap":         listener("imaps", "imap", "0.0.0.0:1993", true, true),
 		}),
 		update("MtaStageAuth", map[string]any{
 			"saslMechanisms": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission' && is_tls", "then": "[plain, login]"}}, "else": "false"},
@@ -157,7 +198,7 @@ func render(v inputs) ([]byte, error) {
 			"dkimStrict":  true,
 		}),
 		update("Imap", map[string]any{"allowPlainTextAuth": false}),
-	}
+	}...)
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)

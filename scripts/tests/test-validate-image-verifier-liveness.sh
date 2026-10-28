@@ -61,7 +61,7 @@ refute_text() {
 }
 
 # ---------------------------------------------------------------------------
-# Fake talosctl: serves `get <type> -o json` from a fixture tree, and `ls /` as
+# Fake talosctl: serves resource output from a fixture tree, and `ls /` as
 # the reachability probe.
 #
 # Three behaviours mirror the real tool because the script depends on each:
@@ -101,7 +101,18 @@ while [[ "$#" -gt 0 ]]; do
       resource="${FIXTURES}/${node}/resources/${type}"
       # No instances of this type: exit 0, emit nothing.
       [[ -f "${resource}" ]] || exit 0
-      cat "${resource}"
+      if [[ " $* " == *" -o yaml "* ]]; then
+        # Native YAML keeps zero-prefixed IDs. Emit one document per resource.
+        jq -c . "${resource}" | while IFS= read -r doc; do
+          printf '%s\n' '---'
+          printf '%s\n' "$doc" | yq -P '.metadata.id style = ""'
+        done
+      elif [[ -f "${FIXTURES}/${node}/lossy_json_ids" ]]; then
+        # Talos 1.13.11's untyped YAML-to-JSON path reads 0010 as octal 8.
+        jq '.metadata.id |= (if . == "0010" then 8 elif test("^[0-9]+$") then tonumber else . end)' "${resource}"
+      else
+        cat "${resource}"
+      fi
       exit 0
       ;;
     ls)
@@ -162,6 +173,8 @@ readonly provider_pattern='ghcr.io/devantler-tech/provider-upjet-*'
 readonly storage_pattern='ghcr.io/devantler-tech/platform-kubescape-storage'
 readonly kubescape_node_agent_pattern='ghcr.io/devantler-tech/platform-kubescape-node-agent'
 readonly coroot_node_agent_pattern='ghcr.io/devantler-tech/platform-coroot-node-agent'
+readonly checkpoint_server_pattern='ghcr.io/devantler-tech/platform-coroot'
+readonly checkpoint_collector_pattern='ghcr.io/devantler-tech/platform-coroot-cluster-agent'
 readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
 readonly app_pattern='ghcr.io/devantler-tech/*'
@@ -220,9 +233,11 @@ write_healthy_rules() {
     resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
     resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
     resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-    resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-    resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_server_pattern}"
+    resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_collector_pattern}"
+    resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+    resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
+    resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -248,9 +263,14 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '9 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '11 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
+
+healthy_node wireids
+touch "${fixtures}/wireids/lossy_json_ids"
+output="$(run_script TALOS_NODES=wireids 2>&1)" || fail 'native zero-prefixed resource IDs must retain their declaration order'
+require_text "${output}" 'with exact declared decisions' 'native ID parsing still compares all decisions'
 
 # Exercise the workflow's normal build path rather than only an injected
 # compiled helper, and refuse an unavailable comparator before inspecting nodes.
@@ -291,9 +311,11 @@ write_node driftrules
   resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
   resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
   resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-  resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_server_pattern}"
+  resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_collector_pattern}"
+  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+  resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
+  resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules

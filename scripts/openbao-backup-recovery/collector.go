@@ -125,7 +125,7 @@ func downloadSnapshot(ctx context.Context, client *http.Client, t target, start,
 
 func allowedRecoveryObject(kind, namespace, name string) bool {
 	switch namespace + "/" + kind + "/" + name {
-	case "openbao/job/vault-snapshot-init", "flux-system/configmap/variables-base", "flux-system/configmap/variables-cluster", "flux-system/secret/variables-cluster", "openbao/secret/vault-snapshot-r2", "openbao/secret/openbao-unseal":
+	case "openbao/job/vault-snapshot-init", "flux-system/configmap/variables-base", "flux-system/configmap/variables-cluster", "flux-system/secret/variables-cluster", "openbao/secret/vault-snapshot-r2", "velero/backupstoragelocation.velero.io/default", "velero/backups.velero.io/":
 		return true
 	default:
 		return false
@@ -146,7 +146,12 @@ func recoveryObject(ctx context.Context, kind, namespace, name string) ([]byte, 
 	if !allowedRecoveryObject(kind, namespace, name) {
 		return nil, errEvidence
 	}
-	command := exec.CommandContext(ctx, "kubectl", "--context=admin@prod", "--request-timeout=20s", "--namespace", namespace, "get", kind, name, "--output=json")
+	args := []string{"--context=admin@prod", "--request-timeout=20s", "--namespace", namespace, "get", kind}
+	if name != "" {
+		args = append(args, name)
+	}
+	args = append(args, "--output=json")
+	command := exec.CommandContext(ctx, "kubectl", args...)
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = io.Discard
@@ -178,20 +183,29 @@ func recoveryDirectory(dir string) bool {
 }
 
 // collectRecoveryInputs reads production only; every restore mutation stays in the sandbox.
-func collectRecoveryInputs(dir string) error {
+func collectRecoveryInputs(dir string) (result error) {
+	stage := "private-workspace"
+	defer func() {
+		if result != nil {
+			result = stageError(stage)
+		}
+	}()
 	if !recoveryDirectory(dir) {
 		return errEvidence
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	stage = "snapshot-job-read"
 	job, err := recoveryObject(ctx, "job", "openbao", "vault-snapshot-init")
 	if err != nil {
 		return errEvidence
 	}
+	stage = "snapshot-job-admission"
 	start, end, err := freshJobWindow(job, time.Now().UTC())
 	if err != nil {
 		return errEvidence
 	}
+	stage = "live-health"
 	api, err := newAPI("http://127.0.0.1:38200")
 	if err != nil {
 		return errEvidence
@@ -200,6 +214,7 @@ func collectRecoveryInputs(dir string) error {
 	if err != nil || !*health.Initialized || *health.Sealed {
 		return errEvidence
 	}
+	stage = "deployment-inputs"
 	base, err := recoveryObject(ctx, "configmap", "flux-system", "variables-base")
 	if err != nil {
 		return errEvidence
@@ -216,22 +231,36 @@ func collectRecoveryInputs(dir string) error {
 	if err != nil {
 		return errEvidence
 	}
+	stage = "backup-target"
 	target, err := backupTarget(base, cluster, variables, keys)
 	if err != nil {
 		return errEvidence
 	}
-	recovery, err := recoveryObject(ctx, "secret", "openbao", "openbao-unseal")
+	stage = "recovery-backup-read"
+	location, err := recoveryObject(ctx, "backupstoragelocation.velero.io", "velero", "default")
 	if err != nil {
 		return errEvidence
 	}
-	values, err := fixedObject(recovery, "Secret", "openbao", "openbao-unseal")
+	backups, err := recoveryObject(ctx, "backups.velero.io", "velero", "")
 	if err != nil {
 		return errEvidence
 	}
-	root, key := values["root-token"], values["unseal-key"]
-	if !regexp.MustCompile(`^[A-Za-z0-9._-]{20,256}$`).MatchString(root) || !regexp.MustCompile(`^[A-Za-z0-9+/=]{32,256}$`).MatchString(key) {
+	stage = "recovery-backup-admission"
+	prefix, err := credentialArchivePrefix(base, cluster, variables, location, target)
+	if err != nil {
 		return errEvidence
 	}
+	backup, err := selectCredentialBackup(backups, time.Now().UTC())
+	if err != nil {
+		return errEvidence
+	}
+	stage = "recovery-key-download"
+	recovery, err := downloadRecoveryCredentials(ctx, recoveryHTTP(), target, prefix, backup)
+	if err != nil {
+		return errEvidence
+	}
+	root, key := recovery.Root, recovery.Unseal
+	stage = "live-records"
 	records, err := api.credentialRecords(ctx, root)
 	if err != nil || !recordsEqual(records, records) {
 		return errEvidence
@@ -240,10 +269,12 @@ func collectRecoveryInputs(dir string) error {
 	if err != nil {
 		return errEvidence
 	}
+	stage = "snapshot-download"
 	snapshot, err := downloadSnapshot(ctx, recoveryHTTP(), target, start, end)
 	if err != nil {
 		return errEvidence
 	}
+	stage = "private-handoff"
 	for name, data := range map[string][]byte{"root-token": []byte(root), "unseal-key": []byte(key), "expected.json": expected, "snapshot.snap": snapshot} {
 		if writePrivate(filepath.Join(dir, name), data) != nil {
 			return errEvidence

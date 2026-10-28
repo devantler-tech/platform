@@ -84,7 +84,7 @@ func TestConfiguredAliasesBecomeOnlyTheMaintainerReceivingSet(t *testing.T) {
 	}
 	found := false
 	for _, op := range ops {
-		if op.Object != "Account" || op.Type != "upsert" {
+		if op.Object != "Account" || op.Type != "create" {
 			continue
 		}
 		for ref, value := range op.Value {
@@ -131,7 +131,7 @@ func TestOmittedAliasesDoNotManageExistingReceivingAddresses(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, op := range ops {
-		if op.Object != "Account" || op.Type != "upsert" {
+		if op.Object != "Account" || op.Type != "create" {
 			continue
 		}
 		for _, value := range op.Value {
