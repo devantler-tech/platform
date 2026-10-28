@@ -240,7 +240,10 @@ func TestFluxOperatorUpdatesAreProposedAndReviewed(t *testing.T) {
 var fluxOperatorUpdatePolicy = map[string]any{"automerge": false, "minimumReleaseAge": "0 days"}
 
 type renovateConfig struct {
-	CustomManagers []struct {
+	EnabledManagers []string `json:"enabledManagers"`
+	IgnorePaths     []string `json:"ignorePaths"`
+	IncludePaths    []string `json:"includePaths"`
+	CustomManagers  []struct {
 		CustomType          string   `json:"customType"`
 		ManagerFilePatterns []string `json:"managerFilePatterns"`
 		MatchStrings        []string `json:"matchStrings"`
@@ -250,12 +253,14 @@ type renovateConfig struct {
 	} `json:"customManagers"`
 	Flux         builtInManager   `json:"flux"`
 	Kubernetes   builtInManager   `json:"kubernetes"`
+	Dockerfile   builtInManager   `json:"dockerfile"`
 	PackageRules []map[string]any `json:"packageRules"`
 }
 
 // builtInManager is the part of a built-in manager's settings that decides
 // which files it reads.
 type builtInManager struct {
+	Enabled             *bool    `json:"enabled"`
 	ManagerFilePatterns []string `json:"managerFilePatterns"`
 }
 
