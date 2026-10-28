@@ -148,6 +148,7 @@ jobs:
               - 'scripts/tests/vault-email-credentials/**'
               - 'scripts/prepare-email-credentials.sh'
               - '.github/workflows/verify-email-credential-custody.yaml'
+              - '.github/workflows/copy-email-credential-custody.yaml'
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
