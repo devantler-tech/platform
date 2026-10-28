@@ -7,6 +7,21 @@ configMapGenerator:
     namespace: private-mail
     files:
       - Caddyfile
+# The adapter uses the same signed bootstrap publication as the native process.
+# Inheriting a parent image transformer alone does not pin a newly added sidecar.
+replacements:
+  - source:
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+      fieldPath: spec.template.spec.containers.[name=private-mail].image
+    targets:
+      - select:
+          kind: StatefulSet
+          name: private-mail
+          namespace: private-mail
+        fieldPaths:
+          - spec.template.spec.containers.[name=client-proxy].image
 patches:
   - path: patches/client-proxy.yaml
   - path: patches/isolate-client-proxy.yaml

@@ -11,14 +11,21 @@ func TestProxyIdentityKeepsNativeBackendFencedAndProxyCredentialless(t *testing.
 	}
 	pod := mapping(t, mapping(t, mapping(t, object(t, objects, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
 	var proxy map[string]any
+	var nativeImage any
 	for _, item := range sequence(t, pod["containers"]) {
 		container := mapping(t, item)
 		if container["name"] == "client-proxy" {
 			proxy = container
 		}
+		if container["name"] == "private-mail" {
+			nativeImage = container["image"]
+		}
 	}
 	if proxy == nil {
 		t.Fatal("missing maintained client proxy")
+	}
+	if nativeImage == nil || proxy["image"] != nativeImage {
+		t.Fatal("proxy and native process must share the explicitly pinned bootstrap image")
 	}
 	mounts := sequence(t, proxy["volumeMounts"])
 	if len(mounts) != 1 || mapping(t, mounts[0])["name"] != "client-proxy-config" || mapping(t, mounts[0])["readOnly"] != true {
