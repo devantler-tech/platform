@@ -3,6 +3,49 @@
 set -Eeuo pipefail
 trap 'printf "FAIL: native mail proof stopped at line %s\n" "$LINENO" >&2' ERR
 umask 077
+assert_diagnostic_log_privacy() {
+  local log=$1 secret
+  shift
+  if ! grep -Fq 'server.startup' "$log"; then
+    echo 'FAIL: normal serving produced no startup diagnostic event' >&2; return 1
+  fi
+  for secret in "$@"; do
+    if grep -Fq -f "$secret" "$log"; then
+      echo 'FAIL: a generated fixture credential appeared in server logs' >&2; return 1
+    fi
+  done
+  if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$log"; then
+    echo 'FAIL: a recovery credential appeared in server logs' >&2; return 1
+  fi
+  if grep -Eqi '(^|[^[:alnum:]_-])(smtp|imap|jmap|auth|oauth|message|message-ingest|queue|delivery|http|websocket)\.[[:alnum:]_-]+' "$log"; then
+    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2; return 1
+  fi
+  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'private-canary' "$log"; then
+    echo 'FAIL: private fixture message content appeared in server logs' >&2; return 1
+  fi
+}
+test_diagnostic_log_privacy() (
+  local proof
+  proof=$(mktemp -d)
+  trap 'rm -rf "$proof"' EXIT
+  printf 'server.startup\n' >"$proof/log"
+  assert_diagnostic_log_privacy "$proof/log"
+  printf 'message-ingest.ham message not in the listed canaries\n' >>"$proof/log"
+  if assert_diagnostic_log_privacy "$proof/log" >"$proof/result" 2>&1; then
+    echo 'FAIL: diagnostic privacy check accepted an unlisted message-ingest event' >&2
+    exit 1
+  fi
+  grep -Fq 'excluded message or authentication events' "$proof/result"
+  printf 'server.startup\nprivate-canary\n' >"$proof/log"
+  if assert_diagnostic_log_privacy "$proof/log" >"$proof/result" 2>&1; then
+    echo 'FAIL: diagnostic privacy check accepted a listed message canary' >&2
+    exit 1
+  fi
+  grep -Fq 'private fixture message content' "$proof/result"
+  echo 'PASS: diagnostic log privacy controls'
+)
+test_diagnostic_log_privacy
+if [ "${1:-}" = --test-log-privacy ]; then exit 0; fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture_user="$(id -u):$(id -g)"
 [ "$(id -u)" != 0 ] || { echo 'FAIL: native mail proof requires an unprivileged fixture user' >&2; exit 1; }
@@ -219,6 +262,7 @@ apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
+native_cli query Tracer --fields id --json >"$scratch/tracers-before.jsonl"
 # Permanent client rules are outside configuration ownership and must survive
 # both configuration replay and the later complete initializer re-entry.
 printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"protected-probe":{"address":"192.0.2.30","reason":"portScanning"},"protected-control":{"address":"192.0.2.31","reason":"manual"}}}' >"$scratch/protected-blocks.ndjson"
@@ -363,7 +407,8 @@ jq -e '.rewrite.match|keys|sort==["0","1"]' "$scratch/rcpt.json" >/dev/null
 native_cli query Account --fields id --json >"$scratch/accounts-after.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-after.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-after.jsonl"
-for object in accounts certificates applications; do
+native_cli query Tracer --fields id --json >"$scratch/tracers-after.jsonl"
+for object in accounts certificates applications tracers; do
   jq -s '[.[].id]|sort' "$scratch/$object-before.jsonl" >"$scratch/before.ids"
   jq -s '[.[].id]|sort' "$scratch/$object-after.jsonl" >"$scratch/after.ids"
   cmp "$scratch/before.ids" "$scratch/after.ids"
@@ -462,6 +507,7 @@ grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 # Prime the native application cache with a previous unversioned bundle. An
 # upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
+docker logs "$name" >"$scratch/smtp-auth-server.log" 2>&1
 docker rm "$name" >/dev/null
 mkdir "$scratch/stale-assets" "$scratch/stale-source"
 printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
@@ -519,10 +565,8 @@ for alias in former-a former-b; do
   cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
 done
 docker logs "$name" >"$scratch/server.log" 2>&1
-for secret in "$scratch/inputs/"*-password; do
-  if grep -Fq -f "$secret" "$scratch/server.log"; then
-    echo 'FAIL: a generated fixture credential appeared in server logs' >&2; exit 1
-  fi
+for log in "$scratch/smtp-auth-server.log" "$scratch/server.log"; do
+  assert_diagnostic_log_privacy "$log" "$scratch/inputs/"*-password
 done
 if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
   echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
