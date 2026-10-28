@@ -73,3 +73,36 @@ totals. It never deletes the legacy records or switches consumers. The existing
 `Verify Email Credential Custody` workflow remains a read-only plan. Storage-key
 generation, consumer switching and encrypted-volume activation are separate
 operations after their own recovery coverage is verified.
+
+## Preparing the Email storage key
+
+`Prepare Email Storage Key` is a protected first-attempt, main-only operation,
+confirmed with `prepare-email-storage-key`. Before creating anything, it repeats
+the independent three-account legacy restore and compares those complete values
+with their fixed infrastructure destinations. The private connection files stay
+outside the restore sandbox. A fresh key uses 256 bits of system randomness and
+a create-only KV-v2 write. Existing valid keys are preserved. Deleted history,
+conflicts, changed account values, uncertain writes and changed key readback
+refuse success without retrying or replacing the key.
+
+Its `EMAIL_STORAGE_KEY=PREPARED` receipt explicitly says `recovered=false`.
+Preparation does not select or migrate an Email volume. The service key lives in
+OpenBao, while the existing approved independent recovery credentials recover
+OpenBao itself. No per-client certificate or new host-only recovery copy is
+created.
+
+After the configured off-cluster backup contains the new record, confirm
+`verify-email-storage-key-recovery` in `Verify Email Storage Key Recovery`.
+Its fixed collection and restoration modes include all three canonical accounts
+and `infrastructure/email/storage`, whose sole field is the exact 64-character
+hexadecimal passphrase. The normal three-account and legacy modes remain
+separate. Native Linux tests restore all four synthetic records with the pinned
+server and refuse an altered storage passphrase, corrupt snapshot, wrong unseal
+key or wrong custody scope.
+
+Only the actual independent result
+`OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.6.3` clears this key's recovery
+prerequisite. A prepared key, a recent snapshot missing the key, a skipped native
+test or an offline fixture is insufficient. Encrypted-volume canary, data
+migration, restoration and activation remain separate reviewed operations; keep
+the current mailbox volume until those checks and rollback are proven.

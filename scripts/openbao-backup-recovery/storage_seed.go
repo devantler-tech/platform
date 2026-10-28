@@ -41,8 +41,19 @@ func (a *baoAPI) storageRecord(ctx context.Context, token string) (json.RawMessa
 // Its expected account records must already have survived independent recovery.
 func (a *baoAPI) prepareStorage(ctx context.Context, token string, expected map[string]json.RawMessage, entropy io.Reader) (string, error) {
 	canonical := []string{"infrastructure/email/admin", "infrastructure/email/maintainer", "infrastructure/email/agent"}
-	if !slices.Equal(credentialPaths, canonical) || !recordsEqual(expected, expected) || entropy == nil || !regexp.MustCompile(`^[A-Za-z0-9._-]{20,256}$`).MatchString(token) {
+	if !slices.Equal(credentialPaths, canonical) || len(expected) != 3 || entropy == nil || !regexp.MustCompile(`^[A-Za-z0-9._-]{20,256}$`).MatchString(token) {
 		return "", errEvidence
+	}
+	// The one-time independent proof recovers the original three complete values.
+	// Bind those exact values to their declared canonical destinations before
+	// creating anything. Canonical-only proof inputs are not silently substituted.
+	verified := map[string]json.RawMessage{}
+	for index, account := range []string{"admin", "maintainer", "agent"} {
+		path := "apps/private-mail/" + account
+		if _, ok := recordValueAtPath(path, expected[path]); !ok {
+			return "", errEvidence
+		}
+		verified[canonical[index]] = expected[path]
 	}
 	health, err := a.health(ctx)
 	if err != nil || !*health.Initialized || *health.Sealed {
@@ -59,7 +70,7 @@ func (a *baoAPI) prepareStorage(ctx context.Context, token string, expected map[
 		return "", errEvidence
 	}
 	before, err := a.credentialRecords(ctx, token)
-	if err != nil || !recordsEqual(expected, before) {
+	if err != nil || !recordsEqual(verified, before) {
 		return "", errEvidence
 	}
 	value, version, status, err := a.storageRecord(ctx, token)
@@ -106,7 +117,7 @@ func (a *baoAPI) prepareStorage(ctx context.Context, token string, expected map[
 		return "", errEvidence
 	}
 	after, err := a.credentialRecords(ctx, token)
-	if err != nil || !recordsEqual(expected, after) {
+	if err != nil || !recordsEqual(verified, after) {
 		return "", errEvidence
 	}
 	return state, nil

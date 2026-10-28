@@ -27,5 +27,9 @@ func credentialMode(requested string) (string, []string, bool) {
 
 func canonicalRecoverySet() bool {
 	_, paths, ok := credentialMode("collect-email")
+	if ok && slices.Equal(credentialPaths, paths) {
+		return true
+	}
+	_, paths, ok = credentialMode("collect-email-storage")
 	return ok && slices.Equal(credentialPaths, paths)
 }

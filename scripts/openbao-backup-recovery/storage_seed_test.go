@@ -19,7 +19,7 @@ func TestStorageSeedCreatesOnceAndRefusesUncertaintyOrChangedInputs(t *testing.T
 	previous := credentialPaths
 	t.Cleanup(func() { credentialPaths = previous })
 	credentialPaths = []string{"infrastructure/email/admin", "infrastructure/email/maintainer", "infrastructure/email/agent"}
-	for _, scenario := range []string{"create", "existing", "conflict", "uncertain", "malformed-existing", "deleted-existing", "entropy", "changed-before", "changed-after", "changed-readback", "missing-mount", "wrong-version"} {
+	for _, scenario := range []string{"create", "existing", "conflict", "uncertain", "malformed-existing", "deleted-existing", "entropy", "changed-before", "changed-after", "changed-readback", "missing-mount", "wrong-version", "unbound-scope"} {
 		t.Run(scenario, func(t *testing.T) {
 			posts, adminReads := 0, 0
 			var stored map[string]string
@@ -32,6 +32,13 @@ func TestStorageSeedCreatesOnceAndRefusesUncertaintyOrChangedInputs(t *testing.T
 			expected := map[string]json.RawMessage{}
 			for _, path := range credentialPaths {
 				expected[path] = json.RawMessage(`{"password":"` + strings.Repeat("a", 64) + `"}`)
+			}
+			restored := map[string]json.RawMessage{}
+			for path, value := range expected {
+				restored[strings.Replace(path, "infrastructure/email/", "apps/private-mail/", 1)] = value
+			}
+			if scenario == "unbound-scope" {
+				restored = expected
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/sys/health" && r.Header.Get("X-Vault-Token") != "synthetic-seed-token-only" {
@@ -131,7 +138,7 @@ func TestStorageSeedCreatesOnceAndRefusesUncertaintyOrChangedInputs(t *testing.T
 			if scenario == "entropy" || scenario == "existing" {
 				entropy = strings.NewReader("")
 			}
-			state, err := preparer.prepareStorage(context.Background(), "synthetic-seed-token-only", expected, entropy)
+			state, err := preparer.prepareStorage(context.Background(), "synthetic-seed-token-only", restored, entropy)
 			if scenario == "create" || scenario == "existing" {
 				want := "CREATED"
 				if scenario == "existing" {

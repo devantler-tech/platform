@@ -34,7 +34,7 @@ func runStorageSeed(env func(string) string, out io.Writer) int {
 	}
 	defer clear(raw)
 	var expected map[string]json.RawMessage
-	if json.Unmarshal(raw, &expected) != nil || !recordsEqual(expected, expected) {
+	if json.Unmarshal(raw, &expected) != nil || len(expected) != 3 {
 		return fail("inputs")
 	}
 	api, err := newAPI("http://127.0.0.1:38200")
