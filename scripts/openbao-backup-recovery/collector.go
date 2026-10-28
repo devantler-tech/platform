@@ -178,20 +178,29 @@ func recoveryDirectory(dir string) bool {
 }
 
 // collectRecoveryInputs reads production only; every restore mutation stays in the sandbox.
-func collectRecoveryInputs(dir string) error {
+func collectRecoveryInputs(dir string) (result error) {
+	stage := "private-workspace"
+	defer func() {
+		if result != nil {
+			result = stageError(stage)
+		}
+	}()
 	if !recoveryDirectory(dir) {
 		return errEvidence
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
+	stage = "snapshot-job-read"
 	job, err := recoveryObject(ctx, "job", "openbao", "vault-snapshot-init")
 	if err != nil {
 		return errEvidence
 	}
+	stage = "snapshot-job-admission"
 	start, end, err := freshJobWindow(job, time.Now().UTC())
 	if err != nil {
 		return errEvidence
 	}
+	stage = "live-health"
 	api, err := newAPI("http://127.0.0.1:38200")
 	if err != nil {
 		return errEvidence
@@ -200,6 +209,7 @@ func collectRecoveryInputs(dir string) error {
 	if err != nil || !*health.Initialized || *health.Sealed {
 		return errEvidence
 	}
+	stage = "deployment-inputs"
 	base, err := recoveryObject(ctx, "configmap", "flux-system", "variables-base")
 	if err != nil {
 		return errEvidence
@@ -216,10 +226,12 @@ func collectRecoveryInputs(dir string) error {
 	if err != nil {
 		return errEvidence
 	}
+	stage = "backup-target"
 	target, err := backupTarget(base, cluster, variables, keys)
 	if err != nil {
 		return errEvidence
 	}
+	stage = "recovery-inputs"
 	recovery, err := recoveryObject(ctx, "secret", "openbao", "openbao-unseal")
 	if err != nil {
 		return errEvidence
@@ -232,6 +244,7 @@ func collectRecoveryInputs(dir string) error {
 	if !regexp.MustCompile(`^[A-Za-z0-9._-]{20,256}$`).MatchString(root) || !regexp.MustCompile(`^[A-Za-z0-9+/=]{32,256}$`).MatchString(key) {
 		return errEvidence
 	}
+	stage = "live-records"
 	records, err := api.credentialRecords(ctx, root)
 	if err != nil || !recordsEqual(records, records) {
 		return errEvidence
@@ -240,10 +253,12 @@ func collectRecoveryInputs(dir string) error {
 	if err != nil {
 		return errEvidence
 	}
+	stage = "snapshot-download"
 	snapshot, err := downloadSnapshot(ctx, recoveryHTTP(), target, start, end)
 	if err != nil {
 		return errEvidence
 	}
+	stage = "private-handoff"
 	for name, data := range map[string][]byte{"root-token": []byte(root), "unseal-key": []byte(key), "expected.json": expected, "snapshot.snap": snapshot} {
 		if writePrivate(filepath.Join(dir, name), data) != nil {
 			return errEvidence

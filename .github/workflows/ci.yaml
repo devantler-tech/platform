@@ -4565,7 +4565,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@c2b06a1ac224a57750cd66aec571701c4b546b30 # v13.2.11
+        uses: devantler-tech/.github/actions/aggregate-job-checks@d513d0069c20cd8f037c0cb42eadf73268ac14f4 # v14.0.0
         with:
           job-results: >-
             ${{ needs.changes.result }}

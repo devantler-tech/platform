@@ -71,6 +71,41 @@ func TestRecordComparisonRequiresAllThreeCompleteValues(t *testing.T) {
 	}
 }
 
+// TestDeclaredPasswordOnlyRecordsCanBeVerified exercises the deployed seed schema.
+func TestDeclaredPasswordOnlyRecordsCanBeVerified(t *testing.T) {
+	expected := map[string]json.RawMessage{}
+	for _, path := range credentialPaths {
+		expected[path] = json.RawMessage(`{"password":"` + strings.Repeat("s", 48) + `"}`)
+	}
+	if !recordsEqual(expected, expected) {
+		t.Fatal("the password-only records declared by Email PushSecrets cannot be verified")
+	}
+}
+
+func TestOptionalCredentialUsernameMustRemainValid(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		username any
+		want     bool
+	}{
+		{"valid", "fixture@example.test", true},
+		{"empty", "", false},
+		{"wrong type", 1, false},
+		{"null", nil, false},
+		{"malformed", "fixture\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(map[string]any{"password": strings.Repeat("s", 48), "username": tc.username})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, valid := recordValue(raw); valid != tc.want {
+				t.Fatal("optional credential metadata was accepted with the wrong type or shape")
+			}
+		})
+	}
+}
+
 // TestPlaceholderCredentialsCannotCountAsRecovered rejects unseeded inputs.
 func TestPlaceholderCredentialsCannotCountAsRecovered(t *testing.T) {
 	for _, password := range []string{"", "REPLACE_AFTER_INIT", "short", strings.Repeat("s", 40) + "\n"} {
