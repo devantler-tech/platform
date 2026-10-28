@@ -321,11 +321,12 @@ spec:
         # read access for that lookup is the storage scan-record cleanup role. The
         # main-only publisher attaches SBOM/provenance and signs the digest
         # before this pin may advance.
-        # Revision 8 conditionally reconciles a summary metadata row with its
-        # intact, same-identity payload exactly one version ahead. It preserves
-        # payload bytes and refuses unproven or concurrently changed state (#5419).
+        # Revision 9 reads both native flattened metadata and the versioned
+        # metadata wrapper before conditionally reconciling an intact,
+        # same-identity payload exactly one version ahead. Payload bytes stay
+        # intact; unproven or concurrently changed state is refused (#5419).
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.8-a56a2cf3b4a10ce5352f19e9a8e9da106373b00f@sha256:7aac1d2edfb2442d98b692c52ae33b2f5f3d39748233cd43f885d54020e2840e"
+        tag: "v0.0.297-sqlite-contention.9-f8fd00273d01ce830150e68dfb636598f9e52099@sha256:743a71c369536f94740ca4241394bc877601ff16d0b30095940900fcd7833ff6"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.
