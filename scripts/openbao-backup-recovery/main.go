@@ -312,12 +312,13 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 		return stageError("fixture")
 	}
 	expected := map[string]json.RawMessage{}
-	for i, path := range credentialPaths {
+	for _, path := range credentialPaths {
 		random := make([]byte, 32)
 		if _, err := rand.Read(random); err != nil {
 			return stageError("fixture")
 		}
-		data := map[string]any{"username": fmt.Sprintf("synthetic-%d", i), "password": hex.EncodeToString(random), "retainedField": "synthetic-fixture"}
+		// Match the password-only values seeded by the declared Email PushSecrets.
+		data := map[string]any{"password": hex.EncodeToString(random)}
 		raw, err := json.Marshal(data)
 		if err != nil {
 			return stageError("fixture")
