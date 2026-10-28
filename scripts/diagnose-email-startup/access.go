@@ -25,6 +25,7 @@ type accessResult struct {
 	Paths, Access, CiliumAccess string
 	Block                       blockDetails
 	Ready                       bool
+	Ingress                     *ingressAccessResult
 }
 type accessObservation struct {
 	LiveLoopback  *int            `json:"live_loopback"`
@@ -474,6 +475,10 @@ func decodeAccess(raw []byte, host netip.Addr, now time.Time) (accessResult, err
 
 // collectAccess observes fixed resources once, with bounded waiting and before/after bindings.
 func collectAccess(ctx context.Context, run executor, send inputExecutor, pause func(context.Context) error, now func() time.Time) (accessResult, error) {
+	return collectAccessWithIngress(ctx, run, send, pause, now, nil)
+}
+
+func collectAccessWithIngress(ctx context.Context, run executor, send inputExecutor, pause func(context.Context) error, now func() time.Time, observe func(context.Context, binding, accessAddresses) (ingressObservation, error)) (accessResult, error) {
 	fail := func() (accessResult, error) { return accessResult{}, errors.New("inconclusive") }
 	var before binding
 	var addresses accessAddresses
@@ -569,6 +574,7 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	}
 	input := []byte(authorization + "\n" + addresses.Pod.String() + "\n")
 	raw, e := send(ctx, input, "--context", "admin@prod", "--request-timeout=10s", "exec", "-i", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", accessProbe)
+	defer clear(raw)
 	clear(input)
 	clear(password)
 	if e != nil {
@@ -593,6 +599,24 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 		result.CiliumAccess = "STORED_CILIUM_BLOCK_MATCH"
 	case "STORED_HOST_ALLOW_OVERRIDE":
 		result.CiliumAccess = "STORED_CILIUM_ALLOW_OVERRIDE"
+	}
+	if observe != nil {
+		observation, err := observe(ctx, before, addresses)
+		if err != nil {
+			return fail()
+		}
+		input := []byte(authorization + "\n" + addresses.Pod.String() + "\n")
+		afterRaw, err := send(ctx, input, "--context", "admin@prod", "--request-timeout=10s", "exec", "-i", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", accessProbe)
+		clear(input)
+		defer clear(afterRaw)
+		if err != nil {
+			return fail()
+		}
+		assessment, err := assessIngressAccess(raw, afterRaw, observation, observedAt, now())
+		if err != nil {
+			return fail()
+		}
+		result.Ingress = &assessment
 	}
 	raw, e = request(ctx, run, "get", "pod", "private-mail-0", "-n", "private-mail", "-o", "json")
 	if e != nil {

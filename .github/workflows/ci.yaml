@@ -148,6 +148,7 @@ jobs:
               - 'scripts/tests/vault-email-credentials/**'
               - 'scripts/prepare-email-credentials.sh'
               - '.github/workflows/verify-email-credential-custody.yaml'
+              - '.github/workflows/copy-email-credential-custody.yaml'
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
@@ -1041,7 +1042,7 @@ jobs:
             | sha256sum --check
           tar --extract --gzip --file "$native_hubble/hubble.tar.gz" --directory "$native_hubble"
           export HUBBLE_TEST_BIN="$native_hubble/hubble"
-          go test -race ./scripts/verify-arc-transport
+          go test -race ./scripts/verify-arc-transport ./scripts/diagnose-email-startup
           shellcheck scripts/verify-arc-transport.sh scripts/tests/test-verify-arc-transport.sh
           bash scripts/tests/test-verify-arc-transport.sh
 
