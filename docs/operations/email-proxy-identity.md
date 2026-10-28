@@ -32,6 +32,15 @@ Omitting the option retains the legacy setting, and conflicting HTTP forwarding
 still refuses initialization. A rollback must declare false when legacy private
 configuration was already enabled; removing an override alone does not clear it.
 
+The bounded startup and access observers recognize the verified bootstrap image
+published from #5503. They admit either its native process alone or that process
+with the declared adapter. The adapter must use the same immutable image, exact
+command and sole public configuration mount, with no environment or credential
+mount. Both container identities and the adapter's public configuration are
+bound before and after observation; replacement or restart makes the result
+inconclusive. Both containers must be ready for a healthy sample. This observer
+support does not activate the transport or prove external access.
+
 Before activation, require current-head native Caddy/Stalwart and pinned Envoy
 proof, correct real-client identity through the deployed provider, refusal of
 forged/ambiguous/direct untrusted requests, unchanged retained access rules,
