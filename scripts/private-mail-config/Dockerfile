@@ -2,7 +2,7 @@ FROM ghcr.io/stalwartlabs/cli:1.0.13@sha256:9a1e07307d6f890a193322c4b737fc086840
 FROM caddy:2.11.7@sha256:5e5286cb37d44086d651a5363f05f43a692ce4d649d88fb1bd844579f45fa9e8 AS client-proxy
 FROM ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c
 
-USER root
+USER 0
 RUN mkdir -p /usr/local/share/stalwart /usr/local/share/licenses/stalwart-webui && \
     chmod 0755 /usr/local/share /usr/local/share/stalwart /usr/local/share/licenses /usr/local/share/licenses/stalwart-webui
 COPY --from=cli /usr/local/bin/stalwart-cli /usr/local/bin/stalwart-cli

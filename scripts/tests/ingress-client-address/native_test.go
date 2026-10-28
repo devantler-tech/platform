@@ -42,7 +42,16 @@ func fixtureConfiguration(t *testing.T, listenerPort, backendPort int) []byte {
 
 func fixtureConfigurationFor(t *testing.T, policyPath string, listenerPort, backendPort int) []byte {
 	t.Helper()
-	data, err := os.ReadFile(policyPath)
+	var data []byte
+	var err error
+	switch policyPath {
+	case "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml":
+		data, err = os.ReadFile("../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml")
+	case "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml":
+		data, err = os.ReadFile("../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml")
+	default:
+		t.Fatal("unreviewed client identity policy")
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,6 +145,9 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 	if runtime.GOOS != "linux" {
 		t.Fatal("native proof requires a Linux host, not only a Linux Docker daemon")
 	}
+	if os.Getuid() <= 0 || os.Getgid() < 0 {
+		t.Fatal("native proof requires an unprivileged fixture user")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	run := func(args ...string) []byte {
@@ -174,7 +186,7 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 		t.Fatal(err)
 	}
 	config := filepath.Join(t.TempDir(), "envoy.json")
-	if err := os.WriteFile(config, fixtureConfigurationFor(t, policyPath, port, backendPort), 0o644); err != nil {
+	if err := os.WriteFile(config, fixtureConfigurationFor(t, policyPath, port, backendPort), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("pull", pins.Image)
@@ -186,7 +198,7 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 			t.Errorf("owned native fixture cleanup failed: %v: %.1000s", err, out)
 		}
 	})
-	run("run", "--detach", "--name", name, "--network", "host", "--read-only", "--user", "65532:65532", "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--cpus", "1", "--memory", "256m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--mount", "type=bind,source="+config+",target=/fixture.json,readonly", "--entrypoint", "/usr/bin/cilium-envoy", pins.Image, "-c", "/fixture.json", "--concurrency", "1", "--disable-hot-restart", "--log-level", "error")
+	run("run", "--detach", "--name", name, "--network", "host", "--read-only", "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()), "--cap-drop", "ALL", "--security-opt", "no-new-privileges:true", "--cpus", "1", "--memory", "256m", "--tmpfs", "/tmp:rw,noexec,nosuid,size=16m", "--mount", "type=bind,source="+config+",target=/fixture.json,readonly", "--entrypoint", "/usr/bin/cilium-envoy", pins.Image, "-c", "/fixture.json", "--concurrency", "1", "--disable-hot-restart", "--log-level", "error")
 	address := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
 	deadline := time.Now().Add(20 * time.Second)
 	for {
@@ -219,6 +231,10 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 		{"v1", "TCP6", "2001:db8::9", "2001:db8::10"},
 		{"v2", "TCP4", "198.51.100.9", "192.0.2.9"},
 		{"v2", "TCP6", "2001:db8::9", "2001:db8::10"},
+		{"v1", "TCP4", "10.20.30.40", "192.0.2.9"},
+		{"v1", "TCP6", "fd00::9", "2001:db8::10"},
+		{"v2", "TCP4", "10.20.30.40", "192.0.2.9"},
+		{"v2", "TCP6", "fd00::9", "2001:db8::10"},
 	} {
 		t.Run(tc.version+"/"+tc.protocol, func(t *testing.T) {
 			prefix := fmt.Sprintf("PROXY %s %s %s 4242 443\r\n", tc.protocol, tc.source, tc.destination)

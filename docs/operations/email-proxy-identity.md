@@ -15,7 +15,7 @@ upstream PROXY envelope, while Stalwart evaluates connection bans before HTTP
 forwarding headers. A listener-scoped local override avoids an address-wide
 allowed-IP exception. The adapter receives no credential, mailbox or TLS-key
 volume; Cilium limits the frontend to the Gateway identity and explicitly fences
-native and recovery endpoints. The private-network check in Caddy supplements
+native and recovery endpoints. The address check in Caddy supplements
 that identity policy and cannot replace it.
 
 The configuration helper's `useProxyClientIP` setting defaults to false and

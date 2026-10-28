@@ -554,7 +554,7 @@ done
 # about production Gateway trust or Cilium network-policy enforcement.
 native_cli query AllowedIp --fields id,address --json >"$scratch/allowed-before.jsonl"
 jq -sS 'sort_by(.id)' "$scratch/allowed-before.jsonl" >"$scratch/allowed-before.json"
-printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"proxy-client":{"address":"198.51.100.9","reason":"manual"}}}' >"$scratch/proxy-block.ndjson"
+printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"proxy-client":{"address":"198.51.100.9","reason":"manual"},"proxy-client-ipv6":{"address":"2001:db8::9","reason":"manual"}}}' >"$scratch/proxy-block.ndjson"
 native_cli apply --file /proof/proxy-block.ndjson --json >"$scratch/proxy-block-apply.jsonl" 2>"$scratch/proxy-block-apply.err"
 jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/proxy-block-apply.jsonl" >/dev/null
 
@@ -581,7 +581,7 @@ for proxy_enabled in true false; do
   cp "$root/k8s/bases/apps/private-mail-proxy-identity/Caddyfile" "$scratch/ClientProxy.Caddyfile"
   proxy_started=1
   docker run --detach --name "$proxy_name" --network "container:$name" --read-only \
-    --user "$fixture_user" --cpus 1 --memory 128m --cap-drop ALL \
+    --user "$fixture_user" --cpus 0.1 --memory 64m --cap-drop ALL \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/ClientProxy.Caddyfile,target=/etc/email-client-proxy/Caddyfile,readonly" \
     --entrypoint /usr/local/bin/caddy "$name-bootstrap-image" \
@@ -597,9 +597,9 @@ for proxy_enabled in true false; do
   [ "$proxy_ready" = 1 ] || { echo 'FAIL: native proxy-to-mail health did not become ready' >&2; exit 1; }
   verify_rendered_self_checks private-mail-proxy-identity client-proxy "$proxy_name" 127.0.0.1:8081
 
-  for client_ip in 198.51.100.9 198.51.100.10 2001:db8::9; do
+  for client_ip in 198.51.100.9 198.51.100.10 2001:db8::9 2001:db8::10 10.20.30.40 fd00::9; do
     expected=200
-    [ "$client_ip" != 198.51.100.9 ] || expected=502
+    case "$client_ip" in 198.51.100.9|2001:db8::9) expected=502 ;; esac
     status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
       --header "X-Forwarded-For: $client_ip" --header 'Forwarded: for=203.0.113.22' \
       --header 'X-Real-IP: 203.0.113.23' --header 'X-Email-Private-Canary: email-proxy-private-canary' \

@@ -13,7 +13,8 @@
   }
   servers {
     trusted_proxies static private_ranges
-    trusted_proxies_strict
+    # The gateway sends one address, not a proxy chain. Chain traversal would
+    # skip legitimate private clients as though they were another proxy.
     client_ip_headers X-Forwarded-For
     protocols h1
   }

@@ -122,3 +122,49 @@ func TestProxyListenerInventoryAcceptsOnlyItsManagedLoopbackTrust(t *testing.T) 
 		})
 	}
 }
+
+func TestCompleteFiveListenerProfileReplaysInBothTransportStates(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		v := inventoryFixture()
+		var ids []string
+		var listeners []any
+		for _, profile := range []struct {
+			name, protocol, bind string
+			tls, implicit        bool
+		}{
+			{"management", "http", "0.0.0.0:8080", false, false},
+			{"client-proxy", "http", "127.0.0.1:18081", false, false},
+			{"smtp-inbound", "smtp", "0.0.0.0:1025", true, false},
+			{"submission", "smtp", "0.0.0.0:1587", true, false},
+			{"imaps", "imap", "0.0.0.0:1993", true, true},
+		} {
+			trust := map[string]bool{}
+			if enabled && profile.name == "client-proxy" {
+				trust["127.0.0.1"] = true
+			}
+			ids = append(ids, profile.name)
+			listeners = append(listeners, map[string]any{"id": profile.name, "name": profile.name, "protocol": profile.protocol, "bind": map[string]bool{profile.bind: true}, "useTls": profile.tls, "tlsImplicit": profile.implicit, "overrideProxyTrustedNetworks": trust, "tlsDisableProtocols": map[string]bool{}})
+		}
+		methods := v["methodResponses"].([]any)
+		methods[0].([]any)[1] = map[string]any{"ids": ids, "total": len(ids), "position": 0}
+		methods[1].([]any)[1] = map[string]any{"list": listeners, "notFound": []string{}}
+		v = withApplicationInventory(v)
+		methods = v["methodResponses"].([]any)
+		encode := func() []byte {
+			t.Helper()
+			data, err := json.Marshal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return data
+		}
+		if validateInventory(encode()) != nil {
+			t.Fatal("complete managed profile cannot replay")
+		}
+		methods[0].([]any)[1] = map[string]any{"ids": append(ids, "unexpected"), "total": 6, "position": 0}
+		methods[1].([]any)[1] = map[string]any{"list": append(listeners, map[string]any{"id": "unexpected", "name": "unexpected", "protocol": "http", "bind": map[string]bool{"127.0.0.1:18082": true}, "useTls": false, "tlsImplicit": false, "overrideProxyTrustedNetworks": map[string]bool{}, "tlsDisableProtocols": map[string]bool{}}), "notFound": []string{}}
+		if validateInventory(encode()) == nil {
+			t.Fatal("sixth unowned listener accepted")
+		}
+	}
+}

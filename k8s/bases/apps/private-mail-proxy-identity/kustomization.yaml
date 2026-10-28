@@ -23,14 +23,14 @@ replacements:
         fieldPaths:
           - spec.template.spec.containers.[name=client-proxy].image
 patches:
-  - path: patches/client-proxy.yaml
+  - path: patches/add-client-proxy.yaml
   - path: patches/isolate-client-proxy.yaml
   - target:
       version: v1
       kind: Service
       name: private-mail
       namespace: private-mail
-    path: patches/service.yaml
+    path: patches/target-client-proxy.yaml
   - target:
       kind: HTTPRoute
       name: private-mail

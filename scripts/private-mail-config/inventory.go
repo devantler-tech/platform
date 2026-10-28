@@ -72,7 +72,7 @@ func validateInventory(raw []byte) error {
 			return errConfiguration
 		}
 	}
-	if json.Unmarshal(response.Methods[0][1], &query) != nil || json.Unmarshal(response.Methods[1][1], &get) != nil || query.Total == nil || query.Position == nil || *query.Position != 0 || query.IDs == nil || *query.Total != len(query.IDs) || len(query.IDs) > 4 || get.List == nil || get.Missing == nil || len(get.Missing) != 0 || len(get.List) != len(query.IDs) {
+	if json.Unmarshal(response.Methods[0][1], &query) != nil || json.Unmarshal(response.Methods[1][1], &get) != nil || query.Total == nil || query.Position == nil || *query.Position != 0 || query.IDs == nil || *query.Total != len(query.IDs) || len(query.IDs) > 5 || get.List == nil || get.Missing == nil || len(get.Missing) != 0 || len(get.List) != len(query.IDs) {
 		return errConfiguration
 	}
 	ids, names := map[string]bool{}, map[string]bool{}
@@ -92,7 +92,8 @@ func validateInventory(raw []byte) error {
 		}
 		delete(ids, item.ID)
 		names[item.Name] = true
-		protocol, bind, tls, implicit := "", "", true, false
+		var protocol, bind string
+		tls, implicit := true, false
 		switch item.Name {
 		case "client-proxy":
 			protocol, bind, tls = "http", "127.0.0.1:18081", false
