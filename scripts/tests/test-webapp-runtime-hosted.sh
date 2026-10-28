@@ -43,8 +43,8 @@ gateway="$(go -C "$root/scripts/tests/webapp-compiler" mod download -json sigs.k
 
 # Verify the original source-owned CI, image signature and complete provenance
 # with the maintained catalogue helper. Only this temporary manifest is mutated.
-download https://raw.githubusercontent.com/devantler-tech/.github/eec706368bdc0114c010afea778bf5efb17ced23/.github/scripts/prepare-prebuilt-webapp.sh \
-  "$work/verify-image.sh" dcf6fee210077e12f9e147b76eb78e5f4a9c161ace2df7ffeb49ac30a6c08961
+download https://raw.githubusercontent.com/devantler-tech/.github/c2b06a1ac224a57750cd66aec571701c4b546b30/.github/scripts/prepare-prebuilt-webapp.sh \
+  "$work/verify-image.sh" af30ec35d3aee1eb8939ff762b565301d9e3fd419638d3e3ce93be282505fa1a
 mkdir "$work/deploy"
 jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixture",namespace:"runtime-fixture"},spec:{name:"runtime-fixture",host:"runtime-fixture.invalid",image:"verified-before-use",replicas:1,port:8080,probePath:"/healthz",memoryRequest:"64Mi",memoryLimit:"256Mi",cpuLimit:"500m"}}' >"$work/deploy/webapp.yaml"
 (
