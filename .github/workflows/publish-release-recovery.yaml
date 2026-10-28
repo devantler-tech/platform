@@ -121,8 +121,8 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
-          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$RUNNER_TEMP/inspect-release-recovery" .
-          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$RUNNER_TEMP/publish-release-recovery" ./cmd/publish-release-recovery
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/inspect-release-recovery" .
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/publish-release-recovery" ./cmd/publish-release-recovery
       - name: 🔑 Obtain repository-scoped read-only token
         id: read-token
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
@@ -146,7 +146,7 @@ jobs:
           PRODUCER_REF: ${{ inputs.producer-ref }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/inspect-release-recovery" \
+          "./.devantler-tech-recovery/inspect-release-recovery" \
             --repository "$REPOSITORY" --tag "$TAG" --source-sha "$SOURCE_SHA" \
             --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" --producer-ref "$PRODUCER_REF" \
             > "$RUNNER_TEMP/release-diagnosis.json"
@@ -189,7 +189,7 @@ jobs:
           PRODUCER_REF: ${{ inputs.producer-ref }}
         run: |
           set -euo pipefail
-          "$RUNNER_TEMP/publish-release-recovery" \
+          "./.devantler-tech-recovery/publish-release-recovery" \
             --repository "$REPOSITORY" --tag "$TAG" --source-sha "$SOURCE_SHA" \
             --run-id "$RUN_ID" --run-attempt "$RUN_ATTEMPT" --producer-ref "$PRODUCER_REF" \
             > "$RUNNER_TEMP/release-publication.json"
@@ -244,14 +244,14 @@ jobs:
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
-          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$RUNNER_TEMP/inspect-release-recovery" .
-          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$RUNNER_TEMP/publish-release-recovery" ./cmd/publish-release-recovery
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/inspect-release-recovery" .
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/publish-release-recovery" ./cmd/publish-release-recovery
       - name: 🧪 Refuse publication without a credential
         shell: bash
         run: |
           set -euo pipefail
           unset GH_TOKEN GITHUB_TOKEN
-          if "$RUNNER_TEMP/publish-release-recovery" \
+          if "./.devantler-tech-recovery/publish-release-recovery" \
             --repository devantler-tech/platform --tag v1.2.3 --source-sha "$(printf 'a%.0s' {1..40})" \
             --run-id 1 --run-attempt 1 \
             --producer-ref "devantler-tech/.github/.github/workflows/create-release.yaml@$(printf 'b%.0s' {1..40})" \

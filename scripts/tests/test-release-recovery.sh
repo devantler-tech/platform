@@ -26,7 +26,7 @@ cat >"$work/guard.jq" <<'JQ'
     (.run | contains("https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA")) and
     (.run | contains("cmd/publish-release-recovery/main.go"));
   def build: .env == {GOWORK:"off",GOFLAGS:"",GOTOOLCHAIN:"local",CGO_ENABLED:"0"} and
-    (.run | contains("build -trimpath -o \"$RUNNER_TEMP/publish-release-recovery\" ./cmd/publish-release-recovery"));
+    (.run | contains("build -trimpath -o \"$PWD/.devantler-tech-recovery/publish-release-recovery\" ./cmd/publish-release-recovery"));
   def incident: {REPOSITORY:"${{ github.repository }}",TAG:"${{ inputs.tag }}",SOURCE_SHA:"${{ inputs.source-sha }}",RUN_ID:"${{ inputs.run-id }}",RUN_ATTEMPT:"${{ inputs.run-attempt }}",PRODUCER_REF:"${{ inputs.producer-ref }}"};
   def token($contents): {"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}",owner:"devantler-tech",repositories:"${{ steps.admit.outputs.name }}","permission-contents":$contents,"permission-actions":"read"};
   ($w.on | keys) == ["workflow_dispatch"] and $w.permissions == {} and
@@ -47,10 +47,10 @@ cat >"$work/guard.jq" <<'JQ'
   ($s[4] | build) and
   ($s[5].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[5].id == "read-token" and $s[5].with == token("read") and
   $s[6].id == "read-admission" and $s[6].env == ({GH_TOKEN:"${{ steps.read-token.outputs.token }}"} + incident) and
-  ($s[6].run | contains("\"$RUNNER_TEMP/inspect-release-recovery\"")) and
+  ($s[6].run | contains("\"./.devantler-tech-recovery/inspect-release-recovery\"")) and
   ($s[7].uses | test("^actions/create-github-app-token@[a-f0-9]{40}$")) and $s[7].id == "write-token" and $s[7].with == token("write") and
   $s[8].id == "publish" and $s[8].env == ({GH_TOKEN:"${{ steps.write-token.outputs.token }}"} + incident) and
-  ($s[8].run | contains("\"$RUNNER_TEMP/publish-release-recovery\"")) and
+  ($s[8].run | contains("\"./.devantler-tech-recovery/publish-release-recovery\"")) and
   ([$s[] | select(.env.GH_TOKEN != null) | .id] == ["read-admission","publish"]) and
   $o.if == "inputs.enable-recovery && inputs.offline-test" and $o.permissions == {} and
   ($o.steps | length == 5 and all(ordinary)) and
@@ -170,11 +170,15 @@ CASES
 # the writer token; a present release is a verified no-op; anything else fails.
 yq -r '.jobs.recover.steps[6].run' "$workflow" >"$work/read-admission.sh"
 read_admission() {
-  printf '#!/usr/bin/env bash\nprintf %%s %q\nexit %s\n' "$1" "$2" >"$work/runner/inspect-release-recovery"
-  chmod +x "$work/runner/inspect-release-recovery"
+  mkdir -p "$work/admission/.devantler-tech-recovery"
+  printf '#!/usr/bin/env bash\nprintf %%s %q\nexit %s\n' "$1" "$2" >"$work/admission/.devantler-tech-recovery/inspect-release-recovery"
+  chmod +x "$work/admission/.devantler-tech-recovery/inspect-release-recovery"
   rm -f "$work/output"
-  RUNNER_TEMP="$work/runner" GITHUB_OUTPUT="$work/output" REPOSITORY=devantler-tech/platform TAG=v1.2.3 \
-    SOURCE_SHA=a RUN_ID=1 RUN_ATTEMPT=1 PRODUCER_REF=b bash -euo pipefail "$work/read-admission.sh" >/dev/null 2>&1
+  (
+    cd "$work/admission"
+    RUNNER_TEMP="$work/runner" GITHUB_OUTPUT="$work/output" REPOSITORY=devantler-tech/platform TAG=v1.2.3 \
+      SOURCE_SHA=a RUN_ID=1 RUN_ATTEMPT=1 PRODUCER_REF=b bash -euo pipefail "$work/read-admission.sh" >/dev/null 2>&1
+  )
 }
 mkdir -p "$work/runner"
 read_admission '{"diagnosis":"missing-github-release"}' 0 || fail 'missing release was not admitted'
