@@ -16,12 +16,24 @@ const ingressDaemonSample = `{"apiVersion":"apps/v1","kind":"DaemonSet","metadat
 // Unexpected containers, observer failures and identity changes must prevent a
 // usable result, even after the observer has returned plausible flow bytes.
 func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
-	for _, mode := range []string{"matching", "unready-agent", "agent-churn", "daemon-churn", "probe-failure", "observer-failure", "truncated-flow"} {
+	for _, mode := range []string{"matching", "named-cluster", "cluster-churn", "unready-agent", "agent-churn", "daemon-churn", "probe-failure", "observer-failure", "truncated-flow"} {
 		t.Run(mode, func(t *testing.T) {
 			podReads, daemonReads, executions, probes, clockReads := 0, 0, 0, 0, 0
+			clusterReads := 0
 			start := time.Date(2026, 10, 28, 16, 0, 0, 0, time.UTC)
 			run := func(_ context.Context, args ...string) ([]byte, error) {
 				switch strings.Join(args, " ") {
+				case "--context admin@prod --request-timeout=10s get configmap cilium-config -n kube-system -o json":
+					clusterReads++
+					name, revision := "default", "5"
+					if mode == "named-cluster" {
+						name = "prod"
+					}
+					if mode == "cluster-churn" && clusterReads > 1 {
+						revision = "6"
+						name = "prod"
+					}
+					return []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"cilium-config","namespace":"kube-system","uid":"55555555-5555-5555-5555-555555555555","resourceVersion":"` + revision + `"},"data":{"cluster-name":"` + name + `","enable-hubble":"true"}}`), nil
 				case "--context admin@prod --request-timeout=10s get daemonset cilium -n kube-system -o json":
 					daemonReads++
 					raw := ingressDaemonSample
@@ -45,7 +57,7 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 					return nil, errors.New("unexpected native operation")
 				}
 				var actual, expected any
-				if json.Unmarshal([]byte(args[21]), &actual) != nil || json.Unmarshal([]byte(`{"destination_ip":["10.244.2.2"],"destination_pod":["private-mail/private-mail-0"],"destination_port":["8080"],"protocol":["tcp"],"source_identity":[8],"tcp_flags":[{"SYN":true}],"reply":[false],"verdict":["FORWARDED"],"traffic_direction":["INGRESS"],"event_type":[{"type":4,"match_sub_type":true,"sub_type":0}]}`), &expected) != nil || !reflect.DeepEqual(actual, expected) {
+				if json.Unmarshal([]byte(args[21]), &actual) != nil || json.Unmarshal([]byte(`{"destination_ip":["10.244.2.2"],"destination_pod":["private-mail/private-mail-0"],"destination_port":["8080"],"protocol":["tcp"],"source_identity":[8],"tcp_flags":[{"SYN":true}],"reply":[false],"verdict":["FORWARDED"],"traffic_direction":["INGRESS","EGRESS"],"event_type":[{"type":4,"match_sub_type":true,"sub_type":0}]}`), &expected) != nil || !reflect.DeepEqual(actual, expected) {
 					return nil, errors.New("unexpected filter")
 				}
 				executions++
@@ -53,6 +65,9 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 					return nil, errors.New("private-observer-error")
 				}
 				raw := ingressFlowSample
+				if mode != "named-cluster" {
+					raw = strings.Replace(raw, `"prod/worker-1"`, `"worker-1"`, 1)
+				}
 				if mode == "truncated-flow" {
 					raw += "\n{"
 				}
@@ -73,10 +88,10 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 				return start.Add(10 * time.Second)
 			}
 			result, err := observeIngressSources(context.Background(), run, binding{UID: "44444444-4444-4444-4444-444444444444", Node: "worker-1"}, accessAddresses{Pod: netip.MustParseAddr("10.244.2.2")}, probe, func(context.Context) error { return nil }, now)
-			if (err == nil) != (mode == "matching") {
+			if (err == nil) != (mode == "matching" || mode == "named-cluster") {
 				t.Fatal("partial observation accepted or bound observation refused")
 			}
-			if mode == "matching" && (len(result.Sources) != 1 || result.Sources[0] != netip.MustParseAddr("10.244.1.1") || result.Public503 != 2 || result.Public200 != 0) {
+			if (mode == "matching" || mode == "named-cluster") && (len(result.Sources) != 1 || result.Sources[0] != netip.MustParseAddr("10.244.1.1") || result.Public503 != 2 || result.Public200 != 0 || clusterReads != 2) {
 				t.Fatal("observed peer or public response was lost")
 			}
 			if err != nil && (len(result.Sources) != 0 || strings.Contains(err.Error(), "private-")) {

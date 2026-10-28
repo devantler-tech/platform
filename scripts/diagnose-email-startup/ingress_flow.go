@@ -91,7 +91,10 @@ func decodeIngressFlows(data []byte, destination netip.Addr, node string, since,
 		if flow.Time.IsZero() || flow.Time.Before(since) || flow.Time.After(until) {
 			return refuse()
 		}
-		if flow.Verdict != "FORWARDED" || flow.Direction != "INGRESS" || flow.Point != "TO_ENDPOINT" ||
+		// The pinned native parser classifies SNAT traces as EGRESS, even at
+		// TO_ENDPOINT. The receiver observation point and node bind the wire
+		// peer; direction alone does not distinguish pre/post translation.
+		if flow.Verdict != "FORWARDED" || (flow.Direction != "INGRESS" && flow.Direction != "EGRESS") || flow.Point != "TO_ENDPOINT" ||
 			flow.Node != node || (flow.Reply != nil && *flow.Reply) || flow.Source.Identity != 8 || !slices.Contains(flow.Source.Labels, "reserved:ingress") ||
 			flow.Destination.Namespace != "private-mail" || flow.Destination.Pod != "private-mail-0" || flow.IP.Destination != destination.String() ||
 			flow.L4.TCP.Port != 8080 || !flow.L4.TCP.Flags.SYN || flow.L4.TCP.Flags.ACK {

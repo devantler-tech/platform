@@ -19,6 +19,8 @@ func TestIngressFlowRequiresBoundWireEvidence(t *testing.T) {
 		valid     bool
 	}{
 		{"wire source", ingressFlowSample, true},
+		{"SNAT trace classified as egress", strings.Replace(ingressFlowSample, `"traffic_direction":"INGRESS"`, `"traffic_direction":"EGRESS"`, 1), true},
+		{"unknown direction", strings.Replace(ingressFlowSample, `"traffic_direction":"INGRESS"`, `"traffic_direction":"TRAFFIC_DIRECTION_UNKNOWN"`, 1), false},
 		{"duplicate observation", ingressFlowSample + "\n" + ingressFlowSample, true},
 		{"wrong destination", strings.Replace(ingressFlowSample, `"destination":"10.244.2.2"`, `"destination":"10.244.2.3"`, 1), false},
 		{"wrong pod", strings.Replace(ingressFlowSample, `"pod_name":"private-mail-0"`, `"pod_name":"other-0"`, 1), false},
