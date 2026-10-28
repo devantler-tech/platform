@@ -1,0 +1,50 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../private-mail-administration
+configMapGenerator:
+  - name: email-client-proxy
+    namespace: private-mail
+    files:
+      - Caddyfile
+# The adapter uses the same signed bootstrap publication as the native process.
+# Inheriting a parent image transformer alone does not pin a newly added sidecar.
+replacements:
+  - source:
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+      fieldPath: spec.template.spec.containers.[name=private-mail].image
+    targets:
+      - select:
+          kind: StatefulSet
+          name: private-mail
+          namespace: private-mail
+        fieldPaths:
+          - spec.template.spec.containers.[name=client-proxy].image
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/configure-proxy-transport.yaml
+  - path: patches/add-client-proxy.yaml
+  - path: patches/isolate-client-proxy.yaml
+  - target:
+      version: v1
+      kind: Service
+      name: private-mail
+      namespace: private-mail
+    path: patches/target-client-proxy.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/trusted-client-header.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/use-direct-email-dns.yaml

@@ -68,13 +68,17 @@ func loadInputs(dir string) (inputs, error) {
 			return fail()
 		}
 		seen[name] = true
-		if name == "useForwardedClientIP" {
+		if name == "useForwardedClientIP" || name == "useProxyClientIP" {
 			value, decodeErr := d.Token()
 			forwarded, valid := value.(bool)
 			if decodeErr != nil || !valid {
 				return fail()
 			}
-			v.UseForwardedClientIP = forwarded
+			if name == "useForwardedClientIP" {
+				v.UseForwardedClientIP = forwarded
+			} else {
+				v.UseProxyClientIP = forwarded
+			}
 			continue
 		}
 		if name == "maintainerAliases" {
@@ -135,6 +139,8 @@ func command(args []string, log io.Writer) int {
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "", "private mounted configuration")
 	output := f.String("output-file", "", "new private plan in memory-backed storage")
+	var proxy proxyOption
+	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
 	fail := func() int { _, _ = fmt.Fprintln(log, errConfiguration); return 2 }
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) || !filepath.IsAbs(*output) {
 		return fail()
@@ -142,6 +148,9 @@ func command(args []string, log io.Writer) int {
 	v, err := loadInputs(*dir)
 	if err != nil {
 		return fail()
+	}
+	if proxy.value != nil {
+		v.UseProxyClientIP = *proxy.value
 	}
 	b, err := render(v)
 	if err != nil {
