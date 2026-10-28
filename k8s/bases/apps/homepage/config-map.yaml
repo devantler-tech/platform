@@ -142,6 +142,8 @@ data:
         icon: mdi-shield-search
       Package Registries:
         icon: mdi-package-variant-closed
+      Marketplaces:
+        icon: mdi-storefront-outline
       Learning & Reference:
         icon: mdi-school
       Streaming:
@@ -192,6 +194,27 @@ data:
             icon: si-githubactions-#2088FF
             href: https://github.com/orgs/devantler-tech/actions/metrics/performance
             description: Actions run times, queue times and failure rates.
+        - GitHub Ruleset Dashboard:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/rules/dashboard
+            description: Organization-wide rule evaluation trends and bypasses.
+        - GitHub Ruleset Insights:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/rules/insights
+            description: Detailed rule evaluations across organization repositories.
+    - Governance:
+        - GitHub Rulesets:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/rules
+            description: Organization-wide repository rules.
+        - GitHub Repository Properties:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/custom-properties
+            description: Organization-wide repository metadata.
+        - GitHub Audit Log:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/audit-log
+            description: Organization activity and configuration history.
     - Cloud:
         - Hetzner Cloud:
             icon: hetzner
@@ -299,6 +322,9 @@ data:
         - GitHub Security:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/security/overview
+        - GitHub Code Quality:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/security/quality
         - Codex Findings:
             - icon: si-openai-#412991
               href: https://chatgpt.com/codex/cloud/security/findings
@@ -336,6 +362,10 @@ data:
         - skills.sh:
             - icon: mdi-certificate-outline
               href: https://skills.sh
+    - Marketplaces:
+        - GitHub Marketplace:
+            - icon: si-github-#181717
+              href: https://github.com/marketplace
     - Learning & Reference:
         - KodeKloud:
             - icon: mdi-school-outline
