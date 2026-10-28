@@ -61,7 +61,7 @@ refute_text() {
 }
 
 # ---------------------------------------------------------------------------
-# Fake talosctl: serves `get <type> -o json` from a fixture tree, and `ls /` as
+# Fake talosctl: serves resource output from a fixture tree, and `ls /` as
 # the reachability probe.
 #
 # Three behaviours mirror the real tool because the script depends on each:
@@ -101,7 +101,18 @@ while [[ "$#" -gt 0 ]]; do
       resource="${FIXTURES}/${node}/resources/${type}"
       # No instances of this type: exit 0, emit nothing.
       [[ -f "${resource}" ]] || exit 0
-      cat "${resource}"
+      if [[ " $* " == *" -o yaml "* ]]; then
+        # Native YAML keeps zero-prefixed IDs. Emit one document per resource.
+        jq -c . "${resource}" | while IFS= read -r doc; do
+          printf '%s\n' '---'
+          printf '%s\n' "$doc" | yq -P '.metadata.id style = ""'
+        done
+      elif [[ -f "${FIXTURES}/${node}/lossy_json_ids" ]]; then
+        # Talos 1.13.11's untyped YAML-to-JSON path reads 0010 as octal 8.
+        jq '.metadata.id |= (if . == "0010" then 8 elif test("^[0-9]+$") then tonumber else . end)' "${resource}"
+      else
+        cat "${resource}"
+      fi
       exit 0
       ;;
     ls)
@@ -255,6 +266,11 @@ require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
 require_text "${output}" '11 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
+
+healthy_node wireids
+touch "${fixtures}/wireids/lossy_json_ids"
+output="$(run_script TALOS_NODES=wireids 2>&1)" || fail 'native zero-prefixed resource IDs must retain their declaration order'
+require_text "${output}" 'with exact declared decisions' 'native ID parsing still compares all decisions'
 
 # Exercise the workflow's normal build path rather than only an injected
 # compiled helper, and refuse an unavailable comparator before inspecting nodes.
