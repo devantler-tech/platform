@@ -117,6 +117,7 @@ case "$*" in
    printf '%s' "$OPENBAO_RECOVERY_DIR" > "$SYNTHETIC_CASE_DIR/scratch"
    [[ $SYNTHETIC_CASE != collection-failure ]] || exit 7
    printf '%s' synthetic-recovered-root > "$OPENBAO_RECOVERY_DIR/root-token"
+   printf '%s' synthetic-verified-records > "$OPENBAO_RECOVERY_DIR/expected.json"
    if [[ $SYNTHETIC_CASE == collection-format ]]; then printf '%s\n' synthetic-private-input; else printf '%s\n' OPENBAO_BACKUP_INPUTS=PASS; fi;;
  image) printf '%s\n' synthetic-pinned-server;;
  *) exit 91;;
@@ -134,6 +135,7 @@ fi
 				"scripts/prepare-email-credentials.sh": `#!/bin/bash
 set -eu
 [[ -f $SYNTHETIC_CASE_DIR/restored && $EMAIL_CUSTODY_MODE == copy && $BAO_ADDR == http://127.0.0.1:38200 && $EMAIL_CUSTODY_TOKEN_FILE == "$EMAIL_CUSTODY_WORK_DIR/root-token" && $(cat "$EMAIL_CUSTODY_TOKEN_FILE") == synthetic-recovered-root ]] || exit 91
+[[ $EMAIL_CUSTODY_EXPECTED_FILE == "$EMAIL_CUSTODY_WORK_DIR/expected.json" && $(cat "$EMAIL_CUSTODY_EXPECTED_FILE") == synthetic-verified-records ]] || exit 91
 touch "$SYNTHETIC_CASE_DIR/copied"
 case "$SYNTHETIC_CASE" in
  copy-failure) exit 7;;
