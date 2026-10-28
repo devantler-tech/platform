@@ -395,6 +395,8 @@ jobs:
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
               - '.github/workflows/publish-kubescape-storage-hotfix.yaml'
+              - 'scripts/tests/test-kyverno-background-hotfix.sh'
+              - '.github/workflows/publish-kyverno-background-hotfix.yaml'
               - 'scripts/tests/test-coroot-node-agent-hotfix.sh'
               - '.github/workflows/publish-coroot-node-agent-hotfix.yaml'
               - 'k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile'
@@ -3087,6 +3089,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kubescape-storage-hotfix.sh
           bash scripts/tests/test-kubescape-storage-hotfix.sh
+
+      - name: 🧹 Validate Kyverno background compatibility image
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-kyverno-background-hotfix.sh
+          bash scripts/tests/test-kyverno-background-hotfix.sh
 
       - name: 🔭 Validate Coroot node-agent compatibility image
         if: needs.changes.outputs.k8s == 'true'

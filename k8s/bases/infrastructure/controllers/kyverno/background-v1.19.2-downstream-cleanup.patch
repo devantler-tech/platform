@@ -1,0 +1,232 @@
+diff --git a/pkg/background/gpol/downstream_absent_test.go b/pkg/background/gpol/downstream_absent_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..e368d5a20f0eae5d8e822ef6e59d95e833ac40a3
+--- /dev/null
++++ b/pkg/background/gpol/downstream_absent_test.go
+@@ -0,0 +1,189 @@
++package gpol
++
++import (
++	"context"
++	"errors"
++	"fmt"
++	"strings"
++	"testing"
++
++	"github.com/go-logr/logr/funcr"
++	kyvernov1 "github.com/kyverno/kyverno/api/kyverno/v1"
++	"github.com/kyverno/kyverno/pkg/background/common"
++	"github.com/stretchr/testify/require"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/types"
++)
++
++type absentCloneClient struct {
++	*MockClient
++	downstream unstructured.Unstructured
++}
++
++func (c *absentCloneClient) ListResource(_ context.Context, _, _, _ string, selector *metav1.LabelSelector) (*unstructured.UnstructuredList, error) {
++	if selector == nil || selector.MatchLabels[common.GenerateSourceUIDLabel] != "source" {
++		return nil, errors.New("unexpected clone selector")
++	}
++	return &unstructured.UnstructuredList{Items: []unstructured.Unstructured{c.downstream}}, nil
++}
++
++func TestAlreadyAbsentPolicyAndCloneCleanup(t *testing.T) {
++	t.Parallel()
++	gvr := schema.GroupVersionResource{Group: "example.test", Version: "v1", Resource: "things"}
++	missing := apierrors.NewNotFound(gvr.GroupResource(), "owned")
++	for _, operation := range []string{"policy-removed", "clone-source-deleted"} {
++		for _, result := range []struct {
++			name string
++			err  error
++			gone bool
++		}{
++			{"deleted", nil, true},
++			{"already-absent", missing, true},
++			{"wrapped-already-absent", fmt.Errorf("delete: %w", missing), true},
++			{"endpoint-not-found", apierrors.NewNotFound(gvr.GroupResource(), ""), false},
++			{"different-object-not-found", apierrors.NewNotFound(gvr.GroupResource(), "another-object"), false},
++			{"different-api-group-not-found", apierrors.NewNotFound(schema.GroupResource{Group: "another.test", Resource: "things"}, "owned"), false},
++			{"unidentified-not-found", &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonNotFound, Code: 404}}, false},
++			{"forbidden", apierrors.NewForbidden(gvr.GroupResource(), "owned", errors.New("denied")), false},
++			{"conflict", apierrors.NewConflict(gvr.GroupResource(), "owned", errors.New("changed")), false},
++			{"unrelated-failure", errors.New("unavailable"), false},
++		} {
++			t.Run(operation+"/"+result.name, func(t *testing.T) {
++				t.Parallel()
++				obj := makeUnstructured("", "example.test", "v1", "Thing", "owned", "fixture", "owned", map[string]string{common.GeneratePolicyLabel: "policy"})
++				if operation == "clone-source-deleted" {
++					obj.SetLabels(map[string]string{common.GeneratePolicyLabel: "policy", common.GenerateSourceUIDLabel: "source"})
++				}
++				other := makeUnstructured("", "example.test", "v1", "Thing", "other", "fixture", "other", map[string]string{common.GeneratePolicyLabel: "another-policy"})
++				base := &MockClient{err: result.err}
++				client := &absentCloneClient{MockClient: base, downstream: *obj}
++				var failureLogs []string
++				logger := funcr.New(func(_, message string) {
++					if strings.Contains(message, "failed to delete") {
++						failureLogs = append(failureLogs, message)
++					}
++				}, funcr.Options{})
++				w := &watcher{metadataCache: map[types.UID]Resource{
++					"owned": {Name: "owned", Namespace: "fixture", Labels: obj.GetLabels(), Data: obj},
++					"other": {Name: "other", Namespace: "fixture", Labels: other.GetLabels(), Data: other},
++				}}
++				wm := &WatchManager{client: client, log: logger,
++					dynamicWatchers: map[schema.GroupVersionResource]*watcher{gvr: w},
++					policyRefs:      map[string][]schema.GroupVersionResource{"policy": {gvr}, "another-policy": {gvr}},
++					refCount:        map[schema.GroupVersionResource]int{gvr: 2},
++				}
++				cleanup := func() {
++					if operation == "policy-removed" {
++						wm.RemoveWatchersForPolicy("policy", true)
++					} else {
++						source := makeUnstructured("", "example.test", "v1", "Thing", "source", "fixture", "source", nil)
++						wm.handleDelete(source, gvr)
++					}
++				}
++				cleanup()
++				require.Contains(t, w.metadataCache, types.UID("other"))
++				require.Equal(t, []string{"Thing/fixture/owned"}, base.deleted)
++				if result.gone {
++					require.NotContains(t, w.metadataCache, types.UID("owned"))
++					require.Empty(t, failureLogs)
++					cleanup()
++					require.Len(t, base.deleted, 1, "completed cleanup must be idempotent")
++				} else {
++					require.Len(t, failureLogs, 1, "real deletion failures must remain visible")
++					if operation == "clone-source-deleted" {
++						require.Contains(t, w.metadataCache, types.UID("owned"))
++						cleanup()
++						require.Len(t, base.deleted, 2)
++					}
++				}
++			})
++		}
++	}
++}
++
++func TestAlreadyAbsentDownstreamConverges(t *testing.T) {
++	t.Parallel()
++	gvr := schema.GroupVersionResource{Group: "example.test", Version: "v1", Resource: "things"}
++	missing := apierrors.NewNotFound(gvr.GroupResource(), "owned")
++	for _, operation := range []string{"trigger-deleted", "desired-set-changed", "watched-kind-removed"} {
++		for _, result := range []struct {
++			name string
++			err  error
++			gone bool
++		}{
++			{"deleted", nil, true},
++			{"already-absent", missing, true},
++			{"wrapped-already-absent", fmt.Errorf("delete: %w", missing), true},
++			{"endpoint-not-found", apierrors.NewNotFound(gvr.GroupResource(), ""), false},
++			{"different-object-not-found", apierrors.NewNotFound(gvr.GroupResource(), "another-object"), false},
++			{"different-api-group-not-found", apierrors.NewNotFound(schema.GroupResource{Group: "another.test", Resource: "things"}, "owned"), false},
++			{"unidentified-not-found", &apierrors.StatusError{ErrStatus: metav1.Status{Reason: metav1.StatusReasonNotFound, Code: 404}}, false},
++			{"forbidden", apierrors.NewForbidden(gvr.GroupResource(), "owned", errors.New("denied")), false},
++			{"conflict", apierrors.NewConflict(gvr.GroupResource(), "owned", errors.New("changed")), false},
++			{"unrelated-failure", errors.New("unavailable"), false},
++		} {
++			t.Run(operation+"/"+result.name, func(t *testing.T) {
++				t.Parallel()
++				cached := func(name, policy, trigger string) Resource {
++					obj := &unstructured.Unstructured{}
++					obj.SetAPIVersion("example.test/v1")
++					obj.SetKind("Thing")
++					obj.SetName(name)
++					obj.SetNamespace("fixture")
++					obj.SetUID(types.UID(name))
++					obj.SetLabels(map[string]string{common.GeneratePolicyLabel: policy, common.GenerateTriggerUIDLabel: trigger})
++					return Resource{Name: name, Namespace: "fixture", Labels: obj.GetLabels(), Data: obj}
++				}
++				client := &MockClient{err: result.err}
++				var failureLogs []string
++				logger := funcr.New(func(_, message string) {
++					if strings.Contains(message, "failed to delete") {
++						failureLogs = append(failureLogs, message)
++					}
++				}, funcr.Options{})
++				w := &watcher{metadataCache: map[types.UID]Resource{
++					"owned":         cached("owned", "policy", "trigger"),
++					"other-policy":  cached("other-policy", "another-policy", "trigger"),
++					"other-trigger": cached("other-trigger", "policy", "another-trigger"),
++				}}
++				wm := &WatchManager{
++					client: client, log: logger,
++					dynamicWatchers: map[schema.GroupVersionResource]*watcher{gvr: w},
++					policyRefs:      map[string][]schema.GroupVersionResource{"policy": {gvr}, "another-policy": {gvr}},
++					refCount:        map[schema.GroupVersionResource]int{gvr: 2},
++				}
++				cleanup := func() {
++					trigger := &kyvernov1.ResourceSpec{UID: "trigger"}
++					switch operation {
++					case "trigger-deleted":
++						wm.DeleteDownstreams("policy", trigger)
++					case "desired-set-changed":
++						wm.CleanupStaleDownstreams("policy", trigger, nil)
++					case "watched-kind-removed":
++						require.NoError(t, wm.SyncWatchers("policy", trigger, nil))
++					}
++				}
++				cleanup()
++				_, present := w.metadataCache["owned"]
++				require.Equal(t, !result.gone, present, "cache must reflect the deletion outcome")
++				require.Contains(t, w.metadataCache, types.UID("other-policy"))
++				require.Contains(t, w.metadataCache, types.UID("other-trigger"))
++				require.Equal(t, []string{"Thing/fixture/owned"}, client.deleted)
++				if result.gone {
++					require.Empty(t, failureLogs, "completed cleanup must not report a failed deletion")
++				} else {
++					require.Len(t, failureLogs, 1, "real failures must remain visible")
++				}
++				cleanup()
++				if result.gone {
++					require.Len(t, client.deleted, 1, "repeat cleanup must not delete from a stale cache")
++				} else {
++					require.Len(t, client.deleted, 2, "real failures must retain retryable state")
++				}
++			})
++		}
++	}
++}
+diff --git a/pkg/background/gpol/dynamic_watcher.go b/pkg/background/gpol/dynamic_watcher.go
+index d1799f2bbf803542f0008119df4a2f77d042e094..dd67e465973bbdf59c0e08e34ed3ae22a8161e49 100644
+--- a/pkg/background/gpol/dynamic_watcher.go
++++ b/pkg/background/gpol/dynamic_watcher.go
+@@ -14,0 +15 @@ import (
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
+@@ -234 +235 @@ func (wm *WatchManager) SyncWatchers(policyName string, trigger *kyvernov1.Resou
+-					if err != nil {
++					if err != nil && !isDownstreamAbsent(err, res.Data) {
+@@ -311,0 +313,15 @@ func (wm *WatchManager) GetDownstreams(policyName string) []*unstructured.Unstru
++// isDownstreamAbsent requires the API's named-object response. A generic route
++// or resource-type 404 does not establish that the cached downstream is absent.
++func isDownstreamAbsent(err error, resource *unstructured.Unstructured) bool {
++	if resource == nil || resource.GetName() == "" || !apierrors.IsNotFound(err) {
++		return false
++	}
++	var status apierrors.APIStatus
++	if !errors.As(err, &status) {
++		return false
++	}
++	details := status.Status().Details
++	return details != nil && details.Name == resource.GetName() &&
++		details.Group == resource.GroupVersionKind().Group && details.Kind != ""
++}
++
+@@ -324 +340 @@ func (wm *WatchManager) DeleteDownstreams(policyName string, trigger *kyvernov1.
+-		if err != nil {
++		if err != nil && !isDownstreamAbsent(err, res.Data) {
+@@ -415 +431 @@ func (wm *WatchManager) CleanupStaleDownstreams(policyName string, trigger *kyve
+-			if err != nil {
++			if err != nil && !isDownstreamAbsent(err, res.Data) {
+@@ -458 +474 @@ func (wm *WatchManager) RemoveWatchersForPolicy(policyName string, deleteDownstr
+-							if err != nil {
++							if err != nil && !isDownstreamAbsent(err, res.Data) {
+@@ -704 +720 @@ func (wm *WatchManager) handleDelete(obj *unstructured.Unstructured, gvr schema.
+-					if err != nil {
++					if err != nil && !isDownstreamAbsent(err, &downstream) {
