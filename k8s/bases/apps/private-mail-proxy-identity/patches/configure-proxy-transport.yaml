@@ -1,12 +1,7 @@
-apiVersion: apps/v1
-kind: StatefulSet
-metadata:
-  name: private-mail
-  namespace: private-mail
-spec:
-  template:
-    spec:
-      initContainers:
-        - name: configure
-          args:
-            - --proxy-client-ip=true
+- op: test
+  path: /spec/template/spec/initContainers/0/name
+  value: configure
+- op: add
+  path: /spec/template/spec/initContainers/0/args
+  value:
+    - --proxy-client-ip=true
