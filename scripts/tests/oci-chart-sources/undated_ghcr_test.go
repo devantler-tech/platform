@@ -217,7 +217,8 @@ func TestUndatedGHCRDockerfileGuardRejectsLostDiscovery(t *testing.T) {
 			case "commented-from":
 				text = strings.Replace(text, "FROM "+dep.packageName+":", "# FROM "+dep.packageName+":", 1)
 			case "unresolved-version":
-				text = strings.Replace(text, dep.packageName+":1.28.1", dep.packageName+":${UNRESOLVED_VERSION}", 1)
+				reference := regexp.MustCompile(regexp.QuoteMeta(dep.packageName) + `:[^\s@]+`)
+				text = reference.ReplaceAllLiteralString(text, dep.packageName+":${UNRESOLVED_VERSION}")
 			}
 			if err := extractedAs(config, candidate, text); err == nil {
 				t.Fatal("accepted lost dependency discovery")
