@@ -16,10 +16,10 @@ cli='ghcr.io/stalwartlabs/cli:1.0.13@sha256:9a1e07307d6f890a193322c4b737fc086840
 cleanup() {
   local rc=$? cleanup_rc=0
   trap - EXIT
-  docker rm -fv "$name" > /dev/null 2>&1 || cleanup_rc=1
   if [ "$proxy_started" = 1 ]; then
     docker rm -fv "$proxy_name" > /dev/null 2>&1 || cleanup_rc=1
   fi
+  docker rm -fv "$name" > /dev/null 2>&1 || cleanup_rc=1
   docker network rm "$network" > /dev/null 2>&1 || cleanup_rc=1
   docker image rm "$name-bootstrap-image" > /dev/null 2>&1 || cleanup_rc=1
   rm -rf "$scratch"
