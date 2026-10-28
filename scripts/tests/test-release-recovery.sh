@@ -15,10 +15,7 @@ fail() {
 [[ -f "$workflow" ]] || fail 'recovery workflow is missing'
 yq -o=json '.' "$workflow" >"$work/workflow.json"
 yq -o=json '.' "$ci" >"$work/ci.json"
-fixture="$root/.github/actions/release-recovery-offline-fixture/action.yaml"
-[[ -f "$fixture" ]] || fail 'internal recovery fixture is missing'
-yq -o=json '.' "$fixture" >"$work/fixture.json"
-jq -n --slurpfile w "$work/workflow.json" --slurpfile c "$work/ci.json" --slurpfile f "$work/fixture.json" '{w:$w[0],c:$c[0],f:$f[0]}' >"$work/bundle.json"
+jq -n --slurpfile w "$work/workflow.json" --slurpfile c "$work/ci.json" '{w:$w[0],c:$c[0]}' >"$work/bundle.json"
 cat >"$work/guard.jq" <<'JQ'
   .w as $w | .c as $c | $w.jobs.recover as $j | $j.steps as $s | $w.jobs["offline-test"] as $o |
   def ordinary: .if == null and .["continue-on-error"] == null;
@@ -61,18 +58,8 @@ cat >"$work/guard.jq" <<'JQ'
   ($o.steps[1] | source) and ($o.steps[3] | build) and
   ([$o.steps[] | tostring | select(test("secrets\\.|outputs\\.token|github\\.token"))] | length == 0) and ([$o.steps[] | select(.env.GH_TOKEN != null)] | length == 0) and
   ($o.steps[4].run | contains("unset GH_TOKEN GITHUB_TOKEN")) and
-  .f == {name:"Internal release-recovery offline fixture",description:"Credential-free recovery validation generated from the production offline job",
-    inputs:($w.on.workflow_dispatch.inputs|with_entries(select(.key=="enable-recovery" or .key=="offline-test"))|map_values({description:.description,required:false,default:"false"})),
-    runs:{using:"composite",steps:($o.steps|map(. + {if:"inputs.enable-recovery == 'true' && inputs.offline-test == 'true'"}|if has("run") then .shell="bash" else . end))}} and
-  ($c.jobs["test-publish-release-recovery"] | .permissions == {contents:"read"} and .secrets == null and .uses == null and .if == null and .["runs-on"] == "ubuntu-latest" and (.steps|length)==2 and
-    (.steps | all(ordinary)) and
-    .steps[0].uses == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" and .steps[0].with["persist-credentials"] == false and
-    .steps[1].uses == "./.github/actions/release-recovery-offline-fixture" and .steps[1].with == {"enable-recovery":"true","offline-test":"true"}) and
-  ($c.jobs["test-publish-release-recovery-disabled"] | .permissions == {contents:"read"} and .secrets == null and .uses == null and .["runs-on"] == "ubuntu-latest" and (.steps|length)==3 and
-    (.steps | all(ordinary)) and
-    .steps[0].uses == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" and .steps[0].with["persist-credentials"] == false and
-    .steps[1].uses == "./.github/actions/release-recovery-offline-fixture" and .steps[1].with == null and
-    .steps[2].run == "test ! -e .devantler-tech-recovery && test ! -e \"$RUNNER_TEMP/publish-release-recovery\"") and
+  $c.jobs["test-publish-release-recovery"] == ($o|del(.if)|.name="🩹 Validate the release recovery build") and
+  ($c.jobs["test-publish-release-recovery-disabled"] | .if=="github.event_name == 'pull_request'" and .permissions=={contents:"read"} and .["runs-on"]=="ubuntu-latest" and .secrets==null and .uses==null and .["continue-on-error"]==null and (.steps|length)==2 and (.steps|all(ordinary)) and .steps[0].uses=="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" and .steps[0].with["persist-credentials"]==false and .steps[1].with==null and .steps[1].run=="bash scripts/tests/test-release-recovery.sh") and
   (["test-publish-release-recovery","test-publish-release-recovery-disabled"] | all(. as $job |
     ($c.jobs["ci-required-checks"].needs | index($job) != null) and
     ($c.jobs["ci-required-checks"].steps | any((.with["job-results"] // "") | contains("needs." + $job + ".result"))))) and
@@ -82,10 +69,27 @@ cat >"$work/guard.jq" <<'JQ'
 JQ
 jq -e -f "$work/guard.jq" "$work/bundle.json" >/dev/null || fail 'workflow authority, provenance or required coverage is unsafe'
 # Exercise the generator too; the independent parsed equality above is the oracle.
+cp "$ci" "$work/regenerated.yaml"
 bash "$root/scripts/generate-release-recovery-fixture.sh" "$workflow" "$work/regenerated.yaml"
 yq -o=json '.' "$work/regenerated.yaml" | jq -S . >"$work/regenerated.json"
-jq -S . "$work/fixture.json" >"$work/checked.json"
+jq -S . "$work/ci.json" >"$work/checked.json"
 cmp -s "$work/regenerated.json" "$work/checked.json" || fail 'internal recovery fixture needs regeneration'
+# Evaluate the shipped, strictly admitted offline condition in all four boolean
+# states. This runs the default-off test, rather than skipping its CI job.
+offline_condition="$(yq -r '.jobs["offline-test"].if' "$workflow")"
+offline_enabled() {
+  local expression="${offline_condition//inputs.enable-recovery/$1}"
+  expression="${expression//inputs.offline-test/$2}"
+  bash -euo pipefail -c "$expression"
+}
+offline_enabled true true || fail 'explicitly enabled offline condition refused'
+for pair in 'false false' 'false true' 'true false'; do
+  # shellcheck disable=SC2086 # Split the fixed boolean pair, never repository text.
+  if offline_enabled $pair; then fail "offline condition admitted disabled flags: $pair"; fi
+done
+enable_default="$(yq -r '.on.workflow_dispatch.inputs["enable-recovery"].default' "$workflow")"
+offline_default="$(yq -r '.on.workflow_dispatch.inputs["offline-test"].default' "$workflow")"
+if offline_enabled "$enable_default" "$offline_default"; then fail 'default flags started the offline job'; fi
 # shellcheck disable=SC2016 # Keep GitHub expressions literal in refusal controls.
 for mutation in \
   '.w.on.workflow_call={}' \
@@ -119,20 +123,13 @@ for mutation in \
   '.c.jobs["test-publish-release-recovery"].secrets="inherit"' \
   '.c.jobs["test-publish-release-recovery"].steps[1].if="false"' \
   '.c.jobs["test-publish-release-recovery"].steps[1]["continue-on-error"]=true' \
-  '.c.jobs["test-publish-release-recovery"].steps[0].with["persist-credentials"]=true' \
-  '.c.jobs["test-publish-release-recovery-disabled"].steps[2].if="false"' \
+  '.c.jobs["test-publish-release-recovery"].steps[0].with["egress-policy"]="block"' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[1].if="false"' \
   '.c.jobs["test-publish-release-recovery"].steps[1].with["offline-test"]=false' \
   '.c.jobs["test-publish-release-recovery-disabled"].steps[1].with["enable-recovery"]=true' \
   '.c.jobs["ci-required-checks"].needs |= map(select(. != "test-publish-release-recovery"))' \
   '.c.jobs["ci-required-checks"].steps |= map(if .with["job-results"] then .with["job-results"] |= sub("needs.test-publish-release-recovery-disabled.result"; "") else . end)' \
   '.c.jobs["validate-repository-guards"].steps |= map(select(.run != "bash scripts/tests/test-release-recovery.sh"))' \
-  '.f.jobs.recover=.w.jobs.recover' \
-  '.f.on.workflow_call.secrets.APP_PRIVATE_KEY={required:false}' \
-  '.f.runs.permissions.contents="write"' \
-  '.f.runs.steps[1].env.CATALOGUE_SHA="main"' \
-  '.f.runs.steps |= del(.[3])' \
-  '.f.runs.steps[4].if="false"' \
-  '.f.inputs["offline-test"].default=true' \
   '.c.jobs["test-publish-release-recovery"].uses="./.github/workflows/publish-release-recovery.yaml"'; do
   jq "$mutation" "$work/bundle.json" >"$work/mutated.json"
   if jq -e -f "$work/guard.jq" "$work/mutated.json" >/dev/null; then fail "accepted mutation: $mutation"; fi

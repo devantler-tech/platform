@@ -756,22 +756,81 @@ jobs:
   # Repository-wide guards run unconditionally alongside changes, render production and run
   # ShellCheck. Deployment and the required gate both wait for this job's success.
   # kubectl is pinned and checksum-verified; yq and jq come from the ubuntu-latest runner.
+  # BEGIN GENERATED RELEASE RECOVERY FIXTURES
   test-publish-release-recovery:
-    name: 🩹 Validate the release recovery build
+    name: "\U0001FA79 Validate the release recovery build"
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    permissions:
-      contents: read
+    permissions: {}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: "\U0001F6E1️ Harden runner"
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
-          persist-credentials: false
-      - uses: ./.github/actions/release-recovery-offline-fixture
+          egress-policy: audit
+      - name: "\U0001F4D1 Download immutable recovery source"
+        shell: bash
+        env:
+          CATALOGUE_REPOSITORY: devantler-tech/.github
+          CATALOGUE_SHA: f558e3ababb474ac0e6f27d988ce8c876a525196
+        run: |
+          set -euo pipefail
+          [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::invalid catalogue source' >&2
+            exit 1
+          }
+          env -i PATH="$PATH" curl --disable --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 --retry 3 \
+            --output "$RUNNER_TEMP/recovery.tar.gz" \
+            "https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA"
+          mkdir .devantler-tech-recovery
+          tar --extract --gzip --file="$RUNNER_TEMP/recovery.tar.gz" \
+            --strip-components=1 --directory=.devantler-tech-recovery
+          for source_file in go.mod main.go cmd/publish-release-recovery/main.go; do
+            [[ -f ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" &&
+              ! -L ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" ]] || {
+              echo '::error::incomplete recovery source' >&2
+              exit 1
+            }
+          done
+      - name: "\U0001F4E6 Setup Go"
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          enable-recovery: "true"
-          offline-test: "true"
+          go-version: "1.26.9"
+          cache: false
+      - name: "\U0001F528 Build without credentials"
+        env:
+          GOWORK: "off"
+          GOFLAGS: ""
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$RUNNER_TEMP/inspect-release-recovery" .
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$RUNNER_TEMP/publish-release-recovery" ./cmd/publish-release-recovery
+      - name: "\U0001F9EA Refuse publication without a credential"
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset GH_TOKEN GITHUB_TOKEN
+          if "$RUNNER_TEMP/publish-release-recovery" \
+            --repository devantler-tech/platform --tag v1.2.3 --source-sha "$(printf 'a%.0s' {1..40})" \
+            --run-id 1 --run-attempt 1 \
+            --producer-ref "devantler-tech/.github/.github/workflows/create-release.yaml@$(printf 'b%.0s' {1..40})" \
+            > "$RUNNER_TEMP/refusal.out" 2> "$RUNNER_TEMP/refusal.err"; then
+            echo '::error::the publisher ran without a credential' >&2
+            exit 1
+          fi
+          grep -Fq 'a non-empty GH_TOKEN without whitespace is required' "$RUNNER_TEMP/refusal.err" || {
+            echo '::error::the publisher stopped for an unexpected reason' >&2
+            cat "$RUNNER_TEMP/refusal.err" >&2
+            exit 1
+          }
+          [[ ! -s "$RUNNER_TEMP/refusal.out" ]] || {
+            echo '::error::the refused publisher printed a result' >&2
+            exit 1
+          }
+  # END GENERATED RELEASE RECOVERY FIXTURES
 
-  # Default-off is a PR observation; its action must not download or build the publisher.
   test-publish-release-recovery-disabled:
     if: github.event_name == 'pull_request'
     name: 🩹 Validate default-off release recovery
@@ -783,9 +842,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/release-recovery-offline-fixture
-      - name: Confirm that the default-off action did nothing
-        run: test ! -e .devantler-tech-recovery && test ! -e "$RUNNER_TEMP/publish-release-recovery"
+      - name: Exercise the default-off condition and refusal controls
+        run: bash scripts/tests/test-release-recovery.sh
 
   validate-repository-guards:
     name: 🛡️ Validate Repository Guards
