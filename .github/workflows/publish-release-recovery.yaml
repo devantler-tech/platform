@@ -87,7 +87,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: f558e3ababb474ac0e6f27d988ce8c876a525196
+          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -164,6 +164,39 @@ jobs:
               ;;
           esac
           printf 'diagnosis=%s\nmissing=%s\n' "$diagnosis" "$missing" >> "$GITHUB_OUTPUT"
+      - name: 🛑 Verify the read-only credential cannot authorize publication
+        id: read-only-refusal
+        if: steps.read-admission.outputs.missing == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.read-token.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          [[ "$REPOSITORY" == devantler-tech/platform && "$DEFAULT_BRANCH" == main && -n "$GH_TOKEN" ]] || {
+            echo '::error::invalid read-only permission-control scope' >&2
+            exit 1
+          }
+          umask 077
+          probe_dir="$(mktemp -d "$RUNNER_TEMP/release-writer-probe.XXXXXX")"
+          trap 'rm -rf "$probe_dir"' EXIT
+          jq -n --arg branch "$DEFAULT_BRANCH" \
+            '{tag_name:"release-recovery-capability-probe",target_commitish:$branch}' > "$probe_dir/request.json"
+          status="$(env -i PATH="$PATH" curl --disable --silent --show-error \
+            --proto '=https' --connect-timeout 10 --max-time 30 --max-filesize 1048576 \
+            --request POST --header "Authorization: Bearer $GH_TOKEN" \
+            --header 'Accept: application/vnd.github+json' --header 'Content-Type: application/json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' --data-binary "@$probe_dir/request.json" \
+            --output "$probe_dir/response.json" --write-out '%{http_code}' \
+            "https://api.github.com/repos/$REPOSITORY/releases/generate-notes")"
+          if ! jq -se --arg status "$status" 'length == 1 and (.[0] |
+            ($status == "403" and .message == "Resource not accessible by integration") or
+            ($status == "404" and .message == "Not Found"))' "$probe_dir/response.json" > /dev/null 2>&1; then
+            echo '::error::read-only capability refusal was not established; no writer credential requested' >&2
+            exit 1
+          fi
+          printf 'Read-only credential refused by the non-persisting writer capability endpoint.\n'
       - name: 🔑 Obtain repository-scoped publication token
         id: write-token
         if: steps.read-admission.outputs.missing == 'true'
@@ -210,7 +243,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: f558e3ababb474ac0e6f27d988ce8c876a525196
+          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
