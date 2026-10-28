@@ -74,16 +74,17 @@ func recordValue(raw json.RawMessage) (map[string]any, bool) {
 	if d.Decode(&v) != nil || d.Decode(new(any)) != io.EOF || len(v) == 0 {
 		return nil, false
 	}
-	for _, field := range []string{"username", "password"} {
-		text, ok := v[field].(string)
-		if !ok || text == "" {
+	// The declared PushSecrets seed a password-only record. Account identity is
+	// bound by the fixed credential path; an optional username is metadata.
+	password, ok := v["password"].(string)
+	if !ok || !regexp.MustCompile(`^[!-~]{40,256}$`).MatchString(password) || strings.HasPrefix(password, "REPLACE_") || strings.HasPrefix(password, "CHANGE_ME") {
+		return nil, false
+	}
+	if value, present := v["username"]; present {
+		username, ok := value.(string)
+		if !ok || !regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,254}$`).MatchString(username) {
 			return nil, false
 		}
-	}
-	username := v["username"].(string)
-	password := v["password"].(string)
-	if !regexp.MustCompile(`^[A-Za-z0-9._@+-]{1,254}$`).MatchString(username) || !regexp.MustCompile(`^[!-~]{40,256}$`).MatchString(password) || strings.HasPrefix(password, "REPLACE_") || strings.HasPrefix(password, "CHANGE_ME") {
-		return nil, false
 	}
 	return v, true
 }
