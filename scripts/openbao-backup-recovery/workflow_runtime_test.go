@@ -26,7 +26,7 @@ func TestRecoveryWorkflowExcludesClusterCredentials(t *testing.T) {
 		t.Fatal("cannot read guarded recovery workflow")
 	}
 	body := workflow.Jobs["verify"].Steps[4].Run
-	for _, tc := range []string{"matching", "collection-refused", "private-result", "changed-main"} {
+	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "private-collection-stage", "private-result", "restore-stage", "private-restore-stage", "changed-main"} {
 		t.Run(tc, func(t *testing.T) {
 			dir, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -66,6 +66,8 @@ if [[ $1 == image ]]; then printf '%s\n' '` + serverImage + `'; exit 0; fi
 printf '%s' "$OPENBAO_RECOVERY_DIR" > "$FIXTURE_DIR/proof-path"
 for name in root-token unseal-key expected.json snapshot.snap; do printf '%s' synthetic > "$OPENBAO_RECOVERY_DIR/$name"; done
 if [[ $FIXTURE_CASE == collection-refused ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; exit 91; fi
+if [[ $FIXTURE_CASE == collection-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=snapshot-download' >&2; exit 91; fi
+if [[ $FIXTURE_CASE == private-collection-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=PRIVATE_SYNTHETIC_PAYLOAD' >&2; exit 91; fi
 printf '%s\n' OPENBAO_BACKUP_INPUTS=PASS
 `,
 				"scripts/run-openbao-backup-sandbox.sh": `#!/bin/bash
@@ -74,6 +76,8 @@ printf '%s' reached > "$FIXTURE_DIR/sandbox-started"
 [[ $1 == verify ]] || exit 91
 if [[ -e $2/kubeconfig ]]; then printf '%s' exposed > "$FIXTURE_DIR/kubeconfig-exposed"; printf '%s\n' PRIVATE_SYNTHETIC_CLUSTER_CREDENTIAL >&2; exit 91; fi
 for name in root-token unseal-key expected.json snapshot.snap; do [[ -s $2/$name ]] || exit 91; done
+if [[ $FIXTURE_CASE == restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=unseal'; exit 91; fi
+if [[ $FIXTURE_CASE == private-restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=PRIVATE_SYNTHETIC_PAYLOAD'; exit 91; fi
 if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; else printf '%s\n' 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3'; fi
 `,
 			}
@@ -98,6 +102,15 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 			if tc == "matching" && strings.TrimSpace(string(out)) != "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3" {
 				t.Fatal("workflow accepted an unverified result")
 			}
+			if tc == "collection-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=snapshot-download") {
+				t.Fatal("workflow hid the safe collection failure stage")
+			}
+			if tc == "restore-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_RESTORE=FAIL stage=unseal") {
+				t.Fatal("workflow hid the safe restoration failure stage")
+			}
+			if tc != "matching" && !strings.Contains(string(out), "OPENBAO_BACKUP_STAGE=") {
+				t.Fatal("workflow did not identify its bounded phase of refusal")
+			}
 			proof, readErr := os.ReadFile(filepath.Join(dir, "proof-path"))
 			if readErr == nil {
 				if _, statErr := os.Stat(string(proof)); !os.IsNotExist(statErr) {
@@ -105,7 +118,7 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 				}
 			}
 			_, sandboxErr := os.Stat(filepath.Join(dir, "sandbox-started"))
-			if (sandboxErr == nil) != (tc == "matching" || tc == "private-result") {
+			if (sandboxErr == nil) != (tc == "matching" || tc == "private-result" || tc == "restore-stage" || tc == "private-restore-stage") {
 				t.Fatal("workflow reached sandbox after a refused collection or stale main")
 			}
 		})

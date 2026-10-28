@@ -68,8 +68,14 @@ jobs:
           set -euo pipefail
           umask 077
           ulimit -c 0
-          fail() { printf '%s\n' 'OPENBAO_BACKUP_RESTORE=UNVERIFIED' >&2; exit 2; }
+          stage=workspace
+          fail() {
+            printf 'OPENBAO_BACKUP_STAGE=%s\n' "$stage" >&2
+            printf '%s\n' 'OPENBAO_BACKUP_RESTORE=UNVERIFIED' >&2
+            exit 2
+          }
           [[ $(id -u) != 0 && $(findmnt -n -o FSTYPE --target /dev/shm) == tmpfs ]] || fail
+          stage=current-source
           latest=$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main) || fail
           [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || fail
           proof_dir=$(mktemp -d /dev/shm/openbao-recovery.XXXXXXXX)
@@ -87,6 +93,7 @@ jobs:
           export KUBECONFIG="$proof_dir/kubeconfig"
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
           unset KUBE_CONFIG
+          stage=stable-api
           if ! (
             if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
               exit 1
@@ -95,6 +102,7 @@ jobs:
             fail
           fi
           unset HCLOUD_TOKEN
+          stage=live-connection
           kubectl --context=admin@prod -n openbao port-forward --address=127.0.0.1 service/openbao-active 38200:8200 > "$proof_dir/forward.log" 2>&1 &
           forward_pid=$!
           ready=false
@@ -109,16 +117,27 @@ jobs:
           done
           [[ "$ready" == true ]] || fail
           export OPENBAO_RECOVERY_DIR="$proof_dir"
-          if ! "$binary" collect > "$proof_dir/collection-result" 2>"$proof_dir/collection.log"; then fail; fi
+          stage=collection
+          if ! "$binary" collect > "$proof_dir/collection-result" 2>"$proof_dir/collection.log"; then
+            grep -E '^OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=(private-workspace|snapshot-job-read|snapshot-job-admission|live-health|deployment-inputs|backup-target|recovery-inputs|live-records|snapshot-download|private-handoff|collection)$' "$proof_dir/collection.log" >&2 || true
+            fail
+          fi
           [[ $(cat "$proof_dir/collection-result") == OPENBAO_BACKUP_INPUTS=PASS ]] || fail
+          stage=private-handoff
           kill "$forward_pid" 2>/dev/null || fail
           wait "$forward_pid" 2>/dev/null || true
           forward_pid=''
           unset OPENBAO_RECOVERY_DIR KUBECONFIG
           rm -- "$proof_dir/kubeconfig"
+          stage=image
           image=$("$binary" image) || fail
           if ! docker pull "$image" > "$proof_dir/pull.log" 2>&1; then fail; fi
-          if ! bash scripts/run-openbao-backup-sandbox.sh verify "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then fail; fi
+          stage=isolated-restore
+          if ! bash scripts/run-openbao-backup-sandbox.sh verify "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then
+            grep -E '^OPENBAO_BACKUP_RESTORE=FAIL stage=(mode|sandbox|server|initialization|inputs|snapshot|restore|seal|unseal|records|membership|restored_state|fixture|verification)$' "$proof_dir/verification-result" >&2 || true
+            fail
+          fi
+          stage=proof-format
           result=$(cat "$proof_dir/verification-result")
           [[ "$result" == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]] || fail
           printf '%s\n' "$result"
