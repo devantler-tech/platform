@@ -6,6 +6,7 @@ metadata:
 spec:
   template:
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: client-proxy
           image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
