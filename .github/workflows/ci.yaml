@@ -4026,6 +4026,14 @@ jobs:
             bash scripts/tests/test-kubescape-runtime-rules-switch.sh
           fi
 
+      # The controller renderer above retains its audited compiler and binary.
+      # The new HTTP probe uses the root module's patched standard library.
+      - name: ⚙️ Setup the repository Go toolchain for the streaming probe
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: 🧩 Verify Hubble UI streaming with the pinned frontend runtime
         env:
           BASE_SHA: >-
