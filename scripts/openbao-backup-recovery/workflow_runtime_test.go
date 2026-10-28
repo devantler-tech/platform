@@ -26,7 +26,7 @@ func TestRecoveryWorkflowExcludesClusterCredentials(t *testing.T) {
 		t.Fatal("cannot read guarded recovery workflow")
 	}
 	body := workflow.Jobs["verify"].Steps[4].Run
-	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "private-collection-stage", "private-result", "restore-stage", "restore-runtime-stage", "private-restore-stage", "changed-main", "missing-cluster-config"} {
+	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "recovery-key-stage", "private-collection-stage", "private-result", "restore-stage", "restore-runtime-stage", "private-restore-stage", "changed-main", "missing-cluster-config"} {
 		t.Run(tc, func(t *testing.T) {
 			dir, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -67,6 +67,7 @@ printf '%s' "$OPENBAO_RECOVERY_DIR" > "$FIXTURE_DIR/proof-path"
 for name in root-token unseal-key expected.json snapshot.snap; do printf '%s' synthetic > "$OPENBAO_RECOVERY_DIR/$name"; done
 if [[ $FIXTURE_CASE == collection-refused ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; exit 91; fi
 if [[ $FIXTURE_CASE == collection-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=snapshot-download' >&2; exit 91; fi
+if [[ $FIXTURE_CASE == recovery-key-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=recovery-key-download' >&2; exit 91; fi
 if [[ $FIXTURE_CASE == private-collection-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=PRIVATE_SYNTHETIC_PAYLOAD' >&2; exit 91; fi
 printf '%s\n' OPENBAO_BACKUP_INPUTS=PASS
 `,
@@ -108,6 +109,9 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 			}
 			if tc == "collection-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=snapshot-download") {
 				t.Fatal("workflow hid the safe collection failure stage")
+			}
+			if tc == "recovery-key-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=recovery-key-download") {
+				t.Fatal("workflow hid the bounded independent-key failure stage")
 			}
 			if tc == "restore-stage" && !strings.Contains(string(out), "OPENBAO_BACKUP_RESTORE=FAIL stage=unseal") {
 				t.Fatal("workflow hid the safe restoration failure stage")

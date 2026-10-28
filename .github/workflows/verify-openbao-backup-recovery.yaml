@@ -121,7 +121,7 @@ jobs:
           stage=collection
           if ! "$binary" collect > "$proof_dir/collection-result" 2>"$proof_dir/collection.log"; then
             # Raw diagnostics stay private; only these closed failure codes leave scratch storage.
-            grep -E '^OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=(private-workspace|snapshot-job-read|snapshot-job-admission|live-health|deployment-inputs|backup-target|recovery-inputs|live-records|snapshot-download|private-handoff|collection)$' "$proof_dir/collection.log" >&2 || true
+            grep -E '^OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=(private-workspace|snapshot-job-read|snapshot-job-admission|live-health|deployment-inputs|backup-target|recovery-inputs|recovery-backup-read|recovery-backup-admission|recovery-key-download|live-records|snapshot-download|private-handoff|collection)$' "$proof_dir/collection.log" >&2 || true
             fail
           fi
           [[ $(cat "$proof_dir/collection-result") == OPENBAO_BACKUP_INPUTS=PASS ]] || fail
