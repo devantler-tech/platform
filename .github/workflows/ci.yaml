@@ -644,6 +644,7 @@ jobs:
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
               - 'scripts/build-controller-helm.sh'
+              - 'scripts/prepare-helm-render-input-capture.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
               # guard renders charts with the renderer the two entries above build.
@@ -3918,7 +3919,7 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck scripts/build-controller-helm.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4073,7 +4074,7 @@ jobs:
         # The fixture suite pulls no chart: a stand-in packages its fixture charts, and the
         # renderer built here renders them.
         run: |
-          shellcheck scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
+          shellcheck scripts/prepare-helm-render-input-capture.sh scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
