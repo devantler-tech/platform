@@ -72,7 +72,7 @@ func validateInventory(raw []byte) error {
 			return errConfiguration
 		}
 	}
-	if json.Unmarshal(response.Methods[0][1], &query) != nil || json.Unmarshal(response.Methods[1][1], &get) != nil || query.Total == nil || query.Position == nil || *query.Position != 0 || query.IDs == nil || *query.Total != len(query.IDs) || len(query.IDs) > 4 || get.List == nil || get.Missing == nil || len(get.Missing) != 0 || len(get.List) != len(query.IDs) {
+	if json.Unmarshal(response.Methods[0][1], &query) != nil || json.Unmarshal(response.Methods[1][1], &get) != nil || query.Total == nil || query.Position == nil || *query.Position != 0 || query.IDs == nil || *query.Total != len(query.IDs) || len(query.IDs) > 5 || get.List == nil || get.Missing == nil || len(get.Missing) != 0 || len(get.List) != len(query.IDs) {
 		return errConfiguration
 	}
 	ids, names := map[string]bool{}, map[string]bool{}
@@ -83,13 +83,20 @@ func validateInventory(raw []byte) error {
 		ids[id] = true
 	}
 	for _, item := range get.List {
-		if !ids[item.ID] || names[item.Name] || item.UseTLS == nil || item.ImplicitTLS == nil || item.ProxyNetworks == nil || item.DisabledTLS == nil || len(item.ProxyNetworks) != 0 || len(item.DisabledTLS) != 0 {
+		if !ids[item.ID] || names[item.Name] || item.UseTLS == nil || item.ImplicitTLS == nil || item.ProxyNetworks == nil || item.DisabledTLS == nil || len(item.DisabledTLS) != 0 {
+			return errConfiguration
+		}
+		localProxyTrust := item.Name == "client-proxy" && len(item.ProxyNetworks) == 1 && (item.ProxyNetworks["127.0.0.1"] || item.ProxyNetworks["127.0.0.1/32"])
+		if len(item.ProxyNetworks) != 0 && !localProxyTrust {
 			return errConfiguration
 		}
 		delete(ids, item.ID)
 		names[item.Name] = true
-		protocol, bind, tls, implicit := "", "", true, false
+		var protocol, bind string
+		tls, implicit := true, false
 		switch item.Name {
+		case "client-proxy":
+			protocol, bind, tls = "http", "127.0.0.1:18081", false
 		case "management":
 			protocol, bind, tls = "http", "0.0.0.0:8080", false
 		case "smtp-inbound":

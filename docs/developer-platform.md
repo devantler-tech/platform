@@ -19,6 +19,10 @@ The applications-first navigation and central action entry point are tracked in
 [the interface spike](https://github.com/devantler-tech/monorepo/issues/3703).
 That investigation does not require another hosted portal or a parallel catalog.
 
+## Release recovery
+
+Use the repository-owned [release recovery procedure](release-recovery.md) for an interrupted GitHub-only publication with an existing stable tag. Its manual workflow preserves the original tag and source and shares the normal release queue.
+
 ## Retiring the previous portal
 
 The stateless Backstage portal was retired on 18 October 2026

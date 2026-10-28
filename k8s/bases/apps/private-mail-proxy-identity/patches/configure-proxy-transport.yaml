@@ -1,0 +1,7 @@
+- op: test
+  path: /spec/template/spec/initContainers/0/name
+  value: configure
+- op: add
+  path: /spec/template/spec/initContainers/0/args
+  value:
+    - --proxy-client-ip=true

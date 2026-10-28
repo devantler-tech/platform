@@ -32,8 +32,8 @@ func TestProductionAdministrationUsesEncryptedSettings(t *testing.T) {
 	}
 	route := object(t, objects, "HTTPRoute", "private-mail")
 	annotations := mapping(t, mapping(t, route["metadata"])["annotations"])
-	if annotations["gethomepage.dev/name"] != "Email" || annotations["gethomepage.dev/group"] != "Email" {
-		t.Fatal("production must register the Email entry in the Email section")
+	if annotations["gethomepage.dev/name"] != "Stalwart" || annotations["gethomepage.dev/group"] != "Email" || annotations["gethomepage.dev/icon"] != "stalwart.svg" {
+		t.Fatal("production must register Stalwart with its logo in the Email section")
 	}
 	for _, o := range objects {
 		m, _ := o["metadata"].(map[string]any)

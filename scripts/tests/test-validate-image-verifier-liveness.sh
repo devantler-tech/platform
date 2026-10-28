@@ -162,6 +162,8 @@ readonly provider_pattern='ghcr.io/devantler-tech/provider-upjet-*'
 readonly storage_pattern='ghcr.io/devantler-tech/platform-kubescape-storage'
 readonly kubescape_node_agent_pattern='ghcr.io/devantler-tech/platform-kubescape-node-agent'
 readonly coroot_node_agent_pattern='ghcr.io/devantler-tech/platform-coroot-node-agent'
+readonly checkpoint_server_pattern='ghcr.io/devantler-tech/platform-coroot'
+readonly checkpoint_collector_pattern='ghcr.io/devantler-tech/platform-coroot-cluster-agent'
 readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
 readonly app_pattern='ghcr.io/devantler-tech/*'
@@ -220,9 +222,11 @@ write_healthy_rules() {
     resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
     resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
     resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-    resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-    resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_server_pattern}"
+    resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_collector_pattern}"
+    resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+    resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
+    resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -248,7 +252,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '9 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '11 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
@@ -291,9 +295,11 @@ write_node driftrules
   resource_obj 0003 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${storage_pattern}"
   resource_obj 0004 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${kubescape_node_agent_pattern}"
   resource_obj 0005 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${coroot_node_agent_pattern}"
-  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
-  resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
-  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0006 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_server_pattern}"
+  resource_obj 0007 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${checkpoint_collector_pattern}"
+  resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
+  resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
+  resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules
