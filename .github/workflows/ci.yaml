@@ -758,6 +758,97 @@ jobs:
   # Repository-wide guards run unconditionally alongside changes, render production and run
   # ShellCheck. Deployment and the required gate both wait for this job's success.
   # kubectl is pinned and checksum-verified; yq and jq come from the ubuntu-latest runner.
+  # BEGIN GENERATED RELEASE RECOVERY FIXTURES
+  test-publish-release-recovery:
+    name: "\U0001FA79 Validate the release recovery build"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    steps:
+      - name: "\U0001F6E1️ Harden runner"
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - name: "\U0001F4D1 Download immutable recovery source"
+        shell: bash
+        env:
+          CATALOGUE_REPOSITORY: devantler-tech/.github
+          CATALOGUE_SHA: f558e3ababb474ac0e6f27d988ce8c876a525196
+        run: |
+          set -euo pipefail
+          [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo '::error::invalid catalogue source' >&2
+            exit 1
+          }
+          env -i PATH="$PATH" curl --disable --fail --silent --show-error --location \
+            --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 120 --retry 3 \
+            --output "$RUNNER_TEMP/recovery.tar.gz" \
+            "https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA"
+          mkdir .devantler-tech-recovery
+          tar --extract --gzip --file="$RUNNER_TEMP/recovery.tar.gz" \
+            --strip-components=1 --directory=.devantler-tech-recovery
+          for source_file in go.mod main.go cmd/publish-release-recovery/main.go; do
+            [[ -f ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" &&
+              ! -L ".devantler-tech-recovery/.github/scripts/inspect-release-recovery/$source_file" ]] || {
+              echo '::error::incomplete recovery source' >&2
+              exit 1
+            }
+          done
+      - name: "\U0001F4E6 Setup Go"
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.26.9"
+          cache: false
+      - name: "\U0001F528 Build without credentials"
+        env:
+          GOWORK: "off"
+          GOFLAGS: ""
+          GOTOOLCHAIN: local
+          CGO_ENABLED: "0"
+        run: |
+          set -euo pipefail
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/inspect-release-recovery" .
+          go -C .devantler-tech-recovery/.github/scripts/inspect-release-recovery build -trimpath -o "$PWD/.devantler-tech-recovery/publish-release-recovery" ./cmd/publish-release-recovery
+      - name: "\U0001F9EA Refuse publication without a credential"
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset GH_TOKEN GITHUB_TOKEN
+          if "./.devantler-tech-recovery/publish-release-recovery" \
+            --repository devantler-tech/platform --tag v1.2.3 --source-sha "$(printf 'a%.0s' {1..40})" \
+            --run-id 1 --run-attempt 1 \
+            --producer-ref "devantler-tech/.github/.github/workflows/create-release.yaml@$(printf 'b%.0s' {1..40})" \
+            > "$RUNNER_TEMP/refusal.out" 2> "$RUNNER_TEMP/refusal.err"; then
+            echo '::error::the publisher ran without a credential' >&2
+            exit 1
+          fi
+          grep -Fq 'a non-empty GH_TOKEN without whitespace is required' "$RUNNER_TEMP/refusal.err" || {
+            echo '::error::the publisher stopped for an unexpected reason' >&2
+            cat "$RUNNER_TEMP/refusal.err" >&2
+            exit 1
+          }
+          [[ ! -s "$RUNNER_TEMP/refusal.out" ]] || {
+            echo '::error::the refused publisher printed a result' >&2
+            exit 1
+          }
+  # END GENERATED RELEASE RECOVERY FIXTURES
+
+  test-publish-release-recovery-disabled:
+    if: github.event_name == 'pull_request'
+    name: 🩹 Validate default-off release recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Exercise the default-off condition and refusal controls
+        run: |
+          shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh
+          bash scripts/tests/test-release-recovery.sh
+
   validate-repository-guards:
     name: 🛡️ Validate Repository Guards
     runs-on: ubuntu-latest
@@ -794,6 +885,11 @@ jobs:
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
 
+      - name: 🩹 Validate the release recovery boundary
+        run: |
+          shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh
+          bash scripts/tests/test-release-recovery.sh
+
       - name: 💾 Validate storage audit regressions
         run: |
           go test ./scripts/audit-storage-retention
@@ -801,7 +897,7 @@ jobs:
 
       - name: 💾 Require bounded OpenBao expansion transport controls
         env:
-          AUDIT_REQUIRE_NATIVE_CONTROL: '1'
+          AUDIT_REQUIRE_NATIVE_CONTROL: "1"
         run: go test -race -count=1 ./scripts/expand-openbao-audit
 
       - name: 🧯 Validate private recovery field extraction
@@ -974,12 +1070,12 @@ jobs:
         # Use the checksum-verified native Helm above, on PRs and merge groups.
         # The consumer regression must never skip when Helm is unavailable.
         env:
-          KYVERNO_LOG_REQUIRE_NATIVE: '1'
+          KYVERNO_LOG_REQUIRE_NATIVE: "1"
         run: go test -race -count=1 ./scripts/tests/kyverno-logs
 
       - name: 🗃️ Validate Fleet preparation and server images
         env:
-          FLEETDM_REQUIRE_NATIVE: '1'
+          FLEETDM_REQUIRE_NATIVE: "1"
         run: |
           FLEETDM_HELM_BIN="$KYVERNO_LOG_HELM_BIN"
           export FLEETDM_HELM_BIN
@@ -1166,7 +1262,7 @@ jobs:
       # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
       - name: 🔐 Validate the approved-revisions guard
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: |
           shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
           shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
@@ -1182,7 +1278,7 @@ jobs:
 
       - name: 🔐 Enforce approved publication signers
         env:
-          APPROVED_REVISIONS_ENFORCE: '1'
+          APPROVED_REVISIONS_ENFORCE: "1"
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       # The scheduled regeneration (#3552, third child of #3308) runs the generator and
@@ -3333,7 +3429,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 8
         env:
-          OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: '1'
+          OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: "1"
         run: |
           shellcheck scripts/run-openbao-backup-sandbox.sh
           go test -count=1 -v ./scripts/openbao-backup-recovery
@@ -3344,7 +3440,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 5
         env:
-          EMAIL_CREDENTIAL_NATIVE_TEST: '1'
+          EMAIL_CREDENTIAL_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
         if: needs.changes.outputs.k8s == 'true'
@@ -3357,7 +3453,7 @@ jobs:
         if: needs.changes.outputs.k8s == 'true'
         timeout-minutes: 5
         env:
-          EMAIL_CLIENT_IDENTITY_NATIVE_TEST: '1'
+          EMAIL_CLIENT_IDENTITY_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/ingress-client-address
 
       - name: 🔐 Validate Kyverno review admission boundaries
@@ -3397,7 +3493,6 @@ jobs:
         run: |
           shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
           bash scripts/tests/test-coroot-application-health-reconciler.sh
-
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
@@ -4003,6 +4098,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
@@ -4143,7 +4239,13 @@ jobs:
 
   heal-prod-on-failure:
     name: 🩹 Heal Prod (restore main after an unsuccessful or evicted merge-group deploy)
-    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]
+    needs:
+      [
+        changes,
+        deploy-prod,
+        validate-publication-contract,
+        merge-group-queue-membership,
+      ]
     # The deploy above runs on the SPECULATIVE merge ref, before the PR lands on
     # `main`. When it fails the merge group is ejected — but the OCI `latest` tag
     # (and the prod cluster reconciling it) is left pointing at that ejected
@@ -4365,6 +4467,8 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        test-publish-release-recovery,
+        test-publish-release-recovery-disabled,
         validate-publication-generator,
         validate-manifest-regressions,
         validate-go-regressions,
@@ -4466,6 +4570,8 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
+            ${{ needs.test-publish-release-recovery.result }}
+            ${{ needs.test-publish-release-recovery-disabled.result }}
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
             ${{ needs.validate-go-regressions.result }}
