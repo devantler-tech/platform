@@ -16,7 +16,7 @@ const ingressDaemonSample = `{"apiVersion":"apps/v1","kind":"DaemonSet","metadat
 // Unexpected containers, observer failures and identity changes must prevent a
 // usable result, even after the observer has returned plausible flow bytes.
 func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
-	for _, mode := range []string{"matching", "named-cluster", "cluster-churn", "unready-agent", "agent-churn", "daemon-churn", "probe-failure", "observer-failure", "truncated-flow"} {
+	for _, mode := range []string{"matching", "named-cluster", "cluster-churn", "unready-agent", "agent-churn", "daemon-churn", "probe-failure", "observer-failure", "empty-flow", "truncated-flow"} {
 		t.Run(mode, func(t *testing.T) {
 			podReads, daemonReads, executions, probes, clockReads := 0, 0, 0, 0, 0
 			clusterReads := 0
@@ -64,6 +64,9 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 				if mode == "observer-failure" {
 					return nil, errors.New("private-observer-error")
 				}
+				if mode == "empty-flow" {
+					return []byte(" \n\t"), nil
+				}
 				raw := ingressFlowSample
 				if mode != "named-cluster" {
 					raw = strings.Replace(raw, `"prod/worker-1"`, `"worker-1"`, 1)
@@ -96,6 +99,16 @@ func TestIngressObserverBindsExecutionAndRefusesPartialEvidence(t *testing.T) {
 			}
 			if err != nil && (len(result.Sources) != 0 || strings.Contains(err.Error(), "private-")) {
 				t.Fatal("failed observation released private or partial evidence")
+			}
+			if err != nil {
+				want := map[string]string{
+					"cluster-churn": "cluster_after", "unready-agent": "agent_before", "agent-churn": "agent_after",
+					"daemon-churn": "daemon_after", "probe-failure": "public_probes", "observer-failure": "flow_read",
+					"empty-flow": "flow_empty", "truncated-flow": "flow_decode",
+				}[mode]
+				if ingressFailureStage(err) != want {
+					t.Fatal("failed observation lost its closed failure stage")
+				}
 			}
 			if mode == "unready-agent" && (executions != 0 || probes != 0) {
 				t.Fatal("unready privileged target caused network activity")
