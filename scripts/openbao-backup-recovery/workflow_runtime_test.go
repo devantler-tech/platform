@@ -26,7 +26,7 @@ func TestRecoveryWorkflowExcludesClusterCredentials(t *testing.T) {
 		t.Fatal("cannot read guarded recovery workflow")
 	}
 	body := workflow.Jobs["verify"].Steps[4].Run
-	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "private-collection-stage", "private-result", "restore-stage", "private-restore-stage", "changed-main"} {
+	for _, tc := range []string{"matching", "collection-refused", "collection-stage", "private-collection-stage", "private-result", "restore-stage", "private-restore-stage", "changed-main", "missing-cluster-config"} {
 		t.Run(tc, func(t *testing.T) {
 			dir, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -89,6 +89,9 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 			command := exec.Command("bash", "-c", body)
 			command.Dir = dir
 			command.Env = []string{"PATH=" + bin + ":" + os.Getenv("PATH"), "RUNNER_TEMP=" + runner, "GITHUB_SHA=" + strings.Repeat("1", 40), "KUBE_CONFIG=SYNTHETIC_KUBECONFIG", "HCLOUD_TOKEN=SYNTHETIC_PROVIDER_VALUE", "FIXTURE_DIR=" + dir, "FIXTURE_CASE=" + tc}
+			if tc == "missing-cluster-config" {
+				command.Env = append(command.Env, "KUBE_CONFIG=")
+			}
 			out, runErr := command.CombinedOutput()
 			if (runErr == nil) != (tc == "matching") {
 				if _, err := os.Stat(filepath.Join(dir, "kubeconfig-exposed")); err == nil {
@@ -110,6 +113,9 @@ if [[ $FIXTURE_CASE == private-result ]]; then printf '%s\n' PRIVATE_SYNTHETIC_P
 			}
 			if tc != "matching" && !strings.Contains(string(out), "OPENBAO_BACKUP_STAGE=") {
 				t.Fatal("workflow did not identify its bounded phase of refusal")
+			}
+			if tc == "missing-cluster-config" && !strings.Contains(string(out), "OPENBAO_BACKUP_STAGE=private-inputs") {
+				t.Fatal("missing private input was mislabeled as a source failure")
 			}
 			proof, readErr := os.ReadFile(filepath.Join(dir, "proof-path"))
 			if readErr == nil {
