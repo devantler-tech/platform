@@ -369,7 +369,7 @@ func accessMeasurement(t *testing.T, security []byte) []byte {
 
 // TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv exercises the complete collector.
 func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t *testing.T) {
-	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "ingress-blocked", "ingress-unblocked", "ingress-rules-changed", "ingress-observer-failed", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast", "metadata-missing", "pod-creation-changed"} {
+	for _, scenario := range []string{"healthy", "blocked", "cilium-blocked", "cilium-cidr-blocked", "cilium-allow-override", "cilium-expired", "ingress-blocked", "ingress-unblocked", "ingress-rules-changed", "ingress-observer-failed", "ingress-observer-stage", "pod-replaced", "restarted", "addresses-changed", "map-changed", "secret-changed", "read-failed", "exec-failed", "partial-response", "unapproved-projection", "runtime-env", "kubelet-minor-drift", "node-replaced", "cilium-missing", "cilium-foreign-node", "cilium-replaced", "cilium-address-changed", "cilium-version-changed", "cilium-ambiguous", "cilium-malformed", "cilium-host-mismatch", "cilium-pod-address", "cilium-host-address", "cilium-non-unicast", "metadata-missing", "pod-creation-changed"} {
 		t.Run(scenario, func(t *testing.T) {
 			pod := accessPod(t)
 			after := append([]byte(nil), pod...)
@@ -535,6 +535,9 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					if scenario == "ingress-observer-failed" {
 						return ingressObservation{}, errors.New("PRIVATE_ERROR")
 					}
+					if scenario == "ingress-observer-stage" {
+						return ingressObservation{}, ingressFailure("flow_read")
+					}
 					return ingressObservation{Sources: []netip.Addr{netip.MustParseAddr("198.51.100.2")}, Public503: 2}, nil
 				}
 			}
@@ -546,6 +549,9 @@ func TestAccessCollectionBindsInputsAndRuntimeAndNeverPlacesCredentialsInArgv(t 
 					}
 				} else if e == nil || got.Ingress != nil {
 					t.Fatal("collector released incomplete or changing ingress evidence")
+				}
+				if want := map[string]string{"ingress-observer-failed": "observation", "ingress-observer-stage": "flow_read", "ingress-rules-changed": "access_compare"}[scenario]; want != "" && (ingressFailureStage(e) != want || strings.Contains(e.Error(), "PRIVATE")) {
+					t.Fatal("collector lost a closed failure stage or exposed private error content")
 				}
 				return
 			}

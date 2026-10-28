@@ -33,6 +33,8 @@ func TestIngressWorkflowRetainsReviewedIsolationAndMainOnlyGuard(t *testing.T) {
 		}
 	}
 	wantRun := strings.ReplaceAll(baseline.Jobs["observe"].Steps[5].Run, "MAIL_STARTUP_SAMPLE", "MAIL_INGRESS_STATE")
+	wantRun = strings.Replace(wantRun, "MAIL_INGRESS_STATE=INCONCLUSIVE", "MAIL_INGRESS_STATE=INCONCLUSIVE stage=configuration", 1)
+	wantRun = strings.Replace(wantRun, "'MAIL_INGRESS_STATE=INCONCLUSIVE'", "'MAIL_INGRESS_STATE=INCONCLUSIVE stage=endpoint'", 1)
 	if job.Steps[5].Run != wantRun || !reflect.DeepEqual(job.Steps[5].Env, baseline.Jobs["observe"].Steps[5].Env) {
 		t.Fatal("credential handling differs from the exercised private cleanup contract")
 	}
@@ -60,8 +62,12 @@ func TestIngressWorkflowRetainsReviewedIsolationAndMainOnlyGuard(t *testing.T) {
 			t.Fatal("unexpected credential read")
 			return nil, nil
 		}, func(context.Context) error { t.Fatal("unexpected wait"); return nil }, &result)
-		if code != 3 || result.String() != "MAIL_INGRESS_STATE=INCONCLUSIVE\n" || (reads == 1) != (key == "valid") {
-			t.Fatal("entrypoint admitted an unconfirmed read or exposed private failure details")
+		stage := "guard"
+		if key == "valid" {
+			stage = "pod_before"
+		}
+		if code != 3 || result.String() != "MAIL_INGRESS_STATE=INCONCLUSIVE stage="+stage+"\n" || (reads == 1) != (key == "valid") {
+			t.Fatal("entrypoint lost its safe failure stage or admitted an unconfirmed read")
 		}
 	}
 }
