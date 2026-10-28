@@ -16,7 +16,7 @@ kube_version="$(yq -er '.spec.cluster.kubernetesVersion' "$root_dir/ksail.prod.y
 "$pull_bin" pull cilium --repo "$chart_repo" --version "$chart_version" --destination "$scratch" >/dev/null
 if [[ "$mode" == --runtime ]]; then
   command -v docker >/dev/null || fail 'the runtime regression requires Docker; use --render-only for limited local proof'
-  (cd "$root_dir" && go build -o "$scratch/stream-probe" ./scripts/check-hubble-ui-streaming)
+  (cd "$root_dir/scripts/check-hubble-ui-streaming" && go build -mod=readonly -o "$scratch/stream-probe" .)
 fi
 normalize() { awk '{sub(/^[ \t]+/, "");sub(/[ \t]+$/, "");if(length) print}' "$1"; }
 runtime_key=''
