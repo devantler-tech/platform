@@ -12,6 +12,7 @@ func TestCollectionDiagnosticRefusesPrivateErrorContent(t *testing.T) {
 		want string
 	}{
 		{stageError("snapshot-download"), "snapshot-download"},
+		{stageError("recovery-key-download"), "recovery-key-download"},
 		{stageError("PRIVATE_SYNTHETIC_VALUE"), "collection"},
 		{stageError("snapshot-download\nPRIVATE_SYNTHETIC_VALUE"), "collection"},
 		{errors.New("PRIVATE_SYNTHETIC_VALUE"), "collection"},

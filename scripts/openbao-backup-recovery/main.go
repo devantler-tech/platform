@@ -422,7 +422,7 @@ func inputFailureStage(err error) string {
 	var known stageError
 	if errors.As(err, &known) {
 		switch known {
-		case "private-workspace", "snapshot-job-read", "snapshot-job-admission", "live-health", "deployment-inputs", "backup-target", "recovery-inputs", "live-records", "snapshot-download", "private-handoff":
+		case "private-workspace", "snapshot-job-read", "snapshot-job-admission", "live-health", "deployment-inputs", "backup-target", "recovery-inputs", "recovery-backup-read", "recovery-backup-admission", "recovery-key-download", "live-records", "snapshot-download", "private-handoff":
 			return string(known)
 		}
 	}

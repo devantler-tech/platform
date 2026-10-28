@@ -125,7 +125,7 @@ func downloadSnapshot(ctx context.Context, client *http.Client, t target, start,
 
 func allowedRecoveryObject(kind, namespace, name string) bool {
 	switch namespace + "/" + kind + "/" + name {
-	case "openbao/job/vault-snapshot-init", "flux-system/configmap/variables-base", "flux-system/configmap/variables-cluster", "flux-system/secret/variables-cluster", "openbao/secret/vault-snapshot-r2", "openbao/secret/openbao-unseal":
+	case "openbao/job/vault-snapshot-init", "flux-system/configmap/variables-base", "flux-system/configmap/variables-cluster", "flux-system/secret/variables-cluster", "openbao/secret/vault-snapshot-r2", "velero/backupstoragelocation.velero.io/default", "velero/backups.velero.io/":
 		return true
 	default:
 		return false
@@ -146,7 +146,12 @@ func recoveryObject(ctx context.Context, kind, namespace, name string) ([]byte, 
 	if !allowedRecoveryObject(kind, namespace, name) {
 		return nil, errEvidence
 	}
-	command := exec.CommandContext(ctx, "kubectl", "--context=admin@prod", "--request-timeout=20s", "--namespace", namespace, "get", kind, name, "--output=json")
+	args := []string{"--context=admin@prod", "--request-timeout=20s", "--namespace", namespace, "get", kind}
+	if name != "" {
+		args = append(args, name)
+	}
+	args = append(args, "--output=json")
+	command := exec.CommandContext(ctx, "kubectl", args...)
 	var output boundedOutput
 	command.Stdout = &output
 	command.Stderr = io.Discard
@@ -231,19 +236,30 @@ func collectRecoveryInputs(dir string) (result error) {
 	if err != nil {
 		return errEvidence
 	}
-	stage = "recovery-inputs"
-	recovery, err := recoveryObject(ctx, "secret", "openbao", "openbao-unseal")
+	stage = "recovery-backup-read"
+	location, err := recoveryObject(ctx, "backupstoragelocation.velero.io", "velero", "default")
 	if err != nil {
 		return errEvidence
 	}
-	values, err := fixedObject(recovery, "Secret", "openbao", "openbao-unseal")
+	backups, err := recoveryObject(ctx, "backups.velero.io", "velero", "")
 	if err != nil {
 		return errEvidence
 	}
-	root, key := values["root-token"], values["unseal-key"]
-	if !regexp.MustCompile(`^[A-Za-z0-9._-]{20,256}$`).MatchString(root) || !regexp.MustCompile(`^[A-Za-z0-9+/=]{32,256}$`).MatchString(key) {
+	stage = "recovery-backup-admission"
+	prefix, err := credentialArchivePrefix(base, cluster, variables, location, target)
+	if err != nil {
 		return errEvidence
 	}
+	backup, err := selectCredentialBackup(backups, time.Now().UTC())
+	if err != nil {
+		return errEvidence
+	}
+	stage = "recovery-key-download"
+	recovery, err := downloadRecoveryCredentials(ctx, recoveryHTTP(), target, prefix, backup)
+	if err != nil {
+		return errEvidence
+	}
+	root, key := recovery.Root, recovery.Unseal
 	stage = "live-records"
 	records, err := api.credentialRecords(ctx, root)
 	if err != nil || !recordsEqual(records, records) {

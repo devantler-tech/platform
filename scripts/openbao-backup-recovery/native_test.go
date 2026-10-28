@@ -48,6 +48,27 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 	if out, err := run("fixture", fixture); err != nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_FIXTURE=PASS" {
 		t.Fatalf("native synthetic snapshot creation failed: %v %s", err, out)
 	}
+	rootToken, err := privateInput(filepath.Join(fixture, "root-token"), 16384)
+	if err != nil {
+		t.Fatal("missing synthetic root credential")
+	}
+	unsealKey, err := privateInput(filepath.Join(fixture, "unseal-key"), 16384)
+	if err != nil {
+		t.Fatal("missing synthetic recovery credential")
+	}
+	object := credentialSecret(t, string(rootToken), string(unsealKey))
+	archive := credentialArchive(t, credentialArchiveEntry{name: legacyKeyPath, body: object}, credentialArchiveEntry{name: preferredKeyPath, body: object})
+	clear(rootToken)
+	clear(unsealKey)
+	clear(object)
+	defer clear(archive)
+	// Every restore now obtains its keys through the independent archive path.
+	// Removing the originals prevents a healthy fixture from hiding a live-key fallback.
+	for _, name := range []string{"root-token", "unseal-key"} {
+		if os.Remove(filepath.Join(fixture, name)) != nil {
+			t.Fatal("could not remove original synthetic credentials")
+		}
+	}
 	for _, test := range []string{"matching", "corrupt-snapshot", "different-record", "wrong-unseal-key"} {
 		t.Run(test, func(t *testing.T) {
 			dir, err := os.MkdirTemp("/dev/shm", "openbao-recovery-case-")
@@ -55,10 +76,29 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(dir) })
-			for _, name := range []string{"root-token", "unseal-key", "expected.json", "snapshot.snap"} {
+			for _, name := range []string{"expected.json", "snapshot.snap"} {
 				b, err := privateInput(filepath.Join(fixture, name), maxSnapshotBytes)
 				if err != nil || writePrivate(filepath.Join(dir, name), b) != nil {
 					t.Fatal("could not prepare private synthetic handoff")
+				}
+			}
+			recovered, err := readCredentialArchive(archive)
+			if err != nil {
+				t.Fatal("could not recover independent synthetic credentials")
+			}
+			if test == "wrong-unseal-key" {
+				badObject := credentialSecret(t, recovered.Root, strings.Repeat("A", 43)+"=")
+				badArchive := credentialArchive(t, credentialArchiveEntry{name: legacyKeyPath, body: badObject}, credentialArchiveEntry{name: preferredKeyPath, body: badObject})
+				recovered, err = readCredentialArchive(badArchive)
+				clear(badObject)
+				clear(badArchive)
+				if err != nil {
+					t.Fatal("wrong-key archive did not reach native cryptographic verification")
+				}
+			}
+			for name, value := range map[string]string{"root-token": recovered.Root, "unseal-key": recovered.Unseal} {
+				if writePrivate(filepath.Join(dir, name), []byte(value)) != nil {
+					t.Fatal("could not prepare independently recovered synthetic credential")
 				}
 			}
 			switch test {
@@ -81,10 +121,6 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 				b, err = json.Marshal(records)
 				if err != nil || os.WriteFile(filepath.Join(dir, "expected.json"), b, 0600) != nil {
 					t.Fatal("could not change synthetic expected record")
-				}
-			case "wrong-unseal-key":
-				if os.WriteFile(filepath.Join(dir, "unseal-key"), []byte(strings.Repeat("A", 43)+"="), 0600) != nil {
-					t.Fatal("could not replace synthetic recovery key")
 				}
 			}
 			out, err := run("verify", dir)
