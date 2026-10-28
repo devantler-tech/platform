@@ -503,7 +503,9 @@ func wait(ctx context.Context) error {
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	var code int
-	if os.Getenv("MAIL_ACCESS_CONFIRM") != "" {
+	if os.Getenv("MAIL_INGRESS_CONFIRM") != "" {
+		code = runIngressEntry(ctx, os.Getenv, execute, executeInput, wait, os.Stdout)
+	} else if os.Getenv("MAIL_ACCESS_CONFIRM") != "" {
 		code = runAccessEntry(ctx, os.Getenv, execute, executeInput, wait, os.Stdout)
 	} else {
 		code = runEntry(ctx, os.Getenv, execute, wait, os.Stdout)
