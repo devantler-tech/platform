@@ -175,6 +175,29 @@ fixed heartbeat and cut over routes with rollback. Neither a local file copy
 nor a runner cache/artifact is a transactional journal. The controlled inbox,
 phone and same-thread acceptance in #2755 remains required.
 
+The opt-in native storage test uses the actual R2 client and a dedicated proof
+configuration. Its key must be `proofs/alert-journal-native-v1.json` and its
+instance must be `alert-journal-native-proof`; the ordinary journal target is
+refused. Use only the independently approved journal proof bucket and credential,
+never a backup credential. With both private JSON files prepared, run once:
+
+```sh
+ALERT_R2_PROVIDER_PROOF=run-once \
+ALERT_R2_PROOF_CONFIG_FILE=/private/proof/config.json \
+ALERT_R2_PROOF_CREDENTIAL_FILE=/private/proof/credential.json \
+go test -count=1 -v ./scripts/alert-publisher \
+  -run '^TestR2NativeProviderConflictLostResponseAndProcessExit$'
+```
+
+It refuses an existing proof object, demonstrates actual conditional-write
+conflicts, hides one real committed write's acknowledgement from its caller,
+and reads a durable intent after an owned child exits without cleanup. It emits
+only a closed verdict and retains the proof object. A failed or interrupted
+attempt must be investigated; do not delete or replace it to retry. Ordinary
+tests skip this proof. A skip or an offline fixture pass does not establish
+provider acceptance, and this storage proof does not establish GitHub delivery
+or controlled inbox and phone acceptance.
+
 Sources: [R2 consistency and in-flight writes](https://developers.cloudflare.com/r2/reference/consistency/),
 [conditional PutObject](https://developers.cloudflare.com/r2/api/s3/extensions/#conditional-operations-in-putobject),
 and [AWS SDK retry policy](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-retries-timeouts.html).
