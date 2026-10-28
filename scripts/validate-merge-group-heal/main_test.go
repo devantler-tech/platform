@@ -128,11 +128,28 @@ func TestHealDependenciesUseYAMLSemantics(t *testing.T) {
 		"    needs: [changes, deploy-prod, validate-publication-contract, validate-publication-contract]",
 		"    needs: [changes, deploy-prod, validate-publication-contract, unrelated-job]",
 		"    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership, extra-job]",
-		"    needs: {changes: deploy-prod}",
 	} {
 		candidate := strings.Replace(validWorkflow, before, needs, 1)
-		if err := validateWorkflowContract(candidate); err == nil {
-			t.Fatalf("invalid dependencies accepted: %s", needs)
+		if err := validateWorkflowContract(candidate); err == nil || !strings.Contains(err.Error(), "missing deploy dependencies") {
+			t.Fatalf("invalid dependencies %q: error = %v, want missing deploy dependencies", needs, err)
+		}
+	}
+}
+
+func TestHealDependenciesReportInvalidYAML(t *testing.T) {
+	t.Parallel()
+	const before = "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
+	for _, needs := range []string{
+		"    needs: {changes: deploy-prod}",
+		before + "\n    needs: []",
+		"\tneeds: []",
+	} {
+		candidate := strings.Replace(validWorkflow, before, needs, 1)
+		if candidate == validWorkflow {
+			t.Fatal("malformed dependency fixture changed nothing")
+		}
+		if err := validateWorkflowContract(candidate); err == nil || !strings.Contains(err.Error(), "invalid YAML") {
+			t.Fatalf("malformed dependencies %q: error = %v, want invalid YAML", needs, err)
 		}
 	}
 }

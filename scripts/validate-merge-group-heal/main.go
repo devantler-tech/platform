@@ -91,7 +91,10 @@ func validateWorkflowContract(workflow string) error {
 		"changes": true, "deploy-prod": true,
 		"validate-publication-contract": true, "merge-group-queue-membership": true,
 	}
-	if err := yaml.Unmarshal([]byte(healJob), &parsed); err != nil || len(parsed.Needs) != len(expected) {
+	if err := yaml.Unmarshal([]byte(healJob), &parsed); err != nil {
+		return fmt.Errorf("heal job has invalid YAML: %w", err)
+	}
+	if len(parsed.Needs) != len(expected) {
 		return errors.New("heal job is missing deploy dependencies")
 	}
 	for _, dependency := range parsed.Needs {

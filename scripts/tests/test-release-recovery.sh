@@ -59,7 +59,7 @@ cat >"$work/guard.jq" <<'JQ'
   ([$o.steps[] | tostring | select(test("secrets\\.|outputs\\.token|github\\.token"))] | length == 0) and ([$o.steps[] | select(.env.GH_TOKEN != null)] | length == 0) and
   ($o.steps[4].run | contains("unset GH_TOKEN GITHUB_TOKEN")) and
   $c.jobs["test-publish-release-recovery"] == ($o|del(.if)|.name="🩹 Validate the release recovery build") and
-  ($c.jobs["test-publish-release-recovery-disabled"] | .if=="github.event_name == 'pull_request'" and .permissions=={contents:"read"} and .["runs-on"]=="ubuntu-latest" and .secrets==null and .uses==null and .["continue-on-error"]==null and (.steps|length)==2 and (.steps|all(ordinary)) and .steps[0].uses=="actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" and .steps[0].with["persist-credentials"]==false and .steps[1].with==null and .steps[1].run=="bash scripts/tests/test-release-recovery.sh") and
+  ($c.jobs["test-publish-release-recovery-disabled"] | .if=="github.event_name == 'pull_request'" and .permissions=={contents:"read"} and .["runs-on"]=="ubuntu-latest" and .secrets==null and .uses==null and .["continue-on-error"]==null and (.steps|length)==2 and (.steps|all(ordinary)) and (.steps[0].uses | test("^actions/checkout@[a-f0-9]{40}$")) and .steps[0].with["persist-credentials"]==false and .steps[1].with==null and .steps[1].run=="bash scripts/tests/test-release-recovery.sh") and
   (["test-publish-release-recovery","test-publish-release-recovery-disabled"] | all(. as $job |
     ($c.jobs["ci-required-checks"].needs | index($job) != null) and
     ($c.jobs["ci-required-checks"].steps | any((.with["job-results"] // "") | contains("needs." + $job + ".result"))))) and
@@ -68,6 +68,9 @@ cat >"$work/guard.jq" <<'JQ'
   ($c.jobs["validate-repository-guards"].steps | any(.run == "bash scripts/tests/test-release-recovery.sh" and ordinary))
 JQ
 jq -e -f "$work/guard.jq" "$work/bundle.json" >/dev/null || fail 'workflow authority, provenance or required coverage is unsafe'
+# An ordinary immutable checkout update must not require changing this guard.
+jq '.c.jobs["test-publish-release-recovery-disabled"].steps[0].uses="actions/checkout@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' "$work/bundle.json" >"$work/checkout-update.json"
+jq -e -f "$work/guard.jq" "$work/checkout-update.json" >/dev/null || fail 'a SHA-pinned checkout update was refused'
 # Exercise the generator too; the independent parsed equality above is the oracle.
 cp "$ci" "$work/regenerated.yaml"
 bash "$root/scripts/generate-release-recovery-fixture.sh" "$workflow" "$work/regenerated.yaml"
@@ -125,6 +128,10 @@ for mutation in \
   '.c.jobs["test-publish-release-recovery"].steps[1]["continue-on-error"]=true' \
   '.c.jobs["test-publish-release-recovery"].steps[0].with["egress-policy"]="block"' \
   '.c.jobs["test-publish-release-recovery-disabled"].steps[1].if="false"' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[0].uses="actions/checkout@v6"' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[0].uses="actions/checkout@bbbbbbbb"' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[0].uses="actions/checkout@BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"' \
+  '.c.jobs["test-publish-release-recovery-disabled"].steps[0].uses="other/checkout@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"' \
   '.c.jobs["test-publish-release-recovery"].steps[1].with["offline-test"]=false' \
   '.c.jobs["test-publish-release-recovery-disabled"].steps[1].with["enable-recovery"]=true' \
   '.c.jobs["ci-required-checks"].needs |= map(select(. != "test-publish-release-recovery"))' \
