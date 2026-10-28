@@ -24,6 +24,7 @@ type settings struct {
 type inputs struct {
 	settings
 	administratorPassword, maintainerPassword, agentPassword string
+	accountIDs                                               map[string]string
 }
 
 var domainPattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$`)
@@ -78,6 +79,28 @@ func render(v inputs) ([]byte, error) {
 		maintainer["aliases"] = receivingAliases(v.MaintainerAliases, "#domain")
 	}
 	agents := account(v.Agent, v.agentPassword, "User")
+	newAccounts := map[string]any{}
+	var accountUpdates []map[string]any
+	for _, item := range []struct {
+		ref, name, password string
+		value               map[string]any
+	}{
+		{"administrator", v.Administrator, v.administratorPassword, administrator},
+		{"maintainer", v.Maintainer, v.maintainerPassword, maintainer},
+		{"agents", v.Agent, v.agentPassword, agents},
+	} {
+		if id := v.accountIDs[item.name]; id != "" {
+			delete(item.value, "credentials")
+			item.value["credentials/0/secret"] = item.password
+			accountUpdates = append(accountUpdates, map[string]any{"@type": "update", "object": "Account", "id": id, "value": item.value})
+		} else {
+			newAccounts[item.ref] = item.value
+		}
+	}
+	agentID := v.accountIDs[v.Agent]
+	if agentID == "" {
+		agentID = "#agents"
+	}
 	permissions := map[string]bool{}
 	for _, name := range []string{"authenticate", "emailSend", "emailReceive", "jmapMailboxGet", "jmapMailboxChanges", "jmapMailboxQuery", "jmapMailboxQueryChanges", "jmapThreadGet", "jmapThreadChanges", "jmapEmailGet", "jmapEmailChanges", "jmapEmailQuery", "jmapEmailQueryChanges", "jmapBlobGet"} {
 		permissions[name] = true
@@ -108,10 +131,15 @@ func render(v inputs) ([]byte, error) {
 		// recovery must clear a later external directory rather than retain it.
 		update("Authentication", map[string]any{"directoryId": nil}),
 		upsert("Domain", []string{"name"}, map[string]any{"domain": map[string]any{"name": v.Domain, "isEnabled": true, "allowRelaying": false, "catchAllAddress": nil, "subAddressing": map[string]any{"@type": "Disabled"}, "dkimManagement": map[string]any{"@type": "Automatic"}, "dnsManagement": map[string]any{"@type": "Manual"}}}),
-		upsert("Account", []string{"name", "domainId"}, map[string]any{"administrator": administrator, "maintainer": maintainer, "agents": agents}),
+	}
+	if len(newAccounts) != 0 {
+		operations = append(operations, map[string]any{"@type": "create", "object": "Account", "value": newAccounts})
+	}
+	operations = append(operations, accountUpdates...)
+	operations = append(operations, []map[string]any{
 		// Address the exact ID returned by the upsert and replace the whole
 		// tagged permission object; a second upsert can reuse a stale lookup.
-		map[string]any{"@type": "update", "object": "Account", "id": "#agents", "value": map[string]any{"permissions": map[string]any{"@type": "Replace", "enabledPermissions": permissions, "disabledPermissions": map[string]bool{}}}},
+		map[string]any{"@type": "update", "object": "Account", "id": agentID, "value": map[string]any{"permissions": map[string]any{"@type": "Replace", "enabledPermissions": permissions, "disabledPermissions": map[string]bool{}}}},
 		upsert("Certificate", []string{"certificate"}, map[string]any{"mail-tls": map[string]any{
 			"certificate": map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.crt"},
 			"privateKey":  map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.key"},
@@ -157,7 +185,7 @@ func render(v inputs) ([]byte, error) {
 			"dkimStrict":  true,
 		}),
 		update("Imap", map[string]any{"allowPlainTextAuth": false}),
-	}
+	}...)
 	var output bytes.Buffer
 	encoder := json.NewEncoder(&output)
 	encoder.SetEscapeHTML(false)

@@ -78,10 +78,6 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	if err != nil {
 		return errConfiguration
 	}
-	plan, err := render(v)
-	if err != nil {
-		return errConfiguration
-	}
 	if verifyApplicationAsset(runtime.applicationFile, runtime.applicationDigest) != nil {
 		return errConfiguration
 	}
@@ -112,9 +108,6 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 		}
 	}()
 	planPath := filepath.Join(work, "plan.ndjson")
-	if os.WriteFile(planPath, plan, 0600) != nil {
-		return errConfiguration
-	}
 	transport := &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: 2 * time.Second}).DialContext, DisableKeepAlives: true}
 	defer transport.CloseIdleConnections()
 	m := management{client: &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, url: runtime.url, password: v.administratorPassword}
@@ -174,6 +167,14 @@ prepared:
 	inventory, err := m.request(ctx, "/jmap", inventoryRequest)
 	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fmt.Errorf("initial inventory: %w", errConfiguration)
+	}
+	v.accountIDs, err = managedAccountIDs(inventory, v)
+	if err != nil {
+		return fmt.Errorf("initial inventory: %w", errConfiguration)
+	}
+	plan, err := render(v)
+	if err != nil || os.WriteFile(planPath, plan, 0600) != nil {
+		return errConfiguration
 	}
 	applyCtx, applyCancel := context.WithTimeout(ctx, time.Minute)
 	defer applyCancel()

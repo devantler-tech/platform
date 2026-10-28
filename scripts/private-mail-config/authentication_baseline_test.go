@@ -22,8 +22,8 @@ func TestRebuildVerifiesTheLocalAuthenticationBaseline(t *testing.T) {
 	}
 	var administrator, authentication operation
 	for _, op := range ops {
-		if op.Object == "Account" && op.Type == "upsert" {
-			administrator = operation{Type: "upsert", Object: "Account", Value: map[string]any{"administrator": op.Value["administrator"]}}
+		if op.Object == "Account" && op.Type == "create" {
+			administrator = operation{Type: "create", Object: "Account", Value: map[string]any{"administrator": op.Value["administrator"]}}
 			administrator.Value["administrator"].(map[string]any)["domainId"] = "fixture-domain"
 		}
 		if op.Object == "Authentication" && op.Type == "update" {
