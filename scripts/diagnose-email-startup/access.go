@@ -508,6 +508,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if !found {
 		return fail()
 	}
+	proxyBefore, e := proxyConfiguration(ctx, run, before)
+	if e != nil {
+		return fail()
+	}
 	if !nodeName.MatchString(before.Node) {
 		return fail()
 	}
@@ -567,7 +571,6 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	raw, e := send(ctx, input, "--context", "admin@prod", "--request-timeout=10s", "exec", "-i", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", accessProbe)
 	clear(input)
 	clear(password)
-	authorization = ""
 	if e != nil {
 		return fail()
 	}
@@ -597,6 +600,10 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	}
 	after, running, ready, e := bindPod(raw)
 	if e != nil || !running || after != before {
+		return fail()
+	}
+	proxyAfter, e := proxyConfiguration(ctx, run, after)
+	if e != nil || proxyAfter != proxyBefore {
 		return fail()
 	}
 	afterAddresses, e := bindAddresses(raw)
