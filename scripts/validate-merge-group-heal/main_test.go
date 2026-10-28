@@ -108,6 +108,35 @@ const orphanCheckStep = `      - name: verify nothing outlived the failed deploy
 `
 
 // TestValidateWorkflowContractAcceptsFailClosedHealJob keeps the complete recovery path valid.
+func TestHealDependenciesUseYAMLSemantics(t *testing.T) {
+	t.Parallel()
+	const before = "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
+	for _, needs := range []string{
+		"    needs:\n      [\n        changes,\n        deploy-prod,\n        validate-publication-contract,\n        merge-group-queue-membership,\n      ]",
+		"    needs:\n      - changes\n      - deploy-prod\n      - validate-publication-contract\n      - merge-group-queue-membership",
+		"    needs: [merge-group-queue-membership, validate-publication-contract, deploy-prod, changes]",
+	} {
+		candidate := strings.Replace(validWorkflow, before, needs, 1)
+		if candidate == validWorkflow {
+			t.Fatal("dependency fixture changed nothing")
+		}
+		if err := validateWorkflowContract(candidate); err != nil {
+			t.Fatalf("equivalent dependencies refused: %v", err)
+		}
+	}
+	for _, needs := range []string{
+		"    needs: [changes, deploy-prod, validate-publication-contract, validate-publication-contract]",
+		"    needs: [changes, deploy-prod, validate-publication-contract, unrelated-job]",
+		"    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership, extra-job]",
+		"    needs: {changes: deploy-prod}",
+	} {
+		candidate := strings.Replace(validWorkflow, before, needs, 1)
+		if err := validateWorkflowContract(candidate); err == nil {
+			t.Fatalf("invalid dependencies accepted: %s", needs)
+		}
+	}
+}
+
 func TestValidateWorkflowContractAcceptsFailClosedHealJob(t *testing.T) {
 	t.Parallel()
 

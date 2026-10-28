@@ -82,20 +82,29 @@ func validateWorkflowContract(workflow string) error {
 	if !ok {
 		return errors.New("missing heal-prod-on-failure job")
 	}
+	// Dependency order and flow/block formatting do not change GitHub's wait
+	// graph. Require the exact four distinct dependencies from parsed YAML.
+	var parsed struct {
+		Needs []string `yaml:"needs"`
+	}
+	expected := map[string]bool{
+		"changes": true, "deploy-prod": true,
+		"validate-publication-contract": true, "merge-group-queue-membership": true,
+	}
+	if err := yaml.Unmarshal([]byte(healJob), &parsed); err != nil || len(parsed.Needs) != len(expected) {
+		return errors.New("heal job is missing deploy dependencies")
+	}
+	for _, dependency := range parsed.Needs {
+		if !expected[dependency] {
+			return errors.New("heal job is missing deploy dependencies")
+		}
+		delete(expected, dependency)
+	}
 
 	requirements := []struct {
 		line        string
 		description string
 	}{
-		// validate-publication-contract is required by the DR signing contract:
-		// every ci.yaml job that reaches production must WAIT for the publication
-		// gate, and this job re-deploys main's artifact. Pinned as an exact line
-		// here so the two contracts cannot drift into asserting different
-		// dependency sets over the same job.
-		{
-			line:        "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]",
-			description: "deploy dependencies",
-		},
 		{line: "      group: prod-deploy", description: "shared production lock"},
 		{line: "      cancel-in-progress: false", description: "non-preempting production lock"},
 		{line: "          ref: main", description: "current-main checkout"},

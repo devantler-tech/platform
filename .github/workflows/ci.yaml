@@ -758,18 +758,34 @@ jobs:
   # kubectl is pinned and checksum-verified; yq and jq come from the ubuntu-latest runner.
   test-publish-release-recovery:
     name: 🩹 Validate the release recovery build
-    permissions: {}
-    uses: ./.github/workflows/release-recovery-offline-fixture.yaml
-    with:
-      enable-recovery: true
-      offline-test: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-recovery-offline-fixture
+        with:
+          enable-recovery: "true"
+          offline-test: "true"
 
-  # Default-off is a PR observation; do not add its intentionally skipped job to the production needs.
+  # Default-off is a PR observation; its action must not download or build the publisher.
   test-publish-release-recovery-disabled:
     if: github.event_name == 'pull_request'
     name: 🩹 Validate default-off release recovery
-    permissions: {}
-    uses: ./.github/workflows/release-recovery-offline-fixture.yaml
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/release-recovery-offline-fixture
+      - name: Confirm that the default-off action did nothing
+        run: test ! -e .devantler-tech-recovery && test ! -e "$RUNNER_TEMP/publish-release-recovery"
 
   validate-repository-guards:
     name: 🛡️ Validate Repository Guards
