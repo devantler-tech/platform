@@ -54,7 +54,7 @@ func TestPlanPreservesIdentitiesAndRestrictsLocalRecipients(t *testing.T) {
 		t.Fatal("configuration families missing")
 	}
 	for _, want := range []string{
-		`"matchOn":["name","domainId"]`, `"@type":"Replace"`,
+		`"@type":"Replace"`,
 		`"jmapEmailGet":true`, `"mustMatchSender":{"else":"true","match":{}}`,
 		`"tlsImplicit":true`, `"useTls":true`,
 		`authenticated_as == 'agents@example.test'`, `rcpt == 'maintainer@example.test'`,

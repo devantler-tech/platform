@@ -152,12 +152,16 @@ func command(args []string, log io.Writer) int {
 	if proxy.value != nil {
 		v.UseProxyClientIP = *proxy.value
 	}
-	b, err := render(v)
+	inventory, err := privateInput(*dir, "listener-inventory.json", 65536)
+	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+		return fail()
+	}
+	v.accountIDs, err = managedAccountIDs(inventory, v)
 	if err != nil {
 		return fail()
 	}
-	inventory, err := privateInput(*dir, "listener-inventory.json", 65536)
-	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+	b, err := render(v)
+	if err != nil {
 		return fail()
 	}
 	parent, err := os.Stat(filepath.Dir(*output))
