@@ -205,6 +205,8 @@ jobs:
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
+              - 'scripts/tests/test-hubble-ui-streaming.sh'
+              - 'scripts/check-hubble-ui-streaming/**'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
               - 'scripts/tests/test-world-zone-trial.sh'
@@ -4024,6 +4026,34 @@ jobs:
             scripts/render-helm-chart/go.mod scripts/render-helm-chart/go.sum)"
           if [[ -n "$changed_inputs" ]]; then
             bash scripts/tests/test-kubescape-runtime-rules-switch.sh
+          fi
+
+      # The controller renderer above retains its audited compiler and binary.
+      # The new HTTP probe uses the root module's patched standard library.
+      - name: ⚙️ Setup the repository Go toolchain for the streaming probe
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧩 Verify Hubble UI streaming with the pinned frontend runtime
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-hubble-ui-streaming.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/controllers/cilium \
+            k8s/providers/hetzner/infrastructure/controllers \
+            k8s/providers/docker/infrastructure/controllers \
+            k8s/bases/components ksail.prod.yaml \
+            scripts/tests/test-hubble-ui-streaming.sh \
+            scripts/check-hubble-ui-streaming go.mod go.sum \
+            scripts/build-controller-helm.sh scripts/render-helm-chart)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-hubble-ui-streaming.sh --runtime
           fi
 
       - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart
