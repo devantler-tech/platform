@@ -122,6 +122,16 @@ credential from OpenBao (`infrastructure/ghcr/auth`) via the cluster-scoped `ope
 `OCIRepository` and ServiceAccount consume. It is reconciled by flux-system (not
 your tenant SA) — which is why it may use the ClusterSecretStore where your own
 resources may not (the Kyverno policy carves out flux-system-applied resources).
+The initial typed business-site registration instead has KRO create this child.
+Its admission exception is confined to the authenticated controller, the fixed
+business-site destination, the existing pull-credential reference and the exact
+Docker configuration template. Other writers cannot add, remove or change its
+reserved ownership labels, and controller updates must preserve the complete
+ownership tuple. The instance UID is controller-supplied attribution, not an
+independently verified parent identity. This exception neither opens arbitrary
+secret paths nor grants tenant application access. KRO's bind permission names
+the constructor's four exact roles, including `tenant-edit`, rather than the
+unrelated built-in `edit` role.
 The value lives SOPS-encrypted as `ghcr_dockerconfigjson` in the shared
 `secret.enc.yaml` (the same org token both clusters use); the
 `seed-ghcr` PushSecret pushes it to `infrastructure/ghcr/auth` via the `openbao`
@@ -133,7 +143,7 @@ ClusterSecretStore.
 
 ## 4. How publishing & trust fit together
 
-On every `v*` tag, the tenant's `cd.yaml` calls its approved, commit-pinned
+For the existing legacy/dual-family consumers, each `v*` tag makes the tenant's `cd.yaml` call its approved, commit-pinned
 shared publisher. The maintained
 [`publish-app.yaml`](https://github.com/devantler-tech/.github/blob/main/.github/workflows/publish-app.yaml)
 and the legacy location implement that contract. Existing callers stay on their
@@ -144,6 +154,13 @@ approved location until migrated. The workflow builds and pushes the image, pins
 
 `publish-app.yaml` signs two artifacts separately: the OCI **manifest** artifact and the
 container **image**. Three verifiers check them, and they do not check the same thing:
+
+The business site's canonical-only publisher instead uses
+`.github/workflows/publish-runtime.yaml` on a published release. Its initial
+Platform registration is source-only: the typed `Tenant` pins the exact manifest
+digest and reviewed maintained publisher, with application reconciliation,
+WebApp, external DNS and SOPS disabled. Fetching that source does not deploy the
+portal or prove any image/identity/private-input readiness.
 
 | Verifier | Artifact | What it accepts |
 |---|---|---|
@@ -156,9 +173,13 @@ manifest is signed, Flux applies the manifests and then admission denies the Pod
 refuses the pull (`ImagePullBackOff`).
 
 The approved Flux list covers the production consumers already registered with the approval
-generator. It lives in `scripts/publish-workflow-approved-revisions.tsv`, and
-`scripts/write-publish-workflow-matchers.sh` writes it into each of those consumers'
-`OCIRepository`. The generator's consumer list is fixed in code
+generator. Legacy compatibility lives in `scripts/publish-workflow-approved-revisions.tsv`, and
+`scripts/write-publish-workflow-matchers.sh` writes it into those consumers'
+`OCIRepository`. Canonical-only registration lives separately in
+`scripts/canonical-tenant-source-bindings.json`; it records the complete typed
+constructor/instance, qualified source and independently verified publication.
+It never fabricates a legacy signer, applied row or release candidate. The
+writer validates the pinned canonical Tenant unchanged. The legacy consumer floor is fixed in code
 (`scripts/report-publish-workflow-signing-revisions.sh` and the
 `Regenerate Approved Publish Revisions` workflow), so a new tenant registered by hand (§5) is not
 covered until a reviewed platform change adds it there. Maintained revisions are curated separately
@@ -166,6 +187,44 @@ in `scripts/publish-workflow-canonical-approvals.tsv`; recognizing a publisher's
 approve it. The `Tenant` archetype pilot (below) retains the generic legacy full-commit rule and
 accepts the explicitly reviewed maintained revision. Its starter check also requires that this
 rule accept the starter's actual pinned caller.
+
+To generate the initial business-site admission candidate, use
+`scripts/bootstrap-tenant-source.sh --admit-canonical-source --tag <tag> --source-sha <sha> --digest <digest>`
+with the explicit read-only `PUBLISH_KUBE_CONTEXT`. The command independently
+verifies the immutable release, validates the complete raw constructor/instance
+and inventory, and writes the candidate only after all checks pass. The existing
+`--consumer business-site --verify-only` mode remains evidence-only. Review the
+candidate and registration together; generating a file is not deployed acceptance.
+
+For a later source-only upgrade, use
+`scripts/bootstrap-tenant-source.sh --prepare-canonical-upgrade --tag <tag> --source-sha <sha> --digest <digest> --output /absolute/new-candidate-directory`
+with that same read-only context. The existing source must already be Ready and
+SourceVerified with its admitted digest and exact publisher constraint. The tool
+verifies the proposed publication, checks the source again, and generates two
+reviewable files in a new private directory. It never updates the checkout or
+cluster. Copy those generated files to their matching repository paths for review;
+do not hand-edit the generated admission or change its disabled application flags.
+
+The `published-upgrade` record retains the previous binding and a hashed source
+observation separately from the proposed publication. Discovery projects the new
+desired digest; regeneration preserves the last actual observation while the
+previous source remains verified. It records the replacement only after Flux has
+verified the new digest at its current generation, then removes the transitional
+record. A proposed version is never an applied version. Missing, ambiguous,
+recreated, stale or weakened previous sources fail preparation or regeneration;
+an upgrade never restores first-publication authority or enables an application.
+
+Before first verification, complete inventory may show the exact source absent
+or pending without an artifact. Regeneration emits no applied row for that state.
+Once the uniquely identified source is Ready and SourceVerified at its current
+generation with the exact digest, regeneration writes its qualified seven-column
+observation and retires bootstrap authority. A later missing, pending, malformed,
+duplicated or unreadable observation fails; it cannot restore bootstrap. See the
+[canonical-only source decision](adr/canonical-only-source-bootstrap.md).
+
+Local regeneration requires GNU coreutils (`gmv` on macOS). Output replacement
+uses its no-target-directory operation, so a concurrent destination-directory
+change is refused instead of receiving a nested generated file.
 
 **What this means for a registered tenant:** the platform must approve a `publish-app.yaml` commit
 before `cd.yaml` can move to it. Each registered application tenant runs a required check that

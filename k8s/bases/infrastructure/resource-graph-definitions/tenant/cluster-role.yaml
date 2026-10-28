@@ -50,12 +50,12 @@ rules:
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # RBAC escalation guard: creating a binding to a ClusterRole requires the
   # `bind` verb on that role (or holding all its rules). Scope `bind` to exactly
-  # the roles the Tenant bindings reference — `edit` (tenant SA) and the two
+  # the roles the Tenant bindings reference — `tenant-edit` (tenant SA) and the two
   # tenant-external-dns roles — never a blanket grant.
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["clusterroles"]
     resourceNames:
-      - edit
+      - tenant-edit
       - tenant-external-dns
       - tenant-external-dns-global
       - tenant-webapp-edit

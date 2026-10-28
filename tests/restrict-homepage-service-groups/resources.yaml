@@ -13,19 +13,19 @@ spec:
   hostnames:
     - observability.platform.devantler.tech
 ---
-# The group this change adds. Fails before the layout entry exists, passes after.
+# A second declared group, on another namespace. Fails without its layout entry.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: infrastructure-as-code-group
-  namespace: crossview
+  namespace: github-config
   annotations:
     gethomepage.dev/enabled: "true"
-    gethomepage.dev/name: Crossview
+    gethomepage.dev/name: GitHub Config
     gethomepage.dev/group: Infrastructure as Code
 spec:
   hostnames:
-    - crossview.platform.devantler.tech
+    - github-config.platform.devantler.tech
 ---
 # The exact drift that motivated the policy: an undeclared group, which Homepage
 # accepts silently and renders below the bookmark rail.
@@ -65,7 +65,7 @@ metadata:
   annotations:
     gethomepage.dev/enabled: "true"
     gethomepage.dev/name: Not A Service Group
-    gethomepage.dev/group: Banking
+    gethomepage.dev/group: Package Registries
 spec:
   hostnames:
     - bookmark.platform.devantler.tech
@@ -124,7 +124,21 @@ spec:
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
-  name: clients-group
+  name: business-and-clients-group
+  namespace: client-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Business & Clients
+spec:
+  hostnames:
+    - business.platform.devantler.tech
+---
+# Clients merged into Business & Clients. It was accepted only while the last
+# tenant route moved over, and the layout no longer declares it.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-clients-group
   namespace: client-site
   annotations:
     gethomepage.dev/enabled: "true"
@@ -170,3 +184,54 @@ metadata:
 spec:
   hostnames:
     - retired-personal.platform.devantler.tech
+---
+# The two groups Security split into, as the platform's own routes use them.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: secrets-management-group
+  namespace: openbao
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Secrets Management
+spec:
+  hostnames:
+    - vault.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: governance-group
+  namespace: policy-reporter
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Governance
+spec:
+  hostnames:
+    - policy-reporter.platform.devantler.tech
+---
+# The groups those replaced. No route claims them any more, so the layout no
+# longer declares them and admission refuses them.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-security-group
+  namespace: openbao
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Security
+spec:
+  hostnames:
+    - retired-security.platform.devantler.tech
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: retired-business-group
+  namespace: client-site
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Business
+spec:
+  hostnames:
+    - retired-business.platform.devantler.tech

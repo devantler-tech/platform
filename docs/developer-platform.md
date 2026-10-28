@@ -19,6 +19,10 @@ The applications-first navigation and central action entry point are tracked in
 [the interface spike](https://github.com/devantler-tech/monorepo/issues/3703).
 That investigation does not require another hosted portal or a parallel catalog.
 
+## Release recovery
+
+Use the repository-owned [release recovery procedure](release-recovery.md) for an interrupted GitHub-only publication with an existing stable tag. Its manual workflow preserves the original tag and source and shares the normal release queue.
+
 ## Retiring the previous portal
 
 The stateless Backstage portal was retired on 18 October 2026
@@ -32,10 +36,11 @@ policy acted only while the journal existed. The
 [lifecycle decision](adr/backstage-retirement-lifecycle.md) keeps the record of
 how it worked.
 
-The portal's database and its storage are retained in the `backstage` namespace
-(`k8s/providers/hetzner/apps/retained-backstage-db`). The **Protect Retained
-Backstage Storage** workflow and `internal/portalstorage` still guard them. Whether that
-data is kept or retired is decided separately
-([#5122](https://github.com/devantler-tech/platform/issues/5122)), and
-[#4266](https://github.com/devantler-tech/platform/issues/4266) stays open until
-then.
+The portal's retained database was no longer needed. On 26 October 2026 the
+maintainer decided to delete it rather than keep a recovery copy, which closes
+the open retention question
+([#5122](https://github.com/devantler-tech/platform/issues/5122)). A one-off
+**Retire Unused App Leftovers** workflow deleted the database, its claims, their
+retained volumes and the `backstage` namespace
+([#4266](https://github.com/devantler-tech/platform/issues/4266)) and was then
+removed ([#5391](https://github.com/devantler-tech/platform/issues/5391)).

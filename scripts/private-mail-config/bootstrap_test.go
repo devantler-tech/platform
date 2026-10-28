@@ -64,6 +64,9 @@ func TestOwnedBootstrapChild(t *testing.T) {
 	if !strings.HasPrefix(os.Getenv("STALWART_RECOVERY_ADMIN"), "bootstrap:") {
 		os.Exit(3)
 	}
+	if err := os.WriteFile(os.Args[len(os.Args)-1]+".port", []byte(os.Getenv("STALWART_RECOVERY_MODE_PORT")), 0600); err != nil {
+		os.Exit(3)
+	}
 	if err := os.WriteFile(os.Args[len(os.Args)-1], []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
 		os.Exit(3)
 	}
@@ -74,6 +77,9 @@ func TestOwnedBootstrapChild(t *testing.T) {
 }
 
 func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testing.T) {
+	// An inherited serving port cannot make the owned recovery child reachable
+	// through the normal administration Service during startup or a retry.
+	t.Setenv("STALWART_RECOVERY_MODE_PORT", "8080")
 	dir, data := bootstrapInputs(t), t.TempDir()
 	pidFile := filepath.Join(data, "owned-child")
 	executable, err := os.Executable()
@@ -81,6 +87,7 @@ func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testi
 		t.Fatal(err)
 	}
 	runtime := bootstrapRuntime{server: executable, serverArgs: []string{"-test.run=TestOwnedBootstrapChild", "--", pidFile}, cli: "/must-not-run", url: "http://127.0.0.1:1", dataDir: data, startup: 5 * time.Second, shutdown: 3 * time.Second}
+	runtime.applicationFile, runtime.applicationDigest = applicationAssetFixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
@@ -114,12 +121,23 @@ func TestFailedBootstrapStopsOwnedProcessAndFencesConcurrentInitializer(t *testi
 	if process.Signal(syscall.Signal(0)) == nil {
 		t.Fatal("owned recovery child leaked")
 	}
+	port, err := os.ReadFile(pidFile + ".port")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := strconv.Atoi(string(port))
+	// This literal is the independent boundary that serving policies exclude;
+	// deriving it from the implementation would miss a simultaneous port drift.
+	if err != nil || value < 1024 || value > 65535 || value == 8080 || string(port) != "18080" {
+		t.Fatal("bootstrap did not give its recovery child a separate unprivileged management port")
+	}
 }
 
 func TestBootstrapRefusesAnExistingManagementServer(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer server.Close()
 	runtime := bootstrapRuntime{server: "/must-not-run", url: server.URL, dataDir: t.TempDir()}
+	runtime.applicationFile, runtime.applicationDigest = applicationAssetFixture(t)
 	if bootstrap(context.Background(), bootstrapInputs(t), runtime) == nil {
 		t.Fatal("pre-existing management server trusted")
 	}

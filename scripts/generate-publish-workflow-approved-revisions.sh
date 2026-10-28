@@ -354,6 +354,19 @@ split_observation() {
   OBS_COUNT="$n"
 }
 
+# Use rename-to-this-path semantics. POSIX/BSD mv can instead put the temporary
+# file inside a concurrently created directory and falsely report publication.
+replace_generated_record() {
+  local replacement_command
+  case "$(uname -s)" in
+    Linux) replacement_command='mv' ;;
+    Darwin) replacement_command='gmv' ;;
+    *) refuse 'record replacement requires GNU coreutils'; return 1 ;;
+  esac
+  command -v "$replacement_command" >/dev/null || { refuse 'record replacement requires GNU coreutils (gmv on macOS)'; return 1; }
+  "$replacement_command" --no-target-directory -- "$1" "$2"
+}
+
 main() {
   local observer="${APPROVED_REVISION_OBSERVER:-}" pin_resolver="${APPROVED_REVISION_PIN_RESOLVER:-}"
   local release_resolver="${APPROVED_REVISION_RELEASE_RESOLVER:-}" release_candidates='' release_attempted=' '
@@ -366,6 +379,10 @@ main() {
     refuse 'generation outputs must not be symlinks'; exit 1
   fi
   local canonical_baseline_checked=0
+  local canonical_root="${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" canonical_document canonical_file canonical_initial
+  canonical_file="${CANONICAL_TENANT_BINDINGS_FILE:-$canonical_root/scripts/canonical-tenant-source-bindings.json}"
+  canonical_document="$(canonical_tenant_bindings "$canonical_root")" || { refuse 'canonical source admission is invalid'; exit 1; }
+  canonical_initial="$canonical_document"
   local bootstrap_file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}" bootstrap_document=''
   if [ -e "$bootstrap_file" ] || [ -n "${PUBLISH_BOOTSTRAP_FILE:-}" ]; then
     bootstrap_document="$(read_bound_publications "${PUBLISH_CONSUMER_ROOT:-$REPO_ROOT}" "$bootstrap_file")" || {
@@ -400,6 +417,49 @@ main() {
   while IFS=$'\t' read -r repo workflow _version; do
     [ -n "$repo" ] || continue
     examined=$((examined + 1))
+    local canonical_record
+    canonical_record="$(printf '%s\n' "$canonical_document" | jq -c --arg consumer "$repo" '.bindings[]|select(.consumer==$consumer)')"
+    if [ -n "$canonical_record" ]; then
+      # No legacy row/candidate is fabricated for a canonical-only consumer.
+      # A failed observation or immutable publication read never becomes absence.
+      local source_state source_inventory canonical_pin canonical_tuple canonical_previous canonical_date
+      canonical_observation_consistent "$canonical_record" "$IDENTITIES_OUTPUT" || { refuse "$repo: bootstrap/current-observation records disagree"; exit 1; }
+      canonical_publication_verify "$canonical_record" || { refuse "$repo: immutable publication verification failed"; exit 1; }
+      require_canonical_approval "$repo" "$workflow" "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" || exit 1
+      [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] || { refuse "$repo: source inventory context is unset"; exit 1; }
+      source_inventory="$(mktemp)" || exit 1
+      if ! kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$source_inventory"; then
+        rm -f "$source_inventory"; refuse "$repo: source inventory read failed"; exit 1
+      fi
+      source_state="$(canonical_source_inventory_state "$canonical_record" "$source_inventory")" || {
+        rm -f "$source_inventory"; refuse "$repo: source inventory is incomplete, ambiguous or inconsistent"; exit 1;
+      }
+      rm -f "$source_inventory"
+      canonical_pin="$(default_pin_resolver "$repo" "$workflow")" || exit 1
+      [ "$canonical_pin" = "$(printf '%s\n' "$canonical_record" | jq -r .publication.publisherIdentity)" ] || { refuse "$repo: current publisher is outside the pinned admission"; exit 1; }
+      case "$source_state" in
+        previous)
+          # Keep the last actual row, including absence before first observation.
+          canonical_previous="$(awk -F '\t' -v consumer="$repo" '$1==consumer {print}' "$IDENTITIES_OUTPUT")"
+          if [ -n "$canonical_previous" ]; then identities_rows="${identities_rows}${canonical_previous}"$'\n'; fi
+          ;;
+        absent | pending)
+          [ "$(printf '%s\n' "$canonical_record" | jq -r .kind)" = published-bootstrap ] || { refuse "$repo: observed publication cannot regress to bootstrap"; exit 1; }
+          ;;
+        observed)
+          canonical_tuple="$(printf '%s\n' "$canonical_record" | jq -r '[.consumer,.workflow,(.publication.gitTag|ltrimstr("v")),.sourceIdentity.digest,.publication.publisherIdentity,.publication.publisherIdentity]|@tsv')"
+          canonical_previous="$(awk -F '\t' -v consumer="$repo" '$1==consumer {print}' "$IDENTITIES_OUTPUT")"
+          canonical_date="$today"
+          if [ "${canonical_previous%$'\t'*}" = "$canonical_tuple" ] && is_date "${canonical_previous##*$'\t'}"; then
+            canonical_date="${canonical_previous##*$'\t'}"
+          fi
+          identities_rows="${identities_rows}${canonical_tuple}"$'\t'"${canonical_date}"$'\n'
+          canonical_document="$(printf '%s\n' "$canonical_document" | jq --arg consumer "$repo" '.bindings |= map(if .consumer==$consumer then .kind="published-binding"|del(.previousBinding,.previousObservation) else . end)')"
+          ;;
+        *) refuse "$repo: unknown canonical source state"; exit 1 ;;
+      esac
+      continue
+    fi
     if [ -n "$observer" ]; then
       answer="$("$observer" "$repo" "$workflow")" || answer=''
     else
@@ -518,10 +578,28 @@ main() {
   fi
   [ "$examined" -gt 0 ] || { refuse 'no consumers examined; no file written'; exit 1; }
 
-  local tmp identities_tmp bootstrap_tmp=''
+  local tmp identities_tmp bootstrap_tmp='' canonical_tmp=''
   tmp="$(mktemp "${OUTPUT}.XXXXXX")"
   identities_tmp="$(mktemp "${IDENTITIES_OUTPUT}.XXXXXX")"
-  trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}"' EXIT
+  trap 'rm -f "$tmp" "$identities_tmp" "${bootstrap_tmp:-}" "${canonical_tmp:-}"' EXIT
+  if [ "$(printf '%s\n' "$canonical_document" | jq '.bindings|length')" -gt 0 ]; then
+    if [ ! -f "$canonical_file" ] || [ -L "$canonical_file" ]; then
+      refuse 'canonical destination changed; no file written'; exit 1
+    fi
+    # The reader normalizes JSON for validation; that formatting is not an
+    # observation. Keep the original bytes unless the validated data changed.
+    local canonical_unchanged
+    canonical_unchanged="$(printf '%s\n' "$canonical_document" | jq -cr --argjson initial "$canonical_initial" '. == $initial')" || {
+      refuse 'canonical comparison failed; no file written'; exit 1;
+    }
+    if [ "$canonical_unchanged" = false ]; then
+      canonical_tmp="$(mktemp "${canonical_file}.XXXXXX")"
+      printf '%s\n' "$canonical_document" | jq . >"$canonical_tmp"
+      chmod 0644 "$canonical_tmp"
+    elif [ "$canonical_unchanged" != true ]; then
+      refuse 'canonical comparison was not boolean; no file written'; exit 1
+    fi
+  fi
   if [ -n "$bootstrap_document" ]; then
     bootstrap_tmp="$(mktemp "${bootstrap_file}.XXXXXX")"
     printf '%s\n' "$bootstrap_document" >"$bootstrap_tmp"
@@ -537,9 +615,10 @@ main() {
   } >"$identities_tmp"
   # mktemp creates 0600; the committed data file is an ordinary 0644 file and must stay one.
   chmod 0644 "$tmp" "$identities_tmp"
-  mv "$tmp" "$OUTPUT"
-  mv "$identities_tmp" "$IDENTITIES_OUTPUT"
-  [ -z "$bootstrap_tmp" ] || mv "$bootstrap_tmp" "$bootstrap_file"
+  replace_generated_record "$tmp" "$OUTPUT"
+  replace_generated_record "$identities_tmp" "$IDENTITIES_OUTPUT"
+  [ -z "$bootstrap_tmp" ] || replace_generated_record "$bootstrap_tmp" "$bootstrap_file"
+  [ -z "$canonical_tmp" ] || replace_generated_record "$canonical_tmp" "$canonical_file"
   trap - EXIT
   printf '%d consumer(s) examined, %d row(s) re-stamped, written to %s\n' "$examined" "$changed" "$OUTPUT"
 }

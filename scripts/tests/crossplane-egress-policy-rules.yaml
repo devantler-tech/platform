@@ -670,6 +670,9 @@ rules:
   # same three expressions are pinned in
   # scripts/guard-consumer-discovery-conservation.sh; a catalog change is
   # refused by both until it is reviewed here.
+  # #5357 adds only the two closed Helm-default specs. Their fixed patches
+  # may vary token whitespace, never quoted literal whitespace or escapes.
+  # Added variables, selectors or evaluation fields remain unreviewed.
   - name: reject-cel-policy-producers
     expression: >-
       !has(object.apiVersion) ||
@@ -687,6 +690,35 @@ rules:
          has(rule.resources) && rule.resources.size() > 0 &&
          rule.resources.all(resource,
            resource in ['policyreports', 'clusterpolicyreports']))) ||
+      (object.apiVersion == 'policies.kyverno.io/v1' &&
+       object.kind == 'MutatingPolicy' &&
+       has(object.spec) && has(object.spec.mutations) &&
+       object.spec.mutations.size() == 1 &&
+       has(object.spec.mutations[0].jsonPatch) &&
+       has(object.spec.mutations[0].jsonPatch.expression) &&
+       type(object.spec.mutations[0].jsonPatch.expression) == string &&
+       object.spec.mutations[0].jsonPatch.expression.matches(
+         '^[^"\\x5c]*("[^"\\x5c\\s]*"[^"\\x5c]*)*$') &&
+       [{"label":"helm.toolkit.fluxcd.io/helm-test","conditionName":"tests-enabled-on-incoming-object","conditionExpression":"has(object.metadata.labels) && 'helm.toolkit.fluxcd.io/helm-test' in object.metadata.labels && object.metadata.labels['helm.toolkit.fluxcd.io/helm-test'] == 'enabled'","patch":"(has(object.spec.test)&&object.spec.test!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/test\",value:{}}])+[JSONPatch{op:\"add\",path:\"/spec/test/enable\",value:true}]"},{"label":"helm.toolkit.fluxcd.io/remediation","conditionName":"remediation-enabled-on-incoming-object","conditionExpression":"has(object.metadata.labels) && 'helm.toolkit.fluxcd.io/remediation' in object.metadata.labels && object.metadata.labels['helm.toolkit.fluxcd.io/remediation'] == 'enabled'","patch":"(has(object.spec.install)&&object.spec.install!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/install\",value:{}}])+(has(object.spec.install)&&object.spec.install!=null&&has(object.spec.install.remediation)&&object.spec.install.remediation!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/install/remediation\",value:{}}])+[JSONPatch{op:\"add\",path:\"/spec/install/remediation/retries\",value:3},JSONPatch{op:\"add\",path:\"/spec/install/remediation/remediateLastFailure\",value:true}]+(has(object.spec.upgrade)&&object.spec.upgrade!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/upgrade\",value:{}}])+(has(object.spec.upgrade)&&object.spec.upgrade!=null&&has(object.spec.upgrade.remediation)&&object.spec.upgrade.remediation!=null?[]:[JSONPatch{op:\"add\",path:\"/spec/upgrade/remediation\",value:{}}])+[JSONPatch{op:\"add\",path:\"/spec/upgrade/remediation/retries\",value:3},JSONPatch{op:\"add\",path:\"/spec/upgrade/remediation/remediateLastFailure\",value:true}]"}].exists(approved,
+         object.spec.mutations[0].jsonPatch.expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') == approved.patch &&
+         object.spec == {
+           'failurePolicy': 'Fail',
+           'matchConstraints': {
+             'objectSelector': {'matchLabels': {approved.label: 'enabled'}},
+             'resourceRules': [{
+               'apiGroups': ['*'], 'apiVersions': ['*'],
+               'operations': ['CREATE', 'UPDATE'], 'resources': ['*']
+             }]
+           },
+           'matchConditions': [
+             {'name': 'helm-release-kind', 'expression': "object.kind == 'HelmRelease'"},
+             {'name': approved.conditionName, 'expression': approved.conditionExpression}
+           ],
+           'mutations': [{
+             'patchType': 'JSONPatch',
+             'jsonPatch': {'expression': object.spec.mutations[0].jsonPatch.expression}
+           }]
+         })) ||
       (object.kind == 'MutatingPolicy' &&
        has(object.spec) &&
        !has(object.spec.targetMatchConstraints) &&
@@ -773,13 +805,13 @@ rules:
          '^[^"\\x5c]*("[^"\\x5c\\s]*"[^"\\x5c]*)*$') &&
        ((object.spec.matchConstraints.resourceRules[0].resources == ['deployments'] &&
          object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
-           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-deployment","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])') ||
+           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-deployment"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])') ||
         (object.spec.matchConstraints.resourceRules[0].resources == ['daemonsets'] &&
          object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
-           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-daemonset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])') ||
+           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-daemonset"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])') ||
         (object.spec.matchConstraints.resourceRules[0].resources == ['statefulsets'] &&
          object.spec.generate[0].expression.replace(' ', '').replace('\n', '').replace('\t', '').replace('\r', '') ==
-           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])')))
+           'generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-statefulset"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])')))
     message: >-
       Helm-rendered CEL policy producers require explicit effective-policy
       review before deployment

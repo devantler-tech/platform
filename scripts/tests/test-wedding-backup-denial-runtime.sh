@@ -6,12 +6,11 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
-# This fixture and the Crossview runtime fixture use separate hosted daemons.
-# Configure this daemon before its own pinned build.
+# Configure the hosted daemon before this fixture's own pinned build.
 if [ "${GITHUB_ACTIONS:-}" = true ] &&
   [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] &&
   [ "${RUNNER_OS:-}" = Linux ]; then
-  bash "${root_dir}/scripts/tests/test-crossview-login-alerter-runtime.sh" --configure-registry-cache
+  bash "${root_dir}/scripts/tests/lib/configure-hosted-registry-cache.sh"
 fi
 work_dir="$(mktemp -d)"
 readonly work_dir
@@ -42,6 +41,22 @@ docker build --network none --tag "${image}" "${work_dir}"
 docker run --rm --network none --read-only --user 65532:65532 \
   --cap-drop ALL --security-opt no-new-privileges --entrypoint /tools/sh \
   "${image}" -ec 'mc --version; for tool in sed grep awk sort tail sha256sum cut date cat sleep mkdir rm; do command -v "$tool" >/dev/null; done'
+
+# Exercise the retirement command's exact native flags with disposable local
+# files. No alias, object-store connection or cloud credential is available.
+docker run --rm --network none --read-only --user 65532:65532 \
+  --tmpfs /tmp:rw,nosuid,nodev,mode=1777 --cap-drop ALL --security-opt no-new-privileges \
+  --entrypoint /tools/sh "${image}" -ec '
+    export MC_CONFIG_DIR=/tmp/mc
+    for tool in head wc tr sort timeout; do command -v "$tool" >/dev/null; done
+    mkdir -p /tmp/shared/cnpg/wedding-db /tmp/shared/cnpg/umami-db
+    printf old >/tmp/shared/cnpg/wedding-db/proven
+    printf keep >/tmp/shared/cnpg/umami-db/backup
+    printf "%s\n" /tmp/shared/cnpg/wedding-db/proven | timeout 30 mc rm --json --force --stdin
+    test ! -e /tmp/shared/cnpg/wedding-db/proven
+    test "$(cat /tmp/shared/cnpg/umami-db/backup)" = keep
+    printf "PASS: pinned mc removes only exact stdin targets\n"
+  '
 
 # Run the denial proof and the pinned mc against a refusing stub. Require that case to have run: it is skipped outside this image.
 denial_out="$(DENIAL_POD_RUNTIME_IMAGE="${image}" bash "${root_dir}/scripts/tests/test-verify-wedding-backup-denial.sh" 2>&1)" || {

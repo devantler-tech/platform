@@ -1,0 +1,138 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: enabled-empty
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: enabled-existing
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install:
+    timeout: 2m
+    remediation:
+      retries: 1
+      remediateLastFailure: false
+      ignoreTestFailures: true
+  upgrade:
+    cleanupOnFail: true
+    remediation:
+      retries: -1
+      remediateLastFailure: false
+      strategy: rollback
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: enabled-one-parent
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install:
+    timeout: 2m
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: enabled-null-parents
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install: null
+  upgrade:
+    cleanupOnFail: true
+    remediation: null
+---
+apiVersion: other.example/v1
+kind: HelmRelease
+metadata:
+  name: same-kind-other-group
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: unlabelled
+  namespace: controllers
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: disabled
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: disabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wrong-kind
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: enabled
+data:
+  retained: "yes"

@@ -1,0 +1,86 @@
+name: Verify Email Storage Recovery
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-private-mail-storage-recovery"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  verify:
+    name: Verify retained mail storage recovery
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require main and typed confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$CONFIRM" != verify-private-mail-storage-recovery ]]; then
+            printf '%s\n' 'MAIL_STORAGE_RECOVERY=UNVERIFIED' >&2
+            exit 2
+          fi
+
+      - name: Check out the confirmed revision and recovery history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install the repository-approved Kubernetes reader
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/mail-recovery-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/mail-recovery-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/mail-recovery-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/mail-recovery-tools" >> "$GITHUB_PATH"
+
+      - name: Read the original mail deployment recovery window
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          PRIVATE_MAIL_RECOVERY_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          proof_dir="$(mktemp -d "$RUNNER_TEMP/mail-recovery-context.XXXXXX")"
+          trap 'rm -rf "$proof_dir"' EXIT
+          if [[ -z "$KUBE_CONFIG" || ${#KUBE_CONFIG} -gt 1048576 ]]; then
+            printf '%s\n' 'MAIL_STORAGE_RECOVERY=UNVERIFIED'
+            exit 2
+          fi
+          export KUBECONFIG="$proof_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          if ! (
+            if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+              exit 1
+            fi
+          ) 2>"$proof_dir/endpoint.log"; then
+            printf '%s\n' 'MAIL_STORAGE_RECOVERY=UNVERIFIED'
+            exit 2
+          fi
+          unset HCLOUD_TOKEN
+          bash scripts/verify-private-mail-storage-recovery.sh

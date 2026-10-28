@@ -905,11 +905,44 @@ assert_helm_rules_accept \
   "${helm_release_crds_mutation_fixture}" \
   'a MutatingPolicy that sets only the HelmRelease CRD strategy is the reviewed exception'
 
+# #5357: a complete reviewed default spec cannot affect egress or chart values.
+# The guard must still reject added CEL/evaluation fields and altered scopes.
+for suffix in enable-tests remediation-retries; do
+  default_fixture="$(cat "${root_dir}/k8s/bases/infrastructure/cluster-policies/flux/helm-release-${suffix}.yaml")"
+  assert_helm_rules_accept \
+    "helm-default-${suffix}" "${default_fixture}" \
+    'the complete reviewed Helm default must preserve effective-policy inspection'
+  for target in missing-kind source-kind no-label condition-side-effect patch-side-effect values-path failure-policy mutate-existing target-constraints variables extra-selector resource-names second-mutation; do
+    default_candidate="${test_temp_root}/default-${suffix}-${target}.yaml"
+    printf '%s\n' "${default_fixture}" >"${default_candidate}"
+    case "${target}" in
+      missing-kind) yq -i 'del(.spec.matchConditions[0])' "${default_candidate}" ;;
+      source-kind) yq -i '.spec.matchConditions[0].expression = "object.kind == '\''CiliumNetworkPolicy'\''"' "${default_candidate}" ;;
+      no-label) yq -i 'del(.spec.matchConstraints.objectSelector)' "${default_candidate}" ;;
+      condition-side-effect) yq -i '.spec.matchConditions[1].expression += " && http.Get(\"https://example.test\") != null"' "${default_candidate}" ;;
+      patch-side-effect) yq -i '.spec.mutations[0].jsonPatch.expression += " + resource.Get(\"v1\", \"configmaps\", \"default\", \"x\")"' "${default_candidate}" ;;
+      values-path) yq -i '.spec.mutations[0].jsonPatch.expression |= sub("/spec/"; "/spec/values/")' "${default_candidate}" ;;
+      failure-policy) yq -i '.spec.failurePolicy = "Ignore"' "${default_candidate}" ;;
+      mutate-existing) yq -i '.spec.evaluation.mutateExisting.enabled = true' "${default_candidate}" ;;
+      target-constraints) yq -i '.spec.targetMatchConstraints.resourceRules = [{"apiGroups":["*"],"apiVersions":["*"],"operations":["UPDATE"],"resources":["*"]}]' "${default_candidate}" ;;
+      variables) yq -i '.spec.variables = [{"name":"effect","expression":"true"}]' "${default_candidate}" ;;
+      extra-selector) yq -i '.spec.matchConstraints.namespaceSelector.matchLabels.team = "unreviewed"' "${default_candidate}" ;;
+      resource-names) yq -i '.spec.matchConstraints.resourceRules[0].resourceNames = ["unreviewed"]' "${default_candidate}" ;;
+      second-mutation) yq -i '.spec.mutations += [.spec.mutations[0]]' "${default_candidate}" ;;
+    esac
+    changed_default_fixture="$(cat "${default_candidate}")"
+    [ "${changed_default_fixture}" != "${default_fixture}" ] || fail "${suffix}/${target} control did not change its policy"
+    assert_helm_rules_reject \
+      "helm-default-${suffix}-${target}" "${changed_default_fixture}" \
+      'an altered Helm default cannot inherit the reviewed approval' \
+      'reject-cel-policy-producers'
+  done
+done
+
 # The variants below edit a reviewed fixture with ${fixture/pattern/replacement}.
 # Bash 3.2 (macOS /bin/bash) keeps a backslash in the replacement half and bash 5
 # removes it, so the replacement halves carry none: a slash needs no escape
-# there, and a closing brace comes from this variable (#5109).
-readonly closing_brace='}'
+# there (#5109).
 
 assert_reviewed_mutation_variant_rejected() {
   local fixture_name="$1"
@@ -1040,8 +1073,14 @@ spec:
               "apiVersion": dyn("autoscaling.k8s.io/v1"),
               "kind": dyn("VerticalPodAutoscaler"),
               "metadata": dyn({
-                "name": string(object.metadata.name) + "-deployment",
-                "namespace": string(object.metadata.namespace)
+                "name": dyn(string(object.metadata.name) + "-deployment"),
+                "namespace": dyn(string(object.metadata.namespace)),
+                "ownerReferences": dyn([{
+                  "apiVersion": "apps/v1",
+                  "kind": "Deployment",
+                  "name": string(object.metadata.name),
+                  "uid": string([object.metadata.uid].filter(uid, type(uid) == string && size(uid) > 0)[0])
+                }])
               }),
               "spec": dyn({
                 "targetRef": dyn({
@@ -1135,10 +1174,8 @@ assert_reviewed_generation_variant_rejected \
   'an escaped map key must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-label-read' \
-  "${auto_vpa_generating_policy_fixture/\"namespace\": string(object.metadata.namespace)
-              \}/\"namespace\": string(object.metadata.labels.target)
-              ${closing_brace}}" \
-  'a GeneratingPolicy that reads workload data beyond its name and namespace must stay rejected'
+  "${auto_vpa_generating_policy_fixture/\"namespace\": dyn(string(object.metadata.namespace))/\"namespace\": dyn(string(object.metadata.labels.target))}" \
+  'a GeneratingPolicy that reads workload data beyond its reviewed identity must stay rejected'
 generated_deployment_variant="${auto_vpa_generating_policy_fixture/\"kind\": dyn(\"VerticalPodAutoscaler\")/\"kind\": \"Deployment\"}"
 generated_deployment_variant="${generated_deployment_variant/\"apiVersion\": dyn(\"autoscaling.k8s.io\/v1\")/\"apiVersion\": \"apps/v1\"}"
 assert_reviewed_generation_variant_rejected \
@@ -1146,19 +1183,51 @@ assert_reviewed_generation_variant_rejected \
   "${generated_deployment_variant}" \
   'a GeneratingPolicy that builds an apps workload instead of a VerticalPodAutoscaler must stay rejected'
 assert_reviewed_generation_variant_rejected \
+  'generating-policy-owner-uid' \
+  "${auto_vpa_generating_policy_fixture/object.metadata.uid/object.metadata.labels.owner}" \
+  'an owner reference not bound to the workload UID must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-owner-kind' \
+  "${auto_vpa_generating_policy_fixture/\"ownerReferences\": dyn([{
+                  \"apiVersion\": \"apps\/v1\",
+                  \"kind\": \"Deployment\",/\"ownerReferences\": dyn([{
+                  \"apiVersion\": \"apps/v1\",
+                  \"kind\": \"StatefulSet\",}" \
+  'an owner reference to another workload kind must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-owner-name' \
+  "${auto_vpa_generating_policy_fixture/\"ownerReferences\": dyn([{
+                  \"apiVersion\": \"apps\/v1\",
+                  \"kind\": \"Deployment\",
+                  \"name\": string(object.metadata.name),/\"ownerReferences\": dyn([{
+                  \"apiVersion\": \"apps/v1\",
+                  \"kind\": \"Deployment\",
+                  \"name\": \"another-workload\",}" \
+  'an owner reference to another workload name must stay rejected'
+assert_reviewed_generation_variant_rejected \
+  'generating-policy-owner-block-deletion' \
+  "${auto_vpa_generating_policy_fixture/\"ownerReferences\": dyn([{/\"ownerReferences\": dyn([{\"blockOwnerDeletion\": true,}" \
+  'an unreviewed owner deletion permission must stay rejected'
+assert_reviewed_generation_variant_rejected \
   'generating-policy-unbound-apps-kind' \
   "${auto_vpa_generating_policy_fixture/\"updateMode\": \"InPlaceOrRecreate\"/\"updateMode\": \"InPlaceOrRecreate\", \"kind\": \"Deployment\"}" \
   'an apps kind literal outside the targetRef head must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-unbound-target-ref' \
-  "${auto_vpa_generating_policy_fixture/\"apiVersion\": \"apps\/v1\",
-                  \"kind\": \"Deployment\",/\"kind\": \"Deployment\",
+  "${auto_vpa_generating_policy_fixture/\"targetRef\": dyn({
+                  \"apiVersion\": \"apps\/v1\",
+                  \"kind\": \"Deployment\",/\"targetRef\": dyn({
+                  \"kind\": \"Deployment\",
                   \"apiVersion\": \"apps/v1\",}" \
   'a targetRef that does not open with its apps apiVersion and kind literals must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-other-target-name' \
-  "${auto_vpa_generating_policy_fixture/\"kind\": \"Deployment\",
-                  \"name\": string(object.metadata.name)/\"kind\": \"Deployment\",
+  "${auto_vpa_generating_policy_fixture/\"targetRef\": dyn({
+                  \"apiVersion\": \"apps\/v1\",
+                  \"kind\": \"Deployment\",
+                  \"name\": string(object.metadata.name)/\"targetRef\": dyn({
+                  \"apiVersion\": \"apps/v1\",
+                  \"kind\": \"Deployment\",
                   \"name\": \"cilium-operator\"}" \
   'a VerticalPodAutoscaler aimed at another workload must stay rejected'
 assert_reviewed_generation_variant_rejected \
@@ -1169,7 +1238,7 @@ assert_reviewed_generation_variant_rejected \
   'a GeneratingPolicy that applies into a fixed namespace must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-literal-object-namespace' \
-  "${auto_vpa_generating_policy_fixture/\"namespace\": string(object.metadata.namespace)/\"namespace\": \"kube-system\"}" \
+  "${auto_vpa_generating_policy_fixture/\"namespace\": dyn(string(object.metadata.namespace))/\"namespace\": dyn(\"kube-system\")}" \
   'a VerticalPodAutoscaler placed in a fixed namespace must stay rejected'
 assert_reviewed_generation_variant_rejected \
   'generating-policy-mismatched-trigger' \
@@ -1210,7 +1279,7 @@ assert_reviewed_generation_variant_rejected \
 auto_vpa_statefulset_fixture="${auto_vpa_generating_policy_fixture/auto-vpa-deployment/auto-vpa-statefulset}"
 auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/resources: \[\"deployments\"\]/resources: [\"statefulsets\"]}"
 auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/\"-deployment\"/\"-statefulset\"}"
-auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/\"kind\": \"Deployment\"/\"kind\": \"StatefulSet\"}"
+auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture//\"kind\": \"Deployment\"/\"kind\": \"StatefulSet\"}"
 auto_vpa_statefulset_fixture="${auto_vpa_statefulset_fixture/InPlaceOrRecreate/Initial}"
 assert_helm_rules_accept \
   'auto-vpa-generating-policy-statefulset' \
@@ -1219,7 +1288,7 @@ assert_helm_rules_accept \
 auto_vpa_daemonset_fixture="${auto_vpa_generating_policy_fixture/auto-vpa-deployment/auto-vpa-daemonset}"
 auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/resources: \[\"deployments\"\]/resources: [\"daemonsets\"]}"
 auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"-deployment\"/\"-daemonset\"}"
-auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"kind\": \"Deployment\"/\"kind\": \"DaemonSet\"}"
+auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture//\"kind\": \"Deployment\"/\"kind\": \"DaemonSet\"}"
 auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\[\"cpu\", \"memory\"\]/[\"cpu\"]}"
 auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"cpu\": \"50m\", \"memory\": \"64Mi\"/\"cpu\": \"50m\"}"
 auto_vpa_daemonset_fixture="${auto_vpa_daemonset_fixture/\"cpu\": \"3\", \"memory\": \"6Gi\"/\"cpu\": \"1\"}"

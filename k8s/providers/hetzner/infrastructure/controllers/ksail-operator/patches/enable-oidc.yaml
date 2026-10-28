@@ -7,7 +7,7 @@
 # local/CI the *.platform.lan host-file names are not in-cluster resolvable.
 #
 # Reuses the shared `public-client` confidential client (same as oauth2-proxy /
-# Vault / Headlamp) so no new SOPS secret is needed -- the redirect URI is
+# Vault) so no new SOPS secret is needed -- the redirect URI is
 # registered on that client in the dex HelmRelease. This merges into spec.values
 # (it does not replace the base values).
 apiVersion: helm.toolkit.fluxcd.io/v2

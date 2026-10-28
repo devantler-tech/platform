@@ -16,34 +16,46 @@ import (
 	"time"
 )
 
+// A normal administration Service must never select the recovery listener.
+// Stalwart's supported recovery override changes its port, not its bind address.
+const bootstrapRecoveryPort = "18080"
+
 type bootstrapRuntime struct {
-	server, cli, url, dataDir string
-	serverArgs                []string
-	startup, shutdown         time.Duration
+	server, cli, url, dataDir          string
+	applicationFile, applicationDigest string
+	serverArgs                         []string
+	startup, shutdown                  time.Duration
 }
 
+// bootstrapCommand runs the bounded bootstrap lifecycle using private file inputs.
 func bootstrapCommand(args []string, log io.Writer) int {
 	f := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "/etc/private-mail", "mounted private inputs")
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap refused invalid arguments.")
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid arguments.")
 		return 2
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	ctx, timeout := context.WithTimeout(ctx, 3*time.Minute)
 	defer timeout()
-	runtime := bootstrapRuntime{
-		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:8080",
-		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
-		startup: time.Minute, shutdown: 30 * time.Second,
-	}
-	if err := bootstrap(ctx, *dir, runtime); err != nil {
-		_, _ = fmt.Fprintln(log, "Private mail bootstrap failed; serving must remain stopped.", err)
+	applicationDigest, err := pinnedApplicationDigest()
+	if err != nil {
+		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid administration asset metadata.")
 		return 2
 	}
-	if _, err := fmt.Fprintln(log, "Private mail configuration verified; recovery process stopped."); err != nil {
+	runtime := bootstrapRuntime{
+		server: "/usr/local/bin/stalwart", cli: "/usr/local/bin/stalwart-cli", url: "http://127.0.0.1:" + bootstrapRecoveryPort,
+		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
+		startup: time.Minute, shutdown: 30 * time.Second,
+		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
+	}
+	if err := bootstrap(ctx, *dir, runtime); err != nil {
+		_, _ = fmt.Fprintln(log, "Email bootstrap failed; serving must remain stopped.", err)
+		return 2
+	}
+	if _, err := fmt.Fprintln(log, "Email configuration verified; recovery process stopped."); err != nil {
 		return 2
 	}
 	return 0
@@ -51,6 +63,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 
 type boundedOutput struct{ bytes.Buffer }
 
+// Write retains only the configured amount of bootstrap diagnostics.
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 1048576 {
 		return 0, errConfiguration
@@ -67,6 +80,9 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	}
 	plan, err := render(v)
 	if err != nil {
+		return errConfiguration
+	}
+	if verifyApplicationAsset(runtime.applicationFile, runtime.applicationDigest) != nil {
 		return errConfiguration
 	}
 	lock, err := os.OpenFile(filepath.Join(runtime.dataDir, ".private-mail-bootstrap.lock"), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0600)
@@ -114,7 +130,8 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	}
 	child := exec.Command(runtime.server, runtime.serverArgs...)
 	child.Env = []string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + work, "TMPDIR=" + work,
-		"STALWART_RECOVERY_MODE=1", "STALWART_RECOVERY_ADMIN=bootstrap:" + v.administratorPassword}
+		"STALWART_RECOVERY_MODE=1", "STALWART_RECOVERY_MODE_PORT=" + bootstrapRecoveryPort,
+		"STALWART_RECOVERY_ADMIN=bootstrap:" + v.administratorPassword}
 	// Native diagnostics may include credentials or private configuration.
 	child.Stdout, child.Stderr = io.Discard, io.Discard
 	if child.Start() != nil {
@@ -155,7 +172,7 @@ prepared:
 	default:
 	}
 	inventory, err := m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil {
+	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return fmt.Errorf("initial inventory: %w", errConfiguration)
 	}
 	applyCtx, applyCancel := context.WithTimeout(ctx, time.Minute)
@@ -174,7 +191,7 @@ prepared:
 	// Recovery intentionally authenticates only the recovery administrator.
 	// Normal account authentication is proved after this process has stopped.
 	inventory, err = m.request(ctx, "/jmap", inventoryRequest)
-	if err != nil || validateInventory(inventory) != nil {
+	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
 		return errConfiguration
 	}
 	// A successful configuration cannot mask an early child exit or a forced
@@ -187,6 +204,7 @@ prepared:
 	return nil
 }
 
+// stopOwned terminates the bootstrap child within the cleanup grace period.
 func stopOwned(child *exec.Cmd, done <-chan error, grace time.Duration) error {
 	select {
 	case <-done:

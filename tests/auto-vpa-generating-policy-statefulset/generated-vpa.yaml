@@ -4,6 +4,11 @@ kind: VerticalPodAutoscaler
 metadata:
   name: shared-statefulset
   namespace: apps-ns
+  ownerReferences:
+    - apiVersion: apps/v1
+      kind: StatefulSet
+      name: shared
+      uid: 00000000-0000-4000-8000-000000000002
 spec:
   targetRef:
     apiVersion: apps/v1

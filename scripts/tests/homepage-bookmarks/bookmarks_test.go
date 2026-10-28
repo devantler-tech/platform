@@ -125,10 +125,19 @@ func TestRealConfigMapFromAnotherDirectory(t *testing.T) {
 	}
 }
 
-func TestStripeDashboardBookmark(t *testing.T) {
+func TestStripeDashboardService(t *testing.T) {
 	d := fixture(t, repository(t))
-	matches := 0
 	for _, group := range d.bookmarks {
+		for groupName, entries := range group.(map[string]any) {
+			for _, entry := range entries.([]any) {
+				if _, ok := entry.(map[string]any)["Stripe"]; ok {
+					t.Errorf("Stripe must be a Finance service, not a bookmark in %q", groupName)
+				}
+			}
+		}
+	}
+	matches := 0
+	for _, group := range d.services {
 		for groupName, entries := range group.(map[string]any) {
 			for _, entry := range entries.([]any) {
 				fields, ok := entry.(map[string]any)["Stripe"]
@@ -136,26 +145,24 @@ func TestStripeDashboardBookmark(t *testing.T) {
 					continue
 				}
 				matches++
-				if groupName != "Banking" {
-					t.Errorf("Stripe must appear in Banking, got %q", groupName)
+				if groupName != "Finance" {
+					t.Errorf("Stripe must appear in Finance, got %q", groupName)
 				}
-				bookmark := map[string]any{}
-				for _, field := range fields.([]any) {
-					for key, value := range field.(map[string]any) {
-						bookmark[key] = value
-					}
+				service, ok := fields.(map[string]any)
+				if !ok {
+					t.Fatalf("Stripe service must be a mapping, got %T", fields)
 				}
-				if bookmark["href"] != "https://dashboard.stripe.com" {
-					t.Errorf("Stripe must open its dashboard, got %v", bookmark["href"])
+				if service["href"] != "https://dashboard.stripe.com" {
+					t.Errorf("Stripe must open its dashboard, got %v", service["href"])
 				}
-				if icon, ok := bookmark["icon"].(string); !ok || icon == "" {
+				if icon, ok := service["icon"].(string); !ok || icon == "" {
 					t.Error("Stripe must have an icon")
 				}
 			}
 		}
 	}
 	if matches != 1 {
-		t.Errorf("want exactly one Stripe dashboard bookmark, got %d", matches)
+		t.Errorf("want exactly one Stripe dashboard service, got %d", matches)
 	}
 }
 
@@ -187,10 +194,12 @@ func TestBookmarkContracts(t *testing.T) {
 			group := d.bookmarks[0].(map[string]any)
 			group[d.group] = append(d.entries(), d.entries()[0])
 		}, "GROUP -> BOOKMARK: duplicate bookmark name in this group"},
+		// Governance is known only from a route annotation (Policy Reporter), so
+		// this also proves annotation discovery feeds the collision check.
 		{"service group collision", func(d *document) {
-			d.renameGroup("Security")
-			d.settings["layout"].(map[string]any)["Security"] = map[string]any{}
-		}, "Security: bookmark group reuses a service group name"},
+			d.renameGroup("Governance")
+			d.settings["layout"].(map[string]any)["Governance"] = map[string]any{}
+		}, "Governance: bookmark group reuses a service group name"},
 		{"unlisted group", func(d *document) { d.renameGroup("Unlisted Group") }, "Unlisted Group: bookmark group is not listed in settings.yaml layout"},
 		{"two group names", func(d *document) { d.bookmarks[0].(map[string]any)["Extra"] = d.entries() }, "bookmark group item 1 must map exactly one group name"},
 		{"two bookmark names", func(d *document) {

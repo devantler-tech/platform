@@ -31,7 +31,7 @@ spec:
   # HA Clusters remain available; Flux force=false and the prune annotation
   # prevent automatic replacement and garbage collection of this Cluster.
   # renovate: datasource=docker depName=ghcr.io/cloudnative-pg/postgresql
-  imageName: ghcr.io/cloudnative-pg/postgresql:18.4-system-trixie
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie
   # Run 3 instances (1 primary + 2 streaming replicas) for high availability.
   # A single-instance Cluster makes CNPG create a `<cluster>-primary`
   # PodDisruptionBudget with minAvailable=1 on the only pod, which BLOCKS every

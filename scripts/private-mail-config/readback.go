@@ -87,8 +87,11 @@ func validateApply(plan, output []byte) error {
 // Structs may contain native defaults. Security maps are replacements, so an
 // extra permission, socket or expression branch must never compare equal.
 func policyMatches(want, actual any, key string) bool {
+	if key == "aliases" {
+		return receivingAliasesMatch(want, actual)
+	}
 	switch key {
-	case "match", "enabledPermissions", "disabledPermissions", "bind":
+	case "match", "enabledPermissions", "disabledPermissions", "bind", "urlPrefix", "events":
 		return reflect.DeepEqual(want, actual)
 	}
 	if wm, ok := want.(map[string]any); ok {
@@ -254,8 +257,14 @@ func (m management) verify(ctx context.Context, plan []byte) error {
 				var match map[string]any
 				for _, actual := range objects {
 					identity := fields["name"] != nil && reflect.DeepEqual(fields["name"], actual["name"]) && (fields["domainId"] == nil || fields["domainId"] == actual["domainId"])
+					if op.Object == "Tracer" && fields["@type"] == "Stdout" {
+						identity = actual["@type"] == "Stdout"
+					}
 					if op.Object == "Certificate" {
 						identity = policyMatches(fields["certificate"], actual["certificate"], "")
+					}
+					if op.Object == "Application" {
+						identity = fields["description"] != nil && reflect.DeepEqual(fields["description"], actual["description"])
 					}
 					if identity {
 						if match != nil {

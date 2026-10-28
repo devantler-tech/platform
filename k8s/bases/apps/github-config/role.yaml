@@ -43,6 +43,9 @@ rules:
       - branchprotections
       - repositoryrulesets
       - issuelabels
+      - repositorycustomproperties
+      - environments
+      - environmentdeploymentpolicies
     verbs:
       - get
       - list

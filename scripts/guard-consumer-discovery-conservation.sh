@@ -72,7 +72,9 @@
 #   - an OCIRepository TEMPLATE (a nested mapping with a `spec`, not a `sourceRef`) inside any
 #     rendered document: a controller creates that object inside the cluster, so neither the
 #     scan nor any render has a document for it. A kro ResourceGraphDefinition is admitted
-#     only while it names its complete schema GVK and production renders no matching instance;
+#     only while it names its complete schema GVK and production renders no matching instance,
+#     except the exact canonical-only Tenant/constructor/source admission independently
+#     validated below; a publication receipt alone never supplies that admission;
 #     any other carrier (a Flux Operator ResourceSet, say) is refused outright;
 #   - non-empty ResourceSet resourcesTemplate strings, including step templates: their
 #     runtime templating cannot be reproduced by traversing static YAML mappings;
@@ -144,11 +146,11 @@ export CONSUMER_CARRIER_KINDS CONSUMER_LITERAL_KIND CONSUMER_LITERAL_API_VERSION
 # different key or value (`"update Policy"`) into a reviewed one.
 # These are data for yq strenv(), never expanded or parsed by the shell.
 # shellcheck disable=SC2089
-readonly REVIEWED_AUTO_VPA_DEPLOYMENT='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-deployment","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
+readonly REVIEWED_AUTO_VPA_DEPLOYMENT='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-deployment"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"Deployment","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
 # shellcheck disable=SC2089
-readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-daemonset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])'
+readonly REVIEWED_AUTO_VPA_DAEMONSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-daemonset"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"DaemonSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"InPlaceOrRecreate"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m"}),"maxAllowed":dyn({"cpu":"1"})}]})})}])'
 # shellcheck disable=SC2089
-readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":string(object.metadata.name)+"-statefulset","namespace":string(object.metadata.namespace)}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
+readonly REVIEWED_AUTO_VPA_STATEFULSET='generator.Apply(string(object.metadata.namespace),[{"apiVersion":dyn("autoscaling.k8s.io/v1"),"kind":dyn("VerticalPodAutoscaler"),"metadata":dyn({"name":dyn(string(object.metadata.name)+"-statefulset"),"namespace":dyn(string(object.metadata.namespace)),"ownerReferences":dyn([{"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name),"uid":string([object.metadata.uid].filter(uid,type(uid)==string&&size(uid)>0)[0])}])}),"spec":dyn({"targetRef":dyn({"apiVersion":"apps/v1","kind":"StatefulSet","name":string(object.metadata.name)}),"updatePolicy":dyn({"updateMode":"Initial"}),"resourcePolicy":dyn({"containerPolicies":[{"containerName":dyn("*"),"controlledResources":dyn(["cpu","memory"]),"controlledValues":dyn("RequestsAndLimits"),"minAllowed":dyn({"cpu":"50m","memory":"64Mi"}),"maxAllowed":dyn({"cpu":"3","memory":"6Gi"})}]})})}])'
 # shellcheck disable=SC2090
 export REVIEWED_AUTO_VPA_DEPLOYMENT REVIEWED_AUTO_VPA_DAEMONSET REVIEWED_AUTO_VPA_STATEFULSET
 # The reviewed HelmRelease CRD-strategy MutatingPolicy (#5096,
@@ -750,6 +752,34 @@ while IFS=$'\t' read -r file label; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
       refuse "production render $label holds consumer generation or cloning that cannot be accounted for by a static build, so its consumers are UNKNOWN"
   done <<<"$generated"
+  # #5357: admit only the complete reviewed apiVersion/kind/spec surfaces for
+  # the two HelmRelease defaults after rendering. Canonical JSON includes every CEL expression,
+  # selector, operation and evaluation field, without whitespace normalization
+  # inside strings. An altered expression or added field cannot inherit an
+  # approval from the policy's name or its mutation paths. These patches touch
+  # only fixed test/install/upgrade defaults, never chart values or consumers.
+  if ! yq -o=json -I=0 '.. | select(type == "!!map" and .kind == "MutatingPolicy")
+      | {"apiVersion": .apiVersion, "kind": .kind, "spec": .spec}' "$file" |
+    jq -cS . >"$work/helm-default-candidates.jsonl"; then
+    refuse "could not read complete Helm default policy surfaces in $label, so its consumers are UNKNOWN"
+  fi
+  reviewed_defaults='[]'
+  while IFS= read -r candidate; do
+    if command -v sha256sum >/dev/null 2>&1; then
+      candidate_digest="$(printf '%s\n' "$candidate" | sha256sum)" || refuse 'could not fingerprint Helm default policy'
+    else
+      candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint Helm default policy'
+    fi
+    case "${candidate_digest%% *}" in
+      43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824 | \
+        691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17)
+        reviewed_defaults="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_defaults")" ||
+          refuse 'could not record the complete reviewed Helm default policy'
+        ;;
+    esac
+  done <"$work/helm-default-candidates.jsonl"
+  export REVIEWED_HELM_RELEASE_DEFAULTS="$reviewed_defaults"
+
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
   # The one reviewed shape (#5096) is a Kyverno MutatingPolicy whose every
@@ -784,6 +814,7 @@ while IFS=$'\t' read -r file label; do
   if ! mutations="$(yq -N -r '[.. | select(type == "!!map" and
       (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"
         or .kind == "GeneratingPolicy"))
+      | {"apiVersion": .apiVersion, "kind": .kind, "spec": .spec} as $mutationSurface
       | select(((.kind == "MutatingPolicy"
         and ((.apiVersion // "") | tostring | test("^policies[.]kyverno[.]io/"))
         and (.spec | type) == "!!map"
@@ -874,7 +905,9 @@ while IFS=$'\t' read -r file label; do
           | [("deployments=" + strenv(REVIEWED_AUTO_VPA_DEPLOYMENT)),
             ("daemonsets=" + strenv(REVIEWED_AUTO_VPA_DAEMONSET)),
             ("statefulsets=" + strenv(REVIEWED_AUTO_VPA_STATEFULSET))]
-          | any_c(. == $generation))))
+          | any_c(. == $generation)))
+        or (strenv(REVIEWED_HELM_RELEASE_DEFAULTS) | from_json
+          | any_c((. | sort_keys(..) | to_json(0)) == ($mutationSurface | sort_keys(..) | to_json(0)))))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
@@ -987,6 +1020,23 @@ done <<<"$sources"
 # kro creates a templated OCIRepository for every instance of its RGD's complete GVK, inside the
 # cluster. The RGD may sit in one render and its instances in another, so every GVK is
 # collected before any render is searched for instances.
+canonical_rendered=''
+canonical_registration="$(canonical_tenant_bindings "$SCAN_ROOT")" || refuse 'canonical source registrations are unreadable'
+if [ "$(printf '%s\n' "$canonical_registration" | jq -r '.bindings|length')" -gt 0 ]; then
+  : >"$work/typed-source-inventory.jsonl"
+  while IFS=$'\t' read -r file label; do
+    [ -n "$file" ] || continue
+    yq -p=yaml -N -o=json -I=0 '{"file":filename,"document":explode(.)}' "$file" >"$work/typed-source-one.jsonl" ||
+      refuse "could not read typed source declarations in the production render of $label"
+    jq -es --arg file "$file" 'length>0 and all(.[]; type=="object" and keys==["document","file"] and .file==$file)' \
+      "$work/typed-source-one.jsonl" >/dev/null || refuse 'incomplete typed source render observation'
+    cat "$work/typed-source-one.jsonl" >>"$work/typed-source-inventory.jsonl"
+  done <<<"$sources"
+  canonical_typed_source_hits "$SCAN_ROOT" "$work/typed-source-inventory.jsonl" >"$work/typed-source-hits.json" ||
+    refuse 'could not classify every rendered source-producing schema'
+  canonical_rendered="$(canonical_tenant_inventory_projection "$SCAN_ROOT" "$work/typed-source-inventory.jsonl" "$work/typed-source-hits.json" rendered)" ||
+    refuse 'canonical source constructor or instance differs in the production render'
+fi
 while IFS=$'\t' read -r kind api_version; do
   [ -n "$kind" ] || continue
   instances=0
@@ -1018,7 +1068,9 @@ while IFS=$'\t' read -r kind api_version; do
     done <<<"$clones"
   done <<<"$sources"
   if [ "$instances" -gt 0 ]; then
-    refuse "production renders $instances $kind instance(s) of $api_version; kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
+    if [ "$kind" != Tenant ] || [ "$api_version" != kro.run/v1alpha1 ] || [ "$instances" -ne 1 ] || [ -z "$canonical_rendered" ]; then
+      refuse "production renders $instances $kind instance(s) of $api_version; kro turns each into an OCIRepository inside the cluster, which neither the file scan nor this render has a document for"
+    fi
   fi
 done <<<"$(printf '%s' "$consumer_gvks" | sort -u)"
 
@@ -1038,6 +1090,13 @@ while IFS=$'\t' read -r file label; do
   object_contracts="$object_contracts$rows
 "
 done <<<"$sources"
+if [ -n "$canonical_rendered" ]; then
+  printf '%s\n' "$canonical_rendered" >"$work/canonical-rendered-source.json"
+  rows="$(consumer_rows "$work/canonical-rendered-source.json" with-identity)" || refuse 'could not attribute the validated canonical source projection'
+  rendered="$rendered$rows"$'\n'
+  rows="$(consumer_rows "$work/canonical-rendered-source.json" with-object-contract)" || refuse 'could not read the complete canonical source contract'
+  object_contracts="$object_contracts$rows"$'\n'
+fi
 printf '%s' "$rendered" | sed '/^$/d' | LC_ALL=C sort -u >"$work/rendered"
 printf '%s' "$object_contracts" | sed '/^$/d' | LC_ALL=C sort -u >"$work/object-contracts"
 scanned="$(discover_consumers "$SCAN_ROOT" with-identity)" ||

@@ -174,7 +174,7 @@ spec:
       # changes stop reaching the gateway while every health signal stays
       # green (#4198). Rolling the operator re-runs the check.
       podAnnotations:
-        platform.devantler.tech/restart-marker: "2026-09-25-gateway-api-4198"
+        platform.devantler.tech/restart-marker: "2026-10-25-gateway-api-5345"
       # Non-root securityContext for the cilium-OPERATOR only (Kubescape
       # C-0013). The operator-generic image ships no USER, so it runs as root
       # by default; but it is a pure control-plane controller (reads a
@@ -417,3 +417,5 @@ spec:
     gatewayAPI:
       enabled: true
       enableAlpn: true
+      # Keep the receiving side explicit for a verified rollback baseline.
+      enableProxyProtocol: false

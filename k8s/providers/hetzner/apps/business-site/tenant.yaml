@@ -1,0 +1,16 @@
+# Source-only staging: the signed manifest can be fetched and verified, but no
+# tenant application, route or private identity configuration is reconciled.
+apiVersion: kro.run/v1alpha1
+kind: Tenant
+metadata:
+  name: business-site
+  namespace: flux-system
+spec:
+  name: business-site
+  externalDns: false
+  sops: false
+  webApp: false
+  source:
+    digest: sha256:2f43bf60c87e373ab99f9fc08f187287d9526b3f1b3212b6234e2ae80b9c5e82
+    publisherRevision: 467f07582436a26b62cf4aa756423512f85ba0c0
+    reconcileApplication: false

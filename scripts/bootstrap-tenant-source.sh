@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Verify one first publication without claiming that Flux has applied it.
-# Approval bootstrap is scoped to Data Products; business-site has evidence-only mode.
+# Verify publications and prepare bounded source-only admission/upgrade candidates.
+# Generation never claims that Flux has applied the proposed publication.
 set -euo pipefail
 BOOTSTRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/generate-publish-workflow-approved-revisions.sh
@@ -8,7 +8,184 @@ source "$BOOTSTRAP_DIR/generate-publish-workflow-approved-revisions.sh"
 # shellcheck source=scripts/tenant-publication-binding.lib.sh
 source "$BOOTSTRAP_DIR/tenant-publication-binding.lib.sh"
 
+canonical_bootstrap_admission() (
+  set -euo pipefail
+  trap - EXIT
+  local admission_root="$REPO_ROOT" tag='' source_sha='' digest='' seen=':' option output receipt graph_hash previous record state date previous_exists=0 current_record
+  while [ "$#" -gt 0 ]; do
+    option="$1"
+    case "$seen" in *":$option:"*) return 2 ;; esac
+    seen="$seen$option:"
+    [ "$#" -ge 2 ] || return 2
+    case "$option" in
+      --source-root) admission_root="$2" ;;
+      --tag) tag="$2" ;;
+      --source-sha) source_sha="$2" ;;
+      --digest) digest="$2" ;;
+      *) return 2 ;;
+    esac
+    shift 2
+  done
+  [[ "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] && is_sha "$source_sha" && is_digest "$digest" || return 2
+  [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] || return 2
+  admission_root="$(cd "$admission_root" && pwd -P)" || return 2
+  output="$admission_root/scripts/canonical-tenant-source-bindings.json"
+  [ ! -L "$output" ] || return 1
+  [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ] || [ "$CANONICAL_TENANT_BINDINGS_FILE" = "$output" ] || return 2
+  [ ! -e "$output" ] || previous_exists=1
+  previous="$(unset CANONICAL_TENANT_BINDINGS_FILE; canonical_tenant_bindings "$admission_root")" || return 1
+  if [ "$previous_exists" = 1 ] && [ "$(printf '%s\n' "$previous" | jq '.bindings|length')" = 0 ]; then
+    echo 'existing empty registry is not an admission; refusing to claim unchanged output' >&2
+    return 1
+  fi
+  if [ "$(printf '%s\n' "$previous" | jq '.bindings|length')" -gt 0 ]; then
+    [ "$(printf '%s\n' "$previous" | jq -r '.bindings[0].kind')" = published-bootstrap ] || {
+      echo 'canonical source already observed; use ordinary regeneration' >&2; return 1;
+    }
+  fi
+  receipt="$(business_site_manifest_evidence --consumer business-site --verify-only --tag "$tag" --source-sha "$source_sha" --digest "$digest")" || return 1
+  graph_hash="$(yq -o=json -I=0 '.' "$admission_root/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml" |
+    jq -cSs 'select(length==1)|.[0].spec' | shasum -a 256 | awk '{print $1}')" || return 1
+  date="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
+  is_date "$date" || return 1
+  canonical_bootstrap_work="$(mktemp -d)" || return 1
+  trap 'rm -rf "$canonical_bootstrap_work"' EXIT
+  printf '%s\n' "$receipt" | jq -es --arg graph "$graph_hash" --arg date "$date" '
+    select(length==1) | .[0] |
+    select(.schemaVersion==1 and .kind=="manifest-publication-evidence" and .consumer=="business-site" and .deploymentAuthorized==false) |
+    {schemaVersion:1,bindings:[{
+      consumer:.consumer,consumerRepository:"devantler-tech/business-site",workflow:"publish-app",kind:"published-bootstrap",
+      sourcePath:"k8s/providers/hetzner/apps/business-site/tenant.yaml",constructorSpecSha256:$graph,
+      tenantIdentity:{apiVersion:"kro.run/v1alpha1",kind:"Tenant",namespace:"flux-system",name:"business-site"},
+      sourceIdentity:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",namespace:"business-site",name:"business-site",
+        artifactURL:"oci://ghcr.io/devantler-tech/business-site/manifests",digest:.digest},
+      publication:{gitTag:.gitTag,sourceSHA:.sourceSHA,publisherIdentity:.publisherIdentity,callerWorkflow:.callerWorkflow,event:.event,
+        workflowRunId:.workflowRunId,workflowRunAttempt:.workflowRunAttempt,verifiedOn:$date}
+    }]}' >"$canonical_bootstrap_work/candidate.json" || return 1
+  record="$(CANONICAL_TENANT_BINDINGS_FILE="$canonical_bootstrap_work/candidate.json" canonical_tenant_bindings "$admission_root" | jq -ce '.bindings[0]')" || return 1
+  # A fresh verification cannot replace a conflicting existing admission.
+  if [ "$(printf '%s\n' "$previous" | jq '.bindings|length')" -gt 0 ]; then
+    [ "$(printf '%s\n' "$previous" | jq -cS '.bindings[0]|del(.publication.verifiedOn)')" = "$(printf '%s\n' "$record" | jq -cS 'del(.publication.verifiedOn)')" ] || return 1
+    printf '%s\n' "$previous" >"$canonical_bootstrap_work/candidate.json"
+    record="$(printf '%s\n' "$previous" | jq -c '.bindings[0]')"
+  fi
+  canonical_observation_consistent "$record" "${APPROVED_IDENTITIES_FILE:-$admission_root/scripts/publish-workflow-approved-revisions.identities.tsv}" || return 1
+  CANONICAL_TENANT_BINDINGS_FILE="$canonical_bootstrap_work/candidate.json" discover_consumers "$admission_root" >/dev/null || return 1
+  kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$canonical_bootstrap_work/inventory.json" || return 1
+  state="$(canonical_source_inventory_state "$record" "$canonical_bootstrap_work/inventory.json")" || return 1
+  case "$state" in absent | pending) ;; *) echo 'canonical source already has an artifact; use observed regeneration' >&2; return 1 ;; esac
+  # An existing identical admission is a revalidated no-op. Never replace a
+  # concurrently changed/observed record, or move a temporary file into a
+  # destination that became a directory.
+  if [ "$previous_exists" = 1 ]; then
+    current_record="$(CANONICAL_TENANT_BINDINGS_FILE="$output" canonical_tenant_bindings "$admission_root")" || return 1
+    [ "$current_record" = "$previous" ] || return 1
+    echo 'canonical source admission unchanged after fresh verification; application reconciliation remains disabled'
+    return 0
+  fi
+  # Exclusive same-filesystem creation: link(1) never follows a destination
+  # directory or overwrites any conflicting file/symlink appearing after the read.
+  canonical_bootstrap_output="$(mktemp "${output}.XXXXXX")" || return 1
+  trap 'rm -rf "$canonical_bootstrap_work"; rm -f "${canonical_bootstrap_output:-}"' EXIT
+  cp "$canonical_bootstrap_work/candidate.json" "$canonical_bootstrap_output"
+  chmod 0644 "$canonical_bootstrap_output"
+  link "$canonical_bootstrap_output" "$output" || return 1
+  rm "$canonical_bootstrap_output"
+  echo 'canonical source admission candidate generated; review required; application reconciliation remains disabled'
+)
+
+canonical_upgrade_preparation() (
+  set -euo pipefail
+  trap - EXIT
+  local upgrade_root="$REPO_ROOT" upgrade_output='' tag='' source_sha='' digest='' seen=':' option
+  local original record receipt first_snapshot second_snapshot today uid_hash snapshot_hash prepared_root prior_node
+  while [ "$#" -gt 0 ]; do
+    option="$1"
+    case "$seen" in *":$option:"*) return 2 ;; esac
+    seen="$seen$option:"
+    [ "$#" -ge 2 ] || return 2
+    case "$option" in
+      --source-root) upgrade_root="$2" ;;
+      --output) upgrade_output="$2" ;;
+      --tag) tag="$2" ;;
+      --source-sha) source_sha="$2" ;;
+      --digest) digest="$2" ;;
+      *) return 2 ;;
+    esac
+    shift 2
+  done
+  [[ "$tag" =~ ^v[0-9]+[.][0-9]+[.][0-9]+$ ]] && is_sha "$source_sha" && is_digest "$digest" || return 2
+  [ -n "${PUBLISH_KUBE_CONTEXT:-}" ] && [[ "$upgrade_output" = /* ]] || return 2
+  local output_parent output_name upgrade_tenant graph_path
+  output_parent="$(dirname "$upgrade_output")"; output_name="$(basename "$upgrade_output")"
+  [[ "$output_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]] || return 2
+  output_parent="$(cd "$output_parent" && pwd -P)" || return 2
+  upgrade_output="$output_parent/$output_name"
+  [ ! -e "$upgrade_output" ] && [ ! -L "$upgrade_output" ] || return 1
+  upgrade_root="$(cd "$upgrade_root" && pwd -P)" || return 2
+  upgrade_tenant=k8s/providers/hetzner/apps/business-site/tenant.yaml
+  graph_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
+  [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ] || return 2
+  original="$(canonical_tenant_bindings "$upgrade_root")" || return 1
+  record="$(printf '%s\n' "$original" | jq -cer '.bindings|select(length==1)|.[0]|select(.kind!="published-upgrade")')" || return 1
+  canonical_observation_consistent "$record" "${APPROVED_IDENTITIES_FILE:-$upgrade_root/scripts/publish-workflow-approved-revisions.identities.tsv}" || return 1
+  prior_node="$(yq -o=json -I=0 '.' "$upgrade_root/$upgrade_tenant" | jq -ces 'select(length==1)|.[0]')" || return 1
+  canonical_tenant_projection "$upgrade_root" "$prior_node" >/dev/null || return 1
+  discover_consumers "$upgrade_root" >/dev/null || return 1
+  prepared_root="$(mktemp -d "$output_parent/.canonical-upgrade.XXXXXX")" || return 1
+  trap 'rm -rf "$prepared_root"' EXIT
+  kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$prepared_root/first-inventory.json" || return 1
+  first_snapshot="$(canonical_source_observation "$record" "$prepared_root/first-inventory.json")" || return 1
+  receipt="$(business_site_manifest_evidence --consumer business-site --verify-only --tag "$tag" --source-sha "$source_sha" --digest "$digest")" || return 1
+  today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
+  is_date "$today" || return 1
+  uid_hash="$(printf '%s' "$(printf '%s\n' "$first_snapshot" | jq -r .metadata.uid)" | shasum -a 256 | awk '{print $1}')" || return 1
+  snapshot_hash="$(printf '%s\n' "$first_snapshot" | shasum -a 256 | awk '{print $1}')" || return 1
+  mkdir -p "$prepared_root/scripts" "$prepared_root/$(dirname "$upgrade_tenant")" "$prepared_root/$(dirname "$graph_path")"
+  printf '%s\n' "$receipt" | jq -es --argjson old "$record" --arg tag "$tag" --arg source "$source_sha" \
+    --arg digest "$digest" --arg date "$today" --arg uid "$uid_hash" --arg snapshot "$snapshot_hash" --argjson observed "$first_snapshot" '
+    select(length==1)|.[0]|select(.schemaVersion==1 and .kind=="manifest-publication-evidence" and
+      .consumer=="business-site" and .deploymentAuthorized==false and .gitTag==$tag and .sourceSHA==$source and .digest==$digest) |
+    . as $evidence | {schemaVersion:1,bindings:[($old|.kind="published-upgrade"|
+      .previousBinding=$old|.previousObservation={uidSha256:$uid,generation:$observed.metadata.generation,snapshotSha256:$snapshot,observedOn:$date}|
+      .sourceIdentity.digest=$digest|.publication={gitTag:$tag,sourceSHA:$source,publisherIdentity:$evidence.publisherIdentity,
+        callerWorkflow:$evidence.callerWorkflow,event:$evidence.event,workflowRunId:$evidence.workflowRunId,
+        workflowRunAttempt:$evidence.workflowRunAttempt,verifiedOn:$date})]}' >"$prepared_root/scripts/canonical-tenant-source-bindings.json" || return 1
+  cp "$upgrade_root/$graph_path" "$prepared_root/$graph_path"
+  cp "$upgrade_root/scripts/publish-workflow-canonical-approvals.tsv" "$prepared_root/scripts/"
+  cp "${APPROVED_IDENTITIES_FILE:-$upgrade_root/scripts/publish-workflow-approved-revisions.identities.tsv}" "$prepared_root/scripts/"
+  UPGRADE_PREPARED_DIGEST="$digest" yq '.spec.source.digest=strenv(UPGRADE_PREPARED_DIGEST)' "$upgrade_root/$upgrade_tenant" >"$prepared_root/$upgrade_tenant" || return 1
+  # The same strict reader and raw discovery used by CI must accept generated output.
+  APPROVED_IDENTITIES_FILE="$prepared_root/scripts/publish-workflow-approved-revisions.identities.tsv" \
+    CANONICAL_APPROVALS_FILE="$prepared_root/scripts/publish-workflow-canonical-approvals.tsv" \
+    discover_consumers "$prepared_root" >/dev/null || return 1
+  kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$prepared_root/second-inventory.json" || return 1
+  second_snapshot="$(canonical_source_observation "$record" "$prepared_root/second-inventory.json")" || return 1
+  [ "$first_snapshot" = "$second_snapshot" ] || return 1
+  [ "$(canonical_tenant_bindings "$upgrade_root")" = "$original" ] || return 1
+  [ "$(yq -o=json -I=0 '.' "$upgrade_root/$upgrade_tenant" | jq -ces 'select(length==1)|.[0]')" = "$prior_node" ] || return 1
+  canonical_tenant_projection "$upgrade_root" "$prior_node" >/dev/null || return 1
+  discover_consumers "$upgrade_root" >/dev/null || return 1
+  # Reserve a new private output directory only after every input has been validated.
+  # Exclusive links cannot overwrite a conflicting file or follow its final symlink.
+  (umask 077; mkdir "$upgrade_output") || return 1
+  mkdir -p "$upgrade_output/scripts" "$upgrade_output/$(dirname "$upgrade_tenant")" || return 1
+  link "$prepared_root/scripts/canonical-tenant-source-bindings.json" "$upgrade_output/scripts/canonical-tenant-source-bindings.json" || return 1
+  link "$prepared_root/$upgrade_tenant" "$upgrade_output/$upgrade_tenant" || return 1
+  printf 'Canonical source upgrade prepared for review; existing observations and disabled application flags preserved.\n'
+)
+
 bootstrap_tenant_source() (
+  if [ "${1:-}" = --prepare-canonical-upgrade ]; then
+    shift
+    canonical_upgrade_preparation "$@"
+    return
+  fi
+  if [ "${1:-}" = --admit-canonical-source ]; then
+    shift
+    canonical_bootstrap_admission "$@"
+    return
+  fi
   if [ "${1:-}" = --consumer ]; then
     business_site_manifest_evidence "$@" || {
       echo 'business manifest publication could not be verified; no approval created' >&2

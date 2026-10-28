@@ -1,0 +1,46 @@
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: removed
+  namespace: controllers
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install:
+    remediation:
+      retries: 1
+      remediateLastFailure: false
+  upgrade:
+    remediation:
+      retries: 2
+      remediateLastFailure: false
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: disabled
+  namespace: controllers
+  labels:
+    helm.toolkit.fluxcd.io/remediation: disabled
+spec:
+  interval: 1h
+  chart:
+    spec:
+      chart: example
+      sourceRef:
+        kind: HelmRepository
+        name: example
+  install:
+    remediation:
+      retries: 1
+      remediateLastFailure: false
+  upgrade:
+    remediation:
+      retries: 2
+      remediateLastFailure: false

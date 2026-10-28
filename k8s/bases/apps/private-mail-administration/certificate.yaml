@@ -1,0 +1,13 @@
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: private-mail
+  namespace: private-mail
+spec:
+  secretName: private-mail-tls
+  dnsNames:
+    - mail.${domain}
+  issuerRef:
+    group: ${issuer_group}
+    kind: ${issuer_kind}
+    name: ${issuer_name}

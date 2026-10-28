@@ -19,7 +19,7 @@
 #      without it the step prints the manual Scenario 9 instructions)
 #
 # Known limits (documented in the runbook):
-#   * Per-app PVC data (headlamp, actual-budget) is NOT rehydrated into
+#   * Per-app PVC data (actual-budget) is NOT rehydrated into
 #     already-running pods — Velero skips existing resources. Recover an app's
 #     data with the per-app reset dance (runbook Scenario 5).
 #   * CNPG databases (umami-db) recover from their own barman backups —
@@ -179,7 +179,7 @@ jobs:
         # deploy-prod action; renovate keeps the pin current in all places.
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.24"
+          KSAIL_VERSION: "7.203.28"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -636,6 +636,6 @@ jobs:
           echo "- Load balancer IP: ${IP:-<pending>}"
           echo "- DNS: external-dns (policy: sync) repoints the Cloudflare records automatically once HTTPRoutes are Ready — verify with: kubectl -n external-dns logs deploy/external-dns"
           echo "- CNPG databases (umami-db): recover from barman/R2 per docs/dr/runbook.md Scenario 5 (kubectl cnpg restore)."
-          echo "- Per-app PVC data (headlamp, actual-budget): already-running pods keep their fresh volumes; use the per-app reset dance from runbook Scenario 5 if old data is needed."
+          echo "- Per-app PVC data (actual-budget): already-running pods keep their fresh volumes; use the per-app reset dance from runbook Scenario 5 if old data is needed."
           kubectl get kustomizations.kustomize.toolkit.fluxcd.io -A -o wide
           kubectl get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded 2>/dev/null | head -30

@@ -14,13 +14,17 @@ esac
 test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_work="$(mktemp -d)"
 trap 'rm -rf "$test_work"' EXIT
+# shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
+source "$test_root/scripts/tests/lib/legacy-consumer-fixture.sh"
+build_legacy_consumer_fixture "$test_root" "$test_work/consumers"
+export PUBLISH_CONSUMER_ROOT="$test_work/consumers"
 export PUBLISH_BOOTSTRAP_FILE="$test_work/bootstrap-none.json"
 printf '{"schemaVersion":1,"publications":[]}\n' >"$PUBLISH_BOOTSTRAP_FILE"
 export CANONICAL_TEST_ROOT="$test_root" CANONICAL_TEST_WORK="$test_work"
 # The signer the fixtures observe is the first commit the record approves for this consumer, so
 # withdrawing a retired commit from the record does not strand the test on it.
 export CANONICAL_APPROVALS_FILE="$test_work/canonical.tsv"
-cp "$test_root/scripts/publish-workflow-canonical-approvals.tsv" "$CANONICAL_APPROVALS_FILE"
+cp "$test_work/consumers/scripts/publish-workflow-canonical-approvals.tsv" "$CANONICAL_APPROVALS_FILE"
 if [[ "$CANONICAL_TEST_WORKFLOW" == publish-app ]]; then
   # A synthetic approval belongs only to this isolated fixture, never production.
   awk -F'\t' -v consumer="$CANONICAL_TEST_CONSUMER" 'NR==1 || $1!=consumer' "$CANONICAL_APPROVALS_FILE" >"$test_work/canonical.before-app"
@@ -49,9 +53,6 @@ done < <("$test_root/scripts/report-publish-workflow-signing-revisions.sh" --lis
 mv "$test_work/seed.sorted" "$test_work/seed.tsv"
 # The approval guard must see the same simulated sources as this fixture's rows.
 # Do not rewrite production matchers or infer applied evidence from its receipt.
-mkdir -p "$test_work/consumers"
-cp -R "$test_root/k8s" "$test_root/talos" "$test_work/consumers/"
-export PUBLISH_CONSUMER_ROOT="$test_work/consumers"
 APPROVED_REVISIONS_FILE="$test_work/seed.tsv" \
   bash "$test_root/scripts/write-publish-workflow-matchers.sh" >"$test_work/seed-matchers.log"
 cat >"$test_work/bin/gh" <<'STUB'

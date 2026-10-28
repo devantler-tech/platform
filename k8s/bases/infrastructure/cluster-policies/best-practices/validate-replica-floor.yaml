@@ -100,12 +100,11 @@ spec:
     # whose outage delays only an idempotent loop (production may still opt
     # them into HA); and components single by design from the June 2026 HA
     # sweep -- SPIRE needs an external datastore for real HA, CNPG-I exposes
-    # its gRPC readiness endpoint only on the elected leader, and Crossview with
-    # its bundled Postgres is one non-HA unit until the datastore is replaced.
+    # its gRPC readiness endpoint only on the elected leader.
     - name: namedExempt
       expression: >-
         object.metadata.name in [
-          'actual-budget-actualbudget', 'fleet', 'headlamp', 'whoami',
+          'actual-budget-actualbudget', 'fleet', 'whoami',
           'hubble-ui', 'longhorn-ui', 'homepage', 'umami-umami'] ||
         object.metadata.name in [
           'external-dns', 'origin-ca-issuer', 'flagger-loadtester'] ||
@@ -116,8 +115,7 @@ spec:
         object.metadata.name in [
           'cluster-autoscaler-hetzner-cluster-autoscaler',
           'keda-operator-metrics-apiserver', 'longhorn-driver-deployer',
-          'spire-server', 'plugin-barman-cloud', 'crossview',
-          'crossview-postgres']
+          'spire-server', 'plugin-barman-cloud']
     - name: exempt
       expression: >-
         variables.workloadExempt || variables.templateExempt ||

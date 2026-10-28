@@ -38,6 +38,13 @@ spec:
   # KRO reports readiness via `status.state: Active|Inactive`, so teach Flux to
   # health-check RGDs by that field via a CEL expression.
   healthCheckExprs:
+    # Active snapshot storage must bind. The preparation-only Pending allowance
+    # is retired with the first consumers of its main-owned retained claim.
+    - apiVersion: v1
+      kind: PersistentVolumeClaim
+      failed: has(status.phase) && status.phase == 'Lost'
+      current: >-
+        !has(metadata.deletionTimestamp) && has(status.phase) && status.phase == 'Bound'
     - apiVersion: kro.run/v1alpha1
       kind: ResourceGraphDefinition
       current: status.state == 'Active'

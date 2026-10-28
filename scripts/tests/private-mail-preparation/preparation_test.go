@@ -56,6 +56,15 @@ func sequence(t *testing.T, value any) []any {
 	return result
 }
 
+func stringField(t *testing.T, value map[string]any, key string) string {
+	t.Helper()
+	result, ok := value[key].(string)
+	if !ok {
+		t.Fatalf("expected string field %q, got %T", key, value[key])
+	}
+	return result
+}
+
 func object(t *testing.T, objects []map[string]any, kind, name string) map[string]any {
 	t.Helper()
 	for _, o := range objects {
@@ -122,12 +131,12 @@ func TestPreparationRendersWithoutPublicMailOrAPIAuthority(t *testing.T) {
 	object(t, objects, "ExternalSecret", "private-mail-admin")
 }
 
-func TestPreparationIsAbsentFromProductionAndLocal(t *testing.T) {
-	for _, path := range []string{"k8s/providers/hetzner/apps", "k8s/providers/docker/apps"} {
+func TestPreparationIsAbsentFromSharedAndLocal(t *testing.T) {
+	for _, path := range []string{"k8s/bases/apps", "k8s/providers/docker/apps"} {
 		for _, o := range render(t, path) {
 			m, _ := o["metadata"].(map[string]any)
 			if m["namespace"] == "private-mail" || (o["kind"] == "Namespace" && m["name"] == "private-mail") {
-				t.Fatalf("private mail must be absent by default from %s", path)
+				t.Fatalf("inactive mail must have no serving or credential resources in %s", path)
 			}
 		}
 	}

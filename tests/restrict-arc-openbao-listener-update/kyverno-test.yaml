@@ -1,0 +1,33 @@
+# UPDATE fixtures supply the same old/new object. Preserve the legacy
+# grandfathering skip for an existing violation; distinct transitions require
+# the native admission driver because the CLI deliberately clones the object.
+# Pins the listener guard against independent literal resource outcomes.
+# The audited listener in openbao passes; the same name anywhere else fails; a
+# ConfigMap with another name is outside the rule. Changed content in openbao is
+# covered by the -extra-data, -binary-data and -changed-listener fixtures, which
+# need their own directory because every case shares one namespace and name.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-openbao-listener-update
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener-settings.yaml
+resources:
+  - ../restrict-arc-openbao-listener/resources.yaml
+variables: ../restrict-arc-openbao-listener-update/values.yaml
+results:
+  - policy: restrict-arc-openbao-listener-settings
+    resources:
+      - openbao/arc-openbao-listener
+    kind: ConfigMap
+    result: pass
+  - policy: restrict-arc-openbao-listener-settings
+    resources:
+      - arc-runners/arc-openbao-listener
+    kind: ConfigMap
+    result: skip
+  - policy: restrict-arc-openbao-listener-settings
+    resources:
+      - openbao/openbao-config
+    kind: ConfigMap
+    result: skip

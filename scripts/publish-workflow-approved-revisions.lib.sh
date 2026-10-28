@@ -201,6 +201,24 @@ while IFS=$'\t' read -r consumer _rest; do
   [ "$known" -eq 1 ] || refuse "approved set names $consumer, which is not a registered consumer"
 done <<<"$approved"
 
+# Canonical-only consumers have no legacy approval or invented applied history.
+canonical_only="$(canonical_tenant_bindings "$SCAN_ROOT")" || refuse 'invalid canonical-only source binding'
+registered_workflow() {
+  local registered_legacy
+  registered_legacy="$(lookup "$approved" "$1")"
+  if [ -n "$registered_legacy" ]; then
+    printf '%s\n' "${registered_legacy%%$'\t'*}"
+  else
+    printf '%s\n' "$canonical_only" | jq -er --arg consumer "$1" '[.bindings[]|select(.consumer==$consumer)] | select(length==1) | .[0].workflow'
+  fi
+}
+while IFS= read -r canonical_entry; do
+  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
+  [ -z "$(lookup "$approved" "$canonical_consumer")" ] || refuse "$canonical_consumer: both legacy and canonical-only registrations exist"
+  canonical_observation_consistent "$canonical_entry" "${APPROVED_IDENTITIES_FILE:-${APPROVED_SET%.tsv}.identities.tsv}" ||
+    refuse "$canonical_consumer: bootstrap/current-observation records disagree"
+done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
+
 # ── 1b. The canonical approvals, read strictly ──────────────────────────────────────────
 # One row approves one reviewed commit of the matching canonical workflow for one registered
 # consumer. A consumer may hold two rows, never more: the commit its publisher is moving from
@@ -233,10 +251,9 @@ while IFS= read -r row || [ -n "$row" ]; do
     *) refuse "canonical approvals line $line_no ($consumer): '$workflow' is not a supported canonical workflow" ;;
   esac
   is_sha "$commit" || refuse "canonical approvals line $line_no ($consumer): commit '$commit' is not a 40-hex commit"
-  set_record="$(lookup "$approved" "$consumer")"
-  [ -n "$set_record" ] || refuse "canonical approvals line $line_no names $consumer, which is not a registered consumer"
-  [ "${set_record%%$'\t'*}" = "$workflow" ] ||
-    refuse "canonical approvals line $line_no: $consumer publishes with ${set_record%%$'\t'*}, not the approved workflow $workflow"
+  set_workflow="$(registered_workflow "$consumer")" || refuse "canonical approvals line $line_no names $consumer, which is not a registered consumer"
+  [ "$set_workflow" = "$workflow" ] ||
+    refuse "canonical approvals line $line_no: $consumer publishes with $set_workflow, not the approved workflow $workflow"
   held="$(lookup "$canonical" "$consumer")"
   case "$held" in
     '') canonical="${canonical}${consumer}"$'\t'"${commit}"$'\n' ;;
@@ -249,6 +266,14 @@ while IFS= read -r row || [ -n "$row" ]; do
       ;;
   esac
 done <"$CANONICAL_SET"
+
+# The explicit pinned source profile accepts its complete qualified identity only.
+while IFS= read -r canonical_entry; do
+  canonical_consumer="$(printf '%s\n' "$canonical_entry" | jq -r .consumer)"
+  canonical_publisher="$(printf '%s\n' "$canonical_entry" | jq -r .publication.publisherIdentity)"
+  [ "$(lookup "$canonical" "$canonical_consumer")" = "${canonical_publisher##*@}" ] ||
+    refuse "$canonical_consumer: canonical-only publisher differs from its exact approval"
+done < <(printf '%s\n' "$canonical_only" | jq -c '.bindings[]')
 
 # canonical_ref_ok <ref> → success when <ref> is one 40-hex commit, or exactly two distinct ones
 # written as "(first|second)". Nothing else: no pattern, no third alternative, no repeat.

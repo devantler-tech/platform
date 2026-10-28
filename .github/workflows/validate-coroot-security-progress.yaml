@@ -40,7 +40,7 @@ jobs:
       contents: read
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -145,13 +145,13 @@ jobs:
     permissions:
       contents: read
     env:
-      COROOT_IMAGE: ghcr.io/coroot/coroot:1.22.2
+      COROOT_IMAGE: ghcr.io/coroot/coroot:1.28.1
       PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
       SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
       PLAYWRIGHT_VERSION: 1.56.1
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -163,9 +163,9 @@ jobs:
       - name: Verify the native API contract matches the versioned Coroot image
         shell: bash
         run: |
-          # Updating either pin requires reviewing the v1.22.2 API and browser
+          # Updating either pin requires reviewing the v1.28.1 API and browser
           # source contract in scripts/tests/coroot-security-native/README.md.
-          if [ "$COROOT_IMAGE" != ghcr.io/coroot/coroot:1.22.2 ] ||
+          if [ "$COROOT_IMAGE" != ghcr.io/coroot/coroot:1.28.1 ] ||
              [ "$(grep -Fxc "      name: $COROOT_IMAGE" k8s/bases/infrastructure/coroot/coroot.yaml)" != 1 ]; then
             echo 'Native Coroot contract/image differs from communityEdition.image.name; review compatibility before updating the fixture.' >&2
             exit 1

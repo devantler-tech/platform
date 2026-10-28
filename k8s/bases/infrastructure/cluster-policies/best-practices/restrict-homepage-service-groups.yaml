@@ -22,8 +22,8 @@
 # was found. There is no userInfo matching here, so background scanning stays on
 # and existing drift surfaces in the PolicyReports rather than only at admission.
 #
-# SERVICE groups only. The bookmark groups in the same layout block (GitHub,
-# Media, Banking, …) are intentionally absent: Homepage renders services and
+# SERVICE groups only. The bookmark groups in the same layout block (Internal
+# Developer Platform, Supply Chain, Streaming, …) are intentionally absent: Homepage renders services and
 # bookmarks as separate sections, so the config-map keeps the two name sets
 # distinct, and a service claiming a bookmark group's name would paint that
 # heading twice with different contents under each.
@@ -36,6 +36,15 @@
 # purpose: a Kyverno context lookup would make every annotated route in the
 # cluster un-appliable if that ConfigMap ever became unreadable, trading a silent
 # cosmetic bug for a reconciliation outage.
+#
+# RENAMING OR SPLITTING a group that a route claims takes TWO deploys. A route is
+# admitted against the LIVE copy of this policy, and Flux applies routes in
+# earlier layers (infrastructure-controllers, e.g. OpenBao) before this
+# infrastructure-layer policy, and tenant routes on their own schedule. So:
+#   1. add the new group here and to the layout, keeping the old one;
+#   2. once that is live, move the routes, and only then drop the old group.
+# Doing both in one change denies the route's dry-run and fails the whole Flux
+# layer — the merge-group deploy of platform#5383 was evicted for exactly this.
 apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
@@ -88,10 +97,11 @@ spec:
         message: >-
           A route with gethomepage.dev/enabled="true" must set
           gethomepage.dev/group to a service group declared in the Homepage
-          layout (k8s/bases/apps/homepage/config-map.yaml): Internal Developer
-          Platform, Kubernetes, Observability, Security, Diagnostics, Device
-          Management, Infrastructure as Code, Cloud, Network, Home, Finance,
-          Analytics, Data, Business, Products, Clients, or Personal.
+          layout (k8s/bases/apps/homepage/config-map.yaml): Kubernetes,
+          Observability, Analytics, Secrets Management, Governance,
+          Diagnostics, Device Management, Infrastructure as Code, Cloud,
+          Network, Home, Finance, Data, Business & Clients, Products,
+          Personal, or Email.
           An undeclared group still renders,
           but sorts below every declared group with a generic icon. Bookmark
           group names are deliberately not accepted here.
@@ -105,7 +115,9 @@ spec:
                 value:
                   - Kubernetes
                   - Observability
-                  - Security
+                  - Analytics
+                  - Secrets Management
+                  - Governance
                   - Diagnostics
                   - Device Management
                   - Infrastructure as Code
@@ -113,9 +125,8 @@ spec:
                   - Network
                   - Home
                   - Finance
-                  - Analytics
                   - Data
-                  - Business
+                  - Business & Clients
                   - Products
-                  - Clients
                   - Personal
+                  - Email

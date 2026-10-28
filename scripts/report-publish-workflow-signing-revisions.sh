@@ -39,6 +39,8 @@ readonly REPO_ROOT
 source "$REPO_ROOT/scripts/tenant-publication-binding.lib.sh"
 # shellcheck source=scripts/tenant-source-discovery.lib.sh
 source "$REPO_ROOT/scripts/tenant-source-discovery.lib.sh"
+# shellcheck source=scripts/canonical-tenant-source.lib.sh
+source "$REPO_ROOT/scripts/canonical-tenant-source.lib.sh"
 
 # Matches the subject spelling `guard-shared-publish-workflow-pin.sh` validates. Kept
 # textually parallel to that guard: if one moves, the other should be looked at.
@@ -206,9 +208,9 @@ registry_tag_for_git_tag() {
 # The guard-only `with-identity` mode adds the literal object namespace/name and exact URL
 # after that subject; default discovery and --list-consumers keep their four-column contract.
 discover_consumers() {
-  local root="$1" mode="${2:-}" file files rows found='' rc=0
+  local root="$1" mode="${2:-}" file files rows found='' rc=0 typed_documents typed_file
   [ -d "$root" ] || return 0
-  reject_unattributed_tenant_sources "$root" || return 1
+  typed_documents="$(canonical_tenant_source_documents "$root")" || return 1
   # grep exits 1 when NOTHING matches, which is an answer, and 2 when it could not read
   # something, which is not: a file it failed to read is never selected, so its consumers
   # would leave the set without any of the refusals below.
@@ -224,6 +226,13 @@ discover_consumers() {
     rows="$(consumer_rows "$file" "$mode")" || return 1
     found="$found$rows"$'\n'
   done <<<"$files"
+  if [ -n "$typed_documents" ]; then
+    typed_file="$(mktemp)" || return 1
+    printf '%s\n' "$typed_documents" >"$typed_file"
+    rows="$(consumer_rows "$typed_file" "$mode")" || { rm -f "$typed_file"; return 1; }
+    rm -f "$typed_file"
+    found="$found$rows"$'\n'
+  fi
   printf '%s' "$found" | sed '/^$/d' | sort -u
 }
 
@@ -1083,12 +1092,17 @@ deployed_tag() {
 # The report keeps the publisher repository and workflow attached to each revision.
 # pin_at_ref above remains legacy-only for the legacy approval generator.
 report_publisher_at_ref() {
-  local repo="$1" workflow="$2" ref="$3" body calls pattern
+  local repo="$1" workflow="$2" ref="$3" body calls pattern caller=cd.yaml
   case "$workflow" in
     publish-manifests | publish-app) pattern='(actions|[.]github)' ;;
     *) return 1 ;;
   esac
-  body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/cd.yaml" \
+  if [ "$repo" = business-site ]; then
+    [ "$workflow" = publish-app ] || return 1
+    caller=publish-runtime.yaml
+    pattern='[.]github'
+  fi
+  body="$(gh_retry api --method GET "repos/devantler-tech/${repo}/contents/.github/workflows/$caller" \
     --raw-field "ref=${ref}" -H "Accept: application/vnd.github.raw")" || return 1
   [ -n "$body" ] || return 1
   calls="$(printf '%s\n' "$body" | yq eval -o=json -I=0 '[.jobs[].uses // ""]' - 2>/dev/null)" || return 1
@@ -1145,6 +1159,16 @@ default_resolver() {
 # immutable registry artifact. This is never evidence of a Flux apply.
 bound_publication_resolver() {
   local repo="$1" workflow="$2" digest="$3" root="$4" file binding branch current tag source
+  if [ "$repo" = business-site ]; then
+    [ "$workflow" = publish-app ] || return 1
+    binding="$(canonical_tenant_bindings "$root" | jq -cer --arg digest "$digest" '[.bindings[]|select(.sourceIdentity.digest==$digest)]|select(length==1)|.[0]')" || return 1
+    canonical_publication_verify "$binding" || return 1
+    branch="$(gh_retry api repos/devantler-tech/business-site --jq .default_branch)" || return 1
+    plausible_ref "$branch" || return 1
+    current="$(report_publisher_at_ref "$repo" "$workflow" "$branch")" || return 1
+    printf '%s\t%s\tpublished-binding\n' "$(printf '%s\n' "$binding" | jq -r .publication.publisherIdentity)" "$current"
+    return 0
+  fi
   file="${PUBLISH_BOOTSTRAP_FILE:-$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json}"
   binding="$(publication_binding "$root" "$file" "$repo" "$workflow" "$digest")" || return 1
   verify_bound_publication "$binding" || return 1
@@ -1203,11 +1227,18 @@ main() {
   consumers="$(discover_consumers "$root")" ||
     fail 'consumer discovery could not read every file it selected (see above), so the consumer set is UNKNOWN'
 
-  # The repository floor first: EXPECTED_CONSUMERS is what the approved revision set is keyed on.
+  local expected_consumers=("${EXPECTED_CONSUMERS[@]}") expected_artifacts=("${EXPECTED_ARTIFACTS[@]}") canonical_registration
+  canonical_registration="$(canonical_tenant_bindings "$root")" || fail 'canonical source registrations are unreadable'
+  while IFS= read -r canonical_consumer; do
+    [ -n "$canonical_consumer" ] || continue
+    expected_consumers+=("$canonical_consumer")
+    expected_artifacts+=("$canonical_consumer/manifests")
+  done < <(printf '%s\n' "$canonical_registration" | jq -r '.bindings[].consumer')
+  # Legacy registration and explicit canonical-only registration form one census.
   identity_floor consumer EXPECTED_CONSUMERS "$(printf '%s' "$consumers" | cut -f1 | sort -u)" \
-    "${EXPECTED_CONSUMERS[@]}"
+    "${expected_consumers[@]}"
   identity_floor artifact EXPECTED_ARTIFACTS "$(printf '%s' "$consumers" | cut -f4 | sort -u)" \
-    "${EXPECTED_ARTIFACTS[@]}"
+    "${expected_artifacts[@]}"
 
   if [ "${1:-}" = "--list-consumers" ]; then
     printf '%s\n' "$consumers"

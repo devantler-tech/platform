@@ -47,23 +47,35 @@ using its existing shared credential and a run-owned copy of only the dedicated
 keys. It can be rerun after a rotation without restoring shared tenant access.
 The completed catalogue-copy and incident-specific recovery workflows are
 removed. Their catalogue evaluator remains because the read-only coverage
-proof uses it. #4481 removes the predecessor catalogue that still sits in the
-shared bucket. That copy is no longer written to or pruned, and every holder of
-the shared credential can read it. Before it is removed, dispatch `Verify
-Wedding Shared Backup Coverage` on `main` with
+proof uses it. The predecessor Wedding catalogue was removed from the shared
+bucket on 26 October 2026 (#4481); recovery uses only the dedicated bucket.
+Dispatch `Verify Wedding Shared Backup Coverage` on `main` with
 `confirm=verify-wedding-shared-backup-coverage`. It only reads: a pod beside the
 shared credential in `umami` and one beside the dedicated credential in
 `wedding-app` each list their side, and the verdict is `COVERED` only when every
 object in the shared copy is in the dedicated bucket with matching content, or
-was provably removed there by the 30-day retention. Remove the shared copy only
-after a `COVERED` run, and run the proof again afterwards: it then reports
-`EMPTY`. `Verify Wedding Backup Cutover`
+was provably removed there by the 30-day retention. After retirement the expected
+verdict is `EMPTY`. The comparison tool remains available to check that absence.
+`Verify Wedding Backup Cutover`
 is a main-only, protected production dispatch: confirm
 `verify-wedding-backup-cutover` to request a fresh online primary backup. It
 refuses a shared archive, unhealthy database, changed database identity, or
 incomplete backup receipt. Record its backup ID and WAL segment, then confirm
 that the dedicated catalogue contains that completed backup and advancing WAL.
 Backup completion alone does not prove an isolated restore.
+
+The approved `Remove Retired Wedding Shared Backups` dispatch completed on
+protected `main` at `f45da03f04531fc2b12f64f14248d02738f22193`:
+[run 40344934152, attempt 1](https://github.com/devantler-tech/platform/actions/runs/40344934152).
+It accepted the dedicated-only restore proof from run 40104288165, repeated
+coverage, required the complete shared object set to stay unchanged, and removed
+812 proven objects under only the retired Wedding prefix. The same proof then
+listed zero shared objects. Existing Umami, Coroot and Velero backup records
+remained present, and all three consumers completed a fresh backup before the
+run succeeded. Independent readback found neither run-owned proof Pod nor
+ConfigMap in either namespace. These are runtime receipts, rather than a claim
+inferred from the workflow's source merge; the normal coverage workflow remains
+read-only.
 
 ## Velero
 
@@ -139,7 +151,7 @@ CSI snapshots need cluster-wide plumbing that the hetzner overlay adds:
 > ×`longhorn_replica_count`) and a node-agent pod copies it to R2, then deletes
 > both. On the space-constrained cx23 workers this transiently consumes up to
 > the source volume's size × replica count per PVC during the 02:17 run — fine
-> for the current set (umami 5Gi, actual-budget 10Gi, headlamp 256Mi) but worth
+> for the current set (umami 5Gi, actual-budget 10Gi) but worth
 > watching if larger Longhorn volumes are added.
 
 ## CloudNativePG

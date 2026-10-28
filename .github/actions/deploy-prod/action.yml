@@ -83,7 +83,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.203.24"
+        KSAIL_VERSION: "7.203.28"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -354,11 +354,13 @@ runs:
         GH_TOKEN: ${{ github.token }}
         HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
         FLUX_CONTROL_PLANE_BASELINE_FILE: ${{ runner.temp }}/flux-control-plane-baseline
+        MAIL_PROBE_ROLLOUT_DIGEST: ${{ steps.publish_platform_manifest.outputs.digest }}
       # Through the wrapper, not the bare command: a deploy that changes the Flux
       # control plane restarts the controllers this reconcile runs through, which
       # cancels the reconcile the deploy itself triggered (#3478). The wrapper
-      # retries once, and ONLY on evidence that this deploy restarted the control
-      # plane; a genuine failure still fails on the first attempt.
+      # retries once after a proven control-plane restart, or after the fixed
+      # obsolete-mail-probe recovery verifies its replacement and retained claim.
+      # Every path still requires a successful full reconciliation.
       run: ./scripts/reconcile-flux-workloads.sh
 
     - name: 🩺 Diagnose Flux on failure

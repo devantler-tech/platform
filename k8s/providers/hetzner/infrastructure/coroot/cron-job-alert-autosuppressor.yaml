@@ -68,12 +68,8 @@
 #      BuildFailed labels, and exact cancellation shapes qualify; timeouts,
 #      apply/authorization errors, and dependency failures remain visible.
 #
-#   5. crossview-monitor-secret-create-race - Coroot and External Secrets can race
-#      to create the generated crossview-postgres-coroot-monitor Secret during a
-#      database roll. The loser reports AlreadyExists, then the ExternalSecret
-#      immediately reaches Ready/SecretSynced and continues owning the target.
-#      Only that exact object, reason, source, and AlreadyExists message qualify;
-#      forbidden, refresh, provider, and all other ExternalSecret errors remain.
+#   5. Retired with Crossview: the generated Secret it exempted no longer
+#      exists, so the exact race it matched cannot recur.
 #
 #   6. cilium-dns-search-expansion - Cilium's DNS proxy aggregates resolver
 #      attempts from every workload into the Cilium DaemonSet application. The
@@ -361,27 +357,6 @@ spec:
                                           | test("^post build failed for \\x27[^\\x27]+\\x27: substitute from \\x27ConfigMap/variables-cluster\\x27 error: Get \\\"https://10[.]96[.]0[.]1:443/api/v1/namespaces/flux-system/configmaps/variables-cluster\\\": context canceled$")))))
                       | .id'); do
                     ids="$ids $id"; log_info "match flux-status-context-canceled: $id"
-                  done
-
-                  # Exemption 5 - the exact ExternalSecret target-creation race
-                  # during Crossview PostgreSQL reconciliation.
-                  for id in $(printf '%s' "$ALERTS" | jq -r '
-                      def details: (.details // [] | map({key: .name, value: .value}) | from_entries);
-                      def labels($d): ($d.Labels | split("\n") | map(capture("^(?<key>[^=]+)=\"(?<value>.*)\"$")) | from_entries);
-                      .data.alerts[]
-                      | select(.suppressed==false and .resolved_at==null and .rule_id=="kubernetes-events")
-                      | details as $d
-                      | labels($d) as $l
-                      | select(($l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
-                               and $l.cluster=="platform"
-                               and $l.kind=="ExternalSecret"
-                               and $l.name=="crossview-postgres-coroot-monitor"
-                               and $l.namespace=="crossview"
-                               and $l.reason=="UpdateFailed"
-                               and $l.source=="external-secrets"
-                               and $d["Event message"]=="secrets \"crossview-postgres-coroot-monitor\" already exists")
-                      | .id'); do
-                    ids="$ids $id"; log_info "match crossview-monitor-secret-create-race: $id"
                   done
 
                   # Exemption 6 - Kubernetes resolver search-list candidates
