@@ -67,7 +67,13 @@ func TestOwnedBootstrapChild(t *testing.T) {
 	if err := os.WriteFile(os.Args[len(os.Args)-1]+".port", []byte(os.Getenv("STALWART_RECOVERY_MODE_PORT")), 0600); err != nil {
 		os.Exit(3)
 	}
-	if err := os.WriteFile(os.Args[len(os.Args)-1], []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+	// Publish only the complete PID: the parent may observe a newly created
+	// file before WriteFile has filled it.
+	pidFile := os.Args[len(os.Args)-1]
+	if err := os.WriteFile(pidFile+".tmp", []byte(strconv.Itoa(os.Getpid())), 0600); err != nil {
+		os.Exit(3)
+	}
+	if err := os.Rename(pidFile+".tmp", pidFile); err != nil {
 		os.Exit(3)
 	}
 	ch := make(chan os.Signal, 1)

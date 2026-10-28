@@ -20,6 +20,7 @@ type settings struct {
 	Administrator        string   `json:"administrator"`
 	MaintainerAliases    []string `json:"maintainerAliases,omitempty"`
 	UseForwardedClientIP bool     `json:"useForwardedClientIP,omitempty"`
+	UseProxyClientIP     bool     `json:"useProxyClientIP,omitempty"`
 }
 type inputs struct {
 	settings
@@ -32,6 +33,9 @@ var passwordPattern = regexp.MustCompile(`^[a-zA-Z0-9]{40,128}$`)
 
 // render builds staged settings and account changes from validated private inputs.
 func render(v inputs) ([]byte, error) {
+	if v.UseForwardedClientIP && v.UseProxyClientIP {
+		return nil, errConfiguration
+	}
 	if !domainPattern.MatchString(v.Domain) || strings.HasSuffix(v.Domain, ".invalid") || len(v.Domain) > 200 || !domainPattern.MatchString(v.Hostname) || !strings.HasSuffix(v.Hostname, "."+v.Domain) || len(v.Hostname) > 253 {
 		return nil, errConfiguration
 	}
@@ -85,6 +89,14 @@ func render(v inputs) ([]byte, error) {
 	listener := func(name, protocol, bind string, tls, implicit bool) map[string]any {
 		return map[string]any{"name": name, "protocol": protocol, "bind": map[string]bool{bind: true}, "useTls": tls, "tlsImplicit": implicit}
 	}
+	clientProxy := listener("client-proxy", "http", "127.0.0.1:18081", false, false)
+	proxyTrust := map[string]bool{}
+	if v.UseProxyClientIP {
+		proxyTrust["127.0.0.1"] = true
+	}
+	// Only this dedicated local listener consumes a transport identity. Do not
+	// exempt a shared intermediary through global proxy or allowed-IP settings.
+	clientProxy["overrideProxyTrustedNetworks"] = proxyTrust
 	upsert := func(object string, match []string, value any) map[string]any {
 		return map[string]any{"@type": "upsert", "object": object, "matchOn": match, "value": value}
 	}
@@ -116,14 +128,15 @@ func render(v inputs) ([]byte, error) {
 			"certificate": map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.crt"},
 			"privateKey":  map[string]any{"@type": "File", "filePath": "/etc/stalwart/tls/tls.key"},
 		}}),
-		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls"}),
+		update("SystemSettings", map[string]any{"defaultHostname": v.Hostname, "defaultDomainId": "#domain", "defaultCertificateId": "#mail-tls", "proxyTrustedNetworks": map[string]bool{}}),
 		// Named listeners are prepared while the recovery-only process ignores them.
 		// Public activation separately removes recovery mode and supplies TLS files.
 		upsert("NetworkListener", []string{"name"}, map[string]any{
-			"management": listener("management", "http", "0.0.0.0:8080", false, false),
-			"inbound":    listener("smtp-inbound", "smtp", "0.0.0.0:1025", true, false),
-			"submission": listener("submission", "smtp", "0.0.0.0:1587", true, false),
-			"imap":       listener("imaps", "imap", "0.0.0.0:1993", true, true),
+			"client-proxy": clientProxy,
+			"management":   listener("management", "http", "0.0.0.0:8080", false, false),
+			"inbound":      listener("smtp-inbound", "smtp", "0.0.0.0:1025", true, false),
+			"submission":   listener("submission", "smtp", "0.0.0.0:1587", true, false),
+			"imap":         listener("imaps", "imap", "0.0.0.0:1993", true, true),
 		}),
 		update("MtaStageAuth", map[string]any{
 			"saslMechanisms": map[string]any{"match": map[string]any{"0": map[string]any{"if": "listener == 'submission' && is_tls", "then": "[plain, login]"}}, "else": "false"},

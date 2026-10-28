@@ -109,7 +109,11 @@ func TestPinnedOpenBaoPreservesValuesAndVersions(t *testing.T) {
 		if err != nil {
 			t.Fatal("native synthetic credential request failed")
 		}
-		defer response.Body.Close()
+		defer func() {
+			if err := response.Body.Close(); err != nil {
+				t.Error("native credential response could not close")
+			}
+		}()
 		var result map[string]any
 		if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&result); err != nil {
 			t.Fatal("native credential response was invalid")
@@ -149,4 +153,5 @@ func TestPinnedOpenBaoPreservesValuesAndVersions(t *testing.T) {
 			}
 		}
 	}
+	verifyEmailStoragePolicy(t, baseURL, client)
 }

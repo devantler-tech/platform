@@ -977,6 +977,14 @@ spec:
               }
               POLICY
 
+              # Dedicated node-storage key reader; neither account credentials
+              # nor metadata enumeration or writes belong to this identity.
+              bao policy write infra-email-storage-readonly - <<'POLICY'
+              path "secret/data/infrastructure/email/storage" {
+                capabilities = ["read"]
+              }
+              POLICY
+
               bao policy write vault-snapshot-readonly - <<'POLICY'
               path "sys/health" {
                 capabilities = ["read"]
@@ -1191,6 +1199,19 @@ spec:
                 bound_service_account_namespaces=aws \
                 policies=infra-aws-readonly \
                 ttl=1h
+
+              # Prepared independently of activation; this scoped role neither
+              # seeds a key nor widens the shared External Secrets role.
+              bao write auth/kubernetes/role/email-storage - <<'EMAIL_STORAGE_ROLE'
+              {
+                "bound_service_account_names": ["private-mail"],
+                "bound_service_account_namespaces": ["private-mail"],
+                "token_policies": ["infra-email-storage-readonly"],
+                "token_no_default_policy": true,
+                "token_ttl": 3600,
+                "token_max_ttl": 3600
+              }
+              EMAIL_STORAGE_ROLE
 
               # The source-owned SecretStore uses only this namespaced identity.
               # Explicit JSON preserves array/boolean types; no default policy is

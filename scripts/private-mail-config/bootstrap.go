@@ -25,6 +25,7 @@ type bootstrapRuntime struct {
 	applicationFile, applicationDigest string
 	serverArgs                         []string
 	startup, shutdown                  time.Duration
+	proxyClientIP                      *bool
 }
 
 // bootstrapCommand runs the bounded bootstrap lifecycle using private file inputs.
@@ -32,6 +33,8 @@ func bootstrapCommand(args []string, log io.Writer) int {
 	f := flag.NewFlagSet("bootstrap", flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "/etc/private-mail", "mounted private inputs")
+	var proxy proxyOption
+	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) {
 		_, _ = fmt.Fprintln(log, "Email bootstrap refused invalid arguments.")
 		return 2
@@ -50,6 +53,7 @@ func bootstrapCommand(args []string, log io.Writer) int {
 		dataDir: "/var/lib/stalwart", serverArgs: []string{"--config", "/etc/stalwart/config.json"},
 		startup: time.Minute, shutdown: 30 * time.Second,
 		applicationFile: applicationAssetPath(applicationDigest), applicationDigest: applicationDigest,
+		proxyClientIP: proxy.value,
 	}
 	if err := bootstrap(ctx, *dir, runtime); err != nil {
 		_, _ = fmt.Fprintln(log, "Email bootstrap failed; serving must remain stopped.", err)
@@ -77,6 +81,9 @@ func bootstrap(ctx context.Context, inputDir string, runtime bootstrapRuntime) (
 	v, err := loadInputs(inputDir)
 	if err != nil {
 		return errConfiguration
+	}
+	if runtime.proxyClientIP != nil {
+		v.UseProxyClientIP = *runtime.proxyClientIP
 	}
 	plan, err := render(v)
 	if err != nil {

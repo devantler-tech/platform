@@ -266,14 +266,16 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-kubescape-storage' \
   'ghcr.io/devantler-tech/platform-kubescape-node-agent' \
   'ghcr.io/devantler-tech/platform-coroot-node-agent' \
+  'ghcr.io/devantler-tech/platform-coroot' \
+  'ghcr.io/devantler-tech/platform-coroot-cluster-agent' \
   'ghcr.io/devantler-tech/world-at-ruin/zone' \
   'ghcr.io/devantler-tech/platform-private-mail-bootstrap' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all nine exact ordered image routes"
+  echo "FAIL  the real rules must retain all eleven exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: nine ordered rules, dedicated publishers before catch-all"
+  echo "ok    real rules: eleven ordered rules, dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.

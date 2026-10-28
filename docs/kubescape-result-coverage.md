@@ -134,7 +134,8 @@ Metadata agreement alone establishes storage coherence, not scan freshness, a pa
 result, or complete coverage. Keep the remaining missing and stale results tracked in #4263. The
 detector stays read-only; it performs none of these repairs.
 
-The revision 8 compatibility-image publisher adds a bounded, non-destructive repair. Before
+The revision 9 compatibility image adds native flattened-metadata decoding to the bounded,
+non-destructive repair introduced in revision 8; the versioned metadata wrapper remains supported. Before
 the API server and background writers start, it reads only vulnerability-summary metadata
 and the corresponding payloads. It accepts the same UID, name, namespace and creation time,
 an intact regular payload file, and a payload exactly one version ahead with a non-decreasing

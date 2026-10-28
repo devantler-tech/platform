@@ -1200,19 +1200,20 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 9 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 10 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
 	kubescapeNodeAgentAttestorValid := false
 	corootNodeAgentAttestorValid := false
+	checkpointAttestorValid := false
 	analysisAttestorValid := false
 	warZoneAttestorValid := false
 	mailAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1231,6 +1232,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			kubescapeNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kubescape-node-agent-hotfix\\.yaml@refs/heads/main$"
 		case "publishcorootnodeagent":
 			corootNodeAgentAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-node-agent-hotfix\\.yaml@refs/heads/main$"
+		case "publishcorootcheckpoint":
+			checkpointAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-checkpoint-hotfix\\.yaml@refs/heads/main$"
 		case "publishksailanalysis":
 			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
 		case "publishwarzone":
@@ -1246,6 +1249,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesKubescapeNodeAgent := false
 	genericExcludesCorootNodeAgent := false
 	dedicatedRoutesCorootNodeAgent := false
+	genericExcludesCheckpoint := false
+	dedicatedRoutesCheckpoint := false
 	genericExcludesAnalysis := false
 	dedicatedRoutesAnalysis := false
 	genericExcludesWarZone := false
@@ -1256,6 +1261,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		validation, _ := rawValidation.(map[string]any)
 		expression, _ := validation["expression"].(string)
 		if strings.Contains(expression, "attestors.publishapp") {
+			genericExcludesCheckpoint = checkpointRouteContains(expression, true)
 			genericExcludesMail = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@')")
@@ -1290,6 +1296,9 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-coroot-node-agent@')")
 		}
+		if strings.Contains(expression, "attestors.publishcorootcheckpoint") {
+			dedicatedRoutesCheckpoint = checkpointRouteContains(expression, false)
+		}
 		if strings.Contains(expression, "attestors.publishwarzone") {
 			dedicatedRoutesWarZone = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
@@ -1307,6 +1316,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 		}
 	}
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
+		!checkpointAttestorValid || !genericExcludesCheckpoint || !dedicatedRoutesCheckpoint ||
 		!mailAttestorValid || !genericExcludesMail || !dedicatedRoutesMail ||
 		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
@@ -1327,6 +1337,21 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	appendEnvFile("OPERATION_LOG", "ivpol-policy-apply:verify-app-images\n")
 	fmt.Println("imagevalidatingpolicy.policies.kyverno.io/verify-app-images serverside-applied")
 	return 0
+}
+
+func checkpointRouteContains(expression string, excluded bool) bool {
+	comparison, negation := "==", ""
+	if excluded {
+		comparison, negation = "!=", "!"
+	}
+	for _, repository := range []string{"ghcr.io/devantler-tech/platform-coroot", "ghcr.io/devantler-tech/platform-coroot-cluster-agent"} {
+		if !strings.Contains(expression, "image "+comparison+" '"+repository+"'") ||
+			!strings.Contains(expression, negation+"image.startsWith('"+repository+":')") ||
+			!strings.Contains(expression, negation+"image.startsWith('"+repository+"@')") {
+			return false
+		}
+	}
+	return true
 }
 
 func fakeKubectlDeleteRetiredImageValidatingPolicy(args []string) int {
