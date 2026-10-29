@@ -84,6 +84,8 @@ jobs:
           printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
           unset KUBE_CONFIG
           stage=stable-api
-          if ! ./scripts/use-prod-stable-api-endpoint.sh > "$private_dir/endpoint.log" 2>&1; then fail; fi
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            fail
+          fi
           unset HCLOUD_TOKEN
           "$RUNNER_TEMP/verify-email-storage-canary"
