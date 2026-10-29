@@ -89,5 +89,3 @@ spec:
                       - ${cluster_name}-worker-1
                       - ${cluster_name}-worker-2
                       - ${cluster_name}-worker-3
-                      - ${cluster_name}-worker-4
-                      - ${cluster_name}-worker-5
