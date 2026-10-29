@@ -52,10 +52,13 @@ jobs:
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
         run: bash .github/scripts/setup-supply-chain-tools.sh
-      - name: 🧪 Exercise the real controller and restricted public application
+      - name: Validate the hosted runtime script
         run: |
           shellcheck scripts/tests/test-webapp-runtime-hosted.sh
-          bash scripts/tests/test-webapp-runtime-hosted.sh
+      - name: 🧪 Exercise the real controller and restricted public application
+        env:
+          PREBUILT_CI_READ_TOKEN: ${{ github.token }}
+        run: bash scripts/tests/test-webapp-runtime-hosted.sh
 
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
@@ -945,6 +948,11 @@ jobs:
         run: |
           shellcheck scripts/tests/test-webapp-compiler.sh scripts/tests/test-webapp-compiler-wiring.sh
           bash scripts/tests/test-webapp-compiler-wiring.sh
+
+      - name: 🔒 Validate scoped migration runtime publisher
+        run: |
+          shellcheck scripts/tests/test-kyverno-migration-runtime.sh
+          bash scripts/tests/test-kyverno-migration-runtime.sh
 
       - name: 🛡️ Validate preserved policy failure actions
         run: |
@@ -3399,6 +3407,14 @@ jobs:
           go install github.com/mikefarah/yq/v4@v4.54.1
           printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
           PATH="$GOBIN:$PATH" yq --version
+      - name: 🩺 Validate declarative Coroot application health
+        if: needs.changes.outputs.k8s == 'true'
+        # Check the bounded offline matcher before the expensive native proofs.
+        # Exact reviewed app signals receive per-app thresholds; any novel log
+        # pattern resets its threshold so the Applications view fails visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
+          bash scripts/tests/test-coroot-application-health-reconciler.sh
       - name: ⚖️ Read Kyverno CLI version
         if: needs.changes.outputs.k8s == 'true'
         id: kyverno-version
@@ -3496,14 +3512,6 @@ jobs:
         # prior contents of all eight subjects and would otherwise revert in
         # silence — plus the floor and the wiring that reaches it.
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
-
-      - name: 🩺 Validate declarative Coroot application health
-        if: needs.changes.outputs.k8s == 'true'
-        # Exact reviewed app signals receive per-app thresholds; any novel log
-        # pattern resets its threshold so the Applications view fails visible.
-        run: |
-          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
-          bash scripts/tests/test-coroot-application-health-reconciler.sh
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
