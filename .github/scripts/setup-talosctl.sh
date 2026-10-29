@@ -23,7 +23,7 @@ set -euo pipefail
 TALOS_VERSION="1.13.12"
 # SHA-256 of talosctl-linux-amd64 for the TALOS_VERSION above, from that
 # release's sha256sum.txt. UPDATE BOTH TOGETHER.
-TALOSCTL_SHA256="d4358faf5ebd740ab92ec4a9e3111f2f271f681e479f07b8603a3616c76b2413"
+TALOSCTL_SHA256="4ce4218764c24d6a6bd561097199b60ed8619db073792fce5b7cfce7fa8d12fc"
 
 asset_name="talosctl-linux-amd64"
 release_base="https://github.com/siderolabs/talos/releases/download/v${TALOS_VERSION}"
