@@ -16,9 +16,9 @@ fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 # and no required node affinity or fixed node name narrows that again.
 unpinned_placement() {
   jq -e '
+    .spec.template.spec.nodeSelector as $selector |
     (.spec.template.spec.nodeName == null) and
     (.spec.template.spec.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution == null) and
-    .spec.template.spec.nodeSelector as $selector |
     ($selector | type == "object") and
     ([
       {labels:{"kubernetes.io/os":"linux","node.longhorn.io/create-default-disk":"true"},eligible:true},
