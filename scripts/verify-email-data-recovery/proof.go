@@ -86,8 +86,12 @@ func proveMessage(m object, w messageIdentity) bool {
 		return false
 	}
 	body := child(child(m, "bodyValues"), text(parts[0], "partId"))
-	if body["isTruncated"] != false || body["isEncodingProblem"] == true {
-		return false
+	// RFC 8621 BodyValue flags default to false when omitted. A present
+	// non-boolean, truncation or encoding problem still refuses the proof.
+	for _, flag := range []string{"isTruncated", "isEncodingProblem"} {
+		if value, present := body[flag]; present && value != false {
+			return false
+		}
 	}
 	return strings.TrimRight(text(body, "value"), "\r\n") == w.body
 }

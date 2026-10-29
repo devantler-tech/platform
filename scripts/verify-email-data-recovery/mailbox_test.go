@@ -107,7 +107,7 @@ func TestRecoveryMarkerCleanupCannotDeleteOtherMessages(t *testing.T) {
 					if !strings.Contains(string(data), "Message-ID: <email-recovery-"+nonce+"@example.invalid>") {
 						t.Error("uploaded message lost its unique identity")
 					}
-					_, _ = io.WriteString(w, `{"accountId":"company-account","blobId":"owned-blob"}`)
+					_, _ = io.WriteString(w, `{"accountId":"company-account","blobId":"upload-blob"}`)
 					return
 				}
 				var envelope object
@@ -140,10 +140,10 @@ func TestRecoveryMarkerCleanupCannotDeleteOtherMessages(t *testing.T) {
 				case "Email/import":
 					imported = true
 					email := child(child(args, "emails"), "proof")
-					if text(email, "blobId") != "owned-blob" || child(email, "mailboxIds")["owned-box"] != true {
+					if text(email, "blobId") != "upload-blob" || child(email, "mailboxIds")["owned-box"] != true {
 						t.Error("import escaped its own mailbox")
 					}
-					result["created"] = object{"proof": object{"id": "owned-email"}}
+					result["created"] = object{"proof": object{"id": "owned-email", "blobId": "owned-blob"}}
 				case "Email/get":
 					result["list"] = []any{object{"id": "owned-email", "blobId": "owned-blob", "messageId": []any{"email-recovery-" + nonce + "@example.invalid"}, "mailboxIds": object{"owned-box": true}, "textBody": []any{object{"partId": "1"}}, "bodyValues": object{"1": object{"value": "Email recovery verification " + nonce + "\r\n", "isTruncated": false}}}}
 				case "Email/query":

@@ -78,3 +78,28 @@ func TestReaderAcceptsObservedSafeSecurityDefaultsButRejectsInjectedWork(t *test
 		t.Fatal("admission changed the executable but kept recovery clearance")
 	}
 }
+
+func TestAdmissionRefusesInjectedExecutionAndCredentialSources(t *testing.T) {
+	env := confirmedInvocation()
+	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	mutations := map[string]any{
+		"lifecycle":      object{"postStart": object{"exec": object{"command": []any{"/bin/sh", "-c", "echo unexpected"}}}},
+		"envFrom":        []any{object{"secretRef": object{"name": "foreign-secret"}}},
+		"startupProbe":   object{"exec": object{"command": []any{"/bin/sh", "-c", "echo unexpected"}}},
+		"readinessProbe": object{"exec": object{"command": []any{"/bin/sh", "-c", "echo unexpected"}}},
+		"livenessProbe":  object{"exec": object{"command": []any{"/bin/sh", "-c", "echo unexpected"}}},
+		"volumeDevices":  []any{object{"name": "data", "devicePath": "/dev/extra"}},
+	}
+	for key, value := range mutations {
+		t.Run(key, func(t *testing.T) {
+			want := recoveryReader(i)
+			data, _ := json.Marshal(want)
+			var actual object
+			_ = json.Unmarshal(data, &actual)
+			items(child(actual, "spec"), "containers")[0][key] = value
+			if admittedRecoveryObject(want, actual) {
+				t.Fatal("unrequested execution or credential access was admitted")
+			}
+		})
+	}
+}

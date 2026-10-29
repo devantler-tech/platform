@@ -86,3 +86,23 @@ func TestNativeSuccessfulBackupOmitsZeroErrorCount(t *testing.T) {
 		t.Fatal("malformed error count was accepted")
 	}
 }
+
+func TestJMAPBodyValueDefaultsDoNotWeakenExactContentProof(t *testing.T) {
+	expected := messageIdentity{email: "owned-email", blob: "stored-blob", mailbox: "owned-box", messageID: "proof@example.invalid", body: "unique marker"}
+	message := object{"id": "owned-email", "blobId": "stored-blob", "mailboxIds": object{"owned-box": true}, "messageId": []any{"proof@example.invalid"}, "textBody": []any{object{"partId": "1"}}, "bodyValues": object{"1": object{"value": "unique marker\r\n"}}}
+	if !proveMessage(message, expected) {
+		t.Fatal("omitted default-false BodyValue flags were refused")
+	}
+	body := child(child(message, "bodyValues"), "1")
+	for _, bad := range []any{true, "false", float64(0)} {
+		body["isTruncated"] = bad
+		if proveMessage(message, expected) {
+			t.Fatal("truncation or malformed flag weakened the content proof")
+		}
+	}
+	delete(body, "isTruncated")
+	body["value"] = "different body"
+	if proveMessage(message, expected) {
+		t.Fatal("omitted flags admitted different message content")
+	}
+}

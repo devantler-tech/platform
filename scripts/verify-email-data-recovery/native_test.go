@@ -47,6 +47,9 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 	}
 	marker, err := client.createMarker(ctx, nonce)
 	if err != nil {
+		if marker != nil && marker.identity.email != "" {
+			logNativeMessageShape(t, ctx, client, marker.identity)
+		}
 		t.Fatalf("native marker import: %s", err)
 	}
 	if _, err = client.verifyMessage(ctx, marker.identity); err != nil {
@@ -56,4 +59,29 @@ func TestNativeRecoveryMarkerLifecycle(t *testing.T) {
 		t.Fatalf("native marker cleanup: %s", err)
 	}
 	t.Log("EMAIL_RECOVERY_NATIVE_MARKER=PASS import=VERIFIED read=VERIFIED cleanup=VERIFIED")
+}
+
+// Failure diagnostics reveal only comparisons and types from synthetic data.
+// No message content, identifier or credential is written to CI output.
+func logNativeMessageShape(t *testing.T, ctx context.Context, client *mailboxClient, expected messageIdentity) {
+	t.Helper()
+	result, err := client.call(ctx, "Email/get", object{"ids": []any{expected.email}, "properties": []any{"id", "blobId", "messageId", "mailboxIds", "textBody", "bodyValues"}, "fetchTextBodyValues": true})
+	if err != nil {
+		return
+	}
+	messages := items(result, "list")
+	if len(messages) != 1 {
+		t.Logf("NATIVE_MESSAGE_SHAPE count=%d state_present=%t", len(messages), text(result, "state") != "")
+		return
+	}
+	m := messages[0]
+	ids, _ := m["messageId"].([]any)
+	idMatches := len(ids) == 1 && ids[0] == expected.messageID
+	parts := items(m, "textBody")
+	if len(parts) != 1 {
+		t.Logf("NATIVE_MESSAGE_SHAPE text_parts=%d", len(parts))
+		return
+	}
+	body := child(child(m, "bodyValues"), text(parts[0], "partId"))
+	t.Logf("NATIVE_MESSAGE_SHAPE id_match=%t blob_match=%t message_id_match=%t mailbox_match=%t body_match=%t truncated_type=%T encoding_type=%T state_present=%t", text(m, "id") == expected.email, text(m, "blobId") == expected.blob, idMatches, child(m, "mailboxIds")[expected.mailbox] == true, strings.TrimRight(text(body, "value"), "\r\n") == expected.body, body["isTruncated"], body["isEncodingProblem"], text(result, "state") != "")
 }

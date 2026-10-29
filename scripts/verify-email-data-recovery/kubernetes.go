@@ -144,7 +144,7 @@ func admittedRecoveryObject(want, actual object) bool {
 		if len(ac) != 1 || len(wc) != 1 {
 			return false
 		}
-		for _, key := range []string{"name", "image", "command", "args", "env", "securityContext", "volumeMounts"} {
+		for _, key := range []string{"name", "image", "command", "args", "env", "envFrom", "securityContext", "volumeMounts", "volumeDevices", "lifecycle", "startupProbe", "readinessProbe", "livenessProbe"} {
 			if !reflect.DeepEqual(ac[0][key], wc[0][key]) {
 				return false
 			}

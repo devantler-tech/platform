@@ -140,8 +140,12 @@ func (c *mailboxClient) createMarker(ctx context.Context, nonce string) (*mailbo
 		marker.uncertain = true
 		return marker, err
 	}
-	marker.identity.email = text(child(child(imported, "created"), "proof"), "id")
-	if !mailboxIDPattern.MatchString(marker.identity.email) {
+	createdEmail := child(child(imported, "created"), "proof")
+	marker.identity.email = text(createdEmail, "id")
+	// Import may normalize or relink an uploaded blob. Its returned Email
+	// identity, rather than the temporary upload identity, binds later reads.
+	marker.identity.blob = text(createdEmail, "blobId")
+	if !mailboxIDPattern.MatchString(marker.identity.email) || !mailboxIDPattern.MatchString(marker.identity.blob) {
 		marker.uncertain = true
 		return marker, errors.New("marker-import")
 	}
