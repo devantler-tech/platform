@@ -14,6 +14,10 @@ A fresh Velero filesystem backup includes only the selected Email pod and its da
 volume. The restore uses the completed, source-bound Kopia snapshot as bytes;
 backed-up pods, hooks, routes and credentials are not replayed. A fixed recovery
 server reads a separate, three-replica encrypted volume with a new diagnostic key.
+A single reviewed administration declaration supplies the exact runtime digest
+for both source validation and the recovery reader. The declared binary base must
+remain compatible with the native datastore proof; missing or changed facts stop
+preflight before the diagnostic message is created.
 A namespace policy denies external ingress and egress. The API client uses only
 private Kubernetes port forwarding to IPv4 loopback and never follows redirects.
 

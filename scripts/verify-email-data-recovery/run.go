@@ -167,7 +167,7 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 			return err
 		}
 	}
-	reader, err := d.create(ctx, recoveryReader(d.i))
+	reader, err := d.create(ctx, recoveryReader(d.i, d.image))
 	if err != nil {
 		return err
 	}

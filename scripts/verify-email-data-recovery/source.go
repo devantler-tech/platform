@@ -9,7 +9,7 @@ import (
 
 var kubernetesName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-func proveServingSource(pod, pvc, pv object) (sourceIdentity, error) {
+func proveServingSource(pod, pvc, pv object, expectedImage string) (sourceIdentity, error) {
 	pm, cm, vm := child(pod, "metadata"), child(pvc, "metadata"), child(pv, "metadata")
 	fail := func() (sourceIdentity, error) { return sourceIdentity{}, errors.New("serving-source") }
 	if text(pm, "name") != "private-mail-0" || text(pm, "namespace") != "private-mail" || text(pm, "uid") == "" || pm["deletionTimestamp"] != nil || text(cm, "name") != "private-mail-data" || text(cm, "namespace") != "private-mail" || text(cm, "uid") == "" || cm["deletionTimestamp"] != nil || text(vm, "uid") == "" || vm["deletionTimestamp"] != nil {
@@ -34,7 +34,7 @@ func proveServingSource(pod, pvc, pv object) (sourceIdentity, error) {
 		}
 	}
 	containers := items(child(pod, "spec"), "containers")
-	if !ready || text(child(pod, "status"), "phase") != "Running" || len(containers) != 1 || text(containers[0], "name") != "private-mail" || text(containers[0], "image") != recoveryImage {
+	if !ready || text(child(pod, "status"), "phase") != "Running" || len(containers) != 1 || text(containers[0], "name") != "private-mail" || expectedImage == "" || text(containers[0], "image") != expectedImage {
 		return fail()
 	}
 	found := false
@@ -60,6 +60,12 @@ func (d *recoveryDriver) readSource(ctx context.Context) (sourceIdentity, error)
 	if err != nil || !found {
 		return sourceIdentity{}, errors.New("source-pod")
 	}
+	if d.image == "" {
+		d.image, err = loadRecoveryImage()
+		if err != nil {
+			return sourceIdentity{}, err
+		}
+	}
 	pvc, found, err := d.lookup(ctx, "PersistentVolumeClaim", "private-mail-data", "private-mail")
 	if err != nil || !found {
 		return sourceIdentity{}, errors.New("source-claim")
@@ -72,7 +78,7 @@ func (d *recoveryDriver) readSource(ctx context.Context) (sourceIdentity, error)
 	if err != nil || !found {
 		return sourceIdentity{}, errors.New("source-volume")
 	}
-	return proveServingSource(pod, pvc, pv)
+	return proveServingSource(pod, pvc, pv, d.image)
 }
 func (d *recoveryDriver) sourceRetained(ctx context.Context) error {
 	actual, err := d.readSource(ctx)

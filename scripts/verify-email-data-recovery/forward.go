@@ -67,7 +67,7 @@ func (d *recoveryDriver) forward(ctx context.Context, ns, pod, uid string) (stri
 			return errors.New("forward-scope")
 		}
 		o, err := d.owned(ctx, ref)
-		if err != nil || !admittedRecoveryObject(recoveryReader(d.i), o) {
+		if err != nil || !admittedRecoveryObject(recoveryReader(d.i, d.image), o) {
 			return errors.New("forward-reader")
 		}
 		return nil

@@ -52,6 +52,7 @@ type recoveryDriver struct {
 	uncertain             bool
 	started               bool
 	stage                 string
+	image                 string
 	volumeName, volumeUID string
 	pvUID                 string
 	source                sourceIdentity

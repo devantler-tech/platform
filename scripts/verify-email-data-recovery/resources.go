@@ -1,7 +1,5 @@
 package main
 
-const recoveryImage = "ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c"
-
 func recoveryManifest(i invocation, kind, name, ns, api string) object {
 	meta := object{"name": name, "labels": object{recoveryLabel: i.run, "app.kubernetes.io/part-of": "email-data-recovery"}}
 	if ns != "" {
@@ -44,13 +42,13 @@ func recoveryResources(i invocation, key, auth string) []object {
 	return []object{ns, policy, sc, secret, admin, config, pvc}
 }
 
-func recoveryReader(i invocation) object {
+func recoveryReader(i invocation, image string) object {
 	pod := recoveryManifest(i, "Pod", "reader", i.namespace, "v1")
 	pod["spec"] = object{
 		"restartPolicy": "Never", "automountServiceAccountToken": false, "terminationGracePeriodSeconds": float64(30),
 		"securityContext": object{"runAsNonRoot": true, "runAsUser": float64(2000), "runAsGroup": float64(2000), "fsGroup": float64(2000), "fsGroupChangePolicy": "OnRootMismatch", "seccompProfile": object{"type": "RuntimeDefault"}},
 		"containers": []any{object{
-			"name": "reader", "image": recoveryImage, "command": []any{"/usr/local/bin/stalwart"}, "args": []any{"--config", "/etc/stalwart/config.json"},
+			"name": "reader", "image": image, "command": []any{"/usr/local/bin/stalwart"}, "args": []any{"--config", "/etc/stalwart/config.json"},
 			"env":             []any{object{"name": "STALWART_RECOVERY_MODE", "value": "1"}, object{"name": "STALWART_RECOVERY_MODE_PORT", "value": "8080"}, object{"name": "STALWART_RECOVERY_ADMIN", "valueFrom": object{"secretKeyRef": object{"name": "test-authentication", "key": "credential"}}}},
 			"securityContext": object{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "runAsNonRoot": true, "seLinuxOptions": object{}, "seccompProfile": object{"type": "RuntimeDefault"}, "capabilities": object{"drop": []any{"ALL"}}},
 			"resources":       object{"requests": object{"cpu": "25m", "memory": "128Mi"}, "limits": object{"cpu": "1", "memory": "512Mi"}},

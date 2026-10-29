@@ -14,7 +14,7 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 		t.Fatal("recovery graph is incomplete")
 	}
 	seen := map[string]bool{}
-	for _, o := range append(graph, recoveryReader(i)) {
+	for _, o := range append(graph, recoveryReader(i, fixtureImage)) {
 		m := child(o, "metadata")
 		kind, name, ns := text(o, "kind"), text(m, "name"), text(m, "namespace")
 		if !i.permitsMutation(kind, ns, name) {
@@ -38,7 +38,7 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 				t.Fatal("restored server can obtain credentials or execute restored hooks")
 			}
 			containers := items(spec, "containers")
-			if len(containers) != 1 || text(containers[0], "image") != "ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c" {
+			if len(containers) != 1 || text(containers[0], "image") != fixtureImage {
 				t.Fatal("reader is not the reviewed server")
 			}
 			data, _ := json.Marshal(o)
@@ -52,7 +52,7 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 			t.Fatal("recovery graph omitted a safety prerequisite")
 		}
 	}
-	pod := recoveryReader(i)
+	pod := recoveryReader(i, fixtureImage)
 	if !i.permitsMutation(text(pod, "kind"), text(child(pod, "metadata"), "namespace"), text(child(pod, "metadata"), "name")) {
 		t.Fatal("reader is not separately owned")
 	}
@@ -61,7 +61,7 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 func TestReaderAcceptsObservedSafeSecurityDefaultsButRejectsInjectedWork(t *testing.T) {
 	env := confirmedInvocation()
 	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
-	want := recoveryReader(i)
+	want := recoveryReader(i, fixtureImage)
 	data, _ := json.Marshal(want)
 	var actual object
 	_ = json.Unmarshal(data, &actual)
@@ -92,7 +92,7 @@ func TestAdmissionRefusesInjectedExecutionAndCredentialSources(t *testing.T) {
 	}
 	for key, value := range mutations {
 		t.Run(key, func(t *testing.T) {
-			want := recoveryReader(i)
+			want := recoveryReader(i, fixtureImage)
 			data, _ := json.Marshal(want)
 			var actual object
 			_ = json.Unmarshal(data, &actual)

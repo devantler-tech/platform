@@ -79,8 +79,8 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	a := &cleanupAPI{objects: map[string]object{}, paths: map[string]string{}, blockBackend: blocked, cancel: cancel}
-	d := &recoveryDriver{i: i, k: a, refs: map[string]ownedReference{}, volumeName: "pvc-target-volume", volumeUID: "target-longhorn-uid", pvUID: "target-pv-uid"}
-	graph := append(recoveryResources(i, "test-key", "test-admin"), recoveryReader(i), downloadManifest(i, "0123456789abcdef0123456789abcdef"), backupManifest(i))
+	d := &recoveryDriver{i: i, image: fixtureImage, k: a, refs: map[string]ownedReference{}, volumeName: "pvc-target-volume", volumeUID: "target-longhorn-uid", pvUID: "target-pv-uid"}
+	graph := append(recoveryResources(i, "test-key", "test-admin"), recoveryReader(i, fixtureImage), downloadManifest(i, "0123456789abcdef0123456789abcdef"), backupManifest(i))
 	for _, o := range graph {
 		m := child(o, "metadata")
 		kind, ns, name := text(o, "kind"), text(m, "namespace"), text(m, "name")
@@ -99,7 +99,7 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 	a.objects[cleanupKey("DataDownload", "velero", i.namespace+"-download")]["status"] = object{"phase": "Completed"}
 	a.objects[cleanupKey("Backup", "velero", i.namespace+"-backup")]["status"] = object{"phase": "Completed", "expiration": time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)}
 	pod, sourcePVC, pv := servingFixture()
-	d.source, err = proveServingSource(pod, sourcePVC, pv)
+	d.source, err = proveServingSource(pod, sourcePVC, pv, fixtureImage)
 	if err != nil {
 		t.Fatal(err)
 	}
