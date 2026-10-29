@@ -47,6 +47,7 @@ data:
     # painted from custom.css below; cardBlur is omitted because there is
     # no underlying image for backdrop-filter to blur.
     headerStyle: clean
+    fullWidth: true
     statusStyle: dot
     iconStyle: gradient
     hideVersion: true
@@ -449,6 +450,28 @@ data:
     *:focus-visible {
       outline: 2px solid var(--dt-accent);
       outline-offset: 2px;
+    }
+
+    /* Pack whole groups into independent responsive columns. Homepage's flex
+       rows otherwise reserve the tallest group's height for every neighbour.
+       Reading and keyboard order follow the configured order down each column;
+       18rem columns naturally become a single column on narrow screens. */
+    #layout-groups,
+    #services,
+    #bookmarks {
+      display: block;
+      column-width: 18rem;
+      column-gap: 0;
+    }
+    #layout-groups > .services-group,
+    #layout-groups > .bookmark-group,
+    #services > .services-group,
+    #bookmarks > .bookmark-group {
+      display: inline-block;
+      width: 100%;
+      break-inside: avoid;
+      vertical-align: top;
+      margin-bottom: 0.5rem;
     }
 
     /* Service & bookmark cards: the theme already paints a translucent glass
