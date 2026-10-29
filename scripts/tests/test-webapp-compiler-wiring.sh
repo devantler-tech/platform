@@ -20,6 +20,9 @@ PREBUILT_CI_READ_TOKEN="$fixture_token" FIXTURE_TOKEN="$fixture_token" hosted_ci
   bash -x "$work/preamble.sh" > "$work/preamble.log" 2>&1
 if grep -Fq "$fixture_token" "$work/preamble.log"; then fail 'hosted credential reached traced output'; fi
 
+# Require the compiler, scanner and hosted trial inside the read-only job.
+# $1 is workflow JSON; $2 is its exact selection expression, or empty for main.
+# Lint runs separately so only the runtime script receives the CI credential.
 check_job() {
   local input="$1" selection="$2"
   jq -e --arg selection "${selection}" '
