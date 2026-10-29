@@ -1,0 +1,88 @@
+name: Refresh Email Recovery Backup
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: refresh-email-recovery-backup"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  refresh:
+    name: Run the current snapshot and off-cluster mirror once
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != refresh-email-recovery-backup ]]; then
+            printf '%s\n' 'EMAIL_BACKUP_REFRESH=UNVERIFIED stage=dispatch' >&2
+            exit 2
+          fi
+
+      - name: Check out the confirmed immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check the reviewed driver syntax before restoring credentials
+        shell: bash
+        run: bash -n scripts/refresh-email-recovery-backup.sh
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/email-backup-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+            https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl -o "$kubectl_path"
+          printf '%s  %s\n' 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/email-backup-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/email-backup-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/email-backup-tools" >> "$GITHUB_PATH"
+
+      - name: Refresh only the reviewed daily backup template
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          EMAIL_BACKUP_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          ulimit -c 0
+          stage=workspace
+          fail() { printf 'EMAIL_BACKUP_REFRESH=UNVERIFIED stage=%s\n' "$stage" >&2; exit 2; }
+          [[ $(findmnt -n -o FSTYPE --target /dev/shm) == tmpfs ]] || fail
+          stage=current-source
+          latest=$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main) || fail
+          [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || fail
+          private_dir=$(mktemp -d /dev/shm/email-backup-refresh.XXXXXXXX)
+          trap 'rm -rf "$private_dir"' EXIT
+          stage=private-inputs
+          [[ -n "$KUBE_CONFIG" && ${#KUBE_CONFIG} -le 1048576 ]] || fail
+          export KUBECONFIG="$private_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          stage=stable-api
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            fail
+          fi
+          unset HCLOUD_TOKEN
+          export EMAIL_BACKUP_WORK_DIR="$private_dir"
+          bash scripts/refresh-email-recovery-backup.sh
