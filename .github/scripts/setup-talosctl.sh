@@ -20,7 +20,7 @@ set -euo pipefail
 # inspects a single node, which reads as a fleet-wide fault rather than a stale
 # pin.
 # renovate: datasource=github-releases depName=siderolabs/talos extractVersion=^v(?<version>.+)$
-TALOS_VERSION="1.13.11"
+TALOS_VERSION="1.13.12"
 # SHA-256 of talosctl-linux-amd64 for the TALOS_VERSION above, from that
 # release's sha256sum.txt. UPDATE BOTH TOGETHER.
 TALOSCTL_SHA256="d4358faf5ebd740ab92ec4a9e3111f2f271f681e479f07b8603a3616c76b2413"
