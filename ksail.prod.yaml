@@ -122,7 +122,9 @@ spec:
           # Temporary capacity for #5582. The configured static CX43 type is
           # unavailable across the configured locations, so use an independent
           # pool rather than changing the existing workers' server type.
-          # min == max prevents voluntary scale-down. Keep this pool declared
+          # The temporary native CapacityBuffer requests both workers; min ==
+          # max then prevents voluntary scale-down. Deployment reads back both
+          # Ready nodes before accepting this capacity. Keep this pool declared
           # until its replicas have been evacuated and its nodes retired.
           # The replica exclusion policy initially keeps these nodes fenced.
           - name: autoscale-longhorn-v1

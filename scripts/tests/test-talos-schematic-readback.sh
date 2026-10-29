@@ -67,7 +67,15 @@ jq -n --arg schematic "$desired_schematic" --arg version "$desired_version" --ar
   {items: ([
     node("prod-control-plane-2"), node("prod-control-plane-4"), node("prod-control-plane-5")
   ] + [range(1; $workers + 1) | node("prod-worker-" + tostring)] + [
-    node("autoscale-cx43-example")
+    node("autoscale-cx43-example"),
+    (node("autoscale-longhorn-v1-0123456789abcdef") | .metadata.labels = {
+      "storage.platform.devantler.tech/migration-pool": "v1",
+      "node.kubernetes.io/instance-type": "cpx42"
+    }),
+    (node("autoscale-longhorn-v1-fedcba9876543210") | .metadata.labels = {
+      "storage.platform.devantler.tech/migration-pool": "v1",
+      "node.kubernetes.io/instance-type": "cpx42"
+    })
   ])}
 ' >"$tmp_dir/nodes.json"
 
@@ -116,5 +124,21 @@ assert_rejected 'a cordoned node'
 
 jq '.items |= map(select(.metadata.name != "prod-worker-1"))' "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a missing static worker'
+
+jq '.items |= map(select(.metadata.name != "autoscale-longhorn-v1-0123456789abcdef"))' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a migration pool below its configured minimum'
+
+jq '(.items[] | select(.metadata.name == "autoscale-longhorn-v1-0123456789abcdef") | .metadata.labels["storage.platform.devantler.tech/migration-pool"]) = "wrong"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a migration node with the wrong role label'
+
+jq '(.items[] | select(.metadata.name == "autoscale-longhorn-v1-0123456789abcdef") | .metadata.labels["node.kubernetes.io/instance-type"]) = "cx43"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a migration node with the wrong server type'
+
+jq '(.items[] | select(.metadata.name == "autoscale-longhorn-v1-0123456789abcdef") | .status.conditions[0].status) = "False"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'an unready migration node'
 
 printf 'PASS: production Talos version, schematic, and node health are read back fail-closed\n'
