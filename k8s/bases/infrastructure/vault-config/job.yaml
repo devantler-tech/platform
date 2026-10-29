@@ -1047,13 +1047,13 @@ spec:
               }
               # Company Email preparation preserves three durable credentials.
               # Exact-key read/seed only; no mailbox data or wildcard grant.
-              path "secret/data/apps/private-mail/admin" {
+              path "secret/data/infrastructure/email/admin" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/data/apps/private-mail/maintainer" {
+              path "secret/data/infrastructure/email/maintainer" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/data/apps/private-mail/agent" {
+              path "secret/data/infrastructure/email/agent" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/data/apps/actual-budget/*" {
@@ -1101,13 +1101,13 @@ spec:
               path "secret/metadata/apps/actual-budget/*" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/metadata/apps/private-mail/admin" {
+              path "secret/metadata/infrastructure/email/admin" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/metadata/apps/private-mail/maintainer" {
+              path "secret/metadata/infrastructure/email/maintainer" {
                 capabilities = ["create", "update", "read"]
               }
-              path "secret/metadata/apps/private-mail/agent" {
+              path "secret/metadata/infrastructure/email/agent" {
                 capabilities = ["create", "update", "read"]
               }
               path "secret/metadata/apps/actual-budget/*" {

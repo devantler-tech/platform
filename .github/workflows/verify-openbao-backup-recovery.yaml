@@ -119,7 +119,7 @@ jobs:
           [[ "$ready" == true ]] || fail
           export OPENBAO_RECOVERY_DIR="$proof_dir"
           stage=collection
-          if ! "$binary" collect > "$proof_dir/collection-result" 2>"$proof_dir/collection.log"; then
+          if ! "$binary" collect-email > "$proof_dir/collection-result" 2>"$proof_dir/collection.log"; then
             # Raw diagnostics stay private; only these closed failure codes leave scratch storage.
             grep -E '^OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=(private-workspace|snapshot-job-read|snapshot-job-admission|live-health|deployment-inputs|backup-target|recovery-inputs|recovery-backup-read|recovery-backup-admission|recovery-key-download|live-records|snapshot-download|private-handoff|collection)$' "$proof_dir/collection.log" >&2 || true
             fail
@@ -135,7 +135,7 @@ jobs:
           image=$("$binary" image) || fail
           if ! docker pull "$image" > "$proof_dir/pull.log" 2>&1; then fail; fi
           stage=isolated-restore
-          if ! bash scripts/run-openbao-backup-sandbox.sh verify "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then
+          if ! bash scripts/run-openbao-backup-sandbox.sh verify-email "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then
             grep -E '^OPENBAO_BACKUP_RESTORE=FAIL stage=(mode|sandbox|server|initialization|inputs|snapshot|restore|seal|unseal|records|membership|restored_state|fixture|verification|runtime)$' "$proof_dir/verification.log" >&2 || true
             fail
           fi
