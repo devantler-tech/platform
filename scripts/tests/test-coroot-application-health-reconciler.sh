@@ -738,7 +738,12 @@ bounded_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 setup_scenario bounded-concurrenc
 bounded_output="$(run_scenario "${bounded_dir}" 2>&1)"
 printf '%s\n' "${bounded_output}" | jq -s -e '
   length > 0 and all(.[]; .level == "info")
-' >/dev/null || fail 'bounded Coroot capacity produced a synthetic query failure'
+' >/dev/null || {
+  printf '%s\n' "${bounded_output}" >&2
+  printf 'bounded query counters: active=%s peak=%s\n' \
+    "$(cat "${bounded_dir}/active-queries")" "$(cat "${bounded_dir}/peak-queries")" >&2
+  fail 'bounded Coroot capacity produced a synthetic query failure'
+}
 [ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] ||
   fail 'the reconciler exceeded the reviewed four-query Coroot capacity'
 [[ "${script_body}" == *'MAX_CONCURRENT_RECONCILIATIONS=4'* ]] ||
