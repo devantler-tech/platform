@@ -14,9 +14,24 @@ yq -o=json '.' "$root/.github/workflows/$workflow" | jq -e '
   ([$job.steps[]|select(.env.PUBLIC_CI_READ_TOKEN?)] | length==1 and
     .[0].env.PUBLIC_CI_READ_TOKEN=="${{ github.token }}" and
     .[0].run=="bash scripts/probe-public-ci-read-identity.sh" and
+    (.[0]|has("continue-on-error")|not)) and
+  ([$job.steps[]|select(.env.PREBUILT_CI_READ_TOKEN?)] | length==1 and
+    .[0].env.PREBUILT_CI_READ_TOKEN=="${{ github.token }}" and
+    .[0].run=="bash scripts/tests/test-webapp-runtime-hosted.sh" and
     (.[0]|has("continue-on-error")|not))
 ' >/dev/null
 done
+
+# Execute the real hosted script's complete credential preamble. A child must
+# receive neither the input token nor a copied variable's inherited export flag.
+awk '/^root=/{exit} {print}' "$root/scripts/tests/test-webapp-runtime-hosted.sh" > "$work/preamble.sh"
+cat >> "$work/preamble.sh" <<'PREAMBLE'
+[[ "$hosted_ci_read_token" == "$FIXTURE_TOKEN" ]]
+bash -c '[[ -z "${PREBUILT_CI_READ_TOKEN:-}" && -z "${hosted_ci_read_token:-}" ]]'
+PREAMBLE
+PREBUILT_CI_READ_TOKEN="$token" FIXTURE_TOKEN="$token" hosted_ci_read_token=ambient_export_attribute \
+  bash -x "$work/preamble.sh" > "$work/preamble.log" 2>&1
+if grep -Fq "$token" "$work/preamble.log"; then printf 'FAIL: hosted credential reached traced output\n' >&2; exit 1; fi
 cat > "$work/expected-reads" <<'READS'
 anonymous https://api.github.com/repos/devantler-tech/business-site/actions/runs/39603006665
 auth https://api.github.com/repos/devantler-tech/business-site/actions/runs/39603006665

@@ -86,10 +86,13 @@ jobs:
           PUBLIC_CI_READ_TOKEN: ${{ github.token }}
         run: bash scripts/probe-public-ci-read-identity.sh
 
-      - name: 🧪 Exercise the real controller and restricted public application
+      - name: Validate the hosted runtime script
         run: |
           shellcheck scripts/tests/test-webapp-runtime-hosted.sh
-          bash scripts/tests/test-webapp-runtime-hosted.sh
+      - name: 🧪 Exercise the real controller and restricted public application
+        env:
+          PREBUILT_CI_READ_TOKEN: ${{ github.token }}
+        run: bash scripts/tests/test-webapp-runtime-hosted.sh
 
   validate-eks-authorization:
     name: 🔐 Validate Production Authorization

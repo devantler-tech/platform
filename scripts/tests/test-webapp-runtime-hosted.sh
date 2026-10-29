@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 # A disposable GitHub-hosted kubelet/controller trial, never an ambient cluster.
+set +x
 set -euo pipefail
+umask 077
+# Only the verifier receives the job credential. Tool downloads and the later
+# disposable cluster trial run without it, including inherited export attributes.
+unset hosted_ci_read_token
+hosted_ci_read_token="${PREBUILT_CI_READ_TOKEN:-}"
+unset PREBUILT_CI_READ_TOKEN
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fail() { echo "FAIL: WebApp hosted fixture: $1" >&2; exit 1; }
 [[ "${GITHUB_ACTIONS:-}" == true && "${RUNNER_ENVIRONMENT:-}" == github-hosted &&
@@ -43,8 +50,8 @@ gateway="$(go -C "$root/scripts/tests/webapp-compiler" mod download -json sigs.k
 
 # Verify the original source-owned CI, image signature and complete provenance
 # with the maintained catalogue helper. Only this temporary manifest is mutated.
-download https://raw.githubusercontent.com/devantler-tech/.github/c2b06a1ac224a57750cd66aec571701c4b546b30/.github/scripts/prepare-prebuilt-webapp.sh \
-  "$work/verify-image.sh" af30ec35d3aee1eb8939ff762b565301d9e3fd419638d3e3ce93be282505fa1a
+download https://raw.githubusercontent.com/devantler-tech/.github/af511d7b153876412da8309823313034b61a79c9/.github/scripts/prepare-prebuilt-webapp.sh \
+  "$work/verify-image.sh" 4e0db6ad6c8a5620a2b676be0ca28dbe5e5cb855e15cc649368499f3ddcb4bb3
 mkdir "$work/deploy"
 jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixture",namespace:"runtime-fixture"},spec:{name:"runtime-fixture",host:"runtime-fixture.invalid",image:"verified-before-use",replicas:1,port:8080,probePath:"/healthz",memoryRequest:"64Mi",memoryLimit:"256Mi",cpuLimit:"500m"}}' >"$work/deploy/webapp.yaml"
 (
@@ -54,12 +61,14 @@ jq -n '{apiVersion:"kro.run/v1alpha1",kind:"WebApp",metadata:{name:"runtime-fixt
     PREBUILT_IMAGE_DIGEST=sha256:5fd88737e82502d9bc63dbb1248cb3cf97f6afb93ed4ab1c0cfe93f7e341c06b \
     PREBUILT_PUBLIC_DIGEST=b362f95711b9b9fc285335bb19c1a206ee0856eb42a79e39874e653b4735e593 \
     PREBUILT_CI_RUN_ID=39603006665 PREBUILT_CI_RUN_ATTEMPT=1 GITHUB_OUTPUT="$work/verified" \
+    PREBUILT_CI_AUTH_MODE=job-token PREBUILT_CI_READ_TOKEN="$hosted_ci_read_token" \
     bash "$work/verify-image.sh" >"$work/verification.log" 2>&1
 ) || {
   # The verifier reads public evidence over the network; show why it refused.
   tail -n 40 "$work/verification.log" >&2
   fail 'source-owned public image verification failed'
 }
+unset hosted_ci_read_token
 yq -o=json '.' "$work/deploy/webapp.yaml" >"$work/omitted.json"
 jq '.spec += {args:["--public","/app/public","--listen","0.0.0.0:8080","--company-disclosure-projection","/run/webapp-inputs/disclosure"],runAsUser:65532,runAsGroup:65532,readOnlyRootFilesystem:true,secretProjections:[{secretName:"synthetic-disclosure",items:[{key:"disclosure",path:"disclosure"}]}]}' \
   "$work/omitted.json" >"$work/enabled.json"
