@@ -455,7 +455,7 @@ spec:
                         | (($a.application_id // "")==":::"
                            and $e.l.cluster=="platform"
                            and $e.l.kind=="Node"
-                           and ($e.l.name | test("^autoscale-[a-z0-9-]+$"))
+                           and ($e.l.name | type=="string" and test("^autoscale-[a-z0-9-]+$"))
                            and ((($e.l | keys | sort) == ["cluster","kind","name","namespace","reason","source"]
                                  and $e.l.namespace=="longhorn-system"
                                  and $e.l.reason=="Delete"
