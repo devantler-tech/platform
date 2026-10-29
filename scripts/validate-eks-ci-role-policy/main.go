@@ -907,7 +907,8 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 				isFluxSourceResource(identity) ||
 				isControllerRBACEmitter(identity) ||
 				isCurrentKyvernoMutationPolicy(identity) ||
-				isLegacyKyvernoPolicy(identity) {
+				isLegacyKyvernoPolicy(identity) ||
+				isNativeAdmissionPolicy(identity) {
 				return true
 			}
 		}
@@ -920,9 +921,7 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 	return false
 }
 
-// isIndirectAuthorizationPolicy selects Kyverno policies that can generate or
-// mutate RBAC privileges without declaring the resulting object in this render.
-func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIdentity) bool {
+func isNativeAdmissionPolicy(identity resourceIdentity) bool {
 	// Native admission controls can redirect or constrain the same protected
 	// objects as Kyverno. Their policy and binding scopes must remain reviewed.
 	if strings.HasPrefix(identity.apiVersion, "admissionregistration.k8s.io/") {
@@ -930,6 +929,15 @@ func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIde
 		case "MutatingAdmissionPolicy", "MutatingAdmissionPolicyBinding", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding":
 			return true
 		}
+	}
+	return false
+}
+
+// isIndirectAuthorizationPolicy selects admission controls that can generate or
+// mutate RBAC privileges without declaring the resulting object in this render.
+func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIdentity) bool {
+	if isNativeAdmissionPolicy(identity) {
+		return true
 	}
 	if !isLegacyKyvernoPolicy(identity) {
 		return false
