@@ -3,3 +3,9 @@ kind: Kustomization
 resources:
   - ../../../../bases/apps/private-mail-administration
   - secret-settings.enc.yaml
+patches:
+  # Production has retained credential custody. Never infer a fresh installation
+  # from missing records while an older backup is being restored.
+  - path: patches/disable-admin-credential-seeding.yaml
+  - path: patches/disable-maintainer-credential-seeding.yaml
+  - path: patches/disable-agent-credential-seeding.yaml

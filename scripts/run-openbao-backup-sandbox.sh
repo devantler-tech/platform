@@ -8,7 +8,7 @@ fail() { printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=runtime' >&2; exit 2; 
 mode=$1
 proof_dir=$2
 binary=$3
-[[ $mode == verify || $mode == fixture ]] || fail
+[[ $mode == verify || $mode == fixture || $mode == verify-email || $mode == fixture-email ]] || fail
 [[ $proof_dir == /* && -d $proof_dir && ! -L $proof_dir && $binary == /* && -f $binary && ! -L $binary && -x $binary ]] || fail
 [[ $(cd "$proof_dir" && pwd -P) == "$proof_dir" && $(stat -c %a "$proof_dir") == 700 && $(stat -c %u "$proof_dir") == "$(id -u)" ]] || fail
 image=$("$binary" image) || fail
@@ -56,7 +56,7 @@ arguments=(run --rm --name "$name" --label "platform.devantler.tech/recovery-pro
   --tmpfs "/openbao/logs:ro,nosuid,nodev,noexec,size=1m,mode=0700,uid=$(id -u),gid=$(id -g)"
   --mount "type=bind,source=$binary,target=/verifier,readonly"
   --entrypoint /verifier)
-if [[ $mode == fixture ]]; then
+if [[ $mode == fixture || $mode == fixture-email ]]; then
   arguments+=(--env OPENBAO_RECOVERY_SYNTHETIC=1 --mount "type=bind,source=$proof_dir,target=/export")
 else
   arguments+=(--mount "type=bind,source=$proof_dir,target=/proof,readonly")
@@ -65,9 +65,9 @@ fi
 rc=0
 docker "${arguments[@]}" "$image" "$mode" >"$proof_dir/sandbox-result" 2>"$proof_dir/sandbox-error.log" || rc=$?
 result=$(cat "$proof_dir/sandbox-result")
-if [[ $rc == 0 && $mode == fixture && $result == OPENBAO_BACKUP_FIXTURE=PASS ]]; then
+if [[ $rc == 0 && ( $mode == fixture || $mode == fixture-email ) && $result == OPENBAO_BACKUP_FIXTURE=PASS ]]; then
   validated_result=$result
-elif [[ $rc == 0 && $mode == verify && $result == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]]; then
+elif [[ $rc == 0 && ( $mode == verify || $mode == verify-email ) && $result == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]]; then
   validated_result=$result
 else
   # All container and API diagnostics remain private. Only a fixed helper

@@ -62,7 +62,7 @@ exec /bin/sleep 30
 				"runner/openbao-recovery-tools/verifier": `#!/bin/bash
 set -eu
 if [[ $1 == image ]]; then printf '%s\n' '` + serverImage + `'; exit 0; fi
-[[ $1 == collect ]] || exit 91
+[[ $1 == collect-email ]] || exit 91
 printf '%s' "$OPENBAO_RECOVERY_DIR" > "$FIXTURE_DIR/proof-path"
 for name in root-token unseal-key expected.json snapshot.snap; do printf '%s' synthetic > "$OPENBAO_RECOVERY_DIR/$name"; done
 if [[ $FIXTURE_CASE == collection-refused ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; exit 91; fi
@@ -74,7 +74,7 @@ printf '%s\n' OPENBAO_BACKUP_INPUTS=PASS
 				"scripts/run-openbao-backup-sandbox.sh": `#!/bin/bash
 set -eu
 printf '%s' reached > "$FIXTURE_DIR/sandbox-started"
-[[ $1 == verify ]] || exit 91
+[[ $1 == verify-email ]] || exit 91
 if [[ -e $2/kubeconfig ]]; then printf '%s' exposed > "$FIXTURE_DIR/kubeconfig-exposed"; printf '%s\n' PRIVATE_SYNTHETIC_CLUSTER_CREDENTIAL >&2; exit 91; fi
 for name in root-token unseal-key expected.json snapshot.snap; do [[ -s $2/$name ]] || exit 91; done
 if [[ $FIXTURE_CASE == restore-stage ]]; then printf '%s\n' 'OPENBAO_BACKUP_RESTORE=FAIL stage=unseal' >&2; exit 91; fi
