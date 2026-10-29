@@ -109,7 +109,16 @@ all three records permits a later consumer-path switch. A plan or an `UNSEEDED`
 result is not proof of migration.
 
 Consumer changes, exact-path authorization and readback must land after the copy
-is verified. Retire the old active keys only after the consumers and recovery
+is verified. Readers and non-overwriting seed writers use the same three
+`infrastructure/email/` records. Their Kubernetes Secret names and generator
+caches remain unchanged. The synchronizer has no write grant for the retained
+legacy records, and no list, delete or wildcard Email grant.
+
+The independent recovery workflow compares the canonical records using its fixed
+`collect-email` and `verify-email` modes. Its legacy modes remain available to
+the guarded one-time copy workflow and retained-history recovery; the canonical
+mode never falls back to a legacy record when a canonical record is absent.
+Retire the old active keys only after the consumers and recovery
 path are proven; preserve recoverable versions rather than destroying metadata.
 The preparation mechanism can then be removed. Rebuilding from an empty store
 is distinct from moving existing credentials and must not replace restored
