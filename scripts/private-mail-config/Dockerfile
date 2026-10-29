@@ -17,7 +17,8 @@ COPY --chmod=0444 webui.LICENSE /usr/local/share/licenses/stalwart-webui/LICENSE
 COPY --chmod=0444 webui.SOURCE /usr/local/share/licenses/stalwart-webui/SOURCE
 RUN asset_checksum="$(sha256sum /usr/local/share/stalwart/webui.zip)" && \
     asset_digest="${asset_checksum%% *}" && \
-    mv /usr/local/share/stalwart/webui.zip "/usr/local/share/stalwart/webui-${asset_digest}.zip"
+    mv /usr/local/share/stalwart/webui.zip "/usr/local/share/stalwart/webui-${asset_digest}.zip" && \
+    chmod 0755 /usr/local/share/licenses/caddy
 
 USER 2000:2000
 HEALTHCHECK NONE
