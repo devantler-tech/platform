@@ -1,0 +1,48 @@
+---
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-unifi-observe-only
+  annotations:
+    policies.kyverno.io/title: Restrict UniFi Observe-Only Resources
+    policies.kyverno.io/category: Crossplane
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Record, Client, TrafficRoute
+    policies.kyverno.io/minversion: 1.17.0
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [dns.unifi.m.crossplane.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [records]
+      - apiGroups: [vpn.unifi.m.crossplane.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [clients]
+      - apiGroups: [route.unifi.m.crossplane.io]
+        apiVersions: ["*"]
+        operations: [CREATE, UPDATE]
+        resources: [trafficroutes]
+  matchConditions:
+    - name: unifi-source
+      expression: >-
+        request.namespace == 'unifi' &&
+        request.userInfo.username == 'system:serviceaccount:unifi:unifi'
+    - name: observe-only
+      expression: >-
+        object.metadata.?annotations.orValue({})[?'platform.devantler.tech/unifi-management'].orValue('')
+        == 'observe-only'
+  validations:
+    - expression: >-
+        has(object.spec) && has(object.spec.managementPolicies) &&
+        object.spec.managementPolicies == ['Observe']
+      message: >-
+        A UniFi managed resource annotated
+        platform.devantler.tech/unifi-management: observe-only must have
+        spec.managementPolicies exactly ["Observe"].

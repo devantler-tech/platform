@@ -25,6 +25,7 @@ type accessResult struct {
 	Paths, Access, CiliumAccess string
 	Block                       blockDetails
 	Ready                       bool
+	Ingress                     *ingressAccessResult
 }
 type accessObservation struct {
 	LiveLoopback  *int            `json:"live_loopback"`
@@ -474,7 +475,12 @@ func decodeAccess(raw []byte, host netip.Addr, now time.Time) (accessResult, err
 
 // collectAccess observes fixed resources once, with bounded waiting and before/after bindings.
 func collectAccess(ctx context.Context, run executor, send inputExecutor, pause func(context.Context) error, now func() time.Time) (accessResult, error) {
-	fail := func() (accessResult, error) { return accessResult{}, errors.New("inconclusive") }
+	return collectAccessWithIngress(ctx, run, send, pause, now, nil)
+}
+
+func collectAccessWithIngress(ctx context.Context, run executor, send inputExecutor, pause func(context.Context) error, now func() time.Time, observe func(context.Context, binding, accessAddresses) (ingressObservation, error)) (accessResult, error) {
+	stage := ingressFailure("pod_before")
+	fail := func() (accessResult, error) { return accessResult{}, stage }
 	var before binding
 	var addresses accessAddresses
 	var createdBefore time.Time
@@ -508,6 +514,12 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if !found {
 		return fail()
 	}
+	stage = "proxy_before"
+	proxyBefore, e := proxyConfiguration(ctx, run, before)
+	if e != nil {
+		return fail()
+	}
+	stage = "node_before"
 	if !nodeName.MatchString(before.Node) {
 		return fail()
 	}
@@ -529,6 +541,7 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 		}
 		return bindCiliumCandidate(raw, before.Node, nodeBefore.UID, addresses)
 	}
+	stage = "cilium_before"
 	ciliumBefore, e := readCilium()
 	if e != nil {
 		return fail()
@@ -540,6 +553,7 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 		}
 		return readPublicMap(raw)
 	}
+	stage = "datastore_before"
 	cm, e := readMap()
 	if e != nil {
 		return fail()
@@ -551,26 +565,31 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 		}
 		return decodeSecret(raw, name, key)
 	}
+	stage = "settings_before"
 	settings, sb, e := readSecret("private-mail-settings", "settings.json")
 	if e != nil {
 		return fail()
 	}
+	stage = "credential_before"
 	password, pb, e := readSecret("private-mail-admin", "password")
 	if e != nil {
 		return fail()
 	}
+	stage = "authorization"
 	authorization, e := readerAuthorization(settings, password)
 	if e != nil {
 		return fail()
 	}
 	input := []byte(authorization + "\n" + addresses.Pod.String() + "\n")
+	stage = "access_before"
 	raw, e := send(ctx, input, "--context", "admin@prod", "--request-timeout=10s", "exec", "-i", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", accessProbe)
+	defer clear(raw)
 	clear(input)
 	clear(password)
-	authorization = ""
 	if e != nil {
 		return fail()
 	}
+	stage = "access_decode"
 	observedAt := now()
 	result, e := decodeAccess(raw, addresses.Host, observedAt)
 	if e != nil {
@@ -591,6 +610,27 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	case "STORED_HOST_ALLOW_OVERRIDE":
 		result.CiliumAccess = "STORED_CILIUM_ALLOW_OVERRIDE"
 	}
+	if observe != nil {
+		observation, err := observe(ctx, before, addresses)
+		if err != nil {
+			return accessResult{}, ingressFailure(ingressFailureStage(err))
+		}
+		stage = "access_after"
+		input := []byte(authorization + "\n" + addresses.Pod.String() + "\n")
+		afterRaw, err := send(ctx, input, "--context", "admin@prod", "--request-timeout=10s", "exec", "-i", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", accessProbe)
+		clear(input)
+		defer clear(afterRaw)
+		if err != nil {
+			return fail()
+		}
+		stage = "access_compare"
+		assessment, err := assessIngressAccess(raw, afterRaw, observation, observedAt, now())
+		if err != nil {
+			return fail()
+		}
+		result.Ingress = &assessment
+	}
+	stage = "pod_after"
 	raw, e = request(ctx, run, "get", "pod", "private-mail-0", "-n", "private-mail", "-o", "json")
 	if e != nil {
 		return fail()
@@ -599,6 +639,12 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if e != nil || !running || after != before {
 		return fail()
 	}
+	stage = "proxy_after"
+	proxyAfter, e := proxyConfiguration(ctx, run, after)
+	if e != nil || proxyAfter != proxyBefore {
+		return fail()
+	}
+	stage = "pod_after"
 	afterAddresses, e := bindAddresses(raw)
 	if e != nil || afterAddresses != addresses {
 		return fail()
@@ -607,22 +653,27 @@ func collectAccess(ctx context.Context, run executor, send inputExecutor, pause 
 	if e != nil || !createdAfter.Equal(createdBefore) {
 		return fail()
 	}
+	stage = "node_after"
 	nodeAfter, e := readNode()
 	if e != nil || nodeAfter != nodeBefore {
 		return fail()
 	}
+	stage = "cilium_after"
 	ciliumAfter, e := readCilium()
 	if e != nil || ciliumAfter != ciliumBefore {
 		return fail()
 	}
+	stage = "datastore_after"
 	afterMap, e := readMap()
 	if e != nil || afterMap.Metadata != cm.Metadata || !reflect.DeepEqual(afterMap.Data, cm.Data) {
 		return fail()
 	}
+	stage = "settings_after"
 	_, afterSettings, e := readSecret("private-mail-settings", "settings.json")
 	if e != nil || afterSettings != sb {
 		return fail()
 	}
+	stage = "credential_after"
 	afterPassword, afterAdmin, e := readSecret("private-mail-admin", "password")
 	clear(afterPassword)
 	if e != nil || afterAdmin != pb {

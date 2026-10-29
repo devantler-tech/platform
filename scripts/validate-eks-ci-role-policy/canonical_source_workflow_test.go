@@ -1,24 +1,24 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 var canonicalCICommands = map[string]string{
-	"bash scripts/tests/test-canonical-source-bootstrap.sh":        "validate-publication-generator",
-	"bash scripts/tests/test-canonical-source-upgrade.sh":          "validate-publication-generator",
-	"bash scripts/tests/test-canonical-constructor-attribution.sh": "validate-publication-generator",
-	"bash scripts/tests/test-canonical-generator-output.sh":        "validate-publication-generator",
-	"bash scripts/tests/test-canonical-bootstrap-output.sh":        "validate-publication-generator",
-	"bash scripts/tests/test-canonical-publisher-regeneration.sh":  "validate-publication-generator",
-	"bash scripts/tests/test-tenant-source-discovery.sh":           "validate-repository-guards",
-	"./scripts/guard-consumer-discovery-conservation.sh":           "validate-repository-guards",
+	"bash scripts/run-publication-generator-tests.sh --jobs 2":   "validate-publication-generator",
+	"bash scripts/tests/test-run-publication-generator-tests.sh": "validate-publication-generator",
+	"bash scripts/tests/test-tenant-source-discovery.sh":         "validate-repository-guards",
+	"./scripts/guard-consumer-discovery-conservation.sh":         "validate-repository-guards",
 }
 
 var canonicalCIPaths = []string{
@@ -36,6 +36,8 @@ var canonicalCIPaths = []string{
 	"scripts/publish-workflow-bootstrap-publications.json",
 	"scripts/shared-publish-workflow-matchers.tsv",
 	"scripts/generate-publish-workflow-approved-revisions.sh",
+	"scripts/run-publication-generator-tests.sh",
+	"scripts/tests/test-run-publication-generator-tests.sh",
 	"scripts/tests/test-canonical-source-bootstrap.sh",
 	"scripts/tests/test-canonical-source-upgrade.sh",
 	"scripts/tests/test-canonical-constructor-attribution.sh",
@@ -52,6 +54,72 @@ var canonicalCIPaths = []string{
 func TestCanonicalSourceCIRegistration(t *testing.T) {
 	if err := canonicalSourceCIContract(canonicalCIWorkflow(t)); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The workflow now delegates scheduling to the real bounded runner. Exercise
+// that boundary independently of its shell self-test: dropping a fixture or
+// masking any child failure must still fail the unconditional Go regressions.
+func TestCanonicalPublicationRunnerKeepsEveryFixtureAndFailure(t *testing.T) {
+	source, err := os.ReadFile("../run-publication-generator-tests.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixtures := []string{
+		"test-publish-workflow-approved-revisions.sh",
+		"test-tenant-publication-binding.sh",
+		"test-bootstrap-tenant-source.sh",
+		"test-canonical-source-bootstrap.sh",
+		"test-canonical-source-upgrade.sh",
+		"test-canonical-constructor-attribution.sh",
+		"test-canonical-generator-output.sh",
+		"test-canonical-bootstrap-output.sh",
+		"test-canonical-publisher-regeneration.sh",
+	}
+	root := t.TempDir()
+	tests := filepath.Join(root, "scripts", "tests")
+	if err := os.MkdirAll(tests, 0700); err != nil {
+		t.Fatal(err)
+	}
+	runner := filepath.Join(root, "scripts", "run-publication-generator-tests.sh")
+	if err := os.WriteFile(runner, source, 0600); err != nil {
+		t.Fatal(err)
+	}
+	for failure := -1; failure < len(fixtures); failure++ {
+		name := "all-pass"
+		if failure >= 0 {
+			name = fixtures[failure]
+		}
+		t.Run(name, func(t *testing.T) {
+			for index, fixture := range fixtures {
+				status := 0
+				if index == failure {
+					status = 255
+				}
+				body := fmt.Sprintf("#!/usr/bin/env bash\nprintf 'fixture %s\\n'\nexit %d\n", fixture, status)
+				if err := os.WriteFile(filepath.Join(tests, fixture), []byte(body), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			output, err := exec.CommandContext(ctx, "bash", runner, "--jobs", "2").CombinedOutput()
+			if ctx.Err() != nil {
+				t.Fatalf("runner exceeded the bounded fixture deadline: %v\n%s", ctx.Err(), output)
+			}
+			if failure == -1 {
+				if err != nil {
+					t.Fatalf("complete successful fixtures failed: %v\n%s", err, output)
+				}
+			} else if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
+				t.Fatalf("child failure must fail the runner, got %v\n%s", err, output)
+			}
+			for _, fixture := range fixtures {
+				if strings.Count(string(output), "fixture "+fixture+"\n") != 1 {
+					t.Fatalf("fixture %s was omitted or repeated, including after failure\n%s", fixture, output)
+				}
+			}
+		})
 	}
 }
 

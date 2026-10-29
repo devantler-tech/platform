@@ -1,5 +1,31 @@
 # Observe an Email startup
 
+For a bounded ingress investigation, dispatch **Read Email Ingress Source** from
+reviewed `main`, first attempt only, with `read-email-ingress-source`. It retains
+the probe observer's private credentials, production serialization and runtime
+bindings. It makes two unauthenticated HTTPS readiness requests without redirects
+or proxy configuration, then reads at most one bounded native Hubble result from
+the pinned Cilium agent on the bound Email node. The filter is a conjunction of
+the fixed application, its observed Pod address, TCP management port and reserved
+ingress identity. Only ingress SYN flows within the observation window count;
+post-SNAT addresses take precedence when the native flow supplies them.
+
+The observer compares these actual peers with complete access-rule reads before
+and after observation. Changed rules, agent or application replacement, partial
+flows, loss notifications and expiry transitions remain inconclusive. Output
+contains only peer classification counts, public HTTP 200/503 counts and the
+existing local path classification. It never prints addresses, credentials,
+security records or raw flows. An observed sample exits zero; this is evidence
+collection and does not declare Email healthy. No matching flow is inconclusive.
+The workflow changes no access rules, transport configuration or workload.
+
+Inconclusive output includes a closed `stage` code for the refused input,
+observation or comparison. For example, `flow_read` identifies a refused native
+read, `flow_empty` means that read produced no flow bytes, and `flow_decode`
+means the returned evidence did not pass the wire checks. These codes never
+include remote errors or input values. Missing evidence remains inconclusive;
+use the stage to choose a repair rather than automatically repeating the run.
+
 The **Read Email Startup State** workflow takes one bounded sample from the existing
 serving container. Use it when the container restarts without useful application
 logs. It does not restart the service or change its configuration, data, probes,

@@ -699,6 +699,8 @@ func TestTalosRegistryAuthUsesSupportedTalosDocument(t *testing.T) {
 	requireNotContains(t, registryAuth, "\n---\n")
 }
 
+// TestImageVerificationUsesOneSlowFailClosedPolicy binds each dedicated publisher
+// to its exact repository while retaining the shared policy's fail-closed limits.
 func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 	policyPath := "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml"
 	policy := readRepositoryFile(t, policyPath)
@@ -719,6 +721,8 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"name: publishkubescapestorage",
 		"name: publishkubescapenodeagent",
 		"name: publishcorootnodeagent",
+		"name: publishcorootcheckpoint",
+		"name: publishkyvernoreports",
 		"name: publishksailanalysis",
 		"name: publishprovider",
 		"name: ksailcd",
@@ -736,6 +740,18 @@ func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {
 		"image != 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"image == 'ghcr.io/devantler-tech/platform-coroot-node-agent'",
 		"verifyImageSignatures(image, [attestors.publishcorootnodeagent])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-checkpoint-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-coroot'",
+		"image == 'ghcr.io/devantler-tech/platform-coroot'",
+		"image != 'ghcr.io/devantler-tech/platform-coroot-cluster-agent'",
+		"image == 'ghcr.io/devantler-tech/platform-coroot-cluster-agent'",
+		"verifyImageSignatures(image, [attestors.publishcorootcheckpoint])",
+		"^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-reports-hotfix\\.yaml@refs/heads/main$",
+		"image != 'ghcr.io/devantler-tech/platform-kyverno-reports'",
+		"image == 'ghcr.io/devantler-tech/platform-kyverno-reports'",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')",
+		"image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')",
+		"verifyImageSignatures(image, [attestors.publishkyvernoreports])",
 		"^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$",
 		"image != 'ghcr.io/devantler-tech/ksail-analysis-runner'",
 		"image == 'ghcr.io/devantler-tech/ksail-analysis-runner'",

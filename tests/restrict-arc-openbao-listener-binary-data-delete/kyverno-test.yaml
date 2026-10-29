@@ -1,0 +1,17 @@
+# Pins the ClusterPolicy's behaviour before its ValidatingPolicy rewrite (#4995):
+# binaryData beside the audited listener is denied.
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-arc-openbao-listener-binary-data-delete
+policies:
+  - ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-arc-openbao-listener-settings.yaml
+resources:
+  - ../restrict-arc-openbao-listener-binary-data/resources.yaml
+variables: ../restrict-arc-openbao-listener-delete/values.yaml
+results:
+  - policy: restrict-arc-openbao-listener-settings
+    resources:
+      - openbao/arc-openbao-listener
+    kind: ConfigMap
+    result: fail

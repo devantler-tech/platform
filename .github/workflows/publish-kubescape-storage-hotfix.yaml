@@ -8,6 +8,7 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   push:
     branches: [main]
@@ -16,6 +17,7 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   workflow_dispatch:
 
@@ -28,10 +30,11 @@ concurrency:
 env:
   KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
-  IMAGE_TAG: v0.0.297-sqlite-contention.8-${{ github.sha }}
+  IMAGE_TAG: v0.0.297-sqlite-contention.10-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
   CLEANUP_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
   SUMMARY_REPAIR_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
+  NATIVE_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
 
 jobs:
   verify:
@@ -71,6 +74,7 @@ jobs:
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
           CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
+          NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -80,6 +84,13 @@ jobs:
           git apply "${CLEANUP_PATCH}"
           git apply --check "${SUMMARY_REPAIR_PATCH}"
           git apply "${SUMMARY_REPAIR_PATCH}"
+          # Bind the exact preimage and result of the generated zero-context patch.
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 3f044057cba5614fdbcca8104f27cdb086641d29
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
+          git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
           git diff --check
           go test -race ./pkg/registry/file
 
@@ -129,6 +140,7 @@ jobs:
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
           CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
+          NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -138,6 +150,13 @@ jobs:
           git apply "${CLEANUP_PATCH}"
           git apply --check "${SUMMARY_REPAIR_PATCH}"
           git apply "${SUMMARY_REPAIR_PATCH}"
+          # Bind the exact preimage and result of the generated zero-context patch.
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 3f044057cba5614fdbcca8104f27cdb086641d29
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 5f0ee570bc1f758f0c2e4dcaae4ee7b5a4ce3717
+          git apply --check --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
+          test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
           git diff --check
 
       - name: Set up Buildx container driver
@@ -170,8 +189,8 @@ jobs:
             org.opencontainers.image.version=${{ env.IMAGE_TAG }}
             io.devantler.kubescape-storage.upstream-revision=${{ env.KUBESCAPE_STORAGE_SOURCE_COMMIT }}
 
-      - name: Set up Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
 
       - name: Sign and verify published digest
         env:

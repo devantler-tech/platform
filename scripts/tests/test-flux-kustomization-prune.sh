@@ -19,7 +19,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly unifi_kustomization="${root_dir}/k8s/providers/hetzner/apps/unifi/flux-kustomization.yaml"
 readonly unifi_role="${root_dir}/k8s/providers/hetzner/apps/unifi/role.yaml"
-readonly unifi_policy="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-unifi-management-policies.yaml"
+readonly unifi_policy_dir="${root_dir}/k8s/bases/infrastructure/cluster-policies/best-practices"
 readonly tenant_rgd="${root_dir}/k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml"
 readonly retained_policies='Observe,Create,Update,LateInitialize'
 readonly observe_annotation="platform.devantler.tech/unifi-management"
@@ -272,28 +272,40 @@ role_groups="$(yq eval -r '
 ' "${unifi_role}" | sed '/^$/d' | sort -u)"
 [[ -n "${role_groups}" ]] ||
   fail 'the unifi Role grants no UniFi managed-resource group; cannot check prune'
-role_resources="$(yq eval -r '
-  select(.kind == "Role") | .rules[] |
-  select(.apiGroups[] | test("\.unifi\.m\.crossplane\.io$")) | .resources[]
-' "${unifi_role}" | sed '/^$/d' | sort -u)"
+# Compare each replacement directly with the Role. A union of policy scopes
+# could hide an individual gap; separate group/resource sets miss swapped pairs.
+role_pairs="$(yq -o=json '.' "${unifi_role}" | jq -er '
+  [.rules[] | .apiGroups[] as $group |
+    select($group | endswith(".unifi.m.crossplane.io")) |
+    .resources[] | $group + "/" + .] | unique | .[]
+' | sort -u)"
+[[ -n "${role_pairs}" ]] || fail 'the unifi Role has no managed-resource pairs'
 
-# Every kind the unifi ServiceAccount may write must be one the admission policy
-# guards, in every rule; otherwise a newly granted kind could be applied with
-# Delete, or pruned while it still has it.
-for rule in apply-without-delete observe-only-is-observe prune-only-without-delete; do
-  policy_kinds="$(UNIFI_RULE="${rule}" yq eval -r '
-    .spec.rules[] | select(.name == strenv(UNIFI_RULE)) | .match.any[].resources.kinds[]
-  ' "${unifi_policy}" | sed '/^$/d' | sort -u)"
-  [[ -n "${policy_kinds}" ]] ||
-    fail "restrict-unifi-management-policies has no rule ${rule} with kinds"
-  policy_groups="$(printf '%s\n' "${policy_kinds}" | cut -d/ -f1 | sort -u)"
-  [[ "${policy_groups}" == "${role_groups}" ]] ||
-    fail "rule ${rule} guards groups [${policy_groups//$'\n'/ }] but the unifi Role grants [${role_groups//$'\n'/ }]"
-  # Pair kinds with resources, so swapping one granted resource for another in
-  # the same group fails too. Every UniFi kind's plural is its lowercase + s.
-  policy_resources="$(printf '%s\n' "${policy_kinds}" | cut -d/ -f3 | tr '[:upper:]' '[:lower:]' | sed 's/$/s/' | sort -u)"
-  [[ "${policy_resources}" == "${role_resources}" ]] ||
-    fail "rule ${rule} guards [${policy_resources//$'\n'/ }] but the unifi Role grants [${role_resources//$'\n'/ }]"
+# Read a complete individual policy scope, refusing missing/wrong identities.
+policy_scope() {
+  jq -er --arg policy "$2" '
+    select(.kind == "ValidatingPolicy" and .metadata.name == $policy) |
+    [.spec.matchConstraints.resourceRules[] | .apiGroups[] as $group |
+      .resources[] | $group + "/" + .] | unique | .[]
+  ' "$1" | sort -u
+}
+for policy in restrict-unifi-apply-management-policies restrict-unifi-observe-only restrict-unifi-prune-management-policies; do
+  scope_json="${temp_dir}/${policy}-scope.json"
+  yq -o=json '.' "${unifi_policy_dir}/${policy}.yaml" >"${scope_json}"
+  policy_pairs="$(policy_scope "${scope_json}" "${policy}")"
+  [[ -n "${policy_pairs}" && "${policy_pairs}" == "${role_pairs}" ]] ||
+    fail "${policy} scope does not equal the unifi Role group/resource pairs"
+
+  # These read-only ablations keep the same group and resource unions, remove
+  # one pair, or add a new one. Each must be caught by this actual scope check.
+  for mutation in '.spec.matchConstraints.resourceRules |= [(.[0]+{apiGroups:.[1].apiGroups}), (.[1]+{apiGroups:.[0].apiGroups}), .[2:][]]' \
+    '.spec.matchConstraints.resourceRules |= del(.[0])' \
+    '.spec.matchConstraints.resourceRules[0].resources += ["ungranted"]'; do
+    jq "${mutation}" "${scope_json}" >"${temp_dir}/scope-mutant.json"
+    cmp -s "${scope_json}" "${temp_dir}/scope-mutant.json" && fail 'scope ablation changed nothing'
+    mutant_pairs="$(policy_scope "${temp_dir}/scope-mutant.json" "${policy}")"
+    [[ "${mutant_pairs}" != "${role_pairs}" ]] || fail "${policy} scope drift was accepted"
+  done
 done
 
 printf 'flux kustomization prune: %s pruning, unifi retention holds on %s fixture resources\n' \

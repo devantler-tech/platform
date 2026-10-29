@@ -1,4 +1,4 @@
-name: Publish Private Mail Bootstrap
+name: Publish Email Bootstrap
 
 on:
   pull_request:

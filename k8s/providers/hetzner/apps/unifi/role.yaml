@@ -13,7 +13,7 @@
 # trafficroutes, and records). `delete` is the prune grant: the Kustomization
 # prunes what the source removes, and its patches strip the Delete management
 # policy first, so deleting a managed resource never deletes the live UniFi
-# object behind it. The restrict-unifi-management-policies Kyverno policy refuses
+# object behind it. The UniFi prune ValidatingPolicy refuses
 # this SA a delete while the live policies still include Delete.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -25,17 +25,16 @@ metadata:
 rules:
   - apiGroups:
       - vpn.unifi.m.crossplane.io
-      - route.unifi.m.crossplane.io
-      - dns.unifi.m.crossplane.io
     resources:
       - clients
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups:
+      - route.unifi.m.crossplane.io
+    resources:
       - trafficroutes
+    verbs: [get, list, watch, create, update, patch, delete]
+  - apiGroups:
+      - dns.unifi.m.crossplane.io
+    resources:
       - records
-    verbs:
-      - get
-      - list
-      - watch
-      - create
-      - update
-      - patch
-      - delete
+    verbs: [get, list, watch, create, update, patch, delete]

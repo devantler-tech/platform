@@ -29,6 +29,12 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 		{"ghcr.io/devantler-tech/platform-kubescape-storage", "publishkubescapestorage", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-storage-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-kubescape-node-agent", "publishkubescapenodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-kubescape-node-agent-hotfix.yaml@refs/heads/main"},
 		{"ghcr.io/devantler-tech/platform-coroot-node-agent", "publishcorootnodeagent", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-node-agent-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-coroot", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent", "publishcorootcheckpoint", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-coroot-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-coroot-cluster-agent-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
+		{"ghcr.io/devantler-tech/platform-kyverno-reports", "publishkyvernoreports", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main"},
+		{"ghcr.io/devantler-tech/platform-kyverno-reports-other", "publishapp", "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("b", 40)},
 		{"ghcr.io/devantler-tech/world-at-ruin/zone", "publishwarzone", "https://github.com/devantler-tech/world-at-ruin/.github/workflows/server-cd.yaml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/provider-upjet-unifi", "publishprovider", "https://github.com/devantler-tech/provider-upjet-unifi/.github/workflows/publish-provider-package.yml@refs/tags/v1.2.3"},
 		{"ghcr.io/devantler-tech/ksail", "ksailcd", "https://github.com/devantler-tech/ksail/.github/workflows/cd.yaml@refs/tags/v1.2.3"},
@@ -48,6 +54,8 @@ func TestAnalysisImageAdmissionRoutingAndSignerIsolation(t *testing.T) {
 						{"unsigned", "", "", fixture.attestor == ""},
 						{"wrong issuer", fixture.subject, "https://other.example", fixture.attestor == ""},
 						{"cross workflow signer", crossSigner(fixture.subject), githubIssuer, fixture.attestor == ""},
+						{"checkpoint signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishcorootcheckpoint"},
+						{"reports signer", "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main", githubIssuer, fixture.attestor == "" || fixture.attestor == "publishkyvernoreports"},
 						{"wrong ref", strings.Split(fixture.subject, "@")[0] + "@refs/heads/other", githubIssuer, fixture.attestor == ""},
 						{"wrong repository", strings.Replace(fixture.subject, "devantler-tech/", "other-owner/", 1), githubIssuer, fixture.attestor == ""},
 					} {
@@ -199,4 +207,44 @@ func crossSigner(subject string) string {
 		return "https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@" + strings.Repeat("a", 40)
 	}
 	return analysisPublisher
+}
+
+func TestCheckpointNodeSignerMatchesAdmissionBoundary(t *testing.T) {
+	policy := readYAML(t, "k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml")
+	var admissionIdentity map[string]any
+	for _, entry := range field(t, policy, "spec", "attestors").([]any) {
+		if field(t, entry, "name") == "publishcorootcheckpoint" {
+			identities := field(t, entry, "cosign", "keyless", "identities").([]any)
+			equal(t, len(identities), 1)
+			admissionIdentity = identities[0].(map[string]any)
+		}
+	}
+	if admissionIdentity == nil {
+		t.Fatal("checkpoint admission identity is missing")
+	}
+	rules := field(t, readYAML(t, "talos/cluster/verify-first-party-images.yaml"), "rules").([]any)
+	for _, repository := range []string{"ghcr.io/devantler-tech/platform-coroot", "ghcr.io/devantler-tech/platform-coroot-cluster-agent"} {
+		t.Run(repository, func(t *testing.T) {
+			found := 0
+			for _, entry := range rules {
+				if field(t, entry, "image") != repository {
+					continue
+				}
+				found++
+				identity := field(t, entry, "keyless").(map[string]any)
+				equal(t, identity["issuer"], githubIssuer)
+				equal(t, identity["issuer"], admissionIdentity["issuer"])
+				equal(t, identity["subjectRegex"], admissionIdentity["subjectRegExp"])
+				matcher, err := regexp.Compile(identity["subjectRegex"].(string))
+				if err != nil {
+					t.Fatal(err)
+				}
+				publisher := "https://github.com/devantler-tech/platform/.github/workflows/publish-coroot-checkpoint-hotfix.yaml@"
+				for _, subject := range []string{publisher + "refs/heads/main", publisher + "refs/heads/other", publisher + "refs/tags/v1.0.0", publisher + "refs/heads/main-other", publisher + "refs/heads/main/other", strings.Replace(publisher, "checkpoint", "node-agent", 1) + "refs/heads/main", ""} {
+					equal(t, matcher.MatchString(subject), subject == publisher+"refs/heads/main")
+				}
+			}
+			equal(t, found, 1)
+		})
+	}
 }

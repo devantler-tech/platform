@@ -38,7 +38,7 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
   fail 'the workflow image destination drifted'
 # The literal GitHub expression is the contract.
 # shellcheck disable=SC2016
-[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v1.35.8-alerts.1-${{ github.sha }}' ]] ||
+[[ "$(yq -er '.env.IMAGE_TAG' "${workflow}")" == 'v1.35.8-alerts.2-${{ github.sha }}' ]] ||
   fail 'the image tag must identify the reviewed alert-remediation revision'
 
 grep -qF 'repository: coroot/coroot-node-agent' "${workflow}" ||
@@ -54,8 +54,21 @@ grep -qF 'CGO_ENABLED=1 go build -mod=readonly' "${workflow}" ||
 grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
   fail 'the published compatibility image must be keylessly signed by digest'
 
-[[ "$(grep -c '^diff --git ' "${patch_file}")" == '8' ]] ||
-  fail 'the compatibility patch must touch only the four implementations and four regression-test files'
+expected_patch_files="$(printf 'diff --git a/%s b/%s\n' \
+  ebpftracer/tls.go ebpftracer/tls.go \
+  ebpftracer/tls_test.go ebpftracer/tls_test.go \
+  ebpftracer/tracer.go ebpftracer/tracer.go \
+  ebpftracer/tracer_test.go ebpftracer/tracer_test.go \
+  logs/journald_reader.go logs/journald_reader.go \
+  logs/journald_reader_test.go logs/journald_reader_test.go \
+  node/collector.go node/collector.go \
+  node/collector_test.go node/collector_test.go \
+  node/net_dump_linux_test.go node/net_dump_linux_test.go \
+  node/net_dump_retry.go node/net_dump_retry.go \
+  node/net_dump_retry_test.go node/net_dump_retry_test.go \
+  node/net_linux.go node/net_linux.go | LC_ALL=C sort)"
+[[ "$(grep '^diff --git ' "${patch_file}" | LC_ALL=C sort)" == "${expected_patch_files}" ]] ||
+  fail 'the compatibility patch must touch exactly the reviewed implementation and regression-test paths'
 grep -qF 'l7PerfBufferSizePages = 512' "${patch_file}" ||
   fail 'the L7 perf buffer must have sixteen times the upstream burst capacity'
 grep -qF 'TestL7PerfBufferHasBurstHeadroom' "${patch_file}" ||
