@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+# Deliberately unselected. Activation needs a separate reviewed change after the
+# disabled-state recovery path is on main and its native checks have passed.
+resources:
+  - mutating-admission-policy-binding-gateway-receiver.yaml
+  - validating-admission-policy-binding-gateway-receiver.yaml
