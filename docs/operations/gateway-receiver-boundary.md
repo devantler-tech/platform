@@ -53,6 +53,9 @@ operator recovering through the independent production API may explicitly select
 `--context admin@prod`; the producer never escalates a failed scoped read.
 Restore the disabled provider baseline before rebinding. This bootstrap binding
 and its recovery recipient remain separate from operational keys in OpenBao.
+The encrypted Secret belongs to `clusters/prod/bootstrap`, whose Flux
+Kustomization declares SOPS decryption before infrastructure reconciliation.
+The root reconciliation does not decrypt secrets and must not own this file.
 
 ## Protected deployment and restoration
 
