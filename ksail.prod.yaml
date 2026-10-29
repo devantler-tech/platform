@@ -60,7 +60,9 @@ spec:
     #
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
     # static baseline. 9 = the Hetzner account cap (10) MINUS ONE RESERVED SLOT:
-    # 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes. KSail
+    # Normally 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes.
+    # During #5582, 2 temporary static workers use 2 of those slots, leaving
+    # room for 1 autoscaler node. The Image Factory builder slot stays reserved. KSail
     # passes it to cluster-autoscaler --max-nodes-total, which counts every node,
     # so this total framing already matches the runtime. The general pools each
     # allow 4 nodes; the isolated organization runner pool allows 1. Any mix shares the
@@ -148,7 +150,11 @@ spec:
     metricsServer: Enabled
     policyEngine: Kyverno
     controlPlanes: 3
-    workers: 3
+    # Temporary V1 replica capacity for the Longhorn V2 disk migration (#5582).
+    # Keep these workers until every permanent storage worker has its encrypted
+    # raw partition, every volume is on V2, and the temporary disks are empty.
+    # The cluster ceiling remains 9, preserving the Image Factory builder slot.
+    workers: 5
     # Pin Kubernetes deliberately so 'ksail cluster update' doesn't roll nodes
     # to ksail's newer default when that default outruns what the pinned Talos
     # version supports (rejected with "kubelet image is not valid: version of

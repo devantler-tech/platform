@@ -1,0 +1,12 @@
+# V2 clients run on static and autoscaled workers. Replica disks remain limited
+# to static workers by the existing Longhorn admission policy. Keep iSCSI in the
+# image while V1 volumes exist; these prerequisites do not activate V2 (#5582).
+# https://longhorn.io/docs/1.13.0/advanced-resources/os-distro-specific/talos-linux-support/
+machine:
+  sysctls:
+    vm.nr_hugepages: "1024"
+  kernel:
+    modules:
+      - name: nvme_tcp
+      - name: vfio_pci
+      - name: uio_pci_generic
