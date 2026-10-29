@@ -57,15 +57,19 @@ spec:
   # container tags as BARE semver (`1.22.2`), NOT the `v`-prefixed GitHub
   # *release* tag (`v1.22.2`); a `v`-prefixed ref 404s on ghcr → ErrImagePull →
   # the operator's StatefulSet/DaemonSet rollout wedges and stalls the
-  # infrastructure Kustomization health check. Always pin the bare tag. The
+  # infrastructure Kustomization health check. Use bare tags for upstream
+  # releases; platform compatibility builds use their publisher's exact tag
+  # and immutable digest. The
   # three pins below are kept
   # Renovate-trackable by a dedicated regex customManager in
   # `.github/renovate.json` (the built-in kubernetes manager only reads a bare
   # `image:` string, not this `image.name` mapping). There is no spec.version
   # field; the operator HelmRelease itself also stays Flux/Renovate-pinned.
   communityEdition:
+    # Recognize actual checkpoint-record progress on idle archived databases;
+    # retain the existing warning when that evidence is missing or invalid.
     image:
-      name: ghcr.io/coroot/coroot:1.28.1
+      name: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1
 
   # CE has no native OIDC/SSO (Enterprise only), so the UI is fronted by the
   # existing oauth2-proxy (Dex) via http-route.yaml — exactly how Prometheus /
@@ -244,4 +248,4 @@ spec:
       # operator-managed components; the database has a separate DNS policy.
       platform.devantler.tech/dns-policy-rollout: 2026-09-30-ndots-3
     image:
-      name: ghcr.io/coroot/coroot-cluster-agent:1.11.7
+      name: ghcr.io/devantler-tech/platform-coroot-cluster-agent:v1.11.7-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:46b6abe52dbf5445277ef3e3bbcb469a89a88e2c610411c5d9a4270a8a8a88c3

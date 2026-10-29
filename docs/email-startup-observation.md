@@ -19,6 +19,13 @@ security records or raw flows. An observed sample exits zero; this is evidence
 collection and does not declare Email healthy. No matching flow is inconclusive.
 The workflow changes no access rules, transport configuration or workload.
 
+Inconclusive output includes a closed `stage` code for the refused input,
+observation or comparison. For example, `flow_read` identifies a refused native
+read, `flow_empty` means that read produced no flow bytes, and `flow_decode`
+means the returned evidence did not pass the wire checks. These codes never
+include remote errors or input values. Missing evidence remains inconclusive;
+use the stage to choose a repair rather than automatically repeating the run.
+
 The **Read Email Startup State** workflow takes one bounded sample from the existing
 serving container. Use it when the container restarts without useful application
 logs. It does not restart the service or change its configuration, data, probes,

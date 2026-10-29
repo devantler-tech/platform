@@ -27,7 +27,7 @@ env:
   COROOT_NODE_AGENT_SOURCE_COMMIT: ee62018e73b90b1549f5b81ba0d3d6e28851a1df
   UPSTREAM_IMAGE: ghcr.io/coroot/coroot-node-agent:1.35.8@sha256:a08143e4ea42420d4d8b8b2cd21f67dc76743d6e0e37ab9a97b304171e670b93
   IMAGE: ghcr.io/devantler-tech/platform-coroot-node-agent
-  IMAGE_TAG: v1.35.8-alerts.1-${{ github.sha }}
+  IMAGE_TAG: v1.35.8-alerts.2-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
   DOCKERFILE_PATH: k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
 

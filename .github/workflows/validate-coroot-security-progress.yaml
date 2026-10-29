@@ -145,7 +145,7 @@ jobs:
     permissions:
       contents: read
     env:
-      COROOT_IMAGE: ghcr.io/coroot/coroot:1.28.1
+      COROOT_IMAGE: ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1
       PROMETHEUS_IMAGE: ghcr.io/coroot/prometheus:2.55.1-ubi9-0@sha256:c2a4f92f728411b834b7abd07764cf587e28749c377b157443569dea4f81f833
       SERVER_IMAGE: docker.io/library/busybox:1.38.0-musl@sha256:ea2b9914a16a4ac1981994af97b318f7c7d4db76b580c56177f08bf76f4a0be8
       PLAYWRIGHT_VERSION: 1.56.1
@@ -163,9 +163,10 @@ jobs:
       - name: Verify the native API contract matches the versioned Coroot image
         shell: bash
         run: |
-          # Updating either pin requires reviewing the v1.28.1 API and browser
-          # source contract in scripts/tests/coroot-security-native/README.md.
-          if [ "$COROOT_IMAGE" != ghcr.io/coroot/coroot:1.28.1 ] ||
+          # The checkpoint-only patch retains the reviewed v1.28.1 API/browser
+          # contract; this fixture exercises the exact proposed production image.
+          # Update the source audit and real startup-version assertion together.
+          if [ "$COROOT_IMAGE" != ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1 ] ||
              [ "$(grep -Fxc "      name: $COROOT_IMAGE" k8s/bases/infrastructure/coroot/coroot.yaml)" != 1 ]; then
             echo 'Native Coroot contract/image differs from communityEdition.image.name; review compatibility before updating the fixture.' >&2
             exit 1

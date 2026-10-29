@@ -1,6 +1,7 @@
 # Native Coroot dashboard evidence
 
-The hosted workflow runs `run.sh` against the released Coroot 1.28.1 image, an
+The hosted workflow runs `run.sh` against the signed checkpoint compatibility
+build of Coroot 1.28.1 pinned in the production resource, an
 ephemeral Prometheus and a loopback-only synthetic metrics server. It provisions
 the versioned dashboard definitions twice, checks persisted configurations and
 an unrelated dashboard, queries every panel through Coroot using the same
@@ -54,8 +55,19 @@ no port is published or bound to a public interface. Cleanup removes only this
 invocation's named containers and temporary files, preserving diagnostic logs
 and screenshots as seven-day workflow artifacts.
 
-The binary version is verified from its real startup log. Coroot 1.28.1 does
-not expose a `--version` option.
+The binary version is verified from its real startup log. The compatibility
+publisher sets it to `v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477`;
+Coroot 1.28.1 does not expose a `--version` option.
+
+The compatibility build uses upstream revision
+`15137ef2f43e01d0a87245e44b937b25515e0afe` and the reviewed
+[checkpoint patch](../../../k8s/bases/infrastructure/coroot/coroot-v1.28.1-checkpoint-record.patch).
+That patch changes the PostgreSQL inspection, its metric construction and model,
+and its regression tests. It changes none of the entrypoint, flags, bootstrap,
+project selector, dashboard panel API, range-query alignment or browser routes
+audited above. The final image retains the digest-pinned upstream runtime and
+entrypoint. The fixture nevertheless runs the exact proposed image through all
+persisted-dashboard, API, browser and negative controls before adoption.
 
 The workflow also runs for changes to the base Coroot resource and production
 Coroot patch. A preflight requires the native image to equal the versioned

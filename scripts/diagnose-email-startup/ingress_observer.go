@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/netip"
@@ -67,7 +68,8 @@ func ingressDaemonUID(raw []byte) (string, error) {
 // observeIngressSources performs one fixed, bounded read from an owned agent.
 // Raw flows and addresses remain private and cannot choose a command or destination.
 func observeIngressSources(ctx context.Context, run executor, app binding, addresses accessAddresses, probe func(context.Context) (int, error), pause func(context.Context) error, now func() time.Time) (ingressObservation, error) {
-	refuse := func() (ingressObservation, error) { return ingressObservation{}, errIngressEvidence }
+	stage := ingressFailure("ingress_input")
+	refuse := func() (ingressObservation, error) { return ingressObservation{}, stage }
 	if !uuidPattern.MatchString(app.UID) || !nodeName.MatchString(app.Node) || !addresses.Pod.IsGlobalUnicast() || addresses.Pod.Is4In6() || addresses.Pod.Zone() != "" {
 		return refuse()
 	}
@@ -78,6 +80,7 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 		}
 		return bindIngressCluster(raw)
 	}
+	stage = "cluster_before"
 	cluster, err := readCluster()
 	if err != nil {
 		return refuse()
@@ -89,6 +92,7 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 		}
 		return ingressDaemonUID(raw)
 	}
+	stage = "daemon_before"
 	daemon, err := readDaemon()
 	if err != nil {
 		return refuse()
@@ -100,12 +104,14 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 		}
 		return bindIngressAgent(raw, app.Node, daemon)
 	}
+	stage = "agent_before"
 	agent, err := readAgent()
 	if err != nil {
 		return refuse()
 	}
 	since := now().UTC()
 	var result ingressObservation
+	stage = "public_probes"
 	for attempt := 0; attempt < 2; attempt++ {
 		status, err := probe(ctx)
 		if err != nil {
@@ -124,35 +130,45 @@ func observeIngressSources(ctx context.Context, run executor, app binding, addre
 		return refuse()
 	}
 	until := now().UTC()
+	stage = "window"
 	if since.IsZero() || !until.After(since) || until.Sub(since) > 45*time.Second {
 		return refuse()
 	}
+	stage = "flow_filter"
 	filter, err := ingressFlowFilter(addresses.Pod)
 	if err != nil {
 		return refuse()
 	}
+	stage = "flow_read"
 	raw, err := request(ctx, run, "exec", "-n", "kube-system", agent.Name, "-c", "cilium-agent", "--", "hubble", "observe", "--server", "unix:///var/run/cilium/hubble.sock", "--timeout", "5s", "--since", since.Format(time.RFC3339Nano), "--until", until.Format(time.RFC3339Nano), "--allowlist", string(filter), "--output", "jsonpb")
 	defer clear(raw)
 	if err != nil {
 		return refuse()
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return ingressObservation{}, ingressFailure("flow_empty")
 	}
 	// Cilium omits its default cluster prefix in absolute flow node names.
 	flowNode := app.Node
 	if cluster.Name != "default" {
 		flowNode = cluster.Name + "/" + app.Node
 	}
+	stage = "flow_decode"
 	sources, err := decodeIngressFlows(raw, addresses.Pod, flowNode, since, until)
 	if err != nil {
 		return refuse()
 	}
+	stage = "agent_after"
 	after, err := readAgent()
 	if err != nil || after != agent {
 		return refuse()
 	}
+	stage = "daemon_after"
 	daemonAfter, err := readDaemon()
 	if err != nil || daemonAfter != daemon {
 		return refuse()
 	}
+	stage = "cluster_after"
 	clusterAfter, err := readCluster()
 	if err != nil || clusterAfter != cluster {
 		return refuse()

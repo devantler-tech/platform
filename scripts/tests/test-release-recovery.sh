@@ -21,7 +21,7 @@ cat >"$work/guard.jq" <<'JQ'
   def ordinary: .if == null and .["continue-on-error"] == null;
   def recoveryContractRun: .run == "shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh\nbash scripts/tests/test-release-recovery.sh\n";
   def writer: .if == "steps.read-admission.outputs.missing == 'true'" and .["continue-on-error"] == null;
-  def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"0b137510d139bbf62e479d9610b0db17c972bc2b"} and
+  def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"8e2dfbd3f9249b76b58234189ccbbae98d11b32b"} and
     (.run | contains("[[ \"$CATALOGUE_REPOSITORY\" == devantler-tech/.github && \"$CATALOGUE_SHA\" =~ ^[0-9a-f]{40}$ ]]")) and
     (.run | contains("env -i PATH=\"$PATH\" curl --disable")) and
     (.run | contains("https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA")) and
