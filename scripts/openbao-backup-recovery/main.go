@@ -430,7 +430,17 @@ func inputFailureStage(err error) string {
 }
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "collect" {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_RESTORE=FAIL stage=mode")
+		os.Exit(2)
+	}
+	mode, paths, ok := credentialMode(os.Args[1])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_RESTORE=FAIL stage=mode")
+		os.Exit(2)
+	}
+	credentialPaths = paths
+	if mode == "collect" {
 		if err := collectRecoveryInputs(os.Getenv("OPENBAO_RECOVERY_DIR")); err != nil {
 			fmt.Fprintf(os.Stderr, "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=%s\n", inputFailureStage(err))
 			os.Exit(2)
@@ -438,15 +448,11 @@ func main() {
 		fmt.Println("OPENBAO_BACKUP_INPUTS=PASS")
 		return
 	}
-	if len(os.Args) == 2 && os.Args[1] == "image" {
+	if mode == "image" {
 		fmt.Println(serverImage)
 		return
 	}
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_RESTORE=FAIL stage=mode")
-		os.Exit(2)
-	}
-	err := sandbox(os.Args[1])
+	err := sandbox(mode)
 	if err != nil {
 		stage := "verification"
 		var known stageError
@@ -456,7 +462,7 @@ func main() {
 		fmt.Printf("OPENBAO_BACKUP_RESTORE=FAIL stage=%s\n", stage)
 		os.Exit(2)
 	}
-	if os.Args[1] == "fixture" {
+	if mode == "fixture" {
 		fmt.Println("OPENBAO_BACKUP_FIXTURE=PASS")
 	} else {
 		fmt.Printf("OPENBAO_BACKUP_RESTORE=PASS records=3 version=%s\n", serverVersion)
