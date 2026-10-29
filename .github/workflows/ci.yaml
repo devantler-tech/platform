@@ -3404,6 +3404,14 @@ jobs:
           go install github.com/mikefarah/yq/v4@v4.54.1
           printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
           PATH="$GOBIN:$PATH" yq --version
+      - name: 🩺 Validate declarative Coroot application health
+        if: needs.changes.outputs.k8s == 'true'
+        # Check the bounded offline matcher before the expensive native proofs.
+        # Exact reviewed app signals receive per-app thresholds; any novel log
+        # pattern resets its threshold so the Applications view fails visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
+          bash scripts/tests/test-coroot-application-health-reconciler.sh
       - name: ⚖️ Read Kyverno CLI version
         if: needs.changes.outputs.k8s == 'true'
         id: kyverno-version
@@ -3501,14 +3509,6 @@ jobs:
         # prior contents of all eight subjects and would otherwise revert in
         # silence — plus the floor and the wiring that reaches it.
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
-
-      - name: 🩺 Validate declarative Coroot application health
-        if: needs.changes.outputs.k8s == 'true'
-        # Exact reviewed app signals receive per-app thresholds; any novel log
-        # pattern resets its threshold so the Applications view fails visible.
-        run: |
-          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
-          bash scripts/tests/test-coroot-application-health-reconciler.sh
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
