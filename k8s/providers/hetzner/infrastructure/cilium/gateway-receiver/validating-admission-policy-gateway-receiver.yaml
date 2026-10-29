@@ -25,17 +25,17 @@ spec:
     - name: peer
       expression: "'${gateway_receiver_source_cidr}'.split('/')[0]"
   validations:
-    - expression: >-
+    - expression: |-
         size(variables.listeners) == 1 && variables.listeners[0].name == 'listener' &&
         !has(variables.listeners[0].defaultFilterChain) && !has(variables.listeners[0].filterChainMatcher) &&
         !has(variables.listeners[0].default_filter_chain) && !has(variables.listeners[0].filter_chain_matcher) &&
         !has(variables.listeners[0].filter_chains)
       message: The application gateway requires one supported listener without a fallback chain or alternate matcher.
-    - expression: >-
+    - expression: |-
         has(object.metadata.annotations) &&
         object.metadata.annotations['platform.devantler.tech/gateway-receiver-owner'] == 'v1'
       message: The application gateway receiver policy must retain its ownership marker.
-    - expression: >-
+    - expression: |-
         variables.listeners[0].filterChains.exists(c, c.filterChainMatch.transportProtocol == 'tls') &&
         variables.listeners[0].filterChains.all(c,
           has(c.filterChainMatch) && has(c.filterChainMatch.transportProtocol) &&

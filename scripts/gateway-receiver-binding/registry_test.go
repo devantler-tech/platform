@@ -5,11 +5,50 @@ import (
 	"encoding/json"
 	"errors"
 	"gopkg.in/yaml.v3"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRenderedPoliciesMatchTheExactDeployedReadback(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	b := binding{CIDR: "192.0.2.5/32"}
+	raw, err := exec.Command("kubectl", "kustomize", receiverSourceDir).Output()
+	if err != nil {
+		t.Fatal("native policy render")
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(strings.ReplaceAll(string(raw), "${gateway_receiver_source_cidr}", b.CIDR)))
+	seen := 0
+	for {
+		var rendered map[string]any
+		if err := decoder.Decode(&rendered); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal("rendered policy input")
+		}
+		for _, r := range preparedPolicies {
+			if rendered["kind"] != r.Kind {
+				continue
+			}
+			var actual map[string]any
+			if json.Unmarshal(registryFixture(t, r, b), &actual) != nil {
+				t.Fatal("policy metadata fixture")
+			}
+			actual["spec"] = rendered["spec"]
+			readback, _ := json.Marshal(actual)
+			if !admissionMatches(readback, r, b) {
+				t.Fatal("render changed a reviewed policy's exact deployed surface")
+			}
+			seen++
+		}
+	}
+	if seen != len(preparedPolicies) {
+		t.Fatal("a prepared policy was not exercised")
+	}
+}
 
 func registryFixture(t *testing.T, r admissionResource, b binding) []byte {
 	t.Helper()

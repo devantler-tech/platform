@@ -30,14 +30,14 @@ spec:
   mutations:
     - patchType: JSONPatch
       jsonPatch:
-        expression: >-
+        expression: |-
           has(object.metadata.annotations) ? [] :
           [JSONPatch{op: 'add', path: '/metadata/annotations', value: {}}]
     - patchType: JSONPatch
       jsonPatch:
         # Keep maps homogeneous and set the numeric protobuf wrapper separately.
         # This path is exercised with the native Kubernetes JSONPatch evaluator.
-        expression: >-
+        expression: |-
           variables.listener.filterChains.filter(c, c.filterChainMatch.transportProtocol == 'tls').map(c,
             JSONPatch{op: 'add',
               path: '/spec/resources/' + string(variables.listenerIndex) + '/filterChains/' +

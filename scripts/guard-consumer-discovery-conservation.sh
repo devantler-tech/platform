@@ -752,33 +752,39 @@ while IFS=$'\t' read -r file label; do
     [ -z "$count" ] || [ "$count" = 0 ] ||
       refuse "production render $label holds consumer generation or cloning that cannot be accounted for by a static build, so its consumers are UNKNOWN"
   done <<<"$generated"
-  # #5357: admit only the complete reviewed apiVersion/kind/spec surfaces for
-  # the two HelmRelease defaults after rendering. Canonical JSON includes every CEL expression,
+  # Admit only complete reviewed apiVersion/kind/spec surfaces: the two
+  # HelmRelease defaults (#5357) and the native Gateway peer policy. The latter
+  # changes only physical-peer fields and its ownership marker on one fixed
+  # CiliumEnvoyConfig; neither carries a publication consumer or constructor.
+  # Its complete spec fingerprint includes every scope, variable and patch.
+  # A larger or changed policy cannot inherit approval from its name or paths.
+  # Canonical JSON includes every CEL expression,
   # selector, operation and evaluation field, without whitespace normalization
   # inside strings. An altered expression or added field cannot inherit an
   # approval from the policy's name or its mutation paths. These patches touch
-  # only fixed test/install/upgrade defaults, never chart values or consumers.
-  if ! yq -o=json -I=0 '.. | select(type == "!!map" and .kind == "MutatingPolicy")
+  # only fixed defaults or Gateway peer fields, never chart values or consumers.
+  if ! yq -o=json -I=0 '.. | select(type == "!!map" and (.kind == "MutatingPolicy" or .kind == "MutatingAdmissionPolicy"))
       | {"apiVersion": .apiVersion, "kind": .kind, "spec": .spec}' "$file" |
-    jq -cS . >"$work/helm-default-candidates.jsonl"; then
-    refuse "could not read complete Helm default policy surfaces in $label, so its consumers are UNKNOWN"
+    jq -cS . >"$work/reviewed-mutation-candidates.jsonl"; then
+    refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
   fi
-  reviewed_defaults='[]'
+  reviewed_cel_surfaces='[]'
   while IFS= read -r candidate; do
     if command -v sha256sum >/dev/null 2>&1; then
-      candidate_digest="$(printf '%s\n' "$candidate" | sha256sum)" || refuse 'could not fingerprint Helm default policy'
+      candidate_digest="$(printf '%s\n' "$candidate" | sha256sum)" || refuse 'could not fingerprint reviewed mutation policy'
     else
-      candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint Helm default policy'
+      candidate_digest="$(printf '%s\n' "$candidate" | shasum -a 256)" || refuse 'could not fingerprint reviewed mutation policy'
     fi
     case "${candidate_digest%% *}" in
       43b7eaf13a1b754ed0449239ce9e337de6881751fd009c738efb46e367524824 | \
-        691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17)
-        reviewed_defaults="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_defaults")" ||
-          refuse 'could not record the complete reviewed Helm default policy'
+        691bf7d05ed9d87ae261f34d51e7cd062d345a6af8f6bb2dcf1ec1aeb3dade17 | \
+        0fee76150e3ef1d8ab1baf9380dbb3adf4ce0cd152a346c04744f9b13b03e89e)
+        reviewed_cel_surfaces="$(jq -ce --argjson candidate "$candidate" '. + [$candidate]' <<<"$reviewed_cel_surfaces")" ||
+          refuse 'could not record the complete reviewed mutation policy'
         ;;
     esac
-  done <"$work/helm-default-candidates.jsonl"
-  export REVIEWED_HELM_RELEASE_DEFAULTS="$reviewed_defaults"
+  done <"$work/reviewed-mutation-candidates.jsonl"
+  export REVIEWED_CEL_MUTATION_SURFACES="$reviewed_cel_surfaces"
 
   # CEL mutations are not evaluated by this static guard. Refuse their declared
   # presence rather than infer identity preservation from a pre-admission row.
@@ -906,7 +912,7 @@ while IFS=$'\t' read -r file label; do
             ("daemonsets=" + strenv(REVIEWED_AUTO_VPA_DAEMONSET)),
             ("statefulsets=" + strenv(REVIEWED_AUTO_VPA_STATEFULSET))]
           | any_c(. == $generation)))
-        or (strenv(REVIEWED_HELM_RELEASE_DEFAULTS) | from_json
+        or (strenv(REVIEWED_CEL_MUTATION_SURFACES) | from_json
           | any_c((. | sort_keys(..) | to_json(0)) == ($mutationSurface | sort_keys(..) | to_json(0)))))
         | not)] | length' "$file" 2>"$work/yq.err")"; then
     refuse "could not read CEL admission mutations in the render of $label, so its consumers are UNKNOWN"
