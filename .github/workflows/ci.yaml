@@ -105,8 +105,11 @@ jobs:
       # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
+      # Bound already parallel-safe cases to eight slots: the complete
+      # credential-bridge suite improved from 407s to 245s at four CPUs,
+      # preserving the same 582 passing cases and every deadline.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test -timeout 20m ./...
+        run: go test -parallel 8 -timeout 20m ./...
 
   changes:
     name: 🔍 Detect Changes
