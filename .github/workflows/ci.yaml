@@ -52,16 +52,6 @@ jobs:
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
         run: bash .github/scripts/setup-supply-chain-tools.sh
-      - name: 🔐 Validate the public CI identity boundary
-        run: |
-          shellcheck scripts/probe-public-ci-read-identity.sh scripts/tests/test-public-ci-read-identity.sh
-          bash scripts/tests/test-public-ci-read-identity.sh
-
-      - name: 🔬 Observe the existing hosted public CI identity
-        env:
-          PUBLIC_CI_READ_TOKEN: ${{ github.token }}
-        run: bash scripts/probe-public-ci-read-identity.sh
-
       - name: Validate the hosted runtime script
         run: |
           shellcheck scripts/tests/test-webapp-runtime-hosted.sh

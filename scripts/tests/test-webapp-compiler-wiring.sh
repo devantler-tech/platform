@@ -8,6 +8,18 @@ work="$(mktemp -d)"
 trap 'rm -rf -- "${work}"' EXIT
 fail() { echo "FAIL: $*" >&2; exit 1; }
 
+# Execute the actual hosted script's entire credential preamble. Neither input
+# nor a copied variable's inherited export attribute may reach child processes.
+fixture_token=ghs_opaque-fixture.value.with.dots
+awk '/^root=/{exit} {print}' "$root/scripts/tests/test-webapp-runtime-hosted.sh" > "$work/preamble.sh"
+cat >> "$work/preamble.sh" <<'PREAMBLE'
+[[ "$hosted_ci_read_token" == "$FIXTURE_TOKEN" ]]
+bash -c '[[ -z "${PREBUILT_CI_READ_TOKEN:-}" && -z "${hosted_ci_read_token:-}" ]]'
+PREAMBLE
+PREBUILT_CI_READ_TOKEN="$fixture_token" FIXTURE_TOKEN="$fixture_token" hosted_ci_read_token=ambient_export_attribute \
+  bash -x "$work/preamble.sh" > "$work/preamble.log" 2>&1
+if grep -Fq "$fixture_token" "$work/preamble.log"; then fail 'hosted credential reached traced output'; fi
+
 check_job() {
   local input="$1" selection="$2"
   jq -e --arg selection "${selection}" '
@@ -29,7 +41,16 @@ check_job() {
       and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-runtime-hosted.sh")) ]
            | length == 1 and (.[0] | has("if") | not)
              and (.[0]["continue-on-error"] // false) == false
-             and .[0].run == "shellcheck scripts/tests/test-webapp-runtime-hosted.sh\nbash scripts/tests/test-webapp-runtime-hosted.sh\n")
+             and .[0].run == "bash scripts/tests/test-webapp-runtime-hosted.sh"
+             and .[0].env == {PREBUILT_CI_READ_TOKEN:"${{ github.token }}"})
+      and ([ $job.steps[] | select((.run // "") | contains("shellcheck scripts/tests/test-webapp-runtime-hosted.sh")) ]
+           | length == 1 and (.[0] | has("if") | not)
+             and (.[0]["continue-on-error"] // false) == false
+             and .[0].run == "shellcheck scripts/tests/test-webapp-runtime-hosted.sh\n"
+             and (.[0].env.PREBUILT_CI_READ_TOKEN? // "") == "")
+      and (.env.PREBUILT_CI_READ_TOKEN? // "") == ""
+      and ($job.env.PREBUILT_CI_READ_TOKEN? // "") == ""
+      and ([ $job.steps[] | select(.env.PREBUILT_CI_READ_TOKEN?) ] | length) == 1
       and ([ $job.steps[] | select((.run // "") | contains("bash scripts/tests/test-webapp-inputs.sh")) ]
            | length == 1 and (.[0] | has("if") | not)
              and (.[0]["continue-on-error"] // false) == false
@@ -96,6 +117,19 @@ nonexecuting="$(jq '(.jobs["validate-webapp-compiler"].steps[] |
 if (check_job "${nonexecuting}" "needs.changes.outputs.k8s == 'true'") >"${work}/nonexecuting.log" 2>&1; then
   fail 'printing the compiler command must not count as executing it'
 fi
+for mutation in \
+  '(.jobs["validate-webapp-compiler"].steps[]|select(.env.PREBUILT_CI_READ_TOKEN?)).if="false"' \
+  '(.jobs["validate-webapp-compiler"].steps[]|select(.env.PREBUILT_CI_READ_TOKEN?))["continue-on-error"]=true' \
+  'del(.jobs["validate-webapp-compiler"].steps[].env.PREBUILT_CI_READ_TOKEN)' \
+  '.jobs["validate-webapp-compiler"].env.PREBUILT_CI_READ_TOKEN="ambient"' \
+  '.env.PREBUILT_CI_READ_TOKEN="ambient"' \
+  '.jobs["validate-webapp-compiler"].steps[0].env.PREBUILT_CI_READ_TOKEN="ambient"' \
+  '(.jobs["validate-webapp-compiler"].steps[]|select((.run//"")|contains("shellcheck scripts/tests/test-webapp-runtime-hosted.sh"))).if="false"'; do
+  mutated="$(jq "$mutation" <<<"${ci}")"
+  if (check_job "$mutated" "needs.changes.outputs.k8s == 'true'") >"${work}/mutation.log" 2>&1; then
+    fail 'hosted runtime or credential-boundary regression was accepted'
+  fi
+done
 # The route-schema pin lives in three places that must move together (#5218).
 gateway_required="$(awk '$1 == "sigs.k8s.io/gateway-api" { print $2 }' "${root}/scripts/tests/webapp-compiler/go.mod")"
 gateway_reviewed="$(sed -nE 's/.*sigs\.k8s\.io\/gateway-api\)" == (v[0-9.]+) \]\] \|\| fail .unreviewed route schema.*/\1/p' "${root}/scripts/tests/test-webapp-runtime-hosted.sh")"
