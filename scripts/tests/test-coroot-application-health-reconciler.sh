@@ -178,6 +178,7 @@ pass 'control-plane probe targets match loopback-only component listeners'
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
 
+# Build isolated API stubs and state for one reconciler scenario.
 setup_scenario() {
   local name="$1" dex_mode="$2" dex_current="$3"
   local state_error="${4:-context deadline exceeded}"
@@ -269,6 +270,7 @@ else
   printf '%s\n' "${url}" >>"${dir}/cached-requests"
 fi
 
+# Notify the observer on every completed or rejected query, including exits.
 release_query_slot() {
   [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
   printf 'end %s\n' "$$" >&6
@@ -276,6 +278,7 @@ release_query_slot() {
   trap - EXIT
 }
 
+# Wait for the observer's decision; rejected queries retain curl's failure path.
 acquire_query_slot() {
   limit="$(cat "${dir}/concurrency-limit")"
   [ "${limit}" -gt 0 ] || return 0
@@ -679,6 +682,7 @@ STUB
   printf '%s' "${dir}"
 }
 
+# Execute only the checked-in manifest script or a test-local mutation of it.
 run_scenario() {
   local dir="$1"
   SCENARIO_DIR="${dir}" PATH="${dir}/bin:${PATH}" /bin/sh -c "${2:-${script_body}}"
@@ -731,6 +735,7 @@ observe_query_slots() {
   return 1
 }
 
+# Run the scenario with one observer and require a complete event stream.
 run_observed_scenario() {
   local dir="$1" observer_pid
   mkfifo "${dir}/query-events-pipe"
@@ -740,8 +745,25 @@ run_observed_scenario() {
   observed_scenario_status=0
   run_scenario "$dir" "${2:-${script_body}}" >"${dir}/output" 2>&1 || observed_scenario_status=$?
   printf 'finish\n' >&6
-  wait "$observer_pid" || fail 'query observation was incomplete or inconsistent'
+  wait "$observer_pid" || {
+    dump_query_evidence "$dir"
+    fail 'query observation was incomplete or inconsistent'
+  }
   exec 6>&-
+}
+
+# Preserve captured output and counters when any observed assertion fails.
+dump_query_evidence() {
+  local dir="$1" evidence
+  for evidence in output active-queries peak-queries query-events; do
+    printf 'query evidence: %s\n' "$evidence" >&2
+    if [[ -f "${dir}/${evidence}" ]]; then
+      cat "${dir}/${evidence}" >&2
+      printf '\n' >&2
+    else
+      printf '(not recorded)\n' >&2
+    fi
+  done
 }
 
 absent_log_stream_dir="$(setup_scenario absent-log-stream known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known absent)"
@@ -794,18 +816,20 @@ printf '%s\n' "${known_output}" | jq -s -e \
 bounded_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 setup_scenario bounded-concurrency known null)"
 run_observed_scenario "${bounded_dir}"
 bounded_output="$(cat "${bounded_dir}/output")"
-[[ "$observed_scenario_status" == 0 ]] || fail 'bounded reconciliation did not complete'
+[[ "$observed_scenario_status" == 0 ]] || {
+  dump_query_evidence "$bounded_dir"
+  fail "bounded reconciliation did not complete (status $observed_scenario_status)"
+}
 printf '%s\n' "${bounded_output}" | jq -s -e '
   length > 0 and all(.[]; .level == "info")
 ' >/dev/null || {
-  printf '%s\n' "${bounded_output}" >&2
-  printf 'bounded query counters: active=%s peak=%s\n' \
-    "$(cat "${bounded_dir}/active-queries")" "$(cat "${bounded_dir}/peak-queries")" >&2
-  cat "${bounded_dir}/query-events" >&2
+  dump_query_evidence "$bounded_dir"
   fail 'bounded Coroot capacity produced a synthetic query failure'
 }
-[ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] ||
+[ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] || {
+  dump_query_evidence "$bounded_dir"
   fail 'the reconciler exceeded the reviewed four-query Coroot capacity'
+}
 [[ "${script_body}" == *'MAX_CONCURRENT_RECONCILIATIONS=4'* ]] ||
   fail 'Coroot reconciliation must use the reviewed four-worker concurrency ceiling'
 # These literal references keep the rendered shell contract reviewable.
@@ -819,10 +843,15 @@ pass 'Coroot log queries respect the bounded worker capacity'
 overflow_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 COROOT_STUB_MIN_OVERLAP=5 setup_scenario query-overflow known null)"
 overflow_script="${script_body/MAX_CONCURRENT_RECONCILIATIONS=4/MAX_CONCURRENT_RECONCILIATIONS=5}"
 run_observed_scenario "$overflow_dir" "$overflow_script"
-[[ "$(cat "$overflow_dir/peak-queries")" == 5 && "$(cat "$overflow_dir/active-queries")" == 0 ]] ||
+[[ "$(cat "$overflow_dir/peak-queries")" == 5 && "$(cat "$overflow_dir/active-queries")" == 0 ]] || {
+  dump_query_evidence "$overflow_dir"
   fail 'the over-capacity control did not observe five overlapping queries and complete'
+}
 jq -s -e 'any(.[]; .level=="error" and (.msg | contains("query failed")))' \
-  "$overflow_dir/output" >/dev/null || fail 'five overlapping queries did not fail visible'
+  "$overflow_dir/output" >/dev/null || {
+  dump_query_evidence "$overflow_dir"
+  fail 'five overlapping queries did not fail visible'
+}
 pass 'a forced five-query overlap is rejected and remains visible'
 jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and

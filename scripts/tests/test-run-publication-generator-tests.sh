@@ -10,6 +10,7 @@ fail() {
 work="$(mktemp -d)"
 collector_pid=''
 completed=0
+# Stop an unfinished observer and preserve a failure through Bash 3's EXIT trap.
 cleanup() {
   local result=$?
   trap - EXIT
@@ -80,6 +81,7 @@ release_probe() {
   exec 5>&-
 }
 
+# Account for each child once, enforcing the dispatch bound and full completion.
 collect() {
   local active=0 maximum=0 overlap=0 first='' event name
   while IFS=' ' read -r -t 10 event name <&3; do
@@ -122,6 +124,7 @@ collect() {
   return 1
 }
 
+# Dispatch one isolated fixture and retain its status, output and event receipts.
 run_case() {
   local jobs="$1" failures="$2" label="$3"
   state="$work/$label"
