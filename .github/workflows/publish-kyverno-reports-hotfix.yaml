@@ -101,8 +101,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      packages: write
-      id-token: write
+      packages: write # publish the tested image at an immutable source tag
+      id-token: write # sign through this protected main workflow identity
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
