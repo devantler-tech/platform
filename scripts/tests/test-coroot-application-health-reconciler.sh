@@ -273,6 +273,8 @@ release_query_slot() {
   while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
   active="$(cat "${dir}/active-queries")"
   printf '%s' "$((active - 1))" >"${dir}/active-queries"
+  printf 'end pid=%s parent=%s active=%s url=%s\n' \
+    "$$" "$PPID" "$((active - 1))" "$url" >>"${dir}/query-events"
   rmdir "${dir}/query-counter-lock"
   trap - EXIT
 }
@@ -285,6 +287,8 @@ acquire_query_slot() {
   printf '%s' "${active}" >"${dir}/active-queries"
   peak="$(cat "${dir}/peak-queries")"
   [ "${active}" -le "${peak}" ] || printf '%s' "${active}" >"${dir}/peak-queries"
+  printf 'start pid=%s parent=%s active=%s url=%s\n' \
+    "$$" "$PPID" "$active" "$url" >>"${dir}/query-events"
   rmdir "${dir}/query-counter-lock"
   trap release_query_slot EXIT
   sleep 0.1
@@ -742,6 +746,7 @@ printf '%s\n' "${bounded_output}" | jq -s -e '
   printf '%s\n' "${bounded_output}" >&2
   printf 'bounded query counters: active=%s peak=%s\n' \
     "$(cat "${bounded_dir}/active-queries")" "$(cat "${bounded_dir}/peak-queries")" >&2
+  cat "${bounded_dir}/query-events" >&2
   fail 'bounded Coroot capacity produced a synthetic query failure'
 }
 [ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] ||
