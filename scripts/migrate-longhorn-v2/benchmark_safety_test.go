@@ -19,7 +19,8 @@ func benchmarkInventoryFixture() inventory {
 		n["metadata"].(object)["labels"].(object)["node.kubernetes.io/instance-type"] = "cx43"
 		n["spec"].(object)["providerID"] = fmt.Sprintf("hcloud://%d", i+100)
 		n["status"].(object)["nodeInfo"].(object)["systemUUID"] = "hardware-" + name
-		n["status"].(object)["nodeInfo"].(object)["osImage"] = "Talos (v1.13.12)"
+		// Comparability uses the observed opaque OS identity, not a version pin.
+		n["status"].(object)["nodeInfo"].(object)["osImage"] = "Talos (fixture-before-upgrade)"
 		n["status"].(object)["nodeInfo"].(object)["architecture"] = "amd64"
 		s.nodes[i] = n
 		s.storageNodes[i]["metadata"].(object)["name"] = name
@@ -133,6 +134,11 @@ func TestCapacityCannotActivateWithAnIncompleteOrForeignBaseline(t *testing.T) {
 	changed.nodes[0]["spec"].(object)["providerID"] = "hcloud://replacement"
 	if test(record, changed.nodes, true) == nil {
 		t.Fatal("baseline reused after a hardware change")
+	}
+	changedOS := benchmarkInventoryFixture()
+	changedOS.nodes[0]["status"].(object)["nodeInfo"].(object)["osImage"] = "Talos (fixture-after-upgrade)"
+	if test(record, changedOS.nodes, true) == nil {
+		t.Fatal("baseline reused after an operating-system change")
 	}
 }
 
