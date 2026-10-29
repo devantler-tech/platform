@@ -105,8 +105,11 @@ jobs:
       # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
+      # Bound already parallel-safe cases to eight slots: the complete
+      # credential-bridge suite improved from 407s to 245s at four CPUs,
+      # preserving the same 582 passing cases and every deadline.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test -timeout 20m ./...
+        run: go test -parallel 8 -timeout 20m ./...
 
   changes:
     name: 🔍 Detect Changes
@@ -3381,10 +3384,17 @@ jobs:
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
 
   validate-manifest-regressions:
-    name: 🧪 Validate Independent Manifest Regressions
+    name: 🧪 Validate Independent Manifest Regressions (${{ matrix.suite }})
     needs:
       - changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    strategy:
+      fail-fast: false
+      # Keep Docker-backed proofs on a separate runner from render contracts.
+      # Set this to one for the equivalent serial diagnostic control.
+      max-parallel: 2
+      matrix:
+        suite: [contracts, native]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -3399,7 +3409,6 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: 📌 Install the reviewed YAML parser
-        if: needs.changes.outputs.k8s == 'true'
         env:
           GOBIN: ${{ runner.temp }}/platform-validation-tools
         run: |
@@ -3407,7 +3416,7 @@ jobs:
           printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
           PATH="$GOBIN:$PATH" yq --version
       - name: 🩺 Validate declarative Coroot application health
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # Check the bounded offline matcher before the expensive native proofs.
         # Exact reviewed app signals receive per-app thresholds; any novel log
         # pattern resets its threshold so the Applications view fails visible.
@@ -3415,11 +3424,9 @@ jobs:
           shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
           bash scripts/tests/test-coroot-application-health-reconciler.sh
       - name: ⚖️ Read Kyverno CLI version
-        if: needs.changes.outputs.k8s == 'true'
         id: kyverno-version
         run: bash .github/scripts/kyverno-version.sh
       - name: ⚖️ Install Kyverno CLI
-        if: needs.changes.outputs.k8s == 'true'
         uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
         with:
           release: ${{ steps.kyverno-version.outputs.release }}
@@ -3440,19 +3447,19 @@ jobs:
           restore-keys: |
             kubeconform-schema-cache-v1-
       - name: 🔐 Prove snapshot readback with pinned static tooling
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
           VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
       - name: 🐤 Validate staged OpenBao standby repair
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         run: |
           shellcheck scripts/tests/test-openbao-standby-canary.sh
           shellcheck scripts/tests/test-openbao-strategy-transition.sh
           bash scripts/tests/test-openbao-standby-canary.sh
       - name: 🔐 Prove isolated snapshot recovery on the matching server
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 8
         env:
           OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: "1"
@@ -3460,30 +3467,30 @@ jobs:
           shellcheck scripts/run-openbao-backup-sandbox.sh
           go test -count=1 -v ./scripts/openbao-backup-recovery
       - name: 🔒 Validate Crossplane provider egress policy
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         run: bash scripts/tests/test-crossplane-egress-policy.sh
       - name: ✉️ Verify Email credential custody against pinned OpenBao
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
           EMAIL_CREDENTIAL_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 10
         run: |
           shellcheck scripts/tests/test-private-mail-configuration.sh
           bash scripts/tests/test-private-mail-configuration.sh
 
       - name: ✉️ Prove native gateway client identity boundaries
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
           EMAIL_CLIENT_IDENTITY_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/ingress-client-address
 
       - name: 🔐 Validate Kyverno review admission boundaries
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # Render the pinned chart and exercise its match conditions against an
         # isolated real API server. Ordinary policy requests must still fail
         # closed; only the three already-filtered virtual reviews skip dispatch.
@@ -3492,7 +3499,7 @@ jobs:
           bash scripts/tests/test-kyverno-auth-reviews.sh
 
       - name: 🗺️ Validate every unscanned namespace is reviewed
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # A namespace in the operator's excludeNamespaces produces no scan result, and the
         # posture score cannot tell that apart from a clean namespace. So the exclusions must
         # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
@@ -3504,7 +3511,7 @@ jobs:
           bash scripts/tests/test-guard-kubescape-scan-scope.sh
 
       - name: 🔐 Validate the shared-publish-workflow pin guard
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # The guard fails by PASSING: a widened cosign matcher still verifies, so
         # nothing else in CI notices. This pins the shapes it must reject — above
         # all the SHA-or-tag alternation removed in #3022, which is the exact

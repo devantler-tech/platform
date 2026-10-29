@@ -99,7 +99,13 @@ docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log
 }
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
-  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE; test -r /usr/local/share/licenses/caddy/LICENSE' >"$scratch/image-assets.txt"
+  -ec '
+    sha256sum /usr/local/share/stalwart/webui-*.zip || { echo IMAGE_ASSET_FAILURE=archive >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-webui/LICENSE || { echo IMAGE_ASSET_FAILURE=webui-license >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-webui/SOURCE || { echo IMAGE_ASSET_FAILURE=webui-source >&2; exit 1; }
+    test -x /usr/local/share/licenses/caddy || { echo IMAGE_ASSET_FAILURE=proxy-license-directory >&2; exit 1; }
+    test -r /usr/local/share/licenses/caddy/LICENSE || { echo IMAGE_ASSET_FAILURE=proxy-license >&2; exit 1; }
+  ' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /usr/local/bin/caddy \
