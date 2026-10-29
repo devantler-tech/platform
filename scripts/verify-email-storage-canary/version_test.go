@@ -10,7 +10,7 @@ func releasedStorage() object {
 	return object{"metadata": object{"name": "longhorn", "generation": float64(46)}, "spec": object{"chart": object{"spec": object{"version": "1.13.0"}}}, "status": object{"observedGeneration": float64(46), "lastAttemptedRevision": "1.13.0", "history": []any{object{"chartVersion": "1.13.0"}}, "conditions": []any{object{"type": "Ready", "status": "True"}}}}
 }
 func TestVersionPreflightRequiresTheObservedReleaseAndReadyNodes(t *testing.T) {
-	for _, bad := range []string{"", "unobserved", "missing-generations", "string-generations", "zero-generations", "fractional-generations", "old-release", "failed-release", "wrong-os", "unready-node"} {
+	for _, bad := range []string{"", "unobserved", "missing-generations", "string-generations", "zero-generations", "fractional-generations", "old-release", "failed-release", "wrong-os", "previous-os", "unready-node"} {
 		t.Run(bad, func(t *testing.T) {
 			hr := releasedStorage()
 			switch bad {
@@ -33,9 +33,12 @@ func TestVersionPreflightRequiresTheObservedReleaseAndReadyNodes(t *testing.T) {
 			case "failed-release":
 				items(child(hr, "status"), "conditions")[0]["status"] = "False"
 			}
-			node := object{"status": object{"nodeInfo": object{"osImage": "Talos (v1.13.11)"}, "conditions": []any{object{"type": "Ready", "status": "True"}}}}
+			node := object{"status": object{"nodeInfo": object{"osImage": "Talos (v1.13.12)"}, "conditions": []any{object{"type": "Ready", "status": "True"}}}}
 			if bad == "wrong-os" {
 				child(child(node, "status"), "nodeInfo")["osImage"] = "Talos (other)"
+			}
+			if bad == "previous-os" {
+				child(child(node, "status"), "nodeInfo")["osImage"] = "Talos (v1.13.11)"
 			}
 			if bad == "unready-node" {
 				items(child(node, "status"), "conditions")[0]["status"] = "False"

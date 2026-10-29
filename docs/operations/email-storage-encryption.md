@@ -58,7 +58,7 @@ References: [Longhorn 1.13 volume encryption](https://longhorn.io/docs/1.13.0/ad
 `Verify Email Storage Canary` is a manual, first-attempt, explicitly confirmed
 workflow on reviewed `main`, protected by the production environment and the
 production mutation lock. Its driver refuses other dispatch contexts before
-reading the cluster. It checks Longhorn 1.13.0 and Talos 1.13.11; a version change
+reading the cluster. It checks Longhorn 1.13.0 and Talos 1.13.12; a version change
 requires reviewing that binding before another run.
 
 The workflow creates one invocation-owned namespace, a default-deny network

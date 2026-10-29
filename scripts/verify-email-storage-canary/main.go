@@ -243,7 +243,7 @@ func (r *runner) preflight(ctx context.Context) error {
 		return errors.New("nodes")
 	}
 	for _, node := range nodes {
-		if text(child(child(node, "status"), "nodeInfo"), "osImage") != "Talos (v1.13.11)" {
+		if text(child(child(node, "status"), "nodeInfo"), "osImage") != "Talos (v1.13.12)" {
 			return errors.New("os-version")
 		}
 		ready = false
@@ -573,7 +573,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "EMAIL_STORAGE_CANARY=UNVERIFIED stage=%s cleanup=%s run=%s\n", r.stage, status, run)
 		os.Exit(2)
 	}
-	fmt.Println("EMAIL_STORAGE_CANARY=PASS storage=1.13.0 os=1.13.11 write=true remount=true missing_key_refused=true wrong_key_refused=true recovered=true cleanup=VERIFIED")
+	fmt.Println("EMAIL_STORAGE_CANARY=PASS storage=1.13.0 os=1.13.12 write=true remount=true missing_key_refused=true wrong_key_refused=true recovered=true cleanup=VERIFIED")
 }
 
 // Admission defaults are allowed; changing the executable, data path or access is not.
