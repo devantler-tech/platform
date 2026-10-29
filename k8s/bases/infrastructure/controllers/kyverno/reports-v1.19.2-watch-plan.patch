@@ -1,10 +1,412 @@
+diff --git a/cmd/internal/registry_security_test.go b/cmd/internal/registry_security_test.go
+new file mode 100644
+index 0000000..5bd8143
+--- /dev/null
++++ b/cmd/internal/registry_security_test.go
+@@ -0,0 +1,51 @@
++package internal
++
++import (
++	"testing"
++
++	"github.com/google/go-containerregistry/pkg/authn"
++	"github.com/kyverno/sdk/extensions/regcreds"
++)
++
++// An invalid reference exercises provider selection without contacting Azure or
++// reading credentials. Rejected hosts must never reach reference parsing.
++type registryBoundaryResource struct {
++	host  string
++	reads int
++}
++
++func (r *registryBoundaryResource) RegistryStr() string { return r.host }
++func (r *registryBoundaryResource) String() string {
++	r.reads++
++	return "%invalid-reference"
++}
++
++func TestAzureRegistryCredentialBoundary(t *testing.T) {
++	providers := regcreds.KeychainsForProviders("azure")
++	if len(providers) != 1 {
++		t.Fatalf("Azure provider count = %d, want 1", len(providers))
++	}
++	for source, keychain := range map[string]authn.Keychain{
++		"exported":   regcreds.AzureKeychain,
++		"configured": providers[0],
++	} {
++		t.Run(source, func(t *testing.T) {
++			for _, suffix := range []string{"io", "cn", "de", "us"} {
++				for _, host := range []string{"registry.azurecr." + suffix, "REGISTRY.AZURECR." + suffix + ".:443"} {
++					r := &registryBoundaryResource{host: host}
++					_, err := keychain.Resolve(r)
++					if err == nil || r.reads == 0 {
++						t.Errorf("valid Azure host %q did not reach reference validation", host)
++					}
++				}
++				for _, host := range []string{"registry.azurecr." + suffix + ".attacker.example", "registry.azurecr." + suffix + "evil"} {
++					r := &registryBoundaryResource{host: host}
++					auth, err := keychain.Resolve(r)
++					if err != nil || auth != authn.Anonymous || r.reads != 0 {
++						t.Errorf("non-Azure host %q reached credential provider: reads=%d err=%v", host, r.reads, err)
++					}
++				}
++			}
++		})
++	}
++}
 diff --git a/go.mod b/go.mod
-index e2016bd..d5ee233 100644
+index e2016bd..1501352 100644
 --- a/go.mod
 +++ b/go.mod
-@@ -404 +404 @@ require (
+@@ -38 +38 @@ require (
+-	github.com/kyverno/sdk v0.0.0-20261008171927-5a61cbc9e077
++	github.com/kyverno/sdk v0.0.0-20261012132606-c17110bb60ee
+@@ -53 +53 @@ require (
+-	github.com/sigstore/rekor v1.5.3
++	github.com/sigstore/rekor v1.5.4
+@@ -64,9 +64,9 @@ require (
+-	go.opentelemetry.io/otel v1.44.0
+-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0
+-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0
+-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0
+-	go.opentelemetry.io/otel/exporters/prometheus v0.66.0
+-	go.opentelemetry.io/otel/metric v1.44.0
+-	go.opentelemetry.io/otel/sdk v1.44.0
+-	go.opentelemetry.io/otel/sdk/metric v1.44.0
+-	go.opentelemetry.io/otel/trace v1.44.0
++	go.opentelemetry.io/otel v1.45.0
++	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0
++	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0
++	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
++	go.opentelemetry.io/otel/exporters/prometheus v0.67.0
++	go.opentelemetry.io/otel/metric v1.45.0
++	go.opentelemetry.io/otel/sdk v1.45.0
++	go.opentelemetry.io/otel/sdk/metric v1.45.0
++	go.opentelemetry.io/otel/trace v1.45.0
+@@ -75,2 +75,2 @@ require (
+-	go.yaml.in/yaml/v3 v3.0.4
+-	golang.org/x/crypto v0.57.0
++	go.yaml.in/yaml/v3 v3.0.5
++	golang.org/x/crypto v0.58.0
+@@ -99 +99,4 @@ require (
+-require gopkg.in/yaml.v3 v3.0.1 // indirect
++require (
++	github.com/sassoftware/relic/v8 v8.2.0 // indirect
++	gopkg.in/yaml.v3 v3.0.1 // indirect
++)
+@@ -108 +111 @@ require (
+-	cloud.google.com/go/iam v1.11.0 // indirect
++	cloud.google.com/go/iam v1.13.0 // indirect
+@@ -137 +140 @@ require (
+-	github.com/ProtonMail/go-crypto v1.3.0 // indirect
++	github.com/ProtonMail/go-crypto v1.4.1 // indirect
+@@ -165 +168 @@ require (
+-	github.com/aws/aws-sdk-go-v2/service/kms v1.54.0 // indirect
++	github.com/aws/aws-sdk-go-v2/service/kms v1.55.0 // indirect
+@@ -172 +174,0 @@ require (
+-	github.com/blang/semver v3.5.1+incompatible // indirect
+@@ -211 +213 @@ require (
+-	github.com/go-chi/chi/v5 v5.3.0 // indirect
++	github.com/go-chi/chi/v5 v5.3.1 // indirect
+@@ -217 +219 @@ require (
+-	github.com/go-openapi/analysis v0.25.5 // indirect
++	github.com/go-openapi/analysis v0.26.0 // indirect
+@@ -221 +223 @@ require (
+-	github.com/go-openapi/loads v0.25.0 // indirect
++	github.com/go-openapi/loads v0.25.1 // indirect
+@@ -228,2 +230,2 @@ require (
+-	github.com/go-openapi/swag/conv v0.27.3 // indirect
+-	github.com/go-openapi/swag/fileutils v0.27.3 // indirect
++	github.com/go-openapi/swag/conv v0.28.0 // indirect
++	github.com/go-openapi/swag/fileutils v0.28.0 // indirect
+@@ -231,3 +233,3 @@ require (
+-	github.com/go-openapi/swag/jsonutils v0.27.3 // indirect
+-	github.com/go-openapi/swag/loading v0.27.3 // indirect
+-	github.com/go-openapi/swag/mangling v0.27.3 // indirect
++	github.com/go-openapi/swag/jsonutils v0.28.0 // indirect
++	github.com/go-openapi/swag/loading v0.28.0 // indirect
++	github.com/go-openapi/swag/mangling v0.28.0 // indirect
+@@ -235,5 +237,5 @@ require (
+-	github.com/go-openapi/swag/pools v0.27.3 // indirect
+-	github.com/go-openapi/swag/stringutils v0.27.3 // indirect
+-	github.com/go-openapi/swag/typeutils v0.27.3 // indirect
+-	github.com/go-openapi/swag/yamlutils v0.27.3 // indirect
+-	github.com/go-openapi/validate v0.26.1 // indirect
++	github.com/go-openapi/swag/pools v0.28.0 // indirect
++	github.com/go-openapi/swag/stringutils v0.28.0 // indirect
++	github.com/go-openapi/swag/typeutils v0.28.0 // indirect
++	github.com/go-openapi/swag/yamlutils v0.28.0 // indirect
++	github.com/go-openapi/validate v0.26.3 // indirect
+@@ -260 +262 @@ require (
+-	github.com/googleapis/enterprise-certificate-proxy v0.3.17 // indirect
++	github.com/googleapis/enterprise-certificate-proxy v0.3.18 // indirect
+@@ -343 +344,0 @@ require (
+-	github.com/sassoftware/relic v7.2.1+incompatible // indirect
+@@ -390 +391 @@ require (
+-	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
++	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
+@@ -395 +396 @@ require (
+-	golang.org/x/net v0.60.0 // indirect
++	golang.org/x/net v0.62.0 // indirect
+@@ -397,4 +398,4 @@ require (
+-	golang.org/x/sync v0.23.0 // indirect
+-	golang.org/x/sys v0.48.0 // indirect
+-	golang.org/x/term v0.46.0 // indirect
+-	golang.org/x/text v0.42.0 // indirect
++	golang.org/x/sync v0.24.0 // indirect
++	golang.org/x/sys v0.49.0 // indirect
++	golang.org/x/term v0.47.0 // indirect
++	golang.org/x/text v0.43.0 // indirect
+@@ -402,5 +403,5 @@ require (
+-	google.golang.org/api v0.287.1 // indirect
+-	google.golang.org/genproto v0.0.0-20260406210006-6f92a3bedf2d // indirect
 -	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 // indirect
-+	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772
+-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc // indirect
+-	google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af
++	google.golang.org/api v0.290.0 // indirect
++	google.golang.org/genproto v0.0.0-20260622175928-b703f567277d // indirect
++	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d
++	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
++	google.golang.org/protobuf v1.36.12
+@@ -423,0 +425,2 @@ replace k8s.io/pod-security-admission => github.com/kyverno/pod-security-admissi
++
++replace github.com/chrismellard/docker-credential-acr-env => ./third_party/docker-credential-acr-env
+diff --git a/go.sum b/go.sum
+index e217731..322fae6 100644
+--- a/go.sum
++++ b/go.sum
+@@ -16,2 +16,2 @@ cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCB
+-cloud.google.com/go/iam v1.11.0 h1:KieQ9Pb+LLPak1O3Rv3GgCxhnmkYf7Xyh0P5HfF1jFM=
+-cloud.google.com/go/iam v1.11.0/go.mod h1:KP+nKGugNJW4LcLx1uEZcq1ok5sQHFaQehQNl4QDgV4=
++cloud.google.com/go/iam v1.13.0 h1:ufT3FPT5rFFXu6UtLkNoxaOaV5EuA1dsSkmemCSTo6U=
++cloud.google.com/go/iam v1.13.0/go.mod h1:gHXdDEiPDvqd1q1KwBDGQlgZY/BwY760zU2LhOZS5w0=
+@@ -99,2 +99,2 @@ github.com/NYTimes/gziphandler v1.1.1/go.mod h1:n/CVRwUEOgIxrgPvAQhUUr9oeUtvrhMo
+-github.com/ProtonMail/go-crypto v1.3.0 h1:ILq8+Sf5If5DCpHQp4PbZdS1J7HDFRXz/+xKBiRGFrw=
+-github.com/ProtonMail/go-crypto v1.3.0/go.mod h1:9whxjD8Rbs29b4XWbB8irEcE8KHMqaR2e7GWU1R+/PE=
++github.com/ProtonMail/go-crypto v1.4.1 h1:9RfcZHqEQUvP8RzecWEUafnZVtEvrBVL9BiF67IQOfM=
++github.com/ProtonMail/go-crypto v1.4.1/go.mod h1:e1OaTyu5SYVrO9gKOEhTc+5UcXtTUa+P3uLudwcgPqo=
+@@ -195,2 +195,2 @@ github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.31/go.mod h1:w
+-github.com/aws/aws-sdk-go-v2/service/kms v1.54.0 h1:XOfYhrscVxDr0fLbgA4lE5UbQh5w9t+eva8bZu4q6wY=
+-github.com/aws/aws-sdk-go-v2/service/kms v1.54.0/go.mod h1:0RXNc6Yf3AvSMldGD6Lcch96Ojlw2TtGnHsqfD/L4u8=
++github.com/aws/aws-sdk-go-v2/service/kms v1.55.0 h1:uB8ymkVosyourmGXCZHyWhJ4wuKA4xq3ii2dVMPtBZY=
++github.com/aws/aws-sdk-go-v2/service/kms v1.55.0/go.mod h1:rK4RITSY/qJw3qVJ7p19fceOWuvrisqqOChFkX05n5I=
+@@ -211,2 +210,0 @@ github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6r
+-github.com/blang/semver v3.5.1+incompatible h1:cQNTCjp13qL8KC3Nbxr/y2Bqb63oX6wdnnjpJbkM4JQ=
+-github.com/blang/semver v3.5.1+incompatible/go.mod h1:kRBLl5iJ+tD4TcOOxsy/0fnwebNt5EWlYSAyrTnjyyk=
+@@ -234,2 +231,0 @@ github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XL
+-github.com/chrismellard/docker-credential-acr-env v0.0.0-20230304212654-82a0ddb27589 h1:krfRl01rzPzxSxyLyrChD+U+MzsBXbm0OwYYB67uF+4=
+-github.com/chrismellard/docker-credential-acr-env v0.0.0-20230304212654-82a0ddb27589/go.mod h1:OuDyvmLnMCwa2ep4Jkm6nyA0ocJuZlGyk2gGseVzERM=
+@@ -351,2 +347,2 @@ github.com/go-asn1-ber/asn1-ber v1.5.7/go.mod h1:hEBeB/ic+5LoWskz+yKT7vGhhPYkPro
+-github.com/go-chi/chi/v5 v5.3.0 h1:halUjDxhshgXHMrao5bB8eNBXo/rnzwr8m5m36glehM=
+-github.com/go-chi/chi/v5 v5.3.0/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
++github.com/go-chi/chi/v5 v5.3.1 h1:3j4HZLGZQ3JpMCrPJF/Jl3mYJfWLKBfNJ6quurUGCf8=
++github.com/go-chi/chi/v5 v5.3.1/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
+@@ -376,2 +372,2 @@ github.com/go-logr/zerologr v1.2.3/go.mod h1:BxwGo7y5zgSHYR1BjbnHPyF/5ZjVKfKxAZA
+-github.com/go-openapi/analysis v0.25.5 h1:xPYEvTb90o1y0epuiOPAoG4QqahjP3cdp5xNlHeKJRI=
+-github.com/go-openapi/analysis v0.25.5/go.mod h1:d3UGtQC5uq5Kqqqis2VH09Km/v3vwsWrYkbp4gdm+Rc=
++github.com/go-openapi/analysis v0.26.0 h1:1xECln1iMMmQnTjgcknC1vi1hA4KISt6IHpSwnqcuwI=
++github.com/go-openapi/analysis v0.26.0/go.mod h1:40gERFi/2dyXA1FaqRRLxkv1IlC6X+GPDNd1xrYAjZE=
+@@ -384,2 +380,2 @@ github.com/go-openapi/jsonreference v1.0.0/go.mod h1:jtwdyGbJk0Xhe5Y+rwtglQP6Sb1
+-github.com/go-openapi/loads v0.25.0 h1:74Bc2snfaVlsHzwdQj/3gsA9XJz3daXTJVs+4ZaK7jI=
+-github.com/go-openapi/loads v0.25.0/go.mod h1:JFBw4SIB9+PTIFHDfcXuSSy5h6aWzjtUCrPYyx3qWU8=
++github.com/go-openapi/loads v0.25.1 h1:toKQdIDLxlqfKLLGUUmUsiTd5/X0Chzvde9EGYQP/Ac=
++github.com/go-openapi/loads v0.25.1/go.mod h1:33Hen4tsKXHL45TyYojvfD5fZUFN4O1y4r/XhsRW2zc=
+@@ -398,4 +394,4 @@ github.com/go-openapi/swag/cmdutils v0.27.0/go.mod h1:Sm1MVFMkF6guJJ+pQqHnQA3N0j
+-github.com/go-openapi/swag/conv v0.27.3 h1:iqJFmGEjmX3AY0lSszABFqRVqOSt99XS0LzNIMJYuhU=
+-github.com/go-openapi/swag/conv v0.27.3/go.mod h1:nPRmN6jgNme99hpf+nM0auDZGALWIqlwhisKPK/bQhQ=
+-github.com/go-openapi/swag/fileutils v0.27.3 h1:3UVoZ2RLaIs1lt+2jcKzL8RM3Yk0rmsDE9FLA/HGxFE=
+-github.com/go-openapi/swag/fileutils v0.27.3/go.mod h1:VvJFZLTZS0AI854gEQz5tk7dBESdLjiNUMSZ/th2ry8=
++github.com/go-openapi/swag/conv v0.28.0 h1:GtqqbyFe7vR5Y7ehxG9W6/OvrSFdf1OLeTGp40TqxH8=
++github.com/go-openapi/swag/conv v0.28.0/go.mod h1:mbUE+mzctnhxi864m0Q07SpN8OowD9JhxmxuYvZZD/k=
++github.com/go-openapi/swag/fileutils v0.28.0 h1:Z04XWQD7R8Eq+7GnOrjovBxPPmZzsS4gt2H2GPGIViU=
++github.com/go-openapi/swag/fileutils v0.28.0/go.mod h1:VvJFZLTZS0AI854gEQz5tk7dBESdLjiNUMSZ/th2ry8=
+@@ -404,8 +400,8 @@ github.com/go-openapi/swag/jsonname v0.26.1/go.mod h1:OvdW6BoWoj33pTfi7x9vFrgmT+
+-github.com/go-openapi/swag/jsonutils v0.27.3 h1:1DEz+O82frtSMBcos/7XIn1GnpNTbsD4Bru4Dc/uhRc=
+-github.com/go-openapi/swag/jsonutils v0.27.3/go.mod h1:qiDCoQvzkMxrV3G8FLEdIU5L+EFYc0zcDOHWT3Yofvo=
+-github.com/go-openapi/swag/jsonutils/fixtures_test v0.27.3 h1:h/eT9kmGCDdFLJF29lOhzLtF0FmP1AX2MhLJWVebsb8=
+-github.com/go-openapi/swag/jsonutils/fixtures_test v0.27.3/go.mod h1:mofwUWx70wvskwESqRJ//k/9kURmCgyJl5m5Ppoh5kY=
+-github.com/go-openapi/swag/loading v0.27.3 h1:L9nQkEgzU7QgFQL+pLEMfGUKxeM4pWwGwbET9Z3weW0=
+-github.com/go-openapi/swag/loading v0.27.3/go.mod h1:rJ0NeaKsF4CVPnMGjPQl7JlSHzvD0bc2DKXLss1hiuE=
+-github.com/go-openapi/swag/mangling v0.27.3 h1:gRzzD1PAUoLTtGMgI3KpBmCSOlTuLTFWnviLxLcTnyg=
+-github.com/go-openapi/swag/mangling v0.27.3/go.mod h1:jtBE2+V+3pILxOR7Vgce+Cwp6A2PgZbvVqfNntbVs0w=
++github.com/go-openapi/swag/jsonutils v0.28.0 h1:YIch6FwO7RXzeAnbO8Tu7dWBZeUEH+4nA0HXltVTnv4=
++github.com/go-openapi/swag/jsonutils v0.28.0/go.mod h1:CYM3WlTUcagR2ZoHdz54di/cbBqt82tuxuXgAjxw+mg=
++github.com/go-openapi/swag/jsonutils/fixtures_test v0.28.0 h1:qV+VVUAx5Oro8WjVWpZeql7YReTKhT4smR4zhcOQZr0=
++github.com/go-openapi/swag/jsonutils/fixtures_test v0.28.0/go.mod h1:mofwUWx70wvskwESqRJ//k/9kURmCgyJl5m5Ppoh5kY=
++github.com/go-openapi/swag/loading v0.28.0 h1:td8QZdZC9MIYGGSnSPKShKiK22I2tU5UQvuUhIBPRLU=
++github.com/go-openapi/swag/loading v0.28.0/go.mod h1:rXB0QiQX5mMveXEA7ouM4KiiM9jVJe4K6BVbwhD1M4k=
++github.com/go-openapi/swag/mangling v0.28.0 h1:pH8eyeNO9SLYsTMWJrurnNfKmDa28XrlA+HePVD53VM=
++github.com/go-openapi/swag/mangling v0.28.0/go.mod h1:jtBE2+V+3pILxOR7Vgce+Cwp6A2PgZbvVqfNntbVs0w=
+@@ -414,8 +410,8 @@ github.com/go-openapi/swag/netutils v0.27.0/go.mod h1:J+WYyFMLtvtCGqa6jLv+YNUmIK
+-github.com/go-openapi/swag/pools v0.27.3 h1:gXjImP3F6/56wRRcFgEPld084Y6u2gs21ikPBt8NKBk=
+-github.com/go-openapi/swag/pools v0.27.3/go.mod h1:kVQefhSK5RWuRe7BXsL8htgBPAMpN7HDGpGEknqugeE=
+-github.com/go-openapi/swag/stringutils v0.27.3 h1:Ru28hnbAvN5wycALQYy8IobHvASq+FUFMlp1QzLM0JI=
+-github.com/go-openapi/swag/stringutils v0.27.3/go.mod h1:lzRN95CxXmA03XcDWHLOb6nOMcxCqR5rGY0lOgsfRoM=
+-github.com/go-openapi/swag/typeutils v0.27.3 h1:l6SSrx5eR5/WVwrGNzN6bQ9WqL04mrxNBl9YgQ3rcJ4=
+-github.com/go-openapi/swag/typeutils v0.27.3/go.mod h1:Srm0xFNRZ1Y+vCxJclo5qzx8aj+1pAKda/YfFPrG0dQ=
+-github.com/go-openapi/swag/yamlutils v0.27.3 h1:cRFCAoYtslYn9L9T0xWryHy1t7c1MACC+DMj3CLvwvs=
+-github.com/go-openapi/swag/yamlutils v0.27.3/go.mod h1:6JYBGj8sw/NawMllyZY+cTA8Mzk2etS3ZBASdcyPsiU=
++github.com/go-openapi/swag/pools v0.28.0 h1:HPMZWSAfce3rdVTFcjFiCIBtDg9h4x2QlRrHipwhxeU=
++github.com/go-openapi/swag/pools v0.28.0/go.mod h1:kVQefhSK5RWuRe7BXsL8htgBPAMpN7HDGpGEknqugeE=
++github.com/go-openapi/swag/stringutils v0.28.0 h1:ixsc9iYgDPubHL/8nSkbnryEHpD2VRlBMLKpQyPXcDU=
++github.com/go-openapi/swag/stringutils v0.28.0/go.mod h1:lzRN95CxXmA03XcDWHLOb6nOMcxCqR5rGY0lOgsfRoM=
++github.com/go-openapi/swag/typeutils v0.28.0 h1:nRBKSBXjDgf01VDPB3fWeD9nQuhCOVeIYAkUx2tbkyY=
++github.com/go-openapi/swag/typeutils v0.28.0/go.mod h1:Srm0xFNRZ1Y+vCxJclo5qzx8aj+1pAKda/YfFPrG0dQ=
++github.com/go-openapi/swag/yamlutils v0.28.0 h1:TV3JXH6DS46KUroDtMLAYHGkdWf5VDq3wVWFirmzROY=
++github.com/go-openapi/swag/yamlutils v0.28.0/go.mod h1:x0q/yndZHEgk9Rx3DyDqzFUmHy55KTvIZldvF2dTJXs=
+@@ -426,2 +422,2 @@ github.com/go-openapi/testify/v2 v2.6.0/go.mod h1:SgsVHtfooshd0tublTtJ50FPKhujf4
+-github.com/go-openapi/validate v0.26.1 h1:pZSbvtRO8G2R2FpWTYRn3w8LrsNwbtaVhP2dWiBa0Us=
+-github.com/go-openapi/validate v0.26.1/go.mod h1:B8UMgXiQiwwQWIbmuROlwJZDPGlikPuh7iHV1vPX9Oo=
++github.com/go-openapi/validate v0.26.3 h1:OkfZgLvLDnGP2hrRGD+42WBiPWWkoHomTJ+IVI+KaDc=
++github.com/go-openapi/validate v0.26.3/go.mod h1:7DOOa4raU6NRe7A8VQSKbm3VcuUIioREYHFt+er9Sk8=
+@@ -522,2 +518,2 @@ github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+
+-github.com/googleapis/enterprise-certificate-proxy v0.3.17 h1:73NfMHdiqo9JFU9+7a5ExpVa10/R29pXfZIaW559nrg=
+-github.com/googleapis/enterprise-certificate-proxy v0.3.17/go.mod h1:rSEsBUemEBZEexP2y6jPp16LUmUbjmSbcPMQizR0o4k=
++github.com/googleapis/enterprise-certificate-proxy v0.3.18 h1:hvVi34VucdrV1IIsiWuqYM8kutw/92MxNEFxCJZEh0k=
++github.com/googleapis/enterprise-certificate-proxy v0.3.18/go.mod h1:rSEsBUemEBZEexP2y6jPp16LUmUbjmSbcPMQizR0o4k=
+@@ -535,2 +530,0 @@ github.com/graph-gophers/graphql-go v1.9.0/go.mod h1:23olKZ7duEvHlF/2ELEoSZaY1aN
+-github.com/grpc-ecosystem/go-grpc-middleware v1.4.0 h1:UH//fgunKIs4JdUbpDl1VZCDaL56wXCB/5+wF6uHfaI=
+-github.com/grpc-ecosystem/go-grpc-middleware v1.4.0/go.mod h1:g5qyo/la0ALbONm6Vbp88Yd8NsDy6rZz+RcrMPxvld8=
+@@ -647,2 +641,2 @@ github.com/kyverno/pod-security-admission v0.0.0-20261015135348-40bb0fb141a9/go.
+-github.com/kyverno/sdk v0.0.0-20261008171927-5a61cbc9e077 h1:XvVLhi6JhY5xaDCharBepFHTXnHs+NGYbOKwM3oe12k=
+-github.com/kyverno/sdk v0.0.0-20261008171927-5a61cbc9e077/go.mod h1:4YUdsQjxroCGInE5dvnlaPcZ0nV+5MQruyO+7PeTruI=
++github.com/kyverno/sdk v0.0.0-20261012132606-c17110bb60ee h1:f19tVRVPHlSResCW8Z+ya4+JNjiq0Y4HPQx85zI3QfU=
++github.com/kyverno/sdk v0.0.0-20261012132606-c17110bb60ee/go.mod h1:4YUdsQjxroCGInE5dvnlaPcZ0nV+5MQruyO+7PeTruI=
+@@ -809,4 +803,2 @@ github.com/sagikazarmark/locafero v0.11.0/go.mod h1:nVIGvgyzw595SUSUE6tvCp3YYTeH
+-github.com/sassoftware/relic v7.2.1+incompatible h1:Pwyh1F3I0r4clFJXkSI8bOyJINGqpgjJU3DYAZeI05A=
+-github.com/sassoftware/relic v7.2.1+incompatible/go.mod h1:CWfAxv73/iLZ17rbyhIEq3K9hs5w6FpNMdUT//qR+zk=
+-github.com/sassoftware/relic/v7 v7.6.2 h1:rS44Lbv9G9eXsukknS4mSjIAuuX+lMq/FnStgmZlUv4=
+-github.com/sassoftware/relic/v7 v7.6.2/go.mod h1:kjmP0IBVkJZ6gXeAu35/KCEfca//+PKM6vTAsyDPY+k=
++github.com/sassoftware/relic/v8 v8.2.0 h1:9/L4S4I6an/JsPNhmcTpqfiOIsLb/iJaePZD1xR+ulE=
++github.com/sassoftware/relic/v8 v8.2.0/go.mod h1:pZy7hLT9WCOKPonV8G/fplvtBLOZd6/kWtKqeHR6nKc=
+@@ -831,2 +823,2 @@ github.com/sigstore/protobuf-specs v0.5.1/go.mod h1:DRBzpFuE+LnvQMN10/dU6nBeKwVL
+-github.com/sigstore/rekor v1.5.3 h1:0Tyolw3zreRgm7PUW8dccFLXGBThi08278jI8EXNSr4=
+-github.com/sigstore/rekor v1.5.3/go.mod h1:h3GK5dDqCcWJJZUJwdpKGSSmEV2GEjPUjJy3WTjBwzA=
++github.com/sigstore/rekor v1.5.4 h1:A9zITTrkRwO+8lfq7L/gBR7rDHHcBQJRI+a0JQo4xDM=
++github.com/sigstore/rekor v1.5.4/go.mod h1:0bcUHhZPlG+RVW1dI/7sdBp0MiVWVzk9h0tgOH/o0Yc=
+@@ -913,2 +905,2 @@ github.com/tink-crypto/tink-go-awskms/v3 v3.0.0/go.mod h1:+7MXsShLzVbSQ6dI0Pe4Ju
+-github.com/tink-crypto/tink-go-gcpkms/v2 v2.3.0 h1:3s6YMgMOBZRU8qG6ybpKSF2Sau+y3sMvxR911M59SwA=
+-github.com/tink-crypto/tink-go-gcpkms/v2 v2.3.0/go.mod h1:X8UNvbQu2wanAGa8ixRUU/DWt1V2hUBfvPGy6s9nE2s=
++github.com/tink-crypto/tink-go-gcpkms/v2 v2.4.0 h1:xpI5pnEQ0erFCS3JmcEl7Blluo8ZieEPNOURqy9uD70=
++github.com/tink-crypto/tink-go-gcpkms/v2 v2.4.0/go.mod h1:wDDAhjfd1t4TjeJCSsmFK7CARPUs/ITi16ZZ8kmAaFQ=
+@@ -993,24 +985,24 @@ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0/go.mod h1:
+-go.opentelemetry.io/otel v1.44.0 h1:JjwHmHpA4iZ3wBxluu2fbbE7j4kqlE8jXyAyPXH7HqU=
+-go.opentelemetry.io/otel v1.44.0/go.mod h1:BMgjTHL9WPRlRjL2oZCBTL4whCGtXch2H4BhOPIAyYc=
+-go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0 h1:SUplec5dp06reu1zaXmOXdvqH398taqrDXqUl99jxSc=
+-go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0/go.mod h1:ho2g4N+ane+swq5I/VBkKWnRDY4kUINH3FuqyZqX/Ug=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0 h1:4YsVu3B8+3qtWYYrsUYgn0OG78pN0rnNPRGX4SbokQI=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0/go.mod h1:+wnlSn0mD1ADVMe3v9Z/WIaiz6q6gL2J/ejaAmdmv80=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0 h1:qazEJlUOQzhCpzQpFETGby7EdqjI1wsd0W+6Gg1SCTU=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0/go.mod h1:fOD2Yefuxixkx3ahVNf0O/PERb6r4OlbxfATVnYvzCo=
+-go.opentelemetry.io/otel/exporters/prometheus v0.66.0 h1:vkrK8PAznv2NKt2r+kdu252ccGzkEqLc2aSXbQIALYQ=
+-go.opentelemetry.io/otel/exporters/prometheus v0.66.0/go.mod h1:V/UB6D3vMF/UBOL5igAsAYnk1nG/bzYYTzvsB16cy7o=
+-go.opentelemetry.io/otel/metric v1.44.0 h1:1w0gILTcHdr3YI+ixLyjemwrVnsMURbTZFrSYCdDdmc=
+-go.opentelemetry.io/otel/metric v1.44.0/go.mod h1:8O7hanEPBNgEMmybD3s2VBKcgWOCsA6tzHBPODAiquo=
+-go.opentelemetry.io/otel/metric/x v0.66.0 h1:YkCrx1zLOChi9ZcZ6euupOcsgzbVlec7D/xoEU1+cTA=
+-go.opentelemetry.io/otel/metric/x v0.66.0/go.mod h1:d1+BDj9t96do0/1LoU1ayfCv79ZgNE41qbhBvnMOBZk=
+-go.opentelemetry.io/otel/sdk v1.44.0 h1:nHYwb9lK+fJPU/dnT6s7W7Z8itMWyqrnVfbheVYrZ58=
+-go.opentelemetry.io/otel/sdk v1.44.0/go.mod h1:Osuydd3Se74nqjAKxid74N5eC+jfEqfTegHRnq58oK0=
+-go.opentelemetry.io/otel/sdk/metric v1.44.0 h1:3LlKgI+VjbVsjNRFZJZAJ30WjXC5VkNRks6si09iEfI=
+-go.opentelemetry.io/otel/sdk/metric v1.44.0/go.mod h1:5B5pMARnXxKhltooO4xUuCBorl65a4EpnTalObqOigA=
+-go.opentelemetry.io/otel/trace v1.44.0 h1:jxF5CsGYCe74MCRx2X4g7WsY/VBKRqqpNvXlX/6gtIk=
+-go.opentelemetry.io/otel/trace v1.44.0/go.mod h1:oLl1jrMQAVo6v3GAggN+1VH9VIz9iUSvW53sW1Q8PIE=
+-go.opentelemetry.io/proto/otlp v1.10.0 h1:IQRWgT5srOCYfiWnpqUYz9CVmbO8bFmKcwYxpuCSL2g=
+-go.opentelemetry.io/proto/otlp v1.10.0/go.mod h1:/CV4QoCR/S9yaPj8utp3lvQPoqMtxXdzn7ozvvozVqk=
+-go.step.sm/crypto v0.81.0 h1:e+ouzpNt3Xm4dp7HGXhgYB5y4iFik3vh3phHKWmvugU=
+-go.step.sm/crypto v0.81.0/go.mod h1:fsTizqQeASjTXnbv9O00XtRlIuXRkCdoRiJNyXGQujc=
++go.opentelemetry.io/otel v1.45.0 h1:pdrWmLHofpubmArBv1LgFSv1Z0Ie/ppdZzu+kUN5EeU=
++go.opentelemetry.io/otel v1.45.0/go.mod h1:XZxIqPapzEYnhNSScF5DIqXhm/rYi0FzCe2XddAwZfQ=
++go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0 h1:klTViGcsvLCd1xN3rZzfZ12NslC/OimbmR+k+A006RI=
++go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0/go.mod h1:jRsK04CWmXuY8A0O+wMpSf+t90RHZ53o5Qmxn2PQPfk=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 h1:QRefszxJmfPdjXUUm3j6iDzY03mTPXMjqErFqQ67vUg=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0/go.mod h1:Tiz03lTBVBrm7eWZBOidzEaYaJa8tjwGUGv6d8mlTyk=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 h1:fG5MCxGz8+2VtrN/WgqSpJFctVz24gpxj8CxkKmc8Ww=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0/go.mod h1:BmAYTn+3ysbRe+IU2msxmf5Rx3g6DHvex+tWI3LdhYI=
++go.opentelemetry.io/otel/exporters/prometheus v0.67.0 h1:7IefDa35e6V3NoiqIeLDMDxMFyZDk5qcoC0Ax4cC16E=
++go.opentelemetry.io/otel/exporters/prometheus v0.67.0/go.mod h1:nsPI1awTg5Vmg1YrommL2mVarVGlqc4yXOoKAkPRD0c=
++go.opentelemetry.io/otel/metric v1.45.0 h1:7Eg1uH7CJ5cXv9is6tnBe1FI6rj1nwUdbFypRm3br/M=
++go.opentelemetry.io/otel/metric v1.45.0/go.mod h1:HAPbm1nd3p1PmFH7v2dR+6BjXxw+Lq4a2+pndMAm08s=
++go.opentelemetry.io/otel/metric/x v0.67.0 h1:PcicCNZFkZ4bXfSooXdo3WN7RBOVOtjVdo1wD358Uns=
++go.opentelemetry.io/otel/metric/x v0.67.0/go.mod h1:FBjCWZe6wgcqxcMtjdGiClDKXb2YxxXii0CXftE4QtI=
++go.opentelemetry.io/otel/sdk v1.45.0 h1:4VVSMgQ83dUgW2aoX5f6JgLvHwIvzcuLnF9lUdCSpCw=
++go.opentelemetry.io/otel/sdk v1.45.0/go.mod h1:Sr40LgXV7DsKMMJMKOhUWOgMWTfAaqvm2kF0g7ilwuA=
++go.opentelemetry.io/otel/sdk/metric v1.45.0 h1:oVFszMfyj1Am6s24Vtc7wBb8BKLcwepJjNEYILuiE3o=
++go.opentelemetry.io/otel/sdk/metric v1.45.0/go.mod h1:vUWUxDZvu1WVRj8JA8S0AdhsPrZoDpA2DdZauIh4mDA=
++go.opentelemetry.io/otel/trace v1.45.0 h1:l/mP6Uv7oNO7/TblbhpbgMidxhq1uO/rPsikOyVhxag=
++go.opentelemetry.io/otel/trace v1.45.0/go.mod h1:qoJJA2xNMnxRrdISU/kLtfUH2wNeQbiv+jhs/CxI8bc=
++go.opentelemetry.io/proto/otlp v1.11.0 h1:5rrYs0Ykyj50sdU/JU0x8etU+LubXWb+gED6TbEdMIk=
++go.opentelemetry.io/proto/otlp v1.11.0/go.mod h1:SmVizdCOAm3XBtG1g1NnOdhW6jtddT72hLMhv8VwA8E=
++go.step.sm/crypto v0.87.0 h1:+u0pDz1OV9M/SswA6KtcQ3GSrYMMelbL//0W/ceJVYI=
++go.step.sm/crypto v0.87.0/go.mod h1:gBr1mpMiKs5804/Yt03uAoOBiw3DFxARZnGUKEUO82M=
+@@ -1027 +1018,0 @@ go.yaml.in/yaml/v2 v2.4.4/go.mod h1:gMZqIpDtDqOfM0uNfy0SkpRhvUryYH0Z6wdMYcacYXQ=
+-go.yaml.in/yaml/v3 v3.0.4 h1:tfq32ie2Jv2UxXFdLJdh3jXuOzWiL1fo0bu/FbuKpbc=
+@@ -1028,0 +1020,2 @@ go.yaml.in/yaml/v3 v3.0.4/go.mod h1:DhzuOOF2ATzADvBadXxruRBLzYTpT36CKvDb3+aBEFg=
++go.yaml.in/yaml/v3 v3.0.5 h1:N6y/pJk8buWs9NY5ERU2HSMfm+IuD/OtfdAnq6kESPw=
++go.yaml.in/yaml/v3 v3.0.5/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
+@@ -1045,2 +1038,2 @@ golang.org/x/crypto v0.31.0/go.mod h1:kDsLvtWBEx7MV9tJOj9bnXsPbxwJQ6csT/x4KIN4Ss
+-golang.org/x/crypto v0.57.0 h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=
+-golang.org/x/crypto v0.57.0/go.mod h1:Fdz0i5U6CoizGwLda9DttjSk6qlZo25zYNtR+ycvuZA=
++golang.org/x/crypto v0.58.0 h1:COkYLr4k7nDI4r6QtMML2AfzeIswWHAJthLS6K/M/54=
++golang.org/x/crypto v0.58.0/go.mod h1:Xh+kl5A+M0gMiWDytH2Hhr5Z7WbNCpv/eB/EFgfSk+w=
+@@ -1091,2 +1084,2 @@ golang.org/x/net v0.33.0/go.mod h1:HXLR5J+9DxmrqMwG9qjGCxZ+zKXxBru04zlTvWlWuN4=
+-golang.org/x/net v0.60.0 h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=
+-golang.org/x/net v0.60.0/go.mod h1:2DA/G1UfVbCpQPeWTmMPGY7Cs2PkBkwu743bVX5PIVg=
++golang.org/x/net v0.62.0 h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=
++golang.org/x/net v0.62.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
+@@ -1109,2 +1102,2 @@ golang.org/x/sync v0.10.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
+-golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=
+-golang.org/x/sync v0.23.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
++golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
++golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
+@@ -1147,2 +1140,2 @@ golang.org/x/sys v0.28.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+-golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+-golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
++golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
++golang.org/x/sys v0.49.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
+@@ -1160,2 +1153,2 @@ golang.org/x/term v0.27.0/go.mod h1:iMsnZpn0cago0GOrHO2+Y7u7JPn5AylBrcoWkElMTSM=
+-golang.org/x/term v0.46.0 h1:3+OXuTbaKDgwk8jTi3aSLHRlmWqHEUDUtxnbFigO4YE=
+-golang.org/x/term v0.46.0/go.mod h1:+K02xbkittuwc0Am4abfA3Fc+XRGXkvBXNO88NCXPoc=
++golang.org/x/term v0.47.0 h1:cpyOwQkr2Nzxe2p6KnrTG7Ei2wtzjsuSjhpXXepZ/BM=
++golang.org/x/term v0.47.0/go.mod h1:efAfAuG6RKABvg1ArGebRkvX6LXul14SM67o2e4mUCY=
+@@ -1173,2 +1166,2 @@ golang.org/x/text v0.21.0/go.mod h1:4IBbMaMmOPCJ8SecivzSH54+73PCFmPWxNTLm+vZkEQ=
+-golang.org/x/text v0.42.0 h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=
+-golang.org/x/text v0.42.0/go.mod h1:ojzP1Z+2QtioaF8DTtO8K5q7JWVVYwZKenzujK0Zd0E=
++golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
++golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
+@@ -1193,2 +1186,2 @@ golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d/go.mod h1:aiJjzUbINMkxb
+-golang.org/x/tools v0.49.0 h1:3NI7VXzL9+1WZD52Dx2ttoPwD5DWrFGpl9mFZDlmisI=
+-golang.org/x/tools v0.49.0/go.mod h1:SJNXV9DBKT0UbdttsQjbfJlAE/q+y36++zo3uL3N0Oo=
++golang.org/x/tools v0.51.0 h1:k4Xc/1Om9jwkBJBo4NVLMSARBoWtK10mx+W5BnXCeAI=
++golang.org/x/tools v0.51.0/go.mod h1:9eEncMayCV6zRMGhR5eZEC2iBx98qWcF1HZ9Z7wJOoA=
+@@ -1204,2 +1197,2 @@ gonum.org/v1/gonum v0.17.0/go.mod h1:El3tOrEuMpv2UdMrbNlKEh9vd86bmQ6vqIcDwxEOc1E
+-google.golang.org/api v0.287.1 h1:LiyJx32VU3cwQfLchn/513qKhc25hq0pEANYJoWNnnI=
+-google.golang.org/api v0.287.1/go.mod h1:lM2kYRzYUCBY91P9h6VF1PYmvhxii3O5hji37qRvIcY=
++google.golang.org/api v0.290.0 h1:eMw0Xo+IfbbMlKmW7aHvpyQRv9RCXuWx/vs8AD+0x9A=
++google.golang.org/api v0.290.0/go.mod h1:weJZ3lldHFYI0DBFNKpJelUDNnusTt5YaOEgxvt8ci8=
+@@ -1210,6 +1203,6 @@ google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55/go.mod h1:DMBHOl98
+-google.golang.org/genproto v0.0.0-20260406210006-6f92a3bedf2d h1:N1Ec54vZnIPd7MnxRiYLW+oY4fDR4BOS/LrssdD9+ek=
+-google.golang.org/genproto v0.0.0-20260406210006-6f92a3bedf2d/go.mod h1:c2hJ1grtnH0xUiEKGDGkjGNTJ1Hy2LrblyKOHF0sqRM=
+-google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 h1:4namukbyF7JY83aWHQwi9J5ugNTnDReLJ9ZcpqOpRB4=
+-google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772/go.mod h1:1brfde68Npq6+WA75c1EHWPijZEG1kMus61ygPZfn4A=
+-google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc h1:3TtNq/QbJNrSY1nVdjcikfBw6ujnaNbdrd88wNr1OW4=
+-google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc/go.mod h1:4Hqkh8ycfw05ld/3BWL7rJOSfebL2Q+DVDeRgYgxUU8=
++google.golang.org/genproto v0.0.0-20260622175928-b703f567277d h1:CP5omUq8AJTiWMrPKM1WRLJ7zZeXd9OPcQD3TbBNAyY=
++google.golang.org/genproto v0.0.0-20260622175928-b703f567277d/go.mod h1:DrwuGJgFSEVNpv3S5Q5VxhRTvdnjauw9GtvwVOEARfA=
++google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d h1:FarXi840EJWSHYTN3ERkADbPWjl307+FGrA22KAVjjc=
++google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d/go.mod h1:K/+WGbmBY7aNW1HDw1fJnKYo10i0DkAX6pows00dLig=
++google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d h1:IL4hdHzcUv2l/gcg98/Rj3FbtE6axwqslOW8SW0C+S0=
++google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d/go.mod h1:4Hqkh8ycfw05ld/3BWL7rJOSfebL2Q+DVDeRgYgxUU8=
+@@ -1230,2 +1223,2 @@ google.golang.org/protobuf v1.26.0/go.mod h1:9q0QmTI4eRPtz6boOQmLYwt+qCgq0jsYwAQ
+-google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af h1:+5/Sw3GsDNlEmu7TfklWKPdQ0Ykja5VEmq2i817+jbI=
+-google.golang.org/protobuf v1.36.12-0.20260120151049-f2248ac996af/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
++google.golang.org/protobuf v1.36.12 h1:pJOKDDOyeXErUroCihFAd5LQuwXBSpVnKGrj5o/fwxc=
++google.golang.org/protobuf v1.36.12/go.mod h1:HTf+CrKn2C3g5S8VImy6tdcUvCska2kB7j23XfzDpco=
+@@ -1315,2 +1308,2 @@ sigs.k8s.io/yaml v1.6.0/go.mod h1:796bPqUfzR/0jLAl6XjHl3Ck7MiyVv8dbTdyT3/pMf4=
+-software.sslmate.com/src/go-pkcs12 v0.4.0 h1:H2g08FrTvSFKUj+D309j1DPfk5APnIdAQAB8aEykJ5k=
+-software.sslmate.com/src/go-pkcs12 v0.4.0/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=
++software.sslmate.com/src/go-pkcs12 v0.5.0 h1:EC6R394xgENTpZ4RltKydeDUjtlM5drOYIG9c6TVj2M=
++software.sslmate.com/src/go-pkcs12 v0.5.0/go.mod h1:Qiz0EyvDRJjjxGyUQa2cCNZn/wMyzrRJ/qcDXOQazLI=
 diff --git a/pkg/controllers/report/resource/controller.go b/pkg/controllers/report/resource/controller.go
 index b692ecb..1a90bf1 100644
 --- a/pkg/controllers/report/resource/controller.go
@@ -742,4 +1144,670 @@ index 0000000..0c1b3b1
 +	_, _, _, present := c.GetResourceHash("sample-uid")
 +	require.True(t, present, "resolved resources in the same policy must still be watched")
 +	require.Len(t, c.dynamicWatchers, 1)
++}
+diff --git a/third_party/docker-credential-acr-env/COMPATIBILITY.md b/third_party/docker-credential-acr-env/COMPATIBILITY.md
+new file mode 100644
+index 0000000..054f447
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/COMPATIBILITY.md
+@@ -0,0 +1,19 @@
++# Azure credential helper compatibility backport
++
++Library sources and license are copied from the immutable public module
++`github.com/chrismellard/docker-credential-acr-env`
++`v0.0.0-20230304212654-82a0ddb27589` (commit
++`82a0ddb27589`). The module path is retained for existing Sigstore callers.
++Only the library packages, original module declaration and license are included;
++the standalone command and its release tooling are not used by this controller.
++
++The local change anchors all four Azure registry suffixes to the complete host,
++following the fix in the maintained successor's
++[`v1.0.0` release](https://github.com/osscontainertools/docker-credential-acr/blob/v1.0.0/pkg/credhelper/helper.go).
++That successor requires Go 1.27; this backport retains the released controller's
++Go 1.26 compatibility. Credential acquisition, token exchange, authentication
++and supported registry suffixes are unchanged.
++
++The original host tests and added credential-entry boundary regression run from
++the consumer module during the controller image build. No test uses credentials
++or contacts Azure.
+diff --git a/third_party/docker-credential-acr-env/LICENSE b/third_party/docker-credential-acr-env/LICENSE
+new file mode 100644
+index 0000000..d645695
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/LICENSE
+@@ -0,0 +1,202 @@
++
++                                 Apache License
++                           Version 2.0, January 2004
++                        http://www.apache.org/licenses/
++
++   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
++
++   1. Definitions.
++
++      "License" shall mean the terms and conditions for use, reproduction,
++      and distribution as defined by Sections 1 through 9 of this document.
++
++      "Licensor" shall mean the copyright owner or entity authorized by
++      the copyright owner that is granting the License.
++
++      "Legal Entity" shall mean the union of the acting entity and all
++      other entities that control, are controlled by, or are under common
++      control with that entity. For the purposes of this definition,
++      "control" means (i) the power, direct or indirect, to cause the
++      direction or management of such entity, whether by contract or
++      otherwise, or (ii) ownership of fifty percent (50%) or more of the
++      outstanding shares, or (iii) beneficial ownership of such entity.
++
++      "You" (or "Your") shall mean an individual or Legal Entity
++      exercising permissions granted by this License.
++
++      "Source" form shall mean the preferred form for making modifications,
++      including but not limited to software source code, documentation
++      source, and configuration files.
++
++      "Object" form shall mean any form resulting from mechanical
++      transformation or translation of a Source form, including but
++      not limited to compiled object code, generated documentation,
++      and conversions to other media types.
++
++      "Work" shall mean the work of authorship, whether in Source or
++      Object form, made available under the License, as indicated by a
++      copyright notice that is included in or attached to the work
++      (an example is provided in the Appendix below).
++
++      "Derivative Works" shall mean any work, whether in Source or Object
++      form, that is based on (or derived from) the Work and for which the
++      editorial revisions, annotations, elaborations, or other modifications
++      represent, as a whole, an original work of authorship. For the purposes
++      of this License, Derivative Works shall not include works that remain
++      separable from, or merely link (or bind by name) to the interfaces of,
++      the Work and Derivative Works thereof.
++
++      "Contribution" shall mean any work of authorship, including
++      the original version of the Work and any modifications or additions
++      to that Work or Derivative Works thereof, that is intentionally
++      submitted to Licensor for inclusion in the Work by the copyright owner
++      or by an individual or Legal Entity authorized to submit on behalf of
++      the copyright owner. For the purposes of this definition, "submitted"
++      means any form of electronic, verbal, or written communication sent
++      to the Licensor or its representatives, including but not limited to
++      communication on electronic mailing lists, source code control systems,
++      and issue tracking systems that are managed by, or on behalf of, the
++      Licensor for the purpose of discussing and improving the Work, but
++      excluding communication that is conspicuously marked or otherwise
++      designated in writing by the copyright owner as "Not a Contribution."
++
++      "Contributor" shall mean Licensor and any individual or Legal Entity
++      on behalf of whom a Contribution has been received by Licensor and
++      subsequently incorporated within the Work.
++
++   2. Grant of Copyright License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      copyright license to reproduce, prepare Derivative Works of,
++      publicly display, publicly perform, sublicense, and distribute the
++      Work and such Derivative Works in Source or Object form.
++
++   3. Grant of Patent License. Subject to the terms and conditions of
++      this License, each Contributor hereby grants to You a perpetual,
++      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
++      (except as stated in this section) patent license to make, have made,
++      use, offer to sell, sell, import, and otherwise transfer the Work,
++      where such license applies only to those patent claims licensable
++      by such Contributor that are necessarily infringed by their
++      Contribution(s) alone or by combination of their Contribution(s)
++      with the Work to which such Contribution(s) was submitted. If You
++      institute patent litigation against any entity (including a
++      cross-claim or counterclaim in a lawsuit) alleging that the Work
++      or a Contribution incorporated within the Work constitutes direct
++      or contributory patent infringement, then any patent licenses
++      granted to You under this License for that Work shall terminate
++      as of the date such litigation is filed.
++
++   4. Redistribution. You may reproduce and distribute copies of the
++      Work or Derivative Works thereof in any medium, with or without
++      modifications, and in Source or Object form, provided that You
++      meet the following conditions:
++
++      (a) You must give any other recipients of the Work or
++          Derivative Works a copy of this License; and
++
++      (b) You must cause any modified files to carry prominent notices
++          stating that You changed the files; and
++
++      (c) You must retain, in the Source form of any Derivative Works
++          that You distribute, all copyright, patent, trademark, and
++          attribution notices from the Source form of the Work,
++          excluding those notices that do not pertain to any part of
++          the Derivative Works; and
++
++      (d) If the Work includes a "NOTICE" text file as part of its
++          distribution, then any Derivative Works that You distribute must
++          include a readable copy of the attribution notices contained
++          within such NOTICE file, excluding those notices that do not
++          pertain to any part of the Derivative Works, in at least one
++          of the following places: within a NOTICE text file distributed
++          as part of the Derivative Works; within the Source form or
++          documentation, if provided along with the Derivative Works; or,
++          within a display generated by the Derivative Works, if and
++          wherever such third-party notices normally appear. The contents
++          of the NOTICE file are for informational purposes only and
++          do not modify the License. You may add Your own attribution
++          notices within Derivative Works that You distribute, alongside
++          or as an addendum to the NOTICE text from the Work, provided
++          that such additional attribution notices cannot be construed
++          as modifying the License.
++
++      You may add Your own copyright statement to Your modifications and
++      may provide additional or different license terms and conditions
++      for use, reproduction, or distribution of Your modifications, or
++      for any such Derivative Works as a whole, provided Your use,
++      reproduction, and distribution of the Work otherwise complies with
++      the conditions stated in this License.
++
++   5. Submission of Contributions. Unless You explicitly state otherwise,
++      any Contribution intentionally submitted for inclusion in the Work
++      by You to the Licensor shall be under the terms and conditions of
++      this License, without any additional terms or conditions.
++      Notwithstanding the above, nothing herein shall supersede or modify
++      the terms of any separate license agreement you may have executed
++      with Licensor regarding such Contributions.
++
++   6. Trademarks. This License does not grant permission to use the trade
++      names, trademarks, service marks, or product names of the Licensor,
++      except as required for reasonable and customary use in describing the
++      origin of the Work and reproducing the content of the NOTICE file.
++
++   7. Disclaimer of Warranty. Unless required by applicable law or
++      agreed to in writing, Licensor provides the Work (and each
++      Contributor provides its Contributions) on an "AS IS" BASIS,
++      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
++      implied, including, without limitation, any warranties or conditions
++      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
++      PARTICULAR PURPOSE. You are solely responsible for determining the
++      appropriateness of using or redistributing the Work and assume any
++      risks associated with Your exercise of permissions under this License.
++
++   8. Limitation of Liability. In no event and under no legal theory,
++      whether in tort (including negligence), contract, or otherwise,
++      unless required by applicable law (such as deliberate and grossly
++      negligent acts) or agreed to in writing, shall any Contributor be
++      liable to You for damages, including any direct, indirect, special,
++      incidental, or consequential damages of any character arising as a
++      result of this License or out of the use or inability to use the
++      Work (including but not limited to damages for loss of goodwill,
++      work stoppage, computer failure or malfunction, or any and all
++      other commercial damages or losses), even if such Contributor
++      has been advised of the possibility of such damages.
++
++   9. Accepting Warranty or Additional Liability. While redistributing
++      the Work or Derivative Works thereof, You may choose to offer,
++      and charge a fee for, acceptance of support, warranty, indemnity,
++      or other liability obligations and/or rights consistent with this
++      License. However, in accepting such obligations, You may act only
++      on Your own behalf and on Your sole responsibility, not on behalf
++      of any other Contributor, and only if You agree to indemnify,
++      defend, and hold each Contributor harmless for any liability
++      incurred by, or claims asserted against, such Contributor by reason
++      of your accepting any such warranty or additional liability.
++
++   END OF TERMS AND CONDITIONS
++
++   APPENDIX: How to apply the Apache License to your work.
++
++      To apply the Apache License to your work, attach the following
++      boilerplate notice, with the fields enclosed by brackets "[]"
++      replaced with your own identifying information. (Don't include
++      the brackets!)  The text should be enclosed in the appropriate
++      comment syntax for the file format. We also recommend that a
++      file or class name and description of purpose be included on the
++      same "printed page" as the copyright notice for easier
++      identification within third-party archives.
++
++   Copyright [yyyy] [name of copyright owner]
++
++   Licensed under the Apache License, Version 2.0 (the "License");
++   you may not use this file except in compliance with the License.
++   You may obtain a copy of the License at
++
++       http://www.apache.org/licenses/LICENSE-2.0
++
++   Unless required by applicable law or agreed to in writing, software
++   distributed under the License is distributed on an "AS IS" BASIS,
++   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++   See the License for the specific language governing permissions and
++   limitations under the License.
+diff --git a/third_party/docker-credential-acr-env/go.mod b/third_party/docker-credential-acr-env/go.mod
+new file mode 100644
+index 0000000..dee6abc
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/go.mod
+@@ -0,0 +1,40 @@
++module github.com/chrismellard/docker-credential-acr-env
++
++go 1.18
++
++require (
++	github.com/Azure/azure-sdk-for-go v46.4.0+incompatible
++	github.com/Azure/go-autorest/autorest v0.11.28
++	github.com/Azure/go-autorest/autorest/adal v0.9.21
++	github.com/Azure/go-autorest/autorest/azure/auth v0.5.11
++	github.com/docker/docker-credential-helpers v0.6.3
++	github.com/mitchellh/go-homedir v1.1.0
++	github.com/spf13/cobra v1.2.0
++	github.com/spf13/viper v1.8.1
++)
++
++require (
++	github.com/Azure/go-autorest v14.2.0+incompatible // indirect
++	github.com/Azure/go-autorest/autorest/azure/cli v0.4.5 // indirect
++	github.com/Azure/go-autorest/autorest/date v0.3.0 // indirect
++	github.com/Azure/go-autorest/logger v0.2.1 // indirect
++	github.com/Azure/go-autorest/tracing v0.6.0 // indirect
++	github.com/dimchansky/utfbom v1.1.1 // indirect
++	github.com/fsnotify/fsnotify v1.4.9 // indirect
++	github.com/golang-jwt/jwt/v4 v4.2.0 // indirect
++	github.com/hashicorp/hcl v1.0.0 // indirect
++	github.com/inconshreveable/mousetrap v1.0.0 // indirect
++	github.com/magiconair/properties v1.8.5 // indirect
++	github.com/mitchellh/mapstructure v1.4.1 // indirect
++	github.com/pelletier/go-toml v1.9.3 // indirect
++	github.com/spf13/afero v1.6.0 // indirect
++	github.com/spf13/cast v1.3.1 // indirect
++	github.com/spf13/jwalterweatherman v1.1.0 // indirect
++	github.com/spf13/pflag v1.0.5 // indirect
++	github.com/subosito/gotenv v1.2.0 // indirect
++	golang.org/x/crypto v0.0.0-20220722155217-630584e8d5aa // indirect
++	golang.org/x/sys v0.0.0-20220325203850-36772127a21f // indirect
++	golang.org/x/text v0.3.6 // indirect
++	gopkg.in/ini.v1 v1.62.0 // indirect
++	gopkg.in/yaml.v2 v2.4.0 // indirect
++)
+diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/helper.go b/third_party/docker-credential-acr-env/pkg/credhelper/helper.go
+new file mode 100644
+index 0000000..93e6ff7
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/pkg/credhelper/helper.go
+@@ -0,0 +1,85 @@
++/*
++Copyright © 2020 Chris Mellard chris.mellard@icloud.com
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++package credhelper
++
++import (
++	"errors"
++	"fmt"
++	"net/url"
++	"regexp"
++
++	"github.com/Azure/go-autorest/autorest/azure/auth"
++	"github.com/chrismellard/docker-credential-acr-env/pkg/registry"
++	"github.com/chrismellard/docker-credential-acr-env/pkg/token"
++	"github.com/docker/docker-credential-helpers/credentials"
++)
++
++var acrRE = regexp.MustCompile(`^.*\.azurecr\.io$|^.*\.azurecr\.cn$|^.*\.azurecr\.de$|^.*\.azurecr\.us$`)
++
++const (
++	mcrHostname   = "mcr.microsoft.com"
++	tokenUsername = "<token>"
++)
++
++type ACRCredHelper struct {
++}
++
++func NewACRCredentialsHelper() credentials.Helper {
++	return &ACRCredHelper{}
++}
++
++func (a ACRCredHelper) Add(_ *credentials.Credentials) error {
++	return errors.New("list is unimplemented")
++}
++
++func (a ACRCredHelper) Delete(_ string) error {
++	return errors.New("list is unimplemented")
++}
++
++func isACRRegistry(input string) bool {
++	serverURL, err := url.Parse("https://" + input)
++	if err != nil {
++		return false
++	}
++	if serverURL.Hostname() == mcrHostname {
++		return true
++	}
++	matches := acrRE.FindStringSubmatch(serverURL.Hostname())
++	if len(matches) == 0 {
++		return false
++	}
++	return true
++}
++
++func (a ACRCredHelper) Get(serverURL string) (string, string, error) {
++	if !isACRRegistry(serverURL) {
++		return "", "", errors.New("serverURL does not refer to Azure Container Registry")
++	}
++
++	spToken, settings, err := token.GetServicePrincipalTokenFromEnvironment()
++	if err != nil {
++		return "", "", fmt.Errorf("failed to acquire sp token %w", err)
++	}
++	refreshToken, err := registry.GetRegistryRefreshTokenFromAADExchange(serverURL, spToken, settings.Values[auth.TenantID])
++	if err != nil {
++		return "", "", fmt.Errorf("failed to acquire refresh token %w", err)
++	}
++	return tokenUsername, refreshToken, nil
++}
++
++func (a ACRCredHelper) List() (map[string]string, error) {
++	return nil, errors.New("list is unimplemented")
++}
+diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go b/third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go
+new file mode 100644
+index 0000000..aa61fce
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/pkg/credhelper/helper_test.go
+@@ -0,0 +1,45 @@
++/*
++Copyright © 2022 Chris Mellard chris.mellard@icloud.com
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++package credhelper
++
++import "testing"
++
++// TestIsACRHelper tests whether URLs are detected as being ACR/MCR registry
++// hosts, to determine whether the cred helper should fail fast.
++func TestIsACRHelper(t *testing.T) {
++	for _, c := range []struct {
++		url  string
++		want bool
++	}{
++		{"myregistry.azurecr.io", true},
++		{"myregistry.azurecr.cn", true},
++		{"myregistry.azurecr.de", true},
++		{"myregistry.azurecr.us", true},
++		{"mcr.microsoft.com", true},
++		{"myregistry.azurecr.me", false}, // not a known tld
++		{"notacr.xcr.example", false},
++		{"127.0.0.1:12345", false},
++		{"localhost:12345", false},
++		{"notaurl-)(*$@)(*@)(*", false},
++	} {
++		t.Run(c.url, func(t *testing.T) {
++			got := isACRRegistry(c.url)
++			if got != c.want {
++				t.Fatalf("got %t, want %t", got, c.want)
++			}
++		})
++	}
++}
+diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go b/third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go
+new file mode 100644
+index 0000000..186cea2
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/pkg/credhelper/host_boundary_test.go
+@@ -0,0 +1,25 @@
++package credhelper
++
++import "testing"
++
++func TestRegistryHostBoundary(t *testing.T) {
++	for _, suffix := range []string{"io", "cn", "de", "us"} {
++		for _, host := range []string{"registry.azurecr." + suffix, "registry.azurecr." + suffix + ":443"} {
++			if !isACRRegistry(host) {
++				t.Errorf("valid registry %q rejected", host)
++			}
++		}
++		for _, host := range []string{"registry.azurecr." + suffix + ".attacker.example", "registry.azurecr." + suffix + "evil", "registryazurecr." + suffix} {
++			if isACRRegistry(host) {
++				t.Errorf("untrusted registry %q accepted", host)
++				continue // Never enter credential acquisition with a vulnerable control.
++			}
++			// Get must reject the host before trying to obtain credentials. This
++			// branch must return the exact rejection even with no Azure settings.
++			user, secret, err := (&ACRCredHelper{}).Get(host)
++			if err == nil || err.Error() != "serverURL does not refer to Azure Container Registry" || user != "" || secret != "" {
++				t.Errorf("Get(%q) did not stop at host validation", host)
++			}
++		}
++	}
++}
+diff --git a/third_party/docker-credential-acr-env/pkg/registry/const.go b/third_party/docker-credential-acr-env/pkg/registry/const.go
+new file mode 100644
+index 0000000..2f8ad5a
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/pkg/registry/const.go
+@@ -0,0 +1,25 @@
++/*
++Copyright © 2020 Chris Mellard chris.mellard@icloud.com
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++package registry
++
++import (
++	"time"
++)
++
++const (
++	secureScheme   = "https://"
++	defaultTimeOut = time.Duration(30) * time.Second
++)
+diff --git a/third_party/docker-credential-acr-env/pkg/registry/registry.go b/third_party/docker-credential-acr-env/pkg/registry/registry.go
+new file mode 100644
+index 0000000..c1b30dd
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/pkg/registry/registry.go
+@@ -0,0 +1,63 @@
++/*
++Copyright © 2020 Chris Mellard chris.mellard@icloud.com
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++package registry
++
++import (
++	"context"
++	"fmt"
++	"net/url"
++
++	"github.com/Azure/azure-sdk-for-go/services/preview/containerregistry/runtime/2019-08-15-preview/containerregistry"
++	"github.com/Azure/go-autorest/autorest"
++	"github.com/Azure/go-autorest/autorest/adal"
++)
++
++// GetRegistryRefreshTokenFromAADExchange retrieves an OAuth2 refresh token for the registry specified by serverURL
++func GetRegistryRefreshTokenFromAADExchange(serverURL string, principalToken *adal.ServicePrincipalToken, tenantID string) (string, error) {
++	ctx, cancel := context.WithTimeout(context.Background(), defaultTimeOut)
++	defer cancel()
++
++	// If refreshing fails, don't try again, just fail.
++	principalToken.MaxMSIRefreshAttempts = 1
++
++	if err := principalToken.EnsureFreshWithContext(ctx); err != nil {
++		return "", fmt.Errorf("error refreshing sp token - %w", err)
++	}
++
++	registryName, err := getRegistryURL(serverURL)
++	if err != nil {
++		return "", fmt.Errorf("failed to parse server URL - %w", err)
++	}
++	refreshTokenClient := containerregistry.NewRefreshTokensClient(registryName.String())
++	authorizer := autorest.NewBearerAuthorizer(principalToken)
++	refreshTokenClient.Authorizer = authorizer
++	rt, err := refreshTokenClient.GetFromExchange(ctx, "access_token", serverURL, tenantID, "", principalToken.Token().AccessToken)
++	if err != nil {
++		return "", fmt.Errorf("failed to get refresh token for container registry - %w", err)
++	}
++
++	return *rt.RefreshToken, nil
++}
++
++// parseRegistryName parses a serverURL and returns the registry name (i.e. minus transport scheme)
++func getRegistryURL(serverURL string) (*url.URL, error) {
++	sURL, err := url.Parse(secureScheme + serverURL)
++	if err != nil {
++		return &url.URL{}, fmt.Errorf("failed to parse server URL - %w", err)
++	}
++
++	return sURL, nil
++}
+diff --git a/third_party/docker-credential-acr-env/pkg/token/token.go b/third_party/docker-credential-acr-env/pkg/token/token.go
+new file mode 100644
+index 0000000..feff3e1
+--- /dev/null
++++ b/third_party/docker-credential-acr-env/pkg/token/token.go
+@@ -0,0 +1,108 @@
++/*
++Copyright © 2020 Chris Mellard chris.mellard@icloud.com
++
++Licensed under the Apache License, Version 2.0 (the "License");
++you may not use this file except in compliance with the License.
++You may obtain a copy of the License at
++
++    http://www.apache.org/licenses/LICENSE-2.0
++
++Unless required by applicable law or agreed to in writing, software
++distributed under the License is distributed on an "AS IS" BASIS,
++WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++See the License for the specific language governing permissions and
++limitations under the License.
++*/
++package token
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/Azure/go-autorest/autorest/adal"
++	"github.com/Azure/go-autorest/autorest/azure/auth"
++)
++
++func GetServicePrincipalTokenFromEnvironment() (*adal.ServicePrincipalToken, auth.EnvironmentSettings, error) {
++	settings, err := auth.GetSettingsFromEnvironment()
++	if err != nil {
++		return &adal.ServicePrincipalToken{}, auth.EnvironmentSettings{}, fmt.Errorf("failed to get auth settings from environment - %w", err)
++	}
++
++	spToken, err := getServicePrincipalToken(settings, settings.Environment.ResourceManagerEndpoint)
++	if err != nil {
++		return &adal.ServicePrincipalToken{}, auth.EnvironmentSettings{}, fmt.Errorf("failed to initialise sp token config %w", err)
++	}
++
++	return spToken, settings, nil
++}
++
++// getServicePrincipalToken retrieves an Azure AD OAuth2 token from the supplied environment settings for the specified resource
++func getServicePrincipalToken(settings auth.EnvironmentSettings, resource string) (*adal.ServicePrincipalToken, error) {
++
++	//1.Client Credentials
++	if _, e := settings.GetClientCredentials(); e == nil {
++		clientCredentialsConfig, err := settings.GetClientCredentials()
++		if err != nil {
++			return &adal.ServicePrincipalToken{}, fmt.Errorf("failed to get client credentials settings from environment - %w", err)
++		}
++		oAuthConfig, err := adal.NewOAuthConfig(settings.Environment.ActiveDirectoryEndpoint, clientCredentialsConfig.TenantID)
++		if err != nil {
++			return &adal.ServicePrincipalToken{}, fmt.Errorf("failed to initialise OAuthConfig - %w", err)
++		}
++		return adal.NewServicePrincipalToken(*oAuthConfig, clientCredentialsConfig.ClientID, clientCredentialsConfig.ClientSecret, clientCredentialsConfig.Resource)
++	}
++
++	//2. Client Certificate
++	if _, e := settings.GetClientCertificate(); e == nil {
++		return &adal.ServicePrincipalToken{}, fmt.Errorf("authentication method currently unsupported")
++	}
++
++	//3. Username Password
++	if _, e := settings.GetUsernamePassword(); e == nil {
++		return &adal.ServicePrincipalToken{}, fmt.Errorf("authentication method currently unsupported")
++	}
++
++	// federated OIDC JWT assertion
++	jwt, err := jwtLookup()
++	if err == nil {
++		clientID, isPresent := os.LookupEnv("AZURE_CLIENT_ID")
++		if !isPresent {
++			return &adal.ServicePrincipalToken{}, fmt.Errorf("failed to get client id from environment")
++		}
++		tenantID, isPresent := os.LookupEnv("AZURE_TENANT_ID")
++		if !isPresent {
++			return &adal.ServicePrincipalToken{}, fmt.Errorf("failed to get client id from environment")
++		}
++
++		oAuthConfig, err := adal.NewOAuthConfig(settings.Environment.ActiveDirectoryEndpoint, tenantID)
++		if err != nil {
++			return &adal.ServicePrincipalToken{}, fmt.Errorf("failed to initialise OAuthConfig - %w", err)
++		}
++
++		return adal.NewServicePrincipalTokenFromFederatedToken(*oAuthConfig, clientID, *jwt, resource)
++	}
++
++	// 4. MSI
++	return adal.NewServicePrincipalTokenFromManagedIdentity(resource, &adal.ManagedIdentityOptions{
++		ClientID: os.Getenv("AZURE_CLIENT_ID"),
++	})
++}
++
++func jwtLookup() (*string, error) {
++	jwt, isPresent := os.LookupEnv("AZURE_FEDERATED_TOKEN")
++	if isPresent {
++		return &jwt, nil
++	}
++
++	if jwtFile, isPresent := os.LookupEnv("AZURE_FEDERATED_TOKEN_FILE"); isPresent {
++		jwtBytes, err := os.ReadFile(jwtFile)
++		if err != nil {
++			return nil, err
++		}
++		jwt = string(jwtBytes)
++		return &jwt, nil
++	}
++
++	return nil, fmt.Errorf("no JWT found")
 +}

@@ -23,9 +23,9 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: 55d2b33849e13fa3470646b0b25fda4970dd11b7
+  PATCHED_SOURCE_TREE: 23a55f74d9147dfefe6be994600ad52daeb8ee11
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-reports
-  IMAGE_TAG: v1.19.2-watch-plan.1-${{ github.sha }}
+  IMAGE_TAG: v1.19.2-watch-plan.2-${{ github.sha }}
 
 jobs:
   verify:
@@ -63,7 +63,9 @@ jobs:
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
-          git add -- go.mod pkg/controllers/report/resource/controller.go \
+          git add -- cmd/internal/registry_security_test.go go.mod go.sum \
+            third_party/docker-credential-acr-env/ \
+            pkg/controllers/report/resource/controller.go \
             pkg/controllers/report/resource/controller_test.go \
             pkg/controllers/report/resource/watch_kinds.go \
             pkg/controllers/report/resource/watch_plan_test.go
@@ -130,7 +132,9 @@ jobs:
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
-          git add -- go.mod pkg/controllers/report/resource/controller.go \
+          git add -- cmd/internal/registry_security_test.go go.mod go.sum \
+            third_party/docker-credential-acr-env/ \
+            pkg/controllers/report/resource/controller.go \
             pkg/controllers/report/resource/controller_test.go \
             pkg/controllers/report/resource/watch_kinds.go \
             pkg/controllers/report/resource/watch_plan_test.go
@@ -174,7 +178,7 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          test -n "${DIGEST}"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           cosign sign --yes "${IMAGE}@${DIGEST}"
           cosign verify \
             --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main" \

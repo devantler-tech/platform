@@ -1160,6 +1160,11 @@ jobs:
           bash scripts/guard-test-script-exec-bit.sh .
           bash scripts/tests/test-guard-test-script-exec-bit.sh
 
+      - name: 🔒 Validate patched reports runtime publisher
+        run: |
+          shellcheck scripts/tests/test-kyverno-reports-runtime.sh
+          bash scripts/tests/test-kyverno-reports-runtime.sh
+
       - name: 🔐 Validate the documentation tenant scope
         run: |
           shellcheck scripts/tests/test-khoist-documentation-tenant.sh
