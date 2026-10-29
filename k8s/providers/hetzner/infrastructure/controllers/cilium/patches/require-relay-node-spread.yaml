@@ -13,6 +13,8 @@ spec:
       relay:
         topologySpreadConstraints:
           - maxSkew: 1
+            # A single remaining node must not become two replicas' failure domain.
+            minDomains: 2
             topologyKey: kubernetes.io/hostname
             whenUnsatisfiable: DoNotSchedule
             labelSelector:
