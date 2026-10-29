@@ -98,9 +98,12 @@ func assessIngressAccess(before, after []byte, observation ingressObservation, s
 }
 
 func runIngressEntry(ctx context.Context, env func(string) string, run executor, send inputExecutor, pause func(context.Context) error, out io.Writer) int {
-	unknown := func() int { _, _ = io.WriteString(out, "MAIL_INGRESS_STATE=INCONCLUSIVE\n"); return 3 }
+	unknown := func(err error) int {
+		_, _ = fmt.Fprintf(out, "MAIL_INGRESS_STATE=INCONCLUSIVE stage=%s\n", ingressFailureStage(err))
+		return 3
+	}
 	if env("GITHUB_REPOSITORY") != "devantler-tech/platform" || env("GITHUB_EVENT_NAME") != "workflow_dispatch" || env("GITHUB_REF") != "refs/heads/main" || env("GITHUB_RUN_ATTEMPT") != "1" || env("MAIL_INGRESS_CONFIRM") != "read-email-ingress-source" || send == nil {
-		return unknown()
+		return unknown(ingressFailure("guard"))
 	}
 	client := ingressHTTPClient()
 	defer client.CloseIdleConnections()
@@ -109,7 +112,7 @@ func runIngressEntry(ctx context.Context, env func(string) string, run executor,
 	}
 	result, err := collectAccessWithIngress(ctx, run, send, pause, time.Now, observer)
 	if err != nil || result.Ingress == nil {
-		return unknown()
+		return unknown(err)
 	}
 	value := result.Ingress
 	line := fmt.Sprintf("MAIL_INGRESS_STATE=OBSERVED\nMAIL_INGRESS_BLOCKED_PEERS=%d\nMAIL_INGRESS_ALLOWED_PEERS=%d\nMAIL_INGRESS_UNBLOCKED_PEERS=%d\nMAIL_INGRESS_PUBLIC_HTTP_200=%d\nMAIL_INGRESS_PUBLIC_HTTP_503=%d\nMAIL_INGRESS_LOCAL_PATHS=%s\n", value.Blocked, value.Allowed, value.Unblocked, value.Public200, value.Public503, result.Paths)

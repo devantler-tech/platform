@@ -87,7 +87,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
+          CATALOGUE_SHA: 8e2dfbd3f9249b76b58234189ccbbae98d11b32b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -243,7 +243,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
+          CATALOGUE_SHA: 8e2dfbd3f9249b76b58234189ccbbae98d11b32b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
