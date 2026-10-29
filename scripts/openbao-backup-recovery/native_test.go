@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,10 @@ func TestPinnedServerRestoresSnapshotAndRejectsInvalidRecovery(t *testing.T) {
 
 func TestPinnedServerRestoresCanonicalEmailCredentials(t *testing.T) {
 	testPinnedRecovery(t, "-email")
+}
+
+func TestPinnedServerRestoresEmailStorageKeyAndAccountCredentials(t *testing.T) {
+	testPinnedRecovery(t, "-email-storage")
 }
 
 func testPinnedRecovery(t *testing.T, suffix string) {
@@ -126,11 +131,17 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				if err != nil || json.Unmarshal(b, &records) != nil {
 					t.Fatal("invalid synthetic records")
 				}
-				path := "apps/private-mail/maintainer"
-				if suffix == "-email" {
-					path = "infrastructure/email/maintainer"
+				if suffix == "-email-storage" {
+					// Preserve all three account expectations and alter the actual
+					// storage key, so native restoration reaches key comparison.
+					records[storageCredentialPath] = json.RawMessage(`{"passphrase":"` + strings.Repeat("d", 64) + `"}`)
+				} else {
+					path := "apps/private-mail/maintainer"
+					if suffix != "" {
+						path = "infrastructure/email/maintainer"
+					}
+					records[path] = json.RawMessage(`{"username":"changed-synthetic-user","password":"` + strings.Repeat("d", 48) + `","retainedField":"synthetic-fixture"}`)
 				}
-				records[path] = json.RawMessage(`{"username":"changed-synthetic-user","password":"` + strings.Repeat("d", 48) + `","retainedField":"synthetic-fixture"}`)
 				b, err = json.Marshal(records)
 				if err != nil || os.WriteFile(filepath.Join(dir, "expected.json"), b, 0600) != nil {
 					t.Fatal("could not change synthetic expected record")
@@ -143,7 +154,7 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 				}
 				wrongScope := map[string]json.RawMessage{}
 				for key, value := range records {
-					if suffix == "-email" {
+					if suffix != "" {
 						key = strings.Replace(key, "infrastructure/email/", "apps/private-mail/", 1)
 					} else {
 						key = strings.Replace(key, "apps/private-mail/", "infrastructure/email/", 1)
@@ -157,7 +168,11 @@ func testPinnedRecovery(t *testing.T, suffix string) {
 			}
 			out, err := run("verify"+suffix, dir)
 			if test == "matching" {
-				if err != nil || strings.TrimSpace(out) != "OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3" {
+				count := 3
+				if suffix == "-email-storage" {
+					count = 4
+				}
+				if err != nil || strings.TrimSpace(out) != fmt.Sprintf("OPENBAO_BACKUP_RESTORE=PASS records=%d version=2.6.3", count) {
 					t.Fatalf("actual snapshot restoration not proven: %v %s", err, out)
 				}
 			} else {
