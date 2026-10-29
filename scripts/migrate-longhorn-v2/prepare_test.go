@@ -149,6 +149,8 @@ func (f *preparationAPI) run(_ context.Context, input []byte, program string, ar
 					items = f.s.replicas
 				case "engines.longhorn.io":
 					items = f.s.engines
+				case "orphans.longhorn.io":
+					items = f.s.orphans
 				case "pods":
 					items = f.s.pods
 				default:
@@ -268,6 +270,13 @@ func TestUnsafeOrChangedStateNeverRequestsAReset(t *testing.T) {
 		},
 		"replica returns to reset target": func(f *preparationAPI) {
 			f.changeInventory = func(s *inventory) { s.replicas[0]["spec"].(object)["nodeID"] = "prod-worker-1" }
+		},
+		"unregistered data appears between observations": func(f *preparationAPI) {
+			f.changeInventory = func(s *inventory) {
+				o := resource("unregistered-data")
+				o["spec"] = object{"nodeID": "prod-worker-1", "type": "replica"}
+				s.orphans = []object{o}
+			}
 		},
 		"foreign storage fence": func(f *preparationAPI) { f.storage["spec"].(object)["allowScheduling"] = true },
 	} {

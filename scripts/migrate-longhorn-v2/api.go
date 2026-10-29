@@ -101,6 +101,7 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 		{"volumes.longhorn.io", "longhorn-system", &s.volumes},
 		{"replicas.longhorn.io", "longhorn-system", &s.replicas},
 		{"engines.longhorn.io", "longhorn-system", &s.engines},
+		{"orphans.longhorn.io", "longhorn-system", &s.orphans},
 		{"pods", "*", &s.pods},
 	} {
 		objects, err := c.list(ctx, query.kind, query.namespace)

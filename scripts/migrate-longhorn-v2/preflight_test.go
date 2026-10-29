@@ -59,6 +59,20 @@ func TestEvacuatedStoragePreservesAttachedAndRetainedVolumes(t *testing.T) {
 	}
 }
 
+func TestEvacuationRefusesUnregisteredStorageOnTheResetTarget(t *testing.T) {
+	s := evacuatedFixture()
+	orphan := resource("unregistered-copy")
+	orphan["spec"] = object{"nodeID": "target", "type": "replica"}
+	s.orphans = []object{orphan}
+	if verifyEvacuated("target", s) == nil {
+		t.Fatal("unregistered replica data could be erased without a recovery decision")
+	}
+	orphan["spec"].(object)["nodeID"] = "storage-1"
+	if err := verifyEvacuated("target", s); err != nil {
+		t.Fatal("an orphan on another node does not authorize or prevent resetting this empty target", err)
+	}
+}
+
 func TestWipeRefusesUnprovenEvacuation(t *testing.T) {
 	cases := map[string]func(*inventory){
 		"replica still references target":       func(s *inventory) { s.replicas[0]["spec"].(object)["nodeID"] = "target" },

@@ -8,7 +8,7 @@ import (
 type object = map[string]any
 
 type inventory struct {
-	nodes, storageNodes, volumes, replicas, engines, pods []object
+	nodes, storageNodes, volumes, replicas, engines, pods, orphans []object
 }
 
 func value(o object, path ...string) any {
@@ -80,6 +80,14 @@ func verifyEvacuated(target string, s inventory) error {
 	nodes, err := indexed(s.nodes)
 	if err != nil || nodes[target] == nil {
 		return errors.New("kubernetes node inventory is incomplete")
+	}
+	if _, err = indexed(s.orphans); err != nil {
+		return err
+	}
+	for _, orphan := range s.orphans {
+		if node := text(orphan, "spec", "nodeID"); node == "" || node == target {
+			return errors.New("unregistered Longhorn data needs a recovery decision before resetting this worker")
+		}
 	}
 	for _, r := range s.replicas {
 		if text(r, "spec", "nodeID") == target {
