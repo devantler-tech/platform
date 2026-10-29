@@ -132,6 +132,7 @@ run_bootstrap() {
 
 start_server() {
   local mode=$1 health_port=8080
+  local data_dir=${2:-$scratch/data}
   local -a recovery=() application_assets=()
   if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
@@ -147,7 +148,7 @@ start_server() {
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
-    --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
+    --mount "type=bind,source=$data_dir,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
     "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
@@ -563,6 +564,60 @@ grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 docker stop --time 30 "$name" >/dev/null
 docker logs "$name" >"$scratch/smtp-auth-server.log" 2>&1
 docker rm "$name" >/dev/null
+# Establish which native protocol can inspect a recovered datastore before
+# designing the isolated restore worker. A recovery-only listener must not be
+# assumed to provide ordinary mailbox access. Both outcomes below are evidence
+# about the pinned server, never a claim that production data was restored.
+(
+  cd "$scratch/data"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$scratch/source-before-recovery.sha256"
+test -s "$scratch/source-before-recovery.sha256"
+cp -a "$scratch/data" "$scratch/recovered-data"
+start_server preparation "$scratch/recovered-data"
+recovery_mail_status=$(protocol_curl --silent --show-error --max-time 10 \
+  --config /proof/human.curl --header 'Content-Type: application/json' \
+  --data-binary @/proof/receiving-query.json --output /dev/null \
+  --write-out '%{http_code}' "http://$name:8080/jmap")
+if [ "$recovery_mail_status" = 200 ]; then
+  protocol_curl --fail --silent --show-error --max-time 10 \
+    --config /proof/human.curl --header 'Content-Type: application/json' \
+    --data-binary @/proof/receiving-query.json "http://$name:8080/jmap" \
+    >"$scratch/recovery-mail-result.json"
+  if jq -e '.methodResponses|length==2 and .[0][0]=="Email/query" and .[1][0]=="Email/get"' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    verify_receiving_aliases
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_READ_VERIFIED mode=recovery'
+  elif jq -e '.methodResponses|length>0 and all(.[]; .[0]=="error" and (.[1].type=="forbidden" or .[1].type=="unknownMethod"))' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+  else
+    echo 'FAIL: native recovery mailbox protocol returned an unclassified response' >&2; exit 1
+  fi
+elif [ "$recovery_mail_status" = 401 ] || [ "$recovery_mail_status" = 403 ]; then
+  echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+else
+  echo 'FAIL: native recovery mailbox protocol returned an unexpected status' >&2; exit 1
+fi
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+start_server serving "$scratch/recovered-data"
+verify_receiving_aliases
+for alias in former-a former-b; do
+  cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
+done
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" \
+  'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/recovered-read.eml"
+grep -q 'Preserved native mail fixture.' "$scratch/recovered-read.eml"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+(
+  cd "$scratch/data"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$scratch/source-after-recovery.sha256"
+cmp "$scratch/source-before-recovery.sha256" "$scratch/source-after-recovery.sha256"
+echo 'EMAIL_DATA_RECOVERY_FIXTURE=PASS messages=VERIFIED source=UNCHANGED'
 mkdir "$scratch/stale-assets" "$scratch/stale-source"
 printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
 (cd "$scratch/stale-source" && zip -q "$scratch/stale-assets/webui.zip" index.html)
