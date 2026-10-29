@@ -34,6 +34,14 @@ expected_migration_pools=$(yq -o=json '.spec.cluster.autoscaler.node.pools' "$co
   [ .[] | select(.name | startswith("autoscale-longhorn-")) |
     {name, min, max, serverType, role: .labels["storage.platform.devantler.tech/migration-pool"]} ]')
 
+# The V2 migration pool replaces the ordinary warm spare. Allow its native
+# ten-minute unneeded timer, graceful removal and cold boot to finish. Explicit
+# diagnostic limits still win, and every required worker must actually be Ready.
+if jq -e 'any(.[]; .role == "v2" and .min > 0)' <<<"$expected_migration_pools" >/dev/null; then
+  max_attempts=${TALOS_READBACK_ATTEMPTS:-120}
+  max_seconds=${TALOS_READBACK_MAX_SECONDS:-1200}
+fi
+
 [[ "$expected_schematic" =~ ^[0-9a-f]{64}$ &&
    "$expected_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ &&
    "$expected_control_planes" =~ ^[1-9][0-9]*$ &&

@@ -1,0 +1,13 @@
+# Let the ordinary compute node retire for migration capacity (#5582).
+# The exact emptyDir exception preserves the relay's disruption budget.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    hubble:
+      relay:
+        podAnnotations:
+          cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: tmp-volume

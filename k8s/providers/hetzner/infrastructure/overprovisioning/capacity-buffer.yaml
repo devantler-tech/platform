@@ -37,9 +37,11 @@ metadata:
     app.kubernetes.io/component: cluster-buffer
     app.kubernetes.io/part-of: platform
 spec:
-  # One warm spare node. Raise to widen the buffer (N chunks ~= N warm nodes),
-  # bounded by ksail.prod.yaml's maxNodesTotal: 9.
-  replicas: 1
+  # Temporary during #5582: the three fixed migration workers supply spare
+  # capacity. Release ordinary virtual demand so its compute node can retire
+  # and leave room for the V2 worker within the existing nine-node ceiling.
+  # Restore the normal one-chunk buffer when migration capacity is retired.
+  replicas: 0
   # Shape of one chunk — see pod-template.yaml (same namespace).
   podTemplateRef:
     name: overprovisioning
