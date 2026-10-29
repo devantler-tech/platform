@@ -8,7 +8,10 @@ fail() { printf 'FAIL: public CI identity: %s\n' "$1" >&2; exit 1; }
    "${GITHUB_REPOSITORY:-}" == devantler-tech/platform ]] || fail 'requires the existing isolated hosted job'
 [[ -n "${RUNNER_TEMP:-}" && -d "$RUNNER_TEMP" && ! -L "$RUNNER_TEMP" ]] || fail 'missing regular runner scratch directory'
 task_read_token="${PUBLIC_CI_READ_TOKEN:-}"
-[[ "$task_read_token" =~ ^[A-Za-z0-9_]+$ && "${#task_read_token}" -ge 20 && "${#task_read_token}" -le 512 ]] || fail 'missing or unsafe explicit job token'
+# Treat the credential as opaque. The transport alphabet excludes curl-config
+# quoting, whitespace and control bytes while accepting current stateless tokens.
+# https://github.blog/changelog/2026-10-02-stateless-github-app-installation-tokens-rolled-out/
+[[ -n "$task_read_token" && "$task_read_token" != *[!A-Za-z0-9._~+/=-]* ]] || fail 'missing or unsafe explicit job token'
 work="$(mktemp -d "$RUNNER_TEMP/public-ci-identity.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 printf 'header = "Authorization: Bearer %s"\n' "$task_read_token" > "$work/auth.curlrc"

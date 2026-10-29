@@ -71,21 +71,24 @@ printf '%s' "$status"
 [[ "$status" -lt 400 ]] || exit 22
 CURL
 chmod +x "$work/bin/curl"
-for scenario in valid anonymous-quota forbidden redirect same-bucket private missing-private wrong-source failed attempt-mismatch final-rerun malformed missing-token injected-token wrong-context; do
+for scenario in valid stateless-token anonymous-quota forbidden redirect same-bucket private missing-private wrong-source failed attempt-mismatch final-rerun malformed missing-token injected-token quoted-token escaped-token wrong-context; do
   : > "$work/reads"
   task_token="$token" task_actions=true
   case "$scenario" in
+    stateless-token) task_token="ghs_123456_$(printf '%0600d' 0).opaque-fixture.signature-fixture" ;;
     missing-token) task_token='' ;;
     injected-token) task_token=$'ghs_bad\r\nheader = malicious' ;;
+    quoted-token) task_token='opaque"header' ;;
+    escaped-token) task_token='opaque\header' ;;
     wrong-context) task_actions=false ;;
   esac
-  if PATH="$work/bin:$PATH" FIXTURE="$work" FIXTURE_TOKEN="$token" FAULT="$scenario" \
+  if PATH="$work/bin:$PATH" FIXTURE="$work" FIXTURE_TOKEN="$task_token" FAULT="$scenario" \
     GITHUB_ACTIONS="$task_actions" RUNNER_ENVIRONMENT=github-hosted GITHUB_REPOSITORY=devantler-tech/platform \
     GITHUB_EVENT_NAME=pull_request RUNNER_TEMP="$work/temp" PUBLIC_CI_READ_TOKEN="$task_token" \
     bash -x "$root/scripts/probe-public-ci-read-identity.sh" > "$work/result" 2>&1; then verdict=accepted; else verdict=rejected; fi
-  if grep -Fq "$token" "$work/result"; then printf 'FAIL: credential reached output\n' >&2; exit 1; fi
+  if [[ -n "$task_token" ]] && grep -Fq "$task_token" "$work/result"; then printf 'FAIL: credential reached output\n' >&2; exit 1; fi
   case "$scenario" in
-    valid|anonymous-quota)
+    valid|stateless-token|anonymous-quota)
       [[ "$verdict" == accepted && "$(wc -l < "$work/reads" | tr -d ' ')" == 4 ]] || { cat "$work/result"; exit 1; }
       [[ "$(grep -c '^auth ' "$work/reads")" == 3 ]] || exit 1
       cmp -s "$work/expected-reads" "$work/reads" || exit 1 ;;
