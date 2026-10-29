@@ -149,7 +149,8 @@ func main() {
 	kubeContext := "oidc@prod"
 	outputPath := destination
 	verify := len(os.Args) == 4 && os.Args[1] == "verify" && os.Args[2] == "--context" && os.Args[3] == "admin@prod"
-	if verify {
+	restore := len(os.Args) == 4 && os.Args[1] == "restore-disabled" && os.Args[2] == "--context" && os.Args[3] == "admin@prod"
+	if verify || restore {
 		kubeContext = "admin@prod"
 	} else {
 		seen := map[string]bool{}
@@ -176,6 +177,14 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
+	if restore {
+		if err := restoreDisabled(ctx, kubeContext); err != nil {
+			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_DISABLED=UNVERIFIED stage=%s\n", err.Error())
+			os.Exit(2)
+		}
+		fmt.Println("GATEWAY_RECEIVER_DISABLED=VERIFIED bindings=0")
+		return
+	}
 	if verify {
 		if err := verifyDeployed(ctx, kubeContext); err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_SOURCE=UNVERIFIED stage=%s\n", err.Error())

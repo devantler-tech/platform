@@ -657,7 +657,7 @@ runs:
       shell: bash
       run: ./scripts/verify-gateway-routes-applied.sh
 
-    - name: Verify the Gateway receiver source and public routes
+    - name: Restore and verify the prepared Gateway receiver baseline
       if: >-
         !cancelled() &&
         steps.wait_flux_revision.outcome == 'success' &&
@@ -666,7 +666,9 @@ runs:
           steps.wait_prod_api_stability.outcome == 'success'
         )
       shell: bash
-      run: go run ./scripts/gateway-receiver-binding verify --context admin@prod
+      run: |
+        go run ./scripts/gateway-receiver-binding restore-disabled --context admin@prod
+        go run ./scripts/gateway-receiver-binding verify --context admin@prod
 
     - name: Verify the deployed data product UI release
       # The protected deployment must prove current Apps/chart/Helm identities,

@@ -12,6 +12,10 @@
 # validates the combined render. Evidence for approvals made before this file existed is in
 # approved-surface-history.md.
 
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver b975851ba2f5e9013b737712a1824690400387dde205d525de0652e96c0a63e6
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver f1536b6b4f016a69245d702f68c7ee2d1d573049ac5fa1309b1042f19c52dc16
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 36855100be6e3611947d34ce120822158db269cdf860c23ebce11ad9ae76b197
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0

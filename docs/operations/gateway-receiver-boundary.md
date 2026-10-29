@@ -2,18 +2,26 @@
 
 # Gateway receiver binding
 
-The production Gateway accepts application ingress from the declared provider
-connection. Its receiver policy selects Cilium's reserved ingress identity and
-uses one exact private host prefix from the controller-owned Service status.
-Missing configuration has no fallback. This is a prerequisite for the Email
-client-identity transport; the provider and receiver protocol settings remain
-explicitly disabled at this stage.
+This revision prepares an encrypted provider binding and **unbound** native
+admission policies. It changes no listener matching or forwarding protocol.
+Both provider and receiver PROXY settings remain explicitly disabled. Selecting
+the physical-peer component is a later reviewed activation, after this disabled
+baseline and its recovery path have merged and deployed.
 
-The existing internal diagnostic has a separate HTTP-only exception. It allows
-cluster clients to make GET requests to the root of the three fixed synthetic
-`externalauth-probe.invalid` hosts. It cannot select an application HTTPS route.
-The native cross-node diagnostic still needs to pass after deployment; preserving
-its source configuration alone does not prove its runtime behavior.
+The eventual fence uses Envoy's `direct_source_prefix_ranges` on every TLS
+filter chain. This matches the physical connection peer independently of any
+client address claimed by a PROXY header. Cilium's ingress identity alone does
+not establish that boundary: the pinned listener processes PROXY metadata before
+resolving the source identity used for ingress policy. Adding an egress policy
+alone does not close the path that is redirected to the gateway first.
+
+The mutating and validating policies target only the declared application
+Gateway's generated CiliumEnvoyConfig. They preserve its existing plain HTTP
+chain and other resources, require every TLS chain to use the same exact host
+prefix, and reject fallback chains, alternate matchers and protobuf field aliases
+that could evade that check. No global webhook selector is widened. The policies
+remain unbound until the separate `components/physical-peer-fence` component is
+explicitly selected.
 
 ## Prepare or replace the binding
 
@@ -29,14 +37,12 @@ disabled provider baseline. It admits exactly one private IPv4 address and emits
 only its host prefix. It refuses unexpected ports, another provider path,
 ambiguous addresses, duplicate JSON keys, or changing identities.
 
-SOPS must be installed. Encryption uses the repository's production creation rule
-and existing public recipient. No private recovery key is read. Plain input stays
-in a private temporary workspace; the checkout receives the validated encrypted
-Secret only after a second matching metadata read. The producer never applies a
-resource or changes a provider setting.
-
-The destination is created exclusively. To keep the current encrypted file while
-preparing a replacement after infrastructure recovery, choose a new candidate:
+SOPS uses the repository's production creation rule and existing public
+recipient. No private recovery key is read. Plain input stays in a private
+temporary workspace; the checkout receives the validated encrypted Secret only
+after a second matching metadata read. The producer never applies a resource or
+changes a provider setting. The destination is created exclusively. To preserve
+the existing file while preparing a replacement after infrastructure recovery:
 
 ```sh
 go run ./scripts/gateway-receiver-binding --output /tmp/gateway-receiver-candidate.enc.yaml
@@ -44,26 +50,48 @@ go run ./scripts/gateway-receiver-binding --output /tmp/gateway-receiver-candida
 
 Review that encrypted replacement through the normal signed PR workflow. An
 operator recovering through the independent production API may explicitly select
-`--context admin@prod`; the producer never changes contexts or escalates from a
-failed scoped read automatically. Restore the disabled provider baseline before
-rebinding. The encrypted configuration and its recovery recipient remain separate
-from ordinary operational service keys in OpenBao.
+`--context admin@prod`; the producer never escalates a failed scoped read.
+Restore the disabled provider baseline before rebinding. This bootstrap binding
+and its recovery recipient remain separate from operational keys in OpenBao.
 
-## Verify the deployed revision
+## Protected deployment and restoration
 
-The shared protected production deployment reads the actual Secret, policy,
-Service and Gateway after reconciliation. It requires the policy to match the
-reviewed source and the decrypted host prefix and identities to match current
-controller metadata. It probes Homepage and OpenBao through the provider's actual
-public endpoint with normal hostname and TLS verification, bypassing edge caches,
-and repeats the checks with unchanged source identities. A failure fails the
-deployment and retains the existing recovery workflow.
+The shared protected deployment verifies the current encrypted binding against
+actual Service and Gateway identities. It requires both unbound policy specs to
+match reviewed source and the validating policy's current generation to have
+completed type checking without warnings.
 
-`GATEWAY_RECEIVER_SOURCE=VERIFIED` reports that configuration and positive public
-paths agree. It does not prove denied direct paths, original-client attribution,
-Email administration, or a coordinated protocol activation. Those native negative
-and end-to-end checks remain required by #5448 before the Email transport can be
-activated. Keep existing stored access rules throughout that work.
+Before restoring disabled state, the helper checks the generated listener and
+both bindings. An active PROXY listener, unknown owner, changed peer, foreign
+binding, or ambiguous configuration refuses every planned write. The helper
+removes only its exact bindings with observed UID and resource-version deletion
+preconditions, then conditionally removes only its owned peer fields and marker.
+It preserves all other controller configuration and metadata. Readback resolves
+lost acknowledgements; a replacement or uncertain outcome never reports success.
+This mutation runs only in the reviewed protected deployment, never directly from
+an agent session. Future activation must update that deployment and verify that
+main's ordinary recovery restores this disabled baseline.
 
-References: [Cilium ingress CIDR and policy behavior](https://docs.cilium.io/en/stable/network/servicemesh/ingress-and-network-policy/),
-[the deployed provider controller's status construction](https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/v1.39.1/hcloud/load_balancers.go).
+The following read-only check requires both bindings absent and the generated
+listener free of this fence and PROXY filters:
+
+```sh
+go run ./scripts/gateway-receiver-binding verify --context admin@prod
+```
+
+It probes Homepage and OpenBao through the provider's actual public endpoint with
+normal hostname and TLS verification, bypassing edge caches, and repeats with
+unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED` establishes the
+prepared disabled baseline and positive public paths. It does not establish a
+live physical-peer fence, original-client attribution, Email administration, or
+protocol activation.
+
+Before activation, #5448 still requires native allowed and denied peer probes,
+forged PROXY metadata rejection, controller revision stability, the real Email
+path, authenticated administration and observed recovery. Preserve all stored
+access rules throughout that work.
+
+References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.38.6/api-v3/config/listener/v3/listener_components.proto),
+[native Kubernetes mutation policies](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/),
+[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.3/operator/pkg/model/translation/envoy_listener.go),
+[the provider controller's status construction](https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/v1.39.1/hcloud/load_balancers.go).

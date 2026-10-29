@@ -105,6 +105,9 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test -timeout 20m ./...
 
+      - name: 🧪 Validate gateway receiver policies with the native admission engine
+        run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
+
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest

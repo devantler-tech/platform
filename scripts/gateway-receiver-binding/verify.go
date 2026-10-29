@@ -3,52 +3,12 @@ package main
 import (
 	"context"
 	"errors"
-	"gopkg.in/yaml.v3"
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"reflect"
-	"strings"
 	"time"
 )
 
-func policyMatches(raw []byte, b binding) bool {
-	var live map[string]any
-	if strictJSON(raw, &live) != nil {
-		return false
-	}
-	meta, _ := live["metadata"].(map[string]any)
-	if meta["name"] != "gateway-receiver" {
-		return false
-	}
-	source, err := os.ReadFile("k8s/providers/hetzner/infrastructure/cilium/gateway-receiver/cilium-clusterwide-network-policy-gateway-receiver.yaml")
-	if err != nil {
-		return false
-	}
-	var expected map[string]any
-	if yaml.Unmarshal([]byte(strings.ReplaceAll(string(source), "${gateway_receiver_source_cidr}", b.CIDR)), &expected) != nil {
-		return false
-	}
-	actual, _ := live["spec"].(map[string]any)
-	// These API defaults preserve the declared ingress-only enforcement.
-	if defaults, present := actual["enableDefaultDeny"]; present {
-		d, ok := defaults.(map[string]any)
-		if !ok || (d["ingress"] != nil && d["ingress"] != true) {
-			return false
-		}
-		for key, value := range d {
-			if key != "ingress" && key != "egress" {
-				return false
-			}
-			if _, ok := value.(bool); !ok {
-				return false
-			}
-		}
-		delete(actual, "enableDefaultDeny")
-	}
-	return reflect.DeepEqual(actual, expected["spec"])
-}
 func secretMatches(raw []byte, b binding) bool {
 	var s struct {
 		Metadata metadata
@@ -99,9 +59,20 @@ func verifyDeployed(ctx context.Context, kubeContext string) error {
 		if err != nil || !secretMatches(secret, before) {
 			return errors.New("source-secret")
 		}
-		policy, err := readNamespace(ctx, kubeContext, "", "ciliumclusterwidenetworkpolicy.cilium.io", "gateway-receiver")
-		if err != nil || !policyMatches(policy, before) {
-			return errors.New("source-policy")
+		c := receiverClient{context: kubeContext, command: executeReceiver}
+		if err := c.policies(ctx, before); err != nil {
+			return err
+		}
+		if err := c.bindingsAbsent(ctx); err != nil {
+			return err
+		}
+		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+		if err != nil {
+			return err
+		}
+		patch, err := disabledPatch(raw, before)
+		if err != nil || len(patch) != 0 {
+			return errors.New("receiver-not-disabled")
 		}
 		if err = probePublic(ctx, before.PublicIPv4); err != nil {
 			return err

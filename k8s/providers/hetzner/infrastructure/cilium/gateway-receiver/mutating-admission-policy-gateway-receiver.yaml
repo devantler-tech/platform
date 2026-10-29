@@ -1,0 +1,51 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicy
+metadata:
+  name: gateway-receiver
+  annotations:
+    platform.devantler.tech/gateway-receiver-owner: v1
+spec:
+  failurePolicy: Fail
+  reinvocationPolicy: IfNeeded
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [cilium.io]
+        apiVersions: [v2]
+        operations: [CREATE, UPDATE]
+        resources: [ciliumenvoyconfigs]
+        scope: Namespaced
+  matchConditions:
+    - name: owned-application-gateway
+      expression: object.metadata.namespace == 'kube-system' && object.metadata.name == 'cilium-gateway-platform'
+  variables:
+    - name: listener
+      expression: object.spec.resources.filter(r, r['@type'] == 'type.googleapis.com/envoy.config.listener.v3.Listener')[0]
+    - name: listenerIndex
+      expression: object.spec.resources.indexOf(variables.listener)
+    - name: peer
+      expression: "'${gateway_receiver_source_cidr}'.split('/')[0]"
+  mutations:
+    - patchType: JSONPatch
+      jsonPatch:
+        expression: >-
+          has(object.metadata.annotations) ? [] :
+          [JSONPatch{op: 'add', path: '/metadata/annotations', value: {}}]
+    - patchType: JSONPatch
+      jsonPatch:
+        # Keep maps homogeneous and set the numeric protobuf wrapper separately.
+        # This path is exercised with the native Kubernetes JSONPatch evaluator.
+        expression: >-
+          variables.listener.filterChains.filter(c, c.filterChainMatch.transportProtocol == 'tls').map(c,
+            JSONPatch{op: 'add',
+              path: '/spec/resources/' + string(variables.listenerIndex) + '/filterChains/' +
+                string(variables.listener.filterChains.indexOf(c)) + '/filterChainMatch/directSourcePrefixRanges',
+              value: [{'addressPrefix': variables.peer}]}) +
+          variables.listener.filterChains.filter(c, c.filterChainMatch.transportProtocol == 'tls').map(c,
+            JSONPatch{op: 'add',
+              path: '/spec/resources/' + string(variables.listenerIndex) + '/filterChains/' +
+                string(variables.listener.filterChains.indexOf(c)) + '/filterChainMatch/directSourcePrefixRanges/0/prefixLen',
+              value: 32}) +
+          [JSONPatch{op: 'add', path: '/metadata/annotations/platform.devantler.tech~1gateway-receiver-owner', value: 'v1'}]

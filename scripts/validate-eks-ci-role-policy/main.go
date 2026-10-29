@@ -788,6 +788,10 @@ func isAuthorizationKind(kind string) bool {
 		"Function",
 		"Configuration",
 		"DeploymentRuntimeConfig",
+		"MutatingAdmissionPolicy",
+		"MutatingAdmissionPolicyBinding",
+		"ValidatingAdmissionPolicy",
+		"ValidatingAdmissionPolicyBinding",
 	}
 	for _, target := range targets {
 		if kind == target || strings.HasSuffix(kind, "/"+target) {
@@ -795,6 +799,7 @@ func isAuthorizationKind(kind string) bool {
 		}
 	}
 	return strings.HasPrefix(kind, "source.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*") ||
+		strings.HasPrefix(kind, "admissionregistration.k8s.io/") && strings.HasSuffix(kind, "/*") ||
 		strings.HasPrefix(kind, "helm.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*") ||
 		strings.HasPrefix(kind, "pkg.crossplane.io/") && strings.HasSuffix(kind, "/*") ||
 		strings.HasPrefix(kind, "kustomize.toolkit.fluxcd.io/") && strings.HasSuffix(kind, "/*")
@@ -918,6 +923,14 @@ func containsEmbeddedAuthorizationTemplate(value any, depth int) bool {
 // isIndirectAuthorizationPolicy selects Kyverno policies that can generate or
 // mutate RBAC privileges without declaring the resulting object in this render.
 func isIndirectAuthorizationPolicy(document map[string]any, identity resourceIdentity) bool {
+	// Native admission controls can redirect or constrain the same protected
+	// objects as Kyverno. Their policy and binding scopes must remain reviewed.
+	if strings.HasPrefix(identity.apiVersion, "admissionregistration.k8s.io/") {
+		switch identity.kind {
+		case "MutatingAdmissionPolicy", "MutatingAdmissionPolicyBinding", "ValidatingAdmissionPolicy", "ValidatingAdmissionPolicyBinding":
+			return true
+		}
+	}
 	if !isLegacyKyvernoPolicy(identity) {
 		return false
 	}

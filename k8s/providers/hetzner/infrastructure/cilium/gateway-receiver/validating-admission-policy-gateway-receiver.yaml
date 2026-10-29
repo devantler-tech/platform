@@ -1,0 +1,52 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: gateway-receiver
+  annotations:
+    platform.devantler.tech/gateway-receiver-owner: v1
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}
+    resourceRules:
+      - apiGroups: [cilium.io]
+        apiVersions: [v2]
+        operations: [CREATE, UPDATE]
+        resources: [ciliumenvoyconfigs]
+        scope: Namespaced
+  matchConditions:
+    - name: owned-application-gateway
+      expression: object.metadata.namespace == 'kube-system' && object.metadata.name == 'cilium-gateway-platform'
+  variables:
+    - name: listeners
+      expression: object.spec.resources.filter(r, r['@type'] == 'type.googleapis.com/envoy.config.listener.v3.Listener')
+    - name: peer
+      expression: "'${gateway_receiver_source_cidr}'.split('/')[0]"
+  validations:
+    - expression: >-
+        size(variables.listeners) == 1 && variables.listeners[0].name == 'listener' &&
+        !has(variables.listeners[0].defaultFilterChain) && !has(variables.listeners[0].filterChainMatcher) &&
+        !has(variables.listeners[0].default_filter_chain) && !has(variables.listeners[0].filter_chain_matcher) &&
+        !has(variables.listeners[0].filter_chains)
+      message: The application gateway requires one supported listener without a fallback chain or alternate matcher.
+    - expression: >-
+        has(object.metadata.annotations) &&
+        object.metadata.annotations['platform.devantler.tech/gateway-receiver-owner'] == 'v1'
+      message: The application gateway receiver policy must retain its ownership marker.
+    - expression: >-
+        variables.listeners[0].filterChains.exists(c, c.filterChainMatch.transportProtocol == 'tls') &&
+        variables.listeners[0].filterChains.all(c,
+          has(c.filterChainMatch) && has(c.filterChainMatch.transportProtocol) &&
+          !has(c.filter_chain_match) && !has(c.transport_socket) &&
+          !has(c.filterChainMatch.transport_protocol) && !has(c.filterChainMatch.direct_source_prefix_ranges) &&
+          (c.filterChainMatch.transportProtocol == 'raw_buffer' && !has(c.transportSocket) &&
+           !has(c.filterChainMatch.directSourcePrefixRanges) ||
+           c.filterChainMatch.transportProtocol == 'tls' &&
+           has(c.filterChainMatch.directSourcePrefixRanges) &&
+           size(c.filterChainMatch.directSourcePrefixRanges) == 1 &&
+           size(c.filterChainMatch.directSourcePrefixRanges[0]) == 2 &&
+           c.filterChainMatch.directSourcePrefixRanges[0].addressPrefix == variables.peer &&
+           c.filterChainMatch.directSourcePrefixRanges[0].prefixLen == 32))
+      message: Every application TLS chain requires the declared directly connected peer; the plain HTTP diagnostic remains separate.
