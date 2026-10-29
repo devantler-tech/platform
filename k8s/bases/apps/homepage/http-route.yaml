@@ -11,6 +11,27 @@ spec:
   hostnames:
     - ${domain}
   rules:
+    # These stable URLs contain mutable configuration, so an edge cache must
+    # not keep serving the previous theme after Homepage detects a new hash.
+    - matches:
+        - path:
+            type: Exact
+            value: /api/config/custom.css
+        - path:
+            type: Exact
+            value: /api/config/custom.js
+      filters:
+        - type: ResponseHeaderModifier
+          responseHeaderModifier:
+            set:
+              - name: Strict-Transport-Security
+                value: max-age=63072000; includeSubDomains; preload
+              - name: Cache-Control
+                value: private, no-store
+      backendRefs:
+        - name: oauth2-proxy
+          namespace: oauth2-proxy
+          port: 80
     - filters:
         - type: ResponseHeaderModifier
           responseHeaderModifier:
