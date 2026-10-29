@@ -3603,7 +3603,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@d513d0069c20cd8f037c0cb42eadf73268ac14f4 # v14.0.0
+        uses: devantler-tech/.github/actions/validate-naming@84f4cddc69d6a5a937a7e83d2bd77a438d932f26 # v17.0.0
 
       - name: Confirm naming validation completed
         env:
@@ -4616,7 +4616,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@d513d0069c20cd8f037c0cb42eadf73268ac14f4 # v14.0.0
+        uses: devantler-tech/.github/actions/aggregate-job-checks@84f4cddc69d6a5a937a7e83d2bd77a438d932f26 # v17.0.0
         with:
           job-results: >-
             ${{ needs.changes.result }}
