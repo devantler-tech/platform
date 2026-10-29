@@ -92,7 +92,7 @@ records or regenerated caches alone never establish fresh-install intent.
 
 `Prepare Email Storage Key` is a protected first-attempt, main-only operation,
 confirmed with `prepare-email-storage-key`. Before creating anything, it repeats
-the independent three-account legacy restore and compares those complete values
+an independent restore of the three canonical Email accounts and compares those complete values
 with their fixed infrastructure destinations. The private connection files stay
 outside the restore sandbox. A fresh key uses 256 bits of system randomness and
 a create-only KV-v2 write. Existing valid keys are preserved. Deleted history,

@@ -44,7 +44,8 @@ jq -e '
     ([$p.volumes[]|select(.persistentVolumeClaim)|{name,claim:.persistentVolumeClaim.claimName}]==[{name:"snapshots",claim:"vault-snapshots-recovery"}]))
 ' "$work/source.json" > /dev/null 2> "$work/admission.log" || fail
 # Construct exactly the observed template and retain its CronJob controller owner.
-# Its Forbid policy can therefore see this manual run; history cleanup remains native.
+# Native history cleanup retains that ownership; a manual create still needs
+# its own unfinished-Job check because Forbid governs scheduled creation.
 jq --arg name "$job" '
  . as $source |
  {apiVersion:"batch/v1",kind:"Job",metadata:{name:$name,namespace:"openbao",
@@ -55,6 +56,19 @@ jq --arg name "$job" '
 ' "$work/source.json" > "$work/job.json" 2> "$work/manifest.log" || fail
 "${kc[@]}" get cronjob vault-snapshot -o json > "$work/rebound.json" 2> "$work/reader.log" || fail
 jq -e --slurpfile before "$work/source.json" '.metadata.uid==$before[0].metadata.uid and .metadata.resourceVersion==$before[0].metadata.resourceVersion and .spec==$before[0].spec and ((.status.active//[])|length==0)' "$work/rebound.json" > /dev/null 2> "$work/admission.log" || fail
+stage=overlap
+"${kc[@]}" get jobs --chunk-size=0 -o json > "$work/jobs.json" 2> "$work/reader.log" || fail
+jq -e --slurpfile source "$work/source.json" '
+ (((.apiVersion=="v1" and .kind=="List") or (.apiVersion=="batch/v1" and .kind=="JobList")) and
+  (.items|type)=="array" and (.metadata.continue//"")=="") and
+ all(.items[];
+  .apiVersion=="batch/v1" and .kind=="Job" and .metadata.namespace=="openbao" and
+  (.metadata.uid|test("^[a-f0-9]{8}(-[a-f0-9]{4}){3}-[a-f0-9]{12}$")) and
+  (if any(.metadata.ownerReferences[]?; .apiVersion=="batch/v1" and .kind=="CronJob" and .uid==$source[0].metadata.uid and .controller==true)
+   then .metadata.deletionTimestamp==null and (.status.active//0)==0 and
+    ([.status.conditions[]?|select((.type=="Complete" or .type=="Failed") and .status=="True")]|length)==1
+   else true end))
+' "$work/jobs.json" > /dev/null 2> "$work/admission.log" || fail
 stage=create-unknown
 "${kc[@]}" create -f "$work/job.json" -o json > "$work/created.json" 2> "$work/create.log" || fail
 jq -e --arg name "$job" --slurpfile source "$work/source.json" '

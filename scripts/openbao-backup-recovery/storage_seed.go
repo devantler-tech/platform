@@ -44,16 +44,15 @@ func (a *baoAPI) prepareStorage(ctx context.Context, token string, expected map[
 	if !slices.Equal(credentialPaths, canonical) || len(expected) != 3 || entropy == nil || !regexp.MustCompile(`^[A-Za-z0-9._-]{20,256}$`).MatchString(token) {
 		return "", errEvidence
 	}
-	// The one-time independent proof recovers the original three complete values.
-	// Bind those exact values to their declared canonical destinations before
-	// creating anything. Canonical-only proof inputs are not silently substituted.
+	// Bind the three independently restored canonical records to the live
+	// canonical accounts before creating anything. Legacy proofs cannot replace
+	// recovery of the paths the operational consumers now read.
 	verified := map[string]json.RawMessage{}
-	for index, account := range []string{"admin", "maintainer", "agent"} {
-		path := "apps/private-mail/" + account
+	for _, path := range canonical {
 		if _, ok := recordValueAtPath(path, expected[path]); !ok {
 			return "", errEvidence
 		}
-		verified[canonical[index]] = expected[path]
+		verified[path] = expected[path]
 	}
 	health, err := a.health(ctx)
 	if err != nil || !*health.Initialized || *health.Sealed {
@@ -95,7 +94,7 @@ func (a *baoAPI) prepareStorage(ctx context.Context, token string, expected map[
 		if err != nil {
 			return "", errEvidence
 		}
-		body, err := json.Marshal(map[string]any{"data": json.RawMessage(value), "options": map[string]int{"cas": 0}})
+		body, err := json.Marshal(map[string]any{"data": value, "options": map[string]int{"cas": 0}})
 		if err != nil {
 			return "", errEvidence
 		}

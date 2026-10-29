@@ -35,10 +35,13 @@ func TestStorageSeedCreatesOnceAndRefusesUncertaintyOrChangedInputs(t *testing.T
 			}
 			restored := map[string]json.RawMessage{}
 			for path, value := range expected {
-				restored[strings.Replace(path, "infrastructure/email/", "apps/private-mail/", 1)] = value
+				restored[path] = value
 			}
 			if scenario == "unbound-scope" {
-				restored = expected
+				restored = map[string]json.RawMessage{}
+				for path, value := range expected {
+					restored[strings.Replace(path, "infrastructure/email/", "apps/private-mail/", 1)] = value
+				}
 			}
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path != "/v1/sys/health" && r.Header.Get("X-Vault-Token") != "synthetic-seed-token-only" {

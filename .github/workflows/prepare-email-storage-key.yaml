@@ -115,13 +115,13 @@ jobs:
           binary="$RUNNER_TEMP/verify-openbao-recovery"
           export OPENBAO_RECOVERY_DIR="$proof_dir"
           stage=collection
-          if ! "$binary" collect > "$private_dir/collection-result" 2>"$private_dir/collection.log"; then fail; fi
+          if ! "$binary" collect-email > "$private_dir/collection-result" 2>"$private_dir/collection.log"; then fail; fi
           [[ $(cat "$private_dir/collection-result") == OPENBAO_BACKUP_INPUTS=PASS ]] || fail
           stage=image
           image=$("$binary" image) || fail
           if ! docker pull "$image" > "$private_dir/pull.log" 2>&1; then fail; fi
           stage=isolated-restore
-          if ! bash scripts/run-openbao-backup-sandbox.sh verify "$proof_dir" "$binary" > "$private_dir/verification-result" 2>"$private_dir/verification.log"; then fail; fi
+          if ! bash scripts/run-openbao-backup-sandbox.sh verify-email "$proof_dir" "$binary" > "$private_dir/verification-result" 2>"$private_dir/verification.log"; then fail; fi
           [[ $(cat "$private_dir/verification-result") == 'OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3' ]] || fail
           stage='storage-key'
           kill -0 "$forward_pid" 2>/dev/null || fail

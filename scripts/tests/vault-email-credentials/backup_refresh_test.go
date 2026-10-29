@@ -11,7 +11,7 @@ import (
 )
 
 func TestBackupRefreshRequiresTheOwnedCompletedSnapshotAndMirror(t *testing.T) {
-	for _, scenario := range []string{"complete", "active", "image", "pvc", "changed", "create-unknown", "failed", "replacement", "pod-missing"} {
+	for _, scenario := range []string{"complete", "owned-unfinished", "owned-complete", "foreign-unfinished", "jobs-read-failed", "jobs-partial", "active", "image", "pvc", "changed", "create-unknown", "failed", "replacement", "pod-missing"} {
 		t.Run(scenario, func(t *testing.T) {
 			work := t.TempDir()
 			if err := os.Chmod(work, 0700); err != nil {
@@ -66,6 +66,9 @@ case "$1" in
    cronjob)
     if [[ "$SCENARIO" == changed && -f "$FIXTURE/read" ]]; then jq '.metadata.resourceVersion="101"' "$FIXTURE/cron.json"; else cat "$FIXTURE/cron.json"; fi
     touch "$FIXTURE/read" ;;
+   jobs)
+    if [[ "$SCENARIO" == jobs-read-failed ]];then printf SENSITIVE_FIXTURE_VALUE >&2;exit 2;fi
+    jq -n --arg scenario "$SCENARIO" '{apiVersion:"v1",kind:"List",metadata:{continue:(if $scenario=="jobs-partial" then "opaque" else "" end)},items:(if ($scenario=="owned-unfinished" or $scenario=="owned-complete" or $scenario=="foreign-unfinished") then [{apiVersion:"batch/v1",kind:"Job",metadata:{uid:"66666666-6666-4666-8666-666666666666",namespace:"openbao",ownerReferences:[{apiVersion:"batch/v1",kind:"CronJob",name:"vault-snapshot",uid:(if $scenario=="foreign-unfinished" then "99999999-9999-4999-8999-999999999999" else "11111111-1111-4111-8111-111111111111" end),controller:true}]},status:(if $scenario=="owned-complete" then {succeeded:1,conditions:[{type:"Complete",status:"True"}]} else {} end)}] else [] end)}' ;;
    job)
     if [[ "$SCENARIO" == replacement ]];then jq '.metadata.uid="33333333-3333-4333-8333-333333333333"' "$FIXTURE/created.json"; else cat "$FIXTURE/created.json";fi ;;
    pods)
@@ -89,7 +92,7 @@ esac
 			cmd := exec.Command("bash", filepath.Join(repositoryRoot(), "scripts/refresh-email-recovery-backup.sh"))
 			cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "FIXTURE="+work, "SCENARIO="+scenario, "EMAIL_BACKUP_WORK_DIR="+work, "GITHUB_EVENT_NAME=workflow_dispatch", "GITHUB_REF=refs/heads/main", "GITHUB_REPOSITORY=devantler-tech/platform", "GITHUB_RUN_ID=12345", "GITHUB_RUN_ATTEMPT=1", "EMAIL_BACKUP_CONFIRM=refresh-email-recovery-backup")
 			output, err := cmd.CombinedOutput()
-			success := scenario == "complete"
+			success := scenario == "complete" || scenario == "owned-complete" || scenario == "foreign-unfinished"
 			if (err == nil) != success {
 				t.Fatalf("scenario result: error=%v output=%s", err, output)
 			}
@@ -103,7 +106,7 @@ esac
 			if strings.Contains(string(calls), " delete ") {
 				t.Fatal("unknown resource was deleted")
 			}
-			early := scenario == "active" || scenario == "image" || scenario == "pvc" || scenario == "changed"
+			early := scenario == "owned-unfinished" || scenario == "jobs-read-failed" || scenario == "jobs-partial" || scenario == "active" || scenario == "image" || scenario == "pvc" || scenario == "changed"
 			if early && strings.Contains(string(calls), " create ") {
 				t.Fatal("unsafe source created a job")
 			}

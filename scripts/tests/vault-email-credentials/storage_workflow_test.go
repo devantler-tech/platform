@@ -67,7 +67,7 @@ func TestStoragePreparationRequiresIndependentRestoreBeforeSeeding(t *testing.T)
 				"verify-openbao-recovery": `#!/bin/bash
 set -eu
 case "$*" in
- collect)
+ collect-email)
   [[ -s $KUBECONFIG && $KUBECONFIG != "$OPENBAO_RECOVERY_DIR/"* ]] || exit 91
   printf '%s' "$OPENBAO_RECOVERY_DIR" > "$FIXTURE_DIR/scratch"
   [[ $FIXTURE_CASE != collection-failed ]] || exit 7
@@ -87,7 +87,7 @@ esac
 `,
 				"scripts/run-openbao-backup-sandbox.sh": `#!/bin/bash
 set -eu
-[[ $1 == verify && $2 == "$OPENBAO_RECOVERY_DIR" && $3 == "$RUNNER_TEMP/verify-openbao-recovery" && ! -e $2/kubeconfig ]] || exit 91
+[[ $1 == verify-email && $2 == "$OPENBAO_RECOVERY_DIR" && $3 == "$RUNNER_TEMP/verify-openbao-recovery" && ! -e $2/kubeconfig ]] || exit 91
 [[ $FIXTURE_CASE != restore-failed ]] || exit 7
 if [[ $FIXTURE_CASE == restore-format ]]; then printf '%s\n' PRIVATE_SYNTHETIC_PAYLOAD; else
  touch "$FIXTURE_DIR/restored"
