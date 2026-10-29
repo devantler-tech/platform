@@ -12,7 +12,7 @@ import (
 )
 
 func TestReceiverPolicyPreservesOnlyTheSyntheticHTTPDiagnostic(t *testing.T) {
-	path := filepath.Join("..", "..", "k8s", "providers", "hetzner", "infrastructure", "cilium", "cilium-clusterwide-network-policy-gateway-receiver.yaml")
+	path := filepath.Join("..", "..", "k8s", "providers", "hetzner", "infrastructure", "cilium", "gateway-receiver", "cilium-clusterwide-network-policy-gateway-receiver.yaml")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

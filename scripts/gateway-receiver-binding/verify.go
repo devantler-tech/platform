@@ -22,7 +22,7 @@ func policyMatches(raw []byte, b binding) bool {
 	if meta["name"] != "gateway-receiver" {
 		return false
 	}
-	source, err := os.ReadFile("k8s/providers/hetzner/infrastructure/cilium/cilium-clusterwide-network-policy-gateway-receiver.yaml")
+	source, err := os.ReadFile("k8s/providers/hetzner/infrastructure/cilium/gateway-receiver/cilium-clusterwide-network-policy-gateway-receiver.yaml")
 	if err != nil {
 		return false
 	}

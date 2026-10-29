@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-const destination = "k8s/clusters/prod/variables-gateway-receiver.enc.yaml"
+const destination = "k8s/clusters/prod/secret-variables-gateway-receiver.enc.yaml"
 const recipient = "age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6"
 
 func read(ctx context.Context, kubeContext, kind, name string) ([]byte, error) {
