@@ -14,6 +14,28 @@ const recoveryLabel = "email.devantler.tech/data-recovery"
 type sourceIdentity struct{ podUID, claimUID, volume, pv, claimSize, pvUID, reclaim string }
 type messageIdentity struct{ email, blob, mailbox, messageID, body string }
 
+// Scratch receipts may coexist with the data receipt. Select one data volume;
+// proveBackup still binds its owner, source Pod, completion and byte accounting.
+func sourceVolumeBackup(volumes []object, volume string) (object, error) {
+	if volume == "" {
+		return nil, errors.New("backup-volume-count")
+	}
+	var selected object
+	for _, candidate := range volumes {
+		if text(child(candidate, "spec"), "volume") != volume {
+			continue
+		}
+		if selected != nil {
+			return nil, errors.New("backup-volume-count")
+		}
+		selected = candidate
+	}
+	if selected == nil {
+		return nil, errors.New("backup-volume-count")
+	}
+	return selected, nil
+}
+
 func child(o object, k string) object {
 	v, _ := o[k].(map[string]any)
 	if v == nil {

@@ -23,6 +23,31 @@ func TestCompletedSnapshotIsBoundToThisBackupAndServingVolume(t *testing.T) {
 	}
 }
 
+// Velero backs up the serving pod's scratch volume too. Requiring one total
+// receipt would reject a valid data restore; accepting the first can pick scratch.
+func TestMailboxSnapshotSelectionIgnoresScratchButRequiresUniqueData(t *testing.T) {
+	b, data, s, i := backupProofFixture()
+	scratch := object{"spec": object{"volume": "temporary"}, "status": object{"snapshotID": "scratch-must-not-be-restored"}}
+	for _, volumes := range [][]object{{scratch, data}, {data, scratch}, {data}} {
+		selected, err := sourceVolumeBackup(volumes, "data")
+		if err != nil {
+			t.Fatalf("mailbox data backup was refused alongside scratch: %v", err)
+		}
+		snapshot, err := proveBackup(b, selected, s, i, "owned-backup-uid", time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC))
+		if err != nil || snapshot != "0123456789abcdef0123456789abcdef" {
+			t.Fatal("selection did not produce the source-bound mailbox snapshot")
+		}
+	}
+	for _, volumes := range [][]object{nil, {scratch}, {data, data}, {scratch, data, data}} {
+		if _, err := sourceVolumeBackup(volumes, "data"); err == nil {
+			t.Fatal("missing or duplicated mailbox backup was accepted")
+		}
+	}
+	if _, err := sourceVolumeBackup([]object{data}, ""); err == nil {
+		t.Fatal("an unspecified source volume was accepted")
+	}
+}
+
 // Removing any identity, completion or byte-accounting fence would accept one
 // of these foreign, stale, incomplete or empty backups as recovery evidence.
 func TestUnboundOrIncompleteBackupCannotBecomeRestoreInput(t *testing.T) {
@@ -61,7 +86,10 @@ func TestRecoveryMessageProofRequiresExactContentAndIdentity(t *testing.T) {
 		t.Fatal("real recovered message was refused")
 	}
 	for _, key := range []string{"id", "blobId", "messageId", "mailboxIds", "bodyValues", "textBody"} {
-		data, _ := json.Marshal(message)
+		data, err := json.Marshal(message)
+		if err != nil {
+			t.Fatal(err)
+		}
 		var changed object
 		_ = json.Unmarshal(data, &changed)
 		delete(changed, key)

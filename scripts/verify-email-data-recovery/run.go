@@ -147,10 +147,14 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	volumes, err := d.list(ctx, "PodVolumeBackup", "velero", "velero.io/backup-uid="+backup.uid)
-	if err != nil || len(volumes) != 1 {
+	if err != nil {
 		return errors.New("backup-volume-count")
 	}
-	snapshot, err := proveBackup(completed, volumes[0], d.source, d.i, backup.uid, after)
+	volume, err := sourceVolumeBackup(volumes, d.source.volume)
+	if err != nil {
+		return err
+	}
+	snapshot, err := proveBackup(completed, volume, d.source, d.i, backup.uid, after)
 	if err != nil {
 		return err
 	}

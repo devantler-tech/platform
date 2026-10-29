@@ -212,7 +212,10 @@ func (d *recoveryDriver) remove(ctx context.Context, ref ownedReference) error {
 	if err != nil {
 		return err
 	}
-	body, _ := json.Marshal(object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": object{"uid": ref.uid}, "propagationPolicy": "Foreground"})
+	body, err := json.Marshal(object{"apiVersion": "v1", "kind": "DeleteOptions", "preconditions": object{"uid": ref.uid}, "propagationPolicy": "Foreground"})
+	if err != nil {
+		return errors.New("delete-options")
+	}
 	if _, err = d.k.call(ctx, body, "delete", "--raw="+path, "-f=-"); err != nil {
 		d.uncertain = true
 		return errors.New("delete-uncertain")

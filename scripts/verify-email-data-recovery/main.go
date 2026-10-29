@@ -37,7 +37,9 @@ func runRecovery(ctx context.Context, env func(string) string, k kubernetes, out
 		return 2
 	}
 	d.stage = "cleanup"
-	cleanupCtx, finish := context.WithTimeout(context.Background(), 10*time.Minute)
+	// Cleanup keeps dispatch context values but has an independent deadline:
+	// cancellation after verification must not interrupt resource disposal.
+	cleanupCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Minute)
 	defer finish()
 	if err = d.cleanupRestore(cleanupCtx); err != nil {
 		_, _ = fmt.Fprintln(output, "EMAIL_DATA_RECOVERY=UNVERIFIED stage=cleanup cleanup=RETAINED")

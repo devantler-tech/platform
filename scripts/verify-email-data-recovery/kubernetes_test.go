@@ -39,7 +39,10 @@ func (a *boundaryAPI) call(_ context.Context, input []byte, args ...string) ([]b
 		if !ok {
 			return nil, nil
 		}
-		data, _ := json.Marshal(o)
+		data, err := json.Marshal(o)
+		if err != nil {
+			return nil, err
+		}
 		if a.replaced {
 			var changed object
 			_ = json.Unmarshal(data, &changed)

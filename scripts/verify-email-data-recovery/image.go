@@ -37,7 +37,7 @@ func declaredRecoveryImage(declaration, dockerfile io.Reader) (string, error) {
 		return "", errors.New("image-declaration")
 	}
 	var trailing yaml.Node
-	if decoder.Decode(&trailing) != io.EOF {
+	if !errors.Is(decoder.Decode(&trailing), io.EOF) {
 		return "", errors.New("image-declaration-count")
 	}
 	image := ""
