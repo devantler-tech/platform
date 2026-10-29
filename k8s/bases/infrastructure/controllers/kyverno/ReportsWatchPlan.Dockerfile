@@ -13,10 +13,14 @@ RUN GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/gol
 ARG VERSION=unknown
 # Preserve the symbol table so executable scans can distinguish linked packages
 # from conservative module-level findings; omit only DWARF debug information.
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -buildvcs=true -trimpath \
     -ldflags="-w -X github.com/kyverno/kyverno/pkg/version.BuildVersion=${VERSION}" \
     -o /out/reports-controller ./cmd/reports-controller \
-    && test "$(go version /out/reports-controller)" = "/out/reports-controller: go1.26.10"
+    && test "$(go version /out/reports-controller)" = "/out/reports-controller: go1.26.10" \
+    && go version -m /out/reports-controller > /tmp/reports-build-info \
+    && awk '$1 == "mod" && $2 == "github.com/kyverno/kyverno" && $3 == "v1.19.2+dirty" {module++} \
+      $1 == "build" && $2 == "vcs.revision=e63308f1e16c05cd009ac4864be6ec25c66b49be" {revision++} \
+      END {exit(module != 1 || revision != 1)}' /tmp/reports-build-info
 RUN go list -mod=readonly -deps ./cmd/reports-controller > /tmp/reports-packages \
     && if grep -Eq '^golang.org/x/crypto/openpgp(/|$)' /tmp/reports-packages; then \
          echo 'Unsafe OpenPGP package in reports runtime'; exit 1; \

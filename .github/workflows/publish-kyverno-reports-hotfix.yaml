@@ -60,6 +60,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          git fetch --no-write-fetch-head --depth=1 origin +refs/tags/v1.19.2:refs/tags/v1.19.2
+          test "$(git rev-parse "refs/tags/v1.19.2^{commit}")" = "${SOURCE_COMMIT}"
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
@@ -129,6 +131,8 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          git fetch --no-write-fetch-head --depth=1 origin +refs/tags/v1.19.2:refs/tags/v1.19.2
+          test "$(git rev-parse "refs/tags/v1.19.2^{commit}")" = "${SOURCE_COMMIT}"
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check

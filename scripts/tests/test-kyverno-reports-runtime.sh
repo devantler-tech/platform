@@ -23,6 +23,10 @@ while IFS= read -r action; do
   [[ "$action" =~ @[0-9a-f]{40}$ ]] || fail 'action must be commit-pinned'
 done < <(yq -r '.jobs[].steps[]|select(has("uses"))|.uses' "$workflow")
 for job in verify publish; do
+  apply_step="$(JOB="$job" yq -r '.jobs[strenv(JOB)].steps[] | select(."working-directory" == "upstream") | .run' "$workflow")"
+  grep -Fxq 'git fetch --no-write-fetch-head --depth=1 origin +refs/tags/v1.19.2:refs/tags/v1.19.2' <<< "$apply_step" || fail "release tag missing in $job"
+  # shellcheck disable=SC2016
+  grep -Fxq 'test "$(git rev-parse "refs/tags/v1.19.2^{commit}")" = "${SOURCE_COMMIT}"' <<< "$apply_step" || fail "release tag is not bound to exact source in $job"
   # Match executable source proof in each job independently.
   # shellcheck disable=SC2016
   JOB="$job" yq -e '
@@ -55,6 +59,9 @@ diff --git a/third_party/docker-credential-acr-env/pkg/token/token.go b/third_pa
 [[ "$(grep '^diff --git ' "$patch")" == "$expected_headers" ]] || fail 'patch changes unreviewed paths'
 grep -Fxq 'FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder' "$dockerfile" || fail 'patched compiler pin changed'
 grep -Fxq 'ENV GOTOOLCHAIN=local' "$dockerfile" || fail 'implicit compiler switching enabled'
+grep -Fq 'go build -mod=readonly -buildvcs=true -trimpath' "$dockerfile" || fail 'truthful VCS metadata required'
+grep -Fq "\$3 == \"v1.19.2+dirty\"" "$dockerfile" || fail 'actual main-module release proof missing'
+grep -Fq "\$2 == \"vcs.revision=e63308f1e16c05cd009ac4864be6ec25c66b49be\"" "$dockerfile" || fail 'actual main-module revision proof missing'
 grep -Fxq 'RUN timeout 900s go test -mod=readonly -race ./pkg/controllers/report/resource ./pkg/controllers/report/aggregate ./pkg/webhooks/resource/validation' "$dockerfile" || fail 'controller race regressions changed'
 grep -Fxq '    && timeout 900s golangci-lint run --timeout=14m' "$dockerfile" || fail 'full lint gate changed'
 grep -Fq './cmd/internal/... ./pkg/image/... ./pkg/tracing/... ./pkg/metrics/...' "$dockerfile" || fail 'runtime dependency regressions missing'
