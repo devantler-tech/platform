@@ -155,6 +155,7 @@ jobs:
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
+              - 'scripts/verify-email-data-recovery/**'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'

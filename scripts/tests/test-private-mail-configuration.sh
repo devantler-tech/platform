@@ -563,6 +563,37 @@ grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 docker stop --time 30 "$name" >/dev/null
 docker logs "$name" >"$scratch/smtp-auth-server.log" 2>&1
 docker rm "$name" >/dev/null
+# Establish which native protocol can inspect a recovered datastore before
+# designing the isolated restore worker. A recovery-only listener must not be
+# assumed to provide ordinary mailbox access. Both outcomes below are evidence
+# about the pinned server, never a claim that production data was restored.
+start_server preparation
+recovery_mail_status=$(protocol_curl --silent --show-error --max-time 10 \
+  --config /proof/human.curl --header 'Content-Type: application/json' \
+  --data-binary @/proof/receiving-query.json --output /dev/null \
+  --write-out '%{http_code}' "http://$name:8080/jmap")
+if [ "$recovery_mail_status" = 200 ]; then
+  protocol_curl --fail --silent --show-error --max-time 10 \
+    --config /proof/human.curl --header 'Content-Type: application/json' \
+    --data-binary @/proof/receiving-query.json "http://$name:8080/jmap" \
+    >"$scratch/recovery-mail-result.json"
+  if jq -e '.methodResponses|length==2 and .[0][0]=="Email/query" and .[1][0]=="Email/get"' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    verify_receiving_aliases
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_READ_VERIFIED mode=recovery'
+  elif jq -e '.methodResponses|length>0 and all(.[]; .[0]=="error" and (.[1].type=="forbidden" or .[1].type=="unknownMethod"))' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+  else
+    echo 'FAIL: native recovery mailbox protocol returned an unclassified response' >&2; exit 1
+  fi
+elif [ "$recovery_mail_status" = 401 ] || [ "$recovery_mail_status" = 403 ]; then
+  echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+else
+  echo 'FAIL: native recovery mailbox protocol returned an unexpected status' >&2; exit 1
+fi
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
 mkdir "$scratch/stale-assets" "$scratch/stale-source"
 printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
 (cd "$scratch/stale-source" && zip -q "$scratch/stale-assets/webui.zip" index.html)
