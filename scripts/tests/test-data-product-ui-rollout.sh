@@ -326,6 +326,8 @@ if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
 fi
 case "${MODE:-}" in
   slow-public) sleep 0.55 ;;
+  connection-reset) printf '000'; printf 'PRIVATE-ERROR-CANARY: private upstream\n' >&2; exit 56 ;;
+  invalid-http-status) printf '503PRIVATE-ERROR-CANARY'; exit 0 ;;
   dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
   tls-handshake-failure) printf 'PRIVATE-ERROR-CANARY: private handshake\n' >&2; exit 35 ;;
@@ -413,9 +415,13 @@ run_case() {
         public_role=sample_health
         public_reason=request_timeout
         ;;
-      http-failure | redirect)
+      http-failure | redirect | invalid-http-status)
         public_role=sample_health
         public_reason=http_status
+        ;;
+      connection-reset)
+        public_role=sample_health
+        public_reason=transport_failed
         ;;
       missing-csp | weak-csp | duplicate-csp)
         public_role=kit_index
@@ -506,6 +512,19 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# A failed public request must identify its numeric cause without exposing
+# response data. Missing diagnostics make unrelated production evictions opaque.
+run_case receipt-http-failure fail http-failure 15
+jq -e '.httpStatus == 503 and .curlExit == 0' "${scratch}/receipt-http-failure/stdout" >/dev/null ||
+  fail 'HTTP refusal lost its numeric status or curl exit'
+[[ $(wc -l <"${scratch}/receipt-http-failure/urls") -eq 1 ]] || fail 'HTTP refusal was retried'
+run_case receipt-connection-reset fail connection-reset 15
+jq -e '.httpStatus == 0 and .curlExit == 56' "${scratch}/receipt-connection-reset/stdout" >/dev/null ||
+  fail 'transport refusal lost its numeric curl exit'
+[[ $(wc -l <"${scratch}/receipt-connection-reset/urls") -eq 1 ]] || fail 'transport refusal was retried'
+run_case receipt-invalid-status fail invalid-http-status 15
+jq -e 'has("httpStatus") == false and .curlExit == 0' "${scratch}/receipt-invalid-status/stdout" >/dev/null ||
+  fail 'malformed curl output was accepted as an HTTP status'
 # Initial snapshot refusals must identify a fixed role without exposing values.
 mkdir "${scratch}/initial-unready"
 cp "${scratch}/healthy/"*.json "${scratch}/initial-unready/"

@@ -21,15 +21,15 @@ expected_ui_file="$(dirname "$expected_helm_file")/deployment-ui-kit.yaml"
 readonly expected_ui_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
-  local detail='' role='' reason='' extra=''
+  local detail='' role='' reason='' extra='' http_code='' curl_code=''
   # A completed public failure remains useful when the shared deadline subsequently expires.
   # Keep the deadline refusal, while retaining only the validated role and cause already observed.
   if [[ "$1" == public_contract_incomplete || ("$1" == deadline_exceeded && -f "$scratch/public-failure") ]]; then
     role=public_contract
     reason=read_incomplete
     if [[ -f "$scratch/public-failure" ]]; then
-      local saved_role='' saved_reason=''
-      read -r saved_role saved_reason extra <"$scratch/public-failure" || true
+      local saved_role='' saved_reason='' saved_http='' saved_curl=''
+      read -r saved_role saved_reason saved_http saved_curl extra <"$scratch/public-failure" || true
       # Only fixed identifiers may enter a public receipt, never response data.
       if [[ -z "$extra" ]]; then
         case "$saved_role" in
@@ -38,6 +38,8 @@ fail() {
               dns_failed | tls_failed | request_timeout | transport_failed | http_status | body_invalid | security_headers | asset_invalid)
                 role=$saved_role
                 reason=$saved_reason
+                if [[ "$saved_http" =~ ^(000|[1-5][0-9]{2})$ ]]; then http_code=$((10#$saved_http)); fi
+                if [[ "$saved_curl" =~ ^(0|[1-9][0-9]{0,2})$ ]] && ((saved_curl <= 255)); then curl_code=$saved_curl; fi
                 ;;
             esac
             ;;
@@ -45,6 +47,8 @@ fail() {
       fi
     fi
     detail=$(printf ',"phase":"public_contract","role":"%s","reason":"%s"' "$role" "$reason")
+    if [[ -n "$http_code" ]]; then detail+=$(printf ',"httpStatus":%d' "$http_code"); fi
+    if [[ -n "$curl_code" ]]; then detail+=$(printf ',"curlExit":%d' "$curl_code"); fi
   elif [[ ("$1" == deadline_exceeded || "$1" == read_incomplete) &&
     ("$phase" == initial_readiness || "$phase" == rollout_stability) ]]; then
     role=snapshot
@@ -617,8 +621,14 @@ check() {
   return "$result"
 }
 
-# refuse_public records only a fixed role and reason across the bounded child.
-refuse_public() { printf '%s %s\n' "$1" "$2" >"$scratch/public-failure"; }
+# refuse_public records fixed identifiers and optional numeric diagnostics.
+# Normalize curl's output before writing the single-line private record: an
+# unexpected write-out value must never become response data in a public receipt.
+refuse_public() {
+  local http_code=${3:--}
+  [[ "$http_code" =~ ^(000|[1-5][0-9]{2})$ ]] || http_code=-
+  printf '%s %s %s %s\n' "$1" "$2" "$http_code" "${4:--}" >"$scratch/public-failure"
+}
 
 # fetch retrieves one bounded HTTPS response without browser credentials.
 fetch() {
@@ -638,11 +648,11 @@ fetch() {
       35 | 60) reason=tls_failed ;;
       28) reason=request_timeout ;;
     esac
-    refuse_public "$role" "$reason"
+    refuse_public "$role" "$reason" "$result" "$curl_exit"
     return 1
   fi
   [[ "$result" == "${3:-200}" ]] || {
-    refuse_public "$role" http_status
+    refuse_public "$role" http_status "$result" "$curl_exit"
     return 1
   }
 }
