@@ -1,0 +1,27 @@
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: longhorn-migration-replica-exclusion
+policies:
+  - ../../k8s/providers/hetzner/infrastructure/cluster-policies/restrict-storage-to-baseline-workers.yaml
+resources:
+  - resources.yaml
+results:
+  - policy: restrict-storage-to-baseline-workers
+    rule: disable-replica-scheduling-on-autoscale-nodes
+    resources:
+      - autoscale-cx43-0123456789abcdef
+      - autoscale-cx43-1123456789abcdef
+      - autoscale-longhorn-v1-0123456789abcdef
+      - autoscale-longhorn-v10-0123456789abcdef
+    kind: Node
+    result: pass
+    patchedResources: patched-resources.yaml
+  - policy: restrict-storage-to-baseline-workers
+    rule: disable-replica-scheduling-on-autoscale-nodes
+    resources:
+      - autoscale-longhorn-v1-1123456789abcdef
+      - autoscale-longhorn-v2-2123456789abcdef
+      - prod-worker-1
+    kind: Node
+    result: skip

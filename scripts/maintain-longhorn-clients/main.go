@@ -45,6 +45,7 @@ type engine struct {
 	publicationNotStarted bool
 	previousFinished      func(context.Context, journal) error
 	revisionSafe          func(context.Context) error
+	migrationSource       func() ([]byte, error)
 }
 
 func (c client) read(ctx context.Context, kind, ns, name string) (object, error) {
@@ -87,6 +88,7 @@ func (c client) list(ctx context.Context, kind, ns string) ([]object, error) {
 	}
 	return r, nil
 }
+
 // patch transports the unchanged guarded JSON Patch through stdin and retains conflict classification.
 func (c client) patch(ctx context.Context, kind string, o object, p []object) error {
 	b, e := json.Marshal(p)
@@ -444,6 +446,7 @@ func (e engine) clientsReady(ctx context.Context) (bool, error) {
 		byLH[str(n, "metadata", "name")] = n
 	}
 	workers := 0
+	migrationStorage := map[string]bool{}
 	for _, n := range nodes {
 		if val(n, "metadata", "labels", "node-role.kubernetes.io/control-plane") != nil {
 			continue
@@ -469,7 +472,13 @@ func (e engine) clientsReady(ctx context.Context) (bool, error) {
 			if l == nil {
 				return false, nil
 			}
-			if val(l, "spec", "allowScheduling") != false || val(l, "spec", "evictionRequested") != true {
+			eligible, proofErr := e.migrationStorageEligible(n, l)
+			if proofErr != nil {
+				return false, proofErr
+			}
+			if eligible {
+				migrationStorage[str(n, "metadata", "name")] = true
+			} else if val(l, "spec", "allowScheduling") != false || val(l, "spec", "evictionRequested") != true {
 				return false, errors.New("compute-worker replica exclusion is unproven")
 			}
 		}
@@ -482,7 +491,7 @@ func (e engine) clientsReady(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	for _, r := range replicas {
-		if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") {
+		if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") && !migrationStorage[str(r, "spec", "nodeID")] {
 			return false, errors.New("replica storage exists on a compute worker")
 		}
 	}

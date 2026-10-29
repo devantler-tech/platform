@@ -9,6 +9,16 @@
 # via machine.nodeLabels are applied later by NodeApplyController and
 # would race with registration-time scheduling.
 machine:
+  # Reconcile existing Node objects too; kubelet registration arguments alone
+  # do not prove that an already registered node has adopted the new label.
+  nodeLabels:
+    node.longhorn.io/create-default-disk: config
   kubelet:
     extraArgs:
-      node-labels: "node.longhorn.io/create-default-disk=true"
+      node-labels: "node.longhorn.io/create-default-disk=config"
+  nodeAnnotations:
+    # Talos unlocks this encrypted raw partition under a stable mapper name.
+    # Existing V1 disks are unchanged; Longhorn consumes these defaults only
+    # when a node has no disks. Autoscaler nodes remain excluded by admission.
+    node.longhorn.io/default-disks-config: >-
+      [{"name":"longhorn-v2","path":"/dev/mapper/luks2-r-longhorn","diskType":"block","diskDriver":"aio","allowScheduling":true,"storageReserved":4294967296}]

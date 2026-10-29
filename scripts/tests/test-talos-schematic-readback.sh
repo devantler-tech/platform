@@ -75,6 +75,10 @@ jq -n --arg schematic "$desired_schematic" --arg version "$desired_version" --ar
     (node("autoscale-longhorn-v1-fedcba9876543210") | .metadata.labels = {
       "storage.platform.devantler.tech/migration-pool": "v1",
       "node.kubernetes.io/instance-type": "cpx42"
+    }),
+    (node("autoscale-longhorn-v2-0123456789abcdef") | .metadata.labels = {
+      "storage.platform.devantler.tech/migration-pool": "v2",
+      "node.kubernetes.io/instance-type": "cpx42"
     })
   ])}
 ' >"$tmp_dir/nodes.json"
