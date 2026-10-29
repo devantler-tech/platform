@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Secret
+metadata:
+    name: variables-gateway-receiver
+    namespace: flux-system
+stringData:
+    gateway_receiver_gateway_uid: ENC[AES256_GCM,data:qWH+hswLB5pQmia4h4WRIKf9Wrd+Q5c0biv0EhccIsNwJYUC,iv:5DCyIRjQMm//cLrM0VJJrd6nriSIwwxPrPIX7GlQmJU=,tag:KiXIFQ0LXUsQCLgPkhdLHA==,type:str]
+    gateway_receiver_service_uid: ENC[AES256_GCM,data:7008WODv2pvZsSh5kP8+8ZKJBL6YRG881jhvGEcIc6tC4EDz,iv:mmuFR3x8NZ4aJ02/rDtd3TJAPLPsPSSXe44MHfh85IA=,tag:nlvMBPyXIWN7iQHYq0fuJg==,type:str]
+    gateway_receiver_source_cidr: ENC[AES256_GCM,data:fpURifHZFIM+Ae4=,iv:lVUVNPpMI/yUk+NXVwmN+LrI7mNaEy3furASJxzHNG4=,tag:Wu83/Ybb1J4LK+6C1XpwGg==,type:str]
+type: Opaque
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBPNnhUeHFUS1poQlA4aVJs
+            d1ZUWlZuZVBFWC83Q29WSFpMbndDSENNTnhJCjZRc3JQMDh0SFdiUkxPNjgyUXQr
+            RExZb0w5SXJXOHFqeWZRcnJHS0lTUDAKLS0tIENYWm9EWENjbnhjY29nbTRBNllS
+            RDVzdHg1OTRva2lmYWViVmJXb3YxWGsKugysvsaw/lkgqXO078LM4+OgtwdCIz2i
+            dCsHUrg/ZCQ97GC7Ls58wwL7KsRc25HhLuw8wV66Qcq9dIPbJAorkQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age1rk6fs67kly3h4zux5za429z3grjtvs8vcunav4sa28pxk738najsk8wgs6
+    encrypted_regex: ^(data|stringData)$
+    lastmodified: "2026-10-28T23:53:07Z"
+    mac: ENC[AES256_GCM,data:FCBKjdlGdL/s+4pbi/z/cxEyIEQf85XWX0SF954LoNk3RuGoiKDyP/Jq/Trgmhy29QwuS4K2VekyVeck6Iz18Ao6x7jwO+kEw3zB3AfweaocXnezx/PZOfRFXi8Jp1Lma1gRY1PnLrYtTiHEGoEVdCvCioPxiYXgJOh/SSl8OMc=,iv:90gveODOOfHTCqy/h7X5IC6x5yNaO2MakIYoKK3X06A=,tag:c/SSv2gl4hyw+5z5KZZRKQ==,type:str]
+    version: 3.13.3
