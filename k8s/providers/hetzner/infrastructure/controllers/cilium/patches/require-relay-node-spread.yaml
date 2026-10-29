@@ -1,0 +1,20 @@
+---
+# The base's soft spread permits both replicas on one node. Production has
+# multiple eligible nodes and needs separate failure domains (#5576).
+# Keep this in the provider overlay so a one-node local cluster still works.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    hubble:
+      relay:
+        topologySpreadConstraints:
+          - maxSkew: 1
+            topologyKey: kubernetes.io/hostname
+            whenUnsatisfiable: DoNotSchedule
+            labelSelector:
+              matchLabels:
+                k8s-app: hubble-relay
