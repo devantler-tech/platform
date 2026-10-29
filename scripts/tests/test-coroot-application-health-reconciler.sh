@@ -224,6 +224,7 @@ setup_scenario() {
   printf '%s' 'known' >"${dir}/coroot-mode"
   printf '%s' 'stale' >"${dir}/oauth2-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
+  printf '%s' "${COROOT_STUB_MIN_OVERLAP:-0}" >"${dir}/minimum-query-overlap"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
   printf '%s' '192.0.2.10' >"${dir}/service-address"
@@ -270,29 +271,21 @@ fi
 
 release_query_slot() {
   [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
-  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
-  active="$(cat "${dir}/active-queries")"
-  printf '%s' "$((active - 1))" >"${dir}/active-queries"
-  printf 'end pid=%s parent=%s active=%s url=%s\n' \
-    "$$" "$PPID" "$((active - 1))" "$url" >>"${dir}/query-events"
-  rmdir "${dir}/query-counter-lock"
+  printf 'end %s\n' "$$" >&6
+  exec 7>&-
   trap - EXIT
 }
 
 acquire_query_slot() {
   limit="$(cat "${dir}/concurrency-limit")"
   [ "${limit}" -gt 0 ] || return 0
-  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
-  active="$(( $(cat "${dir}/active-queries") + 1 ))"
-  printf '%s' "${active}" >"${dir}/active-queries"
-  peak="$(cat "${dir}/peak-queries")"
-  [ "${active}" -le "${peak}" ] || printf '%s' "${active}" >"${dir}/peak-queries"
-  printf 'start pid=%s parent=%s active=%s url=%s\n' \
-    "$$" "$PPID" "$active" "$url" >>"${dir}/query-events"
-  rmdir "${dir}/query-counter-lock"
+  mkfifo "${dir}/query-$$.gate"
+  exec 7<>"${dir}/query-$$.gate"
+  printf 'start %s\n' "$$" >&6
   trap release_query_slot EXIT
+  IFS= read -r -t 5 decision <&7 || exit 90
+  [ "$decision" = go ] || exit 28
   sleep 0.1
-  [ "${active}" -le "${limit}" ] || exit 28
 }
 
 case "${url}" in
@@ -688,7 +681,67 @@ STUB
 
 run_scenario() {
   local dir="$1"
-  SCENARIO_DIR="${dir}" PATH="${dir}/bin:${PATH}" /bin/sh -c "${script_body}"
+  SCENARIO_DIR="${dir}" PATH="${dir}/bin:${PATH}" /bin/sh -c "${2:-${script_body}}"
+}
+
+# One observer owns the counters. A child must be observed before receiving
+# its reply, and exceeding the capacity is rejected rather than queued.
+observe_query_slots() {
+  local dir="$1" limit overlap active=0 peak=0 event pid pending='' client decision
+  limit="$(cat "${dir}/concurrency-limit")"
+  overlap="$(cat "${dir}/minimum-query-overlap")"
+  while IFS=' ' read -r -t 10 event pid <&6; do
+    if [[ "$event" == finish && -z "$pid" ]]; then
+      [[ "$active" == 0 && -z "$pending" ]] || return 1
+      printf '%s' "$active" >"${dir}/active-queries"
+      printf '%s' "$peak" >"${dir}/peak-queries"
+      return 0
+    fi
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    case "$event" in
+    start)
+      [[ ! -e "${dir}/live-query-$pid" && -p "${dir}/query-$pid.gate" ]] || return 1
+      : >"${dir}/live-query-$pid"
+      active=$((active + 1))
+      ((peak >= active)) || peak=$active
+      decision=go
+      ((active <= limit)) || decision=reject
+      printf '%s' "$decision" >"${dir}/query-$pid.decision"
+      pending="$pending $pid"
+      printf 'start pid=%s active=%s decision=%s\n' "$pid" "$active" "$decision" >>"${dir}/query-events"
+      if ((overlap == 0 || active >= overlap)); then
+        for client in $pending; do
+          exec 8<>"${dir}/query-$client.gate"
+          printf '%s\n' "$(cat "${dir}/query-$client.decision")" >&8
+          exec 8>&-
+        done
+        pending=''
+        overlap=0
+      fi
+      ;;
+    end)
+      [[ -f "${dir}/live-query-$pid" && "$active" -gt 0 ]] || return 1
+      rm "${dir}/live-query-$pid"
+      active=$((active - 1))
+      printf 'end pid=%s active=%s\n' "$pid" "$active" >>"${dir}/query-events"
+      ;;
+    *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+run_observed_scenario() {
+  local dir="$1" observer_pid
+  mkfifo "${dir}/query-events-pipe"
+  exec 6<>"${dir}/query-events-pipe"
+  observe_query_slots "$dir" &
+  observer_pid=$!
+  observed_scenario_status=0
+  run_scenario "$dir" "${2:-${script_body}}" >"${dir}/output" 2>&1 || observed_scenario_status=$?
+  printf 'finish\n' >&6
+  wait "$observer_pid" || fail 'query observation was incomplete or inconsistent'
+  exec 6>&-
 }
 
 absent_log_stream_dir="$(setup_scenario absent-log-stream known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known absent)"
@@ -739,7 +792,9 @@ printf '%s\n' "${known_output}" | jq -s -e \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
 
 bounded_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 setup_scenario bounded-concurrency known null)"
-bounded_output="$(run_scenario "${bounded_dir}" 2>&1)"
+run_observed_scenario "${bounded_dir}"
+bounded_output="$(cat "${bounded_dir}/output")"
+[[ "$observed_scenario_status" == 0 ]] || fail 'bounded reconciliation did not complete'
 printf '%s\n' "${bounded_output}" | jq -s -e '
   length > 0 and all(.[]; .level == "info")
 ' >/dev/null || {
@@ -758,6 +813,17 @@ printf '%s\n' "${bounded_output}" | jq -s -e '
 [[ "${script_body}" == *'[ "$RECONCILIATION_COUNT" -ge "$MAX_CONCURRENT_RECONCILIATIONS" ]'* ]] ||
   fail 'the reconciliation queue must drain each bounded worker batch'
 pass 'Coroot log queries respect the bounded worker capacity'
+
+# Force the realistic regression to overlap five queries. The observer must
+# reject excess work and the real reconciler must keep that failed query visible.
+overflow_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 COROOT_STUB_MIN_OVERLAP=5 setup_scenario query-overflow known null)"
+overflow_script="${script_body/MAX_CONCURRENT_RECONCILIATIONS=4/MAX_CONCURRENT_RECONCILIATIONS=5}"
+run_observed_scenario "$overflow_dir" "$overflow_script"
+[[ "$(cat "$overflow_dir/peak-queries")" == 5 && "$(cat "$overflow_dir/active-queries")" == 0 ]] ||
+  fail 'the over-capacity control did not observe five overlapping queries and complete'
+jq -s -e 'any(.[]; .level=="error" and (.msg | contains("query failed")))' \
+  "$overflow_dir/output" >/dev/null || fail 'five overlapping queries did not fail visible'
+pass 'a forced five-query overlap is rejected and remains visible'
 jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and
