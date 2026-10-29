@@ -18,6 +18,10 @@ func randomRecoveryValue() (string, error) {
 	}
 	return hex.EncodeToString(raw[:]), nil
 }
+
+func approvedBackupControllerImage(image string) bool {
+	return regexp.MustCompile(`^(docker\.io/)?velero/velero:v1\.18\.4(@sha256:[0-9a-f]{64})?$`).MatchString(image)
+}
 func (d *recoveryDriver) list(ctx context.Context, kind, ns, selector string) ([]object, error) {
 	args := []string{"get", kind, "--namespace=" + ns, "-o=json"}
 	if selector != "" {
@@ -53,7 +57,7 @@ func (d *recoveryDriver) preflight(ctx context.Context) (string, error) {
 	}
 	versionOK := false
 	for _, container := range items(child(child(child(velero, "spec"), "template"), "spec"), "containers") {
-		if text(container, "name") == "velero" && regexp.MustCompile(`^(docker.io/)?velero/velero:v1\.18\.4(@sha256:[0-9a-f]{64})?$`).MatchString(text(container, "image")) {
+		if text(container, "name") == "velero" && approvedBackupControllerImage(text(container, "image")) {
 			versionOK = true
 		}
 	}
