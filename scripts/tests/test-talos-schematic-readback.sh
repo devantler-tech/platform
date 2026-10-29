@@ -55,19 +55,28 @@ else
   desired_schematic=$(shasum -a 256 "$root_dir/talos/factory-schematic.yaml" | awk '{print $1}')
 fi
 desired_version=$(yq eval '.spec.cluster.talos.version' "$root_dir/ksail.prod.yaml")
+desired_workers=$(yq eval '.spec.cluster.workers' "$root_dir/ksail.prod.yaml")
 
-jq -n --arg schematic "$desired_schematic" --arg version "$desired_version" '
+jq -n --arg schematic "$desired_schematic" --arg version "$desired_version" --argjson workers "$desired_workers" '
   def node($name): {
     metadata: {name: $name, annotations: {"extensions.talos.dev/schematic": $schematic}},
     spec: {unschedulable: false},
     status: {nodeInfo: {osImage: ("Talos (" + $version + ")")},
              conditions: [{type: "Ready", status: "True"}]}
   };
-  {items: [
-    node("prod-control-plane-2"), node("prod-control-plane-4"), node("prod-control-plane-5"),
-    node("prod-worker-1"), node("prod-worker-2"), node("prod-worker-3"),
-    node("autoscale-cx43-example")
-  ]}
+  {items: ([
+    node("prod-control-plane-2"), node("prod-control-plane-4"), node("prod-control-plane-5")
+  ] + [range(1; $workers + 1) | node("prod-worker-" + tostring)] + [
+    node("autoscale-cx43-example"),
+    (node("autoscale-longhorn-v1-0123456789abcdef") | .metadata.labels = {
+      "storage.platform.devantler.tech/migration-pool": "v1",
+      "node.kubernetes.io/instance-type": "cpx42"
+    }),
+    (node("autoscale-longhorn-v1-fedcba9876543210") | .metadata.labels = {
+      "storage.platform.devantler.tech/migration-pool": "v1",
+      "node.kubernetes.io/instance-type": "cpx42"
+    })
+  ])}
 ' >"$tmp_dir/nodes.json"
 
 run_readback() {
@@ -93,7 +102,7 @@ jq '.items[4].metadata.annotations["extensions.talos.dev/schematic"] = "stale-ex
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a stale static-node schematic'
 
-jq '.items[6].metadata.annotations["extensions.talos.dev/schematic"] = "stale-extension-only"' \
+jq '(.items[] | select(.metadata.name == "autoscale-cx43-example") | .metadata.annotations["extensions.talos.dev/schematic"]) = "stale-extension-only"' \
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a stale autoscaled-node schematic'
 
@@ -113,7 +122,23 @@ jq '.items[0].spec.unschedulable = true' \
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a cordoned node'
 
-jq 'del(.items[5])' "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+jq '.items |= map(select(.metadata.name != "prod-worker-1"))' "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a missing static worker'
+
+jq '.items |= map(select(.metadata.name != "autoscale-longhorn-v1-0123456789abcdef"))' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a migration pool below its configured minimum'
+
+jq '(.items[] | select(.metadata.name == "autoscale-longhorn-v1-0123456789abcdef") | .metadata.labels["storage.platform.devantler.tech/migration-pool"]) = "wrong"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a migration node with the wrong role label'
+
+jq '(.items[] | select(.metadata.name == "autoscale-longhorn-v1-0123456789abcdef") | .metadata.labels["node.kubernetes.io/instance-type"]) = "cx43"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a migration node with the wrong server type'
+
+jq '(.items[] | select(.metadata.name == "autoscale-longhorn-v1-0123456789abcdef") | .status.conditions[0].status) = "False"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'an unready migration node'
 
 printf 'PASS: production Talos version, schematic, and node health are read back fail-closed\n'

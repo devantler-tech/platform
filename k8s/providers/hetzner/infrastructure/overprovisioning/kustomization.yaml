@@ -6,3 +6,5 @@ resources:
   - network-policy.yaml
   - pod-template.yaml
   - capacity-buffer.yaml
+  - pod-template-longhorn-migration.yaml
+  - capacity-buffer-longhorn-migration.yaml
