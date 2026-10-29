@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"reflect"
@@ -212,7 +213,8 @@ func (r *runner) preflight(ctx context.Context) error {
 	if err != nil || !found {
 		return errors.New("storage-version")
 	}
-	if text(child(child(child(hr, "spec"), "chart"), "spec"), "version") != "1.13.0" || child(hr, "status")["observedGeneration"] != child(hr, "metadata")["generation"] {
+	generation, generationOK := child(hr, "metadata")["generation"].(float64)
+	if !generationOK || generation < 1 || generation > 1<<53-1 || generation != math.Trunc(generation) || text(child(child(child(hr, "spec"), "chart"), "spec"), "version") != "1.13.0" || child(hr, "status")["observedGeneration"] != generation {
 		return errors.New("storage-version")
 	}
 	history := items(child(hr, "status"), "history")
