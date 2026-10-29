@@ -90,6 +90,7 @@ docker pull "$cli" >/dev/null
 docker network create --internal "$network" >/dev/null
 mkdir "$scratch/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" test -c -o "$scratch/email-recovery-native.test" ./scripts/verify-email-data-recovery
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
 bash "$root/scripts/private-mail-config/stage-webui.sh" "$scratch/build"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
@@ -559,6 +560,16 @@ upload_status=$(protocol_curl --silent --max-time 10 --config /proof/agent.curl 
 [ "$upload_status" = 403 ]
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/known-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
+# Exercise the recovery driver's real JMAP lifecycle before taking the copy.
+# Only the synthetic fixture identity is translated; requests and cleanup run
+# against the same pinned server used by the production recovery reader.
+docker run --rm --network "container:$name" --user "$fixture_user" --cpus 1 --memory 128m \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true --workdir /proof \
+  --env EMAIL_RECOVERY_NATIVE_TEST=1 \
+  --mount "type=bind,source=$scratch,target=/proof,readonly" \
+  --entrypoint /proof/email-recovery-native.test "$name-bootstrap-image" \
+  -test.run '^TestNativeRecoveryMarkerLifecycle$' -test.timeout 120s -test.v
+
 # Prime the native application cache with a previous unversioned bundle. An
 # upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
