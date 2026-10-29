@@ -1,0 +1,413 @@
+diff --git a/cmd/platform-migrate/main.go b/cmd/platform-migrate/main.go
+new file mode 100644
+index 0000000..fc5b9c2
+--- /dev/null
++++ b/cmd/platform-migrate/main.go
+@@ -0,0 +1,33 @@
++// The maintenance image exposes only the released migration command. It does
++// not expose policy evaluation or other interactive CLI entry points.
++package main
++
++import (
++	"fmt"
++	"os"
++
++	"github.com/kyverno/kyverno/cmd/cli/kubectl-kyverno/commands/migrate"
++	"github.com/spf13/cobra"
++)
++
++var buildVersion = "development"
++
++func newRootCommand() *cobra.Command {
++	root := &cobra.Command{
++		Use:               "kubectl-kyverno",
++		Version:           buildVersion,
++		Short:             "Kyverno maintenance migration runtime",
++		SilenceUsage:      true,
++		SilenceErrors:     true,
++		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
++	}
++	root.AddCommand(migrate.Command())
++	return root
++}
++
++func main() {
++	if err := newRootCommand().Execute(); err != nil {
++		fmt.Fprintln(os.Stderr, err)
++		os.Exit(1)
++	}
++}
+diff --git a/cmd/platform-migrate/main_test.go b/cmd/platform-migrate/main_test.go
+new file mode 100644
+index 0000000..48a77c4
+--- /dev/null
++++ b/cmd/platform-migrate/main_test.go
+@@ -0,0 +1,229 @@
++package main
++
++import (
++	"bytes"
++	"crypto/ecdsa"
++	"crypto/elliptic"
++	"crypto/rand"
++	"crypto/x509"
++	"crypto/x509/pkix"
++	"encoding/json"
++	"encoding/pem"
++	"io"
++	"log"
++	"math/big"
++	"net/http"
++	"net/http/httptest"
++	"path/filepath"
++	"strings"
++	"sync"
++	"testing"
++	"time"
++
++	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
++	apiextensionsscheme "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/scheme"
++	clientcmd "k8s.io/client-go/tools/clientcmd"
++	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
++)
++
++func TestMigrationCommandBoundary(t *testing.T) {
++	for _, tc := range []struct {
++		name                  string
++		args                  []string
++		wantError, wantOutput string
++	}{
++		{"help", []string{"migrate", "--help"}, "", "--resource"},
++		{"version", []string{"--version"}, "", buildVersion},
++		{"other-command", []string{"apply", "--help"}, "unknown command", ""},
++		{"missing-resource", []string{"migrate"}, "required flag", ""},
++		{"empty-resource", []string{"migrate", "--resource", "   "}, "resource cannot be empty", ""},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			cmd := newRootCommand()
++			var output bytes.Buffer
++			cmd.SetOut(&output)
++			cmd.SetErr(io.Discard)
++			cmd.SetArgs(tc.args)
++			err := cmd.Execute()
++			if tc.wantError == "" {
++				if err != nil || !strings.Contains(output.String(), tc.wantOutput) {
++					t.Fatalf("runtime command output unavailable: %v", err)
++				}
++			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
++				t.Fatalf("command boundary error = %v, want %q", err, tc.wantError)
++			}
++		})
++	}
++}
++
++// Exercise the released command through its real TLS Kubernetes clients. The
++// closed loopback API admits one fixed CRD/resource and fails every other route.
++func TestReleasedMigrationThroughTLSAPI(t *testing.T) {
++	for _, tc := range []struct {
++		name, fault    string
++		current, badCA bool
++	}{
++		{name: "already-current", current: true},
++		{name: "migrate-retained-object"},
++		{name: "list-refused", fault: "list"},
++		{name: "object-update-refused", fault: "object"},
++		{name: "status-update-refused", fault: "status"},
++		{name: "untrusted-api-certificate", badCA: true},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			const crdName = "widgets.migration.fixture.invalid"
++			const crdPath = "/apis/apiextensions.k8s.io/v1/customresourcedefinitions/" + crdName
++			const listPath = "/apis/migration.fixture.invalid/v1/widgets"
++			const objectPath = "/apis/migration.fixture.invalid/v1/namespaces/fixture-one/widgets/retained"
++			requests, objectUpdates, statusUpdates := 0, 0, 0
++			faultReached := false
++			var stateMu sync.Mutex
++			crd := map[string]any{
++				"apiVersion": "apiextensions.k8s.io/v1", "kind": "CustomResourceDefinition",
++				"metadata": map[string]any{"name": crdName, "uid": "retained-crd", "resourceVersion": "1"},
++				"spec": map[string]any{
++					"group": "migration.fixture.invalid", "scope": "Namespaced",
++					"names":    map[string]any{"plural": "widgets", "kind": "Widget"},
++					"versions": []any{map[string]any{"name": "v1", "served": true, "storage": true}},
++				},
++				"status": map[string]any{"storedVersions": []string{"v1beta1", "v1"}},
++			}
++			if tc.current {
++				crd["status"] = map[string]any{"storedVersions": []string{"v1"}}
++			}
++			object := map[string]any{
++				"apiVersion": "migration.fixture.invalid/v1", "kind": "Widget",
++				"metadata": map[string]any{"name": "retained", "namespace": "fixture-one", "uid": "retained-widget", "resourceVersion": "1"},
++				"spec":     map[string]any{"value": "preserved"},
++			}
++			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++				stateMu.Lock()
++				defer stateMu.Unlock()
++				requests++
++				w.Header().Set("Content-Type", "application/json")
++				if r.Header.Get("Authorization") != "Bearer fixture-only-token" {
++					t.Error("released client lost its selected fixture identity")
++					w.WriteHeader(http.StatusUnauthorized)
++					return
++				}
++				stage := ""
++				switch {
++				case r.Method == http.MethodGet && r.URL.Path == crdPath:
++					_ = json.NewEncoder(w).Encode(crd)
++					return
++				case r.Method == http.MethodGet && r.URL.Path == listPath:
++					stage = "list"
++				case r.Method == http.MethodPut && r.URL.Path == objectPath:
++					stage = "object"
++				case r.Method == http.MethodPut && r.URL.Path == crdPath+"/status":
++					stage = "status"
++				default:
++					t.Errorf("unexpected API operation: %s %s", r.Method, r.URL.Path)
++					w.WriteHeader(http.StatusNotFound)
++					return
++				}
++				if stage == tc.fault {
++					faultReached = true
++					w.WriteHeader(http.StatusForbidden)
++					_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "v1", "kind": "Status", "status": "Failure", "reason": "Forbidden", "message": "fixture operation refused", "code": 403})
++					return
++				}
++				switch stage {
++				case "list":
++					_ = json.NewEncoder(w).Encode(map[string]any{"apiVersion": "migration.fixture.invalid/v1", "kind": "WidgetList", "metadata": map[string]any{"resourceVersion": "1"}, "items": []any{object}})
++				case "object":
++					var updated map[string]any
++					if err := json.NewDecoder(r.Body).Decode(&updated); err != nil {
++						t.Error(err)
++						return
++					}
++					before, _ := json.Marshal(object)
++					after, _ := json.Marshal(updated)
++					if !bytes.Equal(before, after) {
++						t.Error("migration changed the retained object's identity or data")
++					}
++					objectUpdates++
++					_ = json.NewEncoder(w).Encode(updated)
++				case "status":
++					body, err := io.ReadAll(io.LimitReader(r.Body, 1024*1024))
++					if err != nil {
++						t.Error(err)
++						return
++					}
++					decoded, _, err := apiextensionsscheme.Codecs.UniversalDeserializer().Decode(body, nil, nil)
++					if err != nil {
++						t.Error(err)
++						return
++					}
++					updated, ok := decoded.(*apiextensionsv1.CustomResourceDefinition)
++					if !ok {
++						t.Errorf("unexpected status object %T", decoded)
++						return
++					}
++					if strings.Join(updated.Status.StoredVersions, ",") != "v1" {
++						t.Error("migration did not converge the stored version")
++					}
++					statusUpdates++
++					crd["status"] = map[string]any{"storedVersions": []string{"v1"}}
++					_ = json.NewEncoder(w).Encode(crd)
++				}
++			}))
++			server.Config.ErrorLog = log.New(io.Discard, "", 0)
++			server.StartTLS()
++			defer server.Close()
++			certificate := server.Certificate().Raw
++			if tc.badCA {
++				key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
++				if err != nil {
++					t.Fatal(err)
++				}
++				ca := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "unrelated fixture CA"}, IsCA: true, BasicConstraintsValid: true, KeyUsage: x509.KeyUsageCertSign, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)}
++				certificate, err = x509.CreateCertificate(rand.Reader, ca, ca, &key.PublicKey, key)
++				if err != nil {
++					t.Fatal(err)
++				}
++			}
++			config := clientcmdapi.Config{
++				Clusters:  map[string]*clientcmdapi.Cluster{"fixture": {Server: server.URL, CertificateAuthorityData: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificate})}},
++				AuthInfos: map[string]*clientcmdapi.AuthInfo{"fixture": {Token: "fixture-only-token"}},
++				Contexts:  map[string]*clientcmdapi.Context{"fixture": {Cluster: "fixture", AuthInfo: "fixture"}}, CurrentContext: "fixture",
++			}
++			configPath := filepath.Join(t.TempDir(), "config")
++			if err := clientcmd.WriteToFile(config, configPath); err != nil {
++				t.Fatal(err)
++			}
++			cmd := newRootCommand()
++			cmd.SetOut(io.Discard)
++			cmd.SetErr(io.Discard)
++			cmd.SetArgs([]string{"migrate", "--kubeconfig", configPath, "--resource", crdName})
++			err := cmd.Execute()
++			stateMu.Lock()
++			defer stateMu.Unlock()
++			if tc.badCA {
++				if err == nil || !strings.Contains(err.Error(), "certificate") || requests != 0 {
++					t.Fatalf("untrusted API certificate was not refused: %v requests=%d", err, requests)
++				}
++				return
++			}
++			if tc.fault != "" {
++				if err == nil || !faultReached {
++					t.Fatalf("real API refusal was not propagated: %v reached=%t", err, faultReached)
++				}
++				if tc.fault != "status" && statusUpdates != 0 {
++					t.Fatal("CRD status advanced after an earlier failure")
++				}
++				return
++			}
++			if err != nil {
++				t.Fatal(err)
++			}
++			if tc.current {
++				if requests != 1 || objectUpdates != 0 || statusUpdates != 0 {
++					t.Fatal("an already-current resource was mutated")
++				}
++			} else if objectUpdates != 1 || statusUpdates != 1 {
++				t.Fatalf("migration did not complete: object=%d status=%d", objectUpdates, statusUpdates)
++			}
++		})
++	}
++}
+diff --git a/go.mod b/go.mod
+index e2016bd..2db4eca 100644
+--- a/go.mod
++++ b/go.mod
+@@ -64,9 +64,9 @@ require (
+-	go.opentelemetry.io/otel v1.44.0
+-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0
+-	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0
+-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0
+-	go.opentelemetry.io/otel/exporters/prometheus v0.66.0
+-	go.opentelemetry.io/otel/metric v1.44.0
+-	go.opentelemetry.io/otel/sdk v1.44.0
+-	go.opentelemetry.io/otel/sdk/metric v1.44.0
+-	go.opentelemetry.io/otel/trace v1.44.0
++	go.opentelemetry.io/otel v1.45.0
++	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0
++	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0
++	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0
++	go.opentelemetry.io/otel/exporters/prometheus v0.67.0
++	go.opentelemetry.io/otel/metric v1.45.0
++	go.opentelemetry.io/otel/sdk v1.45.0
++	go.opentelemetry.io/otel/sdk/metric v1.45.0
++	go.opentelemetry.io/otel/trace v1.45.0
+@@ -76 +76 @@ require (
+-	golang.org/x/crypto v0.57.0
++	golang.org/x/crypto v0.58.0
+@@ -390 +390 @@ require (
+-	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
++	go.opentelemetry.io/proto/otlp v1.11.0 // indirect
+@@ -395 +395 @@ require (
+-	golang.org/x/net v0.60.0 // indirect
++	golang.org/x/net v0.62.0 // indirect
+@@ -397,4 +397,4 @@ require (
+-	golang.org/x/sync v0.23.0 // indirect
+-	golang.org/x/sys v0.48.0 // indirect
+-	golang.org/x/term v0.46.0 // indirect
+-	golang.org/x/text v0.42.0 // indirect
++	golang.org/x/sync v0.24.0 // indirect
++	golang.org/x/sys v0.49.0 // indirect
++	golang.org/x/term v0.47.0 // indirect
++	golang.org/x/text v0.43.0 // indirect
+@@ -404,2 +404,2 @@ require (
+-	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 // indirect
+-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc // indirect
++	google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d // indirect
++	google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d // indirect
+diff --git a/go.sum b/go.sum
+index e217731..16c60a9 100644
+--- a/go.sum
++++ b/go.sum
+@@ -993,22 +993,22 @@ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.69.0/go.mod h1:
+-go.opentelemetry.io/otel v1.44.0 h1:JjwHmHpA4iZ3wBxluu2fbbE7j4kqlE8jXyAyPXH7HqU=
+-go.opentelemetry.io/otel v1.44.0/go.mod h1:BMgjTHL9WPRlRjL2oZCBTL4whCGtXch2H4BhOPIAyYc=
+-go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0 h1:SUplec5dp06reu1zaXmOXdvqH398taqrDXqUl99jxSc=
+-go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.44.0/go.mod h1:ho2g4N+ane+swq5I/VBkKWnRDY4kUINH3FuqyZqX/Ug=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0 h1:4YsVu3B8+3qtWYYrsUYgn0OG78pN0rnNPRGX4SbokQI=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.44.0/go.mod h1:+wnlSn0mD1ADVMe3v9Z/WIaiz6q6gL2J/ejaAmdmv80=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0 h1:qazEJlUOQzhCpzQpFETGby7EdqjI1wsd0W+6Gg1SCTU=
+-go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.44.0/go.mod h1:fOD2Yefuxixkx3ahVNf0O/PERb6r4OlbxfATVnYvzCo=
+-go.opentelemetry.io/otel/exporters/prometheus v0.66.0 h1:vkrK8PAznv2NKt2r+kdu252ccGzkEqLc2aSXbQIALYQ=
+-go.opentelemetry.io/otel/exporters/prometheus v0.66.0/go.mod h1:V/UB6D3vMF/UBOL5igAsAYnk1nG/bzYYTzvsB16cy7o=
+-go.opentelemetry.io/otel/metric v1.44.0 h1:1w0gILTcHdr3YI+ixLyjemwrVnsMURbTZFrSYCdDdmc=
+-go.opentelemetry.io/otel/metric v1.44.0/go.mod h1:8O7hanEPBNgEMmybD3s2VBKcgWOCsA6tzHBPODAiquo=
+-go.opentelemetry.io/otel/metric/x v0.66.0 h1:YkCrx1zLOChi9ZcZ6euupOcsgzbVlec7D/xoEU1+cTA=
+-go.opentelemetry.io/otel/metric/x v0.66.0/go.mod h1:d1+BDj9t96do0/1LoU1ayfCv79ZgNE41qbhBvnMOBZk=
+-go.opentelemetry.io/otel/sdk v1.44.0 h1:nHYwb9lK+fJPU/dnT6s7W7Z8itMWyqrnVfbheVYrZ58=
+-go.opentelemetry.io/otel/sdk v1.44.0/go.mod h1:Osuydd3Se74nqjAKxid74N5eC+jfEqfTegHRnq58oK0=
+-go.opentelemetry.io/otel/sdk/metric v1.44.0 h1:3LlKgI+VjbVsjNRFZJZAJ30WjXC5VkNRks6si09iEfI=
+-go.opentelemetry.io/otel/sdk/metric v1.44.0/go.mod h1:5B5pMARnXxKhltooO4xUuCBorl65a4EpnTalObqOigA=
+-go.opentelemetry.io/otel/trace v1.44.0 h1:jxF5CsGYCe74MCRx2X4g7WsY/VBKRqqpNvXlX/6gtIk=
+-go.opentelemetry.io/otel/trace v1.44.0/go.mod h1:oLl1jrMQAVo6v3GAggN+1VH9VIz9iUSvW53sW1Q8PIE=
+-go.opentelemetry.io/proto/otlp v1.10.0 h1:IQRWgT5srOCYfiWnpqUYz9CVmbO8bFmKcwYxpuCSL2g=
+-go.opentelemetry.io/proto/otlp v1.10.0/go.mod h1:/CV4QoCR/S9yaPj8utp3lvQPoqMtxXdzn7ozvvozVqk=
++go.opentelemetry.io/otel v1.45.0 h1:pdrWmLHofpubmArBv1LgFSv1Z0Ie/ppdZzu+kUN5EeU=
++go.opentelemetry.io/otel v1.45.0/go.mod h1:XZxIqPapzEYnhNSScF5DIqXhm/rYi0FzCe2XddAwZfQ=
++go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0 h1:klTViGcsvLCd1xN3rZzfZ12NslC/OimbmR+k+A006RI=
++go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.45.0/go.mod h1:jRsK04CWmXuY8A0O+wMpSf+t90RHZ53o5Qmxn2PQPfk=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0 h1:QRefszxJmfPdjXUUm3j6iDzY03mTPXMjqErFqQ67vUg=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.45.0/go.mod h1:Tiz03lTBVBrm7eWZBOidzEaYaJa8tjwGUGv6d8mlTyk=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0 h1:fG5MCxGz8+2VtrN/WgqSpJFctVz24gpxj8CxkKmc8Ww=
++go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.45.0/go.mod h1:BmAYTn+3ysbRe+IU2msxmf5Rx3g6DHvex+tWI3LdhYI=
++go.opentelemetry.io/otel/exporters/prometheus v0.67.0 h1:7IefDa35e6V3NoiqIeLDMDxMFyZDk5qcoC0Ax4cC16E=
++go.opentelemetry.io/otel/exporters/prometheus v0.67.0/go.mod h1:nsPI1awTg5Vmg1YrommL2mVarVGlqc4yXOoKAkPRD0c=
++go.opentelemetry.io/otel/metric v1.45.0 h1:7Eg1uH7CJ5cXv9is6tnBe1FI6rj1nwUdbFypRm3br/M=
++go.opentelemetry.io/otel/metric v1.45.0/go.mod h1:HAPbm1nd3p1PmFH7v2dR+6BjXxw+Lq4a2+pndMAm08s=
++go.opentelemetry.io/otel/metric/x v0.67.0 h1:PcicCNZFkZ4bXfSooXdo3WN7RBOVOtjVdo1wD358Uns=
++go.opentelemetry.io/otel/metric/x v0.67.0/go.mod h1:FBjCWZe6wgcqxcMtjdGiClDKXb2YxxXii0CXftE4QtI=
++go.opentelemetry.io/otel/sdk v1.45.0 h1:4VVSMgQ83dUgW2aoX5f6JgLvHwIvzcuLnF9lUdCSpCw=
++go.opentelemetry.io/otel/sdk v1.45.0/go.mod h1:Sr40LgXV7DsKMMJMKOhUWOgMWTfAaqvm2kF0g7ilwuA=
++go.opentelemetry.io/otel/sdk/metric v1.45.0 h1:oVFszMfyj1Am6s24Vtc7wBb8BKLcwepJjNEYILuiE3o=
++go.opentelemetry.io/otel/sdk/metric v1.45.0/go.mod h1:vUWUxDZvu1WVRj8JA8S0AdhsPrZoDpA2DdZauIh4mDA=
++go.opentelemetry.io/otel/trace v1.45.0 h1:l/mP6Uv7oNO7/TblbhpbgMidxhq1uO/rPsikOyVhxag=
++go.opentelemetry.io/otel/trace v1.45.0/go.mod h1:qoJJA2xNMnxRrdISU/kLtfUH2wNeQbiv+jhs/CxI8bc=
++go.opentelemetry.io/proto/otlp v1.11.0 h1:5rrYs0Ykyj50sdU/JU0x8etU+LubXWb+gED6TbEdMIk=
++go.opentelemetry.io/proto/otlp v1.11.0/go.mod h1:SmVizdCOAm3XBtG1g1NnOdhW6jtddT72hLMhv8VwA8E=
+@@ -1045,2 +1045,2 @@ golang.org/x/crypto v0.31.0/go.mod h1:kDsLvtWBEx7MV9tJOj9bnXsPbxwJQ6csT/x4KIN4Ss
+-golang.org/x/crypto v0.57.0 h1:3ZVCjf8Ggz7zneR/EHRVx68Ctf+2pmIMP2UFhh9cC6M=
+-golang.org/x/crypto v0.57.0/go.mod h1:Fdz0i5U6CoizGwLda9DttjSk6qlZo25zYNtR+ycvuZA=
++golang.org/x/crypto v0.58.0 h1:COkYLr4k7nDI4r6QtMML2AfzeIswWHAJthLS6K/M/54=
++golang.org/x/crypto v0.58.0/go.mod h1:Xh+kl5A+M0gMiWDytH2Hhr5Z7WbNCpv/eB/EFgfSk+w=
+@@ -1091,2 +1091,2 @@ golang.org/x/net v0.33.0/go.mod h1:HXLR5J+9DxmrqMwG9qjGCxZ+zKXxBru04zlTvWlWuN4=
+-golang.org/x/net v0.60.0 h1:79p50tfZlm0J9YfoDsSi639qSXNGVwEzOPLCxM2FsYU=
+-golang.org/x/net v0.60.0/go.mod h1:2DA/G1UfVbCpQPeWTmMPGY7Cs2PkBkwu743bVX5PIVg=
++golang.org/x/net v0.62.0 h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=
++golang.org/x/net v0.62.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
+@@ -1109,2 +1109,2 @@ golang.org/x/sync v0.10.0/go.mod h1:Czt+wKu1gCyEFDUtn0jG5QVvpJ6rzVqr5aXyt9drQfk=
+-golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=
+-golang.org/x/sync v0.23.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
++golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
++golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
+@@ -1147,2 +1147,2 @@ golang.org/x/sys v0.28.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
+-golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+-golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
++golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
++golang.org/x/sys v0.49.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
+@@ -1160,2 +1160,2 @@ golang.org/x/term v0.27.0/go.mod h1:iMsnZpn0cago0GOrHO2+Y7u7JPn5AylBrcoWkElMTSM=
+-golang.org/x/term v0.46.0 h1:3+OXuTbaKDgwk8jTi3aSLHRlmWqHEUDUtxnbFigO4YE=
+-golang.org/x/term v0.46.0/go.mod h1:+K02xbkittuwc0Am4abfA3Fc+XRGXkvBXNO88NCXPoc=
++golang.org/x/term v0.47.0 h1:cpyOwQkr2Nzxe2p6KnrTG7Ei2wtzjsuSjhpXXepZ/BM=
++golang.org/x/term v0.47.0/go.mod h1:efAfAuG6RKABvg1ArGebRkvX6LXul14SM67o2e4mUCY=
+@@ -1173,2 +1173,2 @@ golang.org/x/text v0.21.0/go.mod h1:4IBbMaMmOPCJ8SecivzSH54+73PCFmPWxNTLm+vZkEQ=
+-golang.org/x/text v0.42.0 h1:JbOZXgfeCPU9gacVtYliJqOhD+zhrEqK4LfdpmlUZqI=
+-golang.org/x/text v0.42.0/go.mod h1:ojzP1Z+2QtioaF8DTtO8K5q7JWVVYwZKenzujK0Zd0E=
++golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
++golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
+@@ -1193,2 +1193,2 @@ golang.org/x/tools v0.21.1-0.20240508182429-e35e4ccd0d2d/go.mod h1:aiJjzUbINMkxb
+-golang.org/x/tools v0.49.0 h1:3NI7VXzL9+1WZD52Dx2ttoPwD5DWrFGpl9mFZDlmisI=
+-golang.org/x/tools v0.49.0/go.mod h1:SJNXV9DBKT0UbdttsQjbfJlAE/q+y36++zo3uL3N0Oo=
++golang.org/x/tools v0.51.0 h1:k4Xc/1Om9jwkBJBo4NVLMSARBoWtK10mx+W5BnXCeAI=
++golang.org/x/tools v0.51.0/go.mod h1:9eEncMayCV6zRMGhR5eZEC2iBx98qWcF1HZ9Z7wJOoA=
+@@ -1212,4 +1212,4 @@ google.golang.org/genproto v0.0.0-20260406210006-6f92a3bedf2d/go.mod h1:c2hJ1grt
+-google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 h1:4namukbyF7JY83aWHQwi9J5ugNTnDReLJ9ZcpqOpRB4=
+-google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772/go.mod h1:1brfde68Npq6+WA75c1EHWPijZEG1kMus61ygPZfn4A=
+-google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc h1:3TtNq/QbJNrSY1nVdjcikfBw6ujnaNbdrd88wNr1OW4=
+-google.golang.org/genproto/googleapis/rpc v0.0.0-20260720155508-bb71a54f79dc/go.mod h1:4Hqkh8ycfw05ld/3BWL7rJOSfebL2Q+DVDeRgYgxUU8=
++google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d h1:FarXi840EJWSHYTN3ERkADbPWjl307+FGrA22KAVjjc=
++google.golang.org/genproto/googleapis/api v0.0.0-20260803160001-6ac0973c030d/go.mod h1:K/+WGbmBY7aNW1HDw1fJnKYo10i0DkAX6pows00dLig=
++google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d h1:IL4hdHzcUv2l/gcg98/Rj3FbtE6axwqslOW8SW0C+S0=
++google.golang.org/genproto/googleapis/rpc v0.0.0-20260803160001-6ac0973c030d/go.mod h1:4Hqkh8ycfw05ld/3BWL7rJOSfebL2Q+DVDeRgYgxUU8=

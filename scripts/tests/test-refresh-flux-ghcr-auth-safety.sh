@@ -320,6 +320,11 @@ force_sync_resource() {
 verify_consumer_secret() {
   printf 'verify:%s/ghcr-auth\n' "$1" >>"${operation_log}"
 }
+# Controller reads are exercised by the complete command-fake Go transaction.
+# This unit control isolates the Talos/fanout ordering from API observations.
+prepare_periodic_fanout_baselines() {
+  return 0
+}
 sync_talos_registry_auth() {
   talos_sync_call_count=$((talos_sync_call_count + 1))
   printf 'talos:%s:%s\n' "$1" "$2" >>"${operation_log}"
@@ -343,6 +348,7 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     "${DESIRED_REVISION}" \
     "${DESIRED_IMAGE}" \
     "${work_dir}/talos-stage-result.txt" \
+    fixture-context \
     wedding-app ascoachingogvaner kyverno
   expected_operations="$(printf '%s\n' \
     variables-patch \
@@ -381,6 +387,7 @@ if declare -F stage_fanout_before_talos >/dev/null; then
     "${DESIRED_REVISION}" \
     "${DESIRED_IMAGE}" \
     "${work_dir}/talos-stage-result.txt" \
+    fixture-context \
     wedding-app ascoachingogvaner kyverno; then
     fail "a failed runtime-proof record blocks the root cutover"
   elif grep -Fxq -- root-patch "${operation_log}"; then
