@@ -31,6 +31,25 @@ through the authorized read-only evidence path before attempting another
 deployment. A healthy observation made later cannot establish the failed run's
 cause.
 
+The private contract probe exports completed results to Coroot. Its pod discovery
+annotations select the HTTP `/metrics` endpoint on port 8081. The collection rule
+selects the existing Coroot cluster-agent in `observability` and that port. Scraping
+reads the last completed observation and does not initiate another public probe.
+
+Use these PromQL queries to distinguish failure reasons and telemetry freshness:
+
+```promql
+sum by (result) (increase(contract_probe_requests_total[1h]))
+contract_probe_ready
+time() - contract_probe_last_observation_timestamp_seconds
+```
+
+The counter's fixed reasons distinguish unavailable or invalid responses,
+configuration failures, cancellation and concurrent requests. They do not retain
+the upstream HTTP status or prove why a request failed. Missing series are an
+observation gap, not zero failures; a healthy latest sample does not clear earlier
+failures or establish long-term reliability.
+
 The offline regression suite exercises the actual verifier with controlled
 resource and transport responses, including invalid observations and private
 canaries:
