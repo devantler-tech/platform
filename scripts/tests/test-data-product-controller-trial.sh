@@ -151,6 +151,7 @@ jq -e '[.[] | select(.kind == "NetworkPolicy" and .metadata.namespace == "data-p
   "${scratch}/apps.json" >/dev/null || fail "${provider}: namespace default-deny must stay active"
 jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-controller-contract-probe")] as $probe |
   ($probe|length)==1 and $probe[0].spec.replicas==2 and ($probe[0].metadata.labels|has("platform.devantler.tech/replica-floor")|not) and
+  $probe[0].spec.template.metadata.annotations=={"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"} and
   ($probe[0].spec.template.spec | .serviceAccountName=="data-product-controller-contract-probe" and .automountServiceAccountToken==false and
     (.volumes//[])==[] and (.initContainers//[])==[] and .imagePullSecrets==[{name:"ghcr-auth"}] and
     (.containers|length)==1 and (.containers[0] | .name=="contract-probe" and .command==["/contract-probe"] and (.args//[])==[] and
@@ -177,10 +178,11 @@ jq -e '[.[]|select(.kind=="Role" and .metadata.name=="data-product-readiness-obs
 jq -e '[.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|(.specs==null or .specs==[])] == [true] and
   [.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|.spec] ==
   [{endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+    ingress:[{fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"observability","app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":"coroot","app.kubernetes.io/component":"coroot-cluster-agent"}}],toPorts:[{ports:[{port:"8081",protocol:"TCP"}]}]}],
     egress:[{toFQDNs:[{matchName:"harbour-data.${domain}"}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
       {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
        toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:"harbour-data.${domain}"}]}}]}]}]' \
-  "${scratch}/apps.json" >/dev/null || fail "${provider}: contract probe egress must allow only the sample HTTPS host and its DNS lookup"
+  "${scratch}/apps.json" >/dev/null || fail "${provider}: contract probe access must select only its collector, sample HTTPS host and DNS lookup"
 # Recovery executes the candidate workflow after checking out main. A main
 # predating this trial has neither the active app nor this test; an active app
 # must never use a missing test as permission to skip its validation.

@@ -199,6 +199,7 @@ def metadata: {name,namespace,uid,generation,deletionTimestamp,labels,
   revision:.annotations["deployment.kubernetes.io/revision"],
   owners:[.ownerReferences[]? | {apiVersion,kind,name,uid,controller}]};
 def conditions: [.[]? | {type,status,observedGeneration,reason}];
+def metrics_annotations: (.//{} | with_entries(select(.key|startswith("coroot.com/"))));
 def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,protocol:(.protocol//"TCP")}],
   command,args,envCount:(.env//[]|length),envFromCount:(.envFrom//[]|length),volumeMountCount:(.volumeMounts//[]|length),
   env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") |
@@ -206,11 +207,13 @@ def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,proto
   uiFlags:[.env[]? | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="PUBLISHER_PREFLIGHT_ENABLED") |
     {name,value,indirect:(.valueFrom!=null)}],uiEnvironmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,containers:(.spec.template.spec.containers|containers),
+  spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,
+    metricsAnnotations:(.spec.template.metadata.annotations|metrics_annotations),containers:(.spec.template.spec.containers|containers),
     serviceAccountName:.spec.template.spec.serviceAccountName,automountServiceAccountToken:.spec.template.spec.automountServiceAccountToken,
     volumeCount:(.spec.template.spec.volumes//[]|length),initContainerCount:(.spec.template.spec.initContainers//[]|length)},
   status:(.status|{observedGeneration,replicas,updatedReplicas,readyReplicas,availableReplicas})};
 def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.containers|containers),
+  metricsAnnotations:(.metadata.annotations|metrics_annotations),
   serviceAccountName:.spec.serviceAccountName,automountServiceAccountToken:.spec.automountServiceAccountToken,
   volumeCount:(.spec.volumes//[]|length),initContainerCount:(.spec.initContainers//[]|length)},
   status:{phase:.status.phase,podIP:.status.podIP,podIPs:[.status.podIPs[]? | .ip],conditions:(.status.conditions|conditions),
@@ -340,6 +343,7 @@ def dormant_probe($sets;$pods):
     all($owned[];.spec.replicas==0 and (.status.replicas//0)==0) and
     all($pods[];. as $pod | all($owned[];. as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)|not)));
 def private_probe_spec($tag;$enabled):
+  .spec.metricsAnnotations=={"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"} and
   .spec.serviceAccountName=="data-product-controller-contract-probe" and .spec.automountServiceAccountToken==false and .spec.volumeCount==0 and .spec.initContainerCount==0 and
   (.spec.containers|length)==1 and named_image("contract-probe";$tag) and
   (.spec.containers[0] | .command==["/contract-probe"] and (.args//[])==[] and .envCount==2 and .envFromCount==0 and .volumeMountCount==0 and
@@ -390,6 +394,7 @@ def readiness_observation($snapshot;$tag):
     .subjects==[{kind:"ServiceAccount",name:"data-product-controller",namespace:$namespace}]) and
   ($snapshot["probe-policy"]|object_identity("CiliumNetworkPolicy";"cilium.io/v2";"allow-data-product-controller-contract-probe";$namespace) and
     (.specs==null or .specs==[]) and .spec=={endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+      ingress:[{fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"observability","app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":"coroot","app.kubernetes.io/component":"coroot-cluster-agent"}}],toPorts:[{ports:[{port:"8081",protocol:"TCP"}]}]}],
       egress:[{toFQDNs:[{matchName:("harbour-data."+$domain)}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
         {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
          toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:("harbour-data."+$domain)}]}}]}]});

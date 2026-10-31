@@ -120,7 +120,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
  "deployment-harbour":deployment("data-product-controller-harbour";"product"),
  "deployment-ui-kit":deployment("data-product-controller-ui-kit";"ui-kit"),
  "deployment-probe":{apiVersion:"apps/v1",kind:"Deployment",metadata:meta("data-product-controller-contract-probe";"data-product-controller"),
-   spec:{replicas:0,selector:{matchLabels:probe_labels},template:{metadata:{labels:probe_labels},
+   spec:{replicas:0,selector:{matchLabels:probe_labels},template:{metadata:{labels:probe_labels,annotations:{"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"}},
      spec:{serviceAccountName:"data-product-controller-contract-probe",automountServiceAccountToken:false,containers:[probe_container]}}},
    status:{observedGeneration:3,replicas:0,updatedReplicas:0,readyReplicas:0,availableReplicas:0}},
  "probe-account":{apiVersion:"v1",kind:"ServiceAccount",metadata:meta("data-product-controller-contract-probe";"data-product-controller"),automountServiceAccountToken:false},
@@ -131,6 +131,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
    subjects:[{kind:"ServiceAccount",name:"data-product-controller",namespace:"data-product-controller"}]},
  "probe-policy":{apiVersion:"cilium.io/v2",kind:"CiliumNetworkPolicy",metadata:meta("allow-data-product-controller-contract-probe";"data-product-controller"),
    spec:{endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+     ingress:[{fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"observability","app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":"coroot","app.kubernetes.io/component":"coroot-cluster-agent"}}],toPorts:[{ports:[{port:"8081",protocol:"TCP"}]}]}],
      egress:[{toFQDNs:[{matchName:"harbour-data.example.com"}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
        {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
         toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:"harbour-data.example.com"}]}}]}]}},
@@ -698,7 +699,7 @@ jq --arg child "$child" '
     spec:{replicas:2,template:$probe.spec.template},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}} as $set |
   .replicasets.items += [$set] |
   .pods.items += [range(1;3) as $ordinal | {apiVersion:"v1",kind:"Pod",metadata:{name:($probe.metadata.name+"-pod-"+($ordinal|tostring)),namespace:"data-product-controller",
-    uid:($probe.metadata.name+"-pod-"+($ordinal|tostring)+"-uid"),labels:$probe.spec.template.metadata.labels,
+    uid:($probe.metadata.name+"-pod-"+($ordinal|tostring)+"-uid"),labels:$probe.spec.template.metadata.labels,annotations:$probe.spec.template.metadata.annotations,
     ownerReferences:[{apiVersion:"apps/v1",kind:"ReplicaSet",name:$set.metadata.name,uid:$set.metadata.uid,controller:true}]},
     spec:$probe.spec.template.spec,status:{phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:"contract-probe",ready:true,imageID:("containerd://"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}}]
 ' "${scratch}/all.json" >"${scratch}/active.json"
@@ -776,6 +777,9 @@ active_mutation_impl() {
 fixture_pool_register active_mutation_impl
 # active_mutation schedules an active-state mutation within the same strict worker bound.
 active_mutation() { fixture_pool_submit active_mutation_impl "$@"; }
+active_mutation active-pod-missing-metrics pods '(.items[] | select(.metadata.labels["app.kubernetes.io/component"]=="contract-probe") | .metadata.annotations) |= del(.["coroot.com/scrape-metrics"])'
+active_mutation active-pod-wrong-metrics-path pods '(.items[] | select(.metadata.labels["app.kubernetes.io/component"]=="contract-probe") | .metadata.annotations["coroot.com/metrics-path"])="/readyz"'
+active_mutation active-replicaset-missing-metrics replicasets '(.items[] | select(.spec.template.metadata.labels["app.kubernetes.io/component"]=="contract-probe") | .spec.template.metadata.annotations) |= del(.["coroot.com/scrape-metrics"])'
 active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
 active_mutation active-false-connector product '.status.conditions[1].status="False"'
 active_mutation active-missing-contract-condition product '.status.conditions |= map(select(.type!="ContractsReady"))'
@@ -835,6 +839,11 @@ mutate_case observer-secret observer-role '.rules += [{apiGroups:[""],resources:
 mutate_case observer-unbounded observer-role 'del(.rules[0].resourceNames)'
 mutate_case observer-wrong-account observer-binding '.subjects[0].name="other-controller"'
 mutate_case probe-broad-network probe-policy '.spec.egress += [{toEntities:["world"]}]'
+mutate_case probe-missing-metrics-discovery deployment-probe 'del(.spec.template.metadata.annotations["coroot.com/scrape-metrics"])'
+mutate_case probe-wrong-metrics-path deployment-probe '.spec.template.metadata.annotations["coroot.com/metrics-path"]="/readyz"'
+mutate_case probe-broad-metrics-source probe-policy 'del(.spec.ingress[0].fromEndpoints[0].matchLabels["app.kubernetes.io/component"])'
+mutate_case probe-wrong-metrics-port probe-policy '.spec.ingress[0].toPorts[0].ports[0].port="8082"'
+mutate_case probe-extra-metrics-ingress probe-policy '.spec.ingress += [{fromEntities:["world"]}]'
 mutate_case dormant-product-reference product '.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}]'
 run_case partial-observer fail partial-observer
 # A healthy snapshot pair also parses the declared feature state. Allow host scheduling
