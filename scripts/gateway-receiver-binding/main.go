@@ -178,7 +178,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if restore {
-		selected, err := restoreBaseline(receiverSourceDir, func() error { return restoreDisabled(ctx, kubeContext) })
+		rendered, err := renderLayer(ctx)
+		selected := false
+		if err == nil {
+			selected, err = restoreBaseline(rendered, func() error { return restoreDisabled(ctx, kubeContext) })
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_DISABLED=UNVERIFIED stage=%s\n", err.Error())
 			os.Exit(2)
@@ -191,7 +195,11 @@ func main() {
 		return
 	}
 	if verify {
-		selected, err := fenceSelected(receiverSourceDir)
+		rendered, err := renderLayer(ctx)
+		selected := false
+		if err == nil {
+			selected, err = fenceSelected(rendered)
+		}
 		if err == nil {
 			err = verifyDeployed(ctx, kubeContext, selected)
 		}

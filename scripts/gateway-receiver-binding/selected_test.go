@@ -5,47 +5,116 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func writeSelection(t *testing.T, content string) string {
-	t.Helper()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "kustomization.yaml"), []byte(content), 0600); err != nil {
-		t.Fatal(err)
+func renderedResources(kinds ...string) []byte {
+	var out strings.Builder
+	out.WriteString("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: unrelated\n")
+	for _, kind := range kinds {
+		out.WriteString("---\nkind: " + kind + "\nmetadata:\n  name: gateway-receiver\n")
+		if strings.HasSuffix(kind, "Binding") {
+			out.WriteString("spec:\n  policyName: gateway-receiver\n")
+		}
 	}
-	return dir
+	return []byte(out.String())
 }
 
-func TestFenceSelectionReadsOnlyTheExactComponent(t *testing.T) {
-	base := "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - a.yaml\n"
+const (
+	mutatingPolicy   = "MutatingAdmissionPolicy"
+	validatingPolicy = "ValidatingAdmissionPolicy"
+	mutatingBinding  = "MutatingAdmissionPolicyBinding"
+	validBinding     = "ValidatingAdmissionPolicyBinding"
+)
+
+func TestFenceSelectionFollowsTheRenderedLayer(t *testing.T) {
+	policies := []string{mutatingPolicy, validatingPolicy}
+	foreignName := append(renderedResources(append(policies, mutatingBinding)...), []byte("---\nkind: "+validBinding+"\nmetadata:\n  name: other\nspec:\n  policyName: gateway-receiver\n")...)
+	foreignPolicy := append(renderedResources(append(policies, mutatingBinding)...), []byte("---\nkind: "+validBinding+"\nmetadata:\n  name: gateway-receiver\nspec:\n  policyName: other\n")...)
 	for name, tc := range map[string]struct {
-		content  string
+		rendered []byte
 		selected bool
 		fails    bool
 	}{
-		"unselected": {content: base},
-		"selected":   {content: base + "components:\n  - components/physical-peer-fence\n", selected: true},
-		"foreign":    {content: base + "components:\n  - components/other\n", fails: true},
-		"mixed":      {content: base + "components:\n  - components/physical-peer-fence\n  - components/other\n", fails: true},
-		"repeated":   {content: base + "components:\n  - components/physical-peer-fence\n  - components/physical-peer-fence\n", fails: true},
-		"malformed":  {content: "components: [", fails: true},
+		"unselected":       {rendered: renderedResources(policies...)},
+		"selected":         {rendered: renderedResources(append(policies, mutatingBinding, validBinding)...), selected: true},
+		"one binding":      {rendered: renderedResources(append(policies, mutatingBinding)...), fails: true},
+		"repeated binding": {rendered: renderedResources(append(policies, mutatingBinding, validBinding, validBinding)...), fails: true},
+		"binding renamed":  {rendered: foreignName, fails: true},
+		"foreign policy":   {rendered: foreignPolicy, fails: true},
+		"no policies":      {rendered: renderedResources(), fails: true},
+		"one policy":       {rendered: renderedResources(mutatingPolicy), fails: true},
+		"bindings only":    {rendered: renderedResources(mutatingBinding, validBinding), fails: true},
+		"empty render":     {rendered: nil, fails: true},
+		"malformed render": {rendered: []byte("kind: ["), fails: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			selected, err := fenceSelected(writeSelection(t, tc.content))
+			selected, err := fenceSelected(tc.rendered)
 			if (err != nil) != tc.fails || selected != tc.selected {
 				t.Fatalf("selected=%v err=%v", selected, err)
 			}
 		})
 	}
-	if _, err := fenceSelected(t.TempDir()); err == nil {
-		t.Fatal("an unreadable source read as unselected, which would remove a selected fence")
+}
+
+func writeOverlay(t *testing.T, dir string, files map[string]string) {
+	t.Helper()
+	for name, content := range files {
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
-func TestReviewedSourceStillLeavesTheFenceUnselected(t *testing.T) {
-	selected, err := fenceSelected(filepath.Join("..", "..", receiverSourceDir))
+// Selecting the component from a parent overlay must read as selected: only
+// the rendered layer can see it, and reading one file's key could not.
+func TestRealRendersSeeASelectionFromAnyLevel(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	copyOf := func(name string) string {
+		raw, err := os.ReadFile(filepath.Join(receiverSourceDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	fence := "components/physical-peer-fence/"
+	files := map[string]string{}
+	for _, name := range []string{"kustomization.yaml", "mutating-admission-policy-gateway-receiver.yaml", "validating-admission-policy-gateway-receiver.yaml", fence + "kustomization.yaml", fence + "mutating-admission-policy-binding-gateway-receiver.yaml", fence + "validating-admission-policy-binding-gateway-receiver.yaml"} {
+		files["child/"+name] = copyOf(name)
+	}
+	render := func(parent string) []byte {
+		dir := t.TempDir()
+		writeOverlay(t, dir, files)
+		writeOverlay(t, dir, map[string]string{"kustomization.yaml": parent})
+		out, err := exec.Command("kubectl", "kustomize", dir).Output()
+		if err != nil {
+			t.Fatal("native render")
+		}
+		return out
+	}
+	head := "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - child\n"
+	if selected, err := fenceSelected(render(head)); err != nil || selected {
+		t.Fatalf("unselected parent: selected=%v err=%v", selected, err)
+	}
+	if selected, err := fenceSelected(render(head + "components:\n  - child/components/physical-peer-fence\n")); err != nil || !selected {
+		t.Fatalf("parent selection: selected=%v err=%v", selected, err)
+	}
+}
+
+func TestReviewedLayerStillLeavesTheFenceUnselected(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	rendered, err := renderLayer(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := fenceSelected(rendered)
 	if err != nil || selected {
 		t.Fatalf("selected=%v err=%v: selecting the fence is a separate reviewed activation", selected, err)
 	}
@@ -188,21 +257,21 @@ func TestReceiverStateFollowsTheSourceSelection(t *testing.T) {
 }
 
 func TestRestoreBaselineNeverRemovesASelectedFence(t *testing.T) {
-	selected := writeSelection(t, "components:\n  - components/physical-peer-fence\n")
-	unselected := writeSelection(t, "resources:\n  - a.yaml\n")
+	policies := []string{mutatingPolicy, validatingPolicy}
+	unselected := renderedResources(policies...)
 	for name, tc := range map[string]struct {
-		dir      string
+		rendered []byte
 		restored bool
 		selected bool
 		fails    bool
 	}{
-		"selected":   {dir: selected, selected: true},
-		"unselected": {dir: unselected, restored: true},
-		"unreadable": {dir: t.TempDir(), fails: true},
+		"selected":   {rendered: renderedResources(append(policies, mutatingBinding, validBinding)...), selected: true},
+		"unselected": {rendered: unselected, restored: true},
+		"unreadable": {rendered: nil, fails: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			restored := false
-			got, err := restoreBaseline(tc.dir, func() error { restored = true; return nil })
+			got, err := restoreBaseline(tc.rendered, func() error { restored = true; return nil })
 			if (err != nil) != tc.fails || got != tc.selected || restored != tc.restored {
 				t.Fatalf("selected=%v restored=%v err=%v", got, restored, err)
 			}

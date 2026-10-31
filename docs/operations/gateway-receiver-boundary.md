@@ -74,18 +74,22 @@ lost acknowledgements; a replacement or uncertain outcome never reports success.
 This mutation runs only in the reviewed protected deployment, never directly from
 an agent session.
 
-Both deployment steps follow the checked-out source. While `gateway-receiver`
-leaves `components/physical-peer-fence` unselected, they restore and verify the
-disabled baseline. When a revision selects it, `restore-disabled` writes nothing
+Both deployment steps follow what the checked-out Hetzner infrastructure layer
+renders. While it renders neither binding, they restore and verify the disabled
+baseline. When it renders both, from any level of the overlay, `restore-disabled` writes nothing
 and reports `GATEWAY_RECEIVER_DISABLED=NOT-APPLICABLE fence=selected`, and `verify`
 requires both reviewed bindings, the ownership marker and the exact peer on every
 TLS chain. A revision that goes back to unselected, including main's recovery after
-a failed activation, removes the fence as before. An unreadable or unexpected
-selection fails without a write.
+a failed activation, removes the fence as before. A failed render, missing
+policies or a partial or foreign binding fails without a write.
 
 Selecting the component is still a separate activation. Admission applies only when
 the generated listener is written, so that change must also establish how the
-existing listener receives the fence, or its first `verify` fails.
+existing listener receives the fence, or its first `verify` fails. The same applies
+to recovery once main selects it: restoration writes nothing while selected, so a
+listener that lost the fence keeps failing `verify` until something rewrites it.
+Both steps still refuse an active PROXY listener, so turning the transport on needs
+its own change to this helper.
 
 With the component unselected, the following read-only check requires both bindings
 absent and the generated listener free of this fence and PROXY filters:
