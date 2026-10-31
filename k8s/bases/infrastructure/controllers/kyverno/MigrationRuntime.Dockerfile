@@ -33,6 +33,8 @@ RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 300s govulncheck ./cmd/platform-migrate \
     && timeout 120s govulncheck -mode=binary -format json /out/kubectl-kyverno > /tmp/binary-scan.json \
     && grep -Eq '"scan_level": *"symbol"' /tmp/binary-scan.json \
+    && timeout 120s govulncheck -mode=extract /out/kubectl-kyverno > /tmp/binary-extract.json \
+    && grep -Eq '"pkgSymbols": *\[[^]]+\]' /tmp/binary-extract.json \
     && grep -Eo '"osv": *"[^"]+"' /tmp/binary-scan.json | grep -Eo 'GO-[0-9]+-[0-9]+' | sort -u > /tmp/binary-findings \
     && if grep -Evx 'GO-2026-5594|GO-2026-5337|GO-2025-3615' /tmp/binary-findings; then \
          echo 'Unaccepted advisory in the compiled migration runtime'; exit 1; \

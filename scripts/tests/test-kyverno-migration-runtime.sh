@@ -57,6 +57,8 @@ grep -Fq 'go install golang.org/x/vuln/cmd/govulncheck@v1.8.0' "$dockerfile" || 
 grep -Fq 'timeout 300s govulncheck ./cmd/platform-migrate' "$dockerfile" || fail 'source scan missing'
 grep -Fq 'timeout 120s govulncheck -mode=binary -format json /out/kubectl-kyverno > /tmp/binary-scan.json' "$dockerfile" || fail 'compiled binary scan missing'
 grep -Fq "grep -Eq '\"scan_level\": *\"symbol\"' /tmp/binary-scan.json" "$dockerfile" || fail 'symbol-level scan proof missing'
+grep -Fq 'timeout 120s govulncheck -mode=extract /out/kubectl-kyverno > /tmp/binary-extract.json' "$dockerfile" || fail 'symbol extraction proof missing'
+grep -Fq "grep -Eq '\"pkgSymbols\": *\\[[^]]+\\]' /tmp/binary-extract.json" "$dockerfile" || fail 'non-empty symbol proof missing'
 grep -Fq "grep -Evx 'GO-2026-5594|GO-2026-5337|GO-2025-3615' /tmp/binary-findings" "$dockerfile" || fail 'accepted advisories changed'
 # shellcheck disable=SC2016
 grep -Fq 'test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.10"' "$dockerfile" || fail 'actual compiler proof missing'
