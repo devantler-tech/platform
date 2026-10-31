@@ -17,6 +17,7 @@ type preparationAPI struct {
 	resetError        bool
 	postReset         bool
 	staleSource       bool
+	v2Off             bool
 	conflict          bool
 	changeInventory   func(*inventory)
 }
@@ -168,6 +169,12 @@ func (f *preparationAPI) run(_ context.Context, input []byte, program string, ar
 				if args[2] == "storage-minimal-available-percentage" {
 					setting["value"] = "25"
 				}
+				if args[2] == "v2-data-engine" {
+					setting["value"] = "true"
+					if f.v2Off {
+						setting["value"] = "false"
+					}
+				}
 				return f.encode(setting)
 			case "node":
 				return f.encode(f.node)
@@ -214,6 +221,14 @@ func (f *preparationAPI) run(_ context.Context, input []byte, program string, ar
 				f.t.Fatal("write lost UID or resource-version binding")
 			}
 			for _, patch := range patches[2:] {
+				if args[1] == "nodes.longhorn.io" && text(patch, "path") == "/spec/disks" {
+					// Longhorn's webhook refuses to delete a disk that can still schedule.
+					for name, raw := range value(o, "spec", "disks").(object) {
+						if _, kept := patch["value"].(object)[name]; !kept && value(raw.(object), "allowScheduling") != false {
+							return nil, errors.New("please disable the disk before removing it")
+						}
+					}
+				}
 				parts := strings.Split(strings.TrimPrefix(text(patch, "path"), "/"), "/")
 				parent := o
 				for _, part := range parts[:len(parts)-1] {
@@ -335,5 +350,31 @@ func TestForeignPostResetCordonCannotReenableStorageScheduling(t *testing.T) {
 	f.node["metadata"].(object)["annotations"].(object)[fenceAnnotation] = "another-operation"
 	if err := p.finish(context.Background()); err == nil || value(f.storage, "spec", "allowScheduling") != false {
 		t.Fatal("a foreign cordon did not preserve the storage fence")
+	}
+}
+
+func TestDisabledV2EngineHoldsBeforeAnyFence(t *testing.T) {
+	f, p := newPreparationAPI(t, "evacuating")
+	f.cm = nil
+	f.v2Off = true
+	f.node["spec"].(object)["unschedulable"] = false
+	delete(f.node["metadata"].(object)["annotations"].(object), fenceAnnotation)
+	f.storage["spec"].(object)["allowScheduling"] = true
+	f.storage["spec"].(object)["evictionRequested"] = false
+	if err := p.prepare(context.Background()); err == nil || f.resets != 0 || f.cm != nil ||
+		value(f.node, "spec", "unschedulable") != false || value(f.storage, "spec", "allowScheduling") != true {
+		t.Fatalf("a disabled V2 engine did not hold before the fence: %v", err)
+	}
+}
+
+func TestDiskRemovalResumesAfterSchedulingWasDisabled(t *testing.T) {
+	f, p := newPreparationAPI(t, "draining")
+	disks := value(f.storage, "spec", "disks").(object)
+	f.storage["spec"].(object)["disks"] = disabledDisks(disks)
+	if err := p.prepare(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.resets != 1 || p.j.Phase != "prepared" {
+		t.Fatal("an interrupted disk removal did not resume")
 	}
 }

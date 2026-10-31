@@ -189,11 +189,13 @@ func (p *preparation) drainAndReset(ctx context.Context) error {
 		return errors.New("storage evacuation fence changed")
 	}
 	disks := value(lh, "spec", "disks")
-	if !reflect.DeepEqual(disks, p.j.OriginalDisks) && !reflect.DeepEqual(disks, object{}) && !reviewedBlockDisks(disks) {
+	original := reflect.DeepEqual(disks, p.j.OriginalDisks)
+	disabled := reflect.DeepEqual(disks, disabledDisks(p.j.OriginalDisks))
+	if !original && !disabled && !reflect.DeepEqual(disks, object{}) && !reviewedBlockDisks(disks) {
 		return errors.New("a foreign disk configuration prevents reset")
 	}
-	if reflect.DeepEqual(disks, p.j.OriginalDisks) {
-		if err = p.mutate(ctx, "nodes.longhorn.io", "longhorn-system", lh, object{"op": "replace", "path": "/spec/disks", "value": object{}}); err != nil {
+	if original || disabled {
+		if err = p.removeOriginalDisks(ctx, lh, original); err != nil {
 			return err
 		}
 	}
@@ -224,6 +226,43 @@ func (p *preparation) drainAndReset(ctx context.Context) error {
 		fmt.Println("Reset response was uncertain; requiring positive post-reset state before proceeding.")
 	}
 	return nil
+}
+
+// disabledDisks is the original configuration with scheduling off on every disk,
+// the only state from which Longhorn's webhook accepts removing a disk.
+func disabledDisks(original map[string]any) map[string]any {
+	disabled := map[string]any{}
+	for name, raw := range original {
+		disk, _ := raw.(map[string]any)
+		copied := map[string]any{}
+		for key, field := range disk {
+			copied[key] = field
+		}
+		copied["allowScheduling"] = false
+		disabled[name] = copied
+	}
+	return disabled
+}
+
+// Longhorn also refuses removal until the disk reports no scheduled storage, which
+// can lag the evacuation, so the removal is retried within the recovery window.
+func (p preparation) removeOriginalDisks(ctx context.Context, lh object, schedulable bool) error {
+	if schedulable {
+		changes := []object{}
+		for name := range p.j.OriginalDisks {
+			changes = append(changes, object{"op": "replace", "path": "/spec/disks/" + name + "/allowScheduling", "value": false})
+		}
+		if err := p.mutate(ctx, "nodes.longhorn.io", "longhorn-system", lh, changes...); err != nil {
+			return err
+		}
+	}
+	return waitReady(ctx, func() error {
+		current, err := p.storageNode(ctx)
+		if err != nil {
+			return err
+		}
+		return p.mutate(ctx, "nodes.longhorn.io", "longhorn-system", current, object{"op": "replace", "path": "/spec/disks", "value": object{}})
+	})
 }
 
 func waitReady(ctx context.Context, check func() error) error {

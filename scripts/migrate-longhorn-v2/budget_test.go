@@ -12,7 +12,8 @@ func TestRebuildRequiresMeasuredCapacityAndPreservesTheLastV1Worker(t *testing.T
 	for name, change := range map[string]func(*inventory){
 		"unknown size":           func(s *inventory) { delete(s.volumes[0]["spec"].(object), "size") },
 		"logical overcommit":     func(s *inventory) { s.volumes[0]["spec"].(object)["size"] = "96636764160" },
-		"actual data overcommit": func(s *inventory) { s.volumes[0]["status"].(object)["actualSize"] = "85899345920" },
+		"actual data overcommit": func(s *inventory) { s.volumes[0]["status"].(object)["actualSize"] = float64(85899345920) },
+		"string measurement":     func(s *inventory) { s.volumes[0]["status"].(object)["actualSize"] = "1048576" },
 		"missing measurement":    func(s *inventory) { delete(s.volumes[0]["status"].(object), "actualSize") },
 	} {
 		t.Run(name, func(t *testing.T) {

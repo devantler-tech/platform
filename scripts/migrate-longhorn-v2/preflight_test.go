@@ -34,7 +34,7 @@ func evacuatedFixture() inventory {
 		if name == "retained" {
 			state, health, replicaState = "detached", "unknown", "stopped"
 		}
-		v["status"] = object{"state": state, "robustness": health, "actualSize": "1048576"}
+		v["status"] = object{"state": state, "robustness": health, "actualSize": float64(1048576)}
 		s.volumes = append(s.volumes, v)
 		modes := object{}
 		for i := 1; i <= 3; i++ {

@@ -7,7 +7,7 @@ import (
 )
 
 func verifyBudgetSettings(ctx context.Context, c client) error {
-	for name, expected := range map[string]string{"storage-over-provisioning-percentage": "100", "storage-minimal-available-percentage": "25"} {
+	for name, expected := range map[string]string{"storage-over-provisioning-percentage": "100", "storage-minimal-available-percentage": "25", "v2-data-engine": "true"} {
 		setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", name, false)
 		if err != nil || text(setting, "value") != expected {
 			return errors.New("live storage scheduling settings differ from the reviewed capacity budget")
@@ -30,10 +30,12 @@ func verifyRebuildBudget(target string, s inventory) error {
 		if err != nil || size == 0 || size > 96*gib {
 			return errors.New("volume logical size is unknown or outside the raw-disk budget")
 		}
-		used, err := strconv.ParseUint(text(v, "status", "actualSize"), 10, 64)
-		if err != nil || used > 96*gib {
+		// Unlike spec.size, status.actualSize is a JSON number.
+		measured, ok := value(v, "status", "actualSize").(float64)
+		if !ok || measured < 0 || measured > float64(96*gib) {
 			return errors.New("volume actual size is unknown or outside the raw-disk budget")
 		}
+		used := uint64(measured)
 		logical += size
 		actual += used
 		// 96 GiB per target, 4 GiB disk reserve, 2 GiB metadata margin,
