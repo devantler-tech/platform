@@ -233,6 +233,15 @@ spec:
               app.kubernetes.io/component: admission-controller
               app.kubernetes.io/instance: kyverno
     backgroundController:
+      # The released controller reports a failed deletion when a generated object is
+      # already gone, and keeps its stale cache entry (#5527). This build carries that fix
+      # plus the Go toolchain and dependency updates in background-v1.19.2-downstream-
+      # cleanup.patch. Kyverno's webhooks skip this namespace, so the gate is the Talos pull
+      # rule in verify-first-party-images, which accepts only its own publisher on main.
+      image:
+        registry: ghcr.io
+        repository: devantler-tech/platform-kyverno-background
+        tag: v1.19.2-downstream-cleanup.1-aa73bf47bf139712b2dc64c7b6178e9ce2607e67@sha256:327d72f865bb10108b19ce2510e3244104872632aa0063283da5e69034b1f1fa
       replicas: ${kyverno_background_replicas:=1}
       # The chart auto-enables this controller's PDB whenever replicas > 1 and
       # defaults it to minAvailable: 1 -- the exact shape validate-pdb-drain-safe
