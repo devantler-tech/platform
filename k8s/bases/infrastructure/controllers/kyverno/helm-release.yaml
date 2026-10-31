@@ -17,6 +17,25 @@ spec:
       sourceRef:
         kind: HelmRepository
         name: kyverno
+  # Kyverno 1.19.2 leaves its successful migration Job behind: the chart comments out
+  # that hook's deletion policy but still deletes its service account, so the Job names
+  # an account that no longer exists and misleads posture scans (#5491). Delete it on
+  # success only, so the latest failed attempt keeps its diagnostics until the next retry
+  # replaces it. Hooks reach this patch only through the combined strategy, which is
+  # named because the default can change.
+  postRenderStrategy: combined
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: batch
+              version: v1
+              kind: Job
+              name: kyverno-migrate-resources
+            patch: |
+              - op: add
+                path: /metadata/annotations/helm.sh~1hook-delete-policy
+                value: before-hook-creation,hook-succeeded
   # https://github.com/kyverno/kyverno/blob/main/charts/kyverno/values.yaml
   values:
     # --- reports-controller memory growth (Coroot "memory leak") --------------
@@ -338,6 +357,14 @@ spec:
           type: RuntimeDefault
     crds:
       migration:
+        # The released CLI image predates the Go 1.26.10 certificate-verification fix. This
+        # build keeps its migration implementation, identity and arguments (#5542). Kyverno's
+        # own webhooks skip this namespace, so the Talos pull rule is what requires this
+        # image's signer on main; verify-app-images does not see this Pod.
+        image:
+          registry: ghcr.io
+          repository: devantler-tech/platform-kyverno-migrate
+          tag: v1.19.2-migration.1-eed5caab082e10a1ee7c02ac636b66f257c4cfb3@sha256:ee142d6feae09ff8970286261a17ce6f6e9eb0c848a601db31c78933a189ef42
         # The kyverno-migrate-resources post-upgrade hook job sets seccompProfile
         # only at the container level; our require-seccomp-profile ClusterPolicy
         # checks pod-level securityContext, so set it here too (chart default is {})
