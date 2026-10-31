@@ -27,6 +27,8 @@ url="$(yq -r '.spec.url' "${repository}")"
 yq -o=json '.spec.values' "${release}" >"${scratch}/values.json"
 helm template kyverno "${chart}" --repo "${url}" --version "${version}" --is-upgrade \
   --namespace kyverno --values "${scratch}/values.json" >"${scratch}/resources.yaml"
+helm template kyverno "${chart}" --repo "${url}" --version "${version}" --is-upgrade \
+  --namespace kyverno >"${scratch}/chart-defaults.yaml"
 # Kustomize normalizes what it reads, so the comparison baseline goes through it unpatched.
 printf 'resources: [resources.yaml]\n' >"${scratch}/kustomization.yaml"
 kubectl kustomize "${scratch}" >"${scratch}/before.yaml"
@@ -60,6 +62,15 @@ jq -e --arg key "${key}" '.[$key].metadata.annotations["helm.sh/hook"] == "post-
 jq -e --arg key "${key}" --arg image "${image}" '[.[$key].spec.template.spec.containers[].image] == [$image]' \
   "${scratch}/after.json" >/dev/null || fail 'the Job must run the verified migration runtime by digest'
 
+# The patched runtime must keep what the released hook runs with: its arguments are the
+# resources it may touch, and its security context is its identity.
+yq ea -o=json '[. | select(.kind == "Job" and .metadata.name == "kyverno-migrate-resources")]' \
+  "${scratch}/chart-defaults.yaml" >"${scratch}/chart-job.json"
+jq -e --arg key "${key}" --slurpfile chart "${scratch}/chart-job.json" '
+  def scope: .spec.template.spec.containers | map({args, securityContext});
+  (.[$key] | scope) == ($chart[0][0] | scope) and (.[$key] | scope | length) == 1
+' "${scratch}/after.json" >/dev/null || fail 'the Job must keep the released arguments and security context'
+
 # Nothing else may move: the patch is scoped to one annotation on one object.
 jq -e --arg key "${key}" --slurpfile before "${scratch}/before.json" '
   del(.[$key].metadata.annotations["helm.sh/hook-delete-policy"]) == $before[0]
@@ -67,6 +78,6 @@ jq -e --arg key "${key}" --slurpfile before "${scratch}/before.json" '
 jq -e '[to_entries[] | select(.value.kind == "Job" and .value.metadata.annotations["helm.sh/hook"] != null)] | length > 1' \
   "${scratch}/after.json" >/dev/null || fail 'expected unrelated hook Jobs to prove they stay unchanged'
 
-grep -Fq 'scripts/tests/test-kyverno-migration-hook-lifecycle.sh' "${root_dir}/.github/workflows/ci.yaml" ||
+grep -Fq 'bash scripts/tests/test-kyverno-migration-hook-lifecycle.sh' "${root_dir}/.github/workflows/ci.yaml" ||
   fail 'CI must run this test'
 echo 'kyverno migration hook: PASS'

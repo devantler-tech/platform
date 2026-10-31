@@ -357,8 +357,9 @@ spec:
     crds:
       migration:
         # The released CLI image predates the Go 1.26.10 certificate-verification fix. This
-        # build keeps its migration implementation, identity and arguments (#5542), and
-        # verify-app-images admits it only from its own publisher on main.
+        # build keeps its migration implementation, identity and arguments (#5542). Kyverno's
+        # own webhooks skip this namespace, so the Talos pull rule is what requires this
+        # image's signer on main; verify-app-images does not see this Pod.
         image:
           registry: ghcr.io
           repository: devantler-tech/platform-kyverno-migrate
