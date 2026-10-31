@@ -20,8 +20,9 @@ spec:
   # Kyverno 1.19.2 leaves its successful migration Job behind: the chart comments out
   # that hook's deletion policy but still deletes its service account, so the Job names
   # an account that no longer exists and misleads posture scans (#5491). Delete it on
-  # success only, so a failed migration keeps its diagnostics. Hooks reach this patch
-  # only through the combined strategy, which is named because the default can change.
+  # success only, so the latest failed attempt keeps its diagnostics until the next retry
+  # replaces it. Hooks reach this patch only through the combined strategy, which is
+  # named because the default can change.
   postRenderStrategy: combined
   postRenderers:
     - kustomize:
