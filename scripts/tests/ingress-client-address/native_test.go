@@ -115,7 +115,7 @@ func fixtureConfigurationFor(t *testing.T, policyPath string, listenerPort, back
 	policy := patches[0].Value.RequestHeaderModifier
 	var added []any
 	for _, h := range policy.Set {
-		// Cilium 1.20.3 translates HTTPRoute set with this exact Envoy action.
+		// Cilium 1.20.4 translates HTTPRoute set with this exact Envoy action.
 		added = append(added, map[string]any{"header": map[string]any{"key": h.Name, "value": h.Value}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"})
 	}
 	socket := func(port int) map[string]any {
@@ -165,7 +165,7 @@ func TestClientIdentityFixtureUsesTheAuditedControllerRelease(t *testing.T) {
 			}
 		}
 	}
-	if err := yaml.Unmarshal(data, &release); err != nil || release.Spec.Chart.Spec.Version != "1.20.3" {
+	if err := yaml.Unmarshal(data, &release); err != nil || release.Spec.Chart.Spec.Version != "1.20.4" {
 		t.Fatal("reaudit controller header translation and Envoy pin before updating this proof")
 	}
 	if len(release.Spec.ValuesFrom) != 0 || release.Spec.Values.Envoy.Image != nil || (release.Spec.Values.GatewayAPI.XffNumTrustedHops != nil && *release.Spec.Values.GatewayAPI.XffNumTrustedHops != 0) {
@@ -212,7 +212,7 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string, 
 	}
 	var pins nativePins
 	data, err := os.ReadFile("pins.json")
-	if err != nil || json.Unmarshal(data, &pins) != nil || pins.Cilium != "1.20.3" || pins.Image != "quay.io/cilium/cilium-envoy@sha256:d6c8c0c91954d1885026d82a31b341f37dcd34a4b127fdaf1587e43ddd224cef" {
+	if err != nil || json.Unmarshal(data, &pins) != nil || pins.Cilium != "1.20.4" || pins.Image != "quay.io/cilium/cilium-envoy@sha256:547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629" {
 		t.Fatal("native proof must use the audited Cilium Envoy pin")
 	}
 	if got := strings.TrimSpace(string(run("info", "--format", "{{.OSType}}"))); got != "linux" {

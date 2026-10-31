@@ -417,6 +417,22 @@ cluster API and charts are byte-identical, and KSail imports the AWS
 configuration loader only in its AWS credential, SSO and EKS code, which the
 Talos fold never uses.
 
+**7.203.34**, commit `70a9d1314b4ddb38b8f590bd3428509f260fe713`, is audited
+against 7.203.21. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. Only `go.mod` and `go.sum` change: Kubescape
+`opa-utils` v0.0.314 → v0.0.315 and AWS SDK EKS v1.103.0 → v1.104.1. Every
+changed checksum belongs to those two modules; the Go directive, Talos
+machinery and encoding dependencies are unchanged. The complete 1,016-package
+dependency closure of the Talos configuration manager, generator and cluster
+API contains neither changed module. Source review confirms the normalized
+extension/argument trigger, both-role fold and explicit schematic-ID precedence
+are unchanged. The other release changes affect image export, local web UI
+request validation, Hetzner shutdown reporting, Gatekeeper drain behavior and
+KSail's own documentation, CI and scanner exception; none changes the mirrored
+fold. The offline render regression retains both production and local roles,
+explicit and whitespace schematic IDs, and invalid-patch refusals. This audit
+changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

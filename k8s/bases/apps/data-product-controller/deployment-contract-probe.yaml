@@ -16,6 +16,11 @@ spec:
       app.kubernetes.io/component: contract-probe
   template:
     metadata:
+      annotations:
+        coroot.com/scrape-metrics: "true"
+        coroot.com/metrics-port: "8081"
+        coroot.com/metrics-path: /metrics
+        coroot.com/metrics-scheme: http
       labels:
         app.kubernetes.io/name: data-product-controller
         app.kubernetes.io/instance: data-product-controller
