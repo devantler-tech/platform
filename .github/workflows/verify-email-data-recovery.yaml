@@ -1,0 +1,91 @@
+name: Verify Email Mailbox Data Recovery
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-email-data-recovery"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  recovery:
+    name: Verify a separate company Email backup restore
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_WORKFLOW_REF" != devantler-tech/platform/.github/workflows/verify-email-data-recovery.yaml@refs/heads/main || "$GITHUB_ACTOR" != devantler || "$GITHUB_RUN_ATTEMPT" != 1 || "$RUNNER_ENVIRONMENT" != github-hosted || "$CONFIRM" != verify-email-data-recovery ]]; then
+            printf '%s\n' 'EMAIL_DATA_RECOVERY=UNVERIFIED stage=dispatch cleanup=NOT_STARTED' >&2
+            exit 2
+          fi
+
+      - name: Check out the confirmed immutable revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go version
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the reviewed recovery driver before restoring credentials
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/verify-email-data-recovery" ./scripts/verify-email-data-recovery
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/email-recovery-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/email-recovery-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/email-recovery-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/email-recovery-tools" >> "$GITHUB_PATH"
+
+      - name: Verify the message and its isolated restored storage
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          EMAIL_DATA_RECOVERY_CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          stage=private-workspace
+          fail() { printf 'EMAIL_DATA_RECOVERY=UNVERIFIED stage=%s cleanup=NOT_STARTED\n' "$stage" >&2; exit 2; }
+          [[ $(findmnt -n -o FSTYPE --target /dev/shm) == tmpfs ]] || fail
+          private_dir="$(mktemp -d /dev/shm/email-data-recovery.XXXXXXXX)"
+          trap 'rm -rf "$private_dir"' EXIT
+          [[ -n "$KUBE_CONFIG" && ${#KUBE_CONFIG} -le 1048576 ]] || fail
+          export KUBECONFIG="$private_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          stage=stable-api
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            fail
+          fi
+          unset HCLOUD_TOKEN
+          "$RUNNER_TEMP/verify-email-data-recovery"
