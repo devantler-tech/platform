@@ -215,9 +215,9 @@ spec:
               app.kubernetes.io/instance: kyverno
     backgroundController:
       # The released controller reports a failed deletion when a generated object is
-      # already gone, and keeps its stale cache entry (#5527). This build patches only
-      # that path and the Go toolchain, and verify-app-images admits it only from its
-      # own publisher on main.
+      # already gone, and keeps its stale cache entry (#5527). This build carries that fix
+      # plus the Go toolchain and dependency updates in background-v1.19.2-downstream-
+      # cleanup.patch, and verify-app-images admits it only from its own publisher on main.
       image:
         registry: ghcr.io
         repository: devantler-tech/platform-kyverno-background
