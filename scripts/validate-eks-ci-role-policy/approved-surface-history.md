@@ -3941,10 +3941,12 @@ by the new signer. Deploy this acceptance before the next AWS release.
 
 ## 2026-10-31 — Accept the reviewed v19.0.3 organization settings publisher
 
-For #5619, the canonical approvals for the `.github` manifest consumer add
+For #5619, the canonical approvals for the `.github` manifest consumer move to
 `devantler-tech/.github@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next
-to the current signer `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3) and
-`6f1dee9557a939cc24ca2c562ea775d05e01564d`, so the current release keeps verifying
+to the current signer `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3), and
+retire `6f1dee9557a939cc24ca2c562ea775d05e01564d`, because a consumer accepts at
+most two canonical commits. The v19.0.3 tag's own caller pins v10.0.3, so the
+current release keeps verifying until the first publication by v19.0.3 is verified.
 until the first publication by v19.0.3 is verified.
 
 The publishing workflow is not byte-identical across v10.0.3 and v19.0.3. It gains
