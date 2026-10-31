@@ -28,7 +28,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
        else test "$?" -eq 1 && grep -F 'unknown command "apply"' /tmp/unsupported-command; fi
 # Only these exact whole-module records for Kyverno v1.19.2 are accepted, with the same
 # adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
-# (platform#5154). Any other advisory fails the build, and the scan must stay symbol-level.
+# (platform#5154). The list must match exactly: another advisory fails the build, and so does
+# an empty list, because that means the report was not read or the record needs removing here.
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 300s govulncheck ./cmd/platform-migrate \
     && timeout 120s govulncheck -mode=binary -format json /out/kubectl-kyverno > /tmp/binary-scan.json \
@@ -36,9 +37,8 @@ RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 120s govulncheck -mode=extract /out/kubectl-kyverno > /tmp/binary-extract.json \
     && grep -Eq '"pkgSymbols": *\[[^]]+\]' /tmp/binary-extract.json \
     && grep -Eo '"osv": *"[^"]+"' /tmp/binary-scan.json | grep -Eo 'GO-[0-9]+-[0-9]+' | sort -u > /tmp/binary-findings \
-    && if grep -Evx 'GO-2026-5594|GO-2026-5337|GO-2025-3615' /tmp/binary-findings; then \
-         echo 'Unaccepted advisory in the compiled migration runtime'; exit 1; \
-       else test "$?" -eq 1; fi
+    && cat /tmp/binary-findings \
+    && test "$(tr '\n' ' ' < /tmp/binary-findings)" = 'GO-2025-3615 GO-2026-5337 GO-2026-5594 '
 
 FROM reg.kyverno.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56dc33154a2d1d1fba58f4cadad3f47be7e78b11c
 COPY --from=builder --chmod=0755 /out/kubectl-kyverno /ko-app/kubectl-kyverno
