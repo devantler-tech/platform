@@ -326,6 +326,18 @@ if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
   exit 0
 fi
 case "${MODE:-}" in
+  connection-refused-once | empty-reply-once | connection-reset-once)
+    if [[ ! -e "$FIXTURE/public-dropped-once" ]]; then
+      : >"$FIXTURE/public-dropped-once"
+      printf '000'
+      case "$MODE" in
+        connection-refused-once) exit 7 ;;
+        empty-reply-once) exit 52 ;;
+        *) exit 56 ;;
+      esac
+    fi
+    ;;
+  dropped-at-deadline) sleep "$transfer_seconds"; printf '000'; exit 56 ;;
   slow-public) sleep 0.55 ;;
   connection-reset) printf '000'; printf 'PRIVATE-ERROR-CANARY: private upstream\n' >&2; exit 56 ;;
   invalid-http-status) printf '503PRIVATE-ERROR-CANARY'; exit 0 ;;
@@ -522,7 +534,21 @@ jq -e '.httpStatus == 503 and .curlExit == 0' "${scratch}/receipt-http-failure/s
 run_case receipt-connection-reset fail connection-reset 15
 jq -e '.httpStatus == 0 and .curlExit == 56' "${scratch}/receipt-connection-reset/stdout" >/dev/null ||
   fail 'transport refusal lost its numeric curl exit'
-[[ $(wc -l <"${scratch}/receipt-connection-reset/urls") -eq 1 ]] || fail 'transport refusal was retried'
+[[ $(wc -l <"${scratch}/receipt-connection-reset/urls") -eq 2 ]] || fail 'a dropped connection was not retried exactly once'
+# One dropped connection recovers, and the accepted receipt still counts it.
+expected_urls=15
+for mode in connection-refused-once empty-reply-once connection-reset-once; do
+  run_case "$mode" pass "$mode"
+  jq -e '.complete == true and .publicRetries == 1' "${scratch}/${mode}/stdout" >/dev/null ||
+    fail "$mode: the accepted receipt lost the absorbed retry"
+done
+expected_urls=14
+# A retry never extends the deadline, and the refusal keeps the cause it could not retry.
+run_case dropped-at-deadline fail dropped-at-deadline 3
+# Which refusal fires first depends on the second the budget ran out in; both keep the cause.
+jq -e '(.failure == "deadline_exceeded" or .failure == "public_contract_incomplete") and .curlExit == 56' "${scratch}/dropped-at-deadline/stdout" >/dev/null ||
+  fail 'a retry the deadline forbids lost its curl exit'
+[[ $(wc -l <"${scratch}/dropped-at-deadline/urls") -eq 1 ]] || fail 'a retry ran past the deadline'
 run_case receipt-invalid-status fail invalid-http-status 15
 jq -e 'has("httpStatus") == false and .curlExit == 0' "${scratch}/receipt-invalid-status/stdout" >/dev/null ||
   fail 'malformed curl output was accepted as an HTTP status'
@@ -558,7 +584,10 @@ run_case final-moving-public fail flap-public-failure 20
   fail 'final-moving-public: did not reach three moving pairs with failed public checks'
 jq -e '.failure == "rollout_changed" and .changed == ["apps.metadata.labels"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/final-moving-public/stdout" >/dev/null ||
   fail 'final-moving-public: final moving snapshot retained an unvalidated public failure'
-for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
+for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do
+  run_case "$mode" fail "$mode" 15
+  [[ $(wc -l <"${scratch}/${mode}/urls") -eq 1 ]] || fail "$mode: a non-retryable failure was retried"
+done
 # Spend the complete transfer budget, as a connected endpoint that never responds does.
 # The refusal must retain its sanitized transport cause even at the shared deadline.
 run_case transfer-timeout fail transfer-timeout 15
