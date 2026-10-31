@@ -607,7 +607,8 @@ func (e engine) prepare(ctx context.Context) error {
 		if !meta(n) || !condition(n, "Ready") || str(n, "metadata", "annotations", ownerKey) != "" {
 			return errors.New("node readiness or maintenance ownership is unproven")
 		}
-		if condition(n, "Ready") && !strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && str(n, "metadata", "labels", "node.longhorn.io/create-default-disk") == "true" {
+		label := str(n, "metadata", "labels", "node.longhorn.io/create-default-disk")
+		if condition(n, "Ready") && !strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && (label == "true" || label == "config") {
 			storageNodes++
 		}
 	}

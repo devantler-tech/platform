@@ -67,7 +67,7 @@ func ConfiguredPools(data []byte) (map[string]Pool, error) {
 			continue
 		}
 		role := strings.TrimPrefix(name, "autoscale-longhorn-")
-		count := 0
+		var count int
 		switch role {
 		case "v1":
 			count = 2

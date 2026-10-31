@@ -211,3 +211,78 @@ func TestScratchBindingCannotRetireAnApplicationVolume(t *testing.T) {
 		t.Fatal("application data could be retired as scratch")
 	}
 }
+
+func scratchDeleteClient(deleteResult func(attempt int) error, versions *[]string, gets *int) client {
+	deletes := 0
+	return client{context: "admin@prod", run: func(_ context.Context, body []byte, program string, args ...string) ([]byte, error) {
+		if program == "git" {
+			return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
+		}
+		if args[2] == "delete" {
+			var options object
+			if json.Unmarshal(body, &options) != nil {
+				return nil, errors.New("delete options are not JSON")
+			}
+			*versions = append(*versions, text(options, "preconditions", "resourceVersion"))
+			deletes++
+			if err := deleteResult(deletes); err != nil {
+				return nil, err
+			}
+			return nil, nil
+		}
+		*gets++
+		o := resource("fio")
+		o["metadata"].(object)["resourceVersion"] = fmt.Sprint(*gets)
+		return json.Marshal(o)
+	}}
+}
+
+func TestScratchDeletionRetriesAConflictWithFreshPreconditions(t *testing.T) {
+	var versions []string
+	gets := 0
+	// The deletion wait fails here on purpose: the object still exists, and the
+	// cancelled context ends that wait without its polling delay.
+	ctx, cancel := context.WithCancel(context.Background())
+	c := scratchDeleteClient(func(attempt int) error {
+		if attempt == 1 {
+			return fmt.Errorf("delete refused: %w", errConflict)
+		}
+		cancel()
+		return nil
+	}, &versions, &gets)
+	if removeScratch(ctx, c, strings.Repeat("1", 40), "pod", "scratch", "/api/v1/namespaces/scratch/pods/fio", resource("fio")) == nil {
+		t.Fatal("deletion wait was expected to stop on the cancelled context")
+	}
+	if strings.Join(versions, ",") != "1,2" {
+		t.Fatalf("retry must use the freshly read version, sent %v", versions)
+	}
+}
+
+func TestScratchDeletionNeverRetriesOtherFailuresAndStopsAtItsBound(t *testing.T) {
+	for name, tc := range map[string]struct {
+		err  error
+		want int
+	}{"command failure": {errors.New("external command failed"), 1}, "persistent conflict": {errConflict, scratchDeleteAttempts}} {
+		t.Run(name, func(t *testing.T) {
+			var versions []string
+			gets := 0
+			c := scratchDeleteClient(func(int) error { return tc.err }, &versions, &gets)
+			err := removeScratch(context.Background(), c, strings.Repeat("1", 40), "pod", "scratch", "/api/v1/namespaces/scratch/pods/fio", resource("fio"))
+			if !errors.Is(err, tc.err) || len(versions) != tc.want {
+				t.Fatalf("err=%v, delete attempts=%d, want %d", err, len(versions), tc.want)
+			}
+		})
+	}
+}
+
+func TestExecuteClassifiesOnlyAConflictAndKeepsStderrPrivate(t *testing.T) {
+	for script, conflict := range map[string]bool{
+		`echo 'Error from server (Conflict): private detail' >&2; exit 1`:  true,
+		`echo 'Error from server (Forbidden): private detail' >&2; exit 1`: false,
+	} {
+		_, err := execute(context.Background(), nil, "sh", "-c", script)
+		if err == nil || errors.Is(err, errConflict) != conflict || strings.Contains(err.Error(), "private detail") {
+			t.Fatalf("%s: got %v", script, err)
+		}
+	}
+}

@@ -25,16 +25,26 @@ func (c client) deleteObserved(ctx context.Context, source, path string, o objec
 	return err
 }
 
+// A controller can update a scratch resource between the read and the delete.
+// Only that conflict is retried, each time from a fresh read of the same object.
+const scratchDeleteAttempts = 3
+
 func removeScratch(ctx context.Context, c client, source, kind, namespace, path string, original object) error {
-	current, err := c.get(ctx, kind, namespace, text(original, "metadata", "name"), false)
-	if err != nil {
-		return err
-	}
-	if text(current, "metadata", "uid") != text(original, "metadata", "uid") {
-		return errors.New("scratch resource was replaced; refusing deletion")
-	}
-	if err = c.deleteObserved(ctx, source, path, current); err != nil {
-		return err
+	for attempt := 1; ; attempt++ {
+		current, err := c.get(ctx, kind, namespace, text(original, "metadata", "name"), false)
+		if err != nil {
+			return err
+		}
+		if text(current, "metadata", "uid") != text(original, "metadata", "uid") {
+			return errors.New("scratch resource was replaced; refusing deletion")
+		}
+		err = c.deleteObserved(ctx, source, path, current)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, errConflict) || attempt == scratchDeleteAttempts {
+			return err
+		}
 	}
 	return waitReady(ctx, func() error {
 		o, err := c.get(ctx, kind, namespace, text(original, "metadata", "name"), true)
