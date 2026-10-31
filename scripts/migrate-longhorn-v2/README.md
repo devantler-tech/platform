@@ -38,7 +38,9 @@ any Pod that no longer fits once huge pages count, so when a permanent worker's 
 request too much, it first moves the fewest Pods that make them fit, largest first. Only a
 Deployment Pod with another Ready replica qualifies, so its workload keeps serving. It
 also needs no data of its own (no claim, scratch or host volume), no node pinning or
-required placement rule, and to be outside the cluster, storage and Flux namespaces. The worker
+required placement rule, and to be outside the cluster, storage and Flux namespaces. When those
+Pods are not enough, the vulnerability scanner `kubescape/kubevuln` moves too, even as a single
+replica: it serves no traffic and its next scheduled scan repeats the work. The worker
 stays cordoned, under a `longhorn-v2-refresh-<worker>` ownership annotation, until kubelet
 reports the smaller allocatable; otherwise moved Pods could return. Each move is an
 eviction, so disruption budgets decide, and the next Pod leaves only once the workload is

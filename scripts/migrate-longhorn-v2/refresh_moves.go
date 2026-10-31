@@ -86,8 +86,29 @@ func schedulesFreely(pod object) bool {
 	return true
 }
 
-// planRefreshMoves picks the fewest Pods, largest first, that make the worker fit. Only a Pod
-// with another Ready replica qualifies, so its workload keeps serving whatever happens next.
+// restartableScanner names the one single-replica workload that may move. kubevuln serves no
+// traffic and its next scheduled scan repeats the work, so even a replacement that stays Pending
+// costs a delayed scan and no outage. Its scratch volume holds only a rebuildable cache.
+func restartableScanner(pod object) bool {
+	if text(pod, "metadata", "namespace") != "kubescape" || text(pod, "metadata", "labels", "app") != "kubevuln" ||
+		replicaSetOwner(pod) == "" || text(pod, "status", "phase") != "Running" || value(pod, "metadata", "deletionTimestamp") != nil {
+		return false
+	}
+	volumes, _ := value(pod, "spec", "volumes").([]any)
+	for _, raw := range volumes {
+		volume, _ := raw.(map[string]any)
+		for kind := range volume {
+			if !replaceableVolumes[kind] && kind != "emptyDir" {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// planRefreshMoves picks the fewest Pods, largest first, that make the worker fit. A Pod with
+// another Ready replica qualifies, so its workload keeps serving whatever happens next. Only
+// when those are not enough does the restartable scanner move too.
 func planRefreshMoves(n object, pods []object) ([]object, error) {
 	excess, err := refreshExcess(n, pods)
 	if err != nil || excess <= 0 {
@@ -127,8 +148,24 @@ func planRefreshMoves(n object, pods []object) ([]object, error) {
 			excess -= c.request
 		}
 	}
+	for _, pod := range pods {
+		if excess <= 0 {
+			break
+		}
+		if text(pod, "spec", "nodeName") != text(n, "metadata", "name") || !restartableScanner(pod) || readyPodsOf(replicaSetOwner(pod), pods) >= 2 {
+			continue
+		}
+		request, requestErr := podMemoryRequest(pod)
+		if requestErr != nil {
+			return nil, requestErr
+		}
+		if request > 0 {
+			moves = append(moves, pod)
+			excess -= request
+		}
+	}
 	if excess > 0 {
-		return nil, errors.New("worker " + text(n, "metadata", "name") + " requests more memory than remains after huge pages, and its replicated stateless workloads cannot cover the difference")
+		return nil, errors.New("worker " + text(n, "metadata", "name") + " requests more memory than remains after huge pages, and the workloads allowed to move cannot cover the difference")
 	}
 	return moves, nil
 }

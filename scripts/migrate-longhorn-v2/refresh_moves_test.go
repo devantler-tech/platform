@@ -489,3 +489,70 @@ func TestALostEvictionResponseStillCountsAsMoved(t *testing.T) {
 		t.Fatalf("events %v, expected %v", f.events, want)
 	}
 }
+
+func scannerOnWorker(worker, memory string) object {
+	pod := movablePodOnWorker(worker, "kubevuln-abc", memory, "kubevuln-single")
+	metadata := pod["metadata"].(object)
+	metadata["namespace"], metadata["labels"] = "kubescape", object{"app": "kubevuln"}
+	pod["spec"].(object)["volumes"] = []any{object{"name": "token", "projected": object{}}, object{"name": "cache", "emptyDir": object{}}}
+	return pod
+}
+
+func moveNames(moves []object) []string {
+	var names []string
+	for _, pod := range moves {
+		names = append(names, text(pod, "metadata", "name"))
+	}
+	return names
+}
+
+func TestTheScannerMovesOnlyWhenReplicatedPodsAreNotEnough(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	base := podOnWorker(worker, "12Gi")
+	// The scanner is larger than each replicated Pod, so largest-first alone would pick it.
+	moves, err := planRefreshMoves(refreshWorker(), withPeers([]object{base, scannerOnWorker(worker, "640Mi"),
+		movablePodOnWorker(worker, "a", "400Mi", "a"), movablePodOnWorker(worker, "b", "400Mi", "b")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a", "b"}; !slices.Equal(moveNames(moves), want) {
+		t.Fatalf("moves %v, expected %v", moveNames(moves), want)
+	}
+	moves, err = planRefreshMoves(refreshWorker(), withPeers([]object{base, scannerOnWorker(worker, "1Gi"), movablePodOnWorker(worker, "a", "300Mi", "a")}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"a", "kubevuln-abc"}; !slices.Equal(moveNames(moves), want) {
+		t.Fatalf("moves %v, expected %v", moveNames(moves), want)
+	}
+}
+
+func TestRefreshMovesTheScannerAndRestoresScheduling(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), scannerOnWorker(worker, "1Gi"))
+	if err := f.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.evictions) != 1 || value(f.node, "spec", "unschedulable") == true {
+		t.Fatalf("evictions %v, node spec %v", f.evictions, f.node["spec"])
+	}
+}
+
+func TestOnlyTheNamedScannerMovesWithoutAPeer(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	otherNamespace := scannerOnWorker(worker, "2Gi")
+	otherNamespace["metadata"].(object)["namespace"] = "apps"
+	otherApp := scannerOnWorker(worker, "2Gi")
+	otherApp["metadata"].(object)["labels"] = object{"app": "storage"}
+	withClaim := scannerOnWorker(worker, "2Gi")
+	withClaim["spec"].(object)["volumes"] = []any{object{"name": "data", "persistentVolumeClaim": object{}}}
+	statefulSet := scannerOnWorker(worker, "2Gi")
+	statefulSet["metadata"].(object)["ownerReferences"] = []any{object{"kind": "StatefulSet", "controller": true, "uid": "kubevuln-single"}}
+	leaving := scannerOnWorker(worker, "2Gi")
+	leaving["metadata"].(object)["deletionTimestamp"] = "2026-10-31T00:00:00Z"
+	for name, pod := range map[string]object{"namespace": otherNamespace, "app": otherApp, "claim": withClaim, "owner": statefulSet, "leaving": leaving} {
+		if moves, err := planRefreshMoves(refreshWorker(), []object{podOnWorker(worker, "12Gi"), pod}); err == nil {
+			t.Fatalf("%s: planned %v", name, moveNames(moves))
+		}
+	}
+}
