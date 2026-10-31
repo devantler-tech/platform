@@ -72,11 +72,23 @@ preconditions, then conditionally removes only its owned peer fields and marker.
 It preserves all other controller configuration and metadata. Readback resolves
 lost acknowledgements; a replacement or uncertain outcome never reports success.
 This mutation runs only in the reviewed protected deployment, never directly from
-an agent session. Future activation must update that deployment and verify that
-main's ordinary recovery restores this disabled baseline.
+an agent session.
 
-The following read-only check requires both bindings absent and the generated
-listener free of this fence and PROXY filters:
+Both deployment steps follow the checked-out source. While `gateway-receiver`
+leaves `components/physical-peer-fence` unselected, they restore and verify the
+disabled baseline. When a revision selects it, `restore-disabled` writes nothing
+and reports `GATEWAY_RECEIVER_DISABLED=NOT-APPLICABLE fence=selected`, and `verify`
+requires both reviewed bindings, the ownership marker and the exact peer on every
+TLS chain. A revision that goes back to unselected, including main's recovery after
+a failed activation, removes the fence as before. An unreadable or unexpected
+selection fails without a write.
+
+Selecting the component is still a separate activation. Admission applies only when
+the generated listener is written, so that change must also establish how the
+existing listener receives the fence, or its first `verify` fails.
+
+With the component unselected, the following read-only check requires both bindings
+absent and the generated listener free of this fence and PROXY filters:
 
 ```sh
 go run ./scripts/gateway-receiver-binding verify --context admin@prod

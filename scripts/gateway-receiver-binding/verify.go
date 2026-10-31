@@ -49,7 +49,7 @@ func probePublicWithClient(ctx context.Context, client *http.Client) error {
 	}
 	return nil
 }
-func verifyDeployed(ctx context.Context, kubeContext string) error {
+func verifyDeployed(ctx context.Context, kubeContext string, selected bool) error {
 	before, err := collect(ctx, kubeContext)
 	if err != nil {
 		return err
@@ -63,16 +63,8 @@ func verifyDeployed(ctx context.Context, kubeContext string) error {
 		if err := c.policies(ctx, before); err != nil {
 			return err
 		}
-		if err := c.bindingsAbsent(ctx); err != nil {
+		if err := c.receiverState(ctx, before, selected); err != nil {
 			return err
-		}
-		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
-		if err != nil {
-			return err
-		}
-		patch, err := disabledPatch(raw, before)
-		if err != nil || len(patch) != 0 {
-			return errors.New("receiver-not-disabled")
 		}
 		if err = probePublic(ctx, before.PublicIPv4); err != nil {
 			return err
