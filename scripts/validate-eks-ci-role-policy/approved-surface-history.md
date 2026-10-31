@@ -3938,3 +3938,30 @@ The new hash is taken from the required CI job, which rendered with the approved
 tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
 This record does not establish deployed acceptance or a successful publication
 by the new signer. Deploy this acceptance before the next AWS release.
+
+## 2026-10-31 — Accept the reviewed v19.0.3 GitHub configuration publisher alongside v10.0.3
+
+For #5621, the canonical approvals for the `.github` manifest consumer replace
+`devantler-tech/.github@6f1dee9557a939cc24ca2c562ea775d05e01564d` with
+`bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next to
+`0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3). The current release 19.0.3
+and the four releases before it were signed by v10.0.3, and the caller still pins
+it, so it stays accepted until the first publication by v19.0.3 is verified. The
+replaced revision signed none of those releases.
+
+The publishing workflow is not byte-identical across these revisions. It gains
+`timeout-minutes: 60` on the publish job and moves the pinned harden-runner and
+docker/login-action actions forward. No signing, permission or identity step
+changes.
+
+Against the current main, the authorization ledger changes exactly one entry,
+with nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `b5ab7e893cffdb3eaa01de448e1daa4ec95e6d9e9a72d4f47ab8439ad7e558e6` to
+  `4e8335871f17fb3b08946d6698e25db9d5b2e3e26df27c9c55293bd29b6731a0`.
+
+The new hash is taken from the required CI job, which rendered with the approved
+tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
+This record does not establish deployed acceptance or a successful publication
+by the new signer. Deploy this acceptance before the caller moves its pin.
