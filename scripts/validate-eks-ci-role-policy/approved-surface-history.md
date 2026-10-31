@@ -3912,3 +3912,29 @@ job re-renders with the approved kubectl v1.36.2 / Kustomize v5.8.1 and is the
 authority. This record does not claim deployment, nor deletion of the
 prune-protected namespaces, releases and retained claim that stay live until
 they are removed explicitly.
+
+## 2026-10-31 — Accept the reviewed v19.0.3 AWS publisher alongside v7.2.10
+
+For #5617, the canonical approvals for the `aws` manifest consumer add
+`devantler-tech/.github@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next
+to `2fa404276b0ce5c0527683b080e39045045c4e42` (v7.2.10). The AWS caller moved to
+v19.0.3 in devantler-tech/aws#69, and the current release was signed by v7.2.10,
+so both stay accepted until the first publication by v19.0.3 is verified.
+
+The publishing workflow is not byte-identical across these revisions. It gains
+`timeout-minutes: 60` on the publish job and moves the pinned harden-runner,
+docker/login-action and fluxcd/flux2 actions forward. No signing, permission or
+identity step changes. `require-unpublished-version.sh` and
+`recover-manifests-version.sh` have the same blob at both revisions.
+
+Against the current main, the authorization ledger changes exactly one entry,
+with nothing added or removed:
+
+- OCIRepository aws/aws moves from
+  `0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3` to
+  `8ad26301961658e0c50fc13246f1f44894a8f922daeb2713ec8b8724957071c4`.
+
+The new hash is taken from the required CI job, which rendered with the approved
+tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
+This record does not establish deployed acceptance or a successful publication
+by the new signer. Deploy this acceptance before the next AWS release.
