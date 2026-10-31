@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -26,7 +28,7 @@ func workerPressureClear(n object) bool {
 
 // Restarting kubelet preserves running containers and all data. It is required
 // only when dynamically allocated huge pages have not reached Node capacity.
-func refreshHugepages(ctx context.Context, c client, source string, original object) error {
+func refreshHugepages(ctx context.Context, c client, source string, original object, pods []object) error {
 	j := journal{Target: text(original, "metadata", "name"), NodeUID: text(original, "metadata", "uid"),
 		ProviderID: text(original, "spec", "providerID"), MachineUUID: text(original, "status", "nodeInfo", "systemUUID")}
 	boot := text(original, "status", "nodeInfo", "bootID")
@@ -72,6 +74,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if hugepagesReady(n) {
 		return nil
 	}
+	if err = verifyRefreshFits(n, pods); err != nil {
+		return err
+	}
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
@@ -115,9 +120,97 @@ func refreshClients(ctx context.Context, c client, source string, pools map[stri
 		if err = verifyCapacityRoster(fresh.nodes, pools, false); err != nil {
 			return err
 		}
-		if err = refreshHugepages(ctx, c, source, n); err != nil {
+		if err = refreshHugepages(ctx, c, source, n, fresh.pods); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// memoryBytes reads the Kubernetes memory quantities nodes and Pods report here.
+// An unknown form is an error, so a request that cannot be measured holds the restart.
+func memoryBytes(quantity string) (float64, error) {
+	for _, unit := range []struct {
+		suffix string
+		factor float64
+	}{{"Ki", 1 << 10}, {"Mi", 1 << 20}, {"Gi", 1 << 30}, {"Ti", 1 << 40}, {"k", 1e3}, {"M", 1e6}, {"G", 1e9}, {"T", 1e12}, {"m", 1e-3}, {"", 1}} {
+		if number, found := strings.CutSuffix(quantity, unit.suffix); found {
+			amount, err := strconv.ParseFloat(number, 64)
+			if err != nil || amount < 0 {
+				break
+			}
+			return amount * unit.factor, nil
+		}
+	}
+	return 0, fmt.Errorf("memory quantity %q cannot be measured", quantity)
+}
+
+func containerMemoryRequest(raw any) (float64, error) {
+	container, _ := raw.(map[string]any)
+	request := text(container, "resources", "requests", "memory")
+	if request == "" {
+		return 0, nil
+	}
+	return memoryBytes(request)
+}
+
+// podMemoryRequest is what the scheduler and kubelet count for one Pod: the larger of
+// its containers' sum and its largest init container, plus any runtime overhead.
+func podMemoryRequest(pod object) (float64, error) {
+	var total, largestInit float64
+	containers, _ := value(pod, "spec", "containers").([]any)
+	for _, raw := range containers {
+		request, err := containerMemoryRequest(raw)
+		if err != nil {
+			return 0, err
+		}
+		total += request
+	}
+	initContainers, _ := value(pod, "spec", "initContainers").([]any)
+	for _, raw := range initContainers {
+		request, err := containerMemoryRequest(raw)
+		if err != nil {
+			return 0, err
+		}
+		largestInit = max(largestInit, request)
+	}
+	total = max(total, largestInit)
+	if overhead := text(pod, "spec", "overhead", "memory"); overhead != "" {
+		extra, err := memoryBytes(overhead)
+		if err != nil {
+			return 0, err
+		}
+		total += extra
+	}
+	return total, nil
+}
+
+// verifyRefreshFits holds a kubelet restart that would shrink allocatable memory
+// below what the worker's Pods already request. A restarting kubelet admits its Pods
+// again, and one that no longer fits is rejected outright, past any disruption budget.
+func verifyRefreshFits(n object, pods []object) error {
+	if len(pods) == 0 {
+		return errors.New("the worker's memory requests cannot be proven from an empty Pod inventory")
+	}
+	allocatable, err := memoryBytes(text(n, "status", "allocatable", "memory"))
+	if err != nil {
+		return err
+	}
+	var requested float64
+	name := text(n, "metadata", "name")
+	for _, pod := range pods {
+		phase := text(pod, "status", "phase")
+		if text(pod, "spec", "nodeName") != name || phase == "Succeeded" || phase == "Failed" {
+			continue
+		}
+		request, requestErr := podMemoryRequest(pod)
+		if requestErr != nil {
+			return requestErr
+		}
+		requested += request
+	}
+	if requested > allocatable-2*(1<<30) {
+		return errors.New("worker " + name + " requests more memory than remains after huge pages; move workloads off it through disruption budgets first")
 	}
 	return nil
 }

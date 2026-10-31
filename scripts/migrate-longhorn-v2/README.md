@@ -31,7 +31,9 @@ from temporary capacity, and retire temporary workers in a later reviewed step.
 Dispatch only the merged workflow on `main`. First select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
 restarts only kubelet where capacity is stale, and requires every worker to report
-2 GiB of 2 MiB huge pages. Containers and disks are preserved.
+2 GiB of 2 MiB huge pages. Containers and disks are preserved. A restart holds while the
+worker's Pods request more memory than would remain after huge pages, because
+kubelet would reject the excess outright; move those workloads off first.
 
 Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
 temporary replica storage. The pinned fio 3.41 image runs eighteen 4 KiB direct
