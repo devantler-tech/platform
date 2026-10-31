@@ -40,9 +40,15 @@ Use these PromQL queries to distinguish failure reasons and telemetry freshness:
 
 ```promql
 sum by (result) (increase(contract_probe_requests_total[1h]))
+contract_probe_requests_total
 contract_probe_ready
 time() - contract_probe_last_observation_timestamp_seconds
 ```
+
+Each result series first appears when that result first occurs. `increase()` can
+report zero for a failure that happened before its series was first scraped, so
+also read the raw per-pod counter. A non-zero raw value shows that the result
+occurred since that pod started, but cannot establish when it occurred.
 
 The counter's fixed reasons distinguish unavailable or invalid responses,
 configuration failures, cancellation and concurrent requests. They do not retain
