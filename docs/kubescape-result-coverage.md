@@ -160,6 +160,36 @@ CI has no cluster, so it runs only the fixture test
 (`scripts/tests/test-check-kubescape-result-coverage.sh`). The test includes the negative control:
 one expected result removed from a passing set must fail.
 
+### Vulnerability summary references and scanner refreshes
+
+A coherent summary can still point to the wrong object. The scanner writes full and relevant
+vulnerability manifests into its storage namespace, while each workload summary stays in the
+workload's namespace. Both populated `vulnerabilitiesRef` entries must name the namespace where
+their target was actually stored. Read the referenced objects by their declared names and
+namespaces; finding the same name somewhere else does not make the reference valid.
+
+The chart's default kubevuln v0.3.430 publishes the workload namespace in these references.
+Upstream [#946](https://github.com/kubescape/kubevuln/pull/946) fixes that and refreshes cached
+summaries after image changes. The explicit v0.3.566 digest includes those fixes and
+[#1170](https://github.com/kubescape/kubevuln/pull/1170), which preserves node-agent SBOMs when
+local generation is disabled. It is bound to source
+`45099c097fe5470b4a177520eac7de9ee3bfdd80`, with its signature verified against the upstream
+main release workflow, GitHub OIDC issuer and that exact source revision before adoption (#5403).
+The chart, storage image and existing profile APIs do not change with this scanner pin. The
+scanner still uses the served vulnerability-manifest, summary, SBOM, VEX and container-profile
+endpoints; it does not require removing the retained application/network profile APIs.
+
+The newer scanner invalidates exception label caches through workload and namespace informers.
+The Helm post-renderer supplies the matching list/watch permissions for the nine already-readable
+resource types. The render regression checks each permission and the immutable scanner image;
+the chart uses this same image value for its optional SBOM sidecar.
+
+An image rollout does not rewrite existing summaries on its own. After a successful scan, verify
+that the summary follows the current running image, its timestamp advances, its populated
+references resolve, and its severity counters agree with the corresponding complete payloads.
+Repeat the full coverage check, including metadata agreement. Missing manifests, old summaries,
+failed scans and incomplete payload reads remain failures or unknowns; none is a zero-CVE result.
+
 ## First measurement (2026-09-30)
 
 | Surface | Expected | Current | Failing |

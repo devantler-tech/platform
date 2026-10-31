@@ -80,9 +80,14 @@ fi
 # kubevuln v0.3.159 swallows an exhausted conflict retry while updating a
 # VulnerabilityManifestSummary: it logs the original AlreadyExists result and
 # returns success. kubescape/kubevuln#745 fixed both error reporting and
-# propagation, first released in v0.3.404. Chart 1.40.5 selects v0.3.430;
-# verify the rendered image below so a later chart cannot regress silently.
-readonly kubevuln_tag='v0.3.430'
+# propagation, first released in v0.3.404. Its chart-default v0.3.430 still
+# publishes manifest references in the workload namespace even though the
+# manifests live in the scanner namespace, and skips cached-summary refreshes
+# after image updates. Upstream #946 fixes both; v0.3.566 includes that fix and
+# retains node-agent SBOMs when local generation is disabled (#1170).
+# Bind the rendered scanner to the verified upstream release digest, so chart
+# defaults or a mutable tag cannot silently restore either failure (#5403).
+readonly kubevuln_tag='v0.3.566@sha256:7fce339ce129227da00d32d7deb4dc2fa35284acf48cc3db433d853fa75ee97d'
 
 keep_local="$(yq -er '
   .spec.values.kubescapeScheduler.requestBody.commands[] |
@@ -311,6 +316,61 @@ readonly node_agent_profile_reader_count
 [[ "${node_agent_profile_reader_count}" == "1" ]] ||
   fail 'the Helm post-renderer must restore exactly the node-agent profile read rule removed by chart 1.40.4'
 
+# v0.3.566 invalidates exception label caches through informers. Chart 1.40.5
+# grants only get on these objects, so an image-only upgrade would continuously
+# fail to list/watch and could keep stale selector decisions until cache expiry.
+label_watch_access() {
+  local chart_file="$1" api_group="$2" resource="$3"
+  API_GROUP="${api_group}" RESOURCE="${resource}" yq ea -r '
+    select(.kind == "ClusterRole" and .metadata.name == "kubevuln") |
+    [.rules[] |
+      select(.apiGroups[] == strenv(API_GROUP)) |
+      select(.resources[] == strenv(RESOURCE)) |
+      .verbs[] | select(. == "get" or . == "list" or . == "watch")]
+    | unique | sort | join(",") == "get,list,watch"
+  ' "${chart_file}"
+}
+
+while IFS='|' read -r api_group resource; do
+  label_watch_allowed="$(label_watch_access "${postrendered_chart}" "${api_group}" "${resource}")" ||
+    fail "could not inspect kubevuln ${resource} label-watch access"
+  [[ "${label_watch_allowed}" == 'true' ]] ||
+    fail "kubevuln must be able to read/watch ${resource} labels for exception cache invalidation"
+done <<'LABEL_WATCHES'
+|namespaces
+|pods
+|replicationcontrollers
+apps|deployments
+apps|replicasets
+apps|statefulsets
+apps|daemonsets
+batch|jobs
+batch|cronjobs
+LABEL_WATCHES
+
+# Exercise the complete rendered role with three invalid permission variants.
+# A subresource, another API group or a verb suffix cannot authorize this informer.
+readonly invalid_watch_resource="${chart_dir}/invalid-label-watch-resource.yaml"
+yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
+  (.rules[].resources[] | select(. == "deployments")) = "deployments/status")' \
+  "${postrendered_chart}" >"${invalid_watch_resource}" || fail 'could not construct the subresource control'
+[[ "$(label_watch_access "${invalid_watch_resource}" apps deployments)" == false ]] ||
+  fail 'the label-watch guard accepted a subresource instead of deployments'
+
+readonly invalid_watch_group="${chart_dir}/invalid-label-watch-group.yaml"
+yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
+  (.rules[].apiGroups[] | select(. == "apps")) = "apps.example.invalid")' \
+  "${postrendered_chart}" >"${invalid_watch_group}" || fail 'could not construct the API-group control'
+[[ "$(label_watch_access "${invalid_watch_group}" apps deployments)" == false ]] ||
+  fail 'the label-watch guard accepted another API group instead of apps'
+
+readonly invalid_watch_verb="${chart_dir}/invalid-label-watch-verb.yaml"
+yq 'with(select(.kind == "ClusterRole" and .metadata.name == "kubevuln");
+  (.rules[].verbs[] | select(. == "watch")) = "watchStatus")' \
+  "${postrendered_chart}" >"${invalid_watch_verb}" || fail 'could not construct the verb control'
+[[ "$(label_watch_access "${invalid_watch_verb}" apps deployments)" == false ]] ||
+  fail 'the label-watch guard accepted a verb suffix instead of watch'
+
 rendered_posture_schedule="$(yq ea -er '
   select(.kind == "CronJob" and .metadata.name == "kubescape-scheduler") |
   .spec.schedule |
@@ -362,7 +422,7 @@ rendered_kubevuln_image="$(yq ea -er '
 ' "${rendered_chart}")" || fail 'the rendered kubevuln image is missing'
 readonly rendered_kubevuln_image
 [[ "${rendered_kubevuln_image}" == "quay.io/kubescape/kubevuln:${kubevuln_tag}" ]] ||
-  fail 'the rendered kubevuln Deployment does not use the conflict-safe image'
+  fail 'the rendered kubevuln Deployment does not use the verified reference- and refresh-safe image'
 
 # Registry blob pulls can redirect from their API hosts to separate CDN hosts.
 # If a redirect host is blocked, kubevuln retries timeouts for hours and keeps
