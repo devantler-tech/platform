@@ -3959,7 +3959,7 @@ with nothing added or removed:
 
 - OCIRepository github-config/github-config moves from
   `b5ab7e893cffdb3eaa01de448e1daa4ec95e6d9e9a72d4f47ab8439ad7e558e6` to
-  `faca29624c6c46d5405849e513d09b0155098b79d3139feee63aab290cbfb58b`.
+  `4e8335871f17fb3b08946d6698e25db9d5b2e3e26df27c9c55293bd29b6731a0`.
 
 The new hash is taken from the required CI job, which rendered with the approved
 tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
