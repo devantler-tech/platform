@@ -275,6 +275,20 @@ func TestScratchDeletionNeverRetriesOtherFailuresAndStopsAtItsBound(t *testing.T
 	}
 }
 
+func TestScratchDeletionNeverRetriesKindsClearedByEarlierChecks(t *testing.T) {
+	for _, kind := range []string{"persistentvolume", "volumes.longhorn.io", "storageclass", "namespace"} {
+		t.Run(kind, func(t *testing.T) {
+			var versions []string
+			gets := 0
+			c := scratchDeleteClient(func(int) error { return errConflict }, &versions, &gets)
+			err := removeScratch(context.Background(), c, strings.Repeat("1", 40), kind, "", "/api/v1/fio", resource("fio"))
+			if !errors.Is(err, errConflict) || len(versions) != 1 {
+				t.Fatalf("err=%v, delete attempts=%d, want one", err, len(versions))
+			}
+		})
+	}
+}
+
 func TestExecuteClassifiesOnlyAConflictAndKeepsStderrPrivate(t *testing.T) {
 	for script, conflict := range map[string]bool{
 		`echo 'Error from server (Conflict): private detail' >&2; exit 1`:  true,

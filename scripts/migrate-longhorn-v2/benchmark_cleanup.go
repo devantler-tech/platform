@@ -26,8 +26,12 @@ func (c client) deleteObserved(ctx context.Context, source, path string, o objec
 }
 
 // A controller can update a scratch resource between the read and the delete.
-// Only that conflict is retried, each time from a fresh read of the same object.
+// Only that conflict is retried, each time from a fresh read of the same object,
+// and only for kinds that identity alone protects. Every other kind was cleared by
+// checks made before removeScratch, which a retry would not repeat, so it stops.
 const scratchDeleteAttempts = 3
+
+var scratchDeleteRetryKinds = map[string]bool{"pod": true, "persistentvolumeclaim": true}
 
 func removeScratch(ctx context.Context, c client, source, kind, namespace, path string, original object) error {
 	for attempt := 1; ; attempt++ {
@@ -42,7 +46,7 @@ func removeScratch(ctx context.Context, c client, source, kind, namespace, path 
 		if err == nil {
 			break
 		}
-		if !errors.Is(err, errConflict) || attempt == scratchDeleteAttempts {
+		if !errors.Is(err, errConflict) || !scratchDeleteRetryKinds[kind] || attempt == scratchDeleteAttempts {
 			return err
 		}
 	}
