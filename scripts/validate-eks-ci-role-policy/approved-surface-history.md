@@ -3912,3 +3912,26 @@ job re-renders with the approved kubectl v1.36.2 / Kustomize v5.8.1 and is the
 authority. This record does not claim deployment, nor deletion of the
 prune-protected namespaces, releases and retained claim that stay live until
 they are removed explicitly.
+
+## 2026-10-27 — Admit the reviewed v13.2.15 application publisher at the generic boundaries
+
+For #5404, the generic Tenant source rule, the app-image admission policy and
+the node-pull rule accept one more exact maintained publisher revision,
+`devantler-tech/.github@f5d078cc4b04ecb15432ed4e34cba1142a6279d4` (v13.2.15),
+beside `467f07582436a26b62cf4aa756423512f85ba0c0` (v8.0.0) and the deployed
+`0c7b6c3509b73adbc7537e030935bb01987e625b` (v7.23.0) signer. The range
+`467f0758…f5d078cc` was reviewed on #5404: the workflow gains a 60-minute job
+bound and a pinned harden-runner patch release, and its checked-out
+prebuilt-WebApp helper gains a bounded, credential-free rate-limit retry. No
+permission, signing identity or output changes. Per-consumer approval records
+and tenant `publisherRevision` pins are unchanged.
+
+Changed: ResourceGraphDefinition tenant.kro.run moves from
+`24ef73925e497cac2805d326deedd7ff0f2f418520e2908cd5bd16e3ae4d4109` to
+`95a196713ff4ddaabaab3747e40b5b8e02d9c94ea0fea5382fbe86db89ef2b85` because its
+default publisher subject gains the one revision; nothing is added or removed.
+
+The ledger was recomputed locally with the existing surface evaluator, which
+is not the approved renderer; the required CI job re-renders with the approved
+renderer and is the authority. This record does not claim deployment or a
+publication from the new revision.
