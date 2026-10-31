@@ -3938,3 +3938,20 @@ The new hash is taken from the required CI job, which rendered with the approved
 tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
 This record does not establish deployed acceptance or a successful publication
 by the new signer. Deploy this acceptance before the next AWS release.
+
+## 2026-10-31 — Accept the reviewed v19.0.3 organization settings publisher
+
+For #5619, the canonical approvals for the `.github` manifest consumer add
+`devantler-tech/.github@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next
+to the current signer `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3) and
+`6f1dee9557a939cc24ca2c562ea775d05e01564d`, so the current release keeps verifying
+until the first publication by v19.0.3 is verified.
+
+The publishing workflow is not byte-identical across v10.0.3 and v19.0.3. It gains
+`timeout-minutes: 60` on the publish job and moves the pinned harden-runner and
+docker/login-action actions forward. No signing, permission or identity step
+changes. `require-unpublished-version.sh` and `recover-manifests-version.sh` have
+the same blob at both revisions.
+
+This record does not establish deployed acceptance or a successful publication
+by the new signer. Deploy this acceptance before `.github` moves to v19.0.3.
