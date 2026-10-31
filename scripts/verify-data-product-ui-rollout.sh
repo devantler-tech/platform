@@ -636,17 +636,33 @@ refuse_public() {
 }
 
 # fetch retrieves one bounded HTTPS response without browser credentials.
+# A dropped connection (refused, empty reply or reset) is retried once inside the
+# shared deadline. Its cause is recorded first, so a retry the deadline forbids
+# still names it; every other failure refuses on its first attempt.
 fetch() {
-  local url=$1 role=$2 result curl_exit=0 reason=transport_failed
-  remaining
-  # Leave one second for curl's refusal to reach the parent before its watchdog fires.
-  # An exhausted budget still refuses; it never grants extra transfer time.
-  ((left > 1)) || fail deadline_exceeded
-  local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
-  ((connect_seconds <= 5)) || connect_seconds=5
-  result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
-    --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
-    --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
+  local url=$1 role=$2 result curl_exit reason=transport_failed retried=0
+  while :; do
+    remaining
+    # Leave one second for curl's refusal to reach the parent before its watchdog fires.
+    # An exhausted budget still refuses; it never grants extra transfer time.
+    ((left > 1)) || fail deadline_exceeded
+    local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
+    ((connect_seconds <= 5)) || connect_seconds=5
+    curl_exit=0
+    result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
+      --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
+      --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
+    case "$curl_exit" in
+      7 | 52 | 56) ;;
+      *) break ;;
+    esac
+    ((retried == 0)) || break
+    retried=1
+    refuse_public "$role" "$reason" "$result" "$curl_exit"
+    printf '%s\n' "$curl_exit" >>"$scratch/public-retries"
+  done
+  # A retry that succeeded must not leave its first cause on a later deadline refusal.
+  rm -f "$scratch/public-failure"
   if ((curl_exit)); then
     case "$curl_exit" in
       6) reason=dns_failed ;;
@@ -882,11 +898,15 @@ done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
 if [[ "$expected_releases" == true ]]; then public_count=17; else public_count=14; fi
+# An accepted receipt still counts the dropped connections it absorbed, so a
+# retry cannot hide a dependency that keeps dropping them.
+retries_field=''
+if [[ -s "$scratch/public-retries" ]]; then retries_field=$(printf ',"publicRetries":%d' "$(wc -l <"$scratch/public-retries")"); fi
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s}\n' \
-    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s%s}\n' \
+    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")" "$retries_field"
 else
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$retries_field"
 fi
