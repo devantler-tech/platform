@@ -3947,7 +3947,6 @@ to the current signer `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3), and
 retire `6f1dee9557a939cc24ca2c562ea775d05e01564d`, because a consumer accepts at
 most two canonical commits. The v19.0.3 tag's own caller pins v10.0.3, so the
 current release keeps verifying until the first publication by v19.0.3 is verified.
-until the first publication by v19.0.3 is verified.
 
 The publishing workflow is not byte-identical across v10.0.3 and v19.0.3. It gains
 `timeout-minutes: 60` on the publish job and moves the pinned harden-runner and
