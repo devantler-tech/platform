@@ -28,5 +28,4 @@ jobs:
       issues: write
       actions: write
     with:
-      enabled: true
       dry-run: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' && inputs.dry-run }}
