@@ -57,7 +57,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if err != nil {
 		return err
 	}
-	// An interrupted run's cordon is adopted, and released unless a restart is uncertain.
+	// An interrupted run's cordon is adopted, and released unless this run's restart is unproven.
 	held, restarted := text(n, "metadata", "annotations", fenceAnnotation) == fence, false
 	defer func() {
 		if held && !restarted {

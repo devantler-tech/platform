@@ -34,18 +34,22 @@ Dispatch only the merged workflow on `main`. First select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
-any Pod that no longer fits once huge pages count, so when a worker's Pods request
-too much, it first moves the fewest Pods that make them fit, largest first. Only
-Deployment Pods with no data of their own qualify: no claim, scratch or host volume,
-outside the cluster, storage and Flux namespaces. The worker stays cordoned, under a
-`longhorn-v2-refresh-<worker>` ownership annotation, until kubelet reports the smaller
-allocatable; otherwise moved Pods could return. Each move is an eviction, so disruption
-budgets decide, and the next Pod leaves only once the workload is back at its Ready
-count. It holds before cordoning when the qualifying Pods cannot cover the difference
-or no other schedulable worker has room. A refused move or a Pod that came back
-releases the cordon with no restart. An unproven restart keeps the cordon, and so does
-an interrupted run, which fails the next deployment's node readback: dispatch
-`refresh-clients` again, which adopts only that worker's own cordon and releases it.
+any Pod that no longer fits once huge pages count, so when a permanent worker's Pods
+request too much, it first moves Pods until they fit: those with another Ready replica,
+then single replicas, largest first within each. A moved single replica restarts
+elsewhere, as in any drain, so its workload is briefly unavailable. Only Deployment Pods
+with no data of their own qualify: no claim, scratch or host volume, nothing but resources
+deciding where they run, and outside the cluster, storage and Flux namespaces. The worker
+stays cordoned, under a `longhorn-v2-refresh-<worker>` ownership annotation, until kubelet
+reports the smaller allocatable; otherwise moved Pods could return. Each move is an
+eviction, so disruption budgets decide, and the next Pod leaves only once the workload is
+back at its Ready count. It holds before cordoning when the qualifying Pods cannot cover
+the difference, no other schedulable worker has the memory, or the worker is a
+migration-pool node, which never moves Pods. A move refused after retries, a replacement
+that never turns Ready, or a Pod that came back releases the cordon with no restart. An
+unproven restart keeps the cordon, and so does an interrupted run, which fails the next
+deployment's node readback: dispatch `refresh-clients` again, which adopts only that
+worker's own cordon and releases it.
 
 Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
 temporary replica storage. The pinned fio 3.41 image runs eighteen 4 KiB direct

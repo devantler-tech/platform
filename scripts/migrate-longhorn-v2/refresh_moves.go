@@ -4,15 +4,27 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 	"sort"
+	"time"
 )
 
-const refreshFencePrefix = "longhorn-v2-refresh-"
+const (
+	refreshFencePrefix = "longhorn-v2-refresh-"
+	refreshAttempts    = 6
+)
+
+// refreshRetryDelay spaces attempts at a request the API server may refuse for a moment.
+var refreshRetryDelay = 10 * time.Second
+
+// Only permanent workers may be cordoned here: the migration-pool roster check refuses
+// any cordoned pool node, so a cordon left on one could not be adopted or released.
+var refreshMovableWorker = regexp.MustCompile(`^prod-worker-[123]$`)
 
 // Only these volumes can be recreated elsewhere without losing anything.
 var replaceableVolumes = map[string]bool{"name": true, "projected": true, "configMap": true, "secret": true, "downwardAPI": true}
 
-// Moving a Pod here must never move data or the cluster's own machinery, so a Pod
+// Moving a Pod here must never move data, storage, networking or delivery, so a Pod
 // qualifies only by what it positively is, and anything else holds the refresh.
 var refreshPinnedNamespaces = map[string]bool{"kube-system": true, "longhorn-system": true, "flux-system": true}
 
@@ -33,6 +45,9 @@ func movablePod(pod object) bool {
 		text(pod, "status", "phase") != "Running" || value(pod, "metadata", "deletionTimestamp") != nil {
 		return false
 	}
+	if !schedulesFreely(pod) {
+		return false
+	}
 	volumes, _ := value(pod, "spec", "volumes").([]any)
 	for _, raw := range volumes {
 		volume, _ := raw.(map[string]any)
@@ -45,15 +60,45 @@ func movablePod(pod object) bool {
 	return true
 }
 
-// planRefreshMoves picks the fewest movable Pods, largest first, that make the worker fit.
+// schedulesFreely reports that nothing but resources decides where a replacement may run, so
+// the room check below can predict it. Anything it cannot predict could stay Pending.
+func schedulesFreely(pod object) bool {
+	selector, _ := value(pod, "spec", "nodeSelector").(map[string]any)
+	for key := range selector {
+		if key != "kubernetes.io/os" && key != "kubernetes.io/arch" {
+			return false
+		}
+	}
+	affinity, _ := value(pod, "spec", "affinity").(map[string]any)
+	for _, raw := range affinity {
+		kind, _ := raw.(map[string]any)
+		if kind["requiredDuringSchedulingIgnoredDuringExecution"] != nil {
+			return false
+		}
+	}
+	constraints, _ := value(pod, "spec", "topologySpreadConstraints").([]any)
+	for _, raw := range constraints {
+		if constraint, _ := raw.(map[string]any); text(constraint, "whenUnsatisfiable") != "ScheduleAnyway" {
+			return false
+		}
+	}
+	return true
+}
+
+// planRefreshMoves picks Pods that make the worker fit: first those with another Ready
+// replica, which keep serving throughout, then single replicas, largest first within each.
 func planRefreshMoves(n object, pods []object) ([]object, error) {
 	excess, err := refreshExcess(n, pods)
 	if err != nil || excess <= 0 {
 		return nil, err
 	}
+	if !refreshMovableWorker.MatchString(text(n, "metadata", "name")) {
+		return nil, errors.New("worker " + text(n, "metadata", "name") + " requests more memory than remains after huge pages, and only permanent workers may move Pods for a refresh")
+	}
 	type candidate struct {
 		pod     object
 		request float64
+		spare   bool
 	}
 	var candidates []candidate
 	for _, pod := range pods {
@@ -64,9 +109,12 @@ func planRefreshMoves(n object, pods []object) ([]object, error) {
 		if requestErr != nil {
 			return nil, requestErr
 		}
-		candidates = append(candidates, candidate{pod, request})
+		candidates = append(candidates, candidate{pod, request, readyPodsOf(replicaSetOwner(pod), pods) > 1})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].spare != candidates[j].spare {
+			return candidates[i].spare
+		}
 		if candidates[i].request != candidates[j].request {
 			return candidates[i].request > candidates[j].request
 		}
@@ -88,8 +136,9 @@ func planRefreshMoves(n object, pods []object) ([]object, error) {
 	return moves, nil
 }
 
-// verifyMovesHaveRoom proves every moved Pod's request fits on another schedulable
-// worker once huge pages are counted there, before anything is cordoned or evicted.
+// verifyMovesHaveRoom checks every moved Pod's memory request fits on another schedulable
+// worker once huge pages are counted there, before anything is cordoned or evicted. It does
+// not predict the scheduler: a replacement that stays Pending is caught by movePod's wait.
 func verifyMovesHaveRoom(target string, moves []object, nodes, pods []object) error {
 	free := map[string]float64{}
 	for _, n := range nodes {
@@ -123,19 +172,38 @@ func verifyMovesHaveRoom(target string, moves []object, nodes, pods []object) er
 	return nil
 }
 
+func refreshPause(ctx context.Context) error {
+	timer := time.NewTimer(refreshRetryDelay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// patchNode re-reads the Node before every attempt. A stale resource version fails its JSON
+// patch test as an ordinary refusal, and a lost response leaves the patch applied, so any
+// failed attempt is judged again from fresh state. changes returns nil once nothing is left.
 func (c client) patchNode(ctx context.Context, name string, changes func(object) ([]object, error)) error {
 	var err error
-	for range 5 {
+	for attempt := range refreshAttempts {
+		if attempt > 0 {
+			if pause := refreshPause(ctx); pause != nil {
+				return errors.Join(err, pause)
+			}
+		}
 		var n object
 		if n, err = c.get(ctx, "node", "", name, false); err != nil {
-			return err
+			continue
 		}
-		var patch []object
-		if patch, err = changes(n); err != nil || patch == nil {
-			return err
+		patch, refusal := changes(n)
+		if refusal != nil || patch == nil {
+			return refusal
 		}
-		if err = c.patch(ctx, "node", "", n, patch...); !errors.Is(err, errConflict) {
-			return err
+		if err = c.patch(ctx, "node", "", n, patch...); err == nil {
+			return nil
 		}
 	}
 	return err
@@ -143,7 +211,11 @@ func (c client) patchNode(ctx context.Context, name string, changes func(object)
 
 func (c client) cordonForRefresh(ctx context.Context, name string) error {
 	return c.patchNode(ctx, name, func(n object) ([]object, error) {
-		if value(n, "spec", "unschedulable") == true || value(n, "metadata", "annotations", fenceAnnotation) != nil {
+		fence := value(n, "metadata", "annotations", fenceAnnotation)
+		if value(n, "spec", "unschedulable") == true && fence == refreshFencePrefix+name {
+			return nil, nil
+		}
+		if value(n, "spec", "unschedulable") == true || fence != nil {
 			return nil, errors.New("worker cordon appeared during the kubelet refresh")
 		}
 		return append(annotationPatch(n, refreshFencePrefix+name), object{"op": "add", "path": "/spec/unschedulable", "value": true}), nil
@@ -153,7 +225,11 @@ func (c client) cordonForRefresh(ctx context.Context, name string) error {
 // releaseRefreshCordon removes only the cordon this procedure placed.
 func (c client) releaseRefreshCordon(ctx context.Context, name string) error {
 	return c.patchNode(ctx, name, func(n object) ([]object, error) {
-		if text(n, "metadata", "annotations", fenceAnnotation) != refreshFencePrefix+name {
+		fence := value(n, "metadata", "annotations", fenceAnnotation)
+		if fence == nil && value(n, "spec", "unschedulable") != true {
+			return nil, nil
+		}
+		if fence != refreshFencePrefix+name {
 			return nil, errors.New("refusing to release a cordon this refresh does not own")
 		}
 		return []object{{"op": "add", "path": "/spec/unschedulable", "value": false},
@@ -186,7 +262,18 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 	}
 	owner := replicaSetOwner(pod)
 	wanted := readyPodsOf(owner, pods)
-	if _, err = c.kubectl(ctx, eviction, "create", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+name+"/eviction", "-f", "-"); err != nil {
+	// A budget refuses with 429 meaning retry, and its status can lag a replacement turning Ready.
+	for attempt := range refreshAttempts {
+		if attempt > 0 {
+			if err = refreshPause(ctx); err != nil {
+				return err
+			}
+		}
+		if _, err = c.kubectl(ctx, eviction, "create", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+name+"/eviction", "-f", "-"); err == nil {
+			break
+		}
+	}
+	if err != nil {
 		return errors.New("moving " + namespace + "/" + name + " was refused, so no kubelet restart was requested")
 	}
 	return waitReady(ctx, func() error {
@@ -217,11 +304,10 @@ func (c client) moveForRefresh(ctx context.Context, n object, moves, pods []obje
 	if err = verifyMovesHaveRoom(name, moves, nodes, pods); err != nil {
 		return err
 	}
-	if !*held {
-		if err = c.cordonForRefresh(ctx, name); err != nil {
-			return err
-		}
-		*held = true
+	// Held before the request: a lost response may still have placed the cordon.
+	*held = true
+	if err = c.cordonForRefresh(ctx, name); err != nil {
+		return err
 	}
 	for _, pod := range moves {
 		if err = c.movePod(ctx, pod, pods); err != nil {

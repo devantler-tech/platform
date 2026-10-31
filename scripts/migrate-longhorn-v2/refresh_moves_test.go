@@ -20,6 +20,13 @@ type refreshCluster struct {
 	refuseEviction bool
 	loseRestart    bool
 	returnToWorker bool
+	evictions      []object
+	evictionURLs   []string
+	leaving        int
+	loseCordonOnce bool
+	stalePatches   int
+	leavingPods    []object
+	slowDeparture  bool
 }
 
 func movablePodOnWorker(worker, name, memory, owner string) object {
@@ -47,6 +54,9 @@ func spareWorker() object {
 }
 
 func newRefreshCluster(t *testing.T, pods ...object) *refreshCluster {
+	delay := refreshRetryDelay
+	refreshRetryDelay = time.Millisecond
+	t.Cleanup(func() { refreshRetryDelay = delay })
 	return &refreshCluster{t: t, node: refreshWorker(), spare: spareWorker(), pods: pods}
 }
 
@@ -54,9 +64,18 @@ func (f *refreshCluster) list(items ...object) ([]byte, error) {
 	return json.Marshal(object{"items": items})
 }
 
-func (f *refreshCluster) evict(args []string) ([]byte, error) {
+func (f *refreshCluster) evict(args []string, input []byte) ([]byte, error) {
 	name := strings.Split(args[2], "/")[6]
 	f.events = append(f.events, "evict "+name)
+	if f.leaving > 0 {
+		f.t.Fatal("a second Pod left before the previous workload was back")
+	}
+	var eviction object
+	if err := json.Unmarshal(input, &eviction); err != nil {
+		f.t.Fatal(err)
+	}
+	f.evictions = append(f.evictions, eviction)
+	f.evictionURLs = append(f.evictionURLs, args[2])
 	if f.refuseEviction {
 		return nil, errors.New("external command failed")
 	}
@@ -72,12 +91,23 @@ func (f *refreshCluster) evict(args []string) ([]byte, error) {
 		replacement := movablePodOnWorker(worker, name+"-new", "0", "")
 		replacement["metadata"].(object)["ownerReferences"] = owners
 		replacement["spec"].(object)["containers"] = value(pod, "spec", "containers")
+		if f.leaving > 0 {
+			continue
+		}
+		if f.slowDeparture {
+			f.leavingPods = slices.Clone(f.pods)
+			f.leaving = 1
+		}
 		f.pods[i] = replacement
 	}
 	return nil, nil
 }
 
 func (f *refreshCluster) patch(input []byte) ([]byte, error) {
+	if f.stalePatches > 0 {
+		f.stalePatches--
+		return nil, errors.New("external command failed")
+	}
 	var changes []object
 	if err := json.Unmarshal(input, &changes); err != nil {
 		f.t.Fatal(err)
@@ -96,6 +126,10 @@ func (f *refreshCluster) patch(input []byte) ([]byte, error) {
 			delete(f.node["metadata"].(object)["annotations"].(object), fenceAnnotation)
 		}
 	}
+	if f.loseCordonOnce && value(f.node, "spec", "unschedulable") == true {
+		f.loseCordonOnce = false
+		return nil, errors.New("external command failed")
+	}
 	return json.Marshal(f.node)
 }
 
@@ -107,12 +141,16 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 		call := args[2:]
 		switch {
 		case call[0] == "create":
-			return f.evict(call)
+			return f.evict(call, input)
 		case call[0] == "patch":
 			return f.patch(input)
 		case call[0] == "get" && call[1] == "nodes":
 			return f.list(f.node, f.spare)
 		case call[0] == "get" && call[1] == "pods":
+			if f.leaving > 0 {
+				f.leaving--
+				return f.list(f.leavingPods...)
+			}
 			return f.list(f.pods...)
 		case call[0] == "get" && call[1] == "node":
 			return json.Marshal(f.node)
@@ -178,6 +216,11 @@ func TestRefreshHoldsBeforeTouchingAnythingWhenMovesCannotWork(t *testing.T) {
 		pod["metadata"].(object)["ownerReferences"] = []any{object{"kind": kind, "controller": true, "uid": "owner"}}
 		return pod
 	}
+	scheduled := func(field string, setting any) object {
+		pod := big()
+		pod["spec"].(object)[field] = setting
+		return pod
+	}
 	for name, pod := range map[string]object{
 		"persistent claim": withVolume("persistentVolumeClaim"),
 		"scratch data":     withVolume("emptyDir"),
@@ -186,6 +229,10 @@ func TestRefreshHoldsBeforeTouchingAnythingWhenMovesCannotWork(t *testing.T) {
 		"storage system":   inNamespace("longhorn-system"),
 		"cluster system":   inNamespace("kube-system"),
 		"stateful set":     ownedBy("StatefulSet"),
+		"pinned to nodes":  scheduled("nodeSelector", object{"pool": "x"}),
+		"node affinity":    scheduled("affinity", object{"nodeAffinity": object{"requiredDuringSchedulingIgnoredDuringExecution": object{}}}),
+		"anti affinity":    scheduled("affinity", object{"podAntiAffinity": object{"requiredDuringSchedulingIgnoredDuringExecution": []any{}}}),
+		"hard spread":      scheduled("topologySpreadConstraints", []any{object{"whenUnsatisfiable": "DoNotSchedule"}}),
 		"daemon set":       ownedBy("DaemonSet"),
 		"unowned":          podOnWorker(worker, "2Gi"),
 	} {
@@ -226,7 +273,11 @@ func TestRefreshReleasesItsCordonWhenAMoveDoesNotWorkOut(t *testing.T) {
 		if err := f.refresh(context.Background()); err == nil {
 			t.Fatal("a refused eviction was accepted")
 		}
-		if want := []string{"cordon", "evict large", "uncordon"}; !slices.Equal(f.events, want) {
+		want := []string{"cordon"}
+		for range refreshAttempts {
+			want = append(want, "evict large")
+		}
+		if want = append(want, "uncordon"); !slices.Equal(f.events, want) {
 			t.Fatalf("events %v, expected %v", f.events, want)
 		}
 	})
@@ -305,4 +356,92 @@ func TestMovesAreChosenLargestFirstAndStopAtEnough(t *testing.T) {
 	if moves, err = planRefreshMoves(n, []object{podOnWorker(worker, "1Gi")}); err != nil || moves != nil {
 		t.Fatalf("a fitting worker planned moves: %v %v", moves, err)
 	}
+}
+
+func TestMigrationPoolWorkerNeverMovesPods(t *testing.T) {
+	const pool = "autoscale-longhorn-v1-abc"
+	f := newRefreshCluster(t, podOnWorker(pool, "12Gi"), movablePodOnWorker(pool, "large", "2Gi", "large-rs"))
+	f.node["metadata"].(object)["name"] = pool
+	if err := f.refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "only permanent workers") {
+		t.Fatalf("a pool worker did not hold: %v", err)
+	}
+	if len(f.events) != 0 {
+		t.Fatalf("a pool worker was touched: %v", f.events)
+	}
+}
+
+func TestMovesPreferAWorkloadWithAnotherReplica(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	single := movablePodOnWorker(worker, "single", "1500Mi", "single-rs")
+	moves, err := planRefreshMoves(refreshWorker(), []object{podOnWorker(worker, "11Gi"), single,
+		movablePodOnWorker(worker, "spare", "400Mi", "spare-rs"), movablePodOnWorker("spare-worker", "spare-peer", "400Mi", "spare-rs"),
+		movablePodOnWorker(worker, "other", "1Gi", "other-rs"), movablePodOnWorker("spare-worker", "other-peer", "1Gi", "other-rs")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, pod := range moves {
+		names = append(names, text(pod, "metadata", "name"))
+	}
+	if want := []string{"other", "spare"}; !slices.Equal(names, want) {
+		t.Fatalf("moves %v, expected %v", names, want)
+	}
+}
+
+func TestEvictionIsTheOnlyWayAPodLeavesAndNamesThatExactPod(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	if err := f.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"/api/v1/namespaces/apps/pods/large/eviction"}; !slices.Equal(f.evictionURLs, want) {
+		t.Fatalf("eviction URLs %v, expected %v", f.evictionURLs, want)
+	}
+	e := f.evictions[0]
+	if text(e, "apiVersion") != "policy/v1" || text(e, "kind") != "Eviction" || text(e, "metadata", "name") != "large" ||
+		text(e, "metadata", "namespace") != "apps" || text(e, "deleteOptions", "preconditions", "uid") != "large-uid" {
+		t.Fatalf("eviction body does not bind the exact Pod through the budget path: %v", e)
+	}
+}
+
+func TestNextPodWaitsForTheMovedOneToLeave(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "1Gi", "a-rs"), movablePodOnWorker(worker, "b", "900Mi", "b-rs"))
+	f.slowDeparture = true
+	if err := f.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"cordon", "evict a", "evict b", "restart", "uncordon"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, expected %v", f.events, want)
+	}
+}
+
+func TestStaleNodeWritesAreJudgedAgainFromFreshState(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	pods := func() []object {
+		return []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs")}
+	}
+	t.Run("a failed resource version test is retried", func(t *testing.T) {
+		f := newRefreshCluster(t, pods()...)
+		f.stalePatches = 2
+		if err := f.refresh(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"cordon", "evict large", "restart", "uncordon"}; !slices.Equal(f.events, want) {
+			t.Fatalf("events %v, expected %v", f.events, want)
+		}
+	})
+	t.Run("a lost cordon response is not applied twice and is still released", func(t *testing.T) {
+		f := newRefreshCluster(t, pods()...)
+		f.loseCordonOnce = true
+		if err := f.refresh(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		if want := []string{"cordon", "evict large", "restart", "uncordon"}; !slices.Equal(f.events, want) {
+			t.Fatalf("events %v, expected %v", f.events, want)
+		}
+		if value(f.node, "spec", "unschedulable") == true {
+			t.Fatal("the cordon leaked")
+		}
+	})
 }
