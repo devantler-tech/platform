@@ -433,6 +433,22 @@ fold. The offline render regression retains both production and local roles,
 explicit and whitespace schematic IDs, and invalid-patch refusals. This audit
 changes no cluster configuration or vulnerability exception.
 
+**7.204.30**, commit `0df3e213ad5d42308f9f60858f874637c6a798c5`, is audited
+against 7.203.34. The Talos generator and `configmanager/talos`, which holds the
+fold, are byte-identical. In the distribution caller, only the default Kind
+configuration literal changes spelling (Go 1.27 promoted-field form) and the
+explicit schematic-ID path is untouched. The cluster API and charts add one
+optional `spec.workload.validation.kyvernoApiCallResponses` path and spell
+`NewCluster`'s type metadata the same way; `spec.cluster.talos` keeps its names,
+types and defaults. `go.mod` moves the Go directive from 1.26.9 to 1.27.3 and
+seven modules: azidentity, the Microsoft authentication library, Cilium, the
+Copilot SDK, go-jose, Sigstore and Wails. Talos machinery stays at
+v1.14.0-alpha.2 and the YAML encoders are unchanged. None of the seven is in the
+dependency closure of the Talos configuration manager, generator or cluster API;
+three reach the wider distribution manager only through AKS and OCI encryption
+code the Talos path never calls. This audit changes no cluster configuration or
+vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

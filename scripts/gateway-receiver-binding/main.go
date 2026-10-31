@@ -178,19 +178,36 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	if restore {
-		if err := restoreDisabled(ctx, kubeContext); err != nil {
+		rendered, err := renderLayer(ctx)
+		selected := false
+		if err == nil {
+			selected, err = restoreBaseline(rendered, func() error { return restoreDisabled(ctx, kubeContext) })
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_DISABLED=UNVERIFIED stage=%s\n", err.Error())
 			os.Exit(2)
+		}
+		if selected {
+			fmt.Println("GATEWAY_RECEIVER_DISABLED=NOT-APPLICABLE fence=selected")
+			return
 		}
 		fmt.Println("GATEWAY_RECEIVER_DISABLED=VERIFIED bindings=0")
 		return
 	}
 	if verify {
-		if err := verifyDeployed(ctx, kubeContext); err != nil {
+		rendered, err := renderLayer(ctx)
+		selected := false
+		if err == nil {
+			selected, err = fenceSelected(rendered)
+		}
+		if err == nil {
+			err = verifyDeployed(ctx, kubeContext, selected)
+		}
+		if err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_SOURCE=UNVERIFIED stage=%s\n", err.Error())
 			os.Exit(2)
 		}
-		fmt.Println("GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4")
+		fmt.Printf("GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=%t\n", selected)
 		return
 	}
 	if err := prepare(ctx, kubeContext, outputPath); err != nil {
