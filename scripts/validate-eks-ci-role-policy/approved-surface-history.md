@@ -3953,5 +3953,14 @@ docker/login-action actions forward. No signing, permission or identity step
 changes. `require-unpublished-version.sh` and `recover-manifests-version.sh` have
 the same blob at both revisions.
 
+Against the current main, the authorization ledger changes exactly one entry,
+with nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `b5ab7e893cffdb3eaa01de448e1daa4ec95e6d9e9a72d4f47ab8439ad7e558e6` to
+  `faca29624c6c46d5405849e513d09b0155098b79d3139feee63aab290cbfb58b`.
+
+The new hash is taken from the required CI job, which rendered with the approved
+tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
 This record does not establish deployed acceptance or a successful publication
 by the new signer. Deploy this acceptance before `.github` moves to v19.0.3.
