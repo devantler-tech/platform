@@ -3913,26 +3913,6 @@ authority. This record does not claim deployment, nor deletion of the
 prune-protected namespaces, releases and retained claim that stay live until
 they are removed explicitly.
 
-## 2026-10-29 — Longhorn migration capacity reclamation (#5596)
-
-The checksum-verified kubectl v1.36.2 / Kustomize v5.8.1 renderer measures two
-changed existing entries. Each adds only the exact local-volume eviction
-annotation needed to relocate an ordinary compute workload; no role, binding,
-ServiceAccount, controller source or network grant changes.
-
-- Crossplane HelmRelease: `8faec319d400ced8ebc0341fa5496bcd9e578b02cd7b456b7d0beee9334c5d68`
-  becomes `fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3`.
-- Cilium HelmRelease: `583656039a7b6f65fab253ef1ce6ea63ffffd4437e404d5d42996208143a3c7a`
-  becomes `62fd2d7681d498d256925e2ae8759d4c9f16bb8e359d98b5b6594d4288c2f36c`.
-
-Native Crossplane 2.4.3 and Cilium 1.20.3 Helm renders place the annotation on
-their Pod templates and declare the exact named emptyDir volumes. The pinned
-Cluster Autoscaler v1.35.0 local-volume predicate exempts only those names;
-disruption-budget, ownership and scheduling checks remain active. Blanket
-safe-to-evict is not enabled. The ordinary warm-spare demand is temporarily
-replaced by the bounded migration buffers. This record proposes the exact
-surface for review and does not claim production relocation or V2 readiness.
-
 ## 2026-10-31 — Accept the reviewed v19.0.3 AWS publisher alongside v7.2.10
 
 For #5617, the canonical approvals for the `aws` manifest consumer add
