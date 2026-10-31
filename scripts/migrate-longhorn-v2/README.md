@@ -52,7 +52,7 @@ Select `enable-capacity`, a pool,
 and `enable-longhorn-migration-capacity` to activate temporary storage. The whole
 pool is checked and pinned before any disk is enabled. Its role, server type,
 hardware and encryption must match; an existing foreign pin or disk is a hold.
-New pool nodes remain excluded by admission until explicitly enabled. Existing
+New pool nodes remain excluded by admission until explicitly enabled. The V2 pool also holds until Longhorn's V2 data engine setting is on, because Longhorn refuses a block disk otherwise. Existing
 client-readiness checks independently verify the fixed pool source and live pins
 before accepting any replica there. Ordinary compute nodes stay excluded.
 Activation requires the completed, cleaned baseline from a terminal main
@@ -67,8 +67,8 @@ measurements do not establish a universal fourfold performance claim.
 For a permanent worker, select `prepare-worker`, its node name, and
 `prepare-longhorn-v2-node`. The workflow shares the production deployment
 lock. It requires the current main source, the reviewed layout already loaded by
-Talos, the reconciled block-disk defaults, and a Ready target without a foreign
-cordon. It writes a durable journal before requesting evacuation, waits for
+Talos, the reconciled block-disk defaults, every temporary V1 worker enabled for
+replicas, and a Ready target without a foreign cordon. It writes a durable journal before requesting evacuation, waits for
 replica removal, drains through Kubernetes disruption protections, and makes two
 complete observations before requesting the reset. Both attached and retained
 detached volumes must have three healthy copies on distinct other nodes.
@@ -77,7 +77,9 @@ Each Kubernetes write tests the observed UID and resource version. Talos reads
 must report the same hardware UUID as the selected Kubernetes worker before
 host configuration can be trusted or a host command can run. Benchmark journals
 retain each scratch resource's exact name, namespace and UID as it is created,
-including both the PV and backend before I/O is released. Interrupted work keeps
+including both the PV and backend before I/O is released. A held preparation's own cordon does not fail the production deployment's node
+readback while its journal names that exact worker; the worker must still be Ready
+and on the desired image, and any other cordon fails the deployment. Interrupted work keeps
 those identities for explicit recovery.
 
 Before reset,

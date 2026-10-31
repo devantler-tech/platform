@@ -251,6 +251,7 @@ func (f *preparationAPI) run(_ context.Context, input []byte, program string, ar
 func TestCompletePreparationCreatesItsJournalBeforeAnyStorageChange(t *testing.T) {
 	f, p := newPreparationAPI(t, "evacuating")
 	f.cm = nil
+	enableTemporaryStorage(&f.s)
 	f.node["spec"].(object)["unschedulable"] = false
 	delete(f.node["metadata"].(object)["annotations"].(object), fenceAnnotation)
 	f.storage["spec"].(object)["allowScheduling"] = true

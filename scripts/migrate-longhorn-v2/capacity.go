@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -58,6 +59,51 @@ func verifyCapacityRoster(nodes []object, pools map[string]migrationPool, pinned
 	}
 	if controlPlanes != 3 || migrationCounts["v1"] != 2 || migrationCounts["v2"] != 1 {
 		return errors.New("ready control planes and fixed migration-pool capacity are incomplete")
+	}
+	return nil
+}
+
+// verifyTemporaryStorageEnabled proves the temporary V1 pool can receive replicas
+// before any worker is fenced: evacuation otherwise waits with nowhere to place them.
+func verifyTemporaryStorageEnabled(s inventory, pools map[string]migrationPool) error {
+	pool, ok := pools["v1"]
+	if !ok {
+		return errors.New("the temporary V1 migration pool is not configured")
+	}
+	storage := map[string]object{}
+	for _, lh := range s.storageNodes {
+		storage[text(lh, "metadata", "name")] = lh
+	}
+	enabled := 0
+	for _, n := range s.nodes {
+		if text(n, "metadata", "labels", migrationPoolLabel) != pool.role {
+			continue
+		}
+		lh := storage[text(n, "metadata", "name")]
+		disk, _ := value(lh, "spec", "disks", "migration-v1").(map[string]any)
+		status, _ := value(lh, "status", "diskStatus", "migration-v1").(map[string]any)
+		if lh == nil || text(lh, "metadata", "labels", migrationEnabledLabel) != "true" ||
+			value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false ||
+			value(disk, "allowScheduling") != true || value(disk, "evictionRequested") != false ||
+			text(status, "diskUUID") == "" || !ready(status) {
+			return errors.New("the temporary V1 pool is not fully enabled for replicas")
+		}
+		enabled++
+	}
+	if enabled != pool.count {
+		return errors.New("the temporary V1 pool is not fully enabled for replicas")
+	}
+	return nil
+}
+
+// verifyV2EngineEnabled holds V2 activation while Longhorn would refuse its block disk.
+func verifyV2EngineEnabled(ctx context.Context, c client) error {
+	setting, err := c.get(ctx, "settings.longhorn.io", "longhorn-system", "v2-data-engine", false)
+	if err != nil {
+		return err
+	}
+	if text(setting, "value") != "true" {
+		return errors.New("the V2 pool cannot be enabled while Longhorn's V2 data engine is off")
 	}
 	return nil
 }

@@ -105,6 +105,11 @@ func sameCapacityNode(current, original object, pool migrationPool) error {
 }
 
 func bootstrapCapacity(ctx context.Context, c client, source string, pool migrationPool) error {
+	if pool.role == "v2" {
+		if err := verifyV2EngineEnabled(ctx, c); err != nil {
+			return err
+		}
+	}
 	s, err := c.snapshot(ctx)
 	if err != nil {
 		return err

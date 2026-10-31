@@ -58,6 +58,9 @@ func (p *preparation) begin(ctx context.Context) error {
 	if err = verifyMigrationCapacity(s.nodes, p.pools); err != nil {
 		return err
 	}
+	if err = verifyTemporaryStorageEnabled(s, p.pools); err != nil {
+		return err
+	}
 	if err = verifyRebuildBudget(p.target, s); err != nil {
 		return err
 	}
