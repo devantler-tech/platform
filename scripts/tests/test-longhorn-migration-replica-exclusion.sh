@@ -36,7 +36,11 @@ jq -s -e '
 
 # A compute-node trigger must never retrofit every migration node as a side effect.
 [[ $(yq -r '.spec.rules[0].mutate.targets[0].name' "$retrofit") == '{{ request.object.metadata.name }}' ]]
-cmp <(yq -o=json '.spec.rules[0].preconditions' "$policy") <(yq -o=json '.spec.rules[0].preconditions' "$retrofit")
+# The retrofit judges the live target with the admission rule's own condition, and
+# nothing at rule level can act on the trigger as it was queued.
+[[ $(yq -r '.spec.rules[0].preconditions' "$retrofit") == null ]]
+cmp <(yq -o=json '.spec.rules[0].preconditions' "$policy" | sed 's/request\.object\./target./g') \
+  <(yq -o=json '.spec.rules[0].mutate.targets[0].preconditions' "$retrofit")
 
 # Exercise the native mutate-existing target resolver with an ordinary compute
 # trigger and protected migration nodes present in the same fake API inventory.
@@ -58,6 +62,33 @@ done
 jq -s -e 'length > 0 and all(.[]; .metadata.name == "autoscale-cx43-0123456789abcdef") and
   any(.[]; .spec.allowScheduling == false and .spec.evictionRequested == true)' "$work/retrofit.jsonl" >/dev/null || {
   echo 'compute trigger changed another node or did not apply its own fence' >&2
+  exit 1
+}
+
+# A delayed update can carry a trigger that predates the live Node's protection.
+# The CLI cannot hold two copies of one Node, so a test copy of the rule aims an
+# unprotected trigger at a protected Node: only a condition that reads the target
+# can refuse it. The control aims the same trigger at an unprotected Node.
+resources="$root/tests/longhorn-migration-replica-exclusion/resources.yaml"
+fence_from_stale_trigger() {
+  local target=$1 out=$2
+  yq "(.spec.rules[0].mutate.targets[0].name) = \"$target\"" "$retrofit" >"$out.policy.yaml"
+  yq "select(.metadata.name == \"$target\")" "$resources" >"$out.target.yaml"
+  [[ -s "$out.target.yaml" ]]
+  mkdir "$out"
+  kyverno apply "$out.policy.yaml" --resource "$work/trigger.yaml" --target-resource "$out.target.yaml" \
+    --output "$out" --remove-color >"$out.log" 2>&1 || {
+    cat "$out.log"
+    exit 1
+  }
+  grep -rqs 'evictionRequested: true' "$out"
+}
+if fence_from_stale_trigger autoscale-longhorn-v1-1123456789abcdef "$work/stale-protected"; then
+  echo 'a stale trigger fenced a migration node whose live copy is enabled' >&2
+  exit 1
+fi
+fence_from_stale_trigger autoscale-cx43-1123456789abcdef "$work/stale-unprotected" || {
+  echo 'the stale-trigger control applied no fence, so the check above proves nothing' >&2
   exit 1
 }
 echo 'PASS: only armed, exactly named migration pools escape compute-node exclusion; retrofit targets stay bound to their trigger'

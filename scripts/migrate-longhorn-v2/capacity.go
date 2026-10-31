@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -11,7 +12,10 @@ func verifyMigrationCapacity(nodes []object, pools map[string]migrationPool) err
 
 func verifyCapacityRoster(nodes []object, pools map[string]migrationPool, pinned bool) error {
 	byName, err := indexed(nodes)
-	if err != nil || len(byName) != 9 || len(pools) != 2 {
+	if err != nil {
+		return fmt.Errorf("migration node inventory is unusable: %w", err)
+	}
+	if len(byName) != 9 || len(pools) != 2 {
 		return errors.New("migration requires three static workers, three pinned migration workers and three control planes; compute overflow must be retired first")
 	}
 	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
@@ -34,7 +38,10 @@ func verifyCapacityRoster(nodes []object, pools map[string]migrationPool, pinned
 		}
 		role := text(n, "metadata", "labels", migrationPoolLabel)
 		if pool, ok := pools[role]; ok {
-			if err = verifyMigrationNode(n, pool); err != nil || pinned && (text(n, "metadata", "annotations", scaleDownDisabled) != "true" || text(n, "metadata", "annotations", capacityOwnerAnnotation) != capacityOwnerValue) {
+			if err = verifyMigrationNode(n, pool); err != nil {
+				return fmt.Errorf("migration node %s failed verification: %w", name, err)
+			}
+			if pinned && (text(n, "metadata", "annotations", scaleDownDisabled) != "true" || text(n, "metadata", "annotations", capacityOwnerAnnotation) != capacityOwnerValue) {
 				return errors.New("migration capacity lacks its owned scale-down protection")
 			}
 			migrationCounts[role]++

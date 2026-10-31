@@ -211,10 +211,10 @@ func (p *preparation) drainAndReset(ctx context.Context) error {
 	if _, _, err = p.node(ctx, true); err != nil {
 		return err
 	}
+	// advance proves ownership and source freshness before writing. Nothing may
+	// fail between this intent and the reset, or the journal records a reset that
+	// was never sent and the worker needs a reviewed recovery.
 	if err = p.advance(ctx, "reset-requested"); err != nil {
-		return err
-	}
-	if err = p.checkOwner(ctx); err != nil {
 		return err
 	}
 	// A response can be lost after acceptance. Recovery from reset-requested only

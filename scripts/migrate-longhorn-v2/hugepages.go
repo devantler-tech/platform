@@ -14,14 +14,14 @@ func hugepagesReady(n object) bool {
 
 func workerPressureClear(n object) bool {
 	conditions, _ := value(n, "status", "conditions").([]any)
-	clear := map[string]bool{}
+	cleared := map[string]bool{}
 	for _, raw := range conditions {
 		condition, _ := raw.(object)
 		if text(condition, "status") == "False" {
-			clear[text(condition, "type")] = true
+			cleared[text(condition, "type")] = true
 		}
 	}
-	return clear["DiskPressure"] && clear["MemoryPressure"] && clear["PIDPressure"]
+	return cleared["DiskPressure"] && cleared["MemoryPressure"] && cleared["PIDPressure"]
 }
 
 // Restarting kubelet preserves running containers and all data. It is required
