@@ -157,3 +157,44 @@ func TestRefreshDoesNotRestartKubeletWhenRequestsWouldNotFit(t *testing.T) {
 		t.Fatalf("refresh did not hold: %v", err)
 	}
 }
+
+func TestPodMemoryRequestCountsSidecarsAndPodLevelRequests(t *testing.T) {
+	sized := func(memory string, sidecar bool) object {
+		c := object{"resources": object{"requests": object{"memory": memory}}}
+		if sidecar {
+			c["restartPolicy"] = "Always"
+		}
+		return c
+	}
+	pod := podOnWorker("w", "12Gi")
+	pod["spec"].(object)["initContainers"] = []any{sized("1Gi", true), sized("2Gi", false)}
+	if got, err := podMemoryRequest(pod); err != nil || got != 13*(1<<30) {
+		t.Fatalf("native sidecar must add to the running containers: %v %v", got, err)
+	}
+	pod["spec"].(object)["initContainers"] = []any{sized("1Gi", true), sized("13Gi", false)}
+	if got, err := podMemoryRequest(pod); err != nil || got != 14*(1<<30) {
+		t.Fatalf("init peak must include the sidecars started before it: %v %v", got, err)
+	}
+	pod = podOnWorker("w", "1Gi")
+	pod["spec"].(object)["resources"] = object{"requests": object{"memory": "3Gi"}}
+	pod["spec"].(object)["overhead"] = object{"memory": "1Gi"}
+	if got, err := podMemoryRequest(pod); err != nil || got != 4*(1<<30) {
+		t.Fatalf("a Pod-level request must win and keep its overhead: %v %v", got, err)
+	}
+}
+
+func TestRefreshFitSubtractsOnlyUncountedHugepages(t *testing.T) {
+	n := nodeFixture()
+	name := text(n, "metadata", "name")
+	n["status"].(object)["allocatable"] = object{"memory": "12932Mi", "hugepages-2Mi": "2Gi"}
+	if err := verifyRefreshFits(n, []object{podOnWorker(name, "12932Mi")}); err != nil {
+		t.Fatalf("already counted huge pages were subtracted twice: %v", err)
+	}
+	n["status"].(object)["allocatable"] = object{"memory": "14980Mi", "hugepages-2Mi": "1Gi"}
+	if err := verifyRefreshFits(n, []object{podOnWorker(name, "13956Mi")}); err != nil {
+		t.Fatalf("partly counted huge pages were subtracted in full: %v", err)
+	}
+	if err := verifyRefreshFits(n, []object{podOnWorker(name, "13957Mi")}); err == nil {
+		t.Fatal("requests above the remaining allocatable were allowed")
+	}
+}

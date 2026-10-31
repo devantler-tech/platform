@@ -55,6 +55,10 @@ func TestResetRequiresAllTemporaryCapacityAndNoComputeOverflow(t *testing.T) {
 	}
 }
 
+func schedulableConditions() []any {
+	return []any{object{"type": "Ready", "status": "True"}, object{"type": "Schedulable", "status": "True"}}
+}
+
 func enabledTemporaryPoolFixture() (inventory, map[string]migrationPool) {
 	s := inventory{nodes: capacityFixture()}
 	for _, n := range s.nodes {
@@ -65,7 +69,7 @@ func enabledTemporaryPoolFixture() (inventory, map[string]migrationPool) {
 		lh["metadata"].(object)["labels"] = object{migrationEnabledLabel: "true"}
 		lh["spec"] = object{"allowScheduling": true, "evictionRequested": false,
 			"disks": object{"migration-v1": object{"allowScheduling": true, "evictionRequested": false}}}
-		lh["status"] = object{"diskStatus": object{"migration-v1": object{"diskUUID": "disk", "conditions": readyConditions()}}}
+		lh["status"] = object{"conditions": schedulableConditions(), "diskStatus": object{"migration-v1": object{"diskUUID": "disk", "conditions": schedulableConditions()}}}
 		s.storageNodes = append(s.storageNodes, lh)
 	}
 	pools, err := configuredMigrationPools(poolConfigFixture())
@@ -86,6 +90,16 @@ func TestEvacuationRequiresEveryTemporaryV1NodeToAcceptReplicas(t *testing.T) {
 		"eviction":    func(lh object) { lh["spec"].(object)["evictionRequested"] = true },
 		"no disk":     func(lh object) { lh["spec"].(object)["disks"] = object{} },
 		"disk status": func(lh object) { delete(lh["status"].(object)["diskStatus"].(object), "migration-v1") },
+		"disk not schedulable": func(lh object) {
+			lh["status"].(object)["diskStatus"].(object)["migration-v1"].(object)["conditions"] = readyConditions()
+		},
+		"node not schedulable": func(lh object) { lh["status"].(object)["conditions"] = readyConditions() },
+		"disk scheduling off": func(lh object) {
+			lh["spec"].(object)["disks"].(object)["migration-v1"].(object)["allowScheduling"] = false
+		},
+		"disk evicting": func(lh object) {
+			lh["spec"].(object)["disks"].(object)["migration-v1"].(object)["evictionRequested"] = true
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, pools := enabledTemporaryPoolFixture()
@@ -156,6 +170,7 @@ func enableTemporaryStorage(s *inventory) {
 		lh["spec"].(object)["allowScheduling"] = true
 		lh["spec"].(object)["evictionRequested"] = false
 		lh["spec"].(object)["disks"].(object)["migration-v1"] = object{"allowScheduling": true, "evictionRequested": false}
-		lh["status"].(object)["diskStatus"].(object)["migration-v1"] = object{"diskUUID": "disk-" + name, "conditions": readyConditions()}
+		lh["status"].(object)["conditions"] = schedulableConditions()
+		lh["status"].(object)["diskStatus"].(object)["migration-v1"] = object{"diskUUID": "disk-" + name, "conditions": schedulableConditions()}
 	}
 }

@@ -74,6 +74,10 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if hugepagesReady(n) {
 		return nil
 	}
+	// Counted pages with pressure left are not stale capacity: a restart would not help.
+	if text(n, "status", "capacity", "hugepages-2Mi") == "2Gi" && text(n, "status", "allocatable", "hugepages-2Mi") == "2Gi" {
+		return errors.New("worker " + text(n, "metadata", "name") + " reports resource pressure; a kubelet refresh would not clear it")
+	}
 	if err = verifyRefreshFits(n, pods); err != nil {
 		return err
 	}
@@ -154,27 +158,41 @@ func containerMemoryRequest(raw any) (float64, error) {
 	return memoryBytes(request)
 }
 
-// podMemoryRequest is what the scheduler and kubelet count for one Pod: the larger of
-// its containers' sum and its largest init container, plus any runtime overhead.
+// podMemoryRequest is what the scheduler and kubelet count for one Pod: a Pod-level
+// request when set, otherwise the running containers and native sidecars or the peak
+// of any init container beside the sidecars started before it, plus runtime overhead.
 func podMemoryRequest(pod object) (float64, error) {
-	var total, largestInit float64
-	containers, _ := value(pod, "spec", "containers").([]any)
-	for _, raw := range containers {
-		request, err := containerMemoryRequest(raw)
-		if err != nil {
+	var total, sidecars, peakInit float64
+	if request := text(pod, "spec", "resources", "requests", "memory"); request != "" {
+		var err error
+		if total, err = memoryBytes(request); err != nil {
 			return 0, err
 		}
-		total += request
-	}
-	initContainers, _ := value(pod, "spec", "initContainers").([]any)
-	for _, raw := range initContainers {
-		request, err := containerMemoryRequest(raw)
-		if err != nil {
-			return 0, err
+	} else {
+		containers, _ := value(pod, "spec", "containers").([]any)
+		for _, raw := range containers {
+			request, err := containerMemoryRequest(raw)
+			if err != nil {
+				return 0, err
+			}
+			total += request
 		}
-		largestInit = max(largestInit, request)
+		initContainers, _ := value(pod, "spec", "initContainers").([]any)
+		for _, raw := range initContainers {
+			request, err := containerMemoryRequest(raw)
+			if err != nil {
+				return 0, err
+			}
+			container, _ := raw.(map[string]any)
+			if text(container, "restartPolicy") == "Always" {
+				sidecars += request
+				peakInit = max(peakInit, sidecars)
+				continue
+			}
+			peakInit = max(peakInit, sidecars+request)
+		}
+		total = max(total+sidecars, peakInit)
 	}
-	total = max(total, largestInit)
 	if overhead := text(pod, "spec", "overhead", "memory"); overhead != "" {
 		extra, err := memoryBytes(overhead)
 		if err != nil {
@@ -209,7 +227,14 @@ func verifyRefreshFits(n object, pods []object) error {
 		}
 		requested += request
 	}
-	if requested > allocatable-2*(1<<30) {
+	// Only the pages kubelet does not count yet still shrink allocatable.
+	counted := 0.0
+	if pages := text(n, "status", "allocatable", "hugepages-2Mi"); pages != "" {
+		if counted, err = memoryBytes(pages); err != nil {
+			return err
+		}
+	}
+	if requested > allocatable-max(0, 2*(1<<30)-counted) {
 		return errors.New("worker " + name + " requests more memory than remains after huge pages; move workloads off it through disruption budgets first")
 	}
 	return nil

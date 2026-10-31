@@ -3,6 +3,8 @@
 The `Prepare Longhorn V2 Migration` workflow enables protected temporary capacity
 or evacuates and rebuilds one permanent storage worker. It is part of platform#5582; it does not migrate a claim, enable
 V2, disable V1, remove iSCSI, or establish a performance improvement.
+Worker preparation and V2 capacity both hold until a separate reviewed change turns
+on Longhorn's V2 data engine setting; this procedure never changes it.
 
 The production worker configuration reserves a 96 GiB encrypted raw partition
 on the system disk. EPHEMERAL keeps at least 40 GiB, leaves 104 GiB for the raw

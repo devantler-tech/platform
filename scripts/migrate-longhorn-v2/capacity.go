@@ -85,7 +85,8 @@ func verifyTemporaryStorageEnabled(s inventory, pools map[string]migrationPool) 
 		if lh == nil || text(lh, "metadata", "labels", migrationEnabledLabel) != "true" ||
 			value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false ||
 			value(disk, "allowScheduling") != true || value(disk, "evictionRequested") != false ||
-			text(status, "diskUUID") == "" || !ready(status) {
+			text(status, "diskUUID") == "" || !conditionsTrue(status, "Ready", "Schedulable") ||
+			!conditionsTrue(valueObject(lh, "status"), "Ready", "Schedulable") {
 			return errors.New("the temporary V1 pool is not fully enabled for replicas")
 		}
 		enabled++
@@ -106,4 +107,25 @@ func verifyV2EngineEnabled(ctx context.Context, c client) error {
 		return errors.New("the V2 pool cannot be enabled while Longhorn's V2 data engine is off")
 	}
 	return nil
+}
+
+func valueObject(o object, path ...string) object {
+	found, _ := value(o, path...).(map[string]any)
+	return found
+}
+
+// conditionsTrue requires every named condition to be explicitly True.
+func conditionsTrue(o object, kinds ...string) bool {
+	conditions, _ := value(o, "conditions").([]any)
+	for _, kind := range kinds {
+		found := false
+		for _, raw := range conditions {
+			c, ok := raw.(map[string]any)
+			found = found || ok && text(c, "type") == kind && text(c, "status") == "True"
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }

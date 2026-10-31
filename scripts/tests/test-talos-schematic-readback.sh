@@ -160,6 +160,10 @@ jq '(.items[] | select(.metadata.name == "prod-worker-1")).metadata.annotations[
 jq '(.items[] | select(.metadata.name == "prod-worker-1")).spec.unschedulable = true' "$tmp_dir/changed.json" >"$tmp_dir/foreign.json"
 mv "$tmp_dir/foreign.json" "$tmp_dir/changed.json"
 assert_rejected 'a cordon owned by another operation'
+jq '(.items[] | select(.metadata.name == "prod-control-plane-2")) |= (.spec.unschedulable = true |
+  .metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = "longhorn-v2-prepare-prod-worker-1")' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a cordoned non-worker carrying a preparation annotation'
 unset MOCK_JOURNAL_FILE
 
 jq '.items |= map(select(.metadata.name != "prod-worker-1"))' "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"

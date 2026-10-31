@@ -121,7 +121,7 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
       printf 'PASS: all Talos nodes run %s with schematic %s and are Ready/schedulable\n' \
         "$expected_version" "$expected_schematic"
       if [[ -n "$held_worker" ]]; then
-        printf 'HELD: %s stays cordoned by its Longhorn V2 preparation journal; recover it before the next preparation\n' "$held_worker"
+        printf '::warning::HELD: %s stays cordoned by its Longhorn V2 preparation journal; recover it before the next preparation\n' "$held_worker"
       fi
       exit 0
     fi
