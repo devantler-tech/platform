@@ -13,9 +13,14 @@ RUN GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/gol
     && timeout 300s golangci-lint run --timeout=4m ./cmd/platform-migrate ./cmd/cli/kubectl-kyverno/commands/migrate
 ARG VERSION=development
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
-    -ldflags="-s -w -X main.buildVersion=${VERSION}" \
+    -ldflags="-X main.buildVersion=${VERSION}" \
     -o /out/kubectl-kyverno ./cmd/platform-migrate \
     && test "$(go version /out/kubectl-kyverno)" = "/out/kubectl-kyverno: go1.26.10" \
+    && go version -m /out/kubectl-kyverno > /tmp/build-info \
+    && grep -Eq '^[[:space:]]+mod[[:space:]]+github\.com/kyverno/kyverno[[:space:]]+v1\.19\.2[[:space:]]' /tmp/build-info \
+    && grep -Eq '^[[:space:]]+build[[:space:]]+vcs\.modified=false$' /tmp/build-info \
+    && go tool nm /out/kubectl-kyverno > /tmp/symbols \
+    && grep -Eq '[[:space:]]T main\.main$' /tmp/symbols \
     && test "$(/out/kubectl-kyverno --version)" = "kubectl-kyverno version ${VERSION}" \
     && /out/kubectl-kyverno migrate --help \
     && if /out/kubectl-kyverno apply --help > /tmp/unsupported-command 2>&1; then \
