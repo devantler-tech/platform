@@ -16,6 +16,6 @@ RUN go test ./...
 ARG VERSION=unknown
 RUN go build -mod=readonly -ldflags "-X main.version=$VERSION" -o /out/coroot .
 
-FROM ghcr.io/coroot/coroot:1.28.1@sha256:1b908030e1cce068ce6fb907cd02c41552e27aab382e61f1bbb523ceb50a0913
+FROM ghcr.io/coroot/coroot:1.29.0@sha256:2e02fcdd08293cb56671b54a415646c7549a8da8538086900a925c3ee8145fe7
 COPY --from=builder --chmod=0755 /out/coroot /usr/bin/coroot
 RUN ["/usr/bin/coroot", "--help"]

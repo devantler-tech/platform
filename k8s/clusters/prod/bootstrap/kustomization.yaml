@@ -7,3 +7,4 @@ resources:
   - secret.enc.yaml
   - secret-heartbeat.enc.yaml
   - secret-wedding-db-backup-r2.enc.yaml
+  - secret-variables-gateway-receiver.enc.yaml

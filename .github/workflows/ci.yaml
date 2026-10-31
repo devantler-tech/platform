@@ -111,6 +111,9 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test -parallel 8 -timeout 20m ./...
 
+      - name: 🧪 Validate gateway receiver policies with the native admission engine
+        run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
+
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
@@ -4620,7 +4623,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@84f4cddc69d6a5a937a7e83d2bd77a438d932f26 # v17.0.0
+        uses: devantler-tech/.github/actions/aggregate-job-checks@5b5777ddfcb1f0273eeece79eebf6ad01a5f3df9 # v19.0.1
         with:
           job-results: >-
             ${{ needs.changes.result }}

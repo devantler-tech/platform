@@ -12,6 +12,10 @@
 # validates the combined render. Evidence for approvals made before this file existed is in
 # approved-surface-history.md.
 
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver a4a3b3d2542e5aaa30b8292700f2da9076b5d80a191140e0b669da75ba2fc36c
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver e2e83b89e86fad51327edf783f7ae9c991ae5cc41b369ad22b98f2ef308d25b3
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 36855100be6e3611947d34ce120822158db269cdf860c23ebce11ad9ae76b197
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0
@@ -116,7 +120,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap df15a74c32342
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92e331e29ddaa022dccd94ed0c8d7195f8703e20403267c73874593d3
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0cfe2fc47fa5c5ad7e0b696476d22361dc09ab095913995aca08c301156b2c3e
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0404e22df806844ac03bdeb8cc51f2d7434c10754877c2d3c15cbc623b05b671
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
 
@@ -406,7 +410,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb3257414
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner af12d172b3cc20f85f5b2016d30558db30905e977fe7682130184d0b1a4d3b16
 
-source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3
+source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 8ad26301961658e0c50fc13246f1f44894a8f922daeb2713ec8b8724957071c4
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
 
@@ -431,5 +435,7 @@ v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a81
 v1|ConfigMap|flux-system|variables-cluster 4dd0f78bf25a143540b8caec53295a4a4869c42df99d0b0f003a1ac86971a162
 
 v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
+
+v1|Secret|flux-system|variables-gateway-receiver b020f1466f1849694c2d15a9577e1923192a780f15eaac45c206d8495faa0deb
 
 v1|Secret|flux-system|variables-heartbeat 1ae01ab68307178f8a0d330b313612ceb0a10ca06b5f953415749ca2aea9c81c
