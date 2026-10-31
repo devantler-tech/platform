@@ -26,9 +26,17 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -trimpath \
     && if /out/kubectl-kyverno apply --help > /tmp/unsupported-command 2>&1; then \
          echo 'Unsupported CLI command exposed by migration runtime'; exit 1; \
        else test "$?" -eq 1 && grep -F 'unknown command "apply"' /tmp/unsupported-command; fi
+# Only these exact whole-module records for Kyverno v1.19.2 are accepted, with the same
+# adjudication and removal as scripts/tests/tenant-webapp-admission/.govulncheck-allow.txt
+# (platform#5154). Any other advisory fails the build, and the scan must stay symbol-level.
 RUN GOBIN=/usr/local/bin go install golang.org/x/vuln/cmd/govulncheck@v1.8.0 \
     && timeout 300s govulncheck ./cmd/platform-migrate \
-    && timeout 120s govulncheck -mode=binary /out/kubectl-kyverno
+    && timeout 120s govulncheck -mode=binary -format json /out/kubectl-kyverno > /tmp/binary-scan.json \
+    && grep -Eq '"scan_level": *"symbol"' /tmp/binary-scan.json \
+    && grep -Eo '"osv": *"[^"]+"' /tmp/binary-scan.json | grep -Eo 'GO-[0-9]+-[0-9]+' | sort -u > /tmp/binary-findings \
+    && if grep -Evx 'GO-2026-5594|GO-2026-5337|GO-2025-3615' /tmp/binary-findings; then \
+         echo 'Unaccepted advisory in the compiled migration runtime'; exit 1; \
+       else test "$?" -eq 1; fi
 
 FROM reg.kyverno.io/kyverno/kyverno-cli:v1.19.2@sha256:322ec5044d600930cb3af0e56dc33154a2d1d1fba58f4cadad3f47be7e78b11c
 COPY --from=builder --chmod=0755 /out/kubectl-kyverno /ko-app/kubectl-kyverno
