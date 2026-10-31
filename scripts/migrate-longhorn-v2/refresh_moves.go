@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"regexp"
 	"sort"
 	"time"
@@ -60,8 +61,8 @@ func movablePod(pod object) bool {
 	return true
 }
 
-// schedulesFreely reports that nothing but resources decides where a replacement may run, so
-// the room check below can predict it. Anything it cannot predict could stay Pending.
+// schedulesFreely refuses the constraints most likely to leave a replacement Pending. It is not
+// a scheduler: a Pod moves only while another replica serves, so a miss costs capacity, not service.
 func schedulesFreely(pod object) bool {
 	selector, _ := value(pod, "spec", "nodeSelector").(map[string]any)
 	for key := range selector {
@@ -85,8 +86,8 @@ func schedulesFreely(pod object) bool {
 	return true
 }
 
-// planRefreshMoves picks Pods that make the worker fit: first those with another Ready
-// replica, which keep serving throughout, then single replicas, largest first within each.
+// planRefreshMoves picks the fewest Pods, largest first, that make the worker fit. Only a Pod
+// with another Ready replica qualifies, so its workload keeps serving whatever happens next.
 func planRefreshMoves(n object, pods []object) ([]object, error) {
 	excess, err := refreshExcess(n, pods)
 	if err != nil || excess <= 0 {
@@ -98,23 +99,19 @@ func planRefreshMoves(n object, pods []object) ([]object, error) {
 	type candidate struct {
 		pod     object
 		request float64
-		spare   bool
 	}
 	var candidates []candidate
 	for _, pod := range pods {
-		if text(pod, "spec", "nodeName") != text(n, "metadata", "name") || !movablePod(pod) {
+		if text(pod, "spec", "nodeName") != text(n, "metadata", "name") || !movablePod(pod) || readyPodsOf(replicaSetOwner(pod), pods) < 2 {
 			continue
 		}
 		request, requestErr := podMemoryRequest(pod)
 		if requestErr != nil {
 			return nil, requestErr
 		}
-		candidates = append(candidates, candidate{pod, request, readyPodsOf(replicaSetOwner(pod), pods) > 1})
+		candidates = append(candidates, candidate{pod, request})
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].spare != candidates[j].spare {
-			return candidates[i].spare
-		}
 		if candidates[i].request != candidates[j].request {
 			return candidates[i].request > candidates[j].request
 		}
@@ -131,7 +128,7 @@ func planRefreshMoves(n object, pods []object) ([]object, error) {
 		}
 	}
 	if excess > 0 {
-		return nil, errors.New("worker " + text(n, "metadata", "name") + " requests more memory than remains after huge pages, and its stateless workloads cannot cover the difference")
+		return nil, errors.New("worker " + text(n, "metadata", "name") + " requests more memory than remains after huge pages, and its replicated stateless workloads cannot cover the difference")
 	}
 	return moves, nil
 }
@@ -248,6 +245,15 @@ func readyPodsOf(owner string, pods []object) int {
 	return count
 }
 
+func podListed(pods []object, uid string) bool {
+	for _, pod := range pods {
+		if text(pod, "metadata", "uid") == uid {
+			return true
+		}
+	}
+	return false
+}
+
 // movePod asks for an eviction, so disruption budgets decide, and waits until the
 // workload is back at its Ready count before the next Pod may leave.
 func (c client) movePod(ctx context.Context, pod object, pods []object) error {
@@ -268,6 +274,11 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 			if err = refreshPause(ctx); err != nil {
 				return err
 			}
+			// A lost response can hide a success, and a retry would then only report the Pod missing.
+			if live, listErr := c.list(ctx, "pods", namespace); listErr == nil && !podListed(live, uid) {
+				err = nil
+				break
+			}
 		}
 		if _, err = c.kubectl(ctx, eviction, "create", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+name+"/eviction", "-f", "-"); err == nil {
 			break
@@ -281,10 +292,8 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 		if listErr != nil {
 			return listErr
 		}
-		for _, other := range live {
-			if text(other, "metadata", "uid") == uid {
-				return errors.New("the moved Pod has not left yet")
-			}
+		if podListed(live, uid) {
+			return errors.New("the moved Pod has not left yet")
 		}
 		if readyPodsOf(owner, live) < wanted {
 			return errors.New("the moved workload is not back at its Ready count")
@@ -314,6 +323,7 @@ func (c client) moveForRefresh(ctx context.Context, n object, moves, pods []obje
 			return err
 		}
 	}
+	fmt.Printf("Moved %d Pods off %s before its kubelet refresh.\n", len(moves), name)
 	live, err := c.list(ctx, "pods", "*")
 	if err != nil {
 		return err

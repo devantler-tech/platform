@@ -268,6 +268,9 @@ func (p preparation) removeOriginalDisks(ctx context.Context, lh object, schedul
 	})
 }
 
+// readinessPoll spaces waitReady's checks.
+var readinessPoll = 5 * time.Second
+
 func waitReady(ctx context.Context, check func() error) error {
 	deadline, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
@@ -275,7 +278,7 @@ func waitReady(ctx context.Context, check func() error) error {
 		if err := check(); err == nil {
 			return nil
 		}
-		timer := time.NewTimer(5 * time.Second)
+		timer := time.NewTimer(readinessPoll)
 		select {
 		case <-deadline.Done():
 			timer.Stop()

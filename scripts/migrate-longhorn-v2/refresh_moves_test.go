@@ -27,6 +27,8 @@ type refreshCluster struct {
 	stalePatches   int
 	leavingPods    []object
 	slowDeparture  bool
+	loseEviction   bool
+	loseUncordon   bool
 }
 
 func movablePodOnWorker(worker, name, memory, owner string) object {
@@ -53,11 +55,21 @@ func spareWorker() object {
 	return spare
 }
 
+func withPeers(pods []object) []object {
+	all := slices.Clone(pods)
+	for _, pod := range pods {
+		if owner := replicaSetOwner(pod); owner != "" && !strings.HasSuffix(owner, "-single") {
+			all = append(all, movablePodOnWorker("spare-worker", text(pod, "metadata", "name")+"-peer", "100Mi", owner))
+		}
+	}
+	return all
+}
+
 func newRefreshCluster(t *testing.T, pods ...object) *refreshCluster {
-	delay := refreshRetryDelay
-	refreshRetryDelay = time.Millisecond
-	t.Cleanup(func() { refreshRetryDelay = delay })
-	return &refreshCluster{t: t, node: refreshWorker(), spare: spareWorker(), pods: pods}
+	delay, poll := refreshRetryDelay, readinessPoll
+	refreshRetryDelay, readinessPoll = time.Millisecond, time.Millisecond
+	t.Cleanup(func() { refreshRetryDelay, readinessPoll = delay, poll })
+	return &refreshCluster{t: t, node: refreshWorker(), spare: spareWorker(), pods: withPeers(pods)}
 }
 
 func (f *refreshCluster) list(items ...object) ([]byte, error) {
@@ -91,14 +103,15 @@ func (f *refreshCluster) evict(args []string, input []byte) ([]byte, error) {
 		replacement := movablePodOnWorker(worker, name+"-new", "0", "")
 		replacement["metadata"].(object)["ownerReferences"] = owners
 		replacement["spec"].(object)["containers"] = value(pod, "spec", "containers")
-		if f.leaving > 0 {
-			continue
-		}
 		if f.slowDeparture {
 			f.leavingPods = slices.Clone(f.pods)
-			f.leaving = 1
+			f.leaving = 3
 		}
 		f.pods[i] = replacement
+	}
+	if f.loseEviction {
+		f.loseEviction = false
+		return nil, errors.New("external command failed")
 	}
 	return nil, nil
 }
@@ -126,6 +139,10 @@ func (f *refreshCluster) patch(input []byte) ([]byte, error) {
 			delete(f.node["metadata"].(object)["annotations"].(object), fenceAnnotation)
 		}
 	}
+	if f.loseUncordon && value(f.node, "spec", "unschedulable") != true {
+		f.loseUncordon = false
+		return nil, errors.New("external command failed")
+	}
 	if f.loseCordonOnce && value(f.node, "spec", "unschedulable") == true {
 		f.loseCordonOnce = false
 		return nil, errors.New("external command failed")
@@ -147,9 +164,22 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 		case call[0] == "get" && call[1] == "nodes":
 			return f.list(f.node, f.spare)
 		case call[0] == "get" && call[1] == "pods":
-			if f.leaving > 0 {
+			switch f.leaving {
+			case 3:
 				f.leaving--
 				return f.list(f.leavingPods...)
+			case 2:
+				f.leaving--
+				pending := slices.Clone(f.pods)
+				for i, pod := range pending {
+					if strings.HasSuffix(text(pod, "metadata", "name"), "-new") {
+						clone := movablePodOnWorker("spare-worker", text(pod, "metadata", "name"), "0", "pending")
+						pending[i] = clone
+					}
+				}
+				return f.list(pending...)
+			case 1:
+				f.leaving--
 			}
 			return f.list(f.pods...)
 		case call[0] == "get" && call[1] == "node":
@@ -341,8 +371,8 @@ func TestRefreshNeverAdoptsAForeignCordon(t *testing.T) {
 func TestMovesAreChosenLargestFirstAndStopAtEnough(t *testing.T) {
 	worker := text(refreshWorker(), "metadata", "name")
 	n := refreshWorker()
-	moves, err := planRefreshMoves(n, []object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "600Mi", "a"),
-		movablePodOnWorker(worker, "b", "900Mi", "b"), movablePodOnWorker(worker, "c", "700Mi", "c"), movablePodOnWorker("spare-worker", "d", "5Gi", "d")})
+	moves, err := planRefreshMoves(n, withPeers([]object{podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "600Mi", "a"),
+		movablePodOnWorker(worker, "b", "900Mi", "b"), movablePodOnWorker(worker, "c", "700Mi", "c"), movablePodOnWorker("spare-worker", "d", "5Gi", "d")}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,21 +400,14 @@ func TestMigrationPoolWorkerNeverMovesPods(t *testing.T) {
 	}
 }
 
-func TestMovesPreferAWorkloadWithAnotherReplica(t *testing.T) {
+func TestASingleReplicaNeverMoves(t *testing.T) {
 	worker := text(refreshWorker(), "metadata", "name")
-	single := movablePodOnWorker(worker, "single", "1500Mi", "single-rs")
-	moves, err := planRefreshMoves(refreshWorker(), []object{podOnWorker(worker, "11Gi"), single,
-		movablePodOnWorker(worker, "spare", "400Mi", "spare-rs"), movablePodOnWorker("spare-worker", "spare-peer", "400Mi", "spare-rs"),
-		movablePodOnWorker(worker, "other", "1Gi", "other-rs"), movablePodOnWorker("spare-worker", "other-peer", "1Gi", "other-rs")})
-	if err != nil {
-		t.Fatal(err)
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "only", "2Gi", "only-single"))
+	if err := f.refresh(context.Background()); err == nil || !strings.Contains(err.Error(), "after huge pages") {
+		t.Fatalf("a single replica was planned to move: %v", err)
 	}
-	var names []string
-	for _, pod := range moves {
-		names = append(names, text(pod, "metadata", "name"))
-	}
-	if want := []string{"other", "spare"}; !slices.Equal(names, want) {
-		t.Fatalf("moves %v, expected %v", names, want)
+	if len(f.events) != 0 {
+		t.Fatalf("a held plan still acted: %v", f.events)
 	}
 }
 
@@ -444,4 +467,25 @@ func TestStaleNodeWritesAreJudgedAgainFromFreshState(t *testing.T) {
 			t.Fatal("the cordon leaked")
 		}
 	})
+}
+
+func TestALostReleaseResponseIsNotAFalseRefusal(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	f.loseUncordon = true
+	if err := f.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestALostEvictionResponseStillCountsAsMoved(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	f.loseEviction = true
+	if err := f.refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"cordon", "evict large", "restart", "uncordon"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, expected %v", f.events, want)
+	}
 }
