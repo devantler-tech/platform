@@ -3945,7 +3945,7 @@ For #5621, the canonical approvals for the `.github` manifest consumer replace
 `devantler-tech/.github@6f1dee9557a939cc24ca2c562ea775d05e01564d` with
 `bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next to
 `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3). The current release 19.0.3
-and the four releases before it were signed by v10.0.3, and the caller still pins
+and the three releases before it were signed by v10.0.3, and the caller still pins
 it, so it stays accepted until the first publication by v19.0.3 is verified. The
 replaced revision signed none of those releases.
 
