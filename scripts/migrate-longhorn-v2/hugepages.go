@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func hugepagesReady(n object) bool {
@@ -28,10 +29,11 @@ func workerPressureClear(n object) bool {
 
 // Restarting kubelet preserves running containers and all data. It is required
 // only when dynamically allocated huge pages have not reached Node capacity.
-func refreshHugepages(ctx context.Context, c client, source string, original object, pods []object) error {
+func refreshHugepages(ctx context.Context, c client, source string, original object, pods []object) (err error) {
 	j := journal{Target: text(original, "metadata", "name"), NodeUID: text(original, "metadata", "uid"),
 		ProviderID: text(original, "spec", "providerID"), MachineUUID: text(original, "status", "nodeInfo", "systemUUID")}
 	boot := text(original, "status", "nodeInfo", "bootID")
+	fence := refreshFencePrefix + j.Target
 	if j.NodeUID == "" || j.ProviderID == "" || j.MachineUUID == "" || boot == "" {
 		return errors.New("worker identity is incomplete for a kubelet refresh")
 	}
@@ -42,7 +44,8 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		}
 		address, err := verifyNode(n, j, true)
 		status, _ := value(n, "status").(map[string]any)
-		if err != nil || !ready(status) || value(n, "spec", "unschedulable") == true || text(n, "status", "nodeInfo", "bootID") != boot {
+		cordoned := value(n, "spec", "unschedulable") == true
+		if err != nil || !ready(status) || cordoned && text(n, "metadata", "annotations", fenceAnnotation) != fence || text(n, "status", "nodeInfo", "bootID") != boot {
 			return nil, "", errors.New("worker readiness or hardware changed during kubelet refresh")
 		}
 		if err = c.verifyHost(ctx, address, n); err != nil {
@@ -54,6 +57,15 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if err != nil {
 		return err
 	}
+	// An interrupted run's cordon is adopted, and released unless a restart is uncertain.
+	held, restarted := text(n, "metadata", "annotations", fenceAnnotation) == fence, false
+	defer func() {
+		if held && !restarted {
+			release, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			err = errors.Join(err, c.releaseRefreshCordon(release, j.Target))
+		}
+	}()
 	pages, err := c.run(ctx, nil, "talosctl", "--nodes="+address, "read", "/proc/sys/vm/nr_hugepages")
 	if err != nil || strings.TrimSpace(string(pages)) != "1024" {
 		return errors.New("the host has not allocated the reviewed huge pages")
@@ -78,8 +90,17 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if text(n, "status", "capacity", "hugepages-2Mi") == "2Gi" && text(n, "status", "allocatable", "hugepages-2Mi") == "2Gi" {
 		return errors.New("worker " + text(n, "metadata", "name") + " reports resource pressure; a kubelet refresh would not clear it")
 	}
-	if err = verifyRefreshFits(n, pods); err != nil {
+	moves, err := planRefreshMoves(n, pods)
+	if err != nil {
 		return err
+	}
+	if len(moves) > 0 {
+		if err = sourceCurrent(ctx, c.run, source); err != nil {
+			return err
+		}
+		if err = c.moveForRefresh(ctx, n, moves, pods, &held); err != nil {
+			return err
+		}
 	}
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
@@ -89,14 +110,21 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	}
 	// Never repeat an uncertain service request. Positive capacity and identity
 	// readback, rather than its return code, establishes completion.
+	restarted = true
 	_, _ = c.run(ctx, nil, "talosctl", "--nodes="+address, "service", "kubelet", "restart")
-	return waitReady(ctx, func() error {
+	if err = waitReady(ctx, func() error {
 		n, _, err := get()
 		if err != nil || !hugepagesReady(n) {
 			return errors.New("kubelet has not reported the required huge-page capacity")
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	if held {
+		return c.releaseRefreshCordon(ctx, j.Target)
+	}
+	return nil
 }
 
 func refreshClients(ctx context.Context, c client, source string, pools map[string]migrationPool) error {
@@ -203,16 +231,15 @@ func podMemoryRequest(pod object) (float64, error) {
 	return total, nil
 }
 
-// verifyRefreshFits holds a kubelet restart that would shrink allocatable memory
-// below what the worker's Pods already request. A restarting kubelet admits its Pods
-// again, and one that no longer fits is rejected outright, past any disruption budget.
-func verifyRefreshFits(n object, pods []object) error {
+// refreshExcess is how much of the worker's Pod memory requests would not fit once a
+// kubelet restart counts the huge pages; negative when they fit, by that much room.
+func refreshExcess(n object, pods []object) (float64, error) {
 	if len(pods) == 0 {
-		return errors.New("the worker's memory requests cannot be proven from an empty Pod inventory")
+		return 0, errors.New("the worker's memory requests cannot be proven from an empty Pod inventory")
 	}
 	allocatable, err := memoryBytes(text(n, "status", "allocatable", "memory"))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var requested float64
 	name := text(n, "metadata", "name")
@@ -223,7 +250,7 @@ func verifyRefreshFits(n object, pods []object) error {
 		}
 		request, requestErr := podMemoryRequest(pod)
 		if requestErr != nil {
-			return requestErr
+			return 0, requestErr
 		}
 		requested += request
 	}
@@ -231,11 +258,22 @@ func verifyRefreshFits(n object, pods []object) error {
 	counted := 0.0
 	if pages := text(n, "status", "allocatable", "hugepages-2Mi"); pages != "" {
 		if counted, err = memoryBytes(pages); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	if requested > allocatable-max(0, 2*(1<<30)-counted) {
-		return errors.New("worker " + name + " requests more memory than remains after huge pages; move workloads off it through disruption budgets first")
+	return requested - (allocatable - max(0, 2*(1<<30)-counted)), nil
+}
+
+// verifyRefreshFits holds a kubelet restart that would shrink allocatable memory
+// below what the worker's Pods already request. A restarting kubelet admits its Pods
+// again, and one that no longer fits is rejected outright, past any disruption budget.
+func verifyRefreshFits(n object, pods []object) error {
+	excess, err := refreshExcess(n, pods)
+	if err != nil {
+		return err
+	}
+	if excess > 0 {
+		return errors.New("worker " + text(n, "metadata", "name") + " requests more memory than remains after huge pages")
 	}
 	return nil
 }

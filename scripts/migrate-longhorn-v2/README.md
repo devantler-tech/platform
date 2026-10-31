@@ -33,9 +33,19 @@ from temporary capacity, and retire temporary workers in a later reviewed step.
 Dispatch only the merged workflow on `main`. First select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
 restarts only kubelet where capacity is stale, and requires every worker to report
-2 GiB of 2 MiB huge pages. Containers and disks are preserved. A restart holds while the
-worker's Pods request more memory than would remain after huge pages, because
-kubelet would reject the excess outright; move those workloads off first.
+2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
+any Pod that no longer fits once huge pages count, so when a worker's Pods request
+too much, it first moves the fewest Pods that make them fit, largest first. Only
+Deployment Pods with no data of their own qualify: no claim, scratch or host volume,
+outside the cluster, storage and Flux namespaces. The worker stays cordoned, under a
+`longhorn-v2-refresh-<worker>` ownership annotation, until kubelet reports the smaller
+allocatable; otherwise moved Pods could return. Each move is an eviction, so disruption
+budgets decide, and the next Pod leaves only once the workload is back at its Ready
+count. It holds before cordoning when the qualifying Pods cannot cover the difference
+or no other schedulable worker has room. A refused move or a Pod that came back
+releases the cordon with no restart. An unproven restart keeps the cordon, and so does
+an interrupted run, which fails the next deployment's node readback: dispatch
+`refresh-clients` again, which adopts only that worker's own cordon and releases it.
 
 Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
 temporary replica storage. The pinned fio 3.41 image runs eighteen 4 KiB direct
