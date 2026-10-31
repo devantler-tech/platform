@@ -1,0 +1,11 @@
+# Host prerequisites only. The protected preparation workflow verifies actual
+# allocation and restarts kubelet only where huge-page capacity is stale.
+# Longhorn V2 activation remains a separate, reviewed storage change.
+machine:
+  sysctls:
+    vm.nr_hugepages: "1024"
+  kernel:
+    modules:
+      - name: nvme_tcp
+      - name: vfio_pci
+      - name: uio_pci_generic

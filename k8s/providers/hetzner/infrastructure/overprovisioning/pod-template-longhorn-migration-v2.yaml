@@ -1,0 +1,40 @@
+# Virtual native demand for the fixed V2 pool; no Pod is instantiated.
+apiVersion: v1
+kind: PodTemplate
+metadata:
+  name: longhorn-migration-v2
+  namespace: overprovisioning
+  annotations:
+    checkov.io/skip1: "CKV_K8S_8=virtual scheduling placeholder, never instantiated"
+    checkov.io/skip2: "CKV_K8S_9=virtual scheduling placeholder, never instantiated"
+template:
+  metadata:
+    labels:
+      app.kubernetes.io/name: longhorn-migration-v2
+  spec:
+    automountServiceAccountToken: false
+    terminationGracePeriodSeconds: 0
+    nodeSelector:
+      storage.platform.devantler.tech/migration-pool: v2
+    containers:
+      - name: pause
+        image: registry.k8s.io/pause:3.10@sha256:ee6521f290b2168b6e0935a181d4cff9be1ac3f505666ef0e3c98fae8199917a
+        resources:
+          requests:
+            cpu: "4"
+            memory: 8Gi
+          limits:
+            cpu: "4"
+            memory: 8Gi
+        securityContext:
+          allowPrivilegeEscalation: false
+          privileged: false
+          runAsNonRoot: true
+          runAsUser: 65534
+          runAsGroup: 65534
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+          seccompProfile:
+            type: RuntimeDefault

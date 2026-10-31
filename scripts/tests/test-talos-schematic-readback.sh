@@ -34,11 +34,16 @@ if [[ -z "$update_line" || -z "$stability_line" || -z "$readback_line" ]] ||
 fi
 
 tmp_dir=$(mktemp -d)
-trap 'rm -f "$tmp_dir/kubectl" "$tmp_dir/nodes.json" "$tmp_dir/changed.json" "$tmp_dir/first-used"; rmdir "$tmp_dir"' EXIT
+trap 'rm -f "$tmp_dir/kubectl" "$tmp_dir/nodes.json" "$tmp_dir/changed.json" "$tmp_dir/first-used" "$tmp_dir/journal.json" "$tmp_dir/held.out"; rmdir "$tmp_dir"' EXIT
 mock_kubectl="$tmp_dir/kubectl"
 cat >"$mock_kubectl" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
+if [[ "$*" == "--context admin@prod --request-timeout=15s get configmap longhorn-v2-prepare-prod-worker-1 --namespace=longhorn-system -o json" ]]; then
+  [[ -n "${MOCK_JOURNAL_FILE:-}" ]] || exit 1
+  cat "$MOCK_JOURNAL_FILE"
+  exit 0
+fi
 [[ "$*" == "${MOCK_EXPECTED_ARGS:---context admin@prod --request-timeout=15s get nodes -o json}" ]] || exit 64
 if [[ -n "${MOCK_FIRST_NODES_FILE:-}" && ! -f "$MOCK_FIRST_USED_MARKER" ]]; then
   : >"$MOCK_FIRST_USED_MARKER"
@@ -74,6 +79,10 @@ jq -n --arg schematic "$desired_schematic" --arg version "$desired_version" --ar
     }),
     (node("autoscale-longhorn-v1-fedcba9876543210") | .metadata.labels = {
       "storage.platform.devantler.tech/migration-pool": "v1",
+      "node.kubernetes.io/instance-type": "cpx42"
+    }),
+    (node("autoscale-longhorn-v2-0123456789abcdef") | .metadata.labels = {
+      "storage.platform.devantler.tech/migration-pool": "v2",
       "node.kubernetes.io/instance-type": "cpx42"
     })
   ])}
@@ -121,6 +130,41 @@ MOCK_NODES_FILE="$tmp_dir/nodes.json" MOCK_FIRST_NODES_FILE="$tmp_dir/changed.js
 jq '.items[0].spec.unschedulable = true' \
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a cordoned node'
+
+journal_for() {
+  jq -n --arg phase "$1" --arg uid "$2" '{data: {record: ({schema: 1, target: "prod-worker-1", phase: $phase, nodeUID: $uid} | tojson)}}'
+}
+jq '(.items[] | select(.metadata.name == "prod-worker-1")) |= (.spec.unschedulable = true | .metadata.uid = "worker-1-uid" |
+  .metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = "longhorn-v2-prepare-prod-worker-1")' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a preparation cordon without its journal'
+journal_for draining worker-1-uid >"$tmp_dir/journal.json"
+MOCK_JOURNAL_FILE="$tmp_dir/journal.json" run_readback "$tmp_dir/changed.json" >"$tmp_dir/held.out"
+grep -Fq 'HELD: prod-worker-1' "$tmp_dir/held.out" || {
+  printf 'readback did not report the journal-held worker\n' >&2
+  exit 1
+}
+export MOCK_JOURNAL_FILE="$tmp_dir/journal.json"
+assert_rejected_with_journal() {
+  journal_for "$2" "$3" >"$tmp_dir/journal.json"
+  assert_rejected "$1"
+}
+assert_rejected_with_journal 'a journal bound to another node identity' draining other-uid
+assert_rejected_with_journal 'a completed journal keeping a cordon' prepared worker-1-uid
+journal_for draining worker-1-uid >"$tmp_dir/journal.json"
+jq '(.items[] | select(.metadata.name == "prod-worker-2")).spec.unschedulable = true' "$tmp_dir/changed.json" >"$tmp_dir/two.json"
+mv "$tmp_dir/two.json" "$tmp_dir/changed.json"
+assert_rejected 'a second cordon beside a journal-held worker'
+jq '(.items[] | select(.metadata.name == "prod-worker-1")).metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = "foreign"' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+jq '(.items[] | select(.metadata.name == "prod-worker-1")).spec.unschedulable = true' "$tmp_dir/changed.json" >"$tmp_dir/foreign.json"
+mv "$tmp_dir/foreign.json" "$tmp_dir/changed.json"
+assert_rejected 'a cordon owned by another operation'
+jq '(.items[] | select(.metadata.name == "prod-control-plane-2")) |= (.spec.unschedulable = true |
+  .metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = "longhorn-v2-prepare-prod-worker-1")' \
+  "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
+assert_rejected 'a cordoned non-worker carrying a preparation annotation'
+unset MOCK_JOURNAL_FILE
 
 jq '.items |= map(select(.metadata.name != "prod-worker-1"))' "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 assert_rejected 'a missing static worker'
