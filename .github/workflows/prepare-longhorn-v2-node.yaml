@@ -1,0 +1,150 @@
+name: Prepare Longhorn V2 Migration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/prepare-longhorn-v2-node.yaml
+      - scripts/migrate-longhorn-v2/**
+      - talos/workers/reserve-longhorn-data.yaml
+      - talos/workers/reserve-ephemeral-space.yaml
+  merge_group:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Refresh clients, benchmark, enable temporary storage or rebuild a worker
+        required: true
+        type: choice
+        options: [prepare-worker, enable-capacity, refresh-clients, benchmark-v1, benchmark-v2]
+      node:
+        description: Permanent storage worker for prepare-worker only
+        required: false
+        type: choice
+        options: [prod-worker-1, prod-worker-2, prod-worker-3]
+      pool:
+        description: Migration pool for enable-capacity only
+        required: false
+        type: choice
+        options: [v1, v2]
+      confirm:
+        description: "Type the exact confirmation documented for the selected operation"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  tests:
+    name: Validate storage reset and recovery boundaries
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Test complete observations, reset scope and interrupted recovery
+        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2
+
+  prepare:
+    name: Run the selected guarded migration step
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    needs: tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    environment: prod
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: prod-deploy
+      cancel-in-progress: false
+      queue: max
+    env:
+      LONGHORN_V2_NODE: ${{ inputs.node }}
+      LONGHORN_V2_OPERATION: ${{ inputs.operation }}
+      LONGHORN_V2_POOL: ${{ inputs.pool }}
+      LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Require confirmed first attempt on main
+        shell: bash
+        env:
+          DISPATCH_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
+          case "${LONGHORN_V2_OPERATION}" in
+            prepare-worker)
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
+              ;;
+            enable-capacity)
+              [[ "${LONGHORN_V2_POOL}" =~ ^v[12]$ && "${LONGHORN_V2_CONFIRM}" == "enable-longhorn-migration-capacity-${LONGHORN_V2_POOL}" ]]
+              ;;
+            refresh-clients)
+              [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]
+              ;;
+            benchmark-v1|benchmark-v2)
+              [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
+              ;;
+            *) exit 1 ;;
+          esac
+      - name: Checkout reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+      - name: Require current main
+        run: ./scripts/verify-prod-recovery-source.sh "${GITHUB_SHA}"
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Install verified Talos client
+        run: .github/scripts/setup-talosctl.sh
+      - name: Install verified Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="${RUNNER_TEMP}/longhorn-v2-kubectl"
+          curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "${kubectl_path}"
+          printf '%s  %s\n' "${KUBECTL_SHA256}" "${kubectl_path}" | sha256sum --check
+          sudo install "${kubectl_path}" /usr/local/bin/kubectl
+      - name: Restore production credentials in memory
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          TALOS_CONFIG: ${{ secrets.TALOS_CONFIG }}
+        run: |
+          set -euo pipefail
+          test -n "${KUBE_CONFIG}" && test -n "${TALOS_CONFIG}"
+          umask 077
+          credential_dir=$(mktemp -d /dev/shm/longhorn-v2.XXXXXX)
+          printf '%s' "${KUBE_CONFIG}" >"${credential_dir}/kubeconfig"
+          printf '%s' "${TALOS_CONFIG}" >"${credential_dir}/talosconfig"
+          printf 'KUBECONFIG=%s/kubeconfig\nTALOSCONFIG=%s/talosconfig\nLONGHORN_V2_CREDENTIAL_DIR=%s\n' "${credential_dir}" "${credential_dir}" "${credential_dir}" >>"${GITHUB_ENV}"
+      - name: Select stable production API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh
+      - name: Run the confirmed migration preparation
+        run: go run ./scripts/migrate-longhorn-v2
+      - name: Remove runner credentials
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -n "${LONGHORN_V2_CREDENTIAL_DIR:-}" && "${LONGHORN_V2_CREDENTIAL_DIR}" == /dev/shm/longhorn-v2.* ]]; then
+            rm -rf -- "${LONGHORN_V2_CREDENTIAL_DIR}"
+          fi

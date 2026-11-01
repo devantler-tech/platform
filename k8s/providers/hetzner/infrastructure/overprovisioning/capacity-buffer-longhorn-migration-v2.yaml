@@ -1,0 +1,11 @@
+# Demand for the third V2 replica target during permanent-worker rebuilds.
+# Retire this virtual buffer after the node has its owned storage pin.
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: longhorn-migration-v2
+  namespace: overprovisioning
+spec:
+  replicas: 1
+  podTemplateRef:
+    name: longhorn-migration-v2
