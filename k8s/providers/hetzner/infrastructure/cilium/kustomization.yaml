@@ -3,3 +3,9 @@ kind: Kustomization
 resources:
   - cilium-clusterwide-network-policy-deny-instance-metadata-egress.yaml
   - gateway-receiver
+components:
+  # Every public TLS chain accepts only the load balancer's private address.
+  # Protected deployment installs and verifies it; see
+  # docs/operations/gateway-receiver-boundary.md. Reverting this selection is
+  # the recovery: main's deployment then removes the bindings and the fields.
+  - gateway-receiver/components/physical-peer-fence

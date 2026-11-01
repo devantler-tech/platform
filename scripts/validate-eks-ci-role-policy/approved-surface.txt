@@ -12,7 +12,11 @@
 # validates the combined render. Evidence for approvals made before this file existed is in
 # approved-surface-history.md.
 
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||gateway-receiver 835871036a393f9eed5a90088ec575937b8c8a45393967166b1fa3c15aac2289
+
 admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver a4a3b3d2542e5aaa30b8292700f2da9076b5d80a191140e0b669da75ba2fc36c
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 02e679b3bede26c8ef6793955787d34b266667cafe41636288c87e1fcb83d339
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver e2e83b89e86fad51327edf783f7ae9c991ae5cc41b369ad22b98f2ef308d25b3
 

@@ -2,11 +2,10 @@
 
 # Gateway receiver binding
 
-This revision prepares an encrypted provider binding and **unbound** native
-admission policies. It changes no listener matching or forwarding protocol.
-Both provider and receiver PROXY settings remain explicitly disabled. Selecting
-the physical-peer component is a later reviewed activation, after this disabled
-baseline and its recovery path have merged and deployed.
+An encrypted provider binding and native admission policies fence the application
+Gateway. Every TLS chain accepts only the load balancer's private address. The
+forwarding protocol does not change: provider and receiver PROXY settings remain
+explicitly disabled, and turning them on is a later reviewed activation.
 
 The fence uses Envoy's `direct_source_prefix_ranges` on every TLS
 filter chain. This matches the physical connection peer independently of any
@@ -19,9 +18,9 @@ The mutating and validating policies target only the declared application
 Gateway's generated CiliumEnvoyConfig. They preserve its existing plain HTTP
 chain and other resources, require every TLS chain to use the same exact host
 prefix, and reject fallback chains, alternate matchers and protobuf field aliases
-that could evade that check. No global webhook selector is widened. The policies
-remain unbound until the separate `components/physical-peer-fence` component is
-explicitly selected.
+that could evade that check. No global webhook selector is widened. The
+`components/physical-peer-fence` component binds them, and the Hetzner Cilium
+layer selects it.
 
 ## Prepare or replace the binding
 
@@ -83,7 +82,7 @@ TLS chain. A revision that goes back to unselected, including main's recovery af
 a failed activation, removes the fence as before. A failed render, missing
 policies or a partial or foreign binding fails without a write.
 
-Selecting the component is still a separate activation. Admission applies only when
+Admission applies only when
 the generated listener is written, and the controller does not rewrite an unchanged
 listener. So between those two steps, `apply-selected` waits a bounded time for the
 reviewed policies and bindings, which arrive with the later `infrastructure` Flux

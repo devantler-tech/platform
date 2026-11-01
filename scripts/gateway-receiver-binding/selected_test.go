@@ -111,15 +111,15 @@ func TestRealRendersSeeASelectionFromAnyLevel(t *testing.T) {
 	}
 }
 
-func TestReviewedLayerStillLeavesTheFenceUnselected(t *testing.T) {
+func TestReviewedLayerSelectsTheFence(t *testing.T) {
 	t.Chdir(filepath.Join("..", ".."))
 	rendered, err := renderLayer(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	selected, err := fenceSelected(rendered)
-	if err != nil || selected {
-		t.Fatalf("selected=%v err=%v: selecting the fence is a separate reviewed activation", selected, err)
+	if err != nil || !selected {
+		t.Fatalf("selected=%v err=%v: main deploys the fence, and unselecting it is a reviewed recovery", selected, err)
 	}
 }
 
