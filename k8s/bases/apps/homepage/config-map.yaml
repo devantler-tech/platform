@@ -221,6 +221,18 @@ data:
             icon: hetzner
             href: https://console.hetzner.cloud/projects
             description: Hetzner Cloud infrastructure provider.
+        - Azure:
+            icon: azure.svg
+            href: https://portal.azure.com/
+            description: Microsoft Azure management portal.
+        - AWS:
+            icon: aws.svg
+            href: https://console.aws.amazon.com/
+            description: Amazon Web Services management console.
+        - Google Cloud:
+            icon: google-cloud.svg
+            href: https://console.cloud.google.com/
+            description: Google Cloud management console.
     - Network:
         - Cloudflare:
             icon: cloudflare
