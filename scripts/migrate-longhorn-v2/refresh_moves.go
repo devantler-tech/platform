@@ -291,6 +291,17 @@ func podListed(pods []object, uid string) bool {
 	return false
 }
 
+// podLeaving is true once the Pod is gone or terminating, which is what an accepted
+// eviction leaves behind.
+func podLeaving(pods []object, uid string) bool {
+	for _, pod := range pods {
+		if text(pod, "metadata", "uid") == uid {
+			return value(pod, "metadata", "deletionTimestamp") != nil
+		}
+	}
+	return true
+}
+
 // movePod asks for an eviction, so disruption budgets decide, and waits until the
 // workload is back at its Ready count before the next Pod may leave.
 func (c client) movePod(ctx context.Context, pod object, pods []object) error {
@@ -323,14 +334,17 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 			}
 			// A lost response can hide a success, and a retry would then only report the Pod missing.
 			live, listErr := c.list(ctx, "pods", namespace)
-			if listErr == nil && !podListed(live, uid) {
+			if listErr != nil {
+				// Never evict on an unread state: this attempt only retries the read.
+				err = listErr
+				continue
+			}
+			if podLeaving(live, uid) {
 				err = nil
 				break
 			}
-			if listErr == nil {
-				if err = keepsServing(live); err != nil {
-					return err
-				}
+			if err = keepsServing(live); err != nil {
+				return err
 			}
 		}
 		if _, err = c.kubectl(ctx, eviction, "create", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+name+"/eviction", "-f", "-"); err == nil {

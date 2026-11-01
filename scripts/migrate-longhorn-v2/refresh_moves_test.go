@@ -31,6 +31,8 @@ type refreshCluster struct {
 	loseUncordon   bool
 	onEvict        func()
 	onRestart      func()
+	onPodsRead     func()
+	failPodReads   int
 }
 
 func movablePodOnWorker(worker, name, memory, owner string) object {
@@ -68,9 +70,9 @@ func withPeers(pods []object) []object {
 }
 
 func newRefreshCluster(t *testing.T, pods ...object) *refreshCluster {
-	delay, poll := refreshRetryDelay, readinessPoll
-	refreshRetryDelay, readinessPoll = time.Millisecond, time.Millisecond
-	t.Cleanup(func() { refreshRetryDelay, readinessPoll = delay, poll })
+	delay, poll, settle := refreshRetryDelay, readinessPoll, refreshSettle
+	refreshRetryDelay, readinessPoll, refreshSettle = time.Millisecond, time.Millisecond, 20*time.Millisecond
+	t.Cleanup(func() { refreshRetryDelay, readinessPoll, refreshSettle = delay, poll, settle })
 	return &refreshCluster{t: t, node: refreshWorker(), spare: spareWorker(), pods: withPeers(pods)}
 }
 
@@ -169,6 +171,13 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 		case call[0] == "get" && call[1] == "nodes":
 			return f.list(f.node, f.spare)
 		case call[0] == "get" && call[1] == "pods":
+			if f.onPodsRead != nil {
+				f.onPodsRead()
+			}
+			if f.failPodReads > 0 {
+				f.failPodReads--
+				return nil, errors.New("external command failed")
+			}
 			switch f.leaving {
 			case 3:
 				f.leaving--
@@ -643,5 +652,58 @@ func TestAProvenCordonIsReleasedAheadOfOtherGates(t *testing.T) {
 		if len(f.events) != 0 {
 			t.Fatalf("%s: released: %v", name, f.events)
 		}
+	}
+}
+
+func TestARejectionAfterCapacityIsProvenStillFailsTheRun(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	reads := -1
+	f.onRestart = func() { reads = 0 }
+	f.onPodsRead = func() {
+		if reads >= 0 {
+			if reads++; reads == 3 {
+				f.pods[0]["status"].(object)["phase"] = "Failed"
+				f.pods[0]["status"].(object)["reason"] = "OutOfmemory"
+			}
+		}
+	}
+	refreshSettle = 2 * time.Second
+	if err := f.refresh(context.Background()); err == nil {
+		t.Fatal("a rejection during the settling window was reported as success")
+	}
+	if slices.Contains(f.events, "uncordon") {
+		t.Fatalf("the cordon was released after a rejection: %v", f.events)
+	}
+}
+
+func TestAnUnreadRetryNeverEvicts(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	pod := f.pods[1]
+	f.refuseEviction = true
+	first := true
+	f.onEvict = func() {
+		if first {
+			first = false
+			f.failPodReads = 1000
+		}
+	}
+	err := client{run: f.run, context: "admin@prod"}.movePod(context.Background(), pod, f.pods)
+	if err == nil {
+		t.Fatal("a refused eviction was reported as moved")
+	}
+	if len(f.evictions) != 1 {
+		t.Fatalf("evicted %d times with no fresh read of the workload", len(f.evictions))
+	}
+}
+
+func TestATerminatingPodCountsAsMovedAfterALostResponse(t *testing.T) {
+	gone := object{"metadata": object{"uid": "a", "deletionTimestamp": "2026-11-01T00:00:00Z"}}
+	if !podLeaving([]object{gone}, "a") || !podLeaving(nil, "a") {
+		t.Fatal("a terminating or missing Pod was not treated as leaving")
+	}
+	if podLeaving([]object{{"metadata": object{"uid": "a"}}}, "a") {
+		t.Fatal("a running Pod was treated as leaving")
 	}
 }

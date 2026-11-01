@@ -31,12 +31,15 @@ worker, so reduce requests or move those workloads by a reviewed change first. A
 that never turns Ready, or a Pod that came back releases the cordon with no restart. An
 unproven restart keeps the cordon, and so does an interrupted run, which fails the next
 deployment's node readback: dispatch `refresh-clients` again. It adopts only that worker's
-own cordon. Once kubelet reports the smaller allocatable it releases that cordon before any
-other check; otherwise that worker goes first, after the volume and roster checks, so
-unhealthy storage leaves the cordon in place until it recovers.
+own cordon. Once kubelet reports the smaller allocatable it releases that cordon before the
+roster and volume checks; otherwise that worker goes first, after those checks, so unhealthy
+storage leaves the cordon in place until it recovers. A later run that holds before restarting
+releases the earlier cordon.
 
 The restart holds under node pressure, and when Pods that landed since the first measurement
-no longer fit. A Pod that kubelet rejects after the restart fails the run and keeps any cordon.
+no longer fit. For two minutes after kubelet reports its new capacity, a rejected Pod or a Pod
+that was running and has gone fails the run and keeps any cordon. Ordinary Pod churn can trip
+this too; check the worker, then dispatch again.
 
 Each Kubernetes patch tests the observed UID and resource version, and Pod evictions
 carry a UID precondition. Talos reads must report the same hardware UUID as the selected

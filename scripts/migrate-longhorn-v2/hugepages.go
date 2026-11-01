@@ -121,6 +121,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if n, _, err = get(); err != nil {
 		return err
 	}
+	if !workerPressureClear(n) {
+		return errors.New("worker " + text(n, "metadata", "name") + " reports resource pressure; a kubelet refresh would not clear it")
+	}
 	// Pods can land after the first measurement, with or without a cordon.
 	before, err := c.list(ctx, "pods", "*")
 	if err != nil {
@@ -142,11 +145,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	}); err != nil {
 		return err
 	}
-	after, err := c.list(ctx, "pods", "*")
-	if err != nil {
-		return err
-	}
-	if err = verifyNoNewRejections(j.Target, before, after); err != nil {
+	if err = c.watchRestartedPods(ctx, j.Target, before); err != nil {
 		return err
 	}
 	if held {
@@ -155,12 +154,46 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	return nil
 }
 
-// verifyNoNewRejections fails when the restart made kubelet reject a Pod it was running.
-func verifyNoNewRejections(name string, before, after []object) error {
+// refreshSettle is how long Pods are watched after kubelet reports its new capacity.
+// Node status and Pod admission are separate kubelet paths, so capacity alone proves
+// nothing about Pods.
+var refreshSettle = 2 * time.Minute
+
+func (c client) watchRestartedPods(ctx context.Context, name string, before []object) error {
+	settled := time.Now().Add(refreshSettle)
+	for {
+		after, err := c.list(ctx, "pods", "*")
+		if err != nil {
+			return err
+		}
+		if err = verifyRestartKeptPods(name, before, after); err != nil {
+			return err
+		}
+		if !time.Now().Before(settled) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(readinessPoll):
+		}
+	}
+}
+
+// verifyRestartKeptPods fails when a Pod running before the restart was rejected or is
+// gone. A controller can delete a rejected Pod, so a missing one is not proof of health;
+// ordinary churn can also trip this, and the next dispatch passes once capacity is proven.
+func verifyRestartKeptPods(name string, before, after []object) error {
+	if len(after) == 0 {
+		return errors.New("the Pods kept by a kubelet restart cannot be proven from an empty inventory")
+	}
 	failed := map[string]bool{}
 	for _, pod := range before {
 		if text(pod, "status", "phase") == "Failed" {
 			failed[text(pod, "metadata", "uid")] = true
+		}
+		if text(pod, "spec", "nodeName") == name && text(pod, "status", "phase") == "Running" && !podListed(after, text(pod, "metadata", "uid")) {
+			return errors.New("a Pod running on " + name + " before its restart is gone")
 		}
 	}
 	for _, pod := range after {
@@ -175,7 +208,7 @@ func verifyNoNewRejections(name string, before, after []object) error {
 	return nil
 }
 
-// releaseProvenRefreshCordons runs ahead of every other gate. Once kubelet reports the
+// releaseProvenRefreshCordons runs ahead of the roster and volume checks. Once kubelet reports the
 // smaller allocatable the cordon protects nothing, so an unrelated hold must not keep it.
 func (c client) releaseProvenRefreshCordons(ctx context.Context, nodes []object) error {
 	for _, n := range nodes {

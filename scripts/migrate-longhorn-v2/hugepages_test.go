@@ -11,6 +11,9 @@ import (
 )
 
 func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testing.T) {
+	settle := refreshSettle
+	refreshSettle = 0
+	t.Cleanup(func() { refreshSettle = settle })
 	for _, alreadyReady := range []bool{false, true} {
 		t.Run(map[bool]string{false: "restart needed", true: "already ready"}[alreadyReady], func(t *testing.T) {
 			n := nodeFixture()
@@ -203,17 +206,23 @@ func TestRefreshFitSubtractsOnlyUncountedHugepages(t *testing.T) {
 	}
 }
 
-func TestRefreshReportsPodsItsRestartRejected(t *testing.T) {
+func TestRefreshJudgesThePodsARestartKept(t *testing.T) {
 	pod := func(uid, node, phase, reason string) object {
 		return object{"metadata": object{"uid": uid}, "spec": object{"nodeName": node}, "status": object{"phase": phase, "reason": reason}}
 	}
 	before := []object{pod("old-failure", "prod-worker-1", "Failed", "OutOfmemory"), pod("kept", "prod-worker-1", "Running", "")}
-	if err := verifyNoNewRejections("prod-worker-1", before, append(before, pod("job", "prod-worker-1", "Failed", "Error"), pod("elsewhere", "prod-worker-2", "Failed", "OutOfmemory"))); err != nil {
+	if err := verifyRestartKeptPods("prod-worker-1", before, append(before, pod("job", "prod-worker-1", "Failed", "Error"), pod("elsewhere", "prod-worker-2", "Failed", "OutOfmemory"))); err != nil {
 		t.Fatal(err)
 	}
 	for _, reason := range []string{"OutOfmemory", "OutOfcpu", "UnexpectedAdmissionError"} {
-		if err := verifyNoNewRejections("prod-worker-1", before, []object{pod("kept", "prod-worker-1", "Failed", reason)}); err == nil {
+		if err := verifyRestartKeptPods("prod-worker-1", before, []object{pod("kept", "prod-worker-1", "Failed", reason)}); err == nil {
 			t.Fatal("rejected Pod passed: " + reason)
 		}
+	}
+	if err := verifyRestartKeptPods("prod-worker-1", before, []object{pod("other", "prod-worker-2", "Running", "")}); err == nil {
+		t.Fatal("a Pod that vanished after the restart passed")
+	}
+	if err := verifyRestartKeptPods("prod-worker-1", before[:1], nil); err == nil {
+		t.Fatal("an empty inventory passed")
 	}
 }
