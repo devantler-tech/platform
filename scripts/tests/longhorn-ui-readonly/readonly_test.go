@@ -121,6 +121,12 @@ var requests = []struct {
 }{
 	{"GET", "/", true}, {"HEAD", "/index.html", true}, {"GET", "/v1/volumes", true}, {"GET", "/v1/nodes", true}, {"GET", "/v1/ws/volumes", true},
 	{"GET", "/index.abc123.js", true}, {"GET", "/static/logo.abc123.svg", true}, {"GET", "/favicon.ico", true},
+	// Actual v1.13.0 asset URLs observed in the deployed HTML shell.
+	{"GET", "/runtime~main.6d7bda24.js?697c2a38c2a3b317069c", true},
+	{"GET", "/styles.beeabb27.async.js?697c2a38c2a3b317069c", true},
+	{"GET", "/main.5284f33a.async.js?697c2a38c2a3b317069c", true},
+	{"GET", "/styles.css?697c2a38c2a3b317069c", true},
+	{"POST", "/runtime~main.6d7bda24.js", false}, {"GET", "/v1/runtime~main.js", false},
 	{"GET", "/v1", true}, {"GET", "/v1/schemas", true}, {"GET", "/v1/settings?limit=100", true},
 	{"GET", "/v1/ws/1s/volumes", true}, {"GET", "/v1/ws/5s/snapshotgroups", true},
 	{"GET", "/v1/supportbundles/node/bundle/download", false}, {"HEAD", "/v1/supportbundles/node/bundle/download", false},

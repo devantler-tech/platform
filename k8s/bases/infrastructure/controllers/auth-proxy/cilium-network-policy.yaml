@@ -37,9 +37,9 @@ spec:
               - method: "^(GET|HEAD)$"
                 path: '^/([?].*)?$'
               - method: "^(GET|HEAD)$"
-                path: '^/[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*[.](html|js|css|json|map|ico)([?].*)?$'
+                path: '^/[A-Za-z0-9_~-]+([.][A-Za-z0-9_~-]+)*[.](html|js|css|json|map|ico)([?].*)?$'
               - method: "^(GET|HEAD)$"
-                path: '^/[A-Za-z0-9_-]+([.][A-Za-z0-9_-]+)*[.](svg|png|jpe?g|gif|webp|woff2?|ttf|eot)([?].*)?$'
+                path: '^/[A-Za-z0-9_~-]+([.][A-Za-z0-9_~-]+)*[.](svg|png|jpe?g|gif|webp|woff2?|ttf|eot)([?].*)?$'
               - method: "^(GET|HEAD)$"
                 path: '^/(static|assets|fonts|images)/[A-Za-z0-9_-]+([./][A-Za-z0-9_-]+)*([?].*)?$'
               - method: "^(GET|HEAD)$"
