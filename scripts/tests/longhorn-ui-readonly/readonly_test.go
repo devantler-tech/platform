@@ -184,6 +184,15 @@ func TestLonghornNetworkBoundaryAllowsReadsAndRefusesWrites(t *testing.T) {
 		// Go's instruction count is an estimate, so retain a margin and still
 		// require the live policy and browser acceptance after deployment.
 		for _, rule := range httpRules {
+			// Each existing path/method grant repairs only scheme metadata.
+			// A header-only rule would authorize unrelated requests.
+			headers := list(rule, "headerMatches")
+			if len(headers) != 1 || len(headers[0].(object)) != 3 || field(headers[0], "name") != "X-Forwarded-Proto" || field(headers[0], "value") != "https" || field(headers[0], "mismatch") != "REPLACE" {
+				t.Fatalf("%s must restore HTTPS after its plaintext inspection hop", boundary.name)
+			}
+			if field(rule, "method") == nil || field(rule, "path") == nil {
+				t.Fatal("scheme repair must not add a header-only access rule")
+			}
 			path, _ := field(rule, "path").(string)
 			expression, err := syntax.Parse(path, syntax.Perl)
 			if err != nil {
