@@ -147,6 +147,8 @@ func runSocketProbeFixture(ctx context.Context, args []string, address string, a
 	return out, err
 }
 
+// TestProbeRetainsItsWriteSideUntilTheResponse observes an EOF-sensitive server
+// with a deliberate half-close control, rather than assuming nc's behavior.
 func TestProbeRetainsItsWriteSideUntilTheResponse(t *testing.T) {
 	for _, halfClose := range []bool{false, true} {
 		t.Run(strconv.FormatBool(halfClose), func(t *testing.T) {

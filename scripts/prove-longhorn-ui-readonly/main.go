@@ -141,6 +141,8 @@ func javascriptContentType(out []byte) bool {
 	return err == nil && (mediaType == "application/javascript" || mediaType == "text/javascript")
 }
 
+// main confines probes to the first confirmed reviewed-main dispatch and bounds
+// the complete request set without forwarding private command diagnostics.
 func main() {
 	if os.Getenv("GITHUB_ACTIONS") != "true" || os.Getenv("GITHUB_REF") != "refs/heads/main" || os.Getenv("GITHUB_RUN_ATTEMPT") != "1" || os.Getenv("LONGHORN_UI_READ_PROOF_CONFIRM") != "prove-longhorn-ui-readonly" {
 		fmt.Fprintln(os.Stderr, "refusing probe outside the first confirmed reviewed-main dispatch")
