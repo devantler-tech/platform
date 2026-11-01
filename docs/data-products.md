@@ -75,11 +75,15 @@ also pass.
 The receipt binds the deployed digests to the image and chart declared in this checkout,
 and the publisher state to its Deployment, current ReplicaSet and serving Pods. Withdrawal
 permits an absent or literal false flag and requires its pages to return 404; indirect,
-duplicate and malformed flag declarations are refused. No product may declare `spec.ui`,
-and the sample's Deployment, current ReplicaSet and Pods may not carry the retired KSail
+duplicate and malformed flag declarations are refused. The two named products may not
+declare `spec.ui`, and the sample's Deployment, current ReplicaSet and Pods may not carry the retired KSail
 flag. When KSail releases are delisted, the receipt requires the descriptor to be absent;
 an unreadable resource is a refusal, not proof of withdrawal. It performs no GitHub source
 read; that check belongs to the consumer browser.
+
+The receipt also counts products across every namespace as `productsInventoried` and those
+still declaring `spec.ui` as `productsDeclaringUI`. These counts report and do not gate, and
+`productInventory: unavailable` means the list was not read, never that the count is zero.
 
 Finish in a browser: read a product through the authenticated registry, query an output
 from a separate application, and load a report in publisher review, including Light and

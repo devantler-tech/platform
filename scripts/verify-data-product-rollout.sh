@@ -136,10 +136,15 @@ remaining() {
   left=$((deadline - SECONDS))
   [[ $left -gt 0 ]] || fail deadline_exceeded
 }
-# bounded runs one read within the remaining budget and reaps its process group.
-bounded() {
-  local result=0
-  remaining
+# bounded_optional runs one read for at most LIMIT seconds of the remaining budget and
+# reaps its process group. Reaching either limit fails that read and leaves the verdict
+# to the caller.
+bounded_optional() {
+  local result=0 limit=$1
+  shift
+  left=$((deadline - SECONDS))
+  ((left > 0)) || return 1
+  ((limit >= left)) || left=$limit
   "$@" &
   active=$!
   (
@@ -154,6 +159,13 @@ bounded() {
   kill -KILL -- "-$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
   watchdog=''
+  return "$result"
+}
+# bounded runs one required read and refuses the rollout at the shared deadline.
+bounded() {
+  local result=0
+  remaining
+  bounded_optional "$left" "$@" || result=$?
   remaining
   return "$result"
 }
@@ -581,6 +593,16 @@ read_resource() {
   printf '%s read_incomplete\n' "$role" >"$scratch/read-failure"
   bounded project_read "$role" "$directory/$role.json" "$allow_absent" "${args[@]}" || fail read_incomplete
 }
+# inventory_products counts every namespace's products and those still declaring
+# the retired field. KHoist removes that field only after this reads zero (ADR 0024).
+# An empty list cannot be the inventory: the two named products were just read.
+inventory_products() {
+  kubectl --kubeconfig "$KUBECONFIG" --context "$context" --namespace "$namespace" --request-timeout 5s \
+    get dataproducts.data.devantler.tech --all-namespaces -o json 2>/dev/null |
+    jq -ce '.items as $items |
+      if ($items|type)!="array" or ($items|length)==0 or any($items[];(.spec|type)!="object") then error("invalid inventory")
+      else "\($items|length) \([$items[]|select(.spec|has("ui"))]|length)" end' -r >"$scratch/product-inventory" 2>/dev/null
+}
 # collect gathers every resource needed to judge a complete rollout snapshot.
 collect() {
   local directory=$1
@@ -884,6 +906,13 @@ if [[ "$expected_releases" == true ]]; then public_count=13; else public_count=1
 # retry cannot hide a dependency that keeps dropping them.
 retries_field=''
 if [[ -s "$scratch/public-retries" ]]; then retries_field=$(printf ',"publicRetries":%d' "$(wc -l <"$scratch/public-retries")"); fi
+# The inventory reports and does not gate: a product elsewhere must not refuse this
+# rollout. Only counts leave the verifier, and an unread inventory never reads as zero.
+inventory_field=',"productInventory":"unavailable"'
+if bounded_optional 10 inventory_products && read -r inventoried with_ui <"$scratch/product-inventory" && [[ "$inventoried" =~ ^[1-9][0-9]*$ && "$with_ui" =~ ^(0|[1-9][0-9]*)$ ]]; then
+  inventory_field=$(printf ',"productsInventoried":%d,"productsDeclaringUI":%d' "$inventoried" "$with_ui")
+fi
+retries_field+=$inventory_field
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then
