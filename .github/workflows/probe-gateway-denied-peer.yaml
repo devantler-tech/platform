@@ -1,0 +1,86 @@
+name: Probe Gateway Denied Peer
+
+# Answers the first question of #5448 stage 3: does the Gateway's TLS fence refuse a physical peer
+# that is not the load balancer? scripts/probe-gateway-denied-peer.sh carries the reasoning and the
+# verdicts.
+#
+# IT WRITES TO PRODUCTION while it runs: one CiliumNetworkPolicy and one pod in `whoami`, labelled
+# with this run's id and deleted on exit. No existing object is modified.
+#
+# KUBE_CONFIG has the established admin@prod pipeline identity. What bounds the job is the reviewed
+# script, the main-branch guard, the confirmation phrase and `contents: read`. The log carries only
+# counts, curl exit codes and the verdict. scripts/tests/test-probe-gateway-denied-peer.sh pins
+# this in CI's required `validate` job without a cluster.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: probe-production-gateway-denied-peer"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  # A deploy rewrites the listener and rolls Envoy, so serialise with every production deploy path.
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  probe:
+    name: Probe the Gateway with a peer that is not the load balancer
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the reviewed main branch and the confirmation
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [[ "${RUN_REF}" == refs/heads/main ]] || { printf 'Dispatch from reviewed main.\n' >&2; exit 1; }
+          [[ "${CONFIRM}" == probe-production-gateway-denied-peer ]] || { printf 'Wrong confirmation; nothing was read or written.\n' >&2; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          mkdir -p ~/.kube
+          umask 077
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Select stable prod API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      # The allowed half: the fence is in place and the load balancer's traffic is still answered.
+      - name: Verify the selected fence and the public routes
+        shell: bash
+        run: go run ./scripts/gateway-receiver-binding verify --context admin@prod
+
+      - name: Probe with a pod as the peer
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: ./scripts/probe-gateway-denied-peer.sh --context admin@prod --run-id "${RUN_ID}"

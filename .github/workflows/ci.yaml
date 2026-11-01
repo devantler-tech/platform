@@ -383,6 +383,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #5448 denied-peer probe, its test and its workflow are one contract:
+              # the test pins what the probe may write to production, that it cleans
+              # up, and that no address reaches the public log.
+              - 'scripts/probe-gateway-denied-peer.sh'
+              - 'scripts/tests/test-probe-gateway-denied-peer.sh'
+              - '.github/workflows/probe-gateway-denied-peer.yaml'
               # The #3144 admission probe, its test and its workflow are one
               # contract: the test pins that every write the probe sends is a
               # server-side dry run and that no identity reaches the public log.
@@ -2412,6 +2418,14 @@ jobs:
         run: |
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
+
+      - name: 🚧 Validate Gateway denied-peer probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod, runs only on dispatch and writes while it runs. Its
+        # test fakes kubectl and pins each verdict against a one-fixture control.
+        run: |
+          shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
+          bash scripts/tests/test-probe-gateway-denied-peer.sh
 
       - name: 🔏 Validate GitHub Team external-identity probe
         if: needs.changes.outputs.k8s == 'true'
