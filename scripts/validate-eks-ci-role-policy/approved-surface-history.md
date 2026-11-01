@@ -3965,3 +3965,19 @@ The new hash is taken from the required CI job, which rendered with the approved
 tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
 This record does not establish deployed acceptance or a successful publication
 by the new signer. Deploy this acceptance before `.github` moves to v19.0.3.
+
+## 2026-11-01 — Register the read-only Longhorn dashboard login
+
+For #5649, Dex's existing confidential client gains the two HTTPS callback
+forms for the Longhorn dashboard, with omitted and explicit default port 443.
+The issuer, client identity, credentials, maintainer-team restriction and all
+Kubernetes permissions remain unchanged. Browser traffic still passes through
+oauth2-proxy before reaching the read-only Longhorn request boundary.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly one
+existing entry, HelmRelease dex/dex, from
+`3db343919ffde305fc4eb68664e0c12ecd8fe618b2f19f28b60b3413bf9237d7` to
+`8adfcbd4795a9b0f36ede017fa76233f9ebf4c18305b42b7fa16e1a9f4e9ab5d`.
+No authorization resource is added or removed. This approval records the
+declared callback change; deployed login and read-only acceptance are separate
+runtime checks.
