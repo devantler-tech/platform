@@ -55,7 +55,10 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 		return err
 	}
 	live, err := d.owned(ctx, transfer)
-	if err != nil || text(child(live, "status"), "phase") != "Completed" {
+	if err != nil {
+		return err
+	}
+	if text(child(live, "status"), "phase") != "Completed" {
 		return errors.New("cleanup-transfer-not-complete")
 	}
 	err = waitRecovery(ctx, 2*time.Minute, func() (bool, error) {
@@ -89,11 +92,17 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 	// This fresh recovery point deliberately remains under Velero's 24-hour TTL.
 	// Only the disposable restored storage is removed by this invocation.
 	backup, err := d.ref("Backup", d.i.namespace+"-backup", "velero")
-	if err != nil || len(d.refs) != 1 {
+	if err != nil {
+		return err
+	}
+	if len(d.refs) != 1 {
 		return errors.New("cleanup-residue")
 	}
 	live, err = d.owned(ctx, backup)
-	if err != nil || text(child(live, "status"), "phase") != "Completed" || text(child(live, "spec"), "ttl") != "24h0m0s" {
+	if err != nil {
+		return err
+	}
+	if text(child(live, "status"), "phase") != "Completed" || text(child(live, "spec"), "ttl") != "24h0m0s" {
 		return errors.New("retained-backup")
 	}
 	expires, e := time.Parse(time.RFC3339, text(child(live, "status"), "expiration"))

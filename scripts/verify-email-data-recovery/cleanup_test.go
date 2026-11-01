@@ -178,6 +178,23 @@ func TestCleanupRetainsAnUnexpectedClaimAndItsNamespace(t *testing.T) {
 	}
 }
 
+func TestCleanupPreservesTheReplacedResourceErrorClass(t *testing.T) {
+	for _, kind := range []string{"DataDownload", "Backup"} {
+		t.Run(kind, func(t *testing.T) {
+			d, api, ctx := cleanupFixture(t, false)
+			suffix := "-download"
+			if kind == "Backup" {
+				suffix = "-backup"
+			}
+			child(api.objects[cleanupKey(kind, "velero", d.i.namespace+suffix)], "metadata")["uid"] = "replacement-uid"
+			err := d.cleanupRestore(ctx)
+			if err == nil || err.Error() != "replacement" || !d.uncertain {
+				t.Fatalf("ownership replacement lost its diagnostic class: %v", err)
+			}
+		})
+	}
+}
+
 // These are hand-checked API shapes of the four platform-generated policies,
 // independent of the source parser used by the cleanup guard.
 func generatedNamespacePolicyFixture(namespace, namespaceUID string) []object {

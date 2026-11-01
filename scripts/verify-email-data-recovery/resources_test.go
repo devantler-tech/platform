@@ -7,9 +7,18 @@ import (
 	"testing"
 )
 
-func TestReaderCapabilitiesPermitThePinnedServerExecutable(t *testing.T) {
+func resourceTestInvocation(t *testing.T) invocation {
+	t.Helper()
 	env := confirmedInvocation()
-	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	i, err := authorizeDataRecovery(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return i
+}
+
+func TestReaderCapabilitiesPermitThePinnedServerExecutable(t *testing.T) {
+	i := resourceTestInvocation(t)
 	container := items(child(recoveryReader(i, fixtureImage), "spec"), "containers")[0]
 	security := child(container, "securityContext")
 	capabilities := child(security, "capabilities")
@@ -19,8 +28,7 @@ func TestReaderCapabilitiesPermitThePinnedServerExecutable(t *testing.T) {
 }
 
 func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
-	env := confirmedInvocation()
-	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	i := resourceTestInvocation(t)
 	graph := recoveryResources(i, "test-volume-key", "restore:temporary-diagnostic-only")
 	if len(graph) != 7 {
 		t.Fatal("recovery graph is incomplete")
@@ -53,8 +61,18 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 			if len(containers) != 1 || text(containers[0], "image") != fixtureImage {
 				t.Fatal("reader is not the reviewed server")
 			}
-			data, _ := json.Marshal(o)
-			if strings.Contains(string(data), "secretKeyRef\":{\"name\":\"private-mail") || strings.Contains(string(data), "hostPath") || strings.Contains(string(data), "serviceAccountName") {
+			for _, env := range items(containers[0], "env") {
+				from := child(env, "valueFrom")
+				ref := child(from, "secretKeyRef")
+				if len(from) != 0 && (len(from) != 1 || text(ref, "name") != "test-authentication" || text(ref, "key") != "credential" || ref["optional"] == true) {
+					t.Fatal("reader inherited source credentials or permissions")
+				}
+			}
+			data, err := json.Marshal(o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(data), "hostPath") || strings.Contains(string(data), "serviceAccountName") {
 				t.Fatal("reader inherited source credentials or permissions")
 			}
 		}
@@ -71,12 +89,16 @@ func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 }
 
 func TestReaderAcceptsObservedSafeSecurityDefaultsButRejectsInjectedWork(t *testing.T) {
-	env := confirmedInvocation()
-	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	i := resourceTestInvocation(t)
 	want := recoveryReader(i, fixtureImage)
-	data, _ := json.Marshal(want)
+	data, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var actual object
-	_ = json.Unmarshal(data, &actual)
+	if err := json.Unmarshal(data, &actual); err != nil {
+		t.Fatal(err)
+	}
 	container := items(child(actual, "spec"), "containers")[0]
 	security := child(container, "securityContext")
 	security["runAsNonRoot"] = true
@@ -92,8 +114,7 @@ func TestReaderAcceptsObservedSafeSecurityDefaultsButRejectsInjectedWork(t *test
 }
 
 func TestAdmissionRefusesInjectedExecutionAndCredentialSources(t *testing.T) {
-	env := confirmedInvocation()
-	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	i := resourceTestInvocation(t)
 	mutations := map[string]any{
 		"lifecycle":      object{"postStart": object{"exec": object{"command": []any{"/bin/sh", "-c", "echo unexpected"}}}},
 		"envFrom":        []any{object{"secretRef": object{"name": "foreign-secret"}}},
@@ -105,9 +126,14 @@ func TestAdmissionRefusesInjectedExecutionAndCredentialSources(t *testing.T) {
 	for key, value := range mutations {
 		t.Run(key, func(t *testing.T) {
 			want := recoveryReader(i, fixtureImage)
-			data, _ := json.Marshal(want)
+			data, err := json.Marshal(want)
+			if err != nil {
+				t.Fatal(err)
+			}
 			var actual object
-			_ = json.Unmarshal(data, &actual)
+			if err := json.Unmarshal(data, &actual); err != nil {
+				t.Fatal(err)
+			}
 			items(child(actual, "spec"), "containers")[0][key] = value
 			if admittedRecoveryObject(want, actual) {
 				t.Fatal("unrequested execution or credential access was admitted")

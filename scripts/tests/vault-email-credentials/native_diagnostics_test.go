@@ -3,9 +3,13 @@ package emailcredentials_test
 import (
 	"errors"
 	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 )
+
+var registryThrottleStatus = regexp.MustCompile(`\b429\b`)
+var registryUnavailableStatus = regexp.MustCompile(`\b50[234]\b`)
 
 // nativeStartFailure emits only fixed classes; raw Docker diagnostics stay out
 // of logs even when credential helpers or provider messages include private data.
@@ -31,7 +35,10 @@ func nativeStartFailure(err error) string {
 		return "container-runtime"
 	}
 	if strings.Contains(message, "quay.io") {
-		for _, marker := range []string{"toomanyrequests", "too many requests", "429"} {
+		if registryThrottleStatus.MatchString(message) {
+			return "registry-throttled"
+		}
+		for _, marker := range []string{"toomanyrequests", "too many requests"} {
 			if strings.Contains(message, marker) {
 				return "registry-throttled"
 			}
@@ -41,7 +48,10 @@ func nativeStartFailure(err error) string {
 				return "registry-denied"
 			}
 		}
-		for _, marker := range []string{"502", "503", "504", "service unavailable", "bad gateway", "i/o timeout", "tls handshake timeout", "connection reset", "no such host"} {
+		if registryUnavailableStatus.MatchString(message) {
+			return "registry-unavailable"
+		}
+		for _, marker := range []string{"service unavailable", "bad gateway", "i/o timeout", "tls handshake timeout", "connection reset", "no such host"} {
 			if strings.Contains(message, marker) {
 				return "registry-unavailable"
 			}
@@ -56,6 +66,13 @@ func TestNativeContainerFailureClassifiesWithoutDisclosingStderr(t *testing.T) {
 	const private = "private-fixture-material-must-never-be-logged"
 	for _, test := range []struct{ name, stderr, want string }{
 		{"registry-throttle", "quay.io: toomanyrequests: " + private, "registry-throttled"},
+		{"registry-throttle-status", "quay.io: HTTP 429 " + private, "registry-throttled"},
+		{"registry-502-status", "quay.io: HTTP 502 " + private, "registry-unavailable"},
+		{"registry-504-status", "quay.io: HTTP 504 " + private, "registry-unavailable"},
+		{"digest-429", "pull quay.io/example/image@sha256:" + strings.Repeat("a", 61) + "429", "process-failed"},
+		{"digest-502", "pull quay.io/example/image@sha256:" + strings.Repeat("a", 61) + "502", "process-failed"},
+		{"digest-503", "pull quay.io/example/image@sha256:" + strings.Repeat("a", 61) + "503", "process-failed"},
+		{"digest-504", "pull quay.io/example/image@sha256:" + strings.Repeat("a", 61) + "504", "process-failed"},
 		{"registry-outage", "quay.io: 503 Service Unavailable " + private, "registry-unavailable"},
 		{"registry-network", "Get https://quay.io/v2/: TLS handshake timeout " + private, "registry-unavailable"},
 		{"registry-access", "quay.io: unauthorized: " + private, "registry-denied"},
