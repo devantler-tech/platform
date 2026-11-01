@@ -75,7 +75,9 @@ export RUNNER_TEMP="$scratch"
 jq -n --arg child "$probe_child" '{schemaVersion:2,mediaType:"application/vnd.oci.image.index.v1+json",manifests:[
   {digest:$child,platform:{os:"linux",architecture:"amd64"}},
   {digest:"sha256:attestation-not-a-runtime",platform:{os:"unknown",architecture:"unknown"}}]}' >"$REGISTRY_PROBE_MANIFEST"
-printf '%s\n' "$probe_child" >"${scratch}/expected-probe"
+# Native CRI status can report the published index instead of its platform child.
+# Both identities belong to this validated immutable release; attestations do not.
+printf '%s\n' "$probe_index" "$probe_child" | sort -u >"${scratch}/expected-probe"
 
 run_case() {
   local name=$1 expected=$2 registry_failure=${3:-false} probe_registry_failure=${4:-false} result=0
@@ -105,7 +107,7 @@ jq -n --arg amd64 "$amd64" --arg arm64 "$arm64" '{schemaVersion:2,mediaType:"app
   {digest:$amd64,platform:{os:"linux",architecture:"amd64"}},
   {digest:$arm64,platform:{os:"linux",architecture:"arm64"}},
   {digest:"sha256:attestation-not-a-runtime",platform:{os:"unknown",architecture:"unknown"}}]}' >"$REGISTRY_MANIFEST"
-printf '%s\n' "$amd64" "$arm64" | sort -u >"${scratch}/expected"
+printf '%s\n' "$index" "$amd64" "$arm64" | sort -u >"${scratch}/expected"
 run_case changed-multi-platform-release pass
 
 jq '.mediaType="application/vnd.docker.distribution.manifest.list.v2+json"' "$REGISTRY_MANIFEST" >"${scratch}/docker-index.json"

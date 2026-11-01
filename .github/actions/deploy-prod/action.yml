@@ -718,9 +718,9 @@ runs:
         domain="$(yq -er '.data.domain' k8s/clusters/prod/bootstrap/config-map.yaml)"
         image_digest="$(yq -er '.spec.values.image.digest' k8s/bases/apps/data-product-controller/helm-release.yaml)"
         chart_digest="$(yq -er '.spec.ref.digest' k8s/bases/apps/data-product-controller/oci-repository.yaml)"
-        # Pods report a platform manifest digest rather than the image index.
-        # Resolve only the selected immutable release, never a mutable tag or
-        # an independently maintained runtime pin. Attestations are not runtimes.
+        # CRI image IDs can report the index or its selected platform manifest.
+        # Admit the immutable index only after validating its supported platform
+        # children. Resolve only this release; attestations are not runtimes.
         resolve_runtime_digests() {
           local image_ref=$1
           docker buildx imagetools inspect "${image_ref}" --raw |
@@ -735,7 +735,7 @@ runs:
             then [.manifests[] | select(.platform.os == "linux" and
                    (.platform.architecture == "amd64" or .platform.architecture == "arm64")) | .digest] |
               if length > 0 and all(.[]; type == "string" and test("^sha256:[0-9a-f]{64}$"))
-              then unique[] else error("no valid runtime manifests") end
+              then (. + [$image_digest]) | unique[] else error("no valid runtime manifests") end
             else error("unsupported image media type") end'
         }
         runtime_digests="$(resolve_runtime_digests "ghcr.io/devantler-tech/data-product-controller@${image_digest}")"
