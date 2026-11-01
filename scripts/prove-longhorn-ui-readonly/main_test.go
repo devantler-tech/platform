@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -68,7 +70,7 @@ func TestProofRequiresEveryPositiveAndNegativeResponse(t *testing.T) {
 		t.Run(strconv.Itoa(broken+1), func(t *testing.T) {
 			calls := 0
 			execute := func(_ context.Context, args ...string) ([]byte, error) {
-				if strings.Join(args[:len(args)-1], " ") != "--context=admin@prod --request-timeout=20s -n oauth2-proxy exec deployment/auth-proxy -c traefik -- /bin/sh -c" {
+				if !socketProbeArguments(args) {
 					t.Fatalf("unexpected command surface: %q", args)
 				}
 				code := []string{"200", "404", "200", "403", "403", "403", "200", "200", "200", "200", "200", "200", "200", "200"}[calls]
@@ -95,11 +97,121 @@ func TestProofRequiresEveryPositiveAndNegativeResponse(t *testing.T) {
 	}
 }
 
-// TestNativeProbeSendsOnlyFixedHarmlessRequests exercises the real shell pipeline.
-func TestNativeProbeSendsOnlyFixedHarmlessRequests(t *testing.T) {
-	if _, err := exec.LookPath("nc"); err != nil {
-		t.Fatal("native proof fixture requires netcat")
+// These fixed arguments keep the socket write side open while the request's
+// builtin reader awaits the response. Piping printf into BusyBox nc sends a
+// premature SHUT_WR and can make Traefik cancel a legitimate request with 499.
+func socketProbeArguments(args []string) bool {
+	return len(args) == 28 && strings.Join(args[:22], " ") == `--context=admin@prod --request-timeout=20s -n oauth2-proxy exec deployment/auth-proxy -c traefik -- /bin/sh -c exec 9>&1; exec "$@" longhorn-ui-probe /bin/busybox timeout -s KILL 15 /bin/busybox nc -w 10` &&
+		strings.Join(args[24:27], " ") == "-e /bin/sh -c"
+}
+
+// Run the real request writer and bounded reader with socket stdin/stdout and
+// captured FD9, as nc -e supplies them. Bash supports the same read -n/-t
+// builtins used in the pinned BusyBox ash. This does not claim to execute the
+// image's netcat/timeout; the protected production dispatch tests those tools.
+func runSocketProbeFixture(ctx context.Context, args []string, address string, afterStart ...func(*net.TCPConn)) ([]byte, error) {
+	if !socketProbeArguments(args) {
+		return nil, errors.New("probe does not retain a response-reading socket process")
 	}
+	connection, err := (&net.Dialer{}).DialContext(ctx, "tcp", address)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = connection.Close() }()
+	socket, err := connection.(*net.TCPConn).File()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = socket.Close() }()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = reader.Close(); _ = writer.Close() }()
+	command := exec.CommandContext(ctx, "/bin/bash", "-c", args[27])
+	command.Stdin, command.Stdout, command.Stderr = socket, socket, io.Discard
+	command.ExtraFiles = []*os.File{nil, nil, nil, nil, nil, nil, writer}
+	command.WaitDelay = time.Second
+	if err = command.Start(); err != nil {
+		return nil, err
+	}
+	_ = writer.Close()
+	for _, control := range afterStart {
+		control(connection.(*net.TCPConn))
+	}
+	out, readErr := io.ReadAll(io.LimitReader(reader, 65537))
+	err = command.Wait()
+	if readErr != nil || len(out) > 65536 {
+		return nil, errors.New("fixture capture did not complete")
+	}
+	return out, err
+}
+
+// TestProbeRetainsItsWriteSideUntilTheResponse observes an EOF-sensitive server
+// with a deliberate half-close control, rather than assuming nc's behavior.
+func TestProbeRetainsItsWriteSideUntilTheResponse(t *testing.T) {
+	for _, halfClose := range []bool{false, true} {
+		t.Run(strconv.FormatBool(halfClose), func(t *testing.T) {
+			requestReceived := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				connection, response, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer func() { _ = connection.Close() }()
+				close(requestReceived)
+				// Characterize the observed cancellation race: a server waiting
+				// before its response sees EOF from nc's old printf pipeline.
+				if err = connection.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+					t.Error(err)
+					return
+				}
+				_, readErr := response.ReadByte()
+				code := "499 Client Closed Request"
+				var timeout net.Error
+				if errors.As(readErr, &timeout) && timeout.Timeout() {
+					code = "200 OK"
+				}
+				_, _ = response.WriteString("HTTP/1.1 " + code + "\r\nContent-Length: 0\r\n\r\n")
+				_ = response.Flush()
+			}))
+			defer server.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			calls := 0
+			err := prove(ctx, func(ctx context.Context, args ...string) ([]byte, error) {
+				calls++
+				if calls != 1 {
+					code := []string{"404", "200", "403", "403", "403", "200", "200", "200", "200", "200", "200", "200", "200"}[calls-2]
+					response := "HTTP/1.1 " + code + " Expected\r\n"
+					if strings.Contains(args[len(args)-1], ".js?") {
+						response += "Content-Type: application/javascript\r\n\r\n"
+					}
+					return []byte(response), nil
+				}
+				var controls []func(*net.TCPConn)
+				if halfClose {
+					controls = append(controls, func(c *net.TCPConn) {
+						select {
+						case <-requestReceived:
+							_ = c.CloseWrite()
+						case <-ctx.Done():
+						}
+					})
+				}
+				return runSocketProbeFixture(ctx, args, strings.TrimPrefix(server.URL, "http://"), controls...)
+			})
+			if (err != nil) != halfClose || halfClose && !strings.Contains(err.Error(), "received HTTP 499") {
+				t.Fatalf("socket write lifetime was not observed: half-close=%t err=%v", halfClose, err)
+			}
+		})
+	}
+}
+
+// TestRequestWriterAndReaderSendOnlyFixedHarmlessRequests exercises the generated
+// program across a real TCP connection under Bash. The image test covers ash/nc.
+func TestRequestWriterAndReaderSendOnlyFixedHarmlessRequests(t *testing.T) {
 	seen := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != "longhorn.platform.devantler.tech" || r.ContentLength != 0 {
@@ -117,14 +229,11 @@ func TestNativeProbeSendsOnlyFixedHarmlessRequests(t *testing.T) {
 		_, _ = w.Write([]byte("private response body must be discarded"))
 	}))
 	defer server.Close()
-	address := strings.ReplaceAll(strings.TrimPrefix(server.URL, "http://"), ":", " ")
+	address := strings.TrimPrefix(server.URL, "http://")
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	err := prove(ctx, func(ctx context.Context, args ...string) ([]byte, error) {
-		program := args[len(args)-1]
-		program = strings.ReplaceAll(program, "nc -w 10 127.0.0.1 8080", "nc -w 2 "+address)
-		program = strings.ReplaceAll(program, "nc -w 10 longhorn-frontend.longhorn-system.svc.cluster.local 80", "nc -w 2 "+address)
-		return exec.CommandContext(ctx, "/bin/sh", "-c", program).Output()
+		return runSocketProbeFixture(ctx, args, address)
 	})
 	if err != nil || seen != 14 {
 		t.Fatalf("native request proof: seen=%d error=%v", seen, err)
@@ -184,10 +293,19 @@ func TestProofRejectsHTMLAndMalformedJavaScriptHeaders(t *testing.T) {
 	}
 }
 
-// TestNativeReaderRejectsFoldedHeaders prevents filtering from repairing bad MIME.
-func TestNativeReaderRejectsFoldedHeaders(t *testing.T) {
-	for _, continuation := range []string{" text/html", "\ttext/html"} {
-		t.Run(strconv.Quote(continuation), func(t *testing.T) {
+// TestNativeReaderRejectsMalformedOrOversizedHeaders prevents filtering from
+// repairing bad MIME or accepting a truncated/unbounded native header block.
+func TestNativeReaderRejectsMalformedOrOversizedHeaders(t *testing.T) {
+	for name, headers := range map[string]string{
+		"space-folded":          "Content-Type: application/javascript\r\n text/html\r\n\r\n",
+		"tab-folded":            "Content-Type: application/javascript\r\n\ttext/html\r\n\r\n",
+		"truncated":             "Content-Type: application/javascript\r\n",
+		"NUL in MIME":           "Content-Type: application/java\x00script\r\n\r\n",
+		"NUL in ignored header": "Content-Type: application/javascript\r\nX-Private-Fixture: a\x00b\r\n\r\n",
+		"oversized line":        "Content-Type: application/javascript\r\nX-Private-Fixture: " + strings.Repeat("x", 65536) + "\r\n\r\n",
+		"aggregate budget":      "Content-Type: application/javascript\r\n" + strings.Repeat("X-Private-Fixture: "+strings.Repeat("x", 12000)+"\r\n", 6) + "\r\n",
+	} {
+		t.Run(name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				connection, writer, err := w.(http.Hijacker).Hijack()
 				if err != nil {
@@ -195,30 +313,27 @@ func TestNativeReaderRejectsFoldedHeaders(t *testing.T) {
 					return
 				}
 				defer func() { _ = connection.Close() }()
-				_, err = writer.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n" + continuation + "\r\nX-Private-Fixture: private header\r\n\r\nprivate body")
-				if err != nil {
-					t.Error(err)
-					return
-				}
-				if err = writer.Flush(); err != nil {
-					t.Error(err)
-				}
+				// Rejection can close the socket before the oversized write ends.
+				_, _ = writer.WriteString("HTTP/1.1 200 OK\r\n" + headers)
+				_ = writer.Flush()
 			}))
 			defer server.Close()
-			address := strings.ReplaceAll(strings.TrimPrefix(server.URL, "http://"), ":", " ")
+			address := strings.TrimPrefix(server.URL, "http://")
 			calls := 0
 			err := prove(t.Context(), func(ctx context.Context, args ...string) ([]byte, error) {
 				code := []string{"200", "404", "200", "403", "403", "403", "200", "200", "200", "200", "200", "200", "200", "200"}[calls]
 				calls++
 				program := args[len(args)-1]
-				if !strings.Contains(program, ".js?") {
-					return []byte("HTTP/1.1 " + code + " Expected\r\n"), nil
+				if calls != 8 {
+					response := "HTTP/1.1 " + code + " Expected\r\n"
+					if strings.Contains(program, ".js?") {
+						response += "Content-Type: application/javascript\r\n\r\n"
+					}
+					return []byte(response), nil
 				}
-				program = strings.ReplaceAll(program, "nc -w 10 127.0.0.1 8080", "nc -w 2 "+address)
-				program = strings.ReplaceAll(program, "nc -w 10 longhorn-frontend.longhorn-system.svc.cluster.local 80", "nc -w 2 "+address)
-				return exec.CommandContext(ctx, "/bin/sh", "-c", program).Output()
+				return runSocketProbeFixture(ctx, args, address)
 			})
-			if err == nil || calls != 14 || strings.Contains(err.Error(), "private") {
+			if err == nil || calls != 14 || !strings.Contains(err.Error(), "probe 8") || strings.Contains(err.Error(), "private") {
 				t.Fatalf("folded header accepted or response leaked: %v", err)
 			}
 		})

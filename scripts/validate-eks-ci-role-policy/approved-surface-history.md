@@ -3982,16 +3982,32 @@ No authorization resource is added or removed. This approval records the
 declared callback change; deployed login and read-only acceptance are separate
 runtime checks.
 
-For #5655, two existing releases gain the autoscaler annotation that names the
-exact emptyDir caches it may move during ordinary eviction: Crossplane's
-`package-cache` and `function-cache`, and the Hubble relay's `tmp-volume`.
-Disruption budgets, ownership and scheduling checks still apply. No Kubernetes
-permission, service account or authorization resource changes.
+## 2026-11-01 — Replace the retired v7.23.0 application publisher with v19.0.5
 
-The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly two
-existing entries: HelmRelease crossplane-system/crossplane from
-`8faec319d400ced8ebc0341fa5496bcd9e578b02cd7b456b7d0beee9334c5d68` to
-`fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3`, and
-HelmRelease kube-system/cilium from
-`583656039a7b6f65fab253ef1ce6ea63ffffd4437e404d5d42996208143a3c7a` to
-`62fd2d7681d498d256925e2ae8759d4c9f16bb8e359d98b5b6594d4288c2f36c`.
+For #5404 and #5424, `devantler-tech/.github@0c7b6c3509b73adbc7537e030935bb01987e625b`
+(v7.23.0) signs nothing deployed any more: wedding-app 1.15.24 was published by
+`467f07582436a26b62cf4aa756423512f85ba0c0` (v8.0.0) and Flux reads it Ready and
+SourceVerified, and ascoachingogvaner moved earlier. The generic Tenant source
+rule, the app-image admission policy and the node-pull rule therefore replace
+that revision with `af042c540ce8db4d64add98c34b5c57691e0e812` (v19.0.5), so they still admit
+exactly two maintained revisions. Wedding-app and ascoachingogvaner gain the same
+row beside v8.0.0; data-product-controller keeps v8.0.0 alone. Business-site
+keeps its single v8.0.0 approval and tenant `publisherRevision`.
+
+The range `f5d078cc…af042c540ce8db4d64add98c34b5c57691e0e812` was reviewed on #5404, on top of the earlier
+`467f0758…f5d078cc` review. The workflow moves only docker/login-action to
+v4.7.0. Its prebuilt-WebApp helper gains an explicit job-token mode for reading
+public CI evidence, unused by this workflow, and refuses private CI evidence.
+No permission, signing identity or output changes.
+
+Changed, with nothing added or removed: ResourceGraphDefinition tenant.kro.run to
+`72f3f972cecdf3ca2e315deb4224bd28c1df1244fc7973a88eb7f4fc03ac1d05`, and OCIRepository
+ascoachingogvaner/ascoachingogvaner to
+`c6e95d236b2c2996f4097e67c14e86905174f7c01fb3e14ea3df02493fad0728`,
+data-product-controller/khoist-documentation to
+`8157ef84adad3b0d8e5219155117056d496a17248f81ba07d33e1ec1b69a2194`, and
+wedding-app/wedding-app to
+`55fb578c4bd6258d6fc025aabd92ef34adcd724ccb97b2608cb2fafcc09ba038`.
+
+This record does not establish a publication by the new signer. Deploy this
+acceptance before any consumer moves its pin to v19.0.5.
