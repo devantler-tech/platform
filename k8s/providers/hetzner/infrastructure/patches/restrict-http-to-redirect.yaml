@@ -1,0 +1,14 @@
+# Only the platform-owned redirect namespace may attach plain HTTP routes.
+# Application namespaces attach to HTTPS, where the physical-peer fence applies.
+- op: test
+  path: /spec/listeners/1/name
+  value: http
+- op: test
+  path: /spec/listeners/1/protocol
+  value: HTTP
+- op: test
+  path: /spec/listeners/1/allowedRoutes/namespaces/from
+  value: All
+- op: replace
+  path: /spec/listeners/1/allowedRoutes/namespaces/from
+  value: Same

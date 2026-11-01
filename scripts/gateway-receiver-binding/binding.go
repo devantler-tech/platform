@@ -24,14 +24,52 @@ type metadata struct {
 }
 type gatewayObject struct {
 	Metadata metadata
-	Spec     struct{ GatewayClassName string }
-	Status   struct {
+	Spec     struct {
+		GatewayClassName string
+		Listeners        []gatewayListener
+	}
+	Status struct {
 		Conditions []struct {
 			Type, Status       string
 			ObservedGeneration int64
 		}
 	}
 }
+
+type gatewayListener struct {
+	Name, Protocol string
+	Port           int
+	AllowedRoutes  struct{ Namespaces struct{ From string } } `yaml:"allowedRoutes"`
+}
+
+// Raw HTTP is reserved for the redirect owned in the Gateway's namespace.
+// Tenant routes attach to the physically fenced TLS side.
+func httpRouteBoundary(listeners []gatewayListener) bool {
+	seen := map[string]bool{}
+	http, https := 0, 0
+	for _, listener := range listeners {
+		if listener.Name == "" || seen[listener.Name] {
+			return false
+		}
+		seen[listener.Name] = true
+		switch listener.Protocol {
+		case "HTTP":
+			if listener.Name != "http" || listener.Port != 80 || listener.AllowedRoutes.Namespaces.From != "Same" {
+				return false
+			}
+			http++
+		case "HTTPS":
+			if listener.Port != 443 {
+				return false
+			}
+			https++
+		default:
+			return false
+		}
+	}
+	return http == 1 && https > 0
+}
+
 type serviceObject struct {
 	Metadata metadata
 	Spec     struct {
@@ -105,6 +143,18 @@ func strictJSON(raw []byte, v any) error {
 	return nil
 }
 func derive(service, gateway []byte) (binding, error) {
+	return deriveTransport(service, gateway, false)
+}
+
+func deriveRecovery(service, gateway []byte) (binding, error) {
+	return deriveTransport(service, gateway, true)
+}
+
+func deriveTransport(service, gateway []byte, recovering bool) (binding, error) {
+	return deriveExpectedTransport(service, gateway, false, recovering)
+}
+
+func deriveExpectedTransport(service, gateway []byte, wantProxy, recovering bool) (binding, error) {
 	refuse := func() (binding, error) { return binding{}, errors.New("unbound-provider") }
 	var s serviceObject
 	var g gatewayObject
@@ -117,25 +167,22 @@ func derive(service, gateway []byte) (binding, error) {
 	if g.Metadata.Name != "platform" || g.Metadata.Namespace != "kube-system" || !uuid.MatchString(g.Metadata.UID) || g.Metadata.ResourceVersion == "" || g.Metadata.Generation < 1 || g.Spec.GatewayClassName != "cilium" {
 		return refuse()
 	}
-	for _, kind := range []string{"Accepted", "Programmed"} {
-		found := false
-		for _, c := range g.Status.Conditions {
-			if c.Type == kind {
-				if found || c.Status != "True" || c.ObservedGeneration != g.Metadata.Generation {
-					return refuse()
-				}
-				found = true
-			}
-		}
-		if !found {
-			return refuse()
-		}
+	if wantProxy && !recovering && !httpRouteBoundary(g.Spec.Listeners) {
+		return refuse()
+	}
+	ready, err := gatewayReadiness(g)
+	if err != nil || (!recovering && !ready) {
+		return refuse()
 	}
 	refs := s.Metadata.OwnerReferences
 	if len(refs) != 1 || refs[0].APIVersion != "gateway.networking.k8s.io/v1" || refs[0].Kind != "Gateway" || refs[0].Name != "platform" || refs[0].UID != g.Metadata.UID || !refs[0].Controller {
 		return refuse()
 	}
-	for key, want := range map[string]string{"load-balancer.hetzner.cloud/name": "platform-gateway", "load-balancer.hetzner.cloud/use-private-ip": "true", "load-balancer.hetzner.cloud/uses-proxyprotocol": "false"} {
+	proxy, expectedMode := "false", "VIP"
+	if wantProxy {
+		proxy, expectedMode = "true", "Proxy"
+	}
+	for key, want := range map[string]string{"load-balancer.hetzner.cloud/name": "platform-gateway", "load-balancer.hetzner.cloud/use-private-ip": "true", "load-balancer.hetzner.cloud/uses-proxyprotocol": proxy} {
 		if s.Metadata.Annotations[key] != want {
 			return refuse()
 		}
@@ -164,11 +211,14 @@ func derive(service, gateway []byte) (binding, error) {
 	seen := map[netip.Addr]bool{}
 	var private netip.Addr
 	var public netip.Addr
+	mode := ""
 	for _, entry := range s.Status.LoadBalancer.Ingress {
 		ip, err := netip.ParseAddr(entry.IP)
-		if err != nil || !ip.IsGlobalUnicast() || ip.Is4In6() || ip.Zone() != "" || seen[ip] || entry.IPMode != "VIP" {
+		if err != nil || !ip.IsGlobalUnicast() || ip.Is4In6() || ip.Zone() != "" || seen[ip] ||
+			(entry.IPMode != expectedMode && (!recovering || (entry.IPMode != "VIP" && entry.IPMode != "Proxy"))) || (mode != "" && mode != entry.IPMode) {
 			return refuse()
 		}
+		mode = entry.IPMode
 		seen[ip] = true
 		if ip.IsPrivate() {
 			if !ip.Is4() || private.IsValid() {
@@ -186,4 +236,30 @@ func derive(service, gateway []byte) (binding, error) {
 		return refuse()
 	}
 	return binding{CIDR: netip.PrefixFrom(private, 32).String(), ServiceUID: s.Metadata.UID, GatewayUID: g.Metadata.UID, ServiceVersion: s.Metadata.ResourceVersion, GatewayVersion: g.Metadata.ResourceVersion, PublicIPv4: public.String(), HTTPNodePort: httpNodePort, HTTPSNodePort: httpsNodePort}, nil
+}
+
+func gatewayReadiness(g gatewayObject) (bool, error) {
+	if g.Metadata.Generation < 1 {
+		return false, errors.New("unbound-provider")
+	}
+	ready := true
+	for _, kind := range []string{"Accepted", "Programmed"} {
+		found := false
+		for _, condition := range g.Status.Conditions {
+			if condition.Type != kind {
+				continue
+			}
+			if found || condition.ObservedGeneration < 0 || condition.ObservedGeneration > g.Metadata.Generation || (condition.Status != "True" && condition.Status != "False" && condition.Status != "Unknown") {
+				return false, errors.New("unbound-provider")
+			}
+			found = true
+			if condition.Status != "True" || condition.ObservedGeneration != g.Metadata.Generation {
+				ready = false
+			}
+		}
+		if !found {
+			ready = false
+		}
+	}
+	return ready, nil
 }

@@ -112,6 +112,8 @@ jobs:
         run: go test -parallel 8 -timeout 20m ./...
 
       - name: 🧪 Validate gateway receiver policies with the native admission engine
+        env:
+          GATEWAY_RECEIVER_NATIVE_TEST: "1"
         run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
 
   changes:

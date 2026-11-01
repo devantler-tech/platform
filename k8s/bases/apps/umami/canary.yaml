@@ -39,6 +39,7 @@ spec:
     gatewayRefs:
       - name: platform
         namespace: kube-system
+        sectionName: https
     # Only expose Umami's public collection endpoints at the edge. The admin UI
     # and login API must not be reachable from the internet because Umami creates
     # a built-in admin/umami account before our in-cluster provisioning CronJob

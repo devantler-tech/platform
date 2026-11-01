@@ -27,6 +27,9 @@ collector="$(
 
 [[ -n "${collector}" ]] || fail 'the Umami collector Canary must remain rendered'
 
+[[ "$(yq eval -r '.spec.service.gatewayRefs[] | [.name, .namespace, .sectionName] | join(":")' - <<<"${collector}")" == 'platform:kube-system:https' ]] ||
+  fail 'the Umami collector must attach only to the HTTPS listener'
+
 collector_prefixes="$(
   yq eval -r '.spec.service.match[].uri.prefix' - <<<"${collector}" | LC_ALL=C sort
 )" || fail 'the Umami public collector prefixes must be extractable'

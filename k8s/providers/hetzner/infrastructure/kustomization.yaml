@@ -247,6 +247,11 @@ patches:
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: patches/attach-hcloud-load-balancer.yaml
+  - path: patches/restrict-http-to-redirect.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
   # JSON6902 patches don't self-identify, so this one needs an explicit
   # target. Adds HTTPS listeners for the tenant-owned ascoachingogvaner.dk
   # domain — see the file header.
