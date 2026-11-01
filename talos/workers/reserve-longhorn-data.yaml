@@ -1,0 +1,21 @@
+# Reserve local block storage without claiming any CSI-attached disk (#5582).
+# Existing EPHEMERAL partitions are not shrunk by configuration. The protected
+# node-preparation workflow first evacuates all replicas and drains the worker,
+# then wipes only EPHEMERAL, retaining STATE and its encryption salt.
+# Larger compute workers keep the additional disk capacity in EPHEMERAL;
+# their raw partition is never eligible for Longhorn replicas.
+apiVersion: v1alpha1
+kind: RawVolumeConfig
+name: longhorn
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 96GiB
+  maxSize: 96GiB
+  grow: false
+encryption:
+  provider: luks2
+  keys:
+    - nodeID: {}
+      slot: 0
+      lockToState: true
