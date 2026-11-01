@@ -83,7 +83,7 @@ runs:
       shell: bash
       env:
         # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-        KSAIL_VERSION: "7.205.3"
+        KSAIL_VERSION: "7.206.0"
         GITHUB_TOKEN: ${{ github.token }}
       run: |
         .github/scripts/setup-ksail.sh
@@ -742,7 +742,7 @@ runs:
               then (. + [$image_digest]) | unique[] else error("no valid runtime manifests") end
             else error("unsupported image media type") end'
         }
-        runtime_digests="$(resolve_runtime_digests "ghcr.io/devantler-tech/data-product-controller@${image_digest}")"
+        runtime_digests="$(resolve_runtime_digests "ghcr.io/devantler-tech/khoist@${image_digest}")"
         probe_image="$(yq -o=json '.spec.template.spec.containers' \
           k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml |
           jq -ers 'if length==1 and (.[0]|type=="array" and length==1) and .[0][0].name=="contract-probe" and
@@ -756,7 +756,7 @@ runs:
         while IFS= read -r runtime_digest; do
           runtime_args+=(--probe-runtime-digest "${runtime_digest}")
         done <<<"${probe_runtime_digests}"
-        ./scripts/verify-data-product-ui-rollout.sh \
+        ./scripts/verify-data-product-rollout.sh \
           --context admin@prod --domain "${domain}" \
           --image-digest "${image_digest}" "${runtime_args[@]}" \
           --chart-digest "${chart_digest}" --apps-digest "${PLATFORM_MANIFEST_DIGEST}" \

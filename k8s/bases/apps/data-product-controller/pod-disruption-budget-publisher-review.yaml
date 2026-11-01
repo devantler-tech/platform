@@ -1,7 +1,7 @@
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: data-product-controller-ui-kit
+  name: data-product-controller-publisher-review
   namespace: data-product-controller
 spec:
   maxUnavailable: 1
@@ -9,4 +9,4 @@ spec:
     matchLabels:
       app.kubernetes.io/name: data-product-controller
       app.kubernetes.io/instance: data-product-controller
-      app.kubernetes.io/component: ui-kit
+      app.kubernetes.io/component: publisher-review

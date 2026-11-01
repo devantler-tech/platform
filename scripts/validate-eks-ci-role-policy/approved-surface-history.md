@@ -3982,17 +3982,32 @@ No authorization resource is added or removed. This approval records the
 declared callback change; deployed login and read-only acceptance are separate
 runtime checks.
 
-## 2026-11-01 — Receive PROXY traffic at the production Gateway
+## 2026-11-01 — Replace the retired v7.23.0 application publisher with v19.0.5
 
-For #5448, the production Cilium Helm values turn on
-`gatewayAPI.enableProxyProtocol`, together with the provider annotation on the
-Hetzner Gateway. The physical-peer fence stays selected. No RBAC, IAM policy,
-credential or permission grant changes.
+For #5404 and #5424, `devantler-tech/.github@0c7b6c3509b73adbc7537e030935bb01987e625b`
+(v7.23.0) signs nothing deployed any more: wedding-app 1.15.24 was published by
+`467f07582436a26b62cf4aa756423512f85ba0c0` (v8.0.0) and Flux reads it Ready and
+SourceVerified, and ascoachingogvaner moved earlier. The generic Tenant source
+rule, the app-image admission policy and the node-pull rule therefore replace
+that revision with `af042c540ce8db4d64add98c34b5c57691e0e812` (v19.0.5), so they still admit
+exactly two maintained revisions. Wedding-app and ascoachingogvaner gain the same
+row beside v8.0.0; data-product-controller keeps v8.0.0 alone. Business-site
+keeps its single v8.0.0 approval and tenant `publisherRevision`.
 
-The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly one
-existing entry, HelmRelease kube-system/cilium, from
-`583656039a7b6f65fab253ef1ce6ea63ffffd4437e404d5d42996208143a3c7a` to
-`43e3693035f610207181ac5fd7053306caad59bb4a7f48d4ea154ccce428bec4`.
-No authorization resource is added or removed. This approval records the
-declared transport change; the provider's effective setting, public routes and
-client identity are separate runtime checks.
+The range `f5d078cc…af042c540ce8db4d64add98c34b5c57691e0e812` was reviewed on #5404, on top of the earlier
+`467f0758…f5d078cc` review. The workflow moves only docker/login-action to
+v4.7.0. Its prebuilt-WebApp helper gains an explicit job-token mode for reading
+public CI evidence, unused by this workflow, and refuses private CI evidence.
+No permission, signing identity or output changes.
+
+Changed, with nothing added or removed: ResourceGraphDefinition tenant.kro.run to
+`72f3f972cecdf3ca2e315deb4224bd28c1df1244fc7973a88eb7f4fc03ac1d05`, and OCIRepository
+ascoachingogvaner/ascoachingogvaner to
+`c6e95d236b2c2996f4097e67c14e86905174f7c01fb3e14ea3df02493fad0728`,
+data-product-controller/khoist-documentation to
+`8157ef84adad3b0d8e5219155117056d496a17248f81ba07d33e1ec1b69a2194`, and
+wedding-app/wedding-app to
+`55fb578c4bd6258d6fc025aabd92ef34adcd724ccb97b2608cb2fafcc09ba038`.
+
+This record does not establish a publication by the new signer. Deploy this
+acceptance before any consumer moves its pin to v19.0.5.

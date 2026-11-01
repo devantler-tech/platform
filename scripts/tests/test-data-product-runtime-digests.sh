@@ -37,7 +37,7 @@ cat >"${scratch}/bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "buildx imagetools inspect ghcr.io/devantler-tech/data-product-controller@${index} --raw")
+  "buildx imagetools inspect ghcr.io/devantler-tech/khoist@${index} --raw")
     manifest=$REGISTRY_MANIFEST; failure=${REGISTRY_FAILURE:-false} ;;
   "buildx imagetools inspect ${probe_image} --raw")
     manifest=$REGISTRY_PROBE_MANIFEST; failure=${PROBE_REGISTRY_FAILURE:-false} ;;
@@ -47,7 +47,7 @@ esac
 cat "$manifest"
 [[ "$failure" == false ]] || exit 92
 SH
-cat >"${scratch}/scripts/verify-data-product-ui-rollout.sh" <<'SH'
+cat >"${scratch}/scripts/verify-data-product-rollout.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 actual=()
@@ -68,7 +68,7 @@ printf '%s\n' "${actual_probe[@]}" | sort -u >"${RUNNER_TEMP}/actual-probe"
 cmp -s "${RUNNER_TEMP}/expected-probe" "${RUNNER_TEMP}/actual-probe" || exit 97
 touch "${RUNNER_TEMP}/verified"
 SH
-chmod +x "${scratch}/bin/docker" "${scratch}/scripts/verify-data-product-ui-rollout.sh"
+chmod +x "${scratch}/bin/docker" "${scratch}/scripts/verify-data-product-rollout.sh"
 export REGISTRY_MANIFEST="${scratch}/manifest.json"
 export REGISTRY_PROBE_MANIFEST="${scratch}/probe-manifest.json"
 export RUNNER_TEMP="$scratch"

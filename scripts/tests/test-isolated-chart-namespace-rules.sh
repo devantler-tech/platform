@@ -623,7 +623,6 @@ prod_domain="$(yq -o=json '.data.domain' "${root_dir}/k8s/clusters/prod/bootstra
 readonly prod_domain
 readonly harbour_origin="https://harbour-data.${prod_domain}"
 readonly registry_origin="https://data-products.${prod_domain}"
-readonly kit_origin="https://product-ui.${prod_domain}"
 
 # substitute_prod_domain supports the fixture's one reviewed Flux expression.
 # Unbraced Kustomize $patch directives survive; unresolved, malformed or newly
@@ -722,7 +721,7 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e --arg harbour "${harb
     .spec.id == $harbour and
     .spec.outputs[0].url == ($harbour + "/api/observations") and
     .spec.outputs[0].contractUrl == ($harbour + "/openapi.json") and
-    .spec.ui.url == ($harbour + "/ui")
+    (.spec | has("ui") | not)
   )] == [true]
 ' >/dev/null || {
   printf 'FAIL: rendered sample descriptor must use independently served root endpoints\n' >&2
@@ -731,22 +730,20 @@ yq ea -o=json '[.]' "${render_dir}/resources.yaml" | jq -e --arg harbour "${harb
 
 # Both independent workloads must enact the bounded contract, rather than merely
 # accepting values that an older chart ignores. The sample owns its publication
-# URL; the authenticated registry and portable UI host may supply cosmetic hints.
+# URL, and neither workload retains a presentation setting.
 yq ea -o=json '[.]' "${render_dir}/resources.yaml" >"${render_dir}/resources.json"
 image_digest="$(yq -r '.spec.values.image.digest' "${release}")"
 [[ "${image_digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || {
   printf 'FAIL: trial image must carry an immutable sha256 digest\n' >&2
   exit 1
 }
-# trial_contract_matches checks the standard registry listener and complete
-# rendered presentation contract, publication endpoints, host, admission rule
+# trial_contract_matches checks the standard registry listener, API-only
+# publication endpoints, retired presentation settings, admission rule
 # and the exact controller-local leader-election Event grant.
 trial_contract_matches() {
-  jq -e --arg image "ghcr.io/devantler-tech/data-product-controller@${image_digest}" \
+  jq -e --arg image "ghcr.io/devantler-tech/khoist@${image_digest}" \
     --arg harbour "${harbour_origin}" \
-    --arg registry "${registry_origin}" --arg kit "${kit_origin}" \
-    --arg cel_rule "self.apiVersion != 'data-product-ui/v1' || !self.capabilities.exists(c, c == 'appearance')" '
-      ([$registry,$kit] | sort) as $host_origins |
+    '
       ([.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller") |
         .spec.template.spec.serviceAccountName]) as $accounts |
       $accounts == ["data-product-controller"] and
@@ -764,9 +761,7 @@ trial_contract_matches() {
         ["data-product-controller", "data-product-controller-harbour"] and
       [.[] | select(.kind == "Deployment") | .spec.template.spec.containers[0] |
         (.image == $image and
-         ([.env[]? | select(.name == "REGISTRY_UI_ENABLED")] == []) and
-         ([.env[] | select(.name == "UI_CONTRACT_ENABLED") | .value] == ["true"]) and
-         ([.env[] | select(.name == "UI_APPEARANCE_ENABLED") | .value] == ["true"]))] == [true,true] and
+         ([.env[]? | select(.name == "REGISTRY_UI_ENABLED" or .name == "UI_CONTRACT_ENABLED" or .name == "UI_APPEARANCE_ENABLED")] == []))] == [true,true] and
       [.[] | select(.kind == "Service" and .metadata.name == "data-product-controller") |
         (.spec.selector["app.kubernetes.io/component"] == "controller" and
          [.spec.ports[] | select(.name == "http") | [.port,.targetPort]] == [[80,"registry"]])] == [true] and
@@ -775,9 +770,7 @@ trial_contract_matches() {
       [.[] | select(.kind == "Deployment" and .metadata.name == "data-product-controller-harbour") |
         .spec.template.spec.containers[0].env |
         ([.[] | select(.name == "PUBLIC_BASE_URL") | .value] == [$harbour] and
-         [.[] | select(.name == "UI_HOST_ORIGINS") |
-           (.value | split(",") | sort) == $host_origins] == [true] and
-         [.[] | select(.name == "KSAIL_RELEASES_ENABLED") | .value] == ["true"])] == [true] and
+         [.[] | select(.name == "UI_HOST_ORIGINS" or .name == "KSAIL_RELEASES_ENABLED")] == [])] == [true] and
       [.[] | select(.kind == "DataProduct" and .metadata.name == "ksail-releases") |
         (.metadata.namespace == "data-product-controller" and
          .spec.id == "https://github.com/devantler-tech/ksail/releases" and
@@ -785,24 +778,17 @@ trial_contract_matches() {
          .spec.owner == {name:"devantler-tech",url:"https://github.com/devantler-tech/ksail"} and
          .spec.outputs == [{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",
            contractUrl:($harbour + "/ksail-releases/openapi.json"),mediaType:"application/json"}] and
-         .spec.ui.url == ($harbour + "/ksail-releases/ui") and
-         (.spec.ui.contract | .hostOrigins |= sort) == {"apiVersion":"data-product-ui/v2",
-           "hostOrigins":$host_origins,"capabilities":["status","resize","appearance"]})] == [true] and
+         (.spec | has("ui") | not))] == [true] and
       [.[] | select(.kind == "DataProduct" and .metadata.name == "harbour-observations") |
-        (.spec.ui.contract | .hostOrigins |= sort) == {"apiVersion":"data-product-ui/v2",
-          "hostOrigins":$host_origins,
-          "capabilities":["status","resize","appearance"]}] == [true] and
+        (.spec | has("ui") | not)] == [true] and
       [.[] | select(.kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech") |
         .spec.versions[] | select(.name == "v1alpha1") |
-        .schema.openAPIV3Schema.properties.spec.properties.ui.properties.contract |
-        (.properties.apiVersion.enum == ["data-product-ui/v1","data-product-ui/v2"] and
-         .properties.capabilities.items.enum == ["status","resize","appearance"] and
-         .properties.capabilities.maxItems == 3 and
-         ."x-kubernetes-validations" == [{message:"Appearance requires data-product-ui/v2",rule:$cel_rule}])] == [true]
+        .schema.openAPIV3Schema.properties.spec.properties.ui."x-kubernetes-validations"] ==
+        [[{message:"API-only products do not support spec.ui; remove it",rule:"false"}]]
     ' "$1" >/dev/null
 }
 trial_contract_matches "${render_dir}/resources.json" || {
-  printf 'FAIL: rendered trial must retain local Event writes, the default registry, appearance gates, immutable images and the bounded approved-origin contract\n' >&2
+  printf 'FAIL: rendered trial must retain local Event writes, the default registry, immutable images, retired presentation settings and the API-only admission rule\n' >&2
   exit 1
 }
 
@@ -810,10 +796,10 @@ trial_contract_matches "${render_dir}/resources.json" || {
 # lost listener, retired flag, lost gate, publication mismatch, inappropriate host
 # or disabled admission rule fails this assertion. Event writes must also retain
 # their required verbs and single, namespace-local controller recipient.
-for broken in listener service retired-flag gate publication origin missing-portable-origin origin-desynchronization admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole release-activation release-source release-ui release-contract; do
+for broken in listener service retired-flag gate publication origin host-origins admission event-grant event-verbs event-subject event-wildcard-role event-wildcard-clusterrole release-activation release-source release-ui release-contract; do
   case "${broken}" in
     release-activation) jq 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
-      (.spec.template.spec.containers[0].env[] | select(.name == "KSAIL_RELEASES_ENABLED") | .value) = "false"
+      .spec.template.spec.containers[0].env += [{name:"KSAIL_RELEASES_ENABLED",value:"true"}]
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
     release-source) jq 'map(if .kind == "DataProduct" and .metadata.name == "ksail-releases" then
       .spec.outputs[0].url = "https://other.example.invalid/releases" else . end)' \
@@ -850,22 +836,19 @@ for broken in listener service retired-flag gate publication origin missing-port
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
     admission) jq 'map(if .kind == "CustomResourceDefinition" and .metadata.name == "dataproducts.data.devantler.tech" then
       (.spec.versions[] | select(.name == "v1alpha1") |
-       .schema.openAPIV3Schema.properties.spec.properties.ui.properties.contract."x-kubernetes-validations"[].rule) = "true"
+       .schema.openAPIV3Schema.properties.spec.properties.ui."x-kubernetes-validations"[].rule) = "true"
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
     gate) jq 'map(if .kind == "Deployment" then
-      (.spec.template.spec.containers[0].env[] | select(.name == "UI_APPEARANCE_ENABLED") | .value) = "false"
+      .spec.template.spec.containers[0].env = ((.spec.template.spec.containers[0].env // []) + [{name:"UI_APPEARANCE_ENABLED",value:"true"}])
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
     publication) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
       (.spec.template.spec.containers[0].env[] | select(.name == "PUBLIC_BASE_URL") | .value) = $registry
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
     origin) jq --arg harbour "${harbour_origin}" 'map(if .kind == "DataProduct" then
-      .spec.ui.contract.hostOrigins = [$harbour] else . end)' \
+      .spec.ui = {title:"Legacy",url:($harbour + "/ui")} else . end)' \
       "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-    missing-portable-origin) jq --arg registry "${registry_origin}" 'map(if .kind == "DataProduct" then
-      .spec.ui.contract.hostOrigins = [$registry] else . end)' \
-      "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
-    origin-desynchronization) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
-      (.spec.template.spec.containers[0].env[] | select(.name == "UI_HOST_ORIGINS") | .value) = $registry
+    host-origins) jq --arg registry "${registry_origin}" 'map(if .kind == "Deployment" and .metadata.name == "data-product-controller-harbour" then
+      .spec.template.spec.containers[0].env += [{name:"UI_HOST_ORIGINS",value:$registry}]
       else . end)' "${render_dir}/resources.json" >"${test_root}/appearance-${broken}.json" ;;
   esac
   if trial_contract_matches "${test_root}/appearance-${broken}.json"; then
