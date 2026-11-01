@@ -666,6 +666,8 @@ runs:
           steps.wait_prod_api_stability.outcome == 'success'
         )
       shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
       run: |
         go run ./scripts/gateway-receiver-binding restore-disabled --context admin@prod
         go run ./scripts/gateway-receiver-binding apply-selected --context admin@prod
@@ -681,6 +683,8 @@ runs:
         steps.publish_platform_manifest.outcome == 'success' &&
         steps.wait_flux_revision.outcome != 'success'
       shell: bash
+      env:
+        HCLOUD_TOKEN: ${{ inputs.hcloud-token }}
       run: go run ./scripts/gateway-receiver-binding restore-disabled --context admin@prod
 
     - name: Verify the deployed data product UI release

@@ -63,6 +63,25 @@ actual Service and Gateway identities. It requires both unbound policy specs to
 match reviewed source and the validating policy's current generation to have
 completed type checking without warnings.
 
+Receiver operations also require a read-only observation of the load balancer's
+effective disabled transport. The Service annotation and `ipMode` are controller
+intent, so they do not establish that the provider has applied the setting.
+Using the existing protected deployment credential, the helper discovers the
+unique load balancer labelled for the bound Service UID and reads it again by
+its returned identifier. Both services must explicitly report PROXY disabled,
+with the bound public/private endpoints, destination NodePorts and private server
+targets. Missing, partial, changed or unreadable facts fail before a receiver
+operation. A second provider observation brackets a successful operation and
+must retain its identity. These are bounded observations, not an atomic lock
+against independent provider changes.
+
+The helper sends only GET requests to the fixed provider API origin, refuses
+redirects and incomplete inventory, and prints categorical errors. Neither
+credentials nor provider response content enter its output. Selected-fence
+installation, unselected restoration and deployed public verification use this
+same gate. This adds no transport activation or asynchronous recovery support;
+an effective active setting still refuses the disabled baseline.
+
 Before restoring disabled state, the helper checks the generated listener and
 both bindings. An active PROXY listener, unknown owner, foreign binding or ambiguous configuration
 refuses every planned write. The helper

@@ -9,7 +9,10 @@ import (
 	"regexp"
 )
 
-type binding struct{ CIDR, ServiceUID, GatewayUID, ServiceVersion, GatewayVersion, PublicIPv4 string }
+type binding struct {
+	CIDR, ServiceUID, GatewayUID, ServiceVersion, GatewayVersion, PublicIPv4 string
+	HTTPNodePort, HTTPSNodePort                                              int
+}
 type metadata struct {
 	Name, Namespace, UID, ResourceVersion string
 	Generation                            int64
@@ -142,12 +145,18 @@ func derive(service, gateway []byte) (binding, error) {
 	}
 	ports := map[int]bool{}
 	nodePorts := map[int]bool{}
+	var httpNodePort, httpsNodePort int
 	for _, p := range s.Spec.Ports {
 		if (p.Port != 80 && p.Port != 443) || p.Protocol != "TCP" || p.NodePort < 30000 || p.NodePort > 32767 || ports[p.Port] || nodePorts[p.NodePort] {
 			return refuse()
 		}
 		ports[p.Port] = true
 		nodePorts[p.NodePort] = true
+		if p.Port == 80 {
+			httpNodePort = p.NodePort
+		} else {
+			httpsNodePort = p.NodePort
+		}
 	}
 	if len(s.Status.LoadBalancer.Ingress) < 2 || len(s.Status.LoadBalancer.Ingress) > 3 {
 		return refuse()
@@ -176,5 +185,5 @@ func derive(service, gateway []byte) (binding, error) {
 	if !private.IsValid() || !public.IsValid() {
 		return refuse()
 	}
-	return binding{CIDR: netip.PrefixFrom(private, 32).String(), ServiceUID: s.Metadata.UID, GatewayUID: g.Metadata.UID, ServiceVersion: s.Metadata.ResourceVersion, GatewayVersion: g.Metadata.ResourceVersion, PublicIPv4: public.String()}, nil
+	return binding{CIDR: netip.PrefixFrom(private, 32).String(), ServiceUID: s.Metadata.UID, GatewayUID: g.Metadata.UID, ServiceVersion: s.Metadata.ResourceVersion, GatewayVersion: g.Metadata.ResourceVersion, PublicIPv4: public.String(), HTTPNodePort: httpNodePort, HTTPSNodePort: httpsNodePort}, nil
 }

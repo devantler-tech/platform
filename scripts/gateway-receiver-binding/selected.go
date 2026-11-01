@@ -285,21 +285,26 @@ func applySelected(ctx context.Context, kubeContext string) (bool, error) {
 		}
 	}
 	c := receiverClient{context: kubeContext, command: executeReceiver}
-	wrote, err := c.installFence(ctx, before, pauseFor)
-	if err != nil {
-		return wrote, err
-	}
-	// Enough fresh connections to reach most nodes behind the load balancer, once,
-	// when the listeners change. This shows the fence does not refuse the load
-	// balancer; it cannot show that a listener took the fence.
-	for round := 0; wrote && round < fenceProbeRounds; round++ {
-		if err := probePublic(ctx, before.PublicIPv4); err != nil {
-			return wrote, err
+	wrote := false
+	err = withProviderBaseline(ctx, before, readProvider, func() error {
+		var installErr error
+		wrote, installErr = c.installFence(ctx, before, pauseFor)
+		if installErr != nil {
+			return installErr
 		}
-	}
-	after, err := collect(ctx, kubeContext)
-	if err != nil || !sameReceiver(before, after) {
-		return wrote, errors.New("source-changed")
-	}
-	return wrote, nil
+		// Enough fresh connections to reach most nodes behind the load balancer, once,
+		// when the listeners change. This shows the fence does not refuse the load
+		// balancer; it cannot show that a listener took the fence.
+		for round := 0; wrote && round < fenceProbeRounds; round++ {
+			if err := probePublic(ctx, before.PublicIPv4); err != nil {
+				return err
+			}
+		}
+		after, err := collect(ctx, kubeContext)
+		if err != nil || !sameReceiver(before, after) {
+			return errors.New("source-changed")
+		}
+		return nil
+	})
+	return wrote, err
 }
