@@ -6,6 +6,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 readonly root_dir
 readonly workflow="${root_dir}/.github/workflows/publish-coroot-node-agent-hotfix.yaml"
 readonly patch_file="${root_dir}/k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch"
+readonly cluster_agent_patch="${root_dir}/k8s/bases/infrastructure/coroot/cluster-agent-v1.11.8-otel-log-api.patch"
 readonly dockerfile="${root_dir}/k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile"
 readonly source_tag='v1.38.1'
 readonly source_commit='e335bf21a4657e9c91f56945f726e28b5f56a589'
@@ -65,6 +66,14 @@ grep -qF 'test "${reached}" = 0' <<<"${audit_step}" ||
 [[ "$(yq -er '.jobs.publish.needs' "${workflow}")" == 'verify' ]] ||
   fail 'publication must wait for the audit in the verify job'
 
+[[ "$(yq -er '.env.COROOT_CLUSTER_AGENT_SOURCE_COMMIT' "${workflow}")" == 'dfc1a098eaa4bde3b10d4225241b2421a2704679' ]] ||
+  fail 'the cluster-agent copy must come from the exact reviewed release commit'
+[[ "$(grep -c '^diff --git ' "${cluster_agent_patch}")" == '2' ]] ||
+  fail 'the cluster-agent patch must touch only the two reviewed log API files'
+# shellcheck disable=SC2016
+[[ "$(grep -cF 'git -C ../cluster-agent apply "${CLUSTER_AGENT_PATCH}"' "${workflow}")" == '2' ]] ||
+  fail 'both jobs must apply the reviewed cluster-agent patch'
+
 grep -qF 'repository: coroot/coroot-node-agent' "${workflow}" ||
   fail 'the workflow must check out the upstream Coroot node-agent source explicitly'
 # shellcheck disable=SC2016
@@ -87,6 +96,7 @@ expected_patch_files="$(printf 'diff --git a/%s b/%s\n' \
   ebpftracer/tracer_test.go ebpftracer/tracer_test.go \
   logs/journald_reader.go logs/journald_reader.go \
   logs/journald_reader_test.go logs/journald_reader_test.go \
+  logs/otel.go logs/otel.go \
   node/collector.go node/collector.go \
   node/collector_test.go node/collector_test.go \
   node/net_dump_linux_test.go node/net_dump_linux_test.go \

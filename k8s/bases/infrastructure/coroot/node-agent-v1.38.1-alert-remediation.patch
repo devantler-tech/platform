@@ -104,7 +104,7 @@ index 1ebcc2f..2e7c763 100644
  	skipIfNotVM(t)
  	src := `
 diff --git a/go.mod b/go.mod
-index 4cd9b06..1467b2a 100644
+index 4cd9b06..e82b749 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -16,8 +16,8 @@ require (
@@ -134,7 +134,12 @@ index 4cd9b06..1467b2a 100644
  	github.com/vishvananda/netlink v1.3.1
  	github.com/vishvananda/netns v0.0.5
  	github.com/xin053/hsperfdata v0.2.3
-@@ -49,9 +49,9 @@ require (
+@@ -45,13 +45,13 @@ require (
+ 	go.opentelemetry.io/otel v1.46.0
+ 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0
+ 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
+-	go.opentelemetry.io/otel/log v0.20.0
++	go.opentelemetry.io/otel/log v0.21.0
  	go.opentelemetry.io/otel/sdk v1.46.0
  	go.opentelemetry.io/otel/trace v1.46.0
  	golang.org/x/arch v0.4.0
@@ -156,11 +161,15 @@ index 4cd9b06..1467b2a 100644
  	github.com/blang/semver v3.5.1+incompatible // indirect
  	github.com/dustin/go-humanize v1.0.1 // indirect
  	github.com/go-kit/log v0.2.1 // indirect
-@@ -80,7 +80,7 @@ require (
+@@ -78,9 +78,9 @@ require (
+ 	github.com/xdg-go/scram v1.1.2 // indirect
+ 	github.com/xdg-go/stringprep v1.0.4 // indirect
  	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
- 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 // indirect
- 	go.opentelemetry.io/otel/sdk/log v0.20.0 // indirect
+-	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 // indirect
+-	go.opentelemetry.io/otel/sdk/log v0.20.0 // indirect
 -	golang.org/x/crypto v0.56.0 // indirect
++	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 // indirect
++	go.opentelemetry.io/otel/sdk/log v0.21.0 // indirect
 +	golang.org/x/crypto v0.58.0 // indirect
  	k8s.io/klog v1.0.0 // indirect
  )
@@ -185,8 +194,14 @@ index 4cd9b06..1467b2a 100644
  	google.golang.org/genproto/googleapis/api v0.0.0-20260825221802-da73d73af1c5 // indirect
  	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
  	google.golang.org/grpc v1.83.2 // indirect
+@@ -158,3 +158,5 @@ replace (
+ 	github.com/optiopay/kafka => github.com/cilium/kafka v0.0.0-20180809090225-01ce283b732b
+ 	github.com/pyroscope-io/dotnetdiag => github.com/coroot/dotnetdiag v1.2.2
+ )
++
++replace github.com/coroot/coroot-cluster-agent => ../cluster-agent
 diff --git a/go.sum b/go.sum
-index 98da4bc..6f1f325 100644
+index 98da4bc..95308dd 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -1,7 +1,7 @@
@@ -199,7 +214,16 @@ index 98da4bc..6f1f325 100644
  github.com/0xrawsec/golang-etw v1.6.2 h1:ZXOEL2+hfWBz7QK3iSPVhKeB1VYjz47xGl/WfdqdpzA=
  github.com/0xrawsec/golang-etw v1.6.2/go.mod h1:nTLqX2X4dxf/XpYiFmVfWSrjER/CO3A1WOsvc8cac6I=
  github.com/0xrawsec/golang-utils v1.3.1 h1:jjiBzsxzcQPkmEV5KONJY4OnCoqTTW1eQMJcpSdk3hw=
-@@ -119,8 +119,8 @@ github.com/golang/glog v1.2.5 h1:DrW6hGnjIhtvhOIiAKT6Psh/Kd/ldepEa81DKeiRJ5I=
+@@ -61,8 +61,6 @@ github.com/containerd/typeurl/v2 v2.3.0 h1:HZHPhRWo5XMy3QGQoPrUzbW/2ckwjfweHmOwl
+ github.com/containerd/typeurl/v2 v2.3.0/go.mod h1:Qk+PAdUYArVj41TnGi6rJ+48RF0PkcTc4i/taoBcK0w=
+ github.com/coreos/go-systemd/v22 v22.7.0 h1:LAEzFkke61DFROc7zNLX/WA2i5J8gYqe0rSj9KI28KA=
+ github.com/coreos/go-systemd/v22 v22.7.0/go.mod h1:xNUYtjHu2EDXbsxz1i41wouACIwT7Ybq9o0BQhMwD0w=
+-github.com/coroot/coroot-cluster-agent v1.11.8 h1:qQ7Bkj8ta1tFFLwt1Box3xOttj3d4+4FzaK0GP7JC34=
+-github.com/coroot/coroot-cluster-agent v1.11.8/go.mod h1:1gaf6PXWO25xCH1sES5Lxk4oNSwMlG4JrKBgio0LSzg=
+ github.com/coroot/dotnetdiag v1.2.2 h1:PVP/By8o+xhPjfVolJYcjHLbFQInM7pkaD6/otPLc8Q=
+ github.com/coroot/dotnetdiag v1.2.2/go.mod h1:veXCMlFzm1yNl7wwJb/ZLxO4WbzhDBoy1VG1XtkH2ls=
+ github.com/coroot/logger v1.0.0 h1:n8iNkGk6ete9wp/L49FXsZlNiySuA+IJ7TsTkYkiqPc=
+@@ -119,8 +117,8 @@ github.com/golang/glog v1.2.5 h1:DrW6hGnjIhtvhOIiAKT6Psh/Kd/ldepEa81DKeiRJ5I=
  github.com/golang/glog v1.2.5/go.mod h1:6AhwSGph0fcJtXVM/PEHPqZlFeoLxhs7/t5UDAwmO+w=
  github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
  github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
@@ -210,7 +234,7 @@ index 98da4bc..6f1f325 100644
  github.com/gomodule/redigo v1.8.5/go.mod h1:P9dn9mFrCBvWhGE1wpxx6fgq7BAeLBk+UUUzlpkBYO0=
  github.com/gomodule/redigo v1.9.2 h1:HrutZBLhSIU8abiSfW8pj8mPhOyMYjZT/wcA4/L9L9s=
  github.com/gomodule/redigo v1.9.2/go.mod h1:KsU3hiK/Ay8U42qpaJk+kuNa3C+spxapWpM+ywhcgtw=
-@@ -133,16 +133,16 @@ github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/
+@@ -133,16 +131,16 @@ github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/
  github.com/google/go-cmp v0.5.6/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
  github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
  github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
@@ -231,7 +255,7 @@ index 98da4bc..6f1f325 100644
  github.com/grobie/gomemcache v0.0.0-20230213081705-239240bbc445 h1:FlKQKUYPZ5yDCN248M3R7x8yu2E3yEZ0H7aLomE4EoE=
  github.com/grobie/gomemcache v0.0.0-20230213081705-239240bbc445/go.mod h1:L69/dBlPQlWkcnU76WgcppK5e4rrxzQdi6LhLnK/ytA=
  github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePCEX9iuS+cneUwncnw=
-@@ -255,8 +255,8 @@ github.com/prometheus/memcached_exporter v0.14.3 h1:Of+E4D+VysIicZjLDoSvlWAM7Yu0
+@@ -255,8 +253,8 @@ github.com/prometheus/memcached_exporter v0.14.3 h1:Of+E4D+VysIicZjLDoSvlWAM7Yu0
  github.com/prometheus/memcached_exporter v0.14.3/go.mod h1:5RnZhcAXAu6rwwlGl4pz8NJjAjvBdHr1ZL5F8vYLJnU=
  github.com/prometheus/procfs v0.21.1 h1:GljZCt+zSTS+NZq88cyQ1LjZ+RCHp3uVuabBWA5+OJI=
  github.com/prometheus/procfs v0.21.1/go.mod h1:aB55Cww9pdSJVHk0hUf0inxWyyjPogFIjmHKYgMKmtY=
@@ -242,7 +266,7 @@ index 98da4bc..6f1f325 100644
  github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
  github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
  github.com/samber/lo v1.53.0 h1:t975lj2py4kJPQ6haz1QMgtId2gtmfktACxIXArw3HM=
-@@ -283,8 +283,8 @@ github.com/tklauser/go-sysconf v0.3.16 h1:frioLaCQSsF5Cy1jgRBrzr6t502KIIwQ0MArYI
+@@ -283,8 +281,8 @@ github.com/tklauser/go-sysconf v0.3.16 h1:frioLaCQSsF5Cy1jgRBrzr6t502KIIwQ0MArYI
  github.com/tklauser/go-sysconf v0.3.16/go.mod h1:/qNL9xxDhc7tx3HSRsLWNnuzbVfh3e7gh/BmM179nYI=
  github.com/tklauser/numcpus v0.11.0 h1:nSTwhKH5e1dMNsCdVBukSZrURJRoHbSEQjdEbY+9RXw=
  github.com/tklauser/numcpus v0.11.0/go.mod h1:z+LwcLq54uWZTX0u/bGobaV34u6V7KNlTZejzM6/3MQ=
@@ -253,7 +277,38 @@ index 98da4bc..6f1f325 100644
  github.com/vishvananda/netlink v1.3.1 h1:3AEMt62VKqz90r0tmNhog0r/PpWKmrEShJU0wJW6bV0=
  github.com/vishvananda/netlink v1.3.1/go.mod h1:ARtKouGSTGchR8aMwmkzC0qiNPrrWO5JS/XMVl45+b4=
  github.com/vishvananda/netns v0.0.5 h1:DfiHV+j8bA32MFM7bfEunvT8IAqQ/NzSJHtcmW5zdEY=
-@@ -351,10 +351,10 @@ golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACk
+@@ -312,22 +310,22 @@ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 h1:3g7B90U
+ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0/go.mod h1:Ef8SuTh59BT7+ofpDxN9z+yOlc4t2GjLmKDgYNJL/NU=
+ go.opentelemetry.io/otel v1.46.0 h1:FHt5/CDyVxi/8IM1CH7VE/rRgq3kLHa2mSTVMO8AWyc=
+ go.opentelemetry.io/otel v1.46.0/go.mod h1:Gj3SEScelsNC45tp4nSxRYlS+f5iez7W8XPMCt905kE=
+-go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 h1:owlhcJ3QO3X0YTDTCcDZ4V+6aVDkWbNmBoQ5NUp7Oww=
+-go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0/go.mod h1:MP4eemTiI9zC8fgg+DYynhYDYf3ba72S376TvP+Ye0Q=
++go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 h1:fvNHGyo3CdRv/DQveXqhqBxnKTDyRaC5sMSQxilX/A0=
++go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0/go.mod h1:zyGrjRKL2B/6+Jc/m4/otPoZqV2MY9ZjC/aBraRO7zc=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0 h1:OFnwLJr+pF3iHrlGSzbxyuo6/6HyBlnlN1CWEJmBVcw=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0/go.mod h1:716wFneO0ov19A2beH5hjfh9AK5z/VWNAtDijp1Y0/g=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0 h1:KrC1YrQeSt46ITMWAbgQx1M1eV1/1TKzttrBzymPmss=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0/go.mod h1:zDSEzoEqsOrgBeGvH66KRgxh90VonFyJqBHA0Pk3+rM=
+-go.opentelemetry.io/otel/log v0.20.0 h1:/5i0vuHxCLWUfChWG41K9wkM0jafruPw9NU1/RCJirs=
+-go.opentelemetry.io/otel/log v0.20.0/go.mod h1:wOcMcjsZpG8x7Bak7IhSi/lg8wscV2C1VdrKCLPlt0E=
++go.opentelemetry.io/otel/log v0.21.0 h1:SLsVDGmtyBrdw8/a2Z0bOIxou/+bN4z56GebH7T0LvA=
++go.opentelemetry.io/otel/log v0.21.0/go.mod h1:iReetQrZL9Wyg84cCkOoCmqDHS5RCFfyxC7J+r8fn8g=
+ go.opentelemetry.io/otel/metric v1.46.0 h1:yBnkXvgV7AXFILZc5K6IZe/CBFF3OS7BJ8ov6/lj0K8=
+ go.opentelemetry.io/otel/metric v1.46.0/go.mod h1:iPmdWqifKUdzziPkvvzIJXITl56fQx2mGM/DHLB3/2o=
+ go.opentelemetry.io/otel/sdk v1.46.0 h1:h5CNQQjEbuQXY/JfZtgt3i7HVFV3aHPO2OAwO2eTYPI=
+ go.opentelemetry.io/otel/sdk v1.46.0/go.mod h1:GAERFXFt5SYCEB+YiKUbMBeza6UaDH7GmGOZEfh2gSM=
+-go.opentelemetry.io/otel/sdk/log v0.20.0 h1:vM3xI7TQgKPiSghe6urZtAkyFY7SodrSpC83CffDFuY=
+-go.opentelemetry.io/otel/sdk/log v0.20.0/go.mod h1:Knej2nmsTUzN79T2eeXdRsjjPcoxoq2pUyUHz9TFyyU=
+-go.opentelemetry.io/otel/sdk/log/logtest v0.20.0 h1:OqdRZ1guyzamK3M6LlRsmGqRrjkHWw6WZOKKli5ELpg=
+-go.opentelemetry.io/otel/sdk/log/logtest v0.20.0/go.mod h1:PuMIlm7zAt7c3z8zfOI5ox4iT1Z87We+PF6YoINux/M=
++go.opentelemetry.io/otel/sdk/log v0.21.0 h1:QsE7XSR0ktQdKmRKGnR+f1ObGF32WG+7MER/P9KgmYc=
++go.opentelemetry.io/otel/sdk/log v0.21.0/go.mod h1:m9mApjCoD2/1QuKCAptjv+BrG9WKOvQLVdNx+iBldTo=
++go.opentelemetry.io/otel/sdk/log/logtest v0.21.0 h1:X+JBBgKlswCGYsmgL0CnoUUtlE//VB345c84jYAYkdQ=
++go.opentelemetry.io/otel/sdk/log/logtest v0.21.0/go.mod h1:HD1575K8e6sIFBBDd5tZB3t9DlMytWXq9FuR+Y4rfjE=
+ go.opentelemetry.io/otel/sdk/metric v1.46.0 h1:0piZ26EG4RBfebb2jhDH6ERCYHoVWduc3kLgPCwSnSE=
+ go.opentelemetry.io/otel/sdk/metric v1.46.0/go.mod h1:I1PbKrdVc8Qu8HYVDNtqVIwLwjNrhsV/uFuxfwg8mO4=
+ go.opentelemetry.io/otel/trace v1.46.0 h1:OULy7ccdJnZtJ0UDYFOIGaCmiWzJ8Vi2G/Rsu60qs1c=
+@@ -351,10 +349,10 @@ golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACk
  golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
  golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
  golang.org/x/crypto v0.0.0-20210921155107-089bfa567519/go.mod h1:GvvjBRRGRdwPK5ydBHafDWAxML/pGHZbMvKqRZ5+Abc=
@@ -268,7 +323,7 @@ index 98da4bc..6f1f325 100644
  golang.org/x/mod v0.2.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
  golang.org/x/mod v0.3.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
  golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4/go.mod h1:jJ57K6gSWd91VN4djpZkiMVwK6gcyfeH4XE8wZrZaV4=
-@@ -375,14 +375,14 @@ golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v
+@@ -375,14 +373,14 @@ golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v
  golang.org/x/net v0.0.0-20210525063256-abc453219eb5/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
  golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
  golang.org/x/net v0.0.0-20220722155237-a158d28d115b/go.mod h1:XRhObCWvk6IyKnWLug+ECip1KBveYUHfp+8e9klMJ9c=
@@ -287,7 +342,7 @@ index 98da4bc..6f1f325 100644
  golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
  golang.org/x/sys v0.0.0-20190312061237-fead79001313/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
  golang.org/x/sys v0.0.0-20190411185658-b44545bcd369/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
-@@ -412,8 +412,8 @@ golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f/go.mod h1:oPkhp1MJrh7nUepCBc
+@@ -412,8 +410,8 @@ golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f/go.mod h1:oPkhp1MJrh7nUepCBc
  golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
  golang.org/x/sys v0.2.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
  golang.org/x/sys v0.10.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
@@ -298,7 +353,7 @@ index 98da4bc..6f1f325 100644
  golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
  golang.org/x/term v0.0.0-20210927222741-03fcf44c2211/go.mod h1:jbD1KX2456YbFQfuXm/mYQcufACuNUgVhRMnK/tPxf8=
  golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
-@@ -421,8 +421,8 @@ golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
+@@ -421,8 +419,8 @@ golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
  golang.org/x/text v0.3.6/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
  golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
  golang.org/x/text v0.3.8/go.mod h1:E6s5w1FMmriuDzIBO73fBruAKo1PCIq6d2Q6DHfQ8WQ=
@@ -377,6 +432,49 @@ index 0000000..64ad6d7
 +		})
 +	}
 +}
+diff --git a/logs/otel.go b/logs/otel.go
+index 64713b9..abf7be4 100644
+--- a/logs/otel.go
++++ b/logs/otel.go
+@@ -99,7 +99,7 @@ func normalizeTraceContextKey(k string) string {
+ 	return ""
+ }
+ 
+-func logRecordAttrs(source, patternHash string, attributes map[string]string) ([]log.KeyValue, trace.SpanContext) {
++func logRecordAttrs(source, patternHash string, attributes map[string]string) ([]attribute.KeyValue, trace.SpanContext) {
+ 	var traceId trace.TraceID
+ 	var spanId trace.SpanID
+ 	for k, v := range attributes {
+@@ -115,16 +115,16 @@ func logRecordAttrs(source, patternHash string, attributes map[string]string) ([
+ 		}
+ 	}
+ 	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceId, SpanID: spanId})
+-	attrs := make([]log.KeyValue, 0, len(attributes)+2)
+-	attrs = append(attrs, log.String("pattern.hash", patternHash))
++	attrs := make([]attribute.KeyValue, 0, len(attributes)+2)
++	attrs = append(attrs, attribute.String("pattern.hash", patternHash))
+ 	if source != "" {
+-		attrs = append(attrs, log.String(LogSourceAttribute, source))
++		attrs = append(attrs, attribute.String(LogSourceAttribute, source))
+ 	}
+ 	for k, v := range attributes {
+ 		if sc.IsValid() && normalizeTraceContextKey(k) != "" {
+ 			continue
+ 		}
+-		attrs = append(attrs, log.String(k, v))
++		attrs = append(attrs, attribute.String(k, v))
+ 	}
+ 	return attrs, sc
+ }
+@@ -150,7 +150,7 @@ func OtelLogEmitter(containerId, source string) logparser.OnMsgCallbackF {
+ 		record.SetObservedTimestamp(ts)
+ 		record.SetSeverityText(level.String())
+ 		record.SetSeverity(cacommon.LogSeverity(level))
+-		record.SetBody(log.StringValue(msg))
++		record.SetBody(attribute.StringValue(msg))
+ 		record.AddAttributes(attrs...)
+ 		ctx := context.Background()
+ 		if sc.IsValid() {
 diff --git a/node/collector.go b/node/collector.go
 index 202eeea..707cc9f 100644
 --- a/node/collector.go

@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/publish-coroot-node-agent-hotfix.yaml
+      - k8s/bases/infrastructure/coroot/cluster-agent-v1.11.8-otel-log-api.patch
       - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
       - k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch
       - scripts/tests/test-coroot-node-agent-hotfix.sh
@@ -12,6 +13,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/publish-coroot-node-agent-hotfix.yaml
+      - k8s/bases/infrastructure/coroot/cluster-agent-v1.11.8-otel-log-api.patch
       - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
       - k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch
       - scripts/tests/test-coroot-node-agent-hotfix.sh
@@ -26,10 +28,12 @@ concurrency:
 env:
   COROOT_NODE_AGENT_SOURCE_TAG: v1.38.1
   COROOT_NODE_AGENT_SOURCE_COMMIT: e335bf21a4657e9c91f56945f726e28b5f56a589
+  COROOT_CLUSTER_AGENT_SOURCE_COMMIT: dfc1a098eaa4bde3b10d4225241b2421a2704679
   UPSTREAM_IMAGE: ghcr.io/coroot/coroot-node-agent:1.38.1@sha256:a1488ca3e541703fe4b4cdefeff2dae992cc9f45affd18f9f41e5b12a8016cae
   IMAGE: ghcr.io/devantler-tech/platform-coroot-node-agent
   IMAGE_TAG: v1.38.1-alerts.1-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch
+  CLUSTER_AGENT_PATCH_PATH: k8s/bases/infrastructure/coroot/cluster-agent-v1.11.8-otel-log-api.patch
   DOCKERFILE_PATH: k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
 
 jobs:
@@ -57,6 +61,14 @@ jobs:
           path: upstream
           persist-credentials: false
 
+      - name: Check out exact Coroot cluster-agent source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: coroot/coroot-cluster-agent
+          ref: ${{ env.COROOT_CLUSTER_AGENT_SOURCE_COMMIT }}
+          path: cluster-agent
+          persist-credentials: false
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -74,6 +86,7 @@ jobs:
           EXPECTED_SOURCE_COMMIT: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
           EXPECTED_SOURCE_TAG: ${{ env.COROOT_NODE_AGENT_SOURCE_TAG }}
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+          CLUSTER_AGENT_PATCH: ${{ github.workspace }}/${{ env.CLUSTER_AGENT_PATCH_PATH }}
           VERSION: ${{ env.IMAGE_TAG }}
         run: |
           set -euo pipefail
@@ -83,6 +96,8 @@ jobs:
           test "$(git rev-parse "refs/tags/${EXPECTED_SOURCE_TAG}^{commit}")" = "${EXPECTED_SOURCE_COMMIT}"
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
+          # The agent replaces this module with the copy beside it: the release does not build on the fixed OTLP log API.
+          git -C ../cluster-agent apply "${CLUSTER_AGENT_PATCH}"
           git diff --check
           go test -tags slicelabels ./ebpftracer ./node ./logs
           # The agent still reads Prometheus labels as a slice, which newer releases put behind this tag.
@@ -139,6 +154,14 @@ jobs:
           path: upstream
           persist-credentials: false
 
+      - name: Check out exact Coroot cluster-agent source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: coroot/coroot-cluster-agent
+          ref: ${{ env.COROOT_CLUSTER_AGENT_SOURCE_COMMIT }}
+          path: cluster-agent
+          persist-credentials: false
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -156,6 +179,7 @@ jobs:
           EXPECTED_SOURCE_COMMIT: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
           EXPECTED_SOURCE_TAG: ${{ env.COROOT_NODE_AGENT_SOURCE_TAG }}
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
+          CLUSTER_AGENT_PATCH: ${{ github.workspace }}/${{ env.CLUSTER_AGENT_PATCH_PATH }}
           VERSION: ${{ env.IMAGE_TAG }}
         run: |
           set -euo pipefail
@@ -165,6 +189,8 @@ jobs:
           test "$(git rev-parse "refs/tags/${EXPECTED_SOURCE_TAG}^{commit}")" = "${EXPECTED_SOURCE_COMMIT}"
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
+          # The agent replaces this module with the copy beside it: the release does not build on the fixed OTLP log API.
+          git -C ../cluster-agent apply "${CLUSTER_AGENT_PATCH}"
           git diff --check
           # The agent still reads Prometheus labels as a slice, which newer releases put behind this tag.
           CGO_ENABLED=1 go build -mod=readonly -tags slicelabels \
