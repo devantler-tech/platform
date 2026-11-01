@@ -29,3 +29,22 @@ func TestClientRefreshRequiresItsOwnConfirmation(t *testing.T) {
 		env[key] = old
 	}
 }
+
+func TestBenchmarkAuthorizationDoesNotAuthorizeOtherMigrationWrites(t *testing.T) {
+	for _, phase := range []string{"v1", "v2"} {
+		env := dispatchFixture()
+		env["LONGHORN_V2_OPERATION"] = "benchmark-" + phase
+		env["LONGHORN_V2_CONFIRM"] = "benchmark-longhorn-storage"
+		getenv := func(key string) string { return env[key] }
+		if err := authorizeBenchmark(getenv, phase); err != nil {
+			t.Fatal(err)
+		}
+		if authorizeRefresh(getenv) == nil {
+			t.Fatal("benchmark dispatch authorized another operation")
+		}
+		env["GITHUB_REF"] = "refs/heads/unreviewed"
+		if authorizeBenchmark(getenv, phase) == nil {
+			t.Fatal("unreviewed branch benchmark authorized")
+		}
+	}
+}

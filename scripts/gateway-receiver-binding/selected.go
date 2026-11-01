@@ -129,11 +129,12 @@ func fenceActive(raw []byte, b binding) error {
 }
 
 func (c receiverClient) bindingsSelected(ctx context.Context, b binding) error {
-	for _, r := range preparedBindings {
-		raw, err := c.read(ctx, r.Resource, "", "gateway-receiver")
-		if err != nil || !admissionMatches(raw, r, b) {
-			return errors.New("selected-policy-binding")
-		}
+	identities, err := c.fenceIdentities(ctx, b)
+	if err != nil {
+		return err
+	}
+	if c.expected != nil && c.expected.Bindings != identities {
+		return errors.New("receiver-observation-changed")
 	}
 	return nil
 }
@@ -143,6 +144,9 @@ func (c receiverClient) bindingsSelected(ctx context.Context, b binding) error {
 func (c receiverClient) receiverState(ctx context.Context, b binding, selected bool) error {
 	raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
 	if err != nil {
+		return err
+	}
+	if err := c.receiverObserved(raw, b); err != nil {
 		return err
 	}
 	if selected {
@@ -163,12 +167,11 @@ func (c receiverClient) receiverState(ctx context.Context, b binding, selected b
 
 // restoreBaseline runs restoration only when the reviewed source leaves the
 // fence unselected, so main's ordinary recovery keeps answering for main.
-func restoreBaseline(rendered []byte, restore func() error) (bool, error) {
-	selected, err := fenceSelected(rendered)
-	if err != nil {
-		return false, err
+func restoreBaseline(profile transportProfile, restore func() error) (bool, error) {
+	if profile.Proxy && !profile.Fence {
+		return false, errors.New("transport-profile")
 	}
-	if selected {
+	if profile.Fence {
 		return true, nil
 	}
 	return false, restore()
@@ -214,20 +217,38 @@ func fenceTouch(raw []byte) ([]byte, error) {
 // rewritten by the same write. A listener this helper does not own or an active
 // PROXY listener fails at once, because a write could not make either correct.
 func (c receiverClient) installFence(ctx context.Context, b binding, pause func(context.Context, time.Duration) error) (bool, error) {
+	if c.expected != nil && !sameReceiver(c.expected.Binding, b) {
+		return false, errors.New("receiver-observation-changed")
+	}
 	wrote := false
+	attempted := false
 	var last error
 	for {
 		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+		if c.expected != nil && err != nil {
+			return wrote, err
+		}
 		if err == nil {
+			if err := c.receiverObserved(raw, b); err != nil {
+				return wrote, err
+			}
 			if _, err := recoveryPatch(raw, b); err != nil {
 				return wrote, err
 			}
 			last = c.policies(ctx, b)
+			if c.expected != nil && last != nil {
+				return wrote, last
+			}
 			if last == nil {
 				last = c.bindingsSelected(ctx, b)
+				if c.expected != nil && last != nil {
+					return wrote, last
+				}
 			}
 			if last == nil && fenceActive(raw, b) == nil {
-				if wrote {
+				if attempted {
+					// The write may have committed even when its response was
+					// lost. Readback still requires settling and public samples.
 					return true, pause(ctx, fenceSettle)
 				}
 				return false, nil
@@ -239,6 +260,7 @@ func (c receiverClient) installFence(ctx context.Context, b binding, pause func(
 				}
 				// A conflict or an API server still catching up on the policy
 				// shows up in the next read.
+				attempted = true
 				if _, err := c.command(ctx, touch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=merge", "--patch-file=/dev/stdin", "-o=json"); err != nil {
 					last = errors.New("receiver-write-refused")
 				} else {
@@ -262,49 +284,4 @@ func pauseFor(ctx context.Context, d time.Duration) error {
 	case <-time.After(d):
 		return nil
 	}
-}
-
-// applySelected installs the fence the reviewed source selects. It runs only in
-// the protected deployment and never rebinds or edits anything but the marker.
-func applySelected(ctx context.Context, kubeContext string) (bool, error) {
-	if kubeContext != "admin@prod" {
-		return false, errors.New("arguments")
-	}
-	before, err := collect(ctx, kubeContext)
-	if err != nil {
-		return false, err
-	}
-	// A replacement binding reaches the cluster through Flux, so a stale one waits too.
-	for {
-		secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
-		if err == nil && secretMatches(secret, before) {
-			break
-		}
-		if pauseFor(ctx, fencePollEvery) != nil {
-			return false, errors.New("source-secret")
-		}
-	}
-	c := receiverClient{context: kubeContext, command: executeReceiver}
-	wrote := false
-	err = withProviderBaseline(ctx, before, readProvider, func() error {
-		var installErr error
-		wrote, installErr = c.installFence(ctx, before, pauseFor)
-		if installErr != nil {
-			return installErr
-		}
-		// Enough fresh connections to reach most nodes behind the load balancer, once,
-		// when the listeners change. This shows the fence does not refuse the load
-		// balancer; it cannot show that a listener took the fence.
-		for round := 0; wrote && round < fenceProbeRounds; round++ {
-			if err := probePublic(ctx, before.PublicIPv4); err != nil {
-				return err
-			}
-		}
-		after, err := collect(ctx, kubeContext)
-		if err != nil || !sameReceiver(before, after) {
-			return errors.New("source-changed")
-		}
-		return nil
-	})
-	return wrote, err
 }

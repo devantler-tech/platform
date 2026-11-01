@@ -77,6 +77,8 @@ jobs:
       # The allowed half: the fence is in place and the load balancer's traffic is still answered.
       - name: Verify the selected fence and the public routes
         shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: |
           set -euo pipefail
           verified="$(go run ./scripts/gateway-receiver-binding verify --context admin@prod)"

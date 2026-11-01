@@ -126,6 +126,7 @@ func fakeSet(o object, path string, v any, remove bool) {
 		m[k] = v
 	}
 }
+
 // command models the fixed maintenance commands, including stdin patch preconditions and injected failures.
 func (a *fakeAPI) command(_ context.Context, input []byte, args ...string) ([]byte, error) {
 	if args[0] == "patch" && args[1] == "kustomization" {
@@ -465,5 +466,23 @@ func TestFailureCleanupWiringPrecedesTalosMutation(t *testing.T) {
 		if positions[order[i-1]] >= positions[order[i]] {
 			t.Fatal("maintenance ordering is unsafe")
 		}
+	}
+}
+
+func TestPrepareCountsBaselineWorkersThroughTheDiskConfigLabelTransition(t *testing.T) {
+	for label, ok := range map[string]bool{"true": true, "config": true, "false": false} {
+		t.Run(label, func(t *testing.T) {
+			a := fakeFixture()
+			for _, n := range a.objects[fakeKey("nodes", "", "")] {
+				n["metadata"].(object)["labels"].(object)["node.longhorn.io/create-default-disk"] = label
+			}
+			err := testEngine(a).prepare(context.Background())
+			if ok && err != nil {
+				t.Fatal(err)
+			}
+			if !ok && (err == nil || !strings.Contains(err.Error(), "three ready baseline storage workers")) {
+				t.Fatalf("got %v", err)
+			}
+		})
 	}
 }

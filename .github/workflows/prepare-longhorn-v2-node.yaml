@@ -14,7 +14,7 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [refresh-clients]
+        options: [refresh-clients, benchmark-v1, benchmark-v2]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -51,6 +51,7 @@ jobs:
     environment: prod
     permissions:
       contents: read
+      actions: read
     concurrency:
       group: prod-deploy
       cancel-in-progress: false
@@ -69,6 +70,9 @@ jobs:
           case "${LONGHORN_V2_OPERATION}" in
             refresh-clients)
               [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]
+              ;;
+            benchmark-v1|benchmark-v2)
+              [[ "${LONGHORN_V2_CONFIRM}" == benchmark-longhorn-storage ]]
               ;;
             *) exit 1 ;;
           esac
@@ -118,6 +122,8 @@ jobs:
           HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
         run: ./scripts/use-prod-stable-api-endpoint.sh
       - name: Run the confirmed migration preparation
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: go run ./scripts/migrate-longhorn-v2
       - name: Remove runner credentials
         if: ${{ always() }}

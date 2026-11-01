@@ -112,6 +112,8 @@ jobs:
         run: go test -parallel 8 -timeout 20m ./...
 
       - name: 🧪 Validate gateway receiver policies with the native admission engine
+        env:
+          GATEWAY_RECEIVER_NATIVE_TEST: "1"
         run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
 
   changes:
@@ -201,6 +203,7 @@ jobs:
               - 'scripts/openbao-backup-recovery/**'
               - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/test-ksail-operator-startup-order.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
               - 'scripts/tests/openbao-transport-runtime/**'
@@ -289,6 +292,7 @@ jobs:
               # gate that proves the rule actually fires are one contract.
               - 'tests/label-baseline-workers/**'
               - 'scripts/tests/test-label-baseline-workers.sh'
+              - 'scripts/tests/test-longhorn-migration-replica-exclusion.sh'
               # Exact Longhorn registrar mutation, near-miss fixtures, chart
               # version coupling and least-privilege background-controller RBAC.
               - 'tests/longhorn-registrar-prestop/**'
@@ -1806,7 +1810,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.205.1"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -1950,6 +1954,19 @@ jobs:
           bash scripts/tests/test-umami-tracking-probe.sh
           shellcheck scripts/verify-umami-tracking.sh
 
+      - name: 🧪 Prove the published contract-probe diagnostics
+        if: matrix.suite == 'services'
+        timeout-minutes: 5
+        env:
+          CONTRACT_PROBE_IMAGE_NATIVE_TEST: '1'
+        run: |
+          set -euo pipefail
+          go test -count=1 -timeout 4m -json ./scripts/tests/contract-probe-image |
+            tee "${RUNNER_TEMP}/contract-probe-image.jsonl"
+          # A skipped or missing native test is not a published-image proof.
+          jq -es 'any(.[]; .Action == "pass" and .Test == "TestPublishedProbeImage")' \
+            "${RUNNER_TEMP}/contract-probe-image.jsonl"
+
       - name: ⚖️ Validate cluster policies (placement)
         if: matrix.suite == 'placement'
         run: |
@@ -1969,6 +1986,8 @@ jobs:
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
           shellcheck scripts/tests/test-label-baseline-workers.sh
           bash scripts/tests/test-label-baseline-workers.sh
+          shellcheck scripts/tests/test-longhorn-migration-replica-exclusion.sh
+          bash scripts/tests/test-longhorn-migration-replica-exclusion.sh
           shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
           bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
 
@@ -3021,7 +3040,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.205.1"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3455,7 +3474,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.205.1"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3467,6 +3486,11 @@ jobs:
           key: kubeconform-schema-cache-v1-render-regressions-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+      - name: 🔁 Validate KSail startup layer ordering
+        if: matrix.suite == 'contracts'
+        run: |
+          shellcheck scripts/tests/test-ksail-operator-startup-order.sh
+          bash scripts/tests/test-ksail-operator-startup-order.sh
       - name: 🔐 Prove snapshot readback with pinned static tooling
         if: matrix.suite == 'native'
         timeout-minutes: 5
@@ -4442,7 +4466,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.205.1"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

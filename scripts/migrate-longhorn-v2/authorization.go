@@ -28,3 +28,10 @@ func authorizeRefresh(getenv func(string) string) error {
 	}
 	return authorizeWorkflow(getenv, "refresh-longhorn-v2-clients")
 }
+
+func authorizeBenchmark(getenv func(string) string, phase string) error {
+	if (phase != "v1" && phase != "v2") || getenv("LONGHORN_V2_OPERATION") != "benchmark-"+phase {
+		return errors.New("the explicit storage benchmark operation is required")
+	}
+	return authorizeWorkflow(getenv, "benchmark-longhorn-storage")
+}

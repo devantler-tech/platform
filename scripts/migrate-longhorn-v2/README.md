@@ -4,11 +4,10 @@ The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1, remove iSCSI,
 or change a disk.
 
-This tool lands in stages (platform#5655). Today it has one operation,
-`refresh-clients`, and that operation holds until the V2 migration pool is in
+This tool lands in stages (platform#5655). Today it has `refresh-clients` and the
+benchmarks. `refresh-clients` holds until the V2 migration pool is in
 `ksail.prod.yaml`, the fixed migration workers are Ready and the host huge-page
-settings are loaded. Benchmarking, temporary capacity and worker preparation follow in
-their own changes.
+settings are loaded. Temporary capacity and worker preparation follow in their own changes.
 
 Dispatch only the merged workflow on `main`. Select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
@@ -40,6 +39,36 @@ The restart holds under node pressure, and when Pods that landed since the first
 no longer fit. For two minutes after kubelet reports its new capacity, a rejected Pod or a Pod
 that was running and has gone fails the run and keeps any cordon. Ordinary Pod churn can trip
 this too; check the worker, then dispatch again.
+
+Next select `benchmark-v1` with `benchmark-longhorn-storage`, before enabling any
+temporary replica storage. It holds until every permanent worker reports its huge pages,
+so run `refresh-clients` first. The pinned fio 3.41 image runs eighteen 4 KiB direct
+I/O trials on a disposable volume with three permanent CX43 replicas and client
+worker 3: random read, random write and 70:30 mixed I/O, queue depths 1 and 32,
+three 30-second trials after a 10-second ramp each. CPU limits, throttling, IOPS
+and p99 latency are recorded. The receipt also captures the admitted client CPU
+allocation and each permanent worker's actual instance-manager image, CPU
+request and limit. Storage health is read every minute during the trials, and a scratch
+replica rebuilt at any point is detected from its identity. Three unproven reads in a row,
+from failed reads or a volume staying unhealthy, hold the comparison, so a shorter fault on
+another volume can go unseen. Other changes during the trials hold it too. fio keeps running
+until it finishes or reaches its deadline.
+
+A receipt records these checks, and it does not prove nothing else disturbed the trials: only
+rebuilds, volume health and the recorded configuration are observed. Scratch objects are excluded
+from backups. Compare receipts knowing that, and avoid dispatching around the 02:17 UTC backup,
+whose load on the same disks is not measured. V2's necessary CPU reservation is reported alongside the V1 context;
+the comparison does not assume the engines have identical CPU costs.
+A completed receipt requires healthy storage and
+explicit cleanup of only the owned scratch Pod, claim, retained PV, backend,
+class and namespace. An incomplete run, including one that reaches the Pod's 25 minute
+deadline, holds with its journal and resources preserved for explicit recovery.
+
+Run `benchmark-v2` only after every volume uses V2 and every replica is back on
+the same three permanent workers. It requires the baseline's hardware, OS,
+huge-page allocation and fio workload. Compare the three-trial medians and
+latency alongside CPU throttling and concurrent platform load. These controlled
+measurements do not establish a universal fourfold performance claim.
 
 Each Kubernetes patch tests the observed UID and resource version, and Pod evictions
 carry a UID precondition. Talos reads must report the same hardware UUID as the selected
