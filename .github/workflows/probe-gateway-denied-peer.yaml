@@ -77,10 +77,24 @@ jobs:
       # The allowed half: the fence is in place and the load balancer's traffic is still answered.
       - name: Verify the selected fence and the public routes
         shell: bash
-        run: go run ./scripts/gateway-receiver-binding verify --context admin@prod
+        run: |
+          set -euo pipefail
+          verified="$(go run ./scripts/gateway-receiver-binding verify --context admin@prod)"
+          printf '%s\n' "${verified}"
+          # Without a selected fence, an answered connection would say nothing about the fence.
+          grep -Eq '(^| )fence_selected=true( |$)' <<<"${verified}" || { printf 'The fence is not selected; nothing was probed.\n' >&2; exit 1; }
 
       - name: Probe with a pod as the peer
+        id: probe
         shell: bash
         env:
           RUN_ID: ${{ github.run_id }}
         run: ./scripts/probe-gateway-denied-peer.sh --context admin@prod --run-id "${RUN_ID}"
+
+      # A cancelled job can end the step before the script's own cleanup runs.
+      - name: Remove anything this run left behind
+        if: ${{ always() && steps.probe.outcome != 'skipped' }}
+        shell: bash
+        env:
+          RUN_ID: ${{ github.run_id }}
+        run: kubectl --context admin@prod --request-timeout=30s --namespace whoami delete pods,ciliumnetworkpolicies --selector "platform.devantler.tech/gateway-peer-probe=${RUN_ID}" --ignore-not-found >/dev/null 2>&1

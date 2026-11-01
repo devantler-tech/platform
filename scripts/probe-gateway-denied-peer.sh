@@ -13,15 +13,17 @@
 #            that the plain chain, which carries no fence, still answers.
 #   tls      HTTPS with the SNI of a public route. Certificate checks are off on purpose: a finished
 #            handshake is the failure this looks for, whatever certificate came back.
-#            refused   curl 35, 52 or 56, the shapes of a connection closed before any response
-#            accepted  any HTTP response or curl exit 0
+#            refused   curl 35 or 56 with the TLS handshake never finished (time_appconnect is 0)
+#            accepted  a finished handshake, any HTTP response or curl exit 0
 #            other     anything else, such as a refused connect (7) or a timeout (28), which says
 #                      the path failed and nothing about the fence
 #
 # WHY A REFUSAL IS ATTRIBUTABLE. Envoy counts a connection no chain matched in
-# no_filter_chain_match. The script reads that counter from the Envoy on the pod's node before and
-# after the attempts. Other traffic can only raise it, so a rise smaller than the attempts cannot be
-# the fence refusing all of them, and is INCONCLUSIVE.
+# no_filter_chain_match. The script reads that counter before and after the attempts through the
+# cilium-agent on the pod's node, with one fixed read-only command, because the Talos firewall closes
+# Envoy's metrics port to the API server. Other traffic can only raise it, so a rise smaller than the
+# attempts cannot be the fence refusing all of them, and is INCONCLUSIVE. A large enough rise supports
+# the cause; it cannot single out this pod.
 #
 # THE VERDICT
 #   REFUSED   both controls answered, every attempt was refused, and the counter rose by at least
@@ -56,7 +58,6 @@ readonly gateway_namespace='kube-system'
 readonly gateway_service='cilium-gateway-platform'
 readonly tls_host='platform.devantler.tech'
 readonly control_host='unrouted.gateway-peer-probe.invalid'
-readonly envoy_metrics_port='9964'
 # The same pinned image the cross-node probe and the coroot heartbeat CronJob run.
 readonly client_image='docker.io/curlimages/curl:8.22.0@sha256:58adaa4e8dca9c988bae2aba4ab3434a0bb2da16bbe3f92dec39ec7785166777'
 readonly warmup_attempts=12
@@ -254,7 +255,7 @@ spec:
           i=0
           while [ "\$i" -lt "\$ATTEMPTS" ]; do
             i=\$((i + 1))
-            code="\$(curl -sk -o /dev/null --max-time "\$TIMEOUT" --resolve "\$TLS_HOST:443:\$GATEWAY_IP" -w '%{http_code}' "https://\$TLS_HOST/" 2>/dev/null)"
+            code="\$(curl -sk -o /dev/null --max-time "\$TIMEOUT" --resolve "\$TLS_HOST:443:\$GATEWAY_IP" -w '%{http_code} %{time_appconnect}' "https://\$TLS_HOST/" 2>/dev/null)"
             printf 'PROBE tls %s %s\\n' "\$?" "\$code"
           done
           printf 'PROBE control-after %s\\n' "\$(control)"
@@ -289,7 +290,7 @@ pod_logs() {
 # the counter is not there: a missing series is not a zero.
 read_counter() {
   local metrics
-  metrics="$(kc get --raw "/api/v1/namespaces/${gateway_namespace}/pods/${envoy_pod}:${envoy_metrics_port}/proxy/metrics")" || return 0
+  metrics="$(kc -n "${gateway_namespace}" exec "${agent_pod}" --container cilium-agent -- cilium-dbg envoy admin metrics --filter no_filter_chain_match)" || return 0
   grep -E '^[^#]*no_filter_chain_match' <<<"${metrics}" | awk '{ sum += $NF; seen = 1 } END { if (seen) printf "%d", sum }' || true
 }
 
@@ -309,8 +310,8 @@ wait_for_marker() {
 wait_for_marker 'PROBE-READY' || inconclusive 'the pod did not finish its control requests in time'
 node="$(kc -n "${probe_namespace}" get pod "${probe_pod}" -o jsonpath='{.spec.nodeName}')" || node=''
 [[ -n "${node}" ]] || inconclusive 'could not read which node holds the pod'
-envoy_pod="$(kc -n "${gateway_namespace}" get pods -l k8s-app=cilium-envoy --field-selector "spec.nodeName=${node}" -o jsonpath='{.items[0].metadata.name}')" || envoy_pod=''
-[[ -n "${envoy_pod}" ]] || inconclusive 'could not find the Envoy on the node that holds the pod'
+agent_pod="$(kc -n "${gateway_namespace}" get pods -l k8s-app=cilium --field-selector "spec.nodeName=${node}" -o jsonpath='{.items[0].metadata.name}')" || agent_pod=''
+[[ -n "${agent_pod}" ]] || inconclusive 'could not find the Cilium agent on the node that holds the pod'
 counter_before="$(read_counter)"
 
 wait_for_marker 'PROBE-DONE' || inconclusive 'the pod did not finish its attempts in time'
@@ -319,11 +320,11 @@ counter_after="$(read_counter)"
 logs="$(pod_logs)"
 control_before="$(awk '$2 == "control-before" { print $3 }' <<<"${logs}")"
 control_after="$(awk '$2 == "control-after" { print $3 }' <<<"${logs}")"
-# The fields come from the pod's own log, so counting them needs nothing it could shape into a
-# number: `refused` counts only exact curl exits with no HTTP response.
+# A line is `PROBE tls <curl exit> <http code> <time_appconnect>`. curl prints a zero time for a
+# handshake that never finished, and any other value means this peer completed one.
 counted="$(awk '$1 == "PROBE" && $2 == "tls" { n++ } END { print n + 0 }' <<<"${logs}")"
-refused="$(awk '$1 == "PROBE" && $2 == "tls" && ($3 == 35 || $3 == 52 || $3 == 56) && $4 == "000" { n++ } END { print n + 0 }' <<<"${logs}")"
-accepted="$(awk '$1 == "PROBE" && $2 == "tls" && ($3 == 0 || ($4 != "000" && $4 != "")) { n++ } END { print n + 0 }' <<<"${logs}")"
+accepted="$(awk '$1 == "PROBE" && $2 == "tls" && ($3 == 0 || ($4 != "000" && $4 != "") || $5 + 0 > 0) { n++ } END { print n + 0 }' <<<"${logs}")"
+refused="$(awk '$1 == "PROBE" && $2 == "tls" && ($3 == 35 || $3 == 56) && $4 == "000" && $5 != "" && $5 + 0 == 0 { n++ } END { print n + 0 }' <<<"${logs}")"
 other=$((counted - refused - accepted))
 
 printf 'Controls before and after: %s %s\n' "${control_before:-none}" "${control_after:-none}"
