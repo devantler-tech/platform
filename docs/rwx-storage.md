@@ -21,13 +21,17 @@ Longhorn can delete a diagnostic bundle as a side effect of downloading it.
 The route exists only in the Hetzner deployment. Local Docker deployments
 continue without a Longhorn dashboard. Recheck the read-action list against
 Longhorn's API when upgrading it; new POST actions remain denied by default.
+Both Longhorn HTTP inspection boundaries restore the HTTPS scheme within their
+existing read rules, so the manager generates secure browser API links. This
+does not change the manager URL used by internal storage clients.
 
 After deployment, the manual **Prove Longhorn UI Read Only** workflow checks
-successful API reads and denial of writes, duplicate-action bypasses, diagnostic
+successful API reads and JavaScript response types, plus denial of writes, duplicate-action bypasses, diagnostic
 downloads and unknown API paths. Dispatch it from reviewed `main` with the
 confirmation `prove-longhorn-ui-readonly`. It uses fixed requests from the
 existing auth proxy, changes no cluster or storage objects, and logs only a
-sanitized verdict. Negative probes name an impossible resource and an unknown
+sanitized verdict with validated HTTP status codes for mismatches. Response
+headers and contents are never logged. Negative probes name an impossible resource and an unknown
 action, so a missing filter cannot change real data. This network proof is
 separate from observing sign-in and the dashboard in a browser.
 
