@@ -19,7 +19,7 @@ kubectl kustomize "${root_dir}/k8s/providers/${provider}/infrastructure/controll
 yq ea -o=json '[.]' "${scratch}/apps.yaml" >"${scratch}/apps.json"
 yq ea -o=json '[.]' "${scratch}/controllers.yaml" >"${scratch}/controllers.json"
 
-# The UI host follows the Helm runtime. The independently released probe must
+# The publisher host follows the Helm runtime. The independently released probe must
 # render the exact checked-out immutable declaration, without overlay drift.
 probe_image="$(yq -o=json '.spec.template.spec.containers' \
   "${root_dir}/k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml" |
@@ -32,10 +32,10 @@ cat >"${scratch}/runtime-pins.jq" <<'JQ'
   .metadata.name=="data-product-controller")] as $releases |
 ($releases|length)==1 and
 ($releases[0].spec.values.image as $image |
-  $image.repository=="ghcr.io/devantler-tech/data-product-controller" and
+  $image.repository=="ghcr.io/devantler-tech/khoist" and
   ($image.tag|type=="string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
   ($image.digest|type=="string" and test("^sha256:[a-f0-9]{64}$")) and
-  all(["data-product-controller-ui-kit","data-product-controller-contract-probe"][];
+  all(["data-product-controller-publisher-review","data-product-controller-contract-probe"][];
     . as $name | [$resources[] | select(.kind=="Deployment" and .metadata.namespace=="data-product-controller" and
       .metadata.name==$name)] as $deployments |
     ($deployments|length)==1 and ($deployments[0].spec.template.spec.containers|length)==1 and
@@ -45,9 +45,9 @@ cat >"${scratch}/runtime-pins.jq" <<'JQ'
         $pin==($image.repository+":"+$image.tag+"@"+$image.digest) end)))
 JQ
 jq -e --arg probe_image "$probe_image" -f "${scratch}/runtime-pins.jq" "${scratch}/apps.json" >/dev/null ||
-  fail "${provider}: UI host or independent probe differs from its declared immutable runtime"
+  fail "${provider}: publisher host or independent probe differs from its declared immutable runtime"
 # Check both independent components: a valid digest alone cannot prove parity.
-for component in ui-kit contract-probe; do
+for component in publisher-review contract-probe; do
   for mismatch in tag digest missing; do
     jq --arg name "data-product-controller-${component}" --arg mismatch "${mismatch}" '
       if $mismatch=="missing" then map(select(.kind!="Deployment" or .metadata.name!=$name))
@@ -64,9 +64,9 @@ done
 
 jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-product-controller")
   | ((.spec.values | has("registryUI") | not) and .spec.values.demoProduct.enabled == true
-     and .spec.values.uiContract.enabled == true
-     and .spec.values.uiContract.additionalHostOrigins == ["https://product-ui.${domain}"]
-     and .spec.values.uiAppearance.enabled == true
+     and .spec.upgrade.chartNameChangeStrategy == "InPlaceUpdate"
+     and (.spec.values | has("uiContract") | not)
+     and (.spec.values | has("uiAppearance") | not)
      and .spec.values.demoProduct.publicBaseURL == "https://harbour-data.${domain}"
      and .spec.values.demoProduct.ksailReleases.enabled == true
      and ([.spec.values.engineProviders.enabled, .spec.values.provisionedSources.enabled,
@@ -74,7 +74,7 @@ jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-pro
            .spec.values.dcatCatalog.enabled, .spec.values.contractProbe.enabled]
           | all(. == false)) and .spec.values.connectorReadiness.enabled==true
      and .spec.values.contractReadiness.enabled==true)] == [true]' \
-  "${scratch}/apps.json" >/dev/null || fail "${provider}: the trial must enable sample, KSail releases, appearance and independent readiness observation with the exact product publication URL"
+  "${scratch}/apps.json" >/dev/null || fail "${provider}: trial must keep the sample and KSail releases, drop presentation settings, retain independent readiness observation and publish the exact product URL"
 jq -er '[.[] | select(.kind=="HelmRelease" and .metadata.name=="data-product-controller") |
   .spec.postRenderers[].kustomize.patches[] | select(.target.kind=="DataProduct" and .target.name=="harbour-observations")] |
   if length==1 then .[0].patch else error("ambiguous Harbour registration patch") end' \
@@ -139,7 +139,7 @@ jq -e '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.name == "allow
   "${scratch}/controllers.json" >/dev/null || fail "${provider}: auth-proxy egress must reach only the registry component port"
 
 jq -e '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "data-product-controller")
-  | .metadata.name] | sort == ["allow-data-product-controller", "allow-data-product-controller-contract-probe", "allow-data-product-controller-harbour", "allow-data-product-controller-ui-kit"]' \
+  | .metadata.name] | sort == ["allow-data-product-controller", "allow-data-product-controller-contract-probe", "allow-data-product-controller-harbour", "allow-data-product-controller-publisher-review"]' \
   "${scratch}/apps.json" >/dev/null || fail "${provider}: no additional namespace policy may bypass the component boundary"
 jq -e '[.[] | select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "data-product-controller")
   | select(.spec.endpointSelector.matchLabels["k8s:app.kubernetes.io/component"] == "controller")

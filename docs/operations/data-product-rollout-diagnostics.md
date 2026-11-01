@@ -62,10 +62,9 @@ do not establish its root cause. Cancelled work publishes no new failure event.
 Missing series are an observation gap, not zero failures; a healthy latest sample
 does not clear earlier failures or establish long-term reliability.
 
-The standalone probe uses signed KHoist 9.0.5, from source
+The standalone probe, like the other workloads, uses signed KHoist 9.0.5, from source
 `1f616fea9d63bcb0fac4ea6b27e20dbb80f4b85a`. Its command, readiness behavior,
-network boundaries and request limits remain unchanged. The controller, chart and
-other workloads retain their legacy release. The deployment verifier binds the
+network boundaries and request limits remain unchanged. The deployment verifier binds the
 probe Deployment, current ReplicaSet and Pods to its exact checked-out image and
 resolves that image's runtime manifests independently. Controller runtime digests
 cannot satisfy the probe check, or vice versa. Rollback reads the rollback
@@ -83,5 +82,5 @@ resource and transport responses, including invalid observations and private
 canaries:
 
 ```bash
-bash scripts/tests/test-data-product-ui-rollout.sh
+bash scripts/tests/test-data-product-rollout.sh
 ```
