@@ -71,6 +71,13 @@ resolves that image's runtime manifests independently. Controller runtime digest
 cannot satisfy the probe check, or vice versa. Rollback reads the rollback
 checkout's probe declaration and resolves its immutable image again.
 
+The services CI suite starts the declared image as a non-root user with no
+networking, a read-only filesystem and bounded resources. A local read-only
+client verifies startup, a completed isolated DNS failure, and two passive metric
+scrapes. A skipped or missing image test fails its receipt. This checks the
+published executable; live endpoint recovery and Coroot collection remain
+production acceptance.
+
 The offline regression suite exercises the actual verifier with controlled
 resource and transport responses, including invalid observations and private
 canaries:
