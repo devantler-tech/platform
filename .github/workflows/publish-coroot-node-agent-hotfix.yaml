@@ -119,6 +119,12 @@ jobs:
           reached="$(jq -s '[.[] | select(.finding.trace[0].function != null) | .finding.osv] | unique | length' "${report}")"
           printf 'Advisories in shipped modules: %s; reached by the binary: %s\n' "${found}" "${reached}"
           test "${reached}" = 0
+          # The cluster agent builds from a local copy with no module version, so no advisory range can match it.
+          index="${RUNNER_TEMP}/go-vulnerability-modules.json"
+          curl --fail --silent --show-error --location --retry 3 https://vuln.go.dev/index/modules.json >"${index}"
+          # An index that omits the standard library is not the advisory index.
+          jq -e 'any(.[]; .path == "stdlib")' "${index}" >/dev/null
+          jq -e 'all(.[]; .path != "github.com/coroot/coroot-cluster-agent")' "${index}" >/dev/null
 
       - name: Build compatibility image without publishing
         working-directory: upstream

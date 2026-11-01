@@ -365,23 +365,37 @@ index 98da4bc..95308dd 100644
  golang.org/x/time v0.16.0/go.mod h1:rVKOqvZeKvrDKTQiAHJ7wmwP0RzleSphoEA9RcdLA0s=
  golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
 diff --git a/logs/journald_reader.go b/logs/journald_reader.go
-index 803286a..cb2a242 100644
+index 803286a..36ddb94 100644
 --- a/logs/journald_reader.go
 +++ b/logs/journald_reader.go
-@@ -4,6 +4,7 @@ package logs
+@@ -3,7 +3,9 @@
+ package logs
  
  import (
++	"errors"
  	"fmt"
 +	"os"
  	"strings"
  	"sync"
  	"time"
-@@ -32,7 +33,11 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+@@ -24,6 +26,11 @@ type JournaldReader struct {
+ 	lock        sync.Mutex
+ }
+ 
++// isJournalMissing reads through the wrapping sdjournal adds, which os.IsNotExist does not.
++func isJournalMissing(err error) bool {
++	return errors.Is(err, os.ErrNotExist)
++}
++
+ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+ 	r := &JournaldReader{
+ 		until:       make(chan time.Time),
+@@ -32,7 +39,11 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
  	var err error
  	for _, journalPath := range journalPaths {
  		if r.journal, err = sdjournal.NewJournalFromDir(journalPath); err != nil {
 -			klog.Errorf("failed to get journal at %s: %s", journalPath, err)
-+			if os.IsNotExist(err) {
++			if isJournalMissing(err) {
 +				klog.Warningf("journald is unavailable at %s: %s", journalPath, err)
 +			} else {
 +				klog.Errorf("failed to get journal at %s: %s", journalPath, err)
@@ -389,7 +403,7 @@ index 803286a..cb2a242 100644
  			continue
  		}
  		usage, err := r.journal.GetUsage()
-@@ -41,7 +46,7 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+@@ -41,7 +52,7 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
  			continue
  		}
  		if usage == 0 {
@@ -400,17 +414,19 @@ index 803286a..cb2a242 100644
  		}
 diff --git a/logs/journald_reader_test.go b/logs/journald_reader_test.go
 new file mode 100644
-index 0000000..64ad6d7
+index 0000000..0c7b634
 --- /dev/null
 +++ b/logs/journald_reader_test.go
-@@ -0,0 +1,28 @@
+@@ -0,0 +1,30 @@
 +//go:build linux
 +
 +package logs
 +
 +import (
 +	"errors"
++	"fmt"
 +	"os"
++	"syscall"
 +	"testing"
 +)
 +
@@ -420,14 +436,14 @@ index 0000000..64ad6d7
 +		err  error
 +		want bool
 +	}{
-+		{name: "Talos journal path absent", err: os.ErrNotExist, want: true},
-+		{name: "journal permission denied", err: os.ErrPermission, want: false},
++		{name: "Talos journal path absent", err: fmt.Errorf("failed to open journal in directory %q: %w", "/var/log/journal", syscall.ENOENT), want: true},
++		{name: "journal permission denied", err: fmt.Errorf("failed to open journal in directory %q: %w", "/var/log/journal", syscall.EACCES), want: false},
 +		{name: "unexpected journal corruption", err: errors.New("journal header is corrupt"), want: false},
 +	}
 +	for _, tt := range tests {
 +		t.Run(tt.name, func(t *testing.T) {
-+			if got := os.IsNotExist(tt.err); got != tt.want {
-+				t.Fatalf("os.IsNotExist(%q) = %t, want %t", tt.err, got, tt.want)
++			if got := isJournalMissing(tt.err); got != tt.want {
++				t.Fatalf("isJournalMissing(%q) = %t, want %t", tt.err, got, tt.want)
 +			}
 +		})
 +	}
