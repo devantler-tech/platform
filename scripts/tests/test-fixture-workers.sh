@@ -125,7 +125,7 @@ for jobs in 0 3 unknown; do
 done
 # Exercise the real caller cleanup without running the long rollout suite.
 # A parent failure must retain its status and pending-worker diagnostics.
-sed -n '/^cleanup() {$/,/^}$/p' "$root/scripts/tests/test-data-product-ui-rollout.sh" >"$work/cleanup-body"
+sed -n '/^cleanup() {$/,/^}$/p' "$root/scripts/tests/test-data-product-rollout.sh" >"$work/cleanup-body"
 [ "$(grep -c '^cleanup() {' "$work/cleanup-body")" = 1 ]
 cat >"$work/cleanup-driver" <<'CLEANUP'
 #!/usr/bin/env bash

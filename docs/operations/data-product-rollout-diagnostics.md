@@ -61,5 +61,5 @@ resource and transport responses, including invalid observations and private
 canaries:
 
 ```bash
-bash scripts/tests/test-data-product-ui-rollout.sh
+bash scripts/tests/test-data-product-rollout.sh
 ```

@@ -228,12 +228,12 @@ jobs:
               - 'scripts/tests/test-actual-budget-auth-route.sh'
               - 'scripts/tests/test-umami-sso-dashboard-route.sh'
               - 'scripts/tests/test-data-product-controller-trial.sh'
-              - 'scripts/tests/test-data-product-ui-host.sh'
-              - 'scripts/tests/test-data-product-ui-rollout.sh'
+              - 'scripts/tests/test-data-product-publisher-host.sh'
+              - 'scripts/tests/test-data-product-rollout.sh'
               - 'scripts/tests/test-fixture-workers.sh'
               - 'scripts/tests/lib/fixture-workers.lib.sh'
               - 'scripts/tests/test-data-product-runtime-digests.sh'
-              - 'scripts/verify-data-product-ui-rollout.sh'
+              - 'scripts/verify-data-product-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
               - 'scripts/tests/longhorn-ui-readonly/**'
               - 'scripts/tests/test-dex-theme-mount.sh'
@@ -1937,11 +1937,11 @@ jobs:
           bash scripts/tests/test-umami-sso-dashboard-route.sh
           shellcheck scripts/tests/test-data-product-controller-trial.sh
           bash scripts/tests/test-data-product-controller-trial.sh
-          shellcheck scripts/tests/test-data-product-ui-host.sh
-          bash scripts/tests/test-data-product-ui-host.sh
-          shellcheck -x scripts/verify-data-product-ui-rollout.sh scripts/tests/test-data-product-ui-rollout.sh scripts/tests/lib/fixture-workers.lib.sh scripts/tests/test-fixture-workers.sh
+          shellcheck scripts/tests/test-data-product-publisher-host.sh
+          bash scripts/tests/test-data-product-publisher-host.sh
+          shellcheck -x scripts/verify-data-product-rollout.sh scripts/tests/test-data-product-rollout.sh scripts/tests/lib/fixture-workers.lib.sh scripts/tests/test-fixture-workers.sh
           bash scripts/tests/test-fixture-workers.sh
-          bash scripts/tests/test-data-product-ui-rollout.sh
+          bash scripts/tests/test-data-product-rollout.sh
           shellcheck scripts/tests/test-data-product-runtime-digests.sh
           bash scripts/tests/test-data-product-runtime-digests.sh
           shellcheck scripts/tests/test-oauth2-proxy-sso-redirects.sh

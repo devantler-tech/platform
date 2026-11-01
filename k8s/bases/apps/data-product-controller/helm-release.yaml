@@ -20,16 +20,10 @@ spec:
     name: data-product-controller
   values:
     image:
-      repository: ghcr.io/devantler-tech/data-product-controller
-      tag: 2.9.1
-      digest: sha256:d82b984165bc71844c323f752f474f80a7a7f7a78972a5e1171d9f814cb9bb34
+      repository: ghcr.io/devantler-tech/khoist
+      tag: 9.0.5
+      digest: sha256:e485a0e82df734e6fb5ec8b8f3ca923748b82b9cab81be86a0c69e3e116cdfbf
       pullPolicy: IfNotPresent
-    uiContract:
-      enabled: true
-      additionalHostOrigins:
-        - https://product-ui.${domain}
-    uiAppearance:
-      enabled: true
     engineProviders:
       enabled: false
     provisionedSources:
@@ -170,9 +164,6 @@ spec:
               - op: replace
                 path: /spec/outputs/0/contractUrl
                 value: https://harbour-data.${domain}/openapi.json
-              - op: replace
-                path: /spec/ui/url
-                value: https://harbour-data.${domain}/ui
               - op: add
                 path: /spec/connector
                 value:

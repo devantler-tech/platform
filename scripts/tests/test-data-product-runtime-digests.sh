@@ -29,12 +29,12 @@ legacy_runtime="$(yq -r '.runs.steps[] | select(.name == "Verify the deployed da
 cat >"${scratch}/bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == "buildx imagetools inspect ghcr.io/devantler-tech/data-product-controller@${index} --raw" ]] || exit 91
+[[ "$*" == "buildx imagetools inspect ghcr.io/devantler-tech/khoist@${index} --raw" ]] || exit 91
 [[ "${REGISTRY_FAILURE:-false}" != empty ]] || exit 92
 cat "$REGISTRY_MANIFEST"
 [[ "${REGISTRY_FAILURE:-false}" == false ]] || exit 92
 SH
-cat >"${scratch}/scripts/verify-data-product-ui-rollout.sh" <<'SH'
+cat >"${scratch}/scripts/verify-data-product-rollout.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 actual=()
@@ -50,7 +50,7 @@ printf '%s\n' "${actual[@]}" | sort -u >"${RUNNER_TEMP}/actual"
 cmp -s "${RUNNER_TEMP}/expected" "${RUNNER_TEMP}/actual" || exit 95
 touch "${RUNNER_TEMP}/verified"
 SH
-chmod +x "${scratch}/bin/docker" "${scratch}/scripts/verify-data-product-ui-rollout.sh"
+chmod +x "${scratch}/bin/docker" "${scratch}/scripts/verify-data-product-rollout.sh"
 export REGISTRY_MANIFEST="${scratch}/manifest.json"
 export RUNNER_TEMP="$scratch"
 

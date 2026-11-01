@@ -8,17 +8,18 @@ umask 077
 # --runtime-digest sha256:... (repeat) --chart-digest sha256:...
 # --apps-digest sha256:... --apps-verify-file /absolute/public-policy.json [--timeout SECONDS]
 # Expected readiness activation comes from this checkout's Helm declaration.
-# Browser authentication and embedding handshakes remain separate acceptance
-# checks. This helper reads no Secrets or authenticated URLs.
+# Browser authentication remains a separate acceptance check. This helper reads no Secrets or authenticated URLs.
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
 phase=''
-readonly repository='ghcr.io/devantler-tech/data-product-controller'
+readonly repository='ghcr.io/devantler-tech/khoist'
 readonly namespace='data-product-controller'
 expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/apps/data-product-controller/helm-release.yaml"
 readonly expected_helm_file
-expected_ui_file="$(dirname "$expected_helm_file")/deployment-ui-kit.yaml"
-readonly expected_ui_file
+expected_publisher_file="$(dirname "$expected_helm_file")/deployment-publisher-review.yaml"
+readonly expected_publisher_file
+expected_chart_file="$(dirname "$expected_helm_file")/oci-repository.yaml"
+readonly expected_chart_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
   local detail='' role='' reason='' extra='' http_code='' curl_code=''
@@ -33,7 +34,7 @@ fail() {
       # Only fixed identifiers may enter a public receipt, never response data.
       if [[ -z "$extra" ]]; then
         case "$saved_role" in
-          sample_health | sample_observations | sample_openapi | sample_config | release_index | release_openapi | release_config | kit_health | kit_index | kit_library | kit_script | kit_style | publisher_index | publisher_script | publisher_style | publisher_library | descriptor_library)
+          sample_health | sample_observations | sample_openapi | release_index | release_openapi | publisher_health | publisher_root | publisher_index | publisher_script | publisher_style | publisher_library | descriptor_library | metadata_library)
             case "$saved_reason" in
               dns_failed | tls_failed | request_timeout | transport_failed | http_status | body_invalid | security_headers | asset_invalid)
                 role=$saved_role
@@ -60,7 +61,7 @@ fail() {
       read -r saved_role saved_reason extra <"$failure_file" || true
       if [[ -z "$extra" ]]; then
         case "$saved_role" in
-          apps | root | chart | helm | product | release-product | release-flags | replicasets | pods | endpoints | readiness | controller-flags | workloads | backends | routes | gateway | service-harbour | service-ui-kit | deployment-controller | deployment-harbour | deployment-ui-kit | deployment-probe | probe-account | observer-role | observer-binding | probe-policy | route-registry | route-harbour | route-ui-kit | snapshot)
+          apps | root | chart | helm | product | release-product | release-flags | replicasets | pods | endpoints | readiness | controller-flags | workloads | backends | routes | gateway | service-harbour | service-publisher-review | deployment-controller | deployment-harbour | deployment-publisher-review | deployment-probe | probe-account | observer-role | observer-binding | probe-policy | route-registry | route-harbour | route-publisher-review | snapshot)
             case "$saved_reason" in
               read_incomplete | predicate_not_ready | observation_invalid)
                 role=$saved_role
@@ -165,22 +166,34 @@ read_expected_releases() {
 }
 bounded read_expected_releases || fail invalid_expected_state 2
 expected_releases=$(<"$scratch/release-state")
-# read_expected_ui binds literal host opt-ins to this checkout, never to live flags.
-read_expected_ui() {
-  yq -o=json '.spec.template.spec.containers' "$expected_ui_file" 2>/dev/null |
-    jq -ers '
-      if length!=1 or (.[0]|type)!="array" then error("invalid UI declaration") else .[0] end |
-      [.[] | select(.name=="ui-kit")] |
-      if length!=1 or (.[0].env|type)!="array" or (.[0].envFrom!=null and .[0].envFrom!=[]) then error("invalid UI declaration") else .[0].env end |
-      [.[] | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="PUBLISHER_PREFLIGHT_ENABLED")] as $flags |
-      if ($flags|all(.[];.valueFrom==null and (.value|type)=="string")) and
-        ([$flags[]|select(.name=="UI_CONTRACT_ENABLED")]|map(.value))==["true"] and
-        ([$flags[]|select(.name=="UI_APPEARANCE_ENABLED")]|map(.value))==["true"] then
-        [$flags[]|select(.name=="PUBLISHER_PREFLIGHT_ENABLED")|.value] |
-        if .==[] or .==["false"] then false elif .==["true"] then true else error("invalid publisher declaration") end
-      else error("invalid UI declaration") end | tostring' >"$scratch/publisher-state" 2>/dev/null
+# read_expected_release binds the caller's digests to the exact checked-out image and chart.
+# A deploy that passes other digests, or a live release at another tag, is refused.
+read_expected_release() {
+  yq -o=json '.spec.values.image | {"repository": .repository, "tag": .tag, "digest": .digest}' "$expected_helm_file" >"$scratch/expected-image.json" 2>/dev/null || return 1
+  yq -o=json '.spec | {"url": .url, "digest": .ref.digest}' "$expected_chart_file" >"$scratch/expected-chart.json" 2>/dev/null || return 1
+  jq -ner --arg repository "$repository" --arg image_digest "$image_digest" --arg chart_digest "$chart_digest" \
+    --slurpfile image "$scratch/expected-image.json" --slurpfile chart "$scratch/expected-chart.json" '
+    if ($image|length)!=1 or ($chart|length)!=1 or ($image[0]|type)!="object" or ($chart[0]|type)!="object" or
+      $image[0].repository!=$repository or $image[0].digest!=$image_digest or
+      $chart[0].url!="oci://ghcr.io/devantler-tech/charts/khoist" or $chart[0].digest!=$chart_digest or
+      ($image[0].tag|type)!="string" or ($image[0].tag|test("^[0-9]+\\.[0-9]+\\.[0-9]+$")|not)
+    then error("unbound release declaration") else $image[0].tag end' >"$scratch/expected-tag" 2>/dev/null
 }
-bounded read_expected_ui || fail invalid_expected_state 2
+bounded read_expected_release || fail invalid_expected_state 2
+expected_tag=$(<"$scratch/expected-tag")
+# read_expected_publisher binds the literal opt-in to this checkout, never to live flags.
+read_expected_publisher() {
+  yq -o=json '.spec.template.spec.containers' "$expected_publisher_file" 2>/dev/null |
+    jq -ers '
+      if length!=1 or (.[0]|type)!="array" then error("invalid publisher declaration") else .[0] end |
+      [.[] | select(.name=="publisher-review")] |
+      if length!=1 or (.[0].env|type)!="array" or (.[0].envFrom!=null and .[0].envFrom!=[]) then error("invalid publisher declaration") else .[0].env end |
+      [.[] | select(.name=="PUBLISHER_PREFLIGHT_ENABLED")] |
+      if all(.[];.valueFrom==null and (.value|type)=="string") then [.[].value] else error("invalid publisher declaration") end |
+      if .==[] or .==["false"] then false elif .==["true"] then true else error("invalid publisher declaration") end |
+      tostring' >"$scratch/publisher-state" 2>/dev/null
+}
+bounded read_expected_publisher || fail invalid_expected_state 2
 expected_publisher=$(<"$scratch/publisher-state")
 # read_verify_policy validates and copies the single public artifact identity policy.
 read_verify_policy() {
@@ -204,8 +217,8 @@ def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,proto
   command,args,envCount:(.env//[]|length),envFromCount:(.envFrom//[]|length),volumeMountCount:(.volumeMounts//[]|length),
   env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") |
     {name,value,indirect:(.valueFrom!=null)}],
-  uiFlags:[.env[]? | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="PUBLISHER_PREFLIGHT_ENABLED") |
-    {name,value,indirect:(.valueFrom!=null)}],uiEnvironmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
+  publisherFlags:[.env[]? | select(.name=="PUBLISHER_PREFLIGHT_ENABLED") |
+    {name,value,indirect:(.valueFrom!=null)}],environmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,
     metricsAnnotations:(.spec.template.metadata.annotations|metrics_annotations),containers:(.spec.template.spec.containers|containers),
@@ -246,17 +259,16 @@ elif $role == "chart" or $role == "root" then {apiVersion,kind,metadata:(.metada
 elif $role == "release-product" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{id:.spec.id,name:.spec.name,version:.spec.version,owner:(.spec.owner|{name,url}),connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),
     outputs:[.spec.outputs[]? | {name,protocol,url,contractUrl,mediaType}],
-    ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
+    declaresUI:(.spec|has("ui"))},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions)}}
 elif $role == "product" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{connector:.spec.connector,contractChecks:(.spec.contractChecks//[]),outputs:[.spec.outputs[]? | {name,url,contractUrl}],
-    ui:{url:.spec.ui.url,contract:(.spec.ui.contract|{apiVersion,hostOrigins,capabilities})}},
+    declaresUI:(.spec|has("ui"))},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions)}}
 elif $role|startswith("service-") then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{type:.spec.type,selector:.spec.selector,ports:[.spec.ports[]? | {name,port,targetPort,protocol:(.protocol//"TCP")}]}}
 elif $role == "helm" then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{suspend:.spec.suspend,chartRef:.spec.chartRef,values:{image:(.spec.values.image|{repository,tag,digest}),
-    uiContract:(.spec.values.uiContract|{enabled,additionalHostOrigins}),uiAppearance:(.spec.values.uiAppearance|{enabled}),
     controller:{replicas:.spec.values.controller.replicas},demoProduct:(.spec.values.demoProduct|{enabled,replicas,publicBaseURL,ksailReleasesEnabled:(.ksailReleases.enabled//false)}),route:(.spec.values.route|{enabled,host}),
     observationFlags:[.spec.values | .connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]}},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),
@@ -294,15 +306,12 @@ def owned($kind;$name;$uid): [.metadata.owners[]? | select(.controller==true)] a
 def image($tag): .==($repository+"@"+$image_digest) or .==($repository+":"+$tag+"@"+$image_digest);
 def named_image($container;$tag): [.spec.containers[]? | select(.name==$container)] as $containers |
   ($containers|length)==1 and ($containers[0].image|image($tag));
-def ui_flags_ready($container):
-  if $container!="ui-kit" then true else
+def publisher_flag_ready($container):
+  if $container!="publisher-review" then true else
     [.spec.containers[]? | select(.name==$container)] as $containers |
-    ($containers|length)==1 and $containers[0].uiEnvironmentLiteral==true and ($containers[0].uiFlags as $flags |
-      ([$flags[]|select(.name=="PUBLISHER_PREFLIGHT_ENABLED")]|map(.value)) as $publisher |
+    ($containers|length)==1 and $containers[0].environmentLiteral==true and ($containers[0].publisherFlags as $flags |
       ($flags|type=="array" and all(.[];.indirect==false and (.value|type)=="string")) and
-      ([$flags[]|select(.name=="UI_CONTRACT_ENABLED")]|map(.value))==["true"] and
-      ([$flags[]|select(.name=="UI_APPEARANCE_ENABLED")]|map(.value))==["true"] and
-      (if $publisher_enabled then $publisher==["true"] else $publisher==[] or $publisher==["false"] end))
+      (if $publisher_enabled then [$flags[].value]==["true"] else $flags==[] or [$flags[].value]==["false"] end))
   end;
 def runtime: . as $id | any($runtime_digests[]; . as $digest |
   $id==$digest or $id==("containerd://"+$digest) or $id==("docker://"+$digest) or
@@ -315,7 +324,7 @@ def inventory($kind;$version): (.items|type=="array" and length<=4096) and
 def pod_ready($rs;$container;$tag):
   owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid) and .metadata.deletionTimestamp==null and
   .status.phase=="Running" and ([.status.conditions[]? | select(.type=="Ready")]|length)==1 and
-  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and ui_flags_ready($container) and
+  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and publisher_flag_ready($container) and
   ([.status.containers[]? | select(.name==$container)] as $containers | ($containers|length)==1 and
     $containers[0].ready==true and $containers[0].running==true and $containers[0].waiting==false and
     $containers[0].terminated==false and ($containers[0].imageID|runtime));
@@ -324,14 +333,14 @@ def workload($deployment;$container;$tag;$sets;$pods):
   ($deployment.metadata.revision|type=="string" and test("^[1-9][0-9]*$")) and
   $deployment.spec.replicas==2 and $deployment.status.observedGeneration==$deployment.metadata.generation and
   all([$deployment.status.replicas,$deployment.status.updatedReplicas,$deployment.status.readyReplicas,$deployment.status.availableReplicas][];.==2) and
-  ($deployment|named_image($container;$tag) and ui_flags_ready($container)) and
+  ($deployment|named_image($container;$tag) and publisher_flag_ready($container)) and
   ([$sets[] | select(owned("Deployment";$deployment.metadata.name;$deployment.metadata.uid))] as $owned |
     [$owned[] | select(.metadata.revision==$deployment.metadata.revision)] as $current |
     ($current|length)==1 and
     ($current[0]|identity("ReplicaSet";"apps/v1";.metadata.name;$namespace)) and
     $current[0].spec.replicas==2 and $current[0].status.observedGeneration==$current[0].metadata.generation and
     all([$current[0].status.replicas,$current[0].status.readyReplicas,$current[0].status.availableReplicas][];.==2) and
-    ($current[0]|named_image($container;$tag) and ui_flags_ready($container)) and
+    ($current[0]|named_image($container;$tag) and publisher_flag_ready($container)) and
     all($owned[] | select(.metadata.uid!=$current[0].metadata.uid); .spec.replicas==0 and (.status.replicas//0)==0) and
     ([$pods[] | . as $pod | select(any($owned[]; . as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)))] as $owned_pods |
       ($owned_pods|length)==2 and all($owned_pods[];pod_ready($current[0];$container;$tag))));
@@ -458,32 +467,28 @@ try (
   .spec.verify==$apps_verify and (.status.artifact.revision|revision($apps_digest)) and (.status.artifact.digest|digest)) | demand("root")) and
 ((.chart|identity("OCIRepository";"source.toolkit.fluxcd.io/v1";"data-product-controller";$namespace) and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready","SourceVerified"]) and
-  .spec.url=="oci://ghcr.io/devantler-tech/charts/data-product-controller" and .spec.ref.digest==$chart_digest and
-  .spec.verify=={provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/data-product-controller/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]} and
+  .spec.url=="oci://ghcr.io/devantler-tech/charts/khoist" and .spec.ref.digest==$chart_digest and
+  .spec.verify=={provider:"cosign",matchOIDCIdentity:[{issuer:"^https://token\\.actions\\.githubusercontent\\.com$",subject:"^https://github\\.com/devantler-tech/khoist/\\.github/workflows/publish-chart\\.yaml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+$"}]} and
   # The cached file digest differs from the upstream OCI manifest revision.
   (.status.artifact.revision|revision($chart_digest)) and (.status.artifact.digest|digest)) | demand("chart")) and
 ((.helm|identity("HelmRelease";"helm.toolkit.fluxcd.io/v2";"data-product-controller";$namespace) and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
   .spec.chartRef.kind=="OCIRepository" and .spec.chartRef.name=="data-product-controller" and (.spec.chartRef.namespace//$namespace)==$namespace and
   .spec.values.image.repository==$repository and .spec.values.image.digest==$image_digest and
-  ($tag|type=="string" and test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) and
-  .spec.values.uiContract.enabled==true and .spec.values.uiContract.additionalHostOrigins==["https://product-ui."+$domain] and
-  .spec.values.uiAppearance.enabled==true and .spec.values.controller.replicas==2 and .spec.values.demoProduct.enabled==true and
+  $tag==$expected_tag and
+  .spec.values.controller.replicas==2 and .spec.values.demoProduct.enabled==true and
   .spec.values.observationFlags==[$readiness_state=="active",$readiness_state=="active",false] and
   .spec.values.demoProduct.replicas==2 and .spec.values.demoProduct.publicBaseURL==("https://harbour-data."+$domain) and
   .spec.values.demoProduct.ksailReleasesEnabled==$ksail_enabled and
   .spec.values.route.enabled==true and .spec.values.route.host==("data-products."+$domain) and
   .status.lastAttemptedRevisionDigest==$chart_digest and .status.lastAttemptedRevision==($tag+"+"+$chart_digest[7:19]) and
   (.status.lastAttemptedConfigDigest|digest) and .status.history[0].status=="deployed" and (.status.history[0].version|positive) and
-  .status.history[0].name=="data-product-controller" and .status.history[0].namespace==$namespace and .status.history[0].chartName=="data-product-controller" and
+  .status.history[0].name=="data-product-controller" and .status.history[0].namespace==$namespace and .status.history[0].chartName=="khoist" and
   .status.history[0].chartVersion==.status.lastAttemptedRevision and .status.history[0].ociDigest==$chart_digest and .status.history[0].configDigest==.status.lastAttemptedConfigDigest) | demand("helm")) and
 ((.product|identity("DataProduct";"data.devantler.tech/v1alpha1";"harbour-observations";$namespace) and
-  .status.observedGeneration==.metadata.generation and ready(["Ready"]) and .spec.ui.url==("https://harbour-data."+$domain+"/ui") and
+  .status.observedGeneration==.metadata.generation and ready(["Ready"]) and .spec.declaresUI==false and
   .spec.outputs==[{name:"observations",url:("https://harbour-data."+$domain+"/api/observations"),contractUrl:("https://harbour-data."+$domain+"/openapi.json")}] and
-  product_observation and
-  .spec.ui.contract.apiVersion=="data-product-ui/v2" and
-  (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
-  (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"]) | demand("product")) and
+  product_observation) | demand("product")) and
 ((if $ksail_enabled then
   (."release-product"|identity("DataProduct";"data.devantler.tech/v1alpha1";"ksail-releases";$namespace) and
     .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
@@ -492,14 +497,13 @@ try (
     .spec.connector==null and .spec.contractChecks==[] and
     .spec.outputs==[{name:"releases",protocol:"OpenAPI",url:"https://api.github.com/repos/devantler-tech/ksail/releases",
       contractUrl:("https://harbour-data."+$domain+"/ksail-releases/openapi.json"),mediaType:"application/json"}] and
-    .spec.ui.url==("https://harbour-data."+$domain+"/ksail-releases/ui") and .spec.ui.contract.apiVersion=="data-product-ui/v2" and
-    (.spec.ui.contract.hostOrigins|sort)==(["https://data-products."+$domain,"https://product-ui."+$domain]|sort) and
-    (.spec.ui.contract.capabilities|sort)==["appearance","resize","status"])
+    .spec.declaresUI==false)
   else ."release-product"==null end) | demand("release-product")) and
-(([."deployment-harbour"] + [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
-  all(.[]; [.spec.containers[]? | select(.name=="product") | .env[]? | select(.name=="KSAIL_RELEASES_ENABLED")] as $flags |
-    if $ksail_enabled then $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"true",indirect:false}]
-    else $flags==[] or $flags==[{name:"KSAIL_RELEASES_ENABLED",value:"false",indirect:false}] end)) | demand("release-flags")) and
+((."deployment-harbour" as $harbour |
+  [$harbour] + [.replicasets.items[]? | select(owned("Deployment";$harbour.metadata.name;$harbour.metadata.uid) and .metadata.revision==$harbour.metadata.revision)] +
+    [.pods.items[]? | select(.metadata.labels["app.kubernetes.io/component"]=="harbour-product")] |
+  all(.[]; [.spec.containers[]? | select(.name=="product")] as $products | ($products|length)==1 and $products[0].envFromCount==0 and
+    ([$products[0].env[]? | select(.name=="KSAIL_RELEASES_ENABLED")]==[]))) | demand("release-flags")) and
 ((.replicasets|inventory("ReplicaSet";"apps/v1")) | demand("replicasets")) and
 ((.pods|inventory("Pod";"v1")) | demand("pods")) and
 ((.endpoints|inventory("EndpointSlice";"discovery.k8s.io/v1")) | demand("endpoints")) and
@@ -507,14 +511,14 @@ try (
 (([."deployment-controller".spec.containers[] | select(.name=="controller") | .env[]] | sort_by(.name))==
   [{name:"CONNECTOR_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false},
     {name:"CONTRACT_READINESS_ENABLED",value:($readiness_state=="active"|tostring),indirect:false}] | demand("controller-flags")) and
-(all([["deployment-controller","data-product-controller","controller"],["deployment-harbour","data-product-controller-harbour","product"],["deployment-ui-kit","data-product-controller-ui-kit","ui-kit"]][];
+(all([["deployment-controller","data-product-controller","controller"],["deployment-harbour","data-product-controller-harbour","product"],["deployment-publisher-review","data-product-controller-publisher-review","publisher-review"]][];
   . as $id | $snapshot[$id[0]] as $deployment |
   $deployment.metadata.name==$id[1] and workload($deployment;$id[2];$tag;$snapshot.replicasets.items;$snapshot.pods.items)) | demand("workloads")) and
-(all([["harbour","product"],["ui-kit","ui-kit"]][];. as $id |
+(all([["harbour","product"],["publisher-review","publisher-review"]][];. as $id |
   backend($snapshot["service-"+$id[0]];$snapshot["deployment-"+$id[0]];$id[1];$snapshot.replicasets.items;$snapshot.pods.items;$snapshot.endpoints.items)) | demand("backends")) and
 (all([["route-registry","data-product-controller-registry","data-products",{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80},false],
      ["route-harbour","data-product-controller-harbour","harbour-data",{name:"data-product-controller-harbour",namespace:$namespace,port:80},true],
-     ["route-ui-kit","data-product-controller-ui-kit","product-ui",{name:"data-product-controller-ui-kit",namespace:$namespace,port:80},true]][];
+     ["route-publisher-review","data-product-controller-publisher-review","publisher-review",{name:"data-product-controller-publisher-review",namespace:$namespace,port:80},true]][];
   . as $id | $snapshot[$id[0]] | route($id[1];$id[2];$id[3];$id[4])) | demand("routes")) and
 ((.gateway|identity("Gateway";"gateway.networking.k8s.io/v1";"platform";"kube-system") and .spec.gatewayClassName=="cilium" and
   ready(["Accepted","Programmed"]) and
@@ -564,11 +568,11 @@ collect() {
   read_resource "$directory" product "$namespace" dataproducts.data.devantler.tech harbour-observations
   read_resource "$directory" release-product "$namespace" dataproducts.data.devantler.tech ksail-releases
   read_resource "$directory" service-harbour "$namespace" services data-product-controller-harbour
-  read_resource "$directory" service-ui-kit "$namespace" services data-product-controller-ui-kit
+  read_resource "$directory" service-publisher-review "$namespace" services data-product-controller-publisher-review
   read_resource "$directory" endpoints "$namespace" endpointslices.discovery.k8s.io
   read_resource "$directory" deployment-controller "$namespace" deployments.apps data-product-controller
   read_resource "$directory" deployment-harbour "$namespace" deployments.apps data-product-controller-harbour
-  read_resource "$directory" deployment-ui-kit "$namespace" deployments.apps data-product-controller-ui-kit
+  read_resource "$directory" deployment-publisher-review "$namespace" deployments.apps data-product-controller-publisher-review
   read_resource "$directory" deployment-probe "$namespace" deployments.apps data-product-controller-contract-probe
   read_resource "$directory" probe-account "$namespace" serviceaccounts data-product-controller-contract-probe
   read_resource "$directory" observer-role "$namespace" roles.rbac.authorization.k8s.io data-product-readiness-observer
@@ -578,7 +582,7 @@ collect() {
   read_resource "$directory" pods "$namespace" pods
   read_resource "$directory" route-registry "$namespace" httproutes.gateway.networking.k8s.io data-product-controller-registry
   read_resource "$directory" route-harbour "$namespace" httproutes.gateway.networking.k8s.io data-product-controller-harbour
-  read_resource "$directory" route-ui-kit "$namespace" httproutes.gateway.networking.k8s.io data-product-controller-ui-kit
+  read_resource "$directory" route-publisher-review "$namespace" httproutes.gateway.networking.k8s.io data-product-controller-publisher-review
   read_resource "$directory" gateway kube-system gateways.gateway.networking.k8s.io platform
   printf 'snapshot observation_invalid\n' >"$scratch/read-failure"
   bounded aggregate "$directory" || fail read_incomplete
@@ -589,11 +593,11 @@ aggregate() {
     def owner_in($kind;$uids): any(.metadata.owners[]?;
       .kind==$kind and (.uid as $uid | $uids | index($uid))!=null);
     from_entries |
-    [."deployment-controller".metadata.uid,."deployment-harbour".metadata.uid,."deployment-ui-kit".metadata.uid,."deployment-probe".metadata.uid] as $deployment_uids |
+    [."deployment-controller".metadata.uid,."deployment-harbour".metadata.uid,."deployment-publisher-review".metadata.uid,."deployment-probe".metadata.uid] as $deployment_uids |
     .replicasets.items |= (map(select(owner_in("Deployment";$deployment_uids))) | sort_by(.metadata.uid)) |
     [.replicasets.items[].metadata.uid] as $rs_uids |
     .pods.items |= (map(select(owner_in("ReplicaSet";$rs_uids))) | sort_by(.metadata.uid)) |
-    [."service-harbour",."service-ui-kit"] as $services |
+    [."service-harbour",."service-publisher-review"] as $services |
     .endpoints.items |= (map(select(. as $slice | any($services[];. as $service |
       $slice.metadata.labels["kubernetes.io/service-name"]==$service.metadata.name or any($slice.metadata.owners[]?;.uid==$service.metadata.uid)))) | sort_by(.metadata.uid))
   ' "$1/"*.json >"$1/snapshot" 2>/dev/null
@@ -605,7 +609,7 @@ runtime_json=$(<"$scratch/runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
   local result=0
-  jq -ce --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
+  jq -ce --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg expected_tag "$expected_tag" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >"$scratch/check-result" 2>/dev/null || result=$?
   if ((result == 0)); then
@@ -686,7 +690,7 @@ header_is() {
 }
 # public_checks verifies the fixed public contracts, assets and response policies.
 public_checks() {
-  local sample="https://harbour-data.$domain" kit="https://product-ui.$domain" path role
+  local sample="https://harbour-data.$domain" publisher="https://publisher-review.$domain" path role
   rm -f "$scratch/public-failure"
   fetch "$sample/healthz" sample_health || return 1
   fetch "$sample/api/observations" sample_observations || return 1
@@ -701,15 +705,9 @@ public_checks() {
     refuse_public sample_openapi body_invalid
     return 1
   }
-  fetch "$sample/ui-contract-config" sample_config || return 1
-  jq -se --arg registry "https://data-products.$domain" --arg kit "$kit" \
-    'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || {
-    refuse_public sample_config body_invalid
-    return 1
-  }
   if [[ "$expected_releases" == true ]]; then
     fetch "$sample/ksail-releases/ui" release_index || return 1
-    if ! header_is Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src $sample/ksail-releases/ui-contract-config https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'" ||
+    if ! header_is Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; connect-src https://api.github.com/repos/devantler-tech/ksail/releases; frame-ancestors https:; object-src 'none'; base-uri 'none'" ||
       ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
       refuse_public release_index security_headers
       return 1
@@ -725,88 +723,36 @@ public_checks() {
       refuse_public release_openapi body_invalid
       return 1
     }
-    fetch "$sample/ksail-releases/ui-contract-config" release_config || return 1
-    jq -se --arg registry "https://data-products.$domain" --arg kit "$kit" \
-      'length==1 and .[0].appearanceEnabled==true and (.[0].hostOrigins|sort)==([$registry,$kit]|sort)' "$scratch/body" >/dev/null || {
-      refuse_public release_config body_invalid
+  fi
+  fetch "$publisher/healthz" publisher_health || return 1
+  [[ $(cat "$scratch/body") == ok && $(wc -c <"$scratch/body") -eq 3 ]] || {
+    refuse_public publisher_health body_invalid
+    return 1
+  }
+  local csp="default-src 'self'; connect-src 'none'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
+  if [[ "$expected_publisher" == true ]]; then
+    fetch "$publisher/" publisher_root 307 || return 1
+    header_is Location /publisher-review || {
+      refuse_public publisher_root asset_invalid
       return 1
     }
+  else
+    fetch "$publisher/" publisher_root 404 || return 1
   fi
-  fetch "$kit/healthz" kit_health || return 1
-  [[ $(cat "$scratch/body") == ok && $(wc -c <"$scratch/body") -eq 3 ]] || {
-    refuse_public kit_health body_invalid
-    return 1
-  }
-  local csp="default-src 'self'; connect-src 'none'; frame-src https:; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
-  for path in / /ui-contract.js /kit.js /kit.css; do
-    case "$path" in
-      /) role=kit_index ;;
-      /ui-contract.js) role=kit_library ;;
-      /kit.js) role=kit_script ;;
-      /kit.css) role=kit_style ;;
-    esac
-    fetch "$kit$path" "$role" || return 1
-    if ! header_is Content-Security-Policy "$csp" || ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
-      refuse_public "$role" security_headers
-      return 1
-    fi
-    case "$path" in
-      /)
-        if ! { grep -Fq '<body data-appearance-enabled="true">' "$scratch/body" &&
-          grep -Fq 'id="manifest-form"' "$scratch/body" && grep -Fq 'src="ui-contract.js"' "$scratch/body" &&
-          grep -Fq 'src="kit.js"' "$scratch/body" && grep -Fq 'href="kit.css"' "$scratch/body"; }; then
-          refuse_public "$role" asset_invalid
-          return 1
-        fi
-        if [[ "$expected_publisher" == true ]]; then
-          if ! { grep -Fq 'id="workspace-navigation"' "$scratch/body" &&
-            grep -Fq '<a href="/" aria-current="page">' "$scratch/body" &&
-            grep -Fq '<a href="/publisher-review">' "$scratch/body"; }; then
-            refuse_public "$role" asset_invalid
-            return 1
-          fi
-        elif grep -Fq 'href="/publisher-review"' "$scratch/body"; then
-          refuse_public "$role" asset_invalid
-          return 1
-        fi
-        ;;
-      /ui-contract.js) grep -Fq DataProductUI "$scratch/body" || {
-        refuse_public "$role" asset_invalid
-        return 1
-      } ;;
-      /kit.js) grep -Fq DataProductUI.mount "$scratch/body" || {
-        refuse_public "$role" asset_invalid
-        return 1
-      } ;;
-      /kit.css) grep -Fq color-scheme: "$scratch/body" || {
-        refuse_public "$role" asset_invalid
-        return 1
-      } ;;
-    esac
-  done
-  fetch "$kit/descriptor.js" descriptor_library || return 1
-  if ! header_is Content-Security-Policy "$csp" || ! header_is Cache-Control no-store ||
-    ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
-    refuse_public descriptor_library security_headers
-    return 1
-  fi
-  grep -Fq DataProductDescriptor "$scratch/body" || {
-    refuse_public descriptor_library asset_invalid
-    return 1
-  }
-  csp="default-src 'self'; connect-src 'none'; frame-src 'none'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'"
-  for path in /publisher-review /publisher.js /publisher.css /preflight-report.js; do
+  for path in /publisher-review /publisher.js /publisher.css /preflight-report.js /descriptor.js /metadata.js; do
     case "$path" in
       /publisher-review) role=publisher_index ;;
       /publisher.js) role=publisher_script ;;
       /publisher.css) role=publisher_style ;;
       /preflight-report.js) role=publisher_library ;;
+      /descriptor.js) role=descriptor_library ;;
+      /metadata.js) role=metadata_library ;;
     esac
     if [[ "$expected_publisher" != true ]]; then
-      fetch "$kit$path" "$role" 404 || return 1
+      fetch "$publisher$path" "$role" 404 || return 1
       continue
     fi
-    fetch "$kit$path" "$role" || return 1
+    fetch "$publisher$path" "$role" || return 1
     if ! header_is Content-Security-Policy "$csp" || ! header_is Cache-Control no-store ||
       ! header_is Referrer-Policy no-referrer || ! header_is X-Content-Type-Options nosniff; then
       refuse_public "$role" security_headers
@@ -816,10 +762,9 @@ public_checks() {
       /publisher-review)
         if ! { grep -Fq 'id="report-form"' "$scratch/body" && grep -Fq 'id="report-file"' "$scratch/body" &&
           grep -Fq 'id="report-text"' "$scratch/body" && grep -Fq 'id="report-status"' "$scratch/body" &&
-          grep -Fq 'src="/descriptor.js"' "$scratch/body" && grep -Fq 'src="/preflight-report.js"' "$scratch/body" &&
-          grep -Fq 'src="/publisher.js"' "$scratch/body" && grep -Fq 'href="publisher.css"' "$scratch/body" &&
-          grep -Fq 'id="workspace-navigation"' "$scratch/body" && grep -Fq '<a href="/">' "$scratch/body" &&
-          grep -Fq '<a href="/publisher-review" aria-current="page">' "$scratch/body"; }; then
+          grep -Fq 'src="/metadata.js"' "$scratch/body" && grep -Fq 'src="/descriptor.js"' "$scratch/body" &&
+          grep -Fq 'src="/preflight-report.js"' "$scratch/body" && grep -Fq 'src="/publisher.js"' "$scratch/body" &&
+          grep -Fq 'href="publisher.css"' "$scratch/body"; }; then
           refuse_public "$role" asset_invalid
           return 1
         fi
@@ -833,6 +778,14 @@ public_checks() {
         return 1
       } ;;
       /preflight-report.js) grep -Fq DataProductPreflightReport "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+      /descriptor.js) grep -Fq DataProductDescriptor "$scratch/body" || {
+        refuse_public "$role" asset_invalid
+        return 1
+      } ;;
+      /metadata.js) grep -Fq data-product-ui/v2 "$scratch/body" || {
         refuse_public "$role" asset_invalid
         return 1
       } ;;
@@ -897,7 +850,7 @@ while :; do
 done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
-if [[ "$expected_releases" == true ]]; then public_count=17; else public_count=14; fi
+if [[ "$expected_releases" == true ]]; then public_count=13; else public_count=11; fi
 # An accepted receipt still counts the dropped connections it absorbed, so a
 # retry cannot hide a dependency that keeps dropping them.
 retries_field=''
