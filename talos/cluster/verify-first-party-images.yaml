@@ -198,6 +198,21 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
+  # Reports-controller repair: exact repository before the generic app rule.
+  - image: ghcr.io/devantler-tech/platform-kyverno-reports
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-reports-hotfix\.yaml@refs/heads/main$
+  # Patched migration runtime: exact repository before the generic app rule.
+  - image: ghcr.io/devantler-tech/platform-kyverno-migrate
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-migration-runtime\.yaml@refs/heads/main$
+  # Patched background controller: exact repository before the generic app rule.
+  - image: ghcr.io/devantler-tech/platform-kyverno-background
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-background-hotfix\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
   # two reviewed maintained publisher revisions during the v8 transition (#5213).
   # Mutable refs, tags and other maintained commits are refused, as in the app

@@ -178,6 +178,7 @@ pass 'control-plane probe targets match loopback-only component listeners'
 work_root="$(mktemp -d /tmp/tmp.XXXXXXXXXX)"
 trap 'rm -rf "${work_root}"' EXIT
 
+# Build isolated API stubs and state for one reconciler scenario.
 setup_scenario() {
   local name="$1" dex_mode="$2" dex_current="$3"
   local state_error="${4:-context deadline exceeded}"
@@ -224,6 +225,7 @@ setup_scenario() {
   printf '%s' 'known' >"${dir}/coroot-mode"
   printf '%s' 'stale' >"${dir}/oauth2-mode"
   printf '%s' "${concurrency_limit}" >"${dir}/concurrency-limit"
+  printf '%s' "${COROOT_STUB_MIN_OVERLAP:-0}" >"${dir}/minimum-query-overlap"
   printf '0' >"${dir}/active-queries"
   printf '0' >"${dir}/peak-queries"
   printf '%s' '192.0.2.10' >"${dir}/service-address"
@@ -268,27 +270,25 @@ else
   printf '%s\n' "${url}" >>"${dir}/cached-requests"
 fi
 
+# Notify the observer on every completed or rejected query, including exits.
 release_query_slot() {
   [ "$(cat "${dir}/concurrency-limit")" -gt 0 ] || return 0
-  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
-  active="$(cat "${dir}/active-queries")"
-  printf '%s' "$((active - 1))" >"${dir}/active-queries"
-  rmdir "${dir}/query-counter-lock"
+  printf 'end %s\n' "$$" >&6
+  exec 7>&-
   trap - EXIT
 }
 
+# Wait for the observer's decision; rejected queries retain curl's failure path.
 acquire_query_slot() {
   limit="$(cat "${dir}/concurrency-limit")"
   [ "${limit}" -gt 0 ] || return 0
-  while ! mkdir "${dir}/query-counter-lock" 2>/dev/null; do sleep 0.01; done
-  active="$(( $(cat "${dir}/active-queries") + 1 ))"
-  printf '%s' "${active}" >"${dir}/active-queries"
-  peak="$(cat "${dir}/peak-queries")"
-  [ "${active}" -le "${peak}" ] || printf '%s' "${active}" >"${dir}/peak-queries"
-  rmdir "${dir}/query-counter-lock"
+  mkfifo "${dir}/query-$$.gate"
+  exec 7<>"${dir}/query-$$.gate"
+  printf 'start %s\n' "$$" >&6
   trap release_query_slot EXIT
+  IFS= read -r -t 5 decision <&7 || exit 90
+  [ "$decision" = go ] || exit 28
   sleep 0.1
-  [ "${active}" -le "${limit}" ] || exit 28
 }
 
 case "${url}" in
@@ -682,9 +682,88 @@ STUB
   printf '%s' "${dir}"
 }
 
+# Execute only the checked-in manifest script or a test-local mutation of it.
 run_scenario() {
   local dir="$1"
-  SCENARIO_DIR="${dir}" PATH="${dir}/bin:${PATH}" /bin/sh -c "${script_body}"
+  SCENARIO_DIR="${dir}" PATH="${dir}/bin:${PATH}" /bin/sh -c "${2:-${script_body}}"
+}
+
+# One observer owns the counters. A child must be observed before receiving
+# its reply, and exceeding the capacity is rejected rather than queued.
+observe_query_slots() {
+  local dir="$1" limit overlap active=0 peak=0 event pid pending='' client decision
+  limit="$(cat "${dir}/concurrency-limit")"
+  overlap="$(cat "${dir}/minimum-query-overlap")"
+  while IFS=' ' read -r -t 10 event pid <&6; do
+    if [[ "$event" == finish && -z "$pid" ]]; then
+      [[ "$active" == 0 && -z "$pending" ]] || return 1
+      printf '%s' "$active" >"${dir}/active-queries"
+      printf '%s' "$peak" >"${dir}/peak-queries"
+      return 0
+    fi
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    case "$event" in
+    start)
+      [[ ! -e "${dir}/live-query-$pid" && -p "${dir}/query-$pid.gate" ]] || return 1
+      : >"${dir}/live-query-$pid"
+      active=$((active + 1))
+      ((peak >= active)) || peak=$active
+      decision=go
+      ((active <= limit)) || decision=reject
+      printf '%s' "$decision" >"${dir}/query-$pid.decision"
+      pending="$pending $pid"
+      printf 'start pid=%s active=%s decision=%s\n' "$pid" "$active" "$decision" >>"${dir}/query-events"
+      if ((overlap == 0 || active >= overlap)); then
+        for client in $pending; do
+          exec 8<>"${dir}/query-$client.gate"
+          printf '%s\n' "$(cat "${dir}/query-$client.decision")" >&8
+          exec 8>&-
+        done
+        pending=''
+        overlap=0
+      fi
+      ;;
+    end)
+      [[ -f "${dir}/live-query-$pid" && "$active" -gt 0 ]] || return 1
+      rm "${dir}/live-query-$pid"
+      active=$((active - 1))
+      printf 'end pid=%s active=%s\n' "$pid" "$active" >>"${dir}/query-events"
+      ;;
+    *) return 1 ;;
+    esac
+  done
+  return 1
+}
+
+# Run the scenario with one observer and require a complete event stream.
+run_observed_scenario() {
+  local dir="$1" observer_pid
+  mkfifo "${dir}/query-events-pipe"
+  exec 6<>"${dir}/query-events-pipe"
+  observe_query_slots "$dir" &
+  observer_pid=$!
+  observed_scenario_status=0
+  run_scenario "$dir" "${2:-${script_body}}" >"${dir}/output" 2>&1 || observed_scenario_status=$?
+  printf 'finish\n' >&6
+  wait "$observer_pid" || {
+    dump_query_evidence "$dir"
+    fail 'query observation was incomplete or inconsistent'
+  }
+  exec 6>&-
+}
+
+# Preserve captured output and counters when any observed assertion fails.
+dump_query_evidence() {
+  local dir="$1" evidence
+  for evidence in output active-queries peak-queries query-events; do
+    printf 'query evidence: %s\n' "$evidence" >&2
+    if [[ -f "${dir}/${evidence}" ]]; then
+      cat "${dir}/${evidence}" >&2
+      printf '\n' >&2
+    else
+      printf '(not recorded)\n' >&2
+    fi
+  done
 }
 
 absent_log_stream_dir="$(setup_scenario absent-log-stream known null 'context deadline exceeded' null known complete known known known known known valid 'rpc error: code = NotFound desc = an error occurred when try to find sandbox: not found' valid /talos/init known known absent)"
@@ -735,12 +814,22 @@ printf '%s\n' "${known_output}" | jq -s -e \
   >/dev/null || fail 'successful reconciliation must emit structured info JSON'
 
 bounded_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 setup_scenario bounded-concurrency known null)"
-bounded_output="$(run_scenario "${bounded_dir}" 2>&1)"
+run_observed_scenario "${bounded_dir}"
+bounded_output="$(cat "${bounded_dir}/output")"
+[[ "$observed_scenario_status" == 0 ]] || {
+  dump_query_evidence "$bounded_dir"
+  fail "bounded reconciliation did not complete (status $observed_scenario_status)"
+}
 printf '%s\n' "${bounded_output}" | jq -s -e '
   length > 0 and all(.[]; .level == "info")
-' >/dev/null || fail 'bounded Coroot capacity produced a synthetic query failure'
-[ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] ||
+' >/dev/null || {
+  dump_query_evidence "$bounded_dir"
+  fail 'bounded Coroot capacity produced a synthetic query failure'
+}
+[ "$(cat "${bounded_dir}/peak-queries")" -le 4 ] || {
+  dump_query_evidence "$bounded_dir"
   fail 'the reconciler exceeded the reviewed four-query Coroot capacity'
+}
 [[ "${script_body}" == *'MAX_CONCURRENT_RECONCILIATIONS=4'* ]] ||
   fail 'Coroot reconciliation must use the reviewed four-worker concurrency ceiling'
 # These literal references keep the rendered shell contract reviewable.
@@ -748,6 +837,22 @@ printf '%s\n' "${bounded_output}" | jq -s -e '
 [[ "${script_body}" == *'[ "$RECONCILIATION_COUNT" -ge "$MAX_CONCURRENT_RECONCILIATIONS" ]'* ]] ||
   fail 'the reconciliation queue must drain each bounded worker batch'
 pass 'Coroot log queries respect the bounded worker capacity'
+
+# Force the realistic regression to overlap five queries. The observer must
+# reject excess work and the real reconciler must keep that failed query visible.
+overflow_dir="$(COROOT_STUB_CONCURRENCY_LIMIT=4 COROOT_STUB_MIN_OVERLAP=5 setup_scenario query-overflow known null)"
+overflow_script="${script_body/MAX_CONCURRENT_RECONCILIATIONS=4/MAX_CONCURRENT_RECONCILIATIONS=5}"
+run_observed_scenario "$overflow_dir" "$overflow_script"
+[[ "$(cat "$overflow_dir/peak-queries")" == 5 && "$(cat "$overflow_dir/active-queries")" == 0 ]] || {
+  dump_query_evidence "$overflow_dir"
+  fail 'the over-capacity control did not observe five overlapping queries and complete'
+}
+jq -s -e 'any(.[]; .level=="error" and (.msg | contains("query failed")))' \
+  "$overflow_dir/output" >/dev/null || {
+  dump_query_evidence "$overflow_dir"
+  fail 'five overlapping queries did not fail visible'
+}
+pass 'a forced five-query overlap is rejected and remains visible'
 jq -s -e '
   any(.[]; (.url | contains("%3A_%3AUnknown%3Akubelet/inspection/NetworkTCPConnections/config")) and .body.configs[2] == null) and
   any(.[]; (.url | contains("%3Akyverno%3ADeployment%3Akyverno-background-controller/inspection/MemoryLeakPercent/config")) and .body.configs[2].threshold == 35) and

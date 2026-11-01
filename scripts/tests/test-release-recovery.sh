@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Guard the default-off release-recovery workflow: consent, scope, immutable source, read token
-# before writer token, and required CI coverage of both flag states. Executes the shipped steps.
+# before writer token, and required CI coverage of consent/offline routing. Executes shipped steps.
 set -euo pipefail
 root="$(git rev-parse --show-toplevel)"
 workflow="${1:-$root/.github/workflows/publish-release-recovery.yaml}"
@@ -21,7 +21,7 @@ cat >"$work/guard.jq" <<'JQ'
   def ordinary: .if == null and .["continue-on-error"] == null;
   def recoveryContractRun: .run == "shellcheck scripts/generate-release-recovery-fixture.sh scripts/tests/test-release-recovery.sh\nbash scripts/tests/test-release-recovery.sh\n";
   def writer: .if == "steps.read-admission.outputs.missing == 'true'" and .["continue-on-error"] == null;
-  def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"0b137510d139bbf62e479d9610b0db17c972bc2b"} and
+  def source: .env == {CATALOGUE_REPOSITORY:"devantler-tech/.github",CATALOGUE_SHA:"8e2dfbd3f9249b76b58234189ccbbae98d11b32b"} and
     (.run | contains("[[ \"$CATALOGUE_REPOSITORY\" == devantler-tech/.github && \"$CATALOGUE_SHA\" =~ ^[0-9a-f]{40}$ ]]")) and
     (.run | contains("env -i PATH=\"$PATH\" curl --disable")) and
     (.run | contains("https://codeload.github.com/$CATALOGUE_REPOSITORY/tar.gz/$CATALOGUE_SHA")) and
@@ -31,13 +31,13 @@ cat >"$work/guard.jq" <<'JQ'
   def incident: {REPOSITORY:"${{ github.repository }}",TAG:"${{ inputs.tag }}",SOURCE_SHA:"${{ inputs.source-sha }}",RUN_ID:"${{ inputs.run-id }}",RUN_ATTEMPT:"${{ inputs.run-attempt }}",PRODUCER_REF:"${{ inputs.producer-ref }}"};
   def token($contents): {"client-id":"${{ vars.APP_CLIENT_ID }}","private-key":"${{ secrets.APP_PRIVATE_KEY }}",owner:"devantler-tech",repositories:"${{ steps.admit.outputs.name }}","permission-contents":$contents,"permission-actions":"read"};
   ($w.on | keys) == ["workflow_dispatch"] and $w.permissions == {} and
-  $w.on.workflow_dispatch.inputs["enable-recovery"] == {description:$w.on.workflow_dispatch.inputs["enable-recovery"].description,type:"boolean",default:false} and
+  ($w.on.workflow_dispatch.inputs | has("enable-recovery") | not) and
   $w.on.workflow_dispatch.inputs["confirm-publication"].type == "boolean" and $w.on.workflow_dispatch.inputs["confirm-publication"].default == false and
-  $w.on.workflow_dispatch.inputs["offline-test"].default == false and
+  $w.on.workflow_dispatch.inputs["offline-test"].type == "boolean" and $w.on.workflow_dispatch.inputs["offline-test"].default == false and
   ($w.on.workflow_dispatch.inputs | has("repository") | not) and
   $w.on.workflow_dispatch.secrets == null and
   ($w.jobs | keys) == ["offline-test","recover"] and
-  $j.if == "inputs.enable-recovery && !inputs.offline-test" and $j.permissions == {} and $j.needs == null and
+  $j.if == "inputs.confirm-publication && !inputs.offline-test" and $j.permissions == {} and $j.needs == null and
   $j.concurrency == {group:"create-release-${{ github.repository }}-${{ github.ref }}","cancel-in-progress":false,queue:"max"} and
   ($s | length == 10) and ($s[0:7] | all(ordinary)) and ($s[7:10] | all(writer)) and
   ($s[0].uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and $s[0].with["egress-policy"] == "audit" and
@@ -57,7 +57,7 @@ cat >"$work/guard.jq" <<'JQ'
   $s[9].id == "publish" and $s[9].env == ({GH_TOKEN:"${{ steps.write-token.outputs.token }}"} + incident) and
   ($s[9].run | contains("\"./.devantler-tech-recovery/publish-release-recovery\"")) and
   ([$s[] | select(.env.GH_TOKEN != null) | .id] == ["read-admission","read-only-refusal","publish"]) and
-  $o.if == "inputs.enable-recovery && inputs.offline-test" and $o.permissions == {} and
+  $o.if == "inputs.offline-test" and $o.permissions == {} and
   ($o.steps | length == 5 and all(ordinary)) and
   ($o.steps[0].uses | test("^step-security/harden-runner@[a-f0-9]{40}$")) and
   ($o.steps[1] | source) and ($o.steps[3] | build) and
@@ -84,29 +84,38 @@ bash "$root/scripts/generate-release-recovery-fixture.sh" "$workflow" "$work/reg
 yq -o=json '.' "$work/regenerated.yaml" | jq -S . >"$work/regenerated.json"
 jq -S . "$work/ci.json" >"$work/checked.json"
 cmp -s "$work/regenerated.json" "$work/checked.json" || fail 'internal recovery fixture needs regeneration'
-# Evaluate the shipped, strictly admitted offline condition in all four boolean
-# states. This runs the default-off test, rather than skipping its CI job.
-offline_condition="$(yq -r '.jobs["offline-test"].if' "$workflow")"
-offline_enabled() {
-  local expression="${offline_condition//inputs.enable-recovery/$1}"
-  expression="${expression//inputs.offline-test/$2}"
-  bash -euo pipefail -c "$expression"
+# The exact predicates admitted above bind this closed four-state routing table.
+# Never execute an expression read from YAML as shell code.
+routing_state() {
+  local confirmation="$1" offline="$2" selected=none
+  if [[ "$confirmation" == true && "$offline" == false ]]; then selected=recover; fi
+  if [[ "$offline" == true ]]; then
+    [[ "$selected" == none ]] || fail 'offline and publication selected together'
+    selected=offline
+  fi
+  printf '%s' "$selected"
 }
-offline_enabled true true || fail 'explicitly enabled offline condition refused'
-for pair in 'false false' 'false true' 'true false'; do
-  # shellcheck disable=SC2086 # Split the fixed boolean pair, never repository text.
-  if offline_enabled $pair; then fail "offline condition admitted disabled flags: $pair"; fi
-done
-enable_default="$(yq -r '.on.workflow_dispatch.inputs["enable-recovery"].default' "$workflow")"
+while read -r confirmation offline expected; do
+  [[ "$(routing_state "$confirmation" "$offline")" == "$expected" ]] || fail 'confirmation/offline routing changed'
+  printf 'PASS: confirmation=%s offline=%s selects %s\n' "$confirmation" "$offline" "$expected"
+done <<'ROUTING'
+false false none
+false true offline
+true false recover
+true true offline
+ROUTING
+confirmation_default="$(yq -r '.on.workflow_dispatch.inputs["confirm-publication"].default' "$workflow")"
 offline_default="$(yq -r '.on.workflow_dispatch.inputs["offline-test"].default' "$workflow")"
-if offline_enabled "$enable_default" "$offline_default"; then fail 'default flags started the offline job'; fi
+[[ "$(routing_state "$confirmation_default" "$offline_default")" == none ]] || fail 'default inputs started a job'
 # shellcheck disable=SC2016 # Keep GitHub expressions literal in refusal controls.
 for mutation in \
   '.w.on.workflow_call={}' \
-  '.w.on.workflow_dispatch.inputs["enable-recovery"].default=true' \
+  '.w.on.workflow_dispatch.inputs["enable-recovery"]={type:"boolean",default:false}' \
   '.w.on.workflow_dispatch.inputs["confirm-publication"].default=true' \
   '.w.on.workflow_dispatch.inputs.repository={type:"string"}' \
-  '.w.jobs.recover.if="inputs.enable-recovery"' \
+  '.w.on.workflow_dispatch.inputs["offline-test"].default=true' \
+  '.w.jobs.recover.if="inputs.confirm-publication"' \
+  '.w.jobs.recover.if="!inputs.offline-test"' \
   '.w.jobs.recover.permissions.contents="write"' \
   '.w.jobs.recover.concurrency["cancel-in-progress"]=true' \
   '.w.jobs.recover.concurrency.group="recovery-${{ github.repository }}"' \
@@ -131,7 +140,7 @@ for mutation in \
   '.w.jobs.recover.steps[8].with.repositories=null' \
   '.w.jobs.recover.steps[9].env.GH_TOKEN="${{ github.token }}"' \
   '.w.jobs.recover.steps[9].env.REPOSITORY="${{ inputs.tag }}"' \
-  '.w.jobs["offline-test"].if="inputs.offline-test"' \
+  '.w.jobs["offline-test"].if="inputs.offline-test || inputs.confirm-publication"' \
   '.w.jobs["offline-test"].steps[4].env={GH_TOKEN:"${{ secrets.APP_PRIVATE_KEY }}"}' \
   '.c.jobs["test-publish-release-recovery"].if="false"' \
   '.c.jobs["test-publish-release-recovery-disabled"].if="false"' \

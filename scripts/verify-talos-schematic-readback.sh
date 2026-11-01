@@ -30,12 +30,23 @@ fi
 expected_version=$(yq eval '.spec.cluster.talos.version' "$config")
 expected_control_planes=$(yq eval '.spec.cluster.controlPlanes' "$config")
 expected_workers=$(yq eval '.spec.cluster.workers' "$config")
+expected_migration_pools=$(yq -o=json '.spec.cluster.autoscaler.node.pools' "$config" | jq '
+  [ .[] | select(.name | startswith("autoscale-longhorn-")) |
+    {name, min, max, serverType, role: .labels["storage.platform.devantler.tech/migration-pool"]} ]')
 
 [[ "$expected_schematic" =~ ^[0-9a-f]{64}$ &&
    "$expected_version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ &&
    "$expected_control_planes" =~ ^[1-9][0-9]*$ &&
    "$expected_workers" =~ ^[1-9][0-9]*$ ]] || {
   printf 'invalid desired Talos version, schematic, or static-node count\n' >&2
+  exit 1
+}
+
+jq -e 'all(.[]; (.name | test("^autoscale-longhorn-v[12]$")) and
+  (.role == "v1" or .role == "v2") and .name == ("autoscale-longhorn-" + .role) and
+  (.min | type) == "number" and .min >= 0 and (.max | type) == "number" and .max >= .min and
+  (.serverType | type) == "string" and .serverType != "")' <<<"$expected_migration_pools" >/dev/null || {
+  printf 'invalid desired migration pool configuration\n' >&2
   exit 1
 }
 
@@ -52,10 +63,21 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
       --arg schematic "$expected_schematic" \
       --arg os_image "Talos ($expected_version)" \
       --argjson control_planes "$expected_control_planes" \
-      --argjson workers "$expected_workers" '
+      --argjson workers "$expected_workers" \
+      --argjson pools "$expected_migration_pools" '
+        .items as $nodes |
         (.items | type) == "array" and
         ([.items[] | select(.metadata.name | startswith("prod-control-plane-"))] | length) == $control_planes and
         ([.items[] | select(.metadata.name | startswith("prod-worker-"))] | length) == $workers and
+        all($pools[]; . as $pool |
+          [$nodes[] | select(.metadata.name | startswith($pool.name + "-"))] as $members |
+          ($members | length) >= $pool.min and ($members | length) <= $pool.max and
+          all($members[];
+            (.metadata.name | test("^" + $pool.name + "-[0-9a-f]{16}$")) and
+            .metadata.labels["storage.platform.devantler.tech/migration-pool"] == $pool.role and
+            .metadata.labels["node.kubernetes.io/instance-type"] == $pool.serverType
+          )
+        ) and
         all(.items[];
           .metadata.annotations["extensions.talos.dev/schematic"] == $schematic and
           .status.nodeInfo.osImage == $os_image and

@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Reviewed workflow only: five finite, fixed Cilium CLI metric reads per ready agent (#4329).
+# Reviewed workflow only: finite, fixed Cilium CLI metric reads, five samples per ready agent (#4329).
 # No API listener, setting, workload or policy is changed. Raw responses stay in a private
 # temporary directory. Output is delayed until every read and identity comparison succeeds.
-# Cilium v1.20.3 sources: cilium-dbg/cmd/metrics_list.go, pkg/metrics/cmd.go,
-# pkg/metrics/metrics.go and pkg/rate/metrics/metrics.go. These are rolling gauges,
-# not a latency distribution or proof of Coroot request attribution or recovery.
+# Cilium v1.20.4 sources: cilium-dbg/cmd/metrics_list.go, pkg/metrics/cmd.go,
+# pkg/metrics/metrics.go, pkg/rate/metrics/metrics.go and api/v1/models/metric.go. These gauges
+# hold values from the last finished request, so they are not a latency distribution or
+# proof of Coroot request attribution or recovery. The JSON omits a value of exactly zero.
+# A limiter series exists only after that agent's first processed request for that call,
+# and the registry encodes no match as JSON null. Such an agent is counted, never given values.
 set -euo pipefail
 if [[ "$#" -ne 2 || "$1" != --context || "$2" != admin@prod ]]; then
   printf 'Usage: %s --context admin@prod\n' "$(basename "$0")" >&2
@@ -82,7 +85,7 @@ roster() {
     [$d.spec.template.spec.containers[] | select(.name=="cilium-agent")] as $dc |
     if ($d.metadata.uid|type)!="string" or ($d.metadata.uid|length)==0 or
       ($dc|length)!=1 or
-      ($dc[0].image|test("^quay.io/cilium/cilium:v1\\.20\\.3(@sha256:[a-f0-9]{64})?$"))!=true or
+      ($dc[0].image|test("^quay.io/cilium/cilium:v1\\.20\\.4(@sha256:[a-f0-9]{64})?$"))!=true or
       ($d.status.desiredNumberScheduled|type)!="number" or
       $d.status.desiredNumberScheduled<1 or $d.status.desiredNumberScheduled>32 or
       $d.status.desiredNumberScheduled!=$d.status.numberAvailable or
@@ -116,17 +119,35 @@ roster() {
 roster "${work_dir}/before" || inconclusive 'the ready agent roster could not be established.'
 jq -r '.agents[].name' "${work_dir}/before.identity" >"${work_dir}/names"
 : >"${work_dir}/safe"
+: >"${work_dir}/unobserved"
 for sample in 1 2 3 4 5; do
   [[ "${sample}" -eq 1 ]] || sleep 15
   agent=0
   while IFS= read -r pod; do
     agent=$((agent + 1))
-    read_json "${work_dir}/metrics" exec --namespace kube-system "${pod}" --container cilium-agent \
-      -- cilium-dbg metrics list --output json --match-pattern '^cilium_api_limiter_' ||
-      inconclusive "an agent metric read failed (${read_failure})."
+    if ! read_json "${work_dir}/metrics" exec --namespace kube-system "${pod}" --container cilium-agent \
+      -- cilium-dbg metrics list --output json --match-pattern '^cilium_api_limiter_'; then
+      [[ "${read_failure}" == JSON_NULL ]] ||
+        inconclusive "an agent metric read failed (${read_failure})."
+      # The version series is created at agent start, so it separates "no limiter series yet"
+      # from a registry or selector defect on the same command path.
+      read_json "${work_dir}/control" exec --namespace kube-system "${pod}" --container cilium-agent \
+        -- cilium-dbg metrics list --output json --match-pattern '^cilium_version' ||
+        inconclusive "an agent metric read failed (JSON_NULL; control ${read_failure})."
+      jq -e 'type=="array" and any(.[]; .name=="cilium_version")' "${work_dir}/control" >/dev/null 2>&1 ||
+        inconclusive 'an agent metric read failed (JSON_NULL; control REGISTRY_EMPTY).'
+      printf '%s\n' "${agent}" >>"${work_dir}/unobserved"
+      continue
+    fi
+    if jq -e 'type=="array" and length>0 and all(.[]; (.name|startswith("cilium_api_limiter_")) and
+      (.labels.api_call|type)=="string" and .labels.api_call!="endpoint-create")' "${work_dir}/metrics" >/dev/null 2>&1; then
+      printf '%s\n' "${agent}" >>"${work_dir}/unobserved"
+      continue
+    fi
     captured_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if ! jq -e -c --argjson sample "${sample}" --argjson agent "${agent}" --arg time "${captured_at}" '
       def metric_key: .name+"/"+(.labels.value//"");
+      def gauge_value: if has("value") then .value else 0 end;
       ["cilium_api_limiter_processing_duration_seconds/mean",
        "cilium_api_limiter_processing_duration_seconds/estimated",
        "cilium_api_limiter_wait_duration_seconds/mean",
@@ -144,14 +165,15 @@ for sample in 1 2 3 4 5; do
         select(.name as $name | $expected|any(startswith($name+"/")))] as $gauges |
       [$endpoint[]|select(.name=="cilium_api_limiter_processed_requests_total")] as $counters |
       if ($gauges|map(metric_key)|sort)!=$expected or ($counters|length)==0 or
-        (all(($gauges+$counters)[]; (.value|type)=="number" and .value>=0 and .value<=1e12))!=true or
+        (all($gauges[]; gauge_value|type=="number" and .>=0 and .<=1e12))!=true or
+        (all($counters[]; (.value|type)=="number" and .value>=0 and .value<=1e12))!=true or
         (all($gauges[]; (.labels|keys)==(if .name=="cilium_api_limiter_adjustment_factor"
           then ["api_call"] else ["api_call","value"] end)))!=true or
         (all($counters[]; (.labels|keys)==["api_call","outcome","return_code"]))!=true or
         ($counters|map(.labels)|unique|length)!=($counters|length)
       then error("incomplete metric set") else
         {sample:$sample,agent:$agent,capturedAt:$time,apiCall:"endpoint-create",
-         metrics:([$gauges[]|{metric:.name,stat:(.labels.value//"current"),value:.value}]+
+         metrics:([$gauges[]|{metric:.name,stat:(.labels.value//"current"),value:gauge_value}]+
           [{metric:"cilium_api_limiter_processed_requests_total",stat:"all",value:($counters|map(.value)|add)}])}
       end
     ' --null-input "${work_dir}/metrics" >>"${work_dir}/safe" 2>"${work_dir}/parse.stderr"; then
@@ -162,5 +184,18 @@ done
 roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
 cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||
   inconclusive 'agent identity or container state changed during collection.'
+# A replaced agent also starts with no series, so the roster is compared before any count.
+# Each agent must be complete in all five samples or lack series in all five.
+complete="$(jq -s 'group_by(.agent)|map(select(length==5))|length' "${work_dir}/safe")"
+absent="$(sort -n "${work_dir}/unobserved" | uniq -c | awk '$1==5' | wc -l | tr -d ' ')"
+[[ "$((complete + absent))" -eq "${agent}" ]] ||
+  inconclusive 'an agent gained or lost its endpoint-create limiter series during collection.'
+[[ "${complete}" -gt 0 ]] ||
+  inconclusive "${absent} of ${agent} agents report no endpoint-create limiter series (LIMITER_UNOBSERVED)."
 cat "${work_dir}/safe"
-printf 'MEASURED: five complete samples per stable ready agent; rolling gauges only.\n'
+if [[ "${absent}" -gt 0 ]]; then
+  printf 'PARTIAL: five complete samples for %s of %s stable ready agents; %s report no endpoint-create limiter series; gauges hold values from the last finished request.\n' \
+    "${complete}" "${agent}" "${absent}"
+  exit 0
+fi
+printf 'MEASURED: five complete samples per stable ready agent; gauges hold values from the last finished request.\n'

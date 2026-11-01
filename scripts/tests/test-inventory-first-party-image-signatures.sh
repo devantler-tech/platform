@@ -270,12 +270,15 @@ expected_globs="$(printf '%s\n' \
   'ghcr.io/devantler-tech/platform-coroot-cluster-agent' \
   'ghcr.io/devantler-tech/world-at-ruin/zone' \
   'ghcr.io/devantler-tech/platform-private-mail-bootstrap' \
+  'ghcr.io/devantler-tech/platform-kyverno-reports' \
+  'ghcr.io/devantler-tech/platform-kyverno-migrate' \
+  'ghcr.io/devantler-tech/platform-kyverno-background' \
   'ghcr.io/devantler-tech/*')"
 if [ "$real_globs" != "$expected_globs" ]; then
-  echo "FAIL  the real rules must retain all eleven exact ordered image routes"
+  echo "FAIL  the real rules must retain all fourteen exact ordered image routes"
   failures=$((failures + 1))
 else
-  echo "ok    real rules: eleven ordered rules, dedicated publishers before catch-all"
+  echo "ok    real rules: fourteen ordered rules, dedicated publishers before catch-all"
 fi
 
 # The real file must also satisfy the completeness gate the fixtures exercise.
@@ -310,6 +313,118 @@ elif [ "$talos_storage_identity" != "$kyverno_storage_identity" ] ||
 else
   echo "ok    storage identity: Talos and Kyverno carry the same regex and issuer"
 fi
+
+# The reports-controller repair has its own exact main-only publisher. Exercise
+# first-match routing with the real rules, including tag and digest references,
+# and prove that neither publisher can authenticate the other's repository.
+reports_repository='ghcr.io/devantler-tech/platform-kyverno-reports'
+reports_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-reports-hotfix\.yaml@refs/heads/main$'
+talos_reports_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kyverno-reports") | .keyless.subjectRegex' "$real")"
+talos_reports_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kyverno-reports") | .keyless.issuer' "$real")"
+admission_reports_identity="$(yq -r '.spec.attestors[] | select(.name == "publishkyvernoreports") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+admission_reports_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishkyvernoreports") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ "$talos_reports_identity" != "$reports_identity" ] ||
+  [ "$admission_reports_identity" != "$reports_identity" ] ||
+  [ "$talos_reports_issuer" != 'https://token.actions.githubusercontent.com' ] ||
+  [ "$admission_reports_issuer" != "$talos_reports_issuer" ]; then
+  echo 'FAIL  reports image must retain its exact main publisher in both verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    reports publisher identity matches both verifiers'
+fi
+# yq's equality operator treats '*' as a wildcard. The ordered-route assertion
+# above already binds the final entry to the literal app catch-all.
+app_identity="$(yq -r '.rules[-1].keyless.subjectRegex' "$real")"
+for image in "$reports_repository" "$reports_repository:revision" "$reports_repository@sha256:aa" "$reports_repository:revision@sha256:aa" "$reports_repository-other:revision"; do
+  printf '%s\n' "$image" >"${work}/images-reports"
+  for signer in reports app; do
+    accepted_subject="$reports_identity"
+    [ "$signer" = reports ] || accepted_subject="$app_identity"
+    want_rc=1
+    case "$image/$signer" in
+      "$reports_repository-other:revision/app") want_rc=0 ;;
+      "$reports_repository-other:revision/reports") ;;
+      */reports) want_rc=0 ;;
+    esac
+    RC=0
+    OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
+      "$script" --rules "$real" --images "${work}/images-reports" 2>&1)" || RC=$?
+    check "reports signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
+  done
+done
+# The patched migration runtime has its own exact main-only publisher. Exercise
+# first-match routing with the real rules, including tag and digest references,
+# and prove that neither publisher can authenticate the other's repository.
+migrate_repository='ghcr.io/devantler-tech/platform-kyverno-migrate'
+migrate_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-migration-runtime\.yaml@refs/heads/main$'
+talos_migrate_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kyverno-migrate") | .keyless.subjectRegex' "$real")"
+talos_migrate_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kyverno-migrate") | .keyless.issuer' "$real")"
+admission_migrate_identity="$(yq -r '.spec.attestors[] | select(.name == "publishkyvernomigrate") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+admission_migrate_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishkyvernomigrate") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ "$talos_migrate_identity" != "$migrate_identity" ] ||
+  [ "$admission_migrate_identity" != "$migrate_identity" ] ||
+  [ "$talos_migrate_issuer" != 'https://token.actions.githubusercontent.com' ] ||
+  [ "$admission_migrate_issuer" != "$talos_migrate_issuer" ]; then
+  echo 'FAIL  migrate image must retain its exact main publisher in both verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    migrate publisher identity matches both verifiers'
+fi
+# yq's equality operator treats '*' as a wildcard. The ordered-route assertion
+# above already binds the final entry to the literal app catch-all.
+app_identity="$(yq -r '.rules[-1].keyless.subjectRegex' "$real")"
+for image in "$migrate_repository" "$migrate_repository:revision" "$migrate_repository@sha256:aa" "$migrate_repository:revision@sha256:aa" "$migrate_repository-other:revision"; do
+  printf '%s\n' "$image" >"${work}/images-migrate"
+  for signer in migrate app; do
+    accepted_subject="$migrate_identity"
+    [ "$signer" = migrate ] || accepted_subject="$app_identity"
+    want_rc=1
+    case "$image/$signer" in
+      "$migrate_repository-other:revision/app") want_rc=0 ;;
+      "$migrate_repository-other:revision/migrate") ;;
+      */migrate) want_rc=0 ;;
+    esac
+    RC=0
+    OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
+      "$script" --rules "$real" --images "${work}/images-migrate" 2>&1)" || RC=$?
+    check "migrate signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
+  done
+done
+# The patched background controller has its own exact main-only publisher. Exercise
+# first-match routing with the real rules, including tag and digest references,
+# and prove that neither publisher can authenticate the other's repository.
+background_repository='ghcr.io/devantler-tech/platform-kyverno-background'
+background_identity='^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-background-hotfix\.yaml@refs/heads/main$'
+talos_background_identity="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kyverno-background") | .keyless.subjectRegex' "$real")"
+talos_background_issuer="$(yq -r '.rules[] | select(.image == "ghcr.io/devantler-tech/platform-kyverno-background") | .keyless.issuer' "$real")"
+admission_background_identity="$(yq -r '.spec.attestors[] | select(.name == "publishkyvernobackground") | .cosign.keyless.identities[].subjectRegExp' "$kyverno_policy")"
+admission_background_issuer="$(yq -r '.spec.attestors[] | select(.name == "publishkyvernobackground") | .cosign.keyless.identities[].issuer' "$kyverno_policy")"
+if [ "$talos_background_identity" != "$background_identity" ] ||
+  [ "$admission_background_identity" != "$background_identity" ] ||
+  [ "$talos_background_issuer" != 'https://token.actions.githubusercontent.com' ] ||
+  [ "$admission_background_issuer" != "$talos_background_issuer" ]; then
+  echo 'FAIL  background image must retain its exact main publisher in both verifiers'
+  failures=$((failures + 1))
+else
+  echo 'ok    background publisher identity matches both verifiers'
+fi
+for image in "$background_repository" "$background_repository:revision" "$background_repository@sha256:aa" "$background_repository:revision@sha256:aa" "$background_repository-other:revision"; do
+  printf '%s\n' "$image" >"${work}/images-background"
+  for signer in background app; do
+    accepted_subject="$background_identity"
+    [ "$signer" = background ] || accepted_subject="$app_identity"
+    want_rc=1
+    case "$image/$signer" in
+      "$background_repository-other:revision/app") want_rc=0 ;;
+      "$background_repository-other:revision/background") ;;
+      */background) want_rc=0 ;;
+    esac
+    RC=0
+    OUT="$(ACCEPT_SUBJECTS="$accepted_subject" INVENTORY_VERIFY_CMD="${work}/verify" INVENTORY_PROBE_CMD="${work}/probe" \
+      "$script" --rules "$real" --images "${work}/images-background" 2>&1)" || RC=$?
+    check "background signer isolation: $image / $signer" "$want_rc" '' "$RC" "$OUT"
+  done
+done
 
 # --- 12. the provider-package identity pins the RELEASE-TAG GRAMMAR --------
 # The identity's security value is "signed by publish-provider-package.yml, in a provider-upjet-*

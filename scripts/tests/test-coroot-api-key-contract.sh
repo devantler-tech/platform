@@ -53,13 +53,15 @@ assert "${infrastructure}" \
 
 # Component images stay pinned. The operator lists the registry only when an
 # image is unset, so pins remain the primary path and GHCR egress the fallback.
-# The node-agent may use either Coroot's upstream image or the platform's
-# signed compatibility build; both repositories are explicit allow-list entries.
+# The node-agent also accepts its platform compatibility repository. The server
+# and collector additionally accept only these exact reviewed checkpoint builds.
 assert "${infrastructure}" \
   "${coroot} | .[0].spec |
-    (.communityEdition.image.name | test(\"^ghcr[.]io/coroot/coroot:[0-9]\")) and
+    ((.communityEdition.image.name | test(\"^ghcr[.]io/coroot/coroot:[0-9]\")) or
+      .communityEdition.image.name == \"ghcr.io/devantler-tech/platform-coroot:v1.28.1-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:9a2782f405f9ee673301912b3b2cf85a4a154fbfeb1542df2d4937d6600396f1\") and
     (.nodeAgent.image.name | test(\"^ghcr[.]io/(coroot/coroot-node-agent:[0-9]|devantler-tech/platform-coroot-node-agent:v[0-9])\")) and
-    (.clusterAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-cluster-agent:[0-9]\"))" \
+    ((.clusterAgent.image.name | test(\"^ghcr[.]io/coroot/coroot-cluster-agent:[0-9]\")) or
+      .clusterAgent.image.name == \"ghcr.io/devantler-tech/platform-coroot-cluster-agent:v1.11.7-checkpoints.1-27c6c840e2006076c0ff5ed7dabe15daa1c38477@sha256:46b6abe52dbf5445277ef3e3bbcb469a89a88e2c610411c5d9a4270a8a8a88c3\")" \
   'the Coroot component images must remain pinned to explicit GHCR tags'
 
 policy='map(select(.kind == "CiliumNetworkPolicy" and .metadata.namespace == "observability" and .metadata.name == "allow-coroot"))'

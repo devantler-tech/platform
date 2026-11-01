@@ -19,5 +19,5 @@ patches:
   - path: patches/isolate-administration.yaml
 images:
   - name: ghcr.io/devantler-tech/platform-private-mail-bootstrap
-    # Signed protected-main publication from PR #5503.
-    digest: sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d
+    # Signed protected-main publication from PR #5565.
+    digest: sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376

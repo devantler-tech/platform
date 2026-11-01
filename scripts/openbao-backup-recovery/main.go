@@ -177,7 +177,7 @@ func (a *baoAPI) credentialRecords(ctx context.Context, token string) (map[strin
 		if err != nil || status != 200 || json.Unmarshal(b, &response) != nil || response.Data.Metadata.Version < 1 || response.Data.Metadata.Deleted != "" || response.Data.Metadata.Destroyed {
 			return nil, errEvidence
 		}
-		if _, ok := recordValue(response.Data.Data); !ok {
+		if _, ok := recordValueAtPath(path, response.Data.Data); !ok {
 			return nil, errEvidence
 		}
 		records[path] = response.Data.Data
@@ -321,7 +321,9 @@ func (a *baoAPI) createFixture(ctx context.Context, root, key, dir string) error
 		// native restoration proves both minimum-schema admission and retention
 		// of every optional field.
 		data := map[string]any{"password": hex.EncodeToString(random)}
-		if i > 0 {
+		if path == storageCredentialPath {
+			data = map[string]any{"passphrase": hex.EncodeToString(random)}
+		} else if i > 0 {
 			data["username"] = fmt.Sprintf("synthetic-%d", i)
 			data["retainedField"] = "synthetic-fixture"
 		}
@@ -430,7 +432,20 @@ func inputFailureStage(err error) string {
 }
 
 func main() {
-	if len(os.Args) == 2 && os.Args[1] == "collect" {
+	if len(os.Args) != 2 {
+		fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_RESTORE=FAIL stage=mode")
+		os.Exit(2)
+	}
+	mode, paths, ok := credentialMode(os.Args[1])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_RESTORE=FAIL stage=mode")
+		os.Exit(2)
+	}
+	credentialPaths = paths
+	if mode == "seed-storage" {
+		os.Exit(runStorageSeed(os.Getenv, os.Stdout))
+	}
+	if mode == "collect" {
 		if err := collectRecoveryInputs(os.Getenv("OPENBAO_RECOVERY_DIR")); err != nil {
 			fmt.Fprintf(os.Stderr, "OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=%s\n", inputFailureStage(err))
 			os.Exit(2)
@@ -438,15 +453,11 @@ func main() {
 		fmt.Println("OPENBAO_BACKUP_INPUTS=PASS")
 		return
 	}
-	if len(os.Args) == 2 && os.Args[1] == "image" {
+	if mode == "image" {
 		fmt.Println(serverImage)
 		return
 	}
-	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "OPENBAO_BACKUP_RESTORE=FAIL stage=mode")
-		os.Exit(2)
-	}
-	err := sandbox(os.Args[1])
+	err := sandbox(mode)
 	if err != nil {
 		stage := "verification"
 		var known stageError
@@ -456,9 +467,9 @@ func main() {
 		fmt.Printf("OPENBAO_BACKUP_RESTORE=FAIL stage=%s\n", stage)
 		os.Exit(2)
 	}
-	if os.Args[1] == "fixture" {
+	if mode == "fixture" {
 		fmt.Println("OPENBAO_BACKUP_FIXTURE=PASS")
 	} else {
-		fmt.Printf("OPENBAO_BACKUP_RESTORE=PASS records=3 version=%s\n", serverVersion)
+		fmt.Printf("OPENBAO_BACKUP_RESTORE=PASS records=%d version=%s\n", len(credentialPaths), serverVersion)
 	}
 }

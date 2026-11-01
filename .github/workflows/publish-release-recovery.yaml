@@ -1,17 +1,13 @@
 name: 🩹 Publish Release Recovery
 
 # Platform-owned recovery for the captured tag-only incidents (#4839).
-# Engine: devantler-tech/.github v13.4.0, f558e3ababb474ac0e6f27d988ce8c876a525196.
+# Engine: devantler-tech/.github v14.0.5, 8e2dfbd3f9249b76b58234189ccbbae98d11b32b.
 # The boundary test and generated offline fixture guard this wrapper.
-# enable-recovery remains temporary until the protected rollout in .github#603 is verified.
-# confirm-publication is permanent operator consent.
+# The rollout switch was retired after both protected recoveries and no-write proof (.github#603).
+# confirm-publication remains permanent, default-false operator consent.
 on:
   workflow_dispatch:
     inputs:
-      enable-recovery:
-        description: "Temporary rollout flag; recovery is skipped unless true"
-        type: boolean
-        default: false
       confirm-publication:
         description: "Explicit operator consent to publish the missing release; required on every run"
         type: boolean
@@ -45,7 +41,7 @@ permissions: {}
 
 jobs:
   recover:
-    if: inputs.enable-recovery && !inputs.offline-test
+    if: inputs.confirm-publication && !inputs.offline-test
     name: Publish the missing release
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -87,7 +83,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
+          CATALOGUE_SHA: 8e2dfbd3f9249b76b58234189ccbbae98d11b32b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -229,7 +225,7 @@ jobs:
           cat "$RUNNER_TEMP/release-publication.json"
 
   offline-test:
-    if: inputs.enable-recovery && inputs.offline-test
+    if: inputs.offline-test
     name: Offline recovery build and credential refusal
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -243,7 +239,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
+          CATALOGUE_SHA: 8e2dfbd3f9249b76b58234189ccbbae98d11b32b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {

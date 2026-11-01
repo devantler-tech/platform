@@ -95,8 +95,8 @@ func recordsEqual(expected, actual map[string]json.RawMessage) bool {
 		return false
 	}
 	for _, path := range credentialPaths {
-		e, ok1 := recordValue(expected[path])
-		a, ok2 := recordValue(actual[path])
+		e, ok1 := recordValueAtPath(path, expected[path])
+		a, ok2 := recordValueAtPath(path, actual[path])
 		if !ok1 || !ok2 || !reflect.DeepEqual(e, a) {
 			return false
 		}

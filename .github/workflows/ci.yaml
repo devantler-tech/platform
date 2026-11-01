@@ -52,10 +52,13 @@ jobs:
           bash scripts/tests/test-webapp-compiled-scan.sh
       - name: 🔏 Install reviewed public-image verification tools
         run: bash .github/scripts/setup-supply-chain-tools.sh
-      - name: 🧪 Exercise the real controller and restricted public application
+      - name: Validate the hosted runtime script
         run: |
           shellcheck scripts/tests/test-webapp-runtime-hosted.sh
-          bash scripts/tests/test-webapp-runtime-hosted.sh
+      - name: 🧪 Exercise the real controller and restricted public application
+        env:
+          PREBUILT_CI_READ_TOKEN: ${{ github.token }}
+        run: bash scripts/tests/test-webapp-runtime-hosted.sh
 
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
@@ -102,8 +105,14 @@ jobs:
       # evicts an unrelated PR (#4893). 20 minutes keeps the slowest measured run
       # under half the bound. Resize it only from fresh hosted timings, never to
       # hide a hung test.
+      # Bound already parallel-safe cases to eight slots: the complete
+      # credential-bridge suite improved from 407s to 245s at four CPUs,
+      # preserving the same 582 passing cases and every deadline.
       - name: 🧪 Validate the complete Go helper regression suite
-        run: go test -timeout 20m ./...
+        run: go test -parallel 8 -timeout 20m ./...
+
+      - name: 🧪 Validate gateway receiver policies with the native admission engine
+        run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
 
   changes:
     name: 🔍 Detect Changes
@@ -152,6 +161,7 @@ jobs:
               - 'scripts/tests/test-private-mail-server.sh'
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
+              - 'scripts/verify-email-data-recovery/**'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
@@ -205,6 +215,8 @@ jobs:
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
               - 'scripts/tests/test-reloader-placement-selection.sh'
+              - 'scripts/tests/test-hubble-ui-streaming.sh'
+              - 'scripts/check-hubble-ui-streaming/**'
               - 'scripts/tests/test-human-api-access-boundary.sh'
               - 'scripts/tests/test-world-zone-signatures.sh'
               - 'scripts/tests/test-world-zone-trial.sh'
@@ -223,6 +235,7 @@ jobs:
               - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
+              - 'scripts/tests/longhorn-ui-readonly/**'
               - 'scripts/tests/test-dex-theme-mount.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
@@ -371,6 +384,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #5448 denied-peer probe, its test and its workflow are one contract:
+              # the test pins what the probe may write to production, that it cleans
+              # up, and that no address reaches the public log.
+              - 'scripts/probe-gateway-denied-peer.sh'
+              - 'scripts/tests/test-probe-gateway-denied-peer.sh'
+              - '.github/workflows/probe-gateway-denied-peer.yaml'
               # The #3144 admission probe, its test and its workflow are one
               # contract: the test pins that every write the probe sends is a
               # server-side dry run and that no identity reaches the public log.
@@ -396,10 +415,13 @@ jobs:
               - 'scripts/tests/test-kubescape-self-hosted-scan-persistence.sh'
               - 'scripts/tests/test-kubescape-storage-hotfix.sh'
               - '.github/workflows/publish-kubescape-storage-hotfix.yaml'
+              - 'scripts/tests/test-kyverno-background-hotfix.sh'
+              - '.github/workflows/publish-kyverno-background-hotfix.yaml'
               - 'scripts/tests/test-coroot-node-agent-hotfix.sh'
               - '.github/workflows/publish-coroot-node-agent-hotfix.yaml'
               - 'k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile'
-              - 'k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch'
+              - 'k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch'
+              - 'k8s/bases/infrastructure/coroot/cluster-agent-v1.11.8-otel-log-api.patch'
               - 'scripts/tests/test-kubescape-node-agent-hotfix.sh'
               - '.github/workflows/publish-kubescape-node-agent-hotfix.yaml'
               - 'scripts/kubescape-backlog-bridge/**'
@@ -471,6 +493,7 @@ jobs:
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
+              - 'scripts/tests/test-kyverno-migration-hook-lifecycle.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
@@ -644,6 +667,7 @@ jobs:
               - 'scripts/tests/test-kubescape-storage-placement.sh'
               - 'scripts/tests/test-kubescape-runtime-rules-switch.sh'
               - 'scripts/build-controller-helm.sh'
+              - 'scripts/prepare-helm-render-input-capture.sh'
               - 'scripts/render-helm-chart/**'
               # Both halves and the reviewed exception list, for the same reasons. The
               # guard renders charts with the renderer the two entries above build.
@@ -776,7 +800,7 @@ jobs:
         shell: bash
         env:
           CATALOGUE_REPOSITORY: devantler-tech/.github
-          CATALOGUE_SHA: 0b137510d139bbf62e479d9610b0db17c972bc2b
+          CATALOGUE_SHA: 8e2dfbd3f9249b76b58234189ccbbae98d11b32b
         run: |
           set -euo pipefail
           [[ "$CATALOGUE_REPOSITORY" == devantler-tech/.github && "$CATALOGUE_SHA" =~ ^[0-9a-f]{40}$ ]] || {
@@ -937,6 +961,11 @@ jobs:
         run: |
           shellcheck scripts/tests/test-webapp-compiler.sh scripts/tests/test-webapp-compiler-wiring.sh
           bash scripts/tests/test-webapp-compiler-wiring.sh
+
+      - name: 🔒 Validate scoped migration runtime publisher
+        run: |
+          shellcheck scripts/tests/test-kyverno-migration-runtime.sh
+          bash scripts/tests/test-kyverno-migration-runtime.sh
 
       - name: 🛡️ Validate preserved policy failure actions
         run: |
@@ -1777,7 +1806,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2391,6 +2420,14 @@ jobs:
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
 
+      - name: 🚧 Validate Gateway denied-peer probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod, runs only on dispatch and writes while it runs. Its
+        # test fakes kubectl and pins each verdict against a one-fixture control.
+        run: |
+          shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
+          bash scripts/tests/test-probe-gateway-denied-peer.sh
+
       - name: 🔏 Validate GitHub Team external-identity probe
         if: needs.changes.outputs.k8s == 'true'
         # The probe needs prod and runs only on dispatch. Its test fakes kubectl
@@ -2485,6 +2522,8 @@ jobs:
           bash scripts/tests/test-coroot-availability-remediation.sh
           shellcheck scripts/tests/test-descheduler-availability.sh
           bash scripts/tests/test-descheduler-availability.sh
+          shellcheck scripts/tests/test-kyverno-migration-hook-lifecycle.sh
+          bash scripts/tests/test-kyverno-migration-hook-lifecycle.sh
           shellcheck scripts/tests/test-umami-rendered-placement.sh
           bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
@@ -2982,7 +3021,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3084,6 +3123,12 @@ jobs:
         run: |
           shellcheck scripts/tests/test-kubescape-storage-hotfix.sh
           bash scripts/tests/test-kubescape-storage-hotfix.sh
+
+      - name: 🧹 Validate Kyverno background compatibility image
+        if: needs.changes.outputs.k8s == 'true'
+        run: |
+          shellcheck scripts/tests/test-kyverno-background-hotfix.sh
+          bash scripts/tests/test-kyverno-background-hotfix.sh
 
       - name: 🔭 Validate Coroot node-agent compatibility image
         if: needs.changes.outputs.k8s == 'true'
@@ -3315,7 +3360,7 @@ jobs:
           !cancelled() &&
           steps.normalize-sarif.outputs.sarif == 'ready' &&
           github.event.pull_request.head.repo.full_name == github.repository
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ runner.temp }}/kubescape.sarif
           # Distinguishes these alerts from the CodeQL and zizmor analyses that
@@ -3360,10 +3405,17 @@ jobs:
           bash scripts/summarize-sarif-findings.sh "${RUNNER_TEMP}/kubescape.raw.sarif"
 
   validate-manifest-regressions:
-    name: 🧪 Validate Independent Manifest Regressions
+    name: 🧪 Validate Independent Manifest Regressions (${{ matrix.suite }})
     needs:
       - changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.k8s == 'true'
+    strategy:
+      fail-fast: false
+      # Keep Docker-backed proofs on a separate runner from render contracts.
+      # Set this to one for the equivalent serial diagnostic control.
+      max-parallel: 2
+      matrix:
+        suite: [contracts, native]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -3378,19 +3430,24 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: 📌 Install the reviewed YAML parser
-        if: needs.changes.outputs.k8s == 'true'
         env:
           GOBIN: ${{ runner.temp }}/platform-validation-tools
         run: |
           go install github.com/mikefarah/yq/v4@v4.54.1
           printf '%s\n' "$GOBIN" >> "$GITHUB_PATH"
           PATH="$GOBIN:$PATH" yq --version
+      - name: 🩺 Validate declarative Coroot application health
+        if: matrix.suite == 'contracts'
+        # Check the bounded offline matcher before the expensive native proofs.
+        # Exact reviewed app signals receive per-app thresholds; any novel log
+        # pattern resets its threshold so the Applications view fails visible.
+        run: |
+          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
+          bash scripts/tests/test-coroot-application-health-reconciler.sh
       - name: ⚖️ Read Kyverno CLI version
-        if: needs.changes.outputs.k8s == 'true'
         id: kyverno-version
         run: bash .github/scripts/kyverno-version.sh
       - name: ⚖️ Install Kyverno CLI
-        if: needs.changes.outputs.k8s == 'true'
         uses: kyverno/action-install-cli@fcee92fca5c883169ef9927acf543e0b5fc58289 # v0.2.0
         with:
           release: ${{ steps.kyverno-version.outputs.release }}
@@ -3398,7 +3455,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3411,19 +3468,25 @@ jobs:
           restore-keys: |
             kubeconform-schema-cache-v1-
       - name: 🔐 Prove snapshot readback with pinned static tooling
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
           VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
+      - name: 🔒 Prove Longhorn dashboard read-only routing
+        if: matrix.suite == 'native'
+        timeout-minutes: 5
+        env:
+          LONGHORN_UI_NATIVE_TEST: '1'
+        run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         run: |
           shellcheck scripts/tests/test-openbao-standby-canary.sh
           shellcheck scripts/tests/test-openbao-strategy-transition.sh
           bash scripts/tests/test-openbao-standby-canary.sh
       - name: 🔐 Prove isolated snapshot recovery on the matching server
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 8
         env:
           OPENBAO_BACKUP_RECOVERY_NATIVE_TEST: "1"
@@ -3431,30 +3494,30 @@ jobs:
           shellcheck scripts/run-openbao-backup-sandbox.sh
           go test -count=1 -v ./scripts/openbao-backup-recovery
       - name: 🔒 Validate Crossplane provider egress policy
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         run: bash scripts/tests/test-crossplane-egress-policy.sh
       - name: ✉️ Verify Email credential custody against pinned OpenBao
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
           EMAIL_CREDENTIAL_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-email-credentials
       - name: ✉️ Prove native mail accounts and recipient restrictions
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 10
         run: |
           shellcheck scripts/tests/test-private-mail-configuration.sh
           bash scripts/tests/test-private-mail-configuration.sh
 
       - name: ✉️ Prove native gateway client identity boundaries
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
           EMAIL_CLIENT_IDENTITY_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/ingress-client-address
 
       - name: 🔐 Validate Kyverno review admission boundaries
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # Render the pinned chart and exercise its match conditions against an
         # isolated real API server. Ordinary policy requests must still fail
         # closed; only the three already-filtered virtual reviews skip dispatch.
@@ -3463,7 +3526,7 @@ jobs:
           bash scripts/tests/test-kyverno-auth-reviews.sh
 
       - name: 🗺️ Validate every unscanned namespace is reviewed
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # A namespace in the operator's excludeNamespaces produces no scan result, and the
         # posture score cannot tell that apart from a clean namespace. So the exclusions must
         # match scripts/kubescape-unscanned-namespaces.tsv exactly, each row with a reason,
@@ -3475,21 +3538,13 @@ jobs:
           bash scripts/tests/test-guard-kubescape-scan-scope.sh
 
       - name: 🔐 Validate the shared-publish-workflow pin guard
-        if: needs.changes.outputs.k8s == 'true'
+        if: matrix.suite == 'contracts'
         # The guard fails by PASSING: a widened cosign matcher still verifies, so
         # nothing else in CI notices. This pins the shapes it must reject — above
         # all the SHA-or-tag alternation removed in #3022, which is the exact
         # prior contents of all eight subjects and would otherwise revert in
         # silence — plus the floor and the wiring that reaches it.
         run: bash scripts/tests/test-shared-publish-workflow-pin-guard.sh
-
-      - name: 🩺 Validate declarative Coroot application health
-        if: needs.changes.outputs.k8s == 'true'
-        # Exact reviewed app signals receive per-app thresholds; any novel log
-        # pattern resets its threshold so the Applications view fails visible.
-        run: |
-          shellcheck scripts/tests/test-coroot-application-health-reconciler.sh
-          bash scripts/tests/test-coroot-application-health-reconciler.sh
 
   validate-flux-bridge:
     name: 🔐 Validate Flux Credential Bridge
@@ -3577,7 +3632,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@6f1dee9557a939cc24ca2c562ea775d05e01564d # v12.0.1
+        uses: devantler-tech/.github/actions/validate-naming@84f4cddc69d6a5a937a7e83d2bd77a438d932f26 # v17.0.0
 
       - name: Confirm naming validation completed
         env:
@@ -3918,7 +3973,7 @@ jobs:
 
       - name: 🧩 Validate the post-renderer guard
         run: |
-          shellcheck scripts/build-controller-helm.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
+          shellcheck scripts/build-controller-helm.sh scripts/prepare-helm-render-input-capture.sh scripts/guard-helm-post-renderers.sh scripts/tests/test-guard-helm-post-renderers.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4025,6 +4080,34 @@ jobs:
             bash scripts/tests/test-kubescape-runtime-rules-switch.sh
           fi
 
+      # The controller renderer above retains its audited compiler and binary.
+      # The new HTTP probe uses the root module's patched standard library.
+      - name: ⚙️ Setup the repository Go toolchain for the streaming probe
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: 🧩 Verify Hubble UI streaming with the pinned frontend runtime
+        env:
+          BASE_SHA: >-
+            ${{ github.event.pull_request.base.sha ||
+            github.event.merge_group.base_sha }}
+        run: |
+          shellcheck scripts/tests/test-hubble-ui-streaming.sh
+          changed_inputs="$(git diff --name-only "$BASE_SHA" HEAD -- \
+            .github/workflows/ci.yaml \
+            k8s/bases/infrastructure/controllers/cilium \
+            k8s/providers/hetzner/infrastructure/controllers \
+            k8s/providers/docker/infrastructure/controllers \
+            k8s/bases/components ksail.prod.yaml \
+            scripts/tests/test-hubble-ui-streaming.sh \
+            scripts/check-hubble-ui-streaming go.mod go.sum \
+            scripts/build-controller-helm.sh scripts/render-helm-chart)"
+          if [[ -n "$changed_inputs" ]]; then
+            bash scripts/tests/test-hubble-ui-streaming.sh --runtime
+          fi
+
       - name: 🧩 Apply every changed HelmRelease's post-renderers to its chart
         env:
           BASE_SHA: >-
@@ -4073,7 +4156,7 @@ jobs:
         # The fixture suite pulls no chart: a stand-in packages its fixture charts, and the
         # renderer built here renders them.
         run: |
-          shellcheck scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
+          shellcheck scripts/prepare-helm-render-input-capture.sh scripts/guard-pdb-selector-match.sh scripts/tests/test-guard-pdb-selector-match.sh
           controller_helm="$RUNNER_TEMP/controller-helm"
           bash scripts/build-controller-helm.sh "$controller_helm"
           echo "CONTROLLER_HELM=$controller_helm" >> "$GITHUB_ENV"
@@ -4359,7 +4442,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4562,7 +4645,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@d513d0069c20cd8f037c0cb42eadf73268ac14f4 # v14.0.0
+        uses: devantler-tech/.github/actions/aggregate-job-checks@5b5777ddfcb1f0273eeece79eebf6ad01a5f3df9 # v19.0.1
         with:
           job-results: >-
             ${{ needs.changes.result }}

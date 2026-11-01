@@ -1,0 +1,12 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingAdmissionPolicyBinding
+metadata:
+  name: gateway-receiver
+  annotations:
+    platform.devantler.tech/gateway-receiver-owner: v1
+spec:
+  policyName: gateway-receiver
+  matchResources:
+    matchPolicy: Exact
+    namespaceSelector: {}
+    objectSelector: {}

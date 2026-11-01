@@ -12,7 +12,6 @@ require (
 	go.yaml.in/yaml/v2 v2.4.4
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/evanphx/json-patch.v4 v4.13.0
-	gopkg.in/evanphx/json-patch.v5 v5.9.11
 	gopkg.in/yaml.v3 v3.0.1
 	mvdan.cc/sh/v3 v3.14.1
 	sigs.k8s.io/yaml v1.6.0
@@ -59,4 +58,5 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.14.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.7 // indirect
 	github.com/aws/smithy-go v1.28.6 // indirect
+	gopkg.in/evanphx/json-patch.v5 v5.9.11
 )

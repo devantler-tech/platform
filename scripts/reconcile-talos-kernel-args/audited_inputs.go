@@ -249,6 +249,38 @@ var auditedFoldInputs = []struct {
 		"go.mod":                     "cc8d8c1eaee93942a0b4515bd1e3a053a10e0293",
 		"go.sum":                     "ac5eaca71439011e25e49382c261eecd50b456af",
 	}},
+	{"7.203.34", map[string]string{
+		"pkg/fsutil/configmanager":   "76455759a264c6a10ac3ceab608df912efb33307",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "d50e9dc79a9b9d0cd096ea449344a69d780b27e3",
+		"charts":                     "4351b93273821f333e9f0641e323ba99387844bb",
+		"go.mod":                     "3670c2b6f18ddd14099b1d166cab6a12ed578229",
+		"go.sum":                     "ce455b1ab6a93f3f1fe908e88c41ca86b2391991",
+	}},
+	{"7.204.30", map[string]string{
+		"pkg/fsutil/configmanager":   "cf718ca52bd537acbb61209dd34c5d9259c5a5f8",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "4ad0d5e41cd15528bf5026096c0b15ee8e9ae157",
+		"charts":                     "88e653c564b04a1e512dc6e37adbdaf9f61534a2",
+		"go.mod":                     "b28f6dcf842eedd68b718ca07e3b7cdac21e9f62",
+		"go.sum":                     "942be4893f34ab083016927eeed4d018f0a5acac",
+	}},
+	{"7.205.1", map[string]string{
+		"pkg/fsutil/configmanager":   "cf718ca52bd537acbb61209dd34c5d9259c5a5f8",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "4ad0d5e41cd15528bf5026096c0b15ee8e9ae157",
+		"charts":                     "88e653c564b04a1e512dc6e37adbdaf9f61534a2",
+		"go.mod":                     "acd77b48dd689dc0c107d073e5a6e589517eba9c",
+		"go.sum":                     "62c77b34dc8e9643f77bd73e5ce951aa9520bf59",
+	}},
+	{"7.205.3", map[string]string{
+		"pkg/fsutil/configmanager":   "cf718ca52bd537acbb61209dd34c5d9259c5a5f8",
+		"pkg/fsutil/generator/talos": "25c9c416e06b77937e68e71a213c1b2e9ed61205",
+		"pkg/apis":                   "4ad0d5e41cd15528bf5026096c0b15ee8e9ae157",
+		"charts":                     "88e653c564b04a1e512dc6e37adbdaf9f61534a2",
+		"go.mod":                     "4fcbf207e611621b91cc25a672a6416dfa8a20cc",
+		"go.sum":                     "c527402f86a6be7fa984a3580f149281e1d01ddc",
+	}},
 }
 
 // verifyFoldInputs passes only when every fold input of the pinned release was

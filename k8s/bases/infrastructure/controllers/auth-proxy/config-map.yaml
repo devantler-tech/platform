@@ -33,6 +33,22 @@ data:
           rule: "Host(`ksail.${domain}`)"
           entryPoints: ["web"]
           service: ksail-operator
+        # Longhorn 1.13 exposes a few read operations as POST actions. Keep
+        # those explicit. QueryRegexp can match any duplicate query value, so
+        # Cilium's complete-query rules are the final POST authorization gate.
+        # The UI's own API proxy is administrative, so hiding controls is not
+        # an authorization boundary. Both Cilium boundaries enforce this list.
+        longhorn:
+          rule: >-
+            Host(`longhorn.${domain}`) &&
+            (((Method(`GET`) || Method(`HEAD`)) &&
+            ((!PathPrefix(`/v1`) && PathRegexp(`^/([A-Za-z0-9_~-]+([.][A-Za-z0-9_~-]+)*[.](html|js|css|ico|svg|png|jpg|jpeg|gif|webp|woff|woff2|ttf|eot|json|map)|(static|assets|fonts|images)/[A-Za-z0-9_~-]+([./][A-Za-z0-9_~-]+)*)?$`)) || PathRegexp(`^/v1(/(apiversions(/v1)?|schemas(/[A-Za-z0-9_-]+)?|supportbundles|(settings|volumes|nodes|engineimages|events|disktags|nodetags|instancemanagers|backingimages|backupbackingimages|recurringjobs|snapshotgroups|orphans|shardgroups|shards|backuptargets|backupvolumes|systembackups|systemrestores|volumeattachments)(/[A-Za-z0-9][A-Za-z0-9_.-]*)?|ws(/[0-9]+(ms|s|m|h)?)?/(settings|volumes|nodes|engineimages|events|instancemanagers|backingimages|backupbackingimages|recurringjobs|snapshotgroups|orphans|shardgroups|shards|backuptargets|backupvolumes|backups|systembackups|systemrestores|volumeattachments)))?/?$`))) ||
+            (Method(`POST`) &&
+            ((PathRegexp(`^/v1/volumes/[A-Za-z0-9][A-Za-z0-9_.-]*$`) && QueryRegexp(`action`, `^(snapshotList|snapshotGet|snapshotCRList|snapshotCRGet|recurringJobList)$`)) ||
+            (PathRegexp(`^/v1/backupvolumes/[A-Za-z0-9][A-Za-z0-9_.-]*$`) && QueryRegexp(`action`, `^(backupList|backupListByVolume|backupGet)$`)))))
+          entryPoints: ["web"]
+          middlewares: ["longhorn-read-only-headers", "forwarded-proto-https"]
+          service: longhorn
         # Actual Budget handles its own OIDC login too, but it is a personal
         # finance app, so public Gateway traffic first passes through the
         # platform oauth2-proxy maintainer-team gate.
@@ -65,6 +81,11 @@ data:
           entryPoints: ["web"]
           service: data-products
       middlewares:
+        longhorn-read-only-headers:
+          headers:
+            customRequestHeaders:
+              X-HTTP-Method-Override: ""
+              X-Method-Override: ""
         # Restores the scheme the client actually used. Traefik derives
         # X-Forwarded-Proto from the entryPoint it received on, and this
         # entryPoint is plaintext (:8080) because TLS is terminated out at the
@@ -78,6 +99,10 @@ data:
             customRequestHeaders:
               X-Forwarded-Proto: "https"
       services:
+        longhorn:
+          loadBalancer:
+            servers:
+              - url: "http://longhorn-frontend.longhorn-system.svc.cluster.local:80"
         actual-budget:
           loadBalancer:
             servers:
