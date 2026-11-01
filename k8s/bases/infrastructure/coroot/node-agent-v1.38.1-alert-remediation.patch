@@ -104,7 +104,7 @@ index 1ebcc2f..2e7c763 100644
  	skipIfNotVM(t)
  	src := `
 diff --git a/go.mod b/go.mod
-index 4cd9b06..679d2d3 100644
+index 4cd9b06..1467b2a 100644
 --- a/go.mod
 +++ b/go.mod
 @@ -16,8 +16,8 @@ require (
@@ -134,12 +134,7 @@ index 4cd9b06..679d2d3 100644
  	github.com/vishvananda/netlink v1.3.1
  	github.com/vishvananda/netns v0.0.5
  	github.com/xin053/hsperfdata v0.2.3
-@@ -45,13 +45,13 @@ require (
- 	go.opentelemetry.io/otel v1.46.0
- 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0
- 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
--	go.opentelemetry.io/otel/log v0.20.0
-+	go.opentelemetry.io/otel/log v0.21.0
+@@ -49,9 +49,9 @@ require (
  	go.opentelemetry.io/otel/sdk v1.46.0
  	go.opentelemetry.io/otel/trace v1.46.0
  	golang.org/x/arch v0.4.0
@@ -161,15 +156,11 @@ index 4cd9b06..679d2d3 100644
  	github.com/blang/semver v3.5.1+incompatible // indirect
  	github.com/dustin/go-humanize v1.0.1 // indirect
  	github.com/go-kit/log v0.2.1 // indirect
-@@ -78,9 +78,9 @@ require (
- 	github.com/xdg-go/scram v1.1.2 // indirect
- 	github.com/xdg-go/stringprep v1.0.4 // indirect
+@@ -80,7 +80,7 @@ require (
  	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
--	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 // indirect
--	go.opentelemetry.io/otel/sdk/log v0.20.0 // indirect
+ 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 // indirect
+ 	go.opentelemetry.io/otel/sdk/log v0.20.0 // indirect
 -	golang.org/x/crypto v0.56.0 // indirect
-+	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 // indirect
-+	go.opentelemetry.io/otel/sdk/log v0.21.0 // indirect
 +	golang.org/x/crypto v0.58.0 // indirect
  	k8s.io/klog v1.0.0 // indirect
  )
@@ -195,7 +186,7 @@ index 4cd9b06..679d2d3 100644
  	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
  	google.golang.org/grpc v1.83.2 // indirect
 diff --git a/go.sum b/go.sum
-index 98da4bc..df25ca4 100644
+index 98da4bc..6f1f325 100644
 --- a/go.sum
 +++ b/go.sum
 @@ -1,7 +1,7 @@
@@ -262,37 +253,6 @@ index 98da4bc..df25ca4 100644
  github.com/vishvananda/netlink v1.3.1 h1:3AEMt62VKqz90r0tmNhog0r/PpWKmrEShJU0wJW6bV0=
  github.com/vishvananda/netlink v1.3.1/go.mod h1:ARtKouGSTGchR8aMwmkzC0qiNPrrWO5JS/XMVl45+b4=
  github.com/vishvananda/netns v0.0.5 h1:DfiHV+j8bA32MFM7bfEunvT8IAqQ/NzSJHtcmW5zdEY=
-@@ -312,22 +312,22 @@ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 h1:3g7B90U
- go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0/go.mod h1:Ef8SuTh59BT7+ofpDxN9z+yOlc4t2GjLmKDgYNJL/NU=
- go.opentelemetry.io/otel v1.46.0 h1:FHt5/CDyVxi/8IM1CH7VE/rRgq3kLHa2mSTVMO8AWyc=
- go.opentelemetry.io/otel v1.46.0/go.mod h1:Gj3SEScelsNC45tp4nSxRYlS+f5iez7W8XPMCt905kE=
--go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 h1:owlhcJ3QO3X0YTDTCcDZ4V+6aVDkWbNmBoQ5NUp7Oww=
--go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0/go.mod h1:MP4eemTiI9zC8fgg+DYynhYDYf3ba72S376TvP+Ye0Q=
-+go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 h1:fvNHGyo3CdRv/DQveXqhqBxnKTDyRaC5sMSQxilX/A0=
-+go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0/go.mod h1:zyGrjRKL2B/6+Jc/m4/otPoZqV2MY9ZjC/aBraRO7zc=
- go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0 h1:OFnwLJr+pF3iHrlGSzbxyuo6/6HyBlnlN1CWEJmBVcw=
- go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0/go.mod h1:716wFneO0ov19A2beH5hjfh9AK5z/VWNAtDijp1Y0/g=
- go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0 h1:KrC1YrQeSt46ITMWAbgQx1M1eV1/1TKzttrBzymPmss=
- go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0/go.mod h1:zDSEzoEqsOrgBeGvH66KRgxh90VonFyJqBHA0Pk3+rM=
--go.opentelemetry.io/otel/log v0.20.0 h1:/5i0vuHxCLWUfChWG41K9wkM0jafruPw9NU1/RCJirs=
--go.opentelemetry.io/otel/log v0.20.0/go.mod h1:wOcMcjsZpG8x7Bak7IhSi/lg8wscV2C1VdrKCLPlt0E=
-+go.opentelemetry.io/otel/log v0.21.0 h1:SLsVDGmtyBrdw8/a2Z0bOIxou/+bN4z56GebH7T0LvA=
-+go.opentelemetry.io/otel/log v0.21.0/go.mod h1:iReetQrZL9Wyg84cCkOoCmqDHS5RCFfyxC7J+r8fn8g=
- go.opentelemetry.io/otel/metric v1.46.0 h1:yBnkXvgV7AXFILZc5K6IZe/CBFF3OS7BJ8ov6/lj0K8=
- go.opentelemetry.io/otel/metric v1.46.0/go.mod h1:iPmdWqifKUdzziPkvvzIJXITl56fQx2mGM/DHLB3/2o=
- go.opentelemetry.io/otel/sdk v1.46.0 h1:h5CNQQjEbuQXY/JfZtgt3i7HVFV3aHPO2OAwO2eTYPI=
- go.opentelemetry.io/otel/sdk v1.46.0/go.mod h1:GAERFXFt5SYCEB+YiKUbMBeza6UaDH7GmGOZEfh2gSM=
--go.opentelemetry.io/otel/sdk/log v0.20.0 h1:vM3xI7TQgKPiSghe6urZtAkyFY7SodrSpC83CffDFuY=
--go.opentelemetry.io/otel/sdk/log v0.20.0/go.mod h1:Knej2nmsTUzN79T2eeXdRsjjPcoxoq2pUyUHz9TFyyU=
--go.opentelemetry.io/otel/sdk/log/logtest v0.20.0 h1:OqdRZ1guyzamK3M6LlRsmGqRrjkHWw6WZOKKli5ELpg=
--go.opentelemetry.io/otel/sdk/log/logtest v0.20.0/go.mod h1:PuMIlm7zAt7c3z8zfOI5ox4iT1Z87We+PF6YoINux/M=
-+go.opentelemetry.io/otel/sdk/log v0.21.0 h1:QsE7XSR0ktQdKmRKGnR+f1ObGF32WG+7MER/P9KgmYc=
-+go.opentelemetry.io/otel/sdk/log v0.21.0/go.mod h1:m9mApjCoD2/1QuKCAptjv+BrG9WKOvQLVdNx+iBldTo=
-+go.opentelemetry.io/otel/sdk/log/logtest v0.21.0 h1:X+JBBgKlswCGYsmgL0CnoUUtlE//VB345c84jYAYkdQ=
-+go.opentelemetry.io/otel/sdk/log/logtest v0.21.0/go.mod h1:HD1575K8e6sIFBBDd5tZB3t9DlMytWXq9FuR+Y4rfjE=
- go.opentelemetry.io/otel/sdk/metric v1.46.0 h1:0piZ26EG4RBfebb2jhDH6ERCYHoVWduc3kLgPCwSnSE=
- go.opentelemetry.io/otel/sdk/metric v1.46.0/go.mod h1:I1PbKrdVc8Qu8HYVDNtqVIwLwjNrhsV/uFuxfwg8mO4=
- go.opentelemetry.io/otel/trace v1.46.0 h1:OULy7ccdJnZtJ0UDYFOIGaCmiWzJ8Vi2G/Rsu60qs1c=
 @@ -351,10 +351,10 @@ golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACk
  golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
  golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
