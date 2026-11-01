@@ -40,6 +40,54 @@ func fixtureConfiguration(t *testing.T, listenerPort, backendPort int) []byte {
 	return fixtureConfigurationFor(t, "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml", listenerPort, backendPort)
 }
 
+func fixturePhysicalPeerConfiguration(t *testing.T, policyPath string, listenerPort, backendPort int, fenced bool) []byte {
+	raw := fixtureConfigurationFor(t, policyPath, listenerPort, backendPort)
+	if !fenced {
+		return raw
+	}
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		t.Fatal(err)
+	}
+	listener := config["static_resources"].(map[string]any)["listeners"].([]any)[0].(map[string]any)
+	chain := listener["filter_chains"].([]any)[0].(map[string]any)
+	// This field matches the physical socket peer, before trusting any source
+	// claimed by the PROXY envelope. The claimed-source matcher is insufficient.
+	chain["filter_chain_match"] = map[string]any{"direct_source_prefix_ranges": []any{map[string]any{"address_prefix": "127.0.0.1", "prefix_len": 32}}}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw
+}
+
+func TestPhysicalPeerFixtureSelectsConnectionPeer(t *testing.T) {
+	const policy = "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml"
+	for _, fenced := range []bool{false, true} {
+		var config map[string]any
+		if err := json.Unmarshal(fixturePhysicalPeerConfiguration(t, policy, 11080, 18080, fenced), &config); err != nil {
+			t.Fatal(err)
+		}
+		listener := config["static_resources"].(map[string]any)["listeners"].([]any)[0].(map[string]any)
+		chain := listener["filter_chains"].([]any)[0].(map[string]any)
+		match, present := chain["filter_chain_match"].(map[string]any)
+		if !fenced {
+			if present {
+				t.Fatal("the unfenced negative control is no longer independent")
+			}
+			continue
+		}
+		prefixes, valid := match["direct_source_prefix_ranges"].([]any)
+		if !present || !valid || len(prefixes) != 1 {
+			t.Fatal("fixture does not bind the physical connection peer")
+		}
+		prefix := prefixes[0].(map[string]any)
+		if prefix["address_prefix"] != "127.0.0.1" || prefix["prefix_len"] != float64(32) || match["source_prefix_ranges"] != nil {
+			t.Fatal("fixture matches a claimed address or a wider physical range")
+		}
+	}
+}
+
 func fixtureConfigurationFor(t *testing.T, policyPath string, listenerPort, backendPort int) []byte {
 	t.Helper()
 	var data []byte
@@ -67,7 +115,7 @@ func fixtureConfigurationFor(t *testing.T, policyPath string, listenerPort, back
 	policy := patches[0].Value.RequestHeaderModifier
 	var added []any
 	for _, h := range policy.Set {
-		// Cilium 1.20.3 translates HTTPRoute set with this exact Envoy action.
+		// Cilium 1.20.4 translates HTTPRoute set with this exact Envoy action.
 		added = append(added, map[string]any{"header": map[string]any{"key": h.Name, "value": h.Value}, "append_action": "OVERWRITE_IF_EXISTS_OR_ADD"})
 	}
 	socket := func(port int) map[string]any {
@@ -117,7 +165,7 @@ func TestClientIdentityFixtureUsesTheAuditedControllerRelease(t *testing.T) {
 			}
 		}
 	}
-	if err := yaml.Unmarshal(data, &release); err != nil || release.Spec.Chart.Spec.Version != "1.20.3" {
+	if err := yaml.Unmarshal(data, &release); err != nil || release.Spec.Chart.Spec.Version != "1.20.4" {
 		t.Fatal("reaudit controller header translation and Envoy pin before updating this proof")
 	}
 	if len(release.Spec.ValuesFrom) != 0 || release.Spec.Values.Envoy.Image != nil || (release.Spec.Values.GatewayAPI.XffNumTrustedHops != nil && *release.Spec.Values.GatewayAPI.XffNumTrustedHops != 0) {
@@ -130,14 +178,18 @@ func TestClientIdentityFixtureUsesTheAuditedControllerRelease(t *testing.T) {
 }
 
 func TestNativeGatewayReplacesSpoofedClientIdentity(t *testing.T) {
-	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml", "Forwarded")
+	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-client-identity/patches/trusted-client-header.yaml", "Forwarded", false)
 }
 
 func TestNativeProxyGatewayReplacesSpoofedClientIdentity(t *testing.T) {
-	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml", "X-Forwarded-For")
+	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml", "X-Forwarded-For", false)
 }
 
-func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) {
+func TestNativeGatewayPhysicalPeerFenceRejectsForgedTransport(t *testing.T) {
+	testNativeGatewayIdentity(t, "../../../k8s/bases/apps/private-mail-proxy-identity/patches/trusted-client-header.yaml", "X-Forwarded-For", true)
+}
+
+func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string, fenced bool) {
 	t.Helper()
 	if os.Getenv("EMAIL_CLIENT_IDENTITY_NATIVE_TEST") != "1" {
 		t.Skip("opt-in native Linux container proof")
@@ -160,7 +212,7 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 	}
 	var pins nativePins
 	data, err := os.ReadFile("pins.json")
-	if err != nil || json.Unmarshal(data, &pins) != nil || pins.Cilium != "1.20.3" || pins.Image != "quay.io/cilium/cilium-envoy@sha256:d6c8c0c91954d1885026d82a31b341f37dcd34a4b127fdaf1587e43ddd224cef" {
+	if err != nil || json.Unmarshal(data, &pins) != nil || pins.Cilium != "1.20.4" || pins.Image != "quay.io/cilium/cilium-envoy@sha256:547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629" {
 		t.Fatal("native proof must use the audited Cilium Envoy pin")
 	}
 	if got := strings.TrimSpace(string(run("info", "--format", "{{.OSType}}"))); got != "linux" {
@@ -186,7 +238,7 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 		t.Fatal(err)
 	}
 	config := filepath.Join(t.TempDir(), "envoy.json")
-	if err := os.WriteFile(config, fixtureConfigurationFor(t, policyPath, port, backendPort), 0o600); err != nil {
+	if err := os.WriteFile(config, fixturePhysicalPeerConfiguration(t, policyPath, port, backendPort, fenced), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	run("pull", pins.Image)
@@ -212,13 +264,18 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	request := func(prefix string) (*http.Response, error) {
+	requestFrom := func(prefix, physicalPeer string) (*http.Response, error) {
 		t.Helper()
-		conn, err := net.DialTimeout("tcp", address, time.Second)
+		dialer := net.Dialer{Timeout: time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(physicalPeer)}}
+		conn, err := dialer.DialContext(ctx, "tcp4", address)
 		if err != nil {
 			return nil, err
 		}
 		t.Cleanup(func() { _ = conn.Close() })
+		peer, ok := conn.LocalAddr().(*net.TCPAddr)
+		if !ok || !peer.IP.Equal(net.ParseIP(physicalPeer)) {
+			return nil, fmt.Errorf("native fixture did not use the selected physical source")
+		}
 		_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 		_, err = fmt.Fprintf(conn, "%sGET /admin/ HTTP/1.1\r\nHost: mail.example.test\r\nConnection: close\r\nForwarded: for=203.0.113.20\r\nForwarded: for=203.0.113.21\r\nX-Forwarded-For: 203.0.113.22, 203.0.113.23\r\nX-Forwarded-For: invalid-source\r\nX-Real-IP: 203.0.113.24\r\nX-Envoy-External-Address: 203.0.113.25\r\n\r\n", prefix)
 		if err != nil {
@@ -226,6 +283,7 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 		}
 		return http.ReadResponse(bufio.NewReader(conn), nil)
 	}
+	request := func(prefix string) (*http.Response, error) { return requestFrom(prefix, "127.0.0.1") }
 	for _, tc := range []struct{ version, protocol, source, destination string }{
 		{"v1", "TCP4", "198.51.100.9", "192.0.2.9"},
 		{"v1", "TCP6", "2001:db8::9", "2001:db8::10"},
@@ -274,6 +332,49 @@ func testNativeGatewayIdentity(t *testing.T, policyPath, identityHeader string) 
 				t.Fatal("untrusted forwarding metadata changed the canonical client identity")
 			}
 		})
+	}
+	for _, version := range []string{"v1", "v2"} {
+		t.Run("physical-peer/"+version, func(t *testing.T) {
+			prefix := "PROXY TCP4 127.0.0.1 192.0.2.9 4242 443\r\n"
+			if version == "v2" {
+				payload := append([]byte{127, 0, 0, 1}, 192, 0, 2, 9)
+				payload = binary.BigEndian.AppendUint16(payload, 4242)
+				payload = binary.BigEndian.AppendUint16(payload, 443)
+				header := append([]byte("\r\n\r\n\x00\r\nQUIT\n"), 0x21, 0x11)
+				header = binary.BigEndian.AppendUint16(header, uint16(len(payload)))
+				prefix = string(append(header, payload...))
+			}
+			// Validate this exact envelope on the allowed physical connection.
+			allowed, err := request(prefix)
+			if err != nil {
+				t.Fatal("valid envelope from the allowed physical peer was refused")
+			}
+			if err := allowed.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if allowed.StatusCode != http.StatusOK {
+				t.Fatal("allowed physical peer did not reach the backend")
+			}
+			before := hits.Load()
+			response, denied := requestFrom(prefix, "127.0.0.2")
+			if denied == nil {
+				if err := response.Body.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if fenced {
+				if denied == nil || hits.Load() != before {
+					t.Fatal("a forged allowed source bypassed the physical peer fence")
+				}
+			} else if denied != nil || response.StatusCode != http.StatusOK || hits.Load() != before+1 {
+				t.Fatal("unfenced negative control did not accept the same forged transport")
+			}
+		})
+	}
+	if fenced {
+		t.Log("EMAIL_RECEIVER_PHYSICAL_FENCE_NATIVE=PASS allowed=VERIFIED forged_v1=REFUSED forged_v2=REFUSED")
+	} else {
+		t.Log("EMAIL_RECEIVER_PHYSICAL_FENCE_CONTROL=PASS unfenced=ACCEPTED")
 	}
 	before := hits.Load()
 	response, err := request("")

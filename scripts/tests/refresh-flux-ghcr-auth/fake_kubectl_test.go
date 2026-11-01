@@ -1203,7 +1203,7 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	spec, _ := patch["spec"].(map[string]any)
 	webhookConfiguration, _ := spec["webhookConfiguration"].(map[string]any)
 	attestors, _ := spec["attestors"].([]any)
-	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 11 {
+	if webhookConfiguration["timeoutSeconds"] != float64(30) || len(attestors) != 13 {
 		return commandFailure(91, "consolidated image-validating policy patch omitted its timeout or attestors")
 	}
 	storageAttestorValid := false
@@ -1211,13 +1211,15 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	corootNodeAgentAttestorValid := false
 	checkpointAttestorValid := false
 	reportsAttestorValid := false
+	migrateAttestorValid := false
+	backgroundAttestorValid := false
 	analysisAttestorValid := false
 	warZoneAttestorValid := false
 	mailAttestorValid := false
 	for _, rawAttestor := range attestors {
 		attestor, _ := rawAttestor.(map[string]any)
 		name, _ := attestor["name"].(string)
-		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
+		if name != "publishkubescapestorage" && name != "publishkubescapenodeagent" && name != "publishcorootnodeagent" && name != "publishcorootcheckpoint" && name != "publishkyvernoreports" && name != "publishkyvernomigrate" && name != "publishkyvernobackground" && name != "publishwarzone" && name != "publishksailanalysis" && name != "publishprivatemail" {
 			continue
 		}
 		cosign, _ := attestor["cosign"].(map[string]any)
@@ -1240,6 +1242,10 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			checkpointAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-coroot-checkpoint-hotfix\\.yaml@refs/heads/main$"
 		case "publishkyvernoreports":
 			reportsAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-reports-hotfix\\.yaml@refs/heads/main$"
+		case "publishkyvernomigrate":
+			migrateAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-migration-runtime\\.yaml@refs/heads/main$"
+		case "publishkyvernobackground":
+			backgroundAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/platform/\\.github/workflows/publish-kyverno-background-hotfix\\.yaml@refs/heads/main$"
 		case "publishksailanalysis":
 			analysisAttestorValid = issuerValid && subject == "^https://github\\.com/devantler-tech/ksail/\\.github/workflows/publish-ksail-analysis-runner\\.yaml@refs/heads/main$"
 		case "publishwarzone":
@@ -1259,6 +1265,10 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	dedicatedRoutesCheckpoint := false
 	genericExcludesReports := false
 	dedicatedRoutesReports := false
+	genericExcludesMigrate := false
+	dedicatedRoutesMigrate := false
+	genericExcludesBackground := false
+	dedicatedRoutesBackground := false
 	genericExcludesAnalysis := false
 	dedicatedRoutesAnalysis := false
 	genericExcludesWarZone := false
@@ -1272,6 +1282,12 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 			genericExcludesReports = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-reports'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')")
+			genericExcludesMigrate = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-migrate'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@')")
+			genericExcludesBackground = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-kyverno-background'") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:')") &&
+				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@')")
 			genericExcludesCheckpoint = checkpointRouteContains(expression, true)
 			genericExcludesMail = strings.Contains(expression, "image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap'") &&
 				strings.Contains(expression, "!image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:')") &&
@@ -1315,6 +1331,16 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:')") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@')")
 		}
+		if strings.Contains(expression, "attestors.publishkyvernomigrate") {
+			dedicatedRoutesMigrate = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kyverno-migrate'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@')")
+		}
+		if strings.Contains(expression, "attestors.publishkyvernobackground") {
+			dedicatedRoutesBackground = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/platform-kyverno-background'") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:')") &&
+				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@')")
+		}
 		if strings.Contains(expression, "attestors.publishwarzone") {
 			dedicatedRoutesWarZone = strings.Contains(expression, "image == 'ghcr.io/devantler-tech/world-at-ruin/zone'") &&
 				strings.Contains(expression, "image.startsWith('ghcr.io/devantler-tech/world-at-ruin/zone:')") &&
@@ -1334,6 +1360,8 @@ func fakeKubectlPatchConsolidatedImageValidatingPolicy(args []string, patchFile 
 	if !storageAttestorValid || !kubescapeNodeAgentAttestorValid || !corootNodeAgentAttestorValid ||
 		!checkpointAttestorValid || !genericExcludesCheckpoint || !dedicatedRoutesCheckpoint ||
 		!reportsAttestorValid || !genericExcludesReports || !dedicatedRoutesReports ||
+		!migrateAttestorValid || !genericExcludesMigrate || !dedicatedRoutesMigrate ||
+		!backgroundAttestorValid || !genericExcludesBackground || !dedicatedRoutesBackground ||
 		!mailAttestorValid || !genericExcludesMail || !dedicatedRoutesMail ||
 		!analysisAttestorValid || !genericExcludesAnalysis || !dedicatedRoutesAnalysis ||
 		!warZoneAttestorValid || !genericExcludesWarZone || !dedicatedRoutesWarZone ||
@@ -3472,6 +3500,14 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 	}
 	if containsSequence(args, "get", kind, name) {
 		markerName := kind + "-" + namespace + "-" + name
+		fault := os.Getenv("FAKE_FANOUT_FAULT")
+		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
+		annotated := markerExists(markerName + "-annotated")
+		if faultSelected && fault == "malformed-initial-read" && !annotated {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			fmt.Println("not-json")
+			return 0
+		}
 		ready := "True"
 		if resource == os.Getenv("FAKE_UNRECONCILED_FANOUT_RESOURCE") {
 			ready = "False"
@@ -3487,19 +3523,92 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 		if markerExists(markerName) {
 			resourceVersion = "3"
 		}
+		uid := kind + "-" + namespace + "-" + name + "-uid"
+		kindName := "ExternalSecret"
+		if kind == "pushsecret" {
+			kindName = "PushSecret"
+		}
+		spec := map[string]any{"refreshInterval": "1h"}
+		syncedVersion := "1-fixture"
+		periodicCount := 0
+		periodicFault := ""
+		if kind == "externalsecret" && wordListContains(os.Getenv("FAKE_PERIODIC_FANOUT_NAMESPACES"), namespace) {
+			periodicCount = parseInt(markerContent("periodic-reads-"+namespace), 0) + 1
+			setMarkerContent("periodic-reads-"+namespace, strconv.Itoa(periodicCount))
+			appendEnvFile("OPERATION_LOG", fmt.Sprintf("periodic-read:%s:%d\n", namespace, periodicCount))
+			if namespace == os.Getenv("FAKE_PERIODIC_FAULT_NAMESPACE") {
+				periodicFault = os.Getenv("FAKE_PERIODIC_FAULT")
+			}
+			spec["refreshInterval"] = "1m"
+			spec["refreshPolicy"] = "Periodic"
+			initial := markerContent("periodic-initial-refresh-" + namespace)
+			if initial == "" {
+				initial = time.Now().UTC().Add(-5 * time.Second).Format(time.RFC3339)
+				setMarkerContent("periodic-initial-refresh-"+namespace, initial)
+			}
+			refreshTime = initial
+			resourceVersion = strconv.Itoa(20 + periodicCount)
+			if periodicCount > 1 {
+				refreshTime = time.Now().UTC().Add(time.Duration(periodicCount) * time.Second).Format(time.RFC3339)
+				if periodicFault != "" {
+					appendEnvFile("OPERATION_LOG", "periodic-fault:"+namespace+":"+periodicFault+"\n")
+				}
+				switch periodicFault {
+				case "same-refresh":
+					refreshTime = initial
+				case "replaced-uid":
+					uid += "-replacement"
+				case "spec-drift":
+					spec["target"] = map[string]any{"name": "different-target"}
+				case "unready":
+					ready = "False"
+				case "stale-generation":
+					syncedVersion = "0-fixture"
+				case "future-refresh":
+					refreshTime = time.Now().UTC().Add(5 * time.Minute).Format(time.RFC3339)
+				}
+			}
+			if periodicFault == "wrong-policy" {
+				spec["refreshPolicy"] = "OnChange"
+				appendEnvFile("OPERATION_LOG", "periodic-fault:"+namespace+":"+periodicFault+"\n")
+			}
+		}
 		fmt.Println(encodeJSON(map[string]any{
-			"metadata": map[string]any{"resourceVersion": resourceVersion, "generation": 1},
+			"apiVersion": "external-secrets.io/v1",
+			"kind":       kindName,
+			"metadata":   map[string]any{"name": name, "namespace": namespace, "uid": uid, "resourceVersion": resourceVersion, "generation": 1},
+			"spec":       spec,
 			"status": map[string]any{
 				"refreshTime":           refreshTime,
 				"conditions":            []any{map[string]any{"type": "Ready", "status": ready}},
-				"syncedResourceVersion": "1-fixture",
+				"syncedResourceVersion": syncedVersion,
 			},
 		}))
+		if periodicCount > 1 && periodicFault == "read-failure" {
+			return commandFailure(92, "synthetic periodic read failed after plausible output")
+		}
+		if faultSelected && ((fault == "failed-initial-read" && !annotated) ||
+			(fault == "failed-completion-read" && annotated)) {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			return commandFailure(92, "synthetic forced-refresh read failed after plausible output")
+		}
 		return 0
 	}
 	if containsSequence(args, "annotate", kind, name) {
 		appendEnvFile("FANOUT_LOG", resource+"\n")
 		appendEnvFile("OPERATION_LOG", "fanout:"+resource+"\n")
+		if kind == "externalsecret" && wordListContains(os.Getenv("FAKE_PERIODIC_FANOUT_NAMESPACES"), namespace) {
+			return commandFailure(92, "synthetic tenant boundary rejects direct refresh update")
+		}
+		fault := os.Getenv("FAKE_FANOUT_FAULT")
+		faultSelected := resource == os.Getenv("FAKE_FANOUT_FAULT_RESOURCE")
+		if faultSelected && (fault == "refused-annotation" || fault == "refused-annotation-with-output") {
+			appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			if fault == "refused-annotation-with-output" {
+				fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
+			}
+			return commandFailure(92, "synthetic forced-refresh annotation refused")
+		}
 		markerName := kind + "-" + namespace + "-" + name
 		touchMarker(markerName + "-annotated")
 		if resource != os.Getenv("FAKE_SYNC_STALL_RESOURCE") {
@@ -3510,7 +3619,27 @@ func fakeKubectlFanoutResource(args []string, namespace, kind, name string) int 
 				setMarkerContent("vault-seed-value", markerContent("variables-secret-value"))
 			}
 		}
-		fmt.Println(`{"metadata":{"resourceVersion":"2"}}`)
+		acknowledgement := `{"metadata":{"resourceVersion":"2"}}`
+		if faultSelected {
+			switch fault {
+			case "empty-acknowledgement":
+				acknowledgement = ""
+			case "malformed-acknowledgement":
+				acknowledgement = "not-json"
+			case "missing-acknowledgement-version":
+				acknowledgement = `{"metadata":{}}`
+			case "empty-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":""}}`
+			case "null-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":null}}`
+			case "numeric-acknowledgement-version":
+				acknowledgement = `{"metadata":{"resourceVersion":2}}`
+			}
+			if acknowledgement != `{"metadata":{"resourceVersion":"2"}}` {
+				appendEnvFile("OPERATION_LOG", "fanout-fault:"+resource+":"+fault+"\n")
+			}
+		}
+		fmt.Println(acknowledgement)
 		return 0
 	}
 	return commandFailure(91, "unexpected fanout resource invocation")
@@ -3544,6 +3673,9 @@ func fakeKubectlGetConsumerSecret(namespace string) int {
 	fmt.Println(encodeJSON(map[string]any{
 		"data": map[string]any{".dockerconfigjson": encoded},
 	}))
+	if namespace == os.Getenv("FAKE_CONSUMER_READ_FAIL_NAMESPACE") && variablesPatchCount > 0 {
+		return commandFailure(92, "synthetic consumer read failed after plausible output")
+	}
 	return 0
 }
 

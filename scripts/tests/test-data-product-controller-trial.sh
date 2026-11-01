@@ -19,8 +19,13 @@ kubectl kustomize "${root_dir}/k8s/providers/${provider}/infrastructure/controll
 yq ea -o=json '[.]' "${scratch}/apps.yaml" >"${scratch}/apps.json"
 yq ea -o=json '[.]' "${scratch}/controllers.yaml" >"${scratch}/controllers.json"
 
-# Helm and separately managed components must use the same published runtime.
-# Otherwise an upgrade leaves the UI host and independent probe on old code.
+# The UI host follows the Helm runtime. The independently released probe must
+# render the exact checked-out immutable declaration, without overlay drift.
+probe_image="$(yq -o=json '.spec.template.spec.containers' \
+  "${root_dir}/k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml" |
+  jq -ers 'if length==1 and (.[0]|type=="array" and length==1) and .[0][0].name=="contract-probe" and
+    (.[0][0].image|type=="string" and test("^ghcr.io/devantler-tech/(data-product-controller|khoist)(:[0-9]+\\.[0-9]+\\.[0-9]+)?@sha256:[0-9a-f]{64}$"))
+    then .[0][0].image else error("invalid probe declaration") end')"
 cat >"${scratch}/runtime-pins.jq" <<'JQ'
 . as $resources |
 [.[] | select(.kind=="HelmRelease" and .metadata.namespace=="data-product-controller" and
@@ -35,11 +40,12 @@ cat >"${scratch}/runtime-pins.jq" <<'JQ'
       .metadata.name==$name)] as $deployments |
     ($deployments|length)==1 and ($deployments[0].spec.template.spec.containers|length)==1 and
     ($deployments[0].spec.template.spec.containers[0].image as $pin |
-      $pin==($image.repository+"@"+$image.digest) or
-      $pin==($image.repository+":"+$image.tag+"@"+$image.digest))))
+      if $name=="data-product-controller-contract-probe" then $pin==$probe_image
+      else $pin==($image.repository+"@"+$image.digest) or
+        $pin==($image.repository+":"+$image.tag+"@"+$image.digest) end)))
 JQ
-jq -e -f "${scratch}/runtime-pins.jq" "${scratch}/apps.json" >/dev/null ||
-  fail "${provider}: UI host and contract probe must use the Helm release's immutable runtime"
+jq -e --arg probe_image "$probe_image" -f "${scratch}/runtime-pins.jq" "${scratch}/apps.json" >/dev/null ||
+  fail "${provider}: UI host or independent probe differs from its declared immutable runtime"
 # Check both independent components: a valid digest alone cannot prove parity.
 for component in ui-kit contract-probe; do
   for mismatch in tag digest missing; do
@@ -50,7 +56,7 @@ for component in ui-kit contract-probe; do
           if $mismatch=="tag" then sub(":([^@]+)@";":0.0.0@")
           else sub("@sha256:[a-f0-9]{64}$";"@sha256:"+("0"*64)) end
         else . end) end' "${scratch}/apps.json" >"${scratch}/mismatched-runtime.json"
-    if jq -e -f "${scratch}/runtime-pins.jq" "${scratch}/mismatched-runtime.json" >/dev/null; then
+    if jq -e --arg probe_image "$probe_image" -f "${scratch}/runtime-pins.jq" "${scratch}/mismatched-runtime.json" >/dev/null; then
       fail "${provider}: ${component} ${mismatch} mismatch was accepted"
     fi
   done
@@ -151,6 +157,7 @@ jq -e '[.[] | select(.kind == "NetworkPolicy" and .metadata.namespace == "data-p
   "${scratch}/apps.json" >/dev/null || fail "${provider}: namespace default-deny must stay active"
 jq -e '[.[] | select(.kind=="Deployment" and .metadata.name=="data-product-controller-contract-probe")] as $probe |
   ($probe|length)==1 and $probe[0].spec.replicas==2 and ($probe[0].metadata.labels|has("platform.devantler.tech/replica-floor")|not) and
+  $probe[0].spec.template.metadata.annotations=={"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"} and
   ($probe[0].spec.template.spec | .serviceAccountName=="data-product-controller-contract-probe" and .automountServiceAccountToken==false and
     (.volumes//[])==[] and (.initContainers//[])==[] and .imagePullSecrets==[{name:"ghcr-auth"}] and
     (.containers|length)==1 and (.containers[0] | .name=="contract-probe" and .command==["/contract-probe"] and (.args//[])==[] and
@@ -177,10 +184,11 @@ jq -e '[.[]|select(.kind=="Role" and .metadata.name=="data-product-readiness-obs
 jq -e '[.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|(.specs==null or .specs==[])] == [true] and
   [.[]|select(.kind=="CiliumNetworkPolicy" and .metadata.name=="allow-data-product-controller-contract-probe")|.spec] ==
   [{endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+    ingress:[{fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"observability","app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":"coroot","app.kubernetes.io/component":"coroot-cluster-agent"}}],toPorts:[{ports:[{port:"8081",protocol:"TCP"}]}]}],
     egress:[{toFQDNs:[{matchName:"harbour-data.${domain}"}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
       {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
        toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:"harbour-data.${domain}"}]}}]}]}]' \
-  "${scratch}/apps.json" >/dev/null || fail "${provider}: contract probe egress must allow only the sample HTTPS host and its DNS lookup"
+  "${scratch}/apps.json" >/dev/null || fail "${provider}: contract probe access must select only its collector, sample HTTPS host and DNS lookup"
 # Recovery executes the candidate workflow after checking out main. A main
 # predating this trial has neither the active app nor this test; an active app
 # must never use a missing test as permission to skip its validation.

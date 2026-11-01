@@ -68,6 +68,10 @@ esac
 [ "${listener_count}" -ge 4 ] ||
   fail "expected at least 4 Gateway listeners in the prod overlay, found ${listener_count} — did the ascoachingogvaner listener patch stop applying?"
 
+http_namespaces="$(yq eval -r '.spec.listeners[] | select(.protocol == "HTTP") | .allowedRoutes.namespaces.from' "${gateway}")"
+[ "${http_namespaces}" = 'Same' ] ||
+  fail 'plain HTTP must accept only the platform-owned redirect namespace; tenant backends must use HTTPS'
+
 # Compare the kinds as a JOINED STRING, never as an array. yq's `!=` does not
 # do deep array equality — `(… | sort) != ["HTTPRoute"]` evaluates to true even
 # for a correctly pinned listener, which reported all four as unpinned when this

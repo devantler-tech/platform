@@ -199,6 +199,22 @@ incomplete reads and enabled hooks, milters or webhooks require reconciliation;
 they are never silently removed. After apply, require all four exact profiles.
 An empty CLI query is not this completeness proof.
 
+The declared mailbox receives the pinned runtime's normal-user permissions as
+an explicit replacement profile. Fresh recovery has no generated Role objects,
+so initialization cannot depend on finding a role named User. Freeze the
+individual permission names from the reviewed runtime rather than accepting
+future permissions by a prefix. The separate administrator and the service
+account's restricted replacement permissions remain intact. Readback requires
+exact permission maps, including absence of undeclared entries.
+
+External sign-in remains disabled during this local baseline. A later identity
+activation must explicitly clear implicit user roles and verify their absence
+after restart before enabling the external directory. On an empty datastore,
+an update containing only default-valued authentication fields does not prevent
+the first normal startup from installing native role defaults; it is not an
+identity-enrollment restriction. Mailbox permission preparation therefore makes
+no claim that external enrollment is ready or enabled.
+
 The same bounded inventory also covers every local domain and its aliases.
 The reserved rejection domain must be absent from both, and external directory
 resolution is refused. A reserved public DNS suffix alone cannot prove that a

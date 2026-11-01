@@ -139,6 +139,8 @@ patches:
   - path: kyverno/patches/enable-user-namespaces.yaml
   # Prod-only fail-closed WireGuard encryption (egress strict mode) — see file.
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
+  # Require relay replicas to use separate nodes in prod; local retains soft spread.
+  - path: cilium/patches/require-relay-node-spread.yaml
   # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled
   # until a narrow policy consumer lands; if re-enabled, keep the datastore off
   # Longhorn to avoid the SPIRE <-> Longhorn <-> mTLS cycle — see file.
@@ -149,10 +151,6 @@ patches:
   # docker/local-path provider cannot snapshot.
   - path: velero/patches/enable-csi-snapshots.yaml
   - path: velero/patches/prioritise-node-agent.yaml
-  # Prod-only: enable the ksail-operator's native Dex OIDC. The operator does
-  # eager startup OIDC discovery that needs a cluster-resolvable + TLS-trusted
-  # issuer, which the local *.platform.lan host-file domain isn't — see file.
-  - path: ksail-operator/patches/enable-oidc.yaml
   # Prod-only: point the Kubescape node-agent's runtime-detection alerts at the
   # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
   # fanning them out to Slack and Coroot — see file.

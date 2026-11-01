@@ -12,6 +12,14 @@
 # validates the combined render. Evidence for approvals made before this file existed is in
 # approved-surface-history.md.
 
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicyBinding||gateway-receiver 835871036a393f9eed5a90088ec575937b8c8a45393967166b1fa3c15aac2289
+
+admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver 29a4c24f83df36bb1a1cc5880703564b5b853f46e27828aca4493fdc5017d983
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 02e679b3bede26c8ef6793955787d34b266667cafe41636288c87e1fcb83d339
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver c22536e4b66d2287780a0126fe46bb8e9b409f932f8844cf1e55cd3b9cf707e2
+
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 36855100be6e3611947d34ce120822158db269cdf860c23ebce11ad9ae76b197
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|arc-ksail-analysis|ksail-analysis-runners f59980a0d056bb796135803ce4cfb1a84947957e943abe9854a78eaf1249b2b0
@@ -32,7 +40,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|cnpg-system|plugin-barman-cloud 74682cb45a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|crossplane-system|crossplane 8faec319d400ced8ebc0341fa5496bcd9e578b02cd7b456b7d0beee9334c5d68
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 3db343919ffde305fc4eb68664e0c12ecd8fe618b2f19f28b60b3413bf9237d7
+helm.toolkit.fluxcd.io/v2|HelmRelease|dex|dex 8adfcbd4795a9b0f36ede017fa76233f9ebf4c18305b42b7fa16e1a9f4e9ab5d
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|external-dns|external-dns 31c51b3b18a4d7dfbbe2fec098d6aad40f292dd29c6e91f0422217969ce24e45
 
@@ -52,7 +60,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kro-system|kro cd7531d09eab1fa5898b2069fef
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|ksail-operator|ksail-operator dfc2fd679b30a0acf35fcddc41eb883980c345036c95b3ebc5a9d21e0354bfa9
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 5506d37df9ca77a28be095f174196b2f9fb737c31f7e43cc9524cb34e756532c
+helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|cilium 583656039a7b6f65fab253ef1ce6ea63ffffd4437e404d5d42996208143a3c7a
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|descheduler 40d41e62d48b7db3706d544a94b25a75e497d7f11ca6efec1376774c8085de13
 
@@ -68,9 +76,9 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 9337fa8f666f46ac0c4d1e868696f0095316ca869c891b3b9fc03e30c60bb72d
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 6a352e2f5cb05f56d3558dcb9a11b1a56275b70c62b508f67e9c5366c79ce390
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno 96afd304ffb1fc5dfcbdca6a7e8a29006735e1ad40a992edd4cc3b03568208ee
+helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno a853fca682a534b6fd53166c7909a8efc2e850a32ec5cb74ca8049b983520ab7
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|longhorn-system|longhorn 3687bc9ddaa8177bc383eb7d25fc8f1bff732a935e2874656fdd8b438aea6e03
 
@@ -116,7 +124,7 @@ kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|bootstrap df15a74c32342
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|flux-instance cc7711a92e331e29ddaa022dccd94ed0c8d7195f8703e20403267c73874593d3
 
-kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0cfe2fc47fa5c5ad7e0b696476d22361dc09ab095913995aca08c301156b2c3e
+kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure 0404e22df806844ac03bdeb8cc51f2d7434c10754877c2d3c15cbc623b05b671
 
 kustomize.toolkit.fluxcd.io/v1|Kustomization|flux-system|infrastructure-controllers d3cb230f3213d7a231fda9e1a700bf77e07440a0786061389357cf744e136a62
 
@@ -406,7 +414,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|arc-systems|arc-controller 64fb3257414
 
 source.toolkit.fluxcd.io/v1|OCIRepository|ascoachingogvaner|ascoachingogvaner af12d172b3cc20f85f5b2016d30558db30905e977fe7682130184d0b1a4d3b16
 
-source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3
+source.toolkit.fluxcd.io/v1|OCIRepository|aws|aws 8ad26301961658e0c50fc13246f1f44894a8f922daeb2713ec8b8724957071c4
 
 source.toolkit.fluxcd.io/v1|OCIRepository|cert-manager|origin-ca-issuer 026bb5454bce4d953d216d1c661137a3c3232576488eeff7a41ec4c76a642215
 
@@ -414,7 +422,7 @@ source.toolkit.fluxcd.io/v1|OCIRepository|data-product-controller|khoist-documen
 
 source.toolkit.fluxcd.io/v1|OCIRepository|flux-system|flux-operator fdc99e9413e88a5f8a99efa8b515dfbc340303dca5650d34137f1965d2788771
 
-source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config b5ab7e893cffdb3eaa01de448e1daa4ec95e6d9e9a72d4f47ab8439ad7e558e6
+source.toolkit.fluxcd.io/v1|OCIRepository|github-config|github-config 4e8335871f17fb3b08946d6698e25db9d5b2e3e26df27c9c55293bd29b6731a0
 
 source.toolkit.fluxcd.io/v1|OCIRepository|homepage|homepage ff2c2d1aac0b2315247df9f5266eeb00f4443ea551d6e92270bdf76a243c0f38
 
@@ -431,5 +439,7 @@ v1|ConfigMap|flux-system|variables-base 3ad340acc55739177ebb22a26bf2c20116c66a81
 v1|ConfigMap|flux-system|variables-cluster 4dd0f78bf25a143540b8caec53295a4a4869c42df99d0b0f003a1ac86971a162
 
 v1|Secret|flux-system|variables-cluster 03c1c8eb598a7d2fe2a7c0670282d90139b91fb86e5bff534cd5d748976d19f5
+
+v1|Secret|flux-system|variables-gateway-receiver b020f1466f1849694c2d15a9577e1923192a780f15eaac45c206d8495faa0deb
 
 v1|Secret|flux-system|variables-heartbeat 1ae01ab68307178f8a0d330b313612ceb0a10ca06b5f953415749ca2aea9c81c

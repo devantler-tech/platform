@@ -53,6 +53,19 @@ patches:
         namespace: flux-system
       spec:
         timeout: 20m
+  - target:
+      group: kustomize.toolkit.fluxcd.io
+      version: v1
+      kind: Kustomization
+      name: infrastructure
+      namespace: flux-system
+    patch: |
+      - op: add
+        path: /spec/postBuild/substituteFrom/-
+        value:
+          kind: Secret
+          name: variables-gateway-receiver
+          optional: false
 
 replacements:
   # Point apps / infrastructure / infrastructure-controllers Flux Kustomizations

@@ -6,12 +6,14 @@ umask 077
 # the caller's context; this script never changes context or kubeconfig contents.
 # --context NAME --domain PUBLIC_DOMAIN --image-digest sha256:...
 # --runtime-digest sha256:... (repeat) --chart-digest sha256:...
+# --probe-runtime-digest sha256:... (repeat, resolved from the declared probe image)
 # --apps-digest sha256:... --apps-verify-file /absolute/public-policy.json [--timeout SECONDS]
 # Expected readiness activation comes from this checkout's Helm declaration.
 # Browser authentication and embedding handshakes remain separate acceptance
 # checks. This helper reads no Secrets or authenticated URLs.
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
+probe_runtime_digests=()
 phase=''
 readonly repository='ghcr.io/devantler-tech/data-product-controller'
 readonly namespace='data-product-controller'
@@ -19,17 +21,19 @@ expected_helm_file="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/k8s/bases/a
 readonly expected_helm_file
 expected_ui_file="$(dirname "$expected_helm_file")/deployment-ui-kit.yaml"
 readonly expected_ui_file
+expected_probe_file="$(dirname "$expected_helm_file")/deployment-contract-probe.yaml"
+readonly expected_probe_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
-  local detail='' role='' reason='' extra=''
+  local detail='' role='' reason='' extra='' http_code='' curl_code=''
   # A completed public failure remains useful when the shared deadline subsequently expires.
   # Keep the deadline refusal, while retaining only the validated role and cause already observed.
   if [[ "$1" == public_contract_incomplete || ("$1" == deadline_exceeded && -f "$scratch/public-failure") ]]; then
     role=public_contract
     reason=read_incomplete
     if [[ -f "$scratch/public-failure" ]]; then
-      local saved_role='' saved_reason=''
-      read -r saved_role saved_reason extra <"$scratch/public-failure" || true
+      local saved_role='' saved_reason='' saved_http='' saved_curl=''
+      read -r saved_role saved_reason saved_http saved_curl extra <"$scratch/public-failure" || true
       # Only fixed identifiers may enter a public receipt, never response data.
       if [[ -z "$extra" ]]; then
         case "$saved_role" in
@@ -38,6 +42,8 @@ fail() {
               dns_failed | tls_failed | request_timeout | transport_failed | http_status | body_invalid | security_headers | asset_invalid)
                 role=$saved_role
                 reason=$saved_reason
+                if [[ "$saved_http" =~ ^(000|[1-5][0-9]{2})$ ]]; then http_code=$((10#$saved_http)); fi
+                if [[ "$saved_curl" =~ ^(0|[1-9][0-9]{0,2})$ ]] && ((saved_curl <= 255)); then curl_code=$saved_curl; fi
                 ;;
             esac
             ;;
@@ -45,6 +51,8 @@ fail() {
       fi
     fi
     detail=$(printf ',"phase":"public_contract","role":"%s","reason":"%s"' "$role" "$reason")
+    if [[ -n "$http_code" ]]; then detail+=$(printf ',"httpStatus":%d' "$http_code"); fi
+    if [[ -n "$curl_code" ]]; then detail+=$(printf ',"curlExit":%d' "$curl_code"); fi
   elif [[ ("$1" == deadline_exceeded || "$1" == read_incomplete) &&
     ("$phase" == initial_readiness || "$phase" == rollout_stability) ]]; then
     role=snapshot
@@ -97,6 +105,7 @@ while (($#)); do
     --domain) domain=$2 ;;
     --image-digest) image_digest=$2 ;;
     --runtime-digest) runtime_digests+=("$2") ;;
+    --probe-runtime-digest) probe_runtime_digests+=("$2") ;;
     --chart-digest) chart_digest=$2 ;;
     --apps-digest) apps_digest=$2 ;;
     --apps-verify-file) apps_verify_file=$2 ;;
@@ -111,7 +120,8 @@ done
 [[ ${#domain} -le 253 && "$domain" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ && ! "$domain" =~ ^[0-9.]+$ ]] || fail invalid_arguments 2
 case "$domain" in *.local | *.localhost | *.lan | *.invalid | *.test) fail invalid_arguments 2 ;; esac
 [[ ${#runtime_digests[@]} -gt 0 && ${#runtime_digests[@]} -le 8 ]] || fail invalid_arguments 2
-for value in "$image_digest" "$chart_digest" "$apps_digest" "${runtime_digests[@]}"; do
+[[ ${#probe_runtime_digests[@]} -gt 0 && ${#probe_runtime_digests[@]} -le 8 ]] || fail invalid_arguments 2
+for value in "$image_digest" "$chart_digest" "$apps_digest" "${runtime_digests[@]}" "${probe_runtime_digests[@]}"; do
   [[ "$value" =~ ^sha256:[a-f0-9]{64}$ ]] || fail invalid_arguments 2
 done
 [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ && "$timeout_seconds" -le 600 ]] || fail invalid_arguments 2
@@ -178,6 +188,18 @@ read_expected_ui() {
 }
 bounded read_expected_ui || fail invalid_expected_state 2
 expected_publisher=$(<"$scratch/publisher-state")
+# read_expected_probe binds the standalone probe's exact declared immutable
+# image separately from the installed legacy chart and controller workloads.
+read_expected_probe() {
+  yq -o=json '.spec.template.spec.containers' "$expected_probe_file" 2>/dev/null |
+    jq -ers 'if length==1 and (.[0]|type=="array" and length==1) and .[0][0].name=="contract-probe" and
+      (.[0][0].image|type=="string" and test("^ghcr.io/devantler-tech/(data-product-controller|khoist)(:[0-9]+\\.[0-9]+\\.[0-9]+)?@sha256:[0-9a-f]{64}$"))
+      then .[0][0].image else error("invalid probe declaration") end' >"$scratch/probe-image" 2>/dev/null
+}
+bounded read_expected_probe || fail invalid_expected_state 2
+probe_image=$(<"$scratch/probe-image")
+probe_repository=${probe_image%@*}
+probe_repository=${probe_repository%%:*}
 # read_verify_policy validates and copies the single public artifact identity policy.
 read_verify_policy() {
   [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
@@ -195,6 +217,7 @@ def metadata: {name,namespace,uid,generation,deletionTimestamp,labels,
   revision:.annotations["deployment.kubernetes.io/revision"],
   owners:[.ownerReferences[]? | {apiVersion,kind,name,uid,controller}]};
 def conditions: [.[]? | {type,status,observedGeneration,reason}];
+def metrics_annotations: (.//{} | with_entries(select(.key|startswith("coroot.com/"))));
 def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,protocol:(.protocol//"TCP")}],
   command,args,envCount:(.env//[]|length),envFromCount:(.envFrom//[]|length),volumeMountCount:(.volumeMounts//[]|length),
   env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") |
@@ -202,11 +225,13 @@ def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,proto
   uiFlags:[.env[]? | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="PUBLISHER_PREFLIGHT_ENABLED") |
     {name,value,indirect:(.valueFrom!=null)}],uiEnvironmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,containers:(.spec.template.spec.containers|containers),
+  spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,
+    metricsAnnotations:(.spec.template.metadata.annotations|metrics_annotations),containers:(.spec.template.spec.containers|containers),
     serviceAccountName:.spec.template.spec.serviceAccountName,automountServiceAccountToken:.spec.template.spec.automountServiceAccountToken,
     volumeCount:(.spec.template.spec.volumes//[]|length),initContainerCount:(.spec.template.spec.initContainers//[]|length)},
   status:(.status|{observedGeneration,replicas,updatedReplicas,readyReplicas,availableReplicas})};
 def pod: {apiVersion,kind,metadata:(.metadata|metadata),spec:{containers:(.spec.containers|containers),
+  metricsAnnotations:(.metadata.annotations|metrics_annotations),
   serviceAccountName:.spec.serviceAccountName,automountServiceAccountToken:.spec.automountServiceAccountToken,
   volumeCount:(.spec.volumes//[]|length),initContainerCount:(.spec.initContainers//[]|length)},
   status:{phase:.status.phase,podIP:.status.podIP,podIPs:[.status.podIPs[]? | .ip],conditions:(.status.conditions|conditions),
@@ -286,7 +311,7 @@ def owned($kind;$name;$uid): [.metadata.owners[]? | select(.controller==true)] a
   ($owners|length)==1 and $owners[0].apiVersion=="apps/v1" and $owners[0].kind==$kind and $owners[0].name==$name and $owners[0].uid==$uid;
 def image($tag): .==($repository+"@"+$image_digest) or .==($repository+":"+$tag+"@"+$image_digest);
 def named_image($container;$tag): [.spec.containers[]? | select(.name==$container)] as $containers |
-  ($containers|length)==1 and ($containers[0].image|image($tag));
+  ($containers|length)==1 and (if $container=="contract-probe" then $containers[0].image==$probe_image else $containers[0].image|image($tag) end);
 def ui_flags_ready($container):
   if $container!="ui-kit" then true else
     [.spec.containers[]? | select(.name==$container)] as $containers |
@@ -297,9 +322,12 @@ def ui_flags_ready($container):
       ([$flags[]|select(.name=="UI_APPEARANCE_ENABLED")]|map(.value))==["true"] and
       (if $publisher_enabled then $publisher==["true"] else $publisher==[] or $publisher==["false"] end))
   end;
-def runtime: . as $id | any($runtime_digests[]; . as $digest |
+def runtime($container): . as $id |
+  (if $container=="contract-probe" then $probe_runtime_digests else $runtime_digests end) as $digests |
+  (if $container=="contract-probe" then $probe_repository else $repository end) as $runtime_repository |
+  any($digests[]; . as $digest |
   $id==$digest or $id==("containerd://"+$digest) or $id==("docker://"+$digest) or
-  $id==("cri-o://"+$digest) or $id==($repository+"@"+$digest) or $id==("docker-pullable://"+$repository+"@"+$digest));
+  $id==("cri-o://"+$digest) or $id==($runtime_repository+"@"+$digest) or $id==("docker-pullable://"+$runtime_repository+"@"+$digest));
 def inventory($kind;$version): (.items|type=="array" and length<=4096) and
   all(.items[]; .kind==$kind and .apiVersion==$version and .metadata.namespace==$namespace and
     (.metadata.name|type=="string" and length>0) and (.metadata.uid|type=="string" and length>0)) and
@@ -311,7 +339,7 @@ def pod_ready($rs;$container;$tag):
   any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and ui_flags_ready($container) and
   ([.status.containers[]? | select(.name==$container)] as $containers | ($containers|length)==1 and
     $containers[0].ready==true and $containers[0].running==true and $containers[0].waiting==false and
-    $containers[0].terminated==false and ($containers[0].imageID|runtime));
+    $containers[0].terminated==false and ($containers[0].imageID|runtime($container)));
 def workload($deployment;$container;$tag;$sets;$pods):
   ($deployment|identity("Deployment";"apps/v1";$deployment.metadata.name;$namespace)) and
   ($deployment.metadata.revision|type=="string" and test("^[1-9][0-9]*$")) and
@@ -336,6 +364,7 @@ def dormant_probe($sets;$pods):
     all($owned[];.spec.replicas==0 and (.status.replicas//0)==0) and
     all($pods[];. as $pod | all($owned[];. as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)|not)));
 def private_probe_spec($tag;$enabled):
+  .spec.metricsAnnotations=={"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"} and
   .spec.serviceAccountName=="data-product-controller-contract-probe" and .spec.automountServiceAccountToken==false and .spec.volumeCount==0 and .spec.initContainerCount==0 and
   (.spec.containers|length)==1 and named_image("contract-probe";$tag) and
   (.spec.containers[0] | .command==["/contract-probe"] and (.args//[])==[] and .envCount==2 and .envFromCount==0 and .volumeMountCount==0 and
@@ -386,6 +415,7 @@ def readiness_observation($snapshot;$tag):
     .subjects==[{kind:"ServiceAccount",name:"data-product-controller",namespace:$namespace}]) and
   ($snapshot["probe-policy"]|object_identity("CiliumNetworkPolicy";"cilium.io/v2";"allow-data-product-controller-contract-probe";$namespace) and
     (.specs==null or .specs==[]) and .spec=={endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+      ingress:[{fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"observability","app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":"coroot","app.kubernetes.io/component":"coroot-cluster-agent"}}],toPorts:[{ports:[{port:"8081",protocol:"TCP"}]}]}],
       egress:[{toFQDNs:[{matchName:("harbour-data."+$domain)}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
         {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
          toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:("harbour-data."+$domain)}]}}]}]});
@@ -593,11 +623,16 @@ aggregate() {
 make_runtime_json() { printf '%s\n' "${runtime_digests[@]}" | jq -Rsc 'split("\n")[:-1]|unique' >"$scratch/runtime-digests.json"; }
 bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
+# make_probe_runtime_json keeps the probe's resolved runtimes independent.
+make_probe_runtime_json() { printf '%s\n' "${probe_runtime_digests[@]}" | jq -Rsc 'split("\n")[:-1]|unique' >"$scratch/probe-runtime-digests.json"; }
+bounded make_probe_runtime_json || fail read_incomplete
+probe_runtime_json=$(<"$scratch/probe-runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
   local result=0
   jq -ce --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
+    --arg probe_image "$probe_image" --arg probe_repository "$probe_repository" --argjson probe_runtime_digests "$probe_runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >"$scratch/check-result" 2>/dev/null || result=$?
   if ((result == 0)); then
     rm -f "$scratch/snapshot-failure"
@@ -617,32 +652,54 @@ check() {
   return "$result"
 }
 
-# refuse_public records only a fixed role and reason across the bounded child.
-refuse_public() { printf '%s %s\n' "$1" "$2" >"$scratch/public-failure"; }
+# refuse_public records fixed identifiers and optional numeric diagnostics.
+# Normalize curl's output before writing the single-line private record: an
+# unexpected write-out value must never become response data in a public receipt.
+refuse_public() {
+  local http_code=${3:--}
+  [[ "$http_code" =~ ^(000|[1-5][0-9]{2})$ ]] || http_code=-
+  printf '%s %s %s %s\n' "$1" "$2" "$http_code" "${4:--}" >"$scratch/public-failure"
+}
 
 # fetch retrieves one bounded HTTPS response without browser credentials.
+# A dropped connection (refused, empty reply or reset) is retried once inside the
+# shared deadline. Its cause is recorded first, so a retry the deadline forbids
+# still names it; every other failure refuses on its first attempt.
 fetch() {
-  local url=$1 role=$2 result curl_exit=0 reason=transport_failed
-  remaining
-  # Leave one second for curl's refusal to reach the parent before its watchdog fires.
-  # An exhausted budget still refuses; it never grants extra transfer time.
-  ((left > 1)) || fail deadline_exceeded
-  local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
-  ((connect_seconds <= 5)) || connect_seconds=5
-  result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
-    --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
-    --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
+  local url=$1 role=$2 result curl_exit reason=transport_failed retried=0
+  while :; do
+    remaining
+    # Leave one second for curl's refusal to reach the parent before its watchdog fires.
+    # An exhausted budget still refuses; it never grants extra transfer time.
+    ((left > 1)) || fail deadline_exceeded
+    local transfer_seconds=$((left - 1)) connect_seconds=$((left - 1))
+    ((connect_seconds <= 5)) || connect_seconds=5
+    curl_exit=0
+    result=$(curl --disable --silent --show-error --proxy '' --connect-timeout "$connect_seconds" --max-time "$transfer_seconds" \
+      --max-filesize 262144 --proto '=https' --header 'Cookie:' --header 'Authorization:' \
+      --dump-header "$scratch/headers" --output "$scratch/body" --write-out '%{http_code}' --url "$url" 2>/dev/null) || curl_exit=$?
+    case "$curl_exit" in
+      7 | 52 | 56) ;;
+      *) break ;;
+    esac
+    ((retried == 0)) || break
+    retried=1
+    refuse_public "$role" "$reason" "$result" "$curl_exit"
+    printf '%s\n' "$curl_exit" >>"$scratch/public-retries"
+  done
+  # A retry that succeeded must not leave its first cause on a later deadline refusal.
+  rm -f "$scratch/public-failure"
   if ((curl_exit)); then
     case "$curl_exit" in
       6) reason=dns_failed ;;
       35 | 60) reason=tls_failed ;;
       28) reason=request_timeout ;;
     esac
-    refuse_public "$role" "$reason"
+    refuse_public "$role" "$reason" "$result" "$curl_exit"
     return 1
   fi
   [[ "$result" == "${3:-200}" ]] || {
-    refuse_public "$role" http_status
+    refuse_public "$role" http_status "$result" "$curl_exit"
     return 1
   }
 }
@@ -867,11 +924,15 @@ done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
 if [[ "$expected_releases" == true ]]; then public_count=17; else public_count=14; fi
+# An accepted receipt still counts the dropped connections it absorbed, so a
+# retry cannot hide a dependency that keeps dropping them.
+retries_field=''
+if [[ -s "$scratch/public-retries" ]]; then retries_field=$(printf ',"publicRetries":%d' "$(wc -l <"$scratch/public-retries")"); fi
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s}\n' \
-    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s,"retaken":%d,"settled":%s%s}\n' \
+    "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$((attempt - 1))" "$(<"$scratch/settled")" "$retries_field"
 else
-  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher"
+  printf '{"complete":true,"deployments":4,"pods":%s,"routes":3,"publicChecks":%d,"readinessState":"%s","ksailReleasesEnabled":%s,"publisherReviewEnabled":%s%s}\n' "$expected_pods" "$public_count" "$expected_state" "$expected_releases" "$expected_publisher" "$retries_field"
 fi

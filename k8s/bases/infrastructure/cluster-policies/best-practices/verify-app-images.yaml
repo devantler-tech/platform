@@ -118,6 +118,20 @@ spec:
           identities:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-reports-hotfix\.yaml@refs/heads/main$
+    # The patched migration runtime is signed only by its dedicated publisher.
+    - name: publishkyvernomigrate
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-migration-runtime\.yaml@refs/heads/main$
+    # The patched background controller is signed only by its dedicated publisher.
+    - name: publishkyvernobackground
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-background-hotfix\.yaml@refs/heads/main$
     - name: publishksailanalysis
       cosign:
         keyless:
@@ -190,7 +204,7 @@ spec:
             - issuer: https://token.actions.githubusercontent.com
               subjectRegExp: ^https://github\.com/devantler-tech/ksail/\.github/workflows/cd\.yaml@refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.((0|[1-9][0-9]*)|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$
   validations:
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/') &&
           !image.startsWith('ghcr.io/devantler-tech/ksail') &&
@@ -216,6 +230,12 @@ spec:
           image != 'ghcr.io/devantler-tech/platform-kyverno-reports' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-reports@') &&
+          image != 'ghcr.io/devantler-tech/platform-kyverno-migrate' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@') &&
+          image != 'ghcr.io/devantler-tech/platform-kyverno-background' &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:') &&
+          !image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@') &&
           image != 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap:') &&
           !image.startsWith('ghcr.io/devantler-tech/platform-private-mail-bootstrap@') &&
@@ -228,7 +248,7 @@ spec:
         first-party app image is not signed by the publish-app release
         pipeline (keyless cosign, legacy full-commit identity or the explicitly
         approved maintained revision — a release tag is not accepted)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-private-mail-bootstrap' ||
@@ -239,7 +259,7 @@ spec:
       message: >-
         mail bootstrap image is not signed by its main-only publisher;
         other first-party images retain their existing signer.
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/world-at-ruin/zone' ||
@@ -250,7 +270,7 @@ spec:
       message: >-
         World at Ruin zone image is not signed by its server-cd stable release
         workflow; other first-party images retain their existing signer.
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-kubescape-storage' ||
@@ -261,7 +281,7 @@ spec:
       message: >-
         Kubescape storage compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-kubescape-node-agent' ||
@@ -272,7 +292,7 @@ spec:
       message: >-
         Kubescape node-agent compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-coroot-node-agent' ||
@@ -283,7 +303,7 @@ spec:
       message: >-
         Coroot node-agent compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/ksail-analysis-runner' ||
@@ -294,7 +314,7 @@ spec:
       message: >-
         KSail analysis runner image is not signed by the KSail repository's
         dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-coroot' ||
@@ -308,7 +328,7 @@ spec:
       message: >-
         Coroot checkpoint compatibility image is not signed by its main-only
         publisher; other first-party images retain their existing signer.
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image == 'ghcr.io/devantler-tech/platform-kyverno-reports' ||
@@ -319,7 +339,29 @@ spec:
       message: >-
         Kyverno reports compatibility image is not signed by the platform
         repository's dedicated main-branch publisher (keyless cosign)
-    - expression: >-
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kyverno-migrate' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-migrate@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkyvernomigrate]))
+        .all(e, e > 0)
+      message: >-
+        Kyverno migration runtime image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: |-
+        (images.containers + images.initContainers + images.ephemeralContainers)
+        .filter(image,
+          image == 'ghcr.io/devantler-tech/platform-kyverno-background' ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background:') ||
+          image.startsWith('ghcr.io/devantler-tech/platform-kyverno-background@'))
+        .map(image, verifyImageSignatures(image, [attestors.publishkyvernobackground]))
+        .all(e, e > 0)
+      message: >-
+        Kyverno background controller image is not signed by the platform
+        repository's dedicated main-branch publisher (keyless cosign)
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image, image.startsWith('ghcr.io/devantler-tech/provider-upjet-'))
         .map(image, verifyImageSignatures(image, [attestors.publishprovider]))
@@ -327,7 +369,7 @@ spec:
       message: >-
         provider-upjet package image is not signed by its repo's
         publish-provider-package workflow from a release tag (keyless cosign)
-    - expression: >-
+    - expression: |-
         (images.containers + images.initContainers + images.ephemeralContainers)
         .filter(image,
           image.startsWith('ghcr.io/devantler-tech/ksail') &&

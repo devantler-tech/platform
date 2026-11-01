@@ -1,4 +1,4 @@
-FROM docker.io/library/golang:1.26.10-bookworm@sha256:23ce71337b726608afb1bc00986e630a05034a87a87ea1fc2cd1ae5cf33387eb AS builder
+FROM docker.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder
 ENV GOTOOLCHAIN=local
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -7,16 +7,20 @@ RUN go mod download && go mod verify
 COPY . .
 RUN timeout 900s go test -mod=readonly -race ./pkg/controllers/report/resource ./pkg/controllers/report/aggregate ./pkg/webhooks/resource/validation
 RUN timeout 300s go test -mod=readonly -race ./cmd/internal/... ./pkg/image/... ./pkg/tracing/... ./pkg/metrics/... \
-    github.com/chrismellard/docker-credential-acr-env/pkg/credhelper
-RUN GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 \
-    && timeout 900s golangci-lint run --timeout=14m
+    github.com/chrismellard/docker-credential-acr-env/pkg/...
+# Upstream code is not ours to restyle: only lines the hotfix patch changes can fail this gate.
+# Include every Go package changed by the runtime patch, including its local replacement module.
+RUN GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 \
+    && timeout 900s golangci-lint run --timeout=14m --new-from-patch=reports-watch-plan.patch \
+        ./pkg/controllers/report/resource/... ./cmd/internal/... \
+        github.com/chrismellard/docker-credential-acr-env/pkg/...
 ARG VERSION=unknown
 # Preserve the symbol table so executable scans can distinguish linked packages
 # from conservative module-level findings; omit only DWARF debug information.
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -mod=readonly -buildvcs=true -trimpath \
     -ldflags="-w -X github.com/kyverno/kyverno/pkg/version.BuildVersion=${VERSION}" \
     -o /out/reports-controller ./cmd/reports-controller \
-    && test "$(go version /out/reports-controller)" = "/out/reports-controller: go1.26.10" \
+    && test "$(go version /out/reports-controller)" = "/out/reports-controller: go1.27.2" \
     && go version -m /out/reports-controller > /tmp/reports-build-info \
     && awk '$1 == "mod" && $2 == "github.com/kyverno/kyverno" && $3 == "v1.19.2+dirty" {module++} \
       $1 == "build" && $2 == "vcs.revision=e63308f1e16c05cd009ac4864be6ec25c66b49be" {revision++} \

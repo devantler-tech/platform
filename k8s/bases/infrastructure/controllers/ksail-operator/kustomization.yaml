@@ -4,7 +4,6 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - oci-repository.yaml
-  - helm-release.yaml
   - http-route.yaml
   - cilium-network-policy.yaml
   - pod-disruption-budget.yaml

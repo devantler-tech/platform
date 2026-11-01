@@ -14,7 +14,7 @@ jq '.metadata.namespace="business-site" | .metadata.labels += {
   "kro.run/instance-group":"kro.run","kro.run/instance-version":"v1alpha1",
   "kro.run/instance-kind":"Tenant","kro.run/node-id":"ghcrAuth",
   "applyset.kubernetes.io/part-of":"fictional-tenant-applyset"}' "$work/template.json" >"$work/raw.json"
-# These are the structural defaults in the pinned ExternalSecrets 2.13.0 v1 CRD.
+# These are the structural defaults in the pinned ExternalSecrets 2.14.0 v1 CRD.
 jq '.spec.target.deletionPolicy="Retain" | .spec.target.template.mergePolicy="Replace"' "$work/raw.json" >"$work/defaulted.json"
 jq -nc --slurpfile raw "$work/raw.json" --slurpfile defaults "$work/defaulted.json" '
   def request($label;$object;$old;$actor;$operation;$expected):

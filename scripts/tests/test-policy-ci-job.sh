@@ -22,14 +22,15 @@ fi
 # duplicate suite, a misspelled condition, or an unconditional regression would
 # otherwise lose coverage or run the same tests repeatedly.
 cat >"${work}/partition.jq" <<'JQ'
-  def partition($job; $groups; $setup):
+  def partition($job; $groups; $setup; $limit):
     ($job.strategy.matrix.suite // []) as $suites |
     [$job.steps[] | select(.name as $name | ($setup | index($name)) == null)] as $checks |
     ($job["runs-on"] == "ubuntu-latest") and
     ($job.permissions == {contents: "read"}) and
     (($job["continue-on-error"] // false) == false) and
     ($job.strategy["fail-fast"] == false) and
-    ($job.strategy["max-parallel"] == 3) and
+    ($job.strategy["max-parallel"] | if type == "number"
+      then . >= 1 and . <= $limit and . == floor else false end) and
     (($job.strategy.matrix // {} | keys) == ["suite"]) and
     (($suites | sort) == ($groups | sort)) and
     (($suites | unique | length) == ($suites | length)) and
@@ -43,7 +44,13 @@ cat >"${work}/partition.jq" <<'JQ'
   partition(.jobs["validate-cluster-policies"];
     ["fixtures", "tenant", "services", "placement", "storage", "observability"];
     ["📑 Checkout", "⚙️ Setup Go", "📌 Install the reviewed YAML parser",
-     "⚖️ Read Kyverno CLI version", "⚖️ Install Kyverno CLI"])
+     "⚖️ Read Kyverno CLI version", "⚖️ Install Kyverno CLI"]; 3) and
+  (.jobs["validate-cluster-policies"].strategy["max-parallel"] == 3) and
+  partition(.jobs["validate-manifest-regressions"];
+    ["contracts", "native"];
+    ["📑 Checkout", "⚙️ Setup Go", "📌 Install the reviewed YAML parser",
+     "⚖️ Read Kyverno CLI version", "⚖️ Install Kyverno CLI", "⚙️ Setup KSail",
+     "📥 Restore kubeconform schema cache"]; 2)
 JQ
 
 # partition_result distinguishes a rejected matrix from an unreadable routing observation.
@@ -89,6 +96,31 @@ reject_partition "repeated regression" \
   "(.jobs[\"$job\"].steps[] | select(.if != null)) |= del(.if)"
 
 echo 'PASS: the policy matrix preserves one scheduled copy of every regression; 7 broken routings refused'
+
+# Both isolated manifest groups must remain present even when a sibling fails.
+# One worker is the equivalent serial control; neither mode may omit a check.
+job=validate-manifest-regressions
+for workers in 1 2; do
+  jq --argjson workers "$workers" '.jobs["validate-manifest-regressions"].strategy["max-parallel"] = $workers' \
+    "${work}/workflow.json" >"${work}/serial-control.json"
+  partition_result "${work}/serial-control.json" || {
+    echo 'FAIL: serial and parallel manifest controls must retain complete routing' >&2
+    exit 1
+  }
+done
+reject_partition "missing manifest suite" "del(.jobs[\"$job\"].strategy.matrix.suite[0])"
+reject_partition "duplicate manifest suite" \
+  ".jobs[\"$job\"].strategy.matrix.suite += [.jobs[\"$job\"].strategy.matrix.suite[0]]"
+reject_partition "unknown manifest suite" ".jobs[\"$job\"].strategy.matrix.suite += [\"unknown\"]"
+reject_partition "manifest early cancellation" ".jobs[\"$job\"].strategy[\"fail-fast\"] = true"
+reject_partition "manifest ignored failure" ".jobs[\"$job\"][\"continue-on-error\"] = true"
+reject_partition "manifest worker overflow" ".jobs[\"$job\"].strategy[\"max-parallel\"] = 3"
+reject_partition "manifest zero workers" ".jobs[\"$job\"].strategy[\"max-parallel\"] = 0"
+reject_partition "unselected manifest regression" \
+  "(.jobs[\"$job\"].steps[] | select(.if != null) | .if) = \"matrix.suite == 'unknown'\""
+reject_partition "repeated manifest regression" \
+  "(.jobs[\"$job\"].steps[] | select(.if != null)) |= del(.if)"
+echo 'PASS: both manifest worker limits retain complete routing; 9 broken routings refused'
 
 jq -e '
   .jobs["validate-publication-generator"] as $job |
@@ -164,16 +196,21 @@ jq -e --arg selection "github.event_name == 'pull_request' && needs.changes.outp
   ($job.needs == ["changes"]) and ($job.if == $selection) and
   ($job.permissions == {contents: "read"}) and
   (($job["continue-on-error"] // false) == false) and
-  (["🐤 Validate staged OpenBao standby repair",
+  (["🔐 Prove snapshot readback with pinned static tooling",
+    "🐤 Validate staged OpenBao standby repair",
+    "🔐 Prove isolated snapshot recovery on the matching server",
     "🔒 Validate Crossplane provider egress policy",
+    "✉️ Verify Email credential custody against pinned OpenBao",
     "✉️ Prove native mail accounts and recipient restrictions",
+    "✉️ Prove native gateway client identity boundaries",
     "🔐 Validate Kyverno review admission boundaries",
     "🗺️ Validate every unscanned namespace is reviewed",
     "🔐 Validate the shared-publish-workflow pin guard",
-    "🩺 Validate declarative Coroot application health"] | all(.[];
+    "🩺 Validate declarative Coroot application health",
+    "🔁 Validate KSail startup layer ordering"] | all(.[];
       . as $name |
       ([$job.steps[] | select(.name == $name and
-        .if == "needs.changes.outputs.k8s == '\''true'\''" and
+        (.if == "matrix.suite == '\''contracts'\''" or .if == "matrix.suite == '\''native'\''") and
         ((.["continue-on-error"] // false) == false) and
         (.run | type == "string" and length > 0))] | length) == 1 and
       ([$workflow.jobs.validate.steps[]? | select(.name == $name)] | length) == 0)) and
@@ -205,4 +242,4 @@ for event in pull_request merge_group; do
     done
   done
 done
-echo 'PASS: all seven manifest regressions run once and selected non-success outcomes are refused'
+echo 'PASS: all twelve manifest regressions run once and selected non-success outcomes are refused'

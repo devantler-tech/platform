@@ -68,6 +68,11 @@ cat >"${scratch}/bin/yq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $# == 3 && "$1" == -o=json ]] || exit 91
+if [[ "$3" == "$EXPECTED_PROBE_FILE" ]]; then
+  [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
+  cat "$FIXTURE/expected-probe.json"
+  exit 0
+fi
 if [[ "$3" == "$EXPECTED_UI_FILE" ]]; then
   [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
   cat "$FIXTURE/expected-ui.json"
@@ -120,7 +125,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
  "deployment-harbour":deployment("data-product-controller-harbour";"product"),
  "deployment-ui-kit":deployment("data-product-controller-ui-kit";"ui-kit"),
  "deployment-probe":{apiVersion:"apps/v1",kind:"Deployment",metadata:meta("data-product-controller-contract-probe";"data-product-controller"),
-   spec:{replicas:0,selector:{matchLabels:probe_labels},template:{metadata:{labels:probe_labels},
+   spec:{replicas:0,selector:{matchLabels:probe_labels},template:{metadata:{labels:probe_labels,annotations:{"coroot.com/scrape-metrics":"true","coroot.com/metrics-port":"8081","coroot.com/metrics-path":"/metrics","coroot.com/metrics-scheme":"http"}},
      spec:{serviceAccountName:"data-product-controller-contract-probe",automountServiceAccountToken:false,containers:[probe_container]}}},
    status:{observedGeneration:3,replicas:0,updatedReplicas:0,readyReplicas:0,availableReplicas:0}},
  "probe-account":{apiVersion:"v1",kind:"ServiceAccount",metadata:meta("data-product-controller-contract-probe";"data-product-controller"),automountServiceAccountToken:false},
@@ -131,6 +136,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
    subjects:[{kind:"ServiceAccount",name:"data-product-controller",namespace:"data-product-controller"}]},
  "probe-policy":{apiVersion:"cilium.io/v2",kind:"CiliumNetworkPolicy",metadata:meta("allow-data-product-controller-contract-probe";"data-product-controller"),
    spec:{endpointSelector:{matchLabels:{"k8s:app.kubernetes.io/name":"data-product-controller","k8s:app.kubernetes.io/instance":"data-product-controller","k8s:app.kubernetes.io/component":"contract-probe"}},
+     ingress:[{fromEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"observability","app.kubernetes.io/managed-by":"coroot-operator","app.kubernetes.io/part-of":"coroot","app.kubernetes.io/component":"coroot-cluster-agent"}}],toPorts:[{ports:[{port:"8081",protocol:"TCP"}]}]}],
      egress:[{toFQDNs:[{matchName:"harbour-data.example.com"}],toPorts:[{ports:[{port:"443",protocol:"TCP"}]}]},
        {toEndpoints:[{matchLabels:{"k8s:io.kubernetes.pod.namespace":"kube-system","k8s-app":"kube-dns"}}],
         toPorts:[{ports:[{port:"53",protocol:"UDP"},{port:"53",protocol:"TCP"}],rules:{dns:[{matchName:"harbour-data.example.com"}]}}]}]}},
@@ -150,6 +156,7 @@ while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/all.json" >
 printf '[false,false,false]\n' >"${scratch}/healthy/expected-flags.json"
 printf 'false\n' >"${scratch}/healthy/expected-ksail.json"
 jq '[."deployment-ui-kit".spec.template.spec.containers[] | select(.name=="ui-kit")]' "${scratch}/all.json" >"${scratch}/healthy/expected-ui.json"
+jq '."deployment-probe".spec.template.spec.containers' "${scratch}/all.json" >"${scratch}/healthy/expected-probe.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
@@ -325,7 +332,21 @@ if [[ "${MODE:-}" == flaky-public && ! -e "$FIXTURE/public-failed-once" ]]; then
   exit 0
 fi
 case "${MODE:-}" in
+  connection-refused-once | empty-reply-once | connection-reset-once)
+    if [[ ! -e "$FIXTURE/public-dropped-once" ]]; then
+      : >"$FIXTURE/public-dropped-once"
+      printf '000'
+      case "$MODE" in
+        connection-refused-once) exit 7 ;;
+        empty-reply-once) exit 52 ;;
+        *) exit 56 ;;
+      esac
+    fi
+    ;;
+  dropped-at-deadline) sleep "$transfer_seconds"; printf '000'; exit 56 ;;
   slow-public) sleep 0.55 ;;
+  connection-reset) printf '000'; printf 'PRIVATE-ERROR-CANARY: private upstream\n' >&2; exit 56 ;;
+  invalid-http-status) printf '503PRIVATE-ERROR-CANARY'; exit 0 ;;
   dns-failure) printf 'PRIVATE-ERROR-CANARY: private resolver\n' >&2; exit 6 ;;
   tls-failure) printf 'PRIVATE-ERROR-CANARY: private certificate\n' >&2; exit 60 ;;
   tls-handshake-failure) printf 'PRIVATE-ERROR-CANARY: private handshake\n' >&2; exit 35 ;;
@@ -374,11 +395,14 @@ run_case() {
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
+  local probe_runtime="$child"
+  if [[ -f "$fixture/expected-probe-runtime" ]]; then probe_runtime=$(cat "$fixture/expected-probe-runtime"); fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     EXPECTED_UI_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-ui-kit.yaml" \
+    EXPECTED_PROBE_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
-    --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
+    --runtime-digest "$child" --probe-runtime-digest "$probe_runtime" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
     local expected_state expected_pods public_count ksail publisher
@@ -413,9 +437,13 @@ run_case() {
         public_role=sample_health
         public_reason=request_timeout
         ;;
-      http-failure | redirect)
+      http-failure | redirect | invalid-http-status)
         public_role=sample_health
         public_reason=http_status
+        ;;
+      connection-reset)
+        public_role=sample_health
+        public_reason=transport_failed
         ;;
       missing-csp | weak-csp | duplicate-csp)
         public_role=kit_index
@@ -506,6 +534,33 @@ run_case() {
   if grep -Eq 'PRIVATE-ERROR-CANARY|example.com|synthetic-ci|sha256:|data-product-controller|environment-canary' "$fixture/stdout" "$fixture/stderr"; then fail "$name: output was not sanitized"; fi
   printf 'PASS: %s\n' "$name"
 }
+# A failed public request must identify its numeric cause without exposing
+# response data. Missing diagnostics make unrelated production evictions opaque.
+run_case receipt-http-failure fail http-failure 15
+jq -e '.httpStatus == 503 and .curlExit == 0' "${scratch}/receipt-http-failure/stdout" >/dev/null ||
+  fail 'HTTP refusal lost its numeric status or curl exit'
+[[ $(wc -l <"${scratch}/receipt-http-failure/urls") -eq 1 ]] || fail 'HTTP refusal was retried'
+run_case receipt-connection-reset fail connection-reset 15
+jq -e '.httpStatus == 0 and .curlExit == 56' "${scratch}/receipt-connection-reset/stdout" >/dev/null ||
+  fail 'transport refusal lost its numeric curl exit'
+[[ $(wc -l <"${scratch}/receipt-connection-reset/urls") -eq 2 ]] || fail 'a dropped connection was not retried exactly once'
+# One dropped connection recovers, and the accepted receipt still counts it.
+expected_urls=15
+for mode in connection-refused-once empty-reply-once connection-reset-once; do
+  run_case "$mode" pass "$mode"
+  jq -e '.complete == true and .publicRetries == 1' "${scratch}/${mode}/stdout" >/dev/null ||
+    fail "$mode: the accepted receipt lost the absorbed retry"
+done
+expected_urls=14
+# A retry never extends the deadline, and the refusal keeps the cause it could not retry.
+run_case dropped-at-deadline fail dropped-at-deadline 3
+# Which refusal fires first depends on the second the budget ran out in; both keep the cause.
+jq -e '(.failure == "deadline_exceeded" or .failure == "public_contract_incomplete") and .curlExit == 56' "${scratch}/dropped-at-deadline/stdout" >/dev/null ||
+  fail 'a retry the deadline forbids lost its curl exit'
+[[ $(wc -l <"${scratch}/dropped-at-deadline/urls") -eq 1 ]] || fail 'a retry ran past the deadline'
+run_case receipt-invalid-status fail invalid-http-status 15
+jq -e 'has("httpStatus") == false and .curlExit == 0' "${scratch}/receipt-invalid-status/stdout" >/dev/null ||
+  fail 'malformed curl output was accepted as an HTTP status'
 # Initial snapshot refusals must identify a fixed role without exposing values.
 mkdir "${scratch}/initial-unready"
 cp "${scratch}/healthy/"*.json "${scratch}/initial-unready/"
@@ -538,7 +593,10 @@ run_case final-moving-public fail flap-public-failure 20
   fail 'final-moving-public: did not reach three moving pairs with failed public checks'
 jq -e '.failure == "rollout_changed" and .changed == ["apps.metadata.labels"] and (has("phase") or has("role") or has("reason")) == false' "${scratch}/final-moving-public/stdout" >/dev/null ||
   fail 'final-moving-public: final moving snapshot retained an unvalidated public failure'
-for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do run_case "$mode" fail "$mode" 15; done
+for mode in dns-failure tls-failure tls-handshake-failure request-timeout; do
+  run_case "$mode" fail "$mode" 15
+  [[ $(wc -l <"${scratch}/${mode}/urls") -eq 1 ]] || fail "$mode: a non-retryable failure was retried"
+done
 # Spend the complete transfer budget, as a connected endpoint that never responds does.
 # The refusal must retain its sanitized transport cause even at the shared deadline.
 run_case transfer-timeout fail transfer-timeout 15
@@ -679,7 +737,7 @@ jq --arg child "$child" '
     spec:{replicas:2,template:$probe.spec.template},status:{observedGeneration:3,replicas:2,readyReplicas:2,availableReplicas:2}} as $set |
   .replicasets.items += [$set] |
   .pods.items += [range(1;3) as $ordinal | {apiVersion:"v1",kind:"Pod",metadata:{name:($probe.metadata.name+"-pod-"+($ordinal|tostring)),namespace:"data-product-controller",
-    uid:($probe.metadata.name+"-pod-"+($ordinal|tostring)+"-uid"),labels:$probe.spec.template.metadata.labels,
+    uid:($probe.metadata.name+"-pod-"+($ordinal|tostring)+"-uid"),labels:$probe.spec.template.metadata.labels,annotations:$probe.spec.template.metadata.annotations,
     ownerReferences:[{apiVersion:"apps/v1",kind:"ReplicaSet",name:$set.metadata.name,uid:$set.metadata.uid,controller:true}]},
     spec:$probe.spec.template.spec,status:{phase:"Running",conditions:[{type:"Ready",status:"True"}],containerStatuses:[{name:"contract-probe",ready:true,imageID:("containerd://"+$child),state:{running:{startedAt:"2026-10-03T00:00:00Z"}}}]}}]
 ' "${scratch}/all.json" >"${scratch}/active.json"
@@ -687,7 +745,41 @@ while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json
 printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
 printf 'false\n' >"${scratch}/active/expected-ksail.json"
 cp "${scratch}/healthy/expected-ui.json" "${scratch}/active/expected-ui.json"
+cp "${scratch}/healthy/expected-probe.json" "${scratch}/active/expected-probe.json"
 run_case active pass
+
+# The probe may consume a diagnostic release independently. Both its declared
+# image and actual runtime must match; the controller retains its legacy pins.
+mkdir "${scratch}/independent-probe"
+cp "${scratch}/active/"*.json "${scratch}/independent-probe/"
+probe_image="ghcr.io/devantler-tech/khoist:9.0.5@sha256:$(printf 'e%.0s' {1..64})"
+probe_runtime="sha256:$(printf 'f%.0s' {1..64})"
+printf '%s\n' "$probe_runtime" >"${scratch}/independent-probe/expected-probe-runtime"
+jq --arg image "$probe_image" '.[0].image=$image' "${scratch}/active/expected-probe.json" >"${scratch}/independent-probe/expected-probe.json"
+jq --arg image "$probe_image" '.spec.template.spec.containers[0].image=$image' "${scratch}/active/deployment-probe.json" >"${scratch}/independent-probe/deployment-probe.json"
+jq --arg image "$probe_image" '(.items[] | select(.spec.template.spec.containers[0].name=="contract-probe") | .spec.template.spec.containers[0].image)=$image' "${scratch}/active/replicasets.json" >"${scratch}/independent-probe/replicasets.json"
+jq --arg image "$probe_image" --arg runtime "$probe_runtime" '(.items[] | select(.spec.containers[0].name=="contract-probe")) |=
+  (.spec.containers[0].image=$image | .status.containerStatuses[0].imageID=("containerd://"+$runtime))' "${scratch}/active/pods.json" >"${scratch}/independent-probe/pods.json"
+run_case independent-probe pass
+# independent_probe_mutation checks a real exact-image/runtime refusal in the
+# active two-replica snapshot, without replacing any public or ownership check.
+independent_probe_mutation() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/independent-probe/"*.json "${scratch}/$name/"
+  cp "${scratch}/independent-probe/expected-probe-runtime" "${scratch}/$name/"
+  jq "$mutation" "${scratch}/independent-probe/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' 3
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+}
+independent_probe_mutation probe-wrong-deployment-image deployment-probe '.spec.template.spec.containers[0].image="ghcr.io/devantler-tech/khoist:9.0.4@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"'
+independent_probe_mutation probe-wrong-replicaset-image replicasets '(.items[] | select(.spec.template.spec.containers[0].name=="contract-probe") | .spec.template.spec.containers[0].image)="ghcr.io/devantler-tech/khoist@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+independent_probe_mutation probe-wrong-pod-image pods '(.items[] | select(.spec.containers[0].name=="contract-probe") | .spec.containers[0].image)="ghcr.io/devantler-tech/data-product-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+independent_probe_mutation probe-legacy-runtime pods '(.items[] | select(.spec.containers[0].name=="contract-probe") | .status.containerStatuses[0].imageID)="containerd://sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'
+independent_probe_mutation probe-wrong-runtime-repository pods '(.items[] | select(.spec.containers[0].name=="contract-probe") | .status.containerStatuses[0].imageID)="ghcr.io/devantler-tech/data-product-controller@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+independent_probe_mutation controller-cannot-use-probe-runtime pods '.items[0].status.containerStatuses[0].imageID="containerd://sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+independent_probe_mutation controller-cannot-use-probe-image deployment-controller '.spec.template.spec.containers[0].image="ghcr.io/devantler-tech/khoist:9.0.5@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"'
+independent_probe_mutation probe-live-declaration-mismatch expected-probe '.[0].image="ghcr.io/devantler-tech/data-product-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 # A declared public product must exist at its exact current generation and
 # actual workload setting; source data is never fetched by this cluster receipt.
 mkdir "${scratch}/ksail"
@@ -757,6 +849,9 @@ active_mutation_impl() {
 fixture_pool_register active_mutation_impl
 # active_mutation schedules an active-state mutation within the same strict worker bound.
 active_mutation() { fixture_pool_submit active_mutation_impl "$@"; }
+active_mutation active-pod-missing-metrics pods '(.items[] | select(.metadata.labels["app.kubernetes.io/component"]=="contract-probe") | .metadata.annotations) |= del(.["coroot.com/scrape-metrics"])'
+active_mutation active-pod-wrong-metrics-path pods '(.items[] | select(.metadata.labels["app.kubernetes.io/component"]=="contract-probe") | .metadata.annotations["coroot.com/metrics-path"])="/readyz"'
+active_mutation active-replicaset-missing-metrics replicasets '(.items[] | select(.spec.template.metadata.labels["app.kubernetes.io/component"]=="contract-probe") | .spec.template.metadata.annotations) |= del(.["coroot.com/scrape-metrics"])'
 active_mutation active-stale-contract-condition product '.status.conditions[2].observedGeneration=2'
 active_mutation active-false-connector product '.status.conditions[1].status="False"'
 active_mutation active-missing-contract-condition product '.status.conditions |= map(select(.type!="ContractsReady"))'
@@ -816,6 +911,11 @@ mutate_case observer-secret observer-role '.rules += [{apiGroups:[""],resources:
 mutate_case observer-unbounded observer-role 'del(.rules[0].resourceNames)'
 mutate_case observer-wrong-account observer-binding '.subjects[0].name="other-controller"'
 mutate_case probe-broad-network probe-policy '.spec.egress += [{toEntities:["world"]}]'
+mutate_case probe-missing-metrics-discovery deployment-probe 'del(.spec.template.metadata.annotations["coroot.com/scrape-metrics"])'
+mutate_case probe-wrong-metrics-path deployment-probe '.spec.template.metadata.annotations["coroot.com/metrics-path"]="/readyz"'
+mutate_case probe-broad-metrics-source probe-policy 'del(.spec.ingress[0].fromEndpoints[0].matchLabels["app.kubernetes.io/component"])'
+mutate_case probe-wrong-metrics-port probe-policy '.spec.ingress[0].toPorts[0].ports[0].port="8082"'
+mutate_case probe-extra-metrics-ingress probe-policy '.spec.ingress += [{fromEntities:["world"]}]'
 mutate_case dormant-product-reference product '.spec.contractChecks=[{output:"observations",resourceRef:{apiVersion:"apps/v1",kind:"Deployment",name:"data-product-controller-contract-probe"}}]'
 run_case partial-observer fail partial-observer
 # A healthy snapshot pair also parses the declared feature state. Allow host scheduling

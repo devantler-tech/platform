@@ -6,6 +6,148 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
+    # Only the authenticated fan-out proxy reaches the UI. Apply the read-only
+    # boundary here too, independently of its router and egress policy.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+          rules:
+            http:
+              # Keep this endpoint allowlist aligned with the proxy boundary.
+              # Method-only GET would permit destructive bundle downloads.
+              # Restore HTTPS after this final plaintext inspection hop;
+              # nginx forwards this scheme when the manager builds API links.
+              - method: "^(GET|HEAD)$"
+                path: '^/([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/[A-Za-z0-9_~-]+([.][A-Za-z0-9_~-]+)*[.](html|js|css|json|map|ico)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/[A-Za-z0-9_~-]+([.][A-Za-z0-9_~-]+)*[.](svg|png|jpe?g|gif|webp|woff2?|ttf|eot)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/(static|assets|fonts|images)/[A-Za-z0-9_-]+([./][A-Za-z0-9_-]+)*([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1(/(apiversions(/v1)?|schemas(/[A-Za-z0-9_-]+)?))?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/supportbundles/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/(settings|volumes|nodes|events|disktags|nodetags)(/[A-Za-z0-9][A-Za-z0-9_.-]*)?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/(engineimages|instancemanagers)(/[A-Za-z0-9][A-Za-z0-9_.-]*)?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/((backup)?backingimages|recurringjobs)(/[A-Za-z0-9][A-Za-z0-9_.-]*)?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/(snapshotgroups|orphans|shardgroups|shards)(/[A-Za-z0-9][A-Za-z0-9_.-]*)?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/(backup(targets|volumes)|system(backups|restores))(/[A-Za-z0-9][A-Za-z0-9_.-]*)?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/(volumeattachments)(/[A-Za-z0-9][A-Za-z0-9_.-]*)?/?([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/(settings|volumes|nodes|events)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/(engineimages|instancemanagers)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/((backup)?backingimages)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/(backup(targets|volumes|s))([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/(recurringjobs|snapshotgroups|orphans)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/(shard(groups|s)|volumeattachments)([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^(GET|HEAD)$"
+                path: '^/v1/ws(/[0-9]+(ms|s|m|h)?)?/(system(backups|restores))([?].*)?$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^POST$"
+                path: '^/v1/volumes/[A-Za-z0-9][A-Za-z0-9_.-]*[?]action=(snapshotList|snapshotGet|snapshotCRList|snapshotCRGet|recurringJobList)$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
+              - method: "^POST$"
+                path: '^/v1/backupvolumes/[A-Za-z0-9][A-Za-z0-9_.-]*[?]action=(backupList|backupListByVolume|backupGet)$'
+                headerMatches:
+                  - name: X-Forwarded-Proto
+                    value: https
+                    mismatch: REPLACE
     # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver

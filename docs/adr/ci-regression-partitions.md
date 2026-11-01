@@ -16,12 +16,21 @@ Regressions that share one shell environment remain in the same step.
 
 Move the independent OpenBao standby, Crossplane egress, native-mail, Kyverno
 review-admission, unscanned-namespace, publisher-pin and Coroot application-health
-regressions out of the serial manifest job into one required PR job. Preserve
+regressions out of the serial manifest job into one required PR matrix. Preserve
 their complete steps, timeouts and Kubernetes-path selection. Copy the pinned
 compiler, YAML parser, Kyverno, KSail and schema-cache restore prerequisites into
 the isolated checkout. This job has only read access to contents; SARIF upload
 remains in the existing manifest job. A distinct candidate cache key restores
 from the existing schema prefix; cached data never substitutes for evaluation.
+
+The manifest matrix has two groups. `contracts` retains Coroot application
+health, standby repair, Crossplane egress, Kyverno review admission, unscanned
+namespaces and the shared publisher pin. `native` retains static snapshot
+readback, isolated recovery, mail credential custody, account and recipient
+restrictions, and gateway identity. Both get their own runner and the complete
+pinned prerequisites. At most two run concurrently; fail-fast is disabled.
+Setting this matrix's `max-parallel` to one is the equivalent serial diagnostic
+control. Neither setting changes the eleven validation steps or their deadlines.
 
 The existing selection predicates remain authoritative. The required aggregate
 consumes the complete matrix result and refuses failed, cancelled, missing or
@@ -41,6 +50,14 @@ the suite, and cleanup joins the workers before removing shared scratch. The
 production verifier and all fixture assertions and real deadlines stay intact.
 
 ## Evidence and alternatives
+
+The later [complete green run](https://github.com/devantler-tech/platform/actions/runs/40848728705)
+spent 10m14s in independent manifest regressions and 8m47s in complete Go
+regressions. Its six contract steps accounted for 305 seconds and its five
+native steps for 275 seconds. These observed step totals motivate two balanced,
+isolated groups alongside the bounded Go test concurrency. They do not predict
+runner availability or demonstrate a faster complete pipeline; candidate and
+protected-merge measurements remain required under #5495.
 
 Successful run [40272630712](https://github.com/devantler-tech/platform/actions/runs/40272630712)
 took 17m25s for repository guards and 21m06s for cluster policies. The generator
@@ -89,8 +106,15 @@ tests and increasing timeouts do not meet the feedback or coverage requirement.
 missing, duplicate and unknown suites, unselected and repeated regressions,
 ignored failures and premature cancellation. The generator and existing policy
 result controls exercise success and every selected non-success result.
-The additional manifest-regression boundary exercises selection, success,
-failure, cancellation, missing results and unexpected skips.
+The additional manifest-regression boundary exercises both one- and two-worker
+routing, all twelve named checks, invalid worker bounds, selection, success,
+failure, cancellation, missing results and unexpected skips. The step inventory
+must preserve commands, environments, pinned actions, deadlines, permissions
+and prerequisites against the reviewed baseline.
+The KSail startup regression renders both providers and their Flux dependency
+graph. It keeps the OIDC-dependent release alongside the Gateway, its signed
+source and namespace prerequisites earlier, production prune protection and
+authentication intact, and local KSail disabled unless explicitly opted in.
 `scripts/tests/test-fixture-workers.sh` proves actual overlap, complete receipts,
 serial operation and rejection of failures, early errors, duplicate or unknown
 cases, missing, corrupt or unassigned receipts, interruption and invalid worker

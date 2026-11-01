@@ -3,6 +3,9 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../../bases/infrastructure/
+  # Apply the OIDC-dependent release with the Gateway. Its namespace, signed
+  # source, policy and route remain in controllers, which must finish first.
+  - ../../../bases/infrastructure/ksail-operator/
   # Re-adopt the retained release without activating a runner. Suspension does
   # not drain an installed scale set; runtime acceptance remains a separate gate.
   - retained-ksail-analysis/
@@ -211,6 +214,7 @@ components:
   - ../../../bases/components/helmrelease-drift-detection
   - ../../../bases/components/helmrelease-flux-defaults
 patches:
+  - path: ksail-operator/patches/enable-oidc.yaml
   - path: vault-backup-recovery/patches/use-recovery-storage-for-initial-snapshot.yaml
     target:
       group: batch
@@ -247,6 +251,11 @@ patches:
   # gateway-patch self-identifies (Gateway/platform/kube-system), so a path is
   # enough — no explicit target, matching the coroot patch below.
   - path: patches/attach-hcloud-load-balancer.yaml
+  - path: patches/restrict-http-to-redirect.yaml
+    target:
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: platform
   # JSON6902 patches don't self-identify, so this one needs an explicit
   # target. Adds HTTPS listeners for the tenant-owned ascoachingogvaner.dk
   # domain — see the file header.
