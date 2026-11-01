@@ -33,7 +33,7 @@ func policyFile(t *testing.T, name string, out any) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw = []byte(strings.ReplaceAll(string(raw), "${gateway_receiver_source_cidr}", "192.0.2.5/32"))
+	raw = []byte(strings.NewReplacer("${gateway_receiver_source_cidr}", "192.0.2.5/32", "${gateway_receiver_gateway_uid}", "11111111-1111-4111-8111-111111111111").Replace(string(raw)))
 	if err = yaml.UnmarshalStrict(raw, out); err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func validates(t *testing.T, p registration.ValidatingAdmissionPolicy, obj *unst
 	return len(result) == len(checks) && len(result) > 0
 }
 func fixture() *unstructured.Unstructured {
-	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "cilium.io/v2", "kind": "CiliumEnvoyConfig", "metadata": map[string]any{"name": "cilium-gateway-platform", "namespace": "kube-system"}, "spec": map[string]any{"resources": []any{
+	return &unstructured.Unstructured{Object: map[string]any{"apiVersion": "cilium.io/v2", "kind": "CiliumEnvoyConfig", "metadata": map[string]any{"name": "cilium-gateway-platform", "namespace": "kube-system", "ownerReferences": []any{map[string]any{"uid": "11111111-1111-4111-8111-111111111111"}}}, "spec": map[string]any{"resources": []any{
 		map[string]any{"@type": "type.googleapis.com/envoy.config.cluster.v3.Cluster", "name": "unchanged"},
 		map[string]any{"@type": "type.googleapis.com/envoy.config.listener.v3.Listener", "name": "listener", "filterChains": []any{
 			map[string]any{"filterChainMatch": map[string]any{"transportProtocol": "raw_buffer"}, "filters": []any{}},
@@ -221,6 +221,20 @@ func TestNativeMatchConditionsSelectOnlyTheDeclaredGateway(t *testing.T) {
 				result := matcher.Match(context.Background(), attrs(obj), nil, nil)
 				if result.Error != nil || result.Matches != test.want {
 					t.Fatal("native matcher selected another gateway or refused its declared gateway")
+				}
+			}
+			// A rebuilt cluster's Gateway has another identity. The fence must not
+			// apply its stale peer there, which would refuse every public TLS route.
+			for name, owners := range map[string]any{"another gateway": []any{map[string]any{"uid": "99999999-9999-4999-8999-999999999999"}}, "no owner": nil} {
+				obj := fixture()
+				metadata := obj.Object["metadata"].(map[string]any)
+				delete(metadata, "ownerReferences")
+				if owners != nil {
+					metadata["ownerReferences"] = owners
+				}
+				result := matcher.Match(context.Background(), attrs(obj), nil, nil)
+				if result.Error != nil || result.Matches {
+					t.Fatalf("%s: matched=%v err=%v", name, result.Matches, result.Error)
 				}
 			}
 		})

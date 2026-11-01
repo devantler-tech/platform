@@ -14,8 +14,8 @@ not establish that boundary: the pinned listener processes PROXY metadata before
 resolving the source identity used for ingress policy. Adding an egress policy
 alone does not close the path that is redirected to the gateway first.
 
-The mutating and validating policies target only the declared application
-Gateway's generated CiliumEnvoyConfig. They preserve its existing plain HTTP
+The mutating and validating policies target only the generated CiliumEnvoyConfig
+owned by the bound Gateway, identified by its UID. They preserve its existing plain HTTP
 chain and other resources, require every TLS chain to use the same exact host
 prefix, and reject fallback chains, alternate matchers and protobuf field aliases
 that could evade that check. No global webhook selector is widened. The
@@ -112,8 +112,10 @@ If the fence itself refuses public traffic, revert the selection: the deployment
 the reverted source removes the bindings and the fields.
 
 The bound peer belongs to one load balancer. If a replacement changes its private
-address, or a cluster is rebuilt, every public TLS route is refused and the binding is
-stale, so `apply-selected` waits for its whole budget and fails at `source-secret`.
+address, every public TLS route is refused and the binding is stale, so
+`apply-selected` waits for its whole budget and fails at `source-secret`. A rebuilt
+cluster has a new Gateway UID, so the policies do not match its listener: it stays
+reachable, unfenced, with the same failure until rebound.
 Prepare the replacement binding and merge it. When Flux can converge, its deployment
 applies the new peer with no need to unselect first.
 

@@ -19,7 +19,10 @@ spec:
         scope: Namespaced
   matchConditions:
     - name: owned-application-gateway
-      expression: object.metadata.namespace == 'kube-system' && object.metadata.name == 'cilium-gateway-platform'
+      expression: >-
+        object.metadata.namespace == 'kube-system' && object.metadata.name == 'cilium-gateway-platform' &&
+        has(object.metadata.ownerReferences) &&
+        object.metadata.ownerReferences.exists(o, o.uid == '${gateway_receiver_gateway_uid}')
   variables:
     - name: listener
       expression: object.spec.resources.filter(r, r['@type'] == 'type.googleapis.com/envoy.config.listener.v3.Listener')[0]
