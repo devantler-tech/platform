@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# Reviewed workflow only: five finite, fixed Cilium CLI metric reads per ready agent (#4329).
+# Reviewed workflow only: finite, fixed Cilium CLI metric reads, five samples per ready agent (#4329).
 # No API listener, setting, workload or policy is changed. Raw responses stay in a private
 # temporary directory. Output is delayed until every read and identity comparison succeeds.
 # Cilium v1.20.4 sources: cilium-dbg/cmd/metrics_list.go, pkg/metrics/cmd.go,
-# pkg/metrics/metrics.go and pkg/rate/metrics/metrics.go. These are rolling gauges,
-# not a latency distribution or proof of Coroot request attribution or recovery.
+# pkg/metrics/metrics.go, pkg/rate/metrics/metrics.go and api/v1/models/metric.go. These gauges
+# hold values from the last finished request, so they are not a latency distribution or
+# proof of Coroot request attribution or recovery. The JSON omits a value of exactly zero.
 # A limiter series exists only after that agent's first processed request for that call,
 # and the registry encodes no match as JSON null. Such an agent is counted and refused.
 set -euo pipefail
@@ -138,14 +139,15 @@ for sample in 1 2 3 4 5; do
       unobserved=$((unobserved + 1))
       continue
     fi
-    if jq -e 'type=="array" and any(.[]; .name|startswith("cilium_api_limiter_")) and
-      all(.[]; .labels.api_call!="endpoint-create")' "${work_dir}/metrics" >/dev/null 2>&1; then
+    if jq -e 'type=="array" and length>0 and all(.[]; (.name|startswith("cilium_api_limiter_")) and
+      (.labels.api_call|type)=="string" and .labels.api_call!="endpoint-create")' "${work_dir}/metrics" >/dev/null 2>&1; then
       unobserved=$((unobserved + 1))
       continue
     fi
     captured_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if ! jq -e -c --argjson sample "${sample}" --argjson agent "${agent}" --arg time "${captured_at}" '
       def metric_key: .name+"/"+(.labels.value//"");
+      def gauge_value: if has("value") then .value else 0 end;
       ["cilium_api_limiter_processing_duration_seconds/mean",
        "cilium_api_limiter_processing_duration_seconds/estimated",
        "cilium_api_limiter_wait_duration_seconds/mean",
@@ -163,14 +165,15 @@ for sample in 1 2 3 4 5; do
         select(.name as $name | $expected|any(startswith($name+"/")))] as $gauges |
       [$endpoint[]|select(.name=="cilium_api_limiter_processed_requests_total")] as $counters |
       if ($gauges|map(metric_key)|sort)!=$expected or ($counters|length)==0 or
-        (all(($gauges+$counters)[]; (.value|type)=="number" and .value>=0 and .value<=1e12))!=true or
+        (all($gauges[]; gauge_value|type=="number" and .>=0 and .<=1e12))!=true or
+        (all($counters[]; (.value|type)=="number" and .value>=0 and .value<=1e12))!=true or
         (all($gauges[]; (.labels|keys)==(if .name=="cilium_api_limiter_adjustment_factor"
           then ["api_call"] else ["api_call","value"] end)))!=true or
         (all($counters[]; (.labels|keys)==["api_call","outcome","return_code"]))!=true or
         ($counters|map(.labels)|unique|length)!=($counters|length)
       then error("incomplete metric set") else
         {sample:$sample,agent:$agent,capturedAt:$time,apiCall:"endpoint-create",
-         metrics:([$gauges[]|{metric:.name,stat:(.labels.value//"current"),value:.value}]+
+         metrics:([$gauges[]|{metric:.name,stat:(.labels.value//"current"),value:gauge_value}]+
           [{metric:"cilium_api_limiter_processed_requests_total",stat:"all",value:($counters|map(.value)|add)}])}
       end
     ' --null-input "${work_dir}/metrics" >>"${work_dir}/safe" 2>"${work_dir}/parse.stderr"; then
@@ -182,11 +185,11 @@ for sample in 1 2 3 4 5; do
     roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
     cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||
       inconclusive 'agent identity or container state changed during collection.'
-    inconclusive "${unobserved} of ${agent} agents have processed no endpoint-create request since they started (LIMITER_UNOBSERVED)."
+    inconclusive "${unobserved} of ${agent} agents report no endpoint-create limiter series (LIMITER_UNOBSERVED)."
   fi
 done
 roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
 cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||
   inconclusive 'agent identity or container state changed during collection.'
 cat "${work_dir}/safe"
-printf 'MEASURED: five complete samples per stable ready agent; rolling gauges only.\n'
+printf 'MEASURED: five complete samples per stable ready agent; gauges hold values from the last finished request.\n'

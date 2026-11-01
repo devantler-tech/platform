@@ -73,8 +73,9 @@ reset_fixture() {
     ] | [ .[] | .n as $n | .v[] | {name:("cilium_api_limiter_"+$n),labels:({api_call:"endpoint-create"} + (if . == "" then {} else {value:.} end)),value:0.125} ]
     + [{name:"cilium_api_limiter_processed_requests_total",labels:{api_call:"endpoint-create",outcome:"success",return_code:"200"},value:300},
        {name:"cilium_api_limiter_processed_requests_total",labels:{api_call:"endpoint-create",outcome:"fail",return_code:"500"},value:2},
-       {name:"PRIVATE_METRIC",labels:{private:"PRIVATE_LABEL"},value:999}]' >"${fixture}/metrics.json"
-  jq -n '[{name:"cilium_version",labels:{version:"PRIVATE_VERSION"},value:0}]' >"${fixture}/control.json"
+       {name:"PRIVATE_METRIC",labels:{private:"PRIVATE_LABEL"},value:999}]
+    | map(if .labels.value=="min" or .labels.value=="in-flight" then del(.value) else . end)' >"${fixture}/metrics.json"
+  jq -n '[{name:"cilium_version",labels:{version:"PRIVATE_VERSION"}}]' >"${fixture}/control.json"
 }
 # Adds a second agent, whose limiter read comes from second-metrics.json.
 add_second_agent() {
@@ -107,6 +108,10 @@ run_read --context admin@prod
   printf 'FAIL: passing control: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
 }
 [[ "$(grep -c '^--context.* exec ' "${fixture}/calls")" -eq 5 ]] || exit 1
+# An omitted value is upstream's zero, and is published as one.
+[[ "$(printf '%s\n' "${output}" | grep '^{' | jq -s '[.[].metrics[] | select(.metric=="cilium_api_limiter_wait_duration_seconds" and .stat=="min") | .value] | unique | tojson' -r)" == '[0]' ]] || {
+  printf 'FAIL: omitted zero was not published as zero: %s\n' "${output}" >&2; exit 1;
+}
 
 # The reader accepts only the audited agent version, including the previous one.
 reset_fixture
@@ -144,7 +149,7 @@ for mutation in '.items[0].metadata.uid="33333333-3333-3333-3333-333333333333"' 
   jq "${mutation}" "${fixture}/pods.json" >"${fixture}/after.json"
   require_inconclusive
 done
-for mutation in '.[0].value=-1' '.[0].value="PRIVATE_VALUE"' '.[0].labels.value="PRIVATE_VALUE"' \
+for mutation in '.[0].value=-1' '.[0].value=null' '.[0].value="PRIVATE_VALUE"' 'map(if (.name|endswith("processed_requests_total")) then del(.value) else . end)' '.[0].labels.value="PRIVATE_VALUE"' \
   '.[0].labels.private="PRIVATE_LABEL"' '.[0].name="cilium_api_limiter_wait_duration_seconds"' \
   '.[0].labels.api_call="endpoint-delete"' '.[0].value=1e300' '.[0]=.[1]' '.[0:9]' '[]'; do
   reset_fixture
@@ -177,7 +182,7 @@ INVALID_JSON|[]\nPRIVATE_MALFORMED
 RESPONSES
 # A null limiter read with a live registry is an agent that has no series yet. It is
 # reported as such and still publishes no samples.
-unobserved_one='INCONCLUSIVE: 1 of 1 agents have processed no endpoint-create request since they started (LIMITER_UNOBSERVED).'
+unobserved_one='INCONCLUSIVE: 1 of 1 agents report no endpoint-create limiter series (LIMITER_UNOBSERVED).'
 for response in 'null' ' \n null \t\n'; do
   reset_fixture
   printf '%b' "${response}" >"${fixture}/metrics.json"
@@ -199,7 +204,7 @@ reset_fixture
 add_second_agent
 printf 'null' >"${fixture}/second-metrics.json"
 require_inconclusive
-[[ "${output}" == 'INCONCLUSIVE: 1 of 2 agents have processed no endpoint-create request since they started (LIMITER_UNOBSERVED).' ]] || {
+[[ "${output}" == 'INCONCLUSIVE: 1 of 2 agents report no endpoint-create limiter series (LIMITER_UNOBSERVED).' ]] || {
   printf 'FAIL: mixed agents: %s\n' "${output}" >&2; exit 1;
 }
 reset_fixture
@@ -207,7 +212,7 @@ add_second_agent
 printf 'null' >"${fixture}/metrics.json"
 printf 'null' >"${fixture}/second-metrics.json"
 require_inconclusive
-[[ "${output}" == 'INCONCLUSIVE: 2 of 2 agents have processed no endpoint-create request since they started (LIMITER_UNOBSERVED).' ]] || {
+[[ "${output}" == 'INCONCLUSIVE: 2 of 2 agents report no endpoint-create limiter series (LIMITER_UNOBSERVED).' ]] || {
   printf 'FAIL: all agents unobserved: %s\n' "${output}" >&2; exit 1;
 }
 # Two complete agents still measure.
@@ -249,13 +254,21 @@ require_inconclusive
 [[ "${output}" == 'INCONCLUSIVE: an agent metric read failed (JSON_NULL; control COMMAND_FAILED).' ]] || {
   printf 'FAIL: denied control: %s\n' "${output}" >&2; exit 1;
 }
-# Series with no recognisable limiter name are not "no observation yet".
-reset_fixture
-jq -n '[{name:"PRIVATE_METRIC",labels:{api_call:"endpoint-list"},value:1}]' >"${fixture}/metrics.json"
-require_inconclusive
-[[ "${output}" == 'INCONCLUSIVE: a complete finite metric set could not be established.' ]] || {
-  printf 'FAIL: foreign series: %s\n' "${output}" >&2; exit 1;
-}
+# Only well-formed series for other calls show that no endpoint-create series exists.
+while IFS= read -r response; do
+  reset_fixture
+  printf '%s' "${response}" >"${fixture}/metrics.json"
+  require_inconclusive
+  [[ "${output}" == 'INCONCLUSIVE: a complete finite metric set could not be established.' ]] || {
+    printf 'FAIL: unproven unobserved claim: %s (%s)\n' "${output}" "${response}" >&2; exit 1;
+  }
+done <<'SERIES'
+[{"name":"PRIVATE_METRIC","labels":{"api_call":"endpoint-list"},"value":1}]
+[{"name":"cilium_api_limiter_rate_limit"}]
+[{"name":"cilium_api_limiter_rate_limit","labels":null,"value":1}]
+[{"name":"cilium_api_limiter_rate_limit","labels":{"call":"endpoint-create","value":"limit"}}]
+[{"name":"cilium_api_limiter_rate_limit","labels":{"api_call":"endpoint-list"}},{"name":"PRIVATE_METRIC"}]
+SERIES
 while IFS='|' read -r expected exit_code message; do
   reset_fixture
   printf 'PRIVATE_ERROR https://198.51.100.9:6443 %s\n' "${message}" >"${fixture}/stderr"
