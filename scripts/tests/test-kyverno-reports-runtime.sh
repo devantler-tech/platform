@@ -15,7 +15,7 @@ fail() { printf 'FAIL: reports runtime: %s\n' "$1" >&2; exit 1; }
 [[ "$(yq -r '.jobs.publish.if' "$workflow")" == "github.event_name == 'push' && github.ref == 'refs/heads/main'" &&
    "$(yq -r '.jobs.publish.needs' "$workflow")" == verify ]] || fail 'only tested main pushes may publish'
 [[ "$(yq -r '.env.SOURCE_COMMIT' "$workflow")" == e63308f1e16c05cd009ac4864be6ec25c66b49be &&
-   "$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == 23a55f74d9147dfefe6be994600ad52daeb8ee11 &&
+   "$(yq -r '.env.PATCHED_SOURCE_TREE' "$workflow")" == bb6b1b1c14b27fe1c752ca001555907590011d67 &&
    "$(yq -r '.env.IMAGE' "$workflow")" == ghcr.io/devantler-tech/platform-kyverno-reports ]] || fail 'source or destination changed'
 # shellcheck disable=SC2016
 [[ "$(yq -r '.env.IMAGE_TAG' "$workflow")" == 'v1.19.2-watch-plan.2-${{ github.sha }}' ]] || fail 'immutable image tag missing'
@@ -57,23 +57,24 @@ diff --git a/third_party/docker-credential-acr-env/pkg/registry/const.go b/third
 diff --git a/third_party/docker-credential-acr-env/pkg/registry/registry.go b/third_party/docker-credential-acr-env/pkg/registry/registry.go
 diff --git a/third_party/docker-credential-acr-env/pkg/token/token.go b/third_party/docker-credential-acr-env/pkg/token/token.go'
 [[ "$(grep '^diff --git ' "$patch")" == "$expected_headers" ]] || fail 'patch changes unreviewed paths'
-grep -Fxq 'FROM docker.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS builder' "$dockerfile" || fail 'reviewed compiler pin missing'
+grep -Fxq 'FROM docker.io/library/golang:1.27.3-bookworm@sha256:d9b6a1beb9474adc2a1ce842573639b44b2a0dd49b6669f51d3821baf9ec37c9 AS builder' "$dockerfile" || fail 'patched compiler pin missing'
 grep -Fxq 'ENV GOTOOLCHAIN=local' "$dockerfile" || fail 'implicit compiler switching enabled'
 grep -Fq 'go build -mod=readonly -buildvcs=true -trimpath' "$dockerfile" || fail 'truthful VCS metadata required'
 grep -Fq "\$3 == \"v1.19.2+dirty\"" "$dockerfile" || fail 'actual main-module release proof missing'
 grep -Fq "\$2 == \"vcs.revision=e63308f1e16c05cd009ac4864be6ec25c66b49be\"" "$dockerfile" || fail 'actual main-module revision proof missing'
 grep -Fxq 'RUN timeout 900s go test -mod=readonly -race ./pkg/controllers/report/resource ./pkg/controllers/report/aggregate ./pkg/webhooks/resource/validation' "$dockerfile" || fail 'controller race regressions changed'
-grep -Fxq "RUN GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 \\" "$dockerfile" || fail 'reviewed lint tool missing'
-grep -Fxq "    && timeout 900s golangci-lint run --timeout=14m --new-from-patch=reports-watch-plan.patch \\" "$dockerfile" || fail 'reviewed patch lint gate missing'
+grep -Fxq "RUN GOWORK=/tmp/reports-lint.work go work init . ./third_party/docker-credential-acr-env \\" "$dockerfile" || fail 'replacement module lint workspace missing'
+grep -Fxq "    && GOBIN=/usr/local/bin go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0 \\" "$dockerfile" || fail 'reviewed lint tool missing'
+grep -Fxq "    && GOWORK=/tmp/reports-lint.work timeout 900s golangci-lint run --timeout=14m --new-from-patch=reports-watch-plan.patch \\" "$dockerfile" || fail 'reviewed patch lint gate missing'
 grep -Fxq "        ./pkg/controllers/report/resource/... ./cmd/internal/... \\" "$dockerfile" || fail 'changed main-module packages are not linted'
-grep -Fxq '        github.com/chrismellard/docker-credential-acr-env/pkg/...' "$dockerfile" || fail 'changed credential compatibility packages are not linted'
+grep -Fxq '        ./third_party/docker-credential-acr-env/pkg/...' "$dockerfile" || fail 'changed credential compatibility packages are not linted'
 grep -Fq './cmd/internal/... ./pkg/image/... ./pkg/tracing/... ./pkg/metrics/...' "$dockerfile" || fail 'runtime dependency regressions missing'
 grep -Fq 'github.com/chrismellard/docker-credential-acr-env/pkg/...' "$dockerfile" || fail 'legacy credential boundary regressions missing'
 # Keep the actual artifact's symbol table for precise executable vulnerability analysis.
 # shellcheck disable=SC2016
 grep -Fq -- '-ldflags="-w -X github.com/kyverno/kyverno/pkg/version.BuildVersion=${VERSION}"' "$dockerfile" || fail 'executable symbol metadata must be preserved'
 # shellcheck disable=SC2016
-grep -Fq 'test "$(go version /out/reports-controller)" = "/out/reports-controller: go1.27.2"' "$dockerfile" || fail 'actual compiler proof missing'
+grep -Fq 'test "$(go version /out/reports-controller)" = "/out/reports-controller: go1.27.3"' "$dockerfile" || fail 'actual compiler proof missing'
 grep -Fq "^golang.org/x/crypto/openpgp(/|$)" "$dockerfile" || fail 'actual unsafe dependency refusal missing'
 grep -Fq 'go install golang.org/x/vuln/cmd/govulncheck@v1.8.0' "$dockerfile" || fail 'pinned vulnerability scanner changed'
 grep -Fq 'timeout 300s govulncheck ./cmd/reports-controller' "$dockerfile" || fail 'source vulnerability scan missing'

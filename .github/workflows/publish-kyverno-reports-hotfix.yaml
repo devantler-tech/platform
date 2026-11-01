@@ -23,7 +23,7 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: 23a55f74d9147dfefe6be994600ad52daeb8ee11
+  PATCHED_SOURCE_TREE: bb6b1b1c14b27fe1c752ca001555907590011d67
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-reports
   IMAGE_TAG: v1.19.2-watch-plan.2-${{ github.sha }}
 

@@ -1426,10 +1426,10 @@ index 0000000..dee6abc
 +)
 diff --git a/third_party/docker-credential-acr-env/pkg/credhelper/helper.go b/third_party/docker-credential-acr-env/pkg/credhelper/helper.go
 new file mode 100644
-index 0000000..93e6ff7
+index 0000000..a0a1041
 --- /dev/null
 +++ b/third_party/docker-credential-acr-env/pkg/credhelper/helper.go
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,84 @@
 +/*
 +Copyright © 2020 Chris Mellard chris.mellard@icloud.com
 +
@@ -1437,7 +1437,7 @@ index 0000000..93e6ff7
 +you may not use this file except in compliance with the License.
 +You may obtain a copy of the License at
 +
-+    http://www.apache.org/licenses/LICENSE-2.0
++	http://www.apache.org/licenses/LICENSE-2.0
 +
 +Unless required by applicable law or agreed to in writing, software
 +distributed under the License is distributed on an "AS IS" BASIS,
@@ -1466,8 +1466,7 @@ index 0000000..93e6ff7
 +	tokenUsername = "<token>"
 +)
 +
-+type ACRCredHelper struct {
-+}
++type ACRCredHelper struct{}
 +
 +func NewACRCredentialsHelper() credentials.Helper {
 +	return &ACRCredHelper{}
@@ -1599,7 +1598,7 @@ index 0000000..186cea2
 +}
 diff --git a/third_party/docker-credential-acr-env/pkg/registry/const.go b/third_party/docker-credential-acr-env/pkg/registry/const.go
 new file mode 100644
-index 0000000..2f8ad5a
+index 0000000..9cb0cd7
 --- /dev/null
 +++ b/third_party/docker-credential-acr-env/pkg/registry/const.go
 @@ -0,0 +1,25 @@
@@ -1610,7 +1609,7 @@ index 0000000..2f8ad5a
 +you may not use this file except in compliance with the License.
 +You may obtain a copy of the License at
 +
-+    http://www.apache.org/licenses/LICENSE-2.0
++	http://www.apache.org/licenses/LICENSE-2.0
 +
 +Unless required by applicable law or agreed to in writing, software
 +distributed under the License is distributed on an "AS IS" BASIS,
@@ -1630,7 +1629,7 @@ index 0000000..2f8ad5a
 +)
 diff --git a/third_party/docker-credential-acr-env/pkg/registry/registry.go b/third_party/docker-credential-acr-env/pkg/registry/registry.go
 new file mode 100644
-index 0000000..c1b30dd
+index 0000000..2a45dbb
 --- /dev/null
 +++ b/third_party/docker-credential-acr-env/pkg/registry/registry.go
 @@ -0,0 +1,63 @@
@@ -1641,7 +1640,7 @@ index 0000000..c1b30dd
 +you may not use this file except in compliance with the License.
 +You may obtain a copy of the License at
 +
-+    http://www.apache.org/licenses/LICENSE-2.0
++	http://www.apache.org/licenses/LICENSE-2.0
 +
 +Unless required by applicable law or agreed to in writing, software
 +distributed under the License is distributed on an "AS IS" BASIS,
@@ -1699,10 +1698,10 @@ index 0000000..c1b30dd
 +}
 diff --git a/third_party/docker-credential-acr-env/pkg/token/token.go b/third_party/docker-credential-acr-env/pkg/token/token.go
 new file mode 100644
-index 0000000..feff3e1
+index 0000000..f018047
 --- /dev/null
 +++ b/third_party/docker-credential-acr-env/pkg/token/token.go
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,107 @@
 +/*
 +Copyright © 2020 Chris Mellard chris.mellard@icloud.com
 +
@@ -1710,7 +1709,7 @@ index 0000000..feff3e1
 +you may not use this file except in compliance with the License.
 +You may obtain a copy of the License at
 +
-+    http://www.apache.org/licenses/LICENSE-2.0
++	http://www.apache.org/licenses/LICENSE-2.0
 +
 +Unless required by applicable law or agreed to in writing, software
 +distributed under the License is distributed on an "AS IS" BASIS,
@@ -1744,8 +1743,7 @@ index 0000000..feff3e1
 +
 +// getServicePrincipalToken retrieves an Azure AD OAuth2 token from the supplied environment settings for the specified resource
 +func getServicePrincipalToken(settings auth.EnvironmentSettings, resource string) (*adal.ServicePrincipalToken, error) {
-+
-+	//1.Client Credentials
++	// 1.Client Credentials
 +	if _, e := settings.GetClientCredentials(); e == nil {
 +		clientCredentialsConfig, err := settings.GetClientCredentials()
 +		if err != nil {
@@ -1758,12 +1756,12 @@ index 0000000..feff3e1
 +		return adal.NewServicePrincipalToken(*oAuthConfig, clientCredentialsConfig.ClientID, clientCredentialsConfig.ClientSecret, clientCredentialsConfig.Resource)
 +	}
 +
-+	//2. Client Certificate
++	// 2. Client Certificate
 +	if _, e := settings.GetClientCertificate(); e == nil {
 +		return &adal.ServicePrincipalToken{}, fmt.Errorf("authentication method currently unsupported")
 +	}
 +
-+	//3. Username Password
++	// 3. Username Password
 +	if _, e := settings.GetUsernamePassword(); e == nil {
 +		return &adal.ServicePrincipalToken{}, fmt.Errorf("authentication method currently unsupported")
 +	}
