@@ -19,6 +19,24 @@ spec:
             - port: "8080"
               protocol: TCP
   egress:
+    # Longhorn UI and API: authenticated read traffic only. The path includes
+    # the complete query string, so duplicate/extra action parameters fail
+    # closed. These POST handlers only list or retrieve existing resources.
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: longhorn-system
+            app: longhorn-ui
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+          rules:
+            http:
+              - method: "^(GET|HEAD)$"
+              - method: "^POST$"
+                path: '^/v1/volumes/[^/?]+[?]action=(snapshotList|snapshotGet|snapshotCRList|snapshotCRGet|recurringJobList)$'
+              - method: "^POST$"
+                path: '^/v1/backupvolumes/[^/?]+[?]action=(backupList|backupListByVolume|backupGet)$'
     # Registry requests have passed the maintainer-team SSO gate.
     - toEndpoints:
         - matchLabels:

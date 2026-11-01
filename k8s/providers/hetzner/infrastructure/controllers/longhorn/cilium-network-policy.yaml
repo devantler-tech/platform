@@ -6,6 +6,23 @@ metadata:
 spec:
   endpointSelector: {}
   ingress:
+    # Only the authenticated fan-out proxy reaches the UI. Apply the read-only
+    # boundary here too, independently of its router and egress policy.
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: oauth2-proxy
+            app: auth-proxy
+      toPorts:
+        - ports:
+            - port: "8000"
+              protocol: TCP
+          rules:
+            http:
+              - method: "^(GET|HEAD)$"
+              - method: "^POST$"
+                path: '^/v1/volumes/[^/?]+[?]action=(snapshotList|snapshotGet|snapshotCRList|snapshotCRGet|recurringJobList)$'
+              - method: "^POST$"
+                path: '^/v1/backupvolumes/[^/?]+[?]action=(backupList|backupListByVolume|backupGet)$'
     # Webhook from kube-apiserver (hostNetwork on control plane nodes)
     - fromEntities:
         - kube-apiserver

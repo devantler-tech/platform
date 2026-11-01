@@ -235,6 +235,7 @@ jobs:
               - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
+              - 'scripts/tests/longhorn-ui-readonly/**'
               - 'scripts/tests/test-dex-theme-mount.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
@@ -3458,6 +3459,12 @@ jobs:
         env:
           VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
+      - name: 🔒 Prove Longhorn dashboard read-only routing
+        if: matrix.suite == 'native'
+        timeout-minutes: 5
+        env:
+          LONGHORN_UI_NATIVE_TEST: '1'
+        run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'
         run: |
