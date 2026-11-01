@@ -117,7 +117,7 @@ expect "unparseable YAML cannot be checked" 2 "$broken"
 expect "a missing file cannot be checked" 2 "$scratch/does-not-exist.yaml"
 
 # The full consumer fixture suite must start independently of changes, yet both deployment and
-# merge admission must wait for it. Keep this check in the unconditional repository guards: a removed or focused fixture job
+# merge admission must wait for it. The unconditional guards check this wiring: a removed or focused fixture job
 # cannot be relied on to test its own wiring. A skipped deploy alone is accepted by the aggregate.
 consumer_fixture_wiring() {
   local file="$1" workflow_json
@@ -153,11 +153,11 @@ consumer_fixture_wiring() {
         | index($job) != null)
       and any($aggregates[];
         (.["with"]["job-results"] // "") | contains("needs." + $job + ".result"))
-      and any(.jobs["validate-repository-guards"].steps[];
+      and any(.jobs["validate-publication-guards"].steps[];
         .run == $production_run
         and (has("if") | not)
         and ((.["continue-on-error"] // false) == false))
-      and all(.jobs["validate-repository-guards"].steps[];
+      and all(.jobs["validate-publication-guards"].steps[];
         ((.run // "") | contains("bash scripts/tests/test-guard-consumer-discovery-conservation.sh") | not))
     ' <<<"$workflow_json" >/dev/null || {
     printf 'consumer fixtures must run independently and gate deployment plus required checks\n' >&2
@@ -227,10 +227,10 @@ ablate_wiring "focusing fixtures through workflow environment is refused" \
   '.env.CONSUMER_CONSERVATION_REGRESSION = "templates"'
 ablate_wiring "focusing the fixture command itself is refused" \
   '.jobs["validate-consumer-discovery"].steps[1].run = "CONSUMER_CONSERVATION_REGRESSION=templates bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
-ablate_wiring "putting the full fixtures back on the repository guard path is refused" \
-  '(.jobs["validate-repository-guards"].steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) += "bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
+ablate_wiring "putting the full fixtures on the publication guard path is refused" \
+  '(.jobs["validate-publication-guards"].steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) += "bash scripts/tests/test-guard-consumer-discovery-conservation.sh\n"'
 ablate_wiring "removing the real production guard is refused" \
-  '(.jobs["validate-repository-guards"].steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) |= sub("./scripts/guard-consumer-discovery-conservation.sh", "true")'
+  '(.jobs["validate-publication-guards"].steps[] | select(.name == "🔐 Validate consumer discovery against the production render").run) |= sub("./scripts/guard-consumer-discovery-conservation.sh", "true")'
 
 yq '.jobs["unrelated-validator"] = {"runs-on": "ubuntu-latest", "if": "false", "steps": [{"run": "true"}]}' \
   "$ci_workflow" >"$scratch/unrelated-job.yaml"

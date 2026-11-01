@@ -10,8 +10,13 @@ a failed suite does not cancel the other diagnostics.
 Cluster policies have fixtures, tenant, services, placement, storage and
 observability suites. Every validation step belongs to exactly one declared
 suite. The publication-generator suite runs in its own required job with the same
-checkout, compiler and native tool setup. The other repository guards retain their
-unconditional steps, including the checks that independently protect CI wiring.
+checkout, compiler and native tool setup. Repository guards and publication guards
+run in two fixed independent jobs, each with its own checkout and the same pinned
+compiler and native kubectl. Both retain unconditional steps, including the checks
+that independently protect CI wiring. Required CI and production deployment wait
+for both jobs, and the aggregate explicitly refuses every non-success publication
+guard result. Adding a dependency from publication guards to repository guards is
+the equivalent serial diagnostic control; their commands and inputs stay identical.
 Regressions that share one shell environment remain in the same step.
 
 Move the independent OpenBao standby, Crossplane egress, native-mail, Kyverno
@@ -50,6 +55,15 @@ the suite, and cleanup joins the workers before removing shared scratch. The
 production verifier and all fixture assertions and real deadlines stay intact.
 
 ## Evidence and alternatives
+
+Successful protected run [41312932796](https://github.com/devantler-tech/platform/actions/runs/41312932796)
+spent 675 seconds in repository guards before deployment started. The seven
+contiguous publication-report, consumer-discovery, signer-membership, regeneration
+and diagnostic steps accounted for 260 seconds. They motivate a separate fixed
+publication-guard job while the other 56 checks retain their existing job and
+order. This is an observational partition choice, not a predicted or demonstrated
+pipeline speedup; duplicate setup, cold compiler caches and runner waiting remain
+part of candidate and protected-delivery acceptance under #5495.
 
 The later [complete green run](https://github.com/devantler-tech/platform/actions/runs/40848728705)
 spent 10m14s in independent manifest regressions and 8m47s in complete Go
@@ -111,6 +125,9 @@ routing, all eleven named checks, invalid worker bounds, selection, success,
 failure, cancellation, missing results and unexpected skips. The step inventory
 must preserve commands, environments, pinned actions, deadlines, permissions
 and prerequisites against the reviewed baseline.
+The fixed guard-family boundary exercises independent and serial dependency
+shapes, lost jobs and dependencies, conditional or tolerated checks, unexpected
+prerequisites, write-permission drift, and every non-success aggregate result.
 `scripts/tests/test-fixture-workers.sh` proves actual overlap, complete receipts,
 serial operation and rejection of failures, early errors, duplicate or unknown
 cases, missing, corrupt or unassigned receipts, interruption and invalid worker

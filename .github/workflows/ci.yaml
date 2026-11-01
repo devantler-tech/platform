@@ -1265,94 +1265,10 @@ jobs:
         # is manual and uses credentials only after this code reaches main.
         run: go test ./scripts/prove-scoped-package-access
 
-      # The guard above proves every matcher pins A revision. It cannot say WHICH, and
-      # narrowing them to approved revisions (#2818) needs that fact for each consumer.
-      # This runs the hermetic half of the report that computes it: the network resolver
-      # is stubbed, so nothing here depends on another repository's release cadence.
-      - name: 🔐 Validate the publish-revision report
-        run: |
-          shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-signing-revisions.sh
-          bash scripts/tests/test-publish-workflow-signing-revisions.sh
-          shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
-          bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
-
-      # The report above discovers its consumers with a raw FILE SCAN, while production is
-      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
-      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
-      # a consumer in a file the scan never opens — or when the render cannot be judged
-      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
-      # of what it compares lives under scripts/, outside the k8s paths.
-      - name: 🔐 Validate consumer discovery against the production render
-        run: |
-          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
-          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
-          ./scripts/guard-consumer-discovery-conservation.sh
-
-      # The pin guard above proves each matcher pins a FIXED revision; this one proves each
-      # per-consumer matcher pins the revision PAIR the committed approved set names for that
-      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
-      # the same reason as the pin guard: the subjects live in four different trees.
-      # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
-      - name: 🔐 Validate the approved-revisions guard
-        env:
-          APPROVED_REVISIONS_ENFORCE: "1"
-        run: |
-          shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
-          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
-          shellcheck -x scripts/write-publish-workflow-matchers.sh
-          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
-          shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
-          shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
-          shellcheck -x scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
-          bash scripts/tests/test-tenant-source-discovery.sh
-          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
-          bash scripts/tests/test-write-publish-workflow-matchers.sh
-          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
-
-      - name: 🔐 Enforce approved publication signers
-        env:
-          APPROVED_REVISIONS_ENFORCE: "1"
-        run: ./scripts/guard-publish-workflow-approved-revisions.sh
-
-      # The scheduled regeneration (#3552, third child of #3308) runs the generator and
-      # writer and guard above against prod and turns a moved set into ONE draft pull request.
-      # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
-      # commit, least-privilege token grants, and generator → writer → guard → pull request with
-      # no continue-on-error — none of which any script it calls can enforce, so the
-      # test below pins each with an ablation. Unconditional for the same reason as
-      # the two steps above: the workflow lives outside the k8s paths.
-      - name: 🔐 Validate the approved-revisions regeneration workflow
-        run: |
-          shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
-          bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
-
-      # Historical compatibility must remain available after deleting the catalogue;
-      # current observations and canonical approvals remain separately required.
-      - name: 🔐 Validate frozen legacy publisher evidence
-        run: |
-          shellcheck -x scripts/tests/test-frozen-legacy-publisher-release.sh
-          bash scripts/tests/test-frozen-legacy-publisher-release.sh
-
-      # The authorization gate's verdict and its moved-entry diagnostics are two
-      # commands in one step, and a real aggregate mismatch fails BOTH — so a step
-      # that stopped at the first never ran the diagnostics on the one failure they
-      # exist to explain (#3879). That is a property of the STEP's shape, which no
-      # script it calls can enforce, so the test executes the step against stub
-      # binaries and ablates each assertion. It also refuses an `if:` or a tolerated
-      # failure on that step, which would let the gate run without deciding
-      # anything — the Go coverage guards cannot read this compound step (#4361).
-      # Unconditional for the same reason as the steps above: its subjects are
-      # ci.yaml and cd.yaml themselves, which sit outside the k8s paths.
-      - name: 🔐 Validate the authorization gate reports its diagnostics
-        run: |
-          shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
-          bash scripts/tests/test-authorization-gate-diagnostics.sh
-
       - name: 🔐 Validate OCI chart source readiness contracts
         run: go test ./scripts/tests/oci-chart-sources
 
-      # Both subject guards above examine a file only when it already carries a
+      # The subject guards examine a file only when it already carries a
       # shared-publish-workflow subject, so an OCIRepository pointed at a devantler-tech
       # artifact with NO spec.verify at all is invisible to them — and refused by nothing
       # else. This one discovers OCIRepositories by KIND and URL, at any nesting depth,
@@ -1453,6 +1369,127 @@ jobs:
           shellcheck scripts/verify-wedding-backup-cutover.sh scripts/tests/test-verify-wedding-backup-cutover.sh
           bash scripts/tests/test-verify-wedding-backup-cutover.sh
           go test ./scripts/verify-wedding-dedicated-restore
+
+  # Run the seven publication checks in their own checkout.
+  # Both fixed jobs must succeed before required CI or production can proceed.
+  validate-publication-guards:
+    name: 🔐 Validate Publication Guards
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read # checkout repository
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Initialize the approved kubectl for native regressions
+        timeout-minutes: 5
+        shell: bash
+        env:
+          KUBECTL_VERSION: "v1.36.2"
+          KUBECTL_SHA256: "1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82"
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/kubectl"
+          curl -fsSL \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+            -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          sudo install "$kubectl_path" /usr/local/bin/kubectl
+          echo /usr/local/bin >> "$GITHUB_PATH"
+          export PATH="/usr/local/bin:$PATH"
+          kubectl version --client
+
+      # The shared pin guard proves every matcher pins A revision. It cannot say WHICH,
+      # and narrowing them to approved revisions (#2818) needs that fact for each consumer.
+      # This runs the hermetic report with a stubbed network resolver.
+      - name: 🔐 Validate the publish-revision report
+        run: |
+          shellcheck -x scripts/report-publish-workflow-signing-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-signing-revisions.sh
+          bash scripts/tests/test-publish-workflow-signing-revisions.sh
+          shellcheck -x scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
+          bash scripts/tests/test-publish-workflow-signing-revision-resolvers.sh
+
+      # The report above discovers its consumers with a raw FILE SCAN, while production is
+      # what Flux RENDERS. This renders every production root (read from k8s/clusters/prod)
+      # and fails when the two consumer sets differ — an excluded base, a patched ref or URL,
+      # a consumer in a file the scan never opens — or when the render cannot be judged
+      # statically (#3332). Renders only manifests. Unconditional, like the report: one half
+      # of what it compares lives under scripts/, outside the k8s paths.
+      - name: 🔐 Validate consumer discovery against the production render
+        run: |
+          shellcheck -x scripts/guard-consumer-discovery-conservation.sh
+          shellcheck scripts/tests/test-guard-consumer-discovery-conservation.sh
+          ./scripts/guard-consumer-discovery-conservation.sh
+
+      # The shared pin guard proves each matcher pins a FIXED revision; this one proves each
+      # per-consumer matcher pins the revision PAIR the committed approved set names for that
+      # consumer, and refuses any revision outside it (#3551, AC4 of #3308). Unconditional for
+      # the same reason as the pin guard: the subjects live in four different trees.
+      # Enforcement rejects broad SHA patterns and revisions outside each approved pair.
+      - name: 🔐 Validate the approved-revisions guard
+        env:
+          APPROVED_REVISIONS_ENFORCE: "1"
+        run: |
+          shellcheck -x scripts/publish-workflow-approved-revisions.lib.sh
+          shellcheck -x scripts/guard-publish-workflow-approved-revisions.sh
+          shellcheck -x scripts/write-publish-workflow-matchers.sh
+          shellcheck -x scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          shellcheck scripts/tests/test-write-publish-workflow-matchers.sh
+          shellcheck -x scripts/tests/test-publish-workflow-canonical-approvals.sh
+          shellcheck -x scripts/tenant-source-discovery.lib.sh scripts/tests/test-tenant-source-discovery.sh
+          bash scripts/tests/test-tenant-source-discovery.sh
+          bash scripts/tests/test-publish-workflow-approved-revisions-guard.sh
+          bash scripts/tests/test-write-publish-workflow-matchers.sh
+          bash scripts/tests/test-publish-workflow-canonical-approvals.sh
+
+      - name: 🔐 Enforce approved publication signers
+        env:
+          APPROVED_REVISIONS_ENFORCE: "1"
+        run: ./scripts/guard-publish-workflow-approved-revisions.sh
+
+      # The scheduled regeneration (#3552, third child of #3308) runs the generator and
+      # writer and guard above against prod and turns a moved set into ONE draft pull request.
+      # Its safety is the WORKFLOW's shape — a fixed branch, a draft, an App-signed
+      # commit, least-privilege token grants, and generator → writer → guard → pull request with
+      # no continue-on-error — none of which any script it calls can enforce, so the
+      # test below pins each with an ablation. Unconditional for the same reason as
+      # the two steps above: the workflow lives outside the k8s paths.
+      - name: 🔐 Validate the approved-revisions regeneration workflow
+        run: |
+          shellcheck scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
+          bash scripts/tests/test-regenerate-publish-workflow-approved-revisions.sh
+
+      # Historical compatibility must remain available after deleting the catalogue;
+      # current observations and canonical approvals remain separately required.
+      - name: 🔐 Validate frozen legacy publisher evidence
+        run: |
+          shellcheck -x scripts/tests/test-frozen-legacy-publisher-release.sh
+          bash scripts/tests/test-frozen-legacy-publisher-release.sh
+
+      # The authorization gate's verdict and its moved-entry diagnostics are two
+      # commands in one step, and a real aggregate mismatch fails BOTH — so a step
+      # that stopped at the first never ran the diagnostics on the one failure they
+      # exist to explain (#3879). That is a property of the STEP's shape, which no
+      # script it calls can enforce, so the test executes the step against stub
+      # binaries and ablates each assertion. It also refuses an `if:` or a tolerated
+      # failure on that step, which would let the gate run without deciding
+      # anything — the Go coverage guards cannot read this compound step (#4361).
+      # Unconditional for the same reason as the steps above: its subjects are
+      # ci.yaml and cd.yaml themselves, which sit outside the k8s paths.
+      - name: 🔐 Validate the authorization gate reports its diagnostics
+        run: |
+          shellcheck scripts/tests/test-authorization-gate-diagnostics.sh
+          bash scripts/tests/test-authorization-gate-diagnostics.sh
 
   validate-publication-generator:
     name: 🔐 Validate Publication Generator
@@ -4193,6 +4230,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        validate-publication-guards,
         test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
@@ -4562,6 +4600,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
+        validate-publication-guards,
         test-publish-release-recovery,
         test-publish-release-recovery-disabled,
         validate-publication-generator,
@@ -4665,6 +4704,7 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
+            ${{ needs.validate-publication-guards.result }}
             ${{ needs.test-publish-release-recovery.result }}
             ${{ needs.test-publish-release-recovery-disabled.result }}
             ${{ needs.validate-publication-generator.result }}
@@ -4695,6 +4735,15 @@ jobs:
         run: |
           if [ "$REPOSITORY_GUARDS_RESULT" != success ]; then
             echo "::error::Repository guards did not succeed ($REPOSITORY_GUARDS_RESULT)"
+            exit 1
+          fi
+
+      - name: 🔐 Require publication guards
+        env:
+          PUBLICATION_GUARDS_RESULT: ${{ needs.validate-publication-guards.result }}
+        run: |
+          if [ "$PUBLICATION_GUARDS_RESULT" != success ]; then
+            echo "::error::Publication guards did not succeed ($PUBLICATION_GUARDS_RESULT)"
             exit 1
           fi
 

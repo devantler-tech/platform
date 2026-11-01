@@ -122,6 +122,71 @@ reject_partition "repeated manifest regression" \
   "(.jobs[\"$job\"].steps[] | select(.if != null)) |= del(.if)"
 echo 'PASS: both manifest worker limits retain complete routing; 9 broken routings refused'
 
+# The two fixed guard jobs use separate checkouts and remain required for every
+# event. A serial diagnostic dependency may order them, but no path selection,
+# missing result or tolerated failure may turn either family into a green gate.
+cat >"${work}/guards.jq" <<'JQ'
+  . as $workflow |
+  all(["validate-repository-guards", "validate-publication-guards"][]; . as $name |
+    $workflow.jobs[$name] as $job |
+    ($job | type == "object") and
+    ($job["runs-on"] == "ubuntu-latest") and
+    ($job.permissions == {contents: "read"}) and
+    ($job | has("if") | not) and
+    (($job["continue-on-error"] // false) == false) and
+    (($job.steps | length) > 3) and
+    all(($job.steps // [])[]; .if == null and ((.["continue-on-error"] // false) == false))) and
+  (.jobs["validate-repository-guards"] | has("needs") | not) and
+  ((.jobs["validate-publication-guards"].needs // []) as $needs |
+    $needs == [] or $needs == ["validate-repository-guards"]) and
+  all(["deploy-prod", "ci-required-checks"][]; . as $consumer |
+    ($workflow.jobs[$consumer].needs | index("validate-publication-guards") != null))
+JQ
+yq -o=json '.' "$workflow" >"${work}/workflow.json"
+if ! jq -e -f "${work}/guards.jq" "${work}/workflow.json" >/dev/null; then
+  echo 'FAIL: both independent guard families must remain unconditional and required' >&2
+  exit 1
+fi
+jq '.jobs["validate-publication-guards"].needs = ["validate-repository-guards"]' \
+  "${work}/workflow.json" >"${work}/serial-guards.json"
+jq -e -f "${work}/guards.jq" "${work}/serial-guards.json" >/dev/null
+for mutation in \
+  'del(.jobs["validate-publication-guards"])' \
+  '.jobs["validate-publication-guards"].if = "false"' \
+  '.jobs["validate-publication-guards"]["continue-on-error"] = true' \
+  '.jobs["validate-publication-guards"].steps[3]["continue-on-error"] = true' \
+  '.jobs["validate-publication-guards"].steps[3].if = "false"' \
+  '.jobs["validate-publication-guards"].needs = ["changes"]' \
+  '.jobs["validate-publication-guards"].permissions.contents = "write"' \
+  '.jobs["deploy-prod"].needs -= ["validate-publication-guards"]' \
+  '.jobs["ci-required-checks"].needs -= ["validate-publication-guards"]'; do
+  jq "$mutation" "${work}/workflow.json" >"${work}/mutated-guards.json"
+  actual=0
+  jq -e -f "${work}/guards.jq" "${work}/mutated-guards.json" >/dev/null || actual=$?
+  if [ "$actual" -ne 1 ]; then
+    printf 'FAIL: incomplete guard family must be rejected, got %s: %s\n' "$actual" "$mutation" >&2
+    exit 1
+  fi
+done
+guard_step="$(jq -c '[.steps[] | select(.name == "🔐 Require publication guards")]' <<<"${gate}")"
+jq -e 'length == 1 and .[0].env == {
+  PUBLICATION_GUARDS_RESULT: "${{ needs.validate-publication-guards.result }}"
+} and (.[0] | has("if") | not)
+  and ((.[0]["continue-on-error"] // false) == false)
+  and (.[0].run | type == "string" and length > 0)' <<<"${guard_step}" >/dev/null
+jq -r '.[0].run' <<<"${guard_step}" >"${work}/publication-guard-gate.sh"
+for result in success failure cancelled skipped pending unknown ''; do
+  actual=0
+  PUBLICATION_GUARDS_RESULT="$result" bash -e "${work}/publication-guard-gate.sh" >"${work}/guard-output" 2>&1 || actual=$?
+  expected=1
+  [ "$result" != success ] || expected=0
+  if [ "$actual" -ne "$expected" ]; then
+    printf 'FAIL: publication guards result=%s expected=%s actual=%s\n' "$result" "$expected" "$actual" >&2
+    exit 1
+  fi
+done
+echo 'PASS: both guard families remain required; 9 incomplete routes and every non-success result refused'
+
 jq -e '
   .jobs["validate-publication-generator"] as $job |
   ($job.permissions == {contents: "read"}) and
