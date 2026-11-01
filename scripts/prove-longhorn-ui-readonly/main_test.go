@@ -209,9 +209,9 @@ func TestProbeRetainsItsWriteSideUntilTheResponse(t *testing.T) {
 	}
 }
 
-// TestNativeProbeSendsOnlyFixedHarmlessRequests exercises the actual shell
-// request writer and reader across a real TCP connection.
-func TestNativeProbeSendsOnlyFixedHarmlessRequests(t *testing.T) {
+// TestRequestWriterAndReaderSendOnlyFixedHarmlessRequests exercises the generated
+// program across a real TCP connection under Bash. The image test covers ash/nc.
+func TestRequestWriterAndReaderSendOnlyFixedHarmlessRequests(t *testing.T) {
 	seen := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Host != "longhorn.platform.devantler.tech" || r.ContentLength != 0 {
