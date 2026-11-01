@@ -214,6 +214,10 @@ run_read --context admin@prod
 [[ "$(printf '%s\n' "${output}" | grep '^{' | jq -s -r '([.[].agent] | unique | tojson) + " " + (length | tostring)')" == '[1] 5' ]] || {
   printf 'FAIL: partial samples: %s\n' "${output}" >&2; exit 1;
 }
+# Five limiter reads each, plus a control read for each null response.
+[[ "$(grep -c '^--context.* exec ' "${fixture}/calls")" -eq 15 ]] || {
+  printf 'FAIL: partial result read count\n' >&2; exit 1;
+}
 # A series that appears or disappears between samples is neither complete nor absent.
 reset_fixture
 add_second_agent

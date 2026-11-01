@@ -1,7 +1,7 @@
 # Cilium endpoint creation timing
 
 The **Read Cilium API Limiter** workflow collects five snapshots of the endpoint
-creation limiter from each stable ready Cilium agent. Dispatch it from reviewed
+creation limiter from each stable ready Cilium agent that has one. Dispatch it from reviewed
 `main` with `confirm=read-production-cilium-api-limiter`. It uses the established
 production pipeline identity and serializes with deployments. No listener,
 limiter setting, network policy or workload is changed.
@@ -22,7 +22,8 @@ encodes no match as JSON null. On a null read the diagnostic makes one further
 fixed read, of `^cilium_version`, whose series exists from agent start. If that
 read finds the series, or the limiter read has well-formed series only for other
 calls, the agent counts as unobserved and gets no values. An agent that lacks the
-series in all five samples is reported only by count. When other agents are
+series in all five samples publishes no samples, and the verdict counts it. Gaps
+in the published indices show which index it was. When other agents are
 complete, the run ends `PARTIAL` (exit 0), publishing their samples; when none is,
 it ends `INCONCLUSIVE` (`LIMITER_UNOBSERVED`). That shows
 the agent reports no limiter series, which normally means no finished
@@ -42,7 +43,10 @@ both ends. `PARTIAL` requires the same identity at both ends, and each agent eit
 in all five samples or without the series in all five. Other missing metrics, a
 failed read, a series that appears or disappears between samples or a changed
 identity is `INCONCLUSIVE` (exit 3). An unobserved agent says nothing about its
-own timing, so `PARTIAL` describes only the agents it publishes. Agent indices
+own timing, so `PARTIAL` describes only the agents it publishes. It is not
+evidence of a quiet agent either: series appear when a request finishes, so an
+agent whose first request is stuck looks the same, and the slowest agent may be
+the one left out. Agent indices
 follow sorted Pod names, so they repeat between runs while the agents are
 unchanged, and they are not mapped to nodes or Coroot machines.
 
