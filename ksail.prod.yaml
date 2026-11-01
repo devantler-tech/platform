@@ -31,7 +31,8 @@ spec:
     # double cleanly per step (cx43 8c/16G → cx53 16c/32G;
     # ~€8.11/€14.99 gross/mo in fsn1). All pools scale to zero (min: 0) so idle
     # capacity costs nothing; the static workers are the guaranteed baseline and
-    # the only Longhorn storage nodes (autoscaler nodes are compute-only).
+    # Longhorn storage nodes. The temporary, fixed-size migration pool below
+    # starts fenced from storage and is enabled only by the reviewed migration.
     # CAX/ARM is cheaper but needs an ARM Talos image — not applicable here.
     #
     # cx33 (4c/8G) is deliberately EXCLUDED as an overflow type. The per-node
@@ -60,7 +61,10 @@ spec:
     #
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
     # static baseline. 9 = the Hetzner account cap (10) MINUS ONE RESERVED SLOT:
-    # 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes. KSail
+    # Normally 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes.
+    # During #5582, 2 fixed migration-pool workers use 2 of those slots,
+    # leaving room for 1 compute overflow node. The Image Factory builder slot
+    # stays reserved. KSail
     # passes it to cluster-autoscaler --max-nodes-total, which counts every node,
     # so this total framing already matches the runtime. The general pools each
     # allow 4 nodes; the isolated organization runner pool allows 1. Any mix shares the
@@ -115,6 +119,21 @@ spec:
         # alerter CronJob equal to this list; CI fails until they match, and the
         # CronJob alerts on any autoscaler node whose pool is not in it.
         pools:
+          # Temporary capacity for #5582. The configured static CX43 type is
+          # unavailable across the configured locations, so use an independent
+          # pool rather than changing the existing workers' server type.
+          # The temporary native CapacityBuffer requests both workers; min ==
+          # max then prevents voluntary scale-down. Deployment reads back both
+          # Ready nodes before accepting this capacity. Keep this pool declared
+          # until its replicas have been evacuated and its nodes retired.
+          # The replica exclusion policy initially keeps these nodes fenced.
+          - name: autoscale-longhorn-v1
+            serverType: cpx42
+            location: fsn1
+            min: 2
+            max: 2
+            labels:
+              storage.platform.devantler.tech/migration-pool: v1
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1
@@ -148,6 +167,8 @@ spec:
     metricsServer: Enabled
     policyEngine: Kyverno
     controlPlanes: 3
+    # Preserve the existing static workers; temporary migration capacity is
+    # supplied by the separately typed, fixed-size pool above (#5582).
     workers: 3
     # Pin Kubernetes deliberately so 'ksail cluster update' doesn't roll nodes
     # to ksail's newer default when that default outruns what the pinned Talos
@@ -352,3 +373,9 @@ spec:
         - Canary
         - ResourceGraphDefinition
         - Tenant
+      # The public CRD catalogue's Cilium 1.20.2 update (its commit 8f08f38d)
+      # uses a `\u` regular expression that kubeconform's Go engine cannot
+      # compile, which it reports as a missing schema. So stay on the revision
+      # just before it, in both configs. Remove once the catalogue compiles again.
+      schemaLocations:
+        - https://raw.githubusercontent.com/datreeio/CRDs-catalog/6ec4c804fcb9b0a90fec9dd468aa57b984be150a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json

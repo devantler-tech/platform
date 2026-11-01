@@ -12,7 +12,7 @@ import (
 // proxyFixture admits the declared public adapter, without company data or credentials.
 func proxyFixture(t *testing.T) ([]byte, []byte) {
 	t.Helper()
-	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
+	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
 	p := changePod(t, fixturePod(t), func(p map[string]any) {
 		spec := p["spec"].(map[string]any)
 		containers := spec["containers"].([]any)
@@ -45,7 +45,7 @@ func proxyFixture(t *testing.T) ([]byte, []byte) {
 
 // TestProxyObservationRejectsUnboundExecution catches accepting an altered adapter or stale observation.
 func TestProxyObservationRejectsUnboundExecution(t *testing.T) {
-	for _, scenario := range []string{"healthy", "reordered", "unreviewed-image", "injected-environment", "secret-mount", "changed-command", "unknown-map", "changed-public-config", "proxy-config-replaced", "proxy-restarted", "proxy-unready"} {
+	for _, scenario := range []string{"healthy", "reordered", "unreviewed-image", "retired-serving-image", "retired-proxy-image", "injected-environment", "secret-mount", "changed-command", "unknown-map", "changed-public-config", "proxy-config-replaced", "proxy-restarted", "proxy-unready"} {
 		t.Run(scenario, func(t *testing.T) {
 			before, proxyMap := proxyFixture(t)
 			if scenario == "reordered" {
@@ -64,6 +64,10 @@ func TestProxyObservationRejectsUnboundExecution(t *testing.T) {
 					switch scenario {
 					case "unreviewed-image":
 						proxy["image"] = "unreviewed"
+					case "retired-serving-image":
+						spec["containers"].([]any)[0].(map[string]any)["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
+					case "retired-proxy-image":
+						proxy["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
 					case "injected-environment":
 						proxy["env"] = []any{map[string]any{"name": "PRIVATE_SENTINEL", "value": "unreviewed"}}
 					case "secret-mount":

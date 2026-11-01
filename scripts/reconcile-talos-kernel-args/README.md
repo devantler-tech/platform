@@ -417,6 +417,58 @@ cluster API and charts are byte-identical, and KSail imports the AWS
 configuration loader only in its AWS credential, SSO and EKS code, which the
 Talos fold never uses.
 
+**7.203.34**, commit `70a9d1314b4ddb38b8f590bd3428509f260fe713`, is audited
+against 7.203.21. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. Only `go.mod` and `go.sum` change: Kubescape
+`opa-utils` v0.0.314 → v0.0.315 and AWS SDK EKS v1.103.0 → v1.104.1. Every
+changed checksum belongs to those two modules; the Go directive, Talos
+machinery and encoding dependencies are unchanged. The complete 1,016-package
+dependency closure of the Talos configuration manager, generator and cluster
+API contains neither changed module. Source review confirms the normalized
+extension/argument trigger, both-role fold and explicit schematic-ID precedence
+are unchanged. The other release changes affect image export, local web UI
+request validation, Hetzner shutdown reporting, Gatekeeper drain behavior and
+KSail's own documentation, CI and scanner exception; none changes the mirrored
+fold. The offline render regression retains both production and local roles,
+explicit and whitespace schematic IDs, and invalid-patch refusals. This audit
+changes no cluster configuration or vulnerability exception.
+
+**7.204.30**, commit `0df3e213ad5d42308f9f60858f874637c6a798c5`, is audited
+against 7.203.34. The Talos generator and `configmanager/talos`, which holds the
+fold, are byte-identical. In the distribution caller, only the default Kind
+configuration literal changes spelling (Go 1.27 promoted-field form) and the
+explicit schematic-ID path is untouched. The cluster API and charts add one
+optional `spec.workload.validation.kyvernoApiCallResponses` path and spell
+`NewCluster`'s type metadata the same way; `spec.cluster.talos` keeps its names,
+types and defaults. `go.mod` moves the Go directive from 1.26.9 to 1.27.3 and
+seven modules: azidentity, the Microsoft authentication library, Cilium, the
+Copilot SDK, go-jose, Sigstore and Wails. Talos machinery stays at
+v1.14.0-alpha.2 and the YAML encoders are unchanged. None of the seven is in the
+dependency closure of the Talos configuration manager, generator or cluster API;
+three reach the wider distribution manager only through AKS and OCI encryption
+code the Talos path never calls. This audit changes no cluster configuration or
+vulnerability exception.
+
+**7.205.1**, commit `51af0033df04e3c3f8f18f58802204f4e5d136ef`, is audited
+against 7.204.30. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. `go.mod` and `go.sum` change one module, the indirect
+`go-chi/chi` from v5.3.0 to v5.4.0. Talos machinery stays at v1.14.0-alpha.2 and
+the YAML encoders are unchanged. At this tag `go list -deps` finds the module in
+neither the Talos configuration manager, generator and cluster API, nor the wider
+distribution manager; the same read finds the machinery packages. This audit
+changes no cluster configuration or vulnerability exception.
+
+**7.205.3**, commit `720eb6f50e57a5cd1d3849c500ec1081b6e95214`, is audited
+against 7.205.1; 7.205.2 has the inputs audited at 7.205.1. The configuration
+manager, Talos generator, cluster API and charts are byte-identical. `go.mod` and
+`go.sum` change one module: `loft-sh/log` drops the `devantler/log` fork and moves
+to the upstream commit holding the same fix. Talos machinery stays at
+v1.14.0-alpha.2 and the YAML encoders are unchanged. At this tag `go list -deps`
+finds the module in neither the Talos configuration manager, generator nor cluster
+API. It reaches the wider distribution manager only through KSail's vCluster
+provisioner and the vCluster packages it imports, which the Talos path never calls.
+This audit changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

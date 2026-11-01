@@ -111,6 +111,9 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test -parallel 8 -timeout 20m ./...
 
+      - name: 🧪 Validate gateway receiver policies with the native admission engine
+        run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
+
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
@@ -233,6 +236,7 @@ jobs:
               - 'scripts/tests/test-data-product-runtime-digests.sh'
               - 'scripts/verify-data-product-ui-rollout.sh'
               - 'scripts/tests/test-oauth2-proxy-sso-redirects.sh'
+              - 'scripts/tests/longhorn-ui-readonly/**'
               - 'scripts/tests/test-dex-theme-mount.sh'
               - 'scripts/tests/test-umami-tracking-probe.sh'
               - 'scripts/tests/fixtures/umami-curl-stub.sh'
@@ -381,6 +385,12 @@ jobs:
               - 'scripts/probe-cilium-externalauth-crossnode.sh'
               - 'scripts/tests/test-probe-cilium-externalauth-crossnode.sh'
               - '.github/workflows/probe-cilium-externalauth-crossnode.yaml'
+              # The #5448 denied-peer probe, its test and its workflow are one contract:
+              # the test pins what the probe may write to production, that it cleans
+              # up, and that no address reaches the public log.
+              - 'scripts/probe-gateway-denied-peer.sh'
+              - 'scripts/tests/test-probe-gateway-denied-peer.sh'
+              - '.github/workflows/probe-gateway-denied-peer.yaml'
               # The #3144 admission probe, its test and its workflow are one
               # contract: the test pins that every write the probe sends is a
               # server-side dry run and that no identity reaches the public log.
@@ -411,7 +421,8 @@ jobs:
               - 'scripts/tests/test-coroot-node-agent-hotfix.sh'
               - '.github/workflows/publish-coroot-node-agent-hotfix.yaml'
               - 'k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile'
-              - 'k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch'
+              - 'k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch'
+              - 'k8s/bases/infrastructure/coroot/cluster-agent-v1.11.8-otel-log-api.patch'
               - 'scripts/tests/test-kubescape-node-agent-hotfix.sh'
               - '.github/workflows/publish-kubescape-node-agent-hotfix.yaml'
               - 'scripts/kubescape-backlog-bridge/**'
@@ -483,6 +494,7 @@ jobs:
               - 'scripts/tests/test-coroot-api-key-contract.sh'
               - 'scripts/tests/test-coroot-availability-remediation.sh'
               - 'scripts/tests/test-descheduler-availability.sh'
+              - 'scripts/tests/test-kyverno-migration-hook-lifecycle.sh'
               - 'scripts/tests/test-coroot-risk-acceptance-reconciler.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-activation.sh'
               - 'scripts/tests/test-cilium-homogeneous-devices-autoscaler-gate.sh'
@@ -1795,7 +1807,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -2409,6 +2421,14 @@ jobs:
           shellcheck scripts/probe-cilium-externalauth-crossnode.sh scripts/tests/test-probe-cilium-externalauth-crossnode.sh
           bash scripts/tests/test-probe-cilium-externalauth-crossnode.sh
 
+      - name: 🚧 Validate Gateway denied-peer probe
+        if: needs.changes.outputs.k8s == 'true'
+        # The probe needs prod, runs only on dispatch and writes while it runs. Its
+        # test fakes kubectl and pins each verdict against a one-fixture control.
+        run: |
+          shellcheck scripts/probe-gateway-denied-peer.sh scripts/tests/test-probe-gateway-denied-peer.sh
+          bash scripts/tests/test-probe-gateway-denied-peer.sh
+
       - name: 🔏 Validate GitHub Team external-identity probe
         if: needs.changes.outputs.k8s == 'true'
         # The probe needs prod and runs only on dispatch. Its test fakes kubectl
@@ -2503,6 +2523,8 @@ jobs:
           bash scripts/tests/test-coroot-availability-remediation.sh
           shellcheck scripts/tests/test-descheduler-availability.sh
           bash scripts/tests/test-descheduler-availability.sh
+          shellcheck scripts/tests/test-kyverno-migration-hook-lifecycle.sh
+          bash scripts/tests/test-kyverno-migration-hook-lifecycle.sh
           shellcheck scripts/tests/test-umami-rendered-placement.sh
           bash scripts/tests/test-umami-rendered-placement.sh
           shellcheck scripts/tests/test-coroot-risk-acceptance-reconciler.sh
@@ -3000,7 +3022,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3434,7 +3456,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3452,6 +3474,12 @@ jobs:
         env:
           VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
+      - name: 🔒 Prove Longhorn dashboard read-only routing
+        if: matrix.suite == 'native'
+        timeout-minutes: 5
+        env:
+          LONGHORN_UI_NATIVE_TEST: '1'
+        run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'
         run: |
@@ -4415,7 +4443,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.203.28"
+          KSAIL_VERSION: "7.205.3"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4618,7 +4646,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@84f4cddc69d6a5a937a7e83d2bd77a438d932f26 # v17.0.0
+        uses: devantler-tech/.github/actions/aggregate-job-checks@5b5777ddfcb1f0273eeece79eebf6ad01a5f3df9 # v19.0.1
         with:
           job-results: >-
             ${{ needs.changes.result }}
