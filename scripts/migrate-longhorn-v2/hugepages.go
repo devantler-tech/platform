@@ -54,7 +54,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		if err != nil {
 			return nil, "", err
 		}
-		address, err := verifyNode(n, j)
+		address, err := verifyNode(n, j, true)
 		status, _ := value(n, "status").(map[string]any)
 		cordoned := value(n, "spec", "unschedulable") == true
 		if err != nil || !ready(status) || cordoned && text(n, "metadata", "annotations", fenceAnnotation) != fence || text(n, "status", "nodeInfo", "bootID") != boot {
@@ -233,7 +233,7 @@ func refreshClients(ctx context.Context, c client, source string, pools map[stri
 	if err = c.releaseProvenRefreshCordons(ctx, s.nodes); err != nil {
 		return err
 	}
-	if err = verifyCapacityRoster(s.nodes, pools); err != nil {
+	if err = verifyCapacityRoster(s.nodes, pools, false); err != nil {
 		return err
 	}
 	// A worker this procedure left cordoned goes first, so a hold on another cannot strand it.
@@ -251,7 +251,7 @@ func refreshClients(ctx context.Context, c client, source string, pools map[stri
 		if err = verifyRedundancy(fresh); err != nil {
 			return err
 		}
-		if err = verifyCapacityRoster(fresh.nodes, pools); err != nil {
+		if err = verifyCapacityRoster(fresh.nodes, pools, false); err != nil {
 			return err
 		}
 		if err = refreshHugepages(ctx, c, source, n, fresh.pods); err != nil {
