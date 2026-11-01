@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 	"gopkg.in/yaml.v3"
 	"os"
 	"os/exec"
@@ -292,6 +293,7 @@ type fenceAPI struct {
 	policies      map[string][]byte
 	bindings      map[string][]byte
 	admissionLive bool
+	refuseWrites  bool
 	writes        [][]byte
 }
 
@@ -300,6 +302,9 @@ func (a *fenceAPI) command(_ context.Context, input []byte, args ...string) ([]b
 	switch {
 	case strings.Contains(joined, " patch ciliumenvoyconfig "):
 		a.writes = append(a.writes, input)
+		if a.refuseWrites {
+			return nil, errors.New("denied")
+		}
 		if a.admissionLive {
 			setFencePeer(a.config, "192.0.2.5", true)
 		}
@@ -386,6 +391,10 @@ func TestInstallFenceWritesOnlyTheConditionalMarker(t *testing.T) {
 	if json.Unmarshal(api.writes[0], &touch) != nil || len(touch) != 1 || len(touch["metadata"]) != 3 {
 		t.Fatalf("the write reaches beyond the marker: %s", api.writes[0])
 	}
+	annotations, _ := touch["metadata"]["annotations"].(map[string]any)
+	if len(annotations) != 1 || annotations[receiverOwner] != "v1" {
+		t.Fatalf("the write does not carry only the marker: %s", api.writes[0])
+	}
 	if touch["metadata"]["uid"] != "22222222-2222-4222-8222-222222222222" || touch["metadata"]["resourceVersion"] != "100" {
 		t.Fatalf("the write is not conditional on the observed object: %s", api.writes[0])
 	}
@@ -454,7 +463,12 @@ func TestInstallFenceStopsAtTheDeadlineAsUnverified(t *testing.T) {
 func TestInstallFenceRefusesStateAWriteCannotCorrect(t *testing.T) {
 	t.Chdir(filepath.Join("..", ".."))
 	for name, change := range map[string]func(map[string]any){
-		"different peer": func(c map[string]any) { setFencePeer(c, "192.0.2.6", true) },
+		"wider prefix": func(c map[string]any) {
+			setFencePeer(c, "192.0.2.5", true)
+			listener := c["spec"].(map[string]any)["resources"].([]any)[1].(map[string]any)
+			match := listener["filterChains"].([]any)[1].(map[string]any)["filterChainMatch"].(map[string]any)
+			match["directSourcePrefixRanges"].([]any)[0].(map[string]any)["prefixLen"] = 24
+		},
 		"foreign gateway": func(c map[string]any) {
 			c["metadata"].(map[string]any)["ownerReferences"].([]any)[0].(map[string]any)["uid"] = "99999999-9999-4999-8999-999999999999"
 		},
@@ -473,5 +487,173 @@ func TestInstallFenceRefusesStateAWriteCannotCorrect(t *testing.T) {
 				t.Fatalf("err=%v writes=%d", err, len(api.writes))
 			}
 		})
+	}
+}
+
+func TestInstallFenceRewritesAFenceBoundToAnEarlierPeer(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	api, b := newFenceAPI(t)
+	setFencePeer(api.config, "192.0.2.6", true)
+	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(context.Context, time.Duration) error { return nil })
+	if err != nil || !wrote || len(api.writes) != 1 {
+		t.Fatalf("wrote=%v err=%v writes=%d", wrote, err, len(api.writes))
+	}
+	raw, _ := json.Marshal(api.config)
+	if fenceActive(raw, b) != nil {
+		t.Fatal("the earlier peer survived")
+	}
+}
+
+func TestInstallFenceNamesARefusedWrite(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	api, b := newFenceAPI(t)
+	api.refuseWrites = true
+	pauses := 0
+	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(context.Context, time.Duration) error {
+		pauses++
+		if pauses == 2 {
+			return errors.New("cancelled")
+		}
+		return nil
+	})
+	if wrote || err == nil || err.Error() != "receiver-write-refused" {
+		t.Fatalf("wrote=%v err=%v", wrote, err)
+	}
+}
+
+func TestSameReceiverIgnoresOnlyResourceVersions(t *testing.T) {
+	a := binding{CIDR: "192.0.2.5/32", ServiceUID: "s", GatewayUID: "g", ServiceVersion: "1", GatewayVersion: "1", PublicIPv4: "198.51.100.1"}
+	later := a
+	later.ServiceVersion, later.GatewayVersion = "2", "2"
+	if !sameReceiver(a, later) {
+		t.Fatal("a status write read as a changed receiver")
+	}
+	for name, change := range map[string]func(*binding){
+		"peer":    func(x *binding) { x.CIDR = "192.0.2.6/32" },
+		"service": func(x *binding) { x.ServiceUID = "other" },
+		"gateway": func(x *binding) { x.GatewayUID = "other" },
+		"public":  func(x *binding) { x.PublicIPv4 = "198.51.100.2" },
+	} {
+		other := a
+		change(&other)
+		if sameReceiver(a, other) {
+			t.Fatalf("%s change was ignored", name)
+		}
+	}
+}
+
+// restoreFake models an API server: a patch applies unless a binding it still
+// holds reapplies the fence, for the first lag attempts.
+func restoreFake(t *testing.T, peer string, lag int) (receiverClient, map[string]any, *int) {
+	t.Helper()
+	config, _ := disabledFixture()
+	setFencePeer(config, peer, true)
+	patches := 0
+	return receiverClient{context: "admin@prod", pause: func(context.Context, time.Duration) error { return nil }, command: func(_ context.Context, input []byte, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		switch {
+		case strings.Contains(joined, " patch ciliumenvoyconfig "):
+			patches++
+			if patches <= lag {
+				return []byte("{}"), nil
+			}
+			patch, err := jsonpatch.DecodePatch(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw, _ := json.Marshal(config)
+			out, err := patch.Apply(raw)
+			if err != nil {
+				return nil, err
+			}
+			for key := range config {
+				delete(config, key)
+			}
+			if err := json.Unmarshal(out, &config); err != nil {
+				t.Fatal(err)
+			}
+			return out, nil
+		case strings.Contains(joined, " get ciliumenvoyconfig "):
+			return json.Marshal(config)
+		}
+		t.Fatalf("unexpected command: %s", joined)
+		return nil, nil
+	}}, config, &patches
+}
+
+func TestRestorationRetriesAnAPIServerStillHoldingABinding(t *testing.T) {
+	c, config, patches := restoreFake(t, "192.0.2.5", 2)
+	_, b := disabledFixture()
+	if err := c.restoreConfig(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(config)
+	if p, err := disabledPatch(raw, b); err != nil || len(p) != 0 || *patches != 3 {
+		t.Fatalf("patch=%s err=%v patches=%d", p, err, *patches)
+	}
+}
+
+func TestRestorationGivesUpAsUnverified(t *testing.T) {
+	c, _, patches := restoreFake(t, "192.0.2.5", restoreAttempts+1)
+	_, b := disabledFixture()
+	err := c.restoreConfig(context.Background(), b)
+	if err == nil || err.Error() != "receiver-restoration-unverified" || *patches != restoreAttempts {
+		t.Fatalf("err=%v patches=%d", err, *patches)
+	}
+}
+
+func TestRestorationRemovesAFenceBoundToAnEarlierPeer(t *testing.T) {
+	c, config, _ := restoreFake(t, "192.0.2.6", 0)
+	_, b := disabledFixture()
+	if err := c.restoreConfig(context.Background(), b); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(config)
+	if p, err := disabledPatch(raw, b); err != nil || len(p) != 0 {
+		t.Fatalf("patch=%s err=%v", p, err)
+	}
+}
+
+func TestRecoveryRemovesOnlyTheShapeThePolicyInstalls(t *testing.T) {
+	host := map[string]any{"addressPrefix": "192.0.2.6", "prefixLen": float64(32)}
+	if !singleHostPeer([]any{host}) {
+		t.Fatal("a single host was refused")
+	}
+	for name, value := range map[string]any{
+		"none":       []any{},
+		"two":        []any{host, host},
+		"extra key":  []any{map[string]any{"addressPrefix": "192.0.2.6", "prefixLen": float64(32), "other": true}},
+		"wider":      []any{map[string]any{"addressPrefix": "192.0.2.6", "prefixLen": float64(24)}},
+		"ipv6":       []any{map[string]any{"addressPrefix": "2001:db8::1", "prefixLen": float64(32)}},
+		"not an ip":  []any{map[string]any{"addressPrefix": "example.invalid", "prefixLen": float64(32)}},
+		"not a list": host,
+	} {
+		if singleHostPeer(value) {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+// The policies are read after the removal, because the fence may be what stops
+// Flux from delivering them.
+func TestRestorationRemovesTheFenceBeforeReportingStalePolicies(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	c, config, _ := restoreFake(t, "192.0.2.6", 0)
+	_, b := disabledFixture()
+	inner := c.command
+	c.command = func(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "ciliumenvoyconfig") {
+			return inner(ctx, input, args...)
+		}
+		return nil, nil // no bindings, and the policies have not arrived
+	}
+	err := c.restoreReceiver(context.Background(), b)
+	if !isPolicyDrift(err) {
+		t.Fatalf("err=%v", err)
+	}
+	raw, _ := json.Marshal(config)
+	if p, perr := disabledPatch(raw, b); perr != nil || len(p) != 0 {
+		t.Fatalf("the fence stayed: patch=%s err=%v", p, perr)
 	}
 }

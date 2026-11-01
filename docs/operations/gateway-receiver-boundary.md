@@ -7,7 +7,7 @@ Gateway. Every TLS chain accepts only the load balancer's private address. The
 forwarding protocol does not change: provider and receiver PROXY settings remain
 explicitly disabled, and turning them on is a later reviewed activation.
 
-The eventual fence uses Envoy's `direct_source_prefix_ranges` on every TLS
+The fence uses Envoy's `direct_source_prefix_ranges` on every TLS
 filter chain. This matches the physical connection peer independently of any
 client address claimed by a PROXY header. Cilium's ingress identity alone does
 not establish that boundary: the pinned listener processes PROXY metadata before
@@ -64,8 +64,8 @@ match reviewed source and the validating policy's current generation to have
 completed type checking without warnings.
 
 Before restoring disabled state, the helper checks the generated listener and
-both bindings. An active PROXY listener, unknown owner, changed peer, foreign
-binding, or ambiguous configuration refuses every planned write. The helper
+both bindings. An active PROXY listener, unknown owner, foreign binding or ambiguous configuration
+refuses every planned write. The helper
 removes only its exact bindings with observed UID and resource-version deletion
 preconditions, then conditionally removes only its owned peer fields and marker.
 It preserves all other controller configuration and metadata. Readback resolves
@@ -82,29 +82,49 @@ TLS chain. A revision that goes back to unselected, including main's recovery af
 a failed activation, removes the fence as before. A failed render, missing
 policies or a partial or foreign binding fails without a write.
 
-Admission applies only when the generated listener is written, and the controller
-does not rewrite an unchanged listener. So between those two steps, `apply-selected`
-waits a bounded time for the reviewed policies and bindings, which arrive with the
-later `infrastructure` Flux layer, then writes only the ownership marker, conditional on the observed UID
-and resource version. Admission installs the fence on that write, including after a
-listener lost it. It writes nothing when the fence is already active or the source
-leaves it unselected, and refuses a foreign owner, a different peer or an active
-PROXY listener. Every step still refuses an active PROXY listener, so turning the
-transport on needs its own change to this helper.
+Admission applies only when
+the generated listener is written, and the controller does not rewrite an unchanged
+listener. So between those two steps, `apply-selected` waits a bounded time for the
+reviewed policies and bindings, which arrive with the later `infrastructure` Flux
+layer. It then writes only the ownership marker, conditional on the observed UID and
+resource version, and admission installs the fence on that write. That also repairs
+a listener that lost the fence, and rewrites one bound to an earlier peer. It writes
+nothing when the fence is already current or the source leaves it unselected, and
+refuses a foreign owner, an unexpected peer shape or an active PROXY listener. After a write it
+makes 40 public connections, which shows the fence does not refuse the load balancer
+but cannot show that a listener took it. Every step still refuses an active PROXY
+listener, so turning the transport on needs its own change to this helper.
+
+The verify step needs Flux to converge first. A fence that refuses public traffic could
+be what stops convergence, and Flux prunes the bindings without removing the fields
+they installed. So when a deployment published its source and convergence then fails,
+it still runs `restore-disabled`, which writes nothing while that source selects the
+fence.
+
+Restoration does not need the binding or the policies to have converged, and removes a
+fence bound to any single host. It reports a stale binding or policy afterwards, so the
+deployment still fails with the fence gone. It retries for a short time, because an API
+server still holding a removed binding reapplies the fence.
 
 ## Recovery while selected
 
 If the fence itself refuses public traffic, revert the selection: the deployment on
-the reverted source removes the bindings and the fields it installed.
+the reverted source removes the bindings and the fields.
 
-The bound peer belongs to one load balancer. A replacement that keeps the Gateway
-but changes the private address leaves a fence with the old peer, which refuses
-every public TLS route and fails `apply-selected`. Revert the selection, deploy,
-prepare the replacement binding, then select it again. A rebuilt cluster with a stale
-binding has the same problem, so unselect the fence before rebinding it.
+The bound peer belongs to one load balancer. If a replacement changes its private
+address, or a cluster is rebuilt, every public TLS route is refused and the binding is
+stale, so `apply-selected` waits for its whole budget and fails at `source-secret`.
+Prepare the replacement binding and merge it. When Flux can converge, its deployment
+applies the new peer with no need to unselect first.
 
-The following read-only check requires what the source selects, and the generated
-listener free of PROXY filters:
+**Known limit.** If public traffic being refused also stops Flux from converging, these
+merges cannot finish on their own. The failed run of a revert removes the fence, but
+that run is evicted from the queue, and the recovery from main, which still selects the
+fence, installs it again. Whether Flux depends on public routes in this way has not been
+measured. If it happens, the maintainer has to land the revert outside the queue.
+
+With the component unselected, the following read-only check requires both bindings
+absent and the generated listener free of this fence and PROXY filters:
 
 ```sh
 go run ./scripts/gateway-receiver-binding verify --context admin@prod
@@ -112,12 +132,11 @@ go run ./scripts/gateway-receiver-binding verify --context admin@prod
 
 It probes Homepage and OpenBao through the provider's actual public endpoint with
 normal hostname and TLS verification, bypassing edge caches, and repeats with
-unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED fence_selected=true`
-establishes the fence on every TLS chain and positive public paths. It does not
-prove that another peer is refused, original-client attribution, Email
-administration, or protocol activation.
+unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED` establishes the
+declared state and positive public paths. It does not prove that another peer is
+refused, original-client attribution, Email administration, or protocol activation.
 
-Before turning the transport on, #5448 still requires native denied peer probes,
+Before activation, #5448 still requires native allowed and denied peer probes,
 forged PROXY metadata rejection, controller revision stability, the real Email
 path, authenticated administration and observed recovery. Preserve all stored
 access rules throughout that work.

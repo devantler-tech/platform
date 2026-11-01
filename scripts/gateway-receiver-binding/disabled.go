@@ -21,10 +21,34 @@ type receiverConfig struct {
 	Spec struct{ Resources []map[string]any }
 }
 
-// disabledPatch removes only fields installed by this receiver's declared policy.
-// The native main recovery path uses it after removing the exact policy bindings.
-// It never replaces the controller-generated resource or its other route fields.
-func disabledPatch(raw []byte, b binding) ([]byte, error) {
+// disabledPatch removes only fields installed by this receiver's declared policy,
+// and requires the bound peer. It never replaces the controller-generated resource
+// or its other route fields.
+func disabledPatch(raw []byte, b binding) ([]byte, error) { return ownedPatch(raw, b, true) }
+
+// recoveryPatch is disabledPatch for a fence installed for another peer. A replaced
+// load balancer must not make the fence that now refuses it impossible to remove.
+func recoveryPatch(raw []byte, b binding) ([]byte, error) { return ownedPatch(raw, b, false) }
+
+// singleHostPeer is the only peer shape the declared policy installs.
+func singleHostPeer(value any) bool {
+	items, ok := value.([]any)
+	if !ok || len(items) != 1 {
+		return false
+	}
+	entry, ok := items[0].(map[string]any)
+	if !ok || len(entry) != 2 || entry["prefixLen"] != float64(32) {
+		return false
+	}
+	address, ok := entry["addressPrefix"].(string)
+	if !ok {
+		return false
+	}
+	parsed, err := netip.ParseAddr(address)
+	return err == nil && parsed.Is4()
+}
+
+func ownedPatch(raw []byte, b binding, exactPeer bool) ([]byte, error) {
 	bad := func() ([]byte, error) { return nil, errors.New("disabled-receiver-state") }
 	var o receiverConfig
 	if strictJSON(raw, &o) != nil || o.APIVersion != "cilium.io/v2" || o.Kind != "CiliumEnvoyConfig" || o.Metadata.Name != "cilium-gateway-platform" || o.Metadata.Namespace != "kube-system" || !uuid.MatchString(o.Metadata.UID) || o.Metadata.ResourceVersion == "" || o.Metadata.DeletionTimestamp != nil {
@@ -108,7 +132,7 @@ func disabledPatch(raw []byte, b binding) ([]byte, error) {
 					continue
 				}
 				expected := []any{map[string]any{"addressPrefix": prefix.Addr().String(), "prefixLen": float64(32)}}
-				if !present || !reflect.DeepEqual(value, expected) {
+				if !present || !singleHostPeer(value) || (exactPeer && !reflect.DeepEqual(value, expected)) {
 					return bad()
 				}
 				ops = append(ops, map[string]any{"op": "remove", "path": fmt.Sprintf("/spec/resources/%d/filterChains/%d/filterChainMatch/directSourcePrefixRanges", ri, ci)})

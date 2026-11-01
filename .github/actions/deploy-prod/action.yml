@@ -671,6 +671,18 @@ runs:
         go run ./scripts/gateway-receiver-binding apply-selected --context admin@prod
         go run ./scripts/gateway-receiver-binding verify --context admin@prod
 
+    - name: Remove an unselected Gateway receiver fence after a failed convergence
+      # Flux prunes the bindings but not the fields they installed, and the step
+      # above needs convergence. A fence that refuses public traffic can be what
+      # stops convergence, so its removal must not wait for it. It writes nothing
+      # while the checked-out source selects the fence.
+      if: >-
+        !cancelled() &&
+        steps.publish_platform_manifest.outcome == 'success' &&
+        steps.wait_flux_revision.outcome != 'success'
+      shell: bash
+      run: go run ./scripts/gateway-receiver-binding restore-disabled --context admin@prod
+
     - name: Verify the deployed data product UI release
       # The protected deployment must prove current Apps/chart/Helm identities,
       # all current Pods and public endpoints before its candidate can merge.

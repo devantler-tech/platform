@@ -182,7 +182,16 @@ const (
 	// Each node's Envoy receives the listener after the object is written, and
 	// the public probes that follow must exercise the fenced listener.
 	fenceSettle = 20 * time.Second
+	// Two hosts per round, one connection each.
+	fenceProbeRounds = 20
 )
+
+// sameReceiver ignores resource versions: routes landing during the wait update
+// the Gateway's status, which does not change what the fence is bound to.
+func sameReceiver(a, b binding) bool {
+	a.ServiceVersion, a.GatewayVersion, b.ServiceVersion, b.GatewayVersion = "", "", "", ""
+	return a == b
+}
 
 // fenceTouch writes only the ownership marker, conditionally. Admission applies
 // only to writes and the controller does not rewrite an unchanged listener, so
@@ -201,16 +210,16 @@ func fenceTouch(raw []byte) ([]byte, error) {
 
 // installFence retries until the reviewed policies, the bindings and the fence
 // all read as current. Policies or bindings behind the source are the normal lag
-// behind Flux, so they wait and write nothing. A listener this
-// helper does not own, an active PROXY listener or a different peer fails at
-// once, because a write could not make any of them correct.
+// behind Flux, so they wait and write nothing. A fence for an earlier peer is
+// rewritten by the same write. A listener this helper does not own or an active
+// PROXY listener fails at once, because a write could not make either correct.
 func (c receiverClient) installFence(ctx context.Context, b binding, pause func(context.Context, time.Duration) error) (bool, error) {
 	wrote := false
 	var last error
 	for {
 		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
 		if err == nil {
-			if _, err := disabledPatch(raw, b); err != nil {
+			if _, err := recoveryPatch(raw, b); err != nil {
 				return wrote, err
 			}
 			last = c.policies(ctx, b)
@@ -230,9 +239,12 @@ func (c receiverClient) installFence(ctx context.Context, b binding, pause func(
 				}
 				// A conflict or an API server still catching up on the policy
 				// shows up in the next read.
-				_, _ = c.command(ctx, touch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=merge", "--patch-file=/dev/stdin", "-o=json")
-				wrote = true
-				last = errors.New("receiver-not-fenced")
+				if _, err := c.command(ctx, touch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=merge", "--patch-file=/dev/stdin", "-o=json"); err != nil {
+					last = errors.New("receiver-write-refused")
+				} else {
+					wrote = true
+					last = errors.New("receiver-not-fenced")
+				}
 			}
 		} else {
 			last = err
@@ -262,17 +274,31 @@ func applySelected(ctx context.Context, kubeContext string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
-	if err != nil || !secretMatches(secret, before) {
-		return false, errors.New("source-secret")
+	// A replacement binding reaches the cluster through Flux, so a stale one waits too.
+	for {
+		secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
+		if err == nil && secretMatches(secret, before) {
+			break
+		}
+		if pauseFor(ctx, fencePollEvery) != nil {
+			return false, errors.New("source-secret")
+		}
 	}
 	c := receiverClient{context: kubeContext, command: executeReceiver}
 	wrote, err := c.installFence(ctx, before, pauseFor)
 	if err != nil {
 		return wrote, err
 	}
+	// Enough fresh connections to reach most nodes behind the load balancer, once,
+	// when the listeners change. This shows the fence does not refuse the load
+	// balancer; it cannot show that a listener took the fence.
+	for round := 0; wrote && round < fenceProbeRounds; round++ {
+		if err := probePublic(ctx, before.PublicIPv4); err != nil {
+			return wrote, err
+		}
+	}
 	after, err := collect(ctx, kubeContext)
-	if err != nil || after != before {
+	if err != nil || !sameReceiver(before, after) {
 		return wrote, errors.New("source-changed")
 	}
 	return wrote, nil
