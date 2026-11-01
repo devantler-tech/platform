@@ -203,6 +203,7 @@ jobs:
               - 'scripts/openbao-backup-recovery/**'
               - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/test-ksail-operator-startup-order.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
               - 'scripts/tests/openbao-transport-runtime/**'
@@ -291,6 +292,7 @@ jobs:
               # gate that proves the rule actually fires are one contract.
               - 'tests/label-baseline-workers/**'
               - 'scripts/tests/test-label-baseline-workers.sh'
+              - 'scripts/tests/test-longhorn-migration-replica-exclusion.sh'
               # Exact Longhorn registrar mutation, near-miss fixtures, chart
               # version coupling and least-privilege background-controller RBAC.
               - 'tests/longhorn-registrar-prestop/**'
@@ -2021,6 +2023,8 @@ jobs:
           bash scripts/tests/test-provider-drc-pod-seccomp.sh
           shellcheck scripts/tests/test-label-baseline-workers.sh
           bash scripts/tests/test-label-baseline-workers.sh
+          shellcheck scripts/tests/test-longhorn-migration-replica-exclusion.sh
+          bash scripts/tests/test-longhorn-migration-replica-exclusion.sh
           shellcheck scripts/tests/test-hcloud-baseline-worker-affinity.sh
           bash scripts/tests/test-hcloud-baseline-worker-affinity.sh
 
@@ -3519,6 +3523,11 @@ jobs:
           key: kubeconform-schema-cache-v1-render-regressions-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+      - name: 🔁 Validate KSail startup layer ordering
+        if: matrix.suite == 'contracts'
+        run: |
+          shellcheck scripts/tests/test-ksail-operator-startup-order.sh
+          bash scripts/tests/test-ksail-operator-startup-order.sh
       - name: 🔐 Prove snapshot readback with pinned static tooling
         if: matrix.suite == 'native'
         timeout-minutes: 5

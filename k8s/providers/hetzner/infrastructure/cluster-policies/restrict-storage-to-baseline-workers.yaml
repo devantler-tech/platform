@@ -1,7 +1,8 @@
-# Prod-only: keep Longhorn replica storage OFF the ephemeral autoscaler nodes,
-# enforcing the documented compute-only contract for the autoscale-cx* pools
-# (ksail.prod.yaml: "the static workers are ... the only Longhorn storage
-# nodes (autoscaler nodes are compute-only)").
+# Prod-only: keep Longhorn replica storage OFF ordinary autoscaler compute nodes.
+# For #5582 only, the fixed-size migration pools may be explicitly armed after
+# the protected workflow verifies their source, identity, encryption and owned
+# scale-down pins. Exact pool names AND the enabled label are required; new
+# migration nodes start fenced, just like every ordinary compute node.
 #
 # WHY THIS EXISTS: autoscaler nodes boot from the SAME Talos worker config as
 # the static workers (talos/workers/label-nodes.yaml), so they inherit the
@@ -77,6 +78,12 @@ spec:
                 - longhorn.io/v1beta2/Node
               names:
                 - "autoscale-*"
+      preconditions:
+        all:
+          - key: >-
+              {{ regex_match('^autoscale-longhorn-v[12]-[0-9a-f]{16}$', request.object.metadata.name) && (request.object.metadata.labels."storage.platform.devantler.tech/migration-enabled" || '') == 'true' }}
+            operator: Equals
+            value: false
       mutate:
         patchStrategicMerge:
           spec:

@@ -121,13 +121,17 @@ missing, duplicate and unknown suites, unselected and repeated regressions,
 ignored failures and premature cancellation. The generator and existing policy
 result controls exercise success and every selected non-success result.
 The additional manifest-regression boundary exercises both one- and two-worker
-routing, all eleven named checks, invalid worker bounds, selection, success,
+routing, all twelve named checks, invalid worker bounds, selection, success,
 failure, cancellation, missing results and unexpected skips. The step inventory
 must preserve commands, environments, pinned actions, deadlines, permissions
 and prerequisites against the reviewed baseline.
 The fixed guard-family boundary exercises independent and serial dependency
 shapes, lost jobs and dependencies, conditional or tolerated checks, unexpected
 prerequisites, write-permission drift, and every non-success aggregate result.
+The KSail startup regression renders both providers and their Flux dependency
+graph. It keeps the OIDC-dependent release alongside the Gateway, its signed
+source and namespace prerequisites earlier, production prune protection and
+authentication intact, and local KSail disabled unless explicitly opted in.
 `scripts/tests/test-fixture-workers.sh` proves actual overlap, complete receipts,
 serial operation and rejection of failures, early errors, duplicate or unknown
 cases, missing, corrupt or unassigned receipts, interruption and invalid worker

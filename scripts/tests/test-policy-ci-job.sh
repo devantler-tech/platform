@@ -271,7 +271,8 @@ jq -e --arg selection "github.event_name == 'pull_request' && needs.changes.outp
     "🔐 Validate Kyverno review admission boundaries",
     "🗺️ Validate every unscanned namespace is reviewed",
     "🔐 Validate the shared-publish-workflow pin guard",
-    "🩺 Validate declarative Coroot application health"] | all(.[];
+    "🩺 Validate declarative Coroot application health",
+    "🔁 Validate KSail startup layer ordering"] | all(.[];
       . as $name |
       ([$job.steps[] | select(.name == $name and
         (.if == "matrix.suite == '\''contracts'\''" or .if == "matrix.suite == '\''native'\''") and
@@ -306,4 +307,4 @@ for event in pull_request merge_group; do
     done
   done
 done
-echo 'PASS: all eleven manifest regressions run once and selected non-success outcomes are refused'
+echo 'PASS: all twelve manifest regressions run once and selected non-success outcomes are refused'

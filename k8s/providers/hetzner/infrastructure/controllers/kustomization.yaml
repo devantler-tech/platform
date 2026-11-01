@@ -151,10 +151,6 @@ patches:
   # docker/local-path provider cannot snapshot.
   - path: velero/patches/enable-csi-snapshots.yaml
   - path: velero/patches/prioritise-node-agent.yaml
-  # Prod-only: enable the ksail-operator's native Dex OIDC. The operator does
-  # eager startup OIDC discovery that needs a cluster-resolvable + TLS-trusted
-  # issuer, which the local *.platform.lan host-file domain isn't — see file.
-  - path: ksail-operator/patches/enable-oidc.yaml
   # Prod-only: point the Kubescape node-agent's runtime-detection alerts at the
   # in-cluster Alertmanager (alertmanager/ above) + keep the stdout exporter on,
   # fanning them out to Slack and Coroot — see file.
