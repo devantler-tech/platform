@@ -5,12 +5,62 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
+
+// TestNegativeResourceReachesTheActionPredicate guards against a vacuous denial.
+func TestNegativeResourceReachesTheActionPredicate(t *testing.T) {
+	if len(absent) <= 253 || len(absent) > 512 {
+		t.Fatal("negative resource must be impossible in Kubernetes and bounded")
+	}
+	for _, path := range []string{"../../k8s/bases/infrastructure/controllers/auth-proxy/cilium-network-policy.yaml", "../../k8s/providers/hetzner/infrastructure/controllers/longhorn/cilium-network-policy.yaml"} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var value any
+		if err = yaml.Unmarshal(data, &value); err != nil {
+			t.Fatal(err)
+		}
+		found := 0
+		var inspect func(any)
+		inspect = func(value any) {
+			switch v := value.(type) {
+			case map[string]any:
+				if method, ok := v["method"].(string); ok && method == "^POST$" {
+					expression, ok := v["path"].(string)
+					if ok && strings.HasPrefix(expression, "^/v1/volumes/") {
+						pattern := regexp.MustCompile(expression)
+						prefix := "/v1/volumes/" + absent + "?action="
+						if !pattern.MatchString(prefix+"snapshotList") || pattern.MatchString(prefix+"UNRECOGNIZED-READ-ONLY-PROBE&action=snapshotList") {
+							t.Error("negative probe does not isolate the complete-query action restriction")
+						}
+						found++
+					}
+				}
+				for _, child := range v {
+					inspect(child)
+				}
+			case []any:
+				for _, child := range v {
+					inspect(child)
+				}
+			}
+		}
+		inspect(value)
+		if found != 1 {
+			t.Fatal("expected one volume action rule at each boundary")
+		}
+	}
+}
 
 // TestProofRequiresEveryPositiveAndNegativeResponse rejects each failed check.
 func TestProofRequiresEveryPositiveAndNegativeResponse(t *testing.T) {

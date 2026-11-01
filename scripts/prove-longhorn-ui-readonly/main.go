@@ -17,9 +17,15 @@ import (
 
 type executor func(context.Context, ...string) ([]byte, error)
 
-// No real resource can have this Kubernetes name. The action is also unknown:
-// even if every read-only filter failed, these probes cannot mutate a volume.
-const absent = "READ-ONLY-PROBE-5649"
+// This lowercase name fits the HTTP filters' resource character class but
+// exceeds Kubernetes' 253-character CR name limit. Thus the duplicate-action
+// probe tests its query predicate instead of being denied for uppercase input.
+// The first action is also unknown; no probe can mutate an existing volume.
+const absent = "read-only-probe-5649-" +
+	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" +
+	"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 var statusLine = regexp.MustCompile(`^HTTP/1\.[01] ([1-5][0-9]{2}) [^\r\n]*\r?\n?$`)
 
