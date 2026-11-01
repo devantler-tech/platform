@@ -23,9 +23,9 @@ concurrency:
 
 env:
   SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
-  PATCHED_SOURCE_TREE: 55d2b33849e13fa3470646b0b25fda4970dd11b7
+  PATCHED_SOURCE_TREE: bb6b1b1c14b27fe1c752ca001555907590011d67
   IMAGE: ghcr.io/devantler-tech/platform-kyverno-reports
-  IMAGE_TAG: v1.19.2-watch-plan.1-${{ github.sha }}
+  IMAGE_TAG: v1.19.2-watch-plan.2-${{ github.sha }}
 
 jobs:
   verify:
@@ -60,10 +60,14 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          git fetch --no-write-fetch-head --depth=1 origin +refs/tags/v1.19.2:refs/tags/v1.19.2
+          test "$(git rev-parse "refs/tags/v1.19.2^{commit}")" = "${SOURCE_COMMIT}"
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
-          git add -- go.mod pkg/controllers/report/resource/controller.go \
+          git add -- cmd/internal/registry_security_test.go go.mod go.sum \
+            third_party/docker-credential-acr-env/ \
+            pkg/controllers/report/resource/controller.go \
             pkg/controllers/report/resource/controller_test.go \
             pkg/controllers/report/resource/watch_kinds.go \
             pkg/controllers/report/resource/watch_plan_test.go
@@ -100,8 +104,8 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      packages: write
-      id-token: write
+      packages: write # publish the tested image at an immutable source tag
+      id-token: write # sign through this protected main workflow identity
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
@@ -128,10 +132,14 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          git fetch --no-write-fetch-head --depth=1 origin +refs/tags/v1.19.2:refs/tags/v1.19.2
+          test "$(git rev-parse "refs/tags/v1.19.2^{commit}")" = "${SOURCE_COMMIT}"
           git apply --check --unidiff-zero "${HOTFIX_PATCH}"
           git apply --unidiff-zero "${HOTFIX_PATCH}"
           git diff --check
-          git add -- go.mod pkg/controllers/report/resource/controller.go \
+          git add -- cmd/internal/registry_security_test.go go.mod go.sum \
+            third_party/docker-credential-acr-env/ \
+            pkg/controllers/report/resource/controller.go \
             pkg/controllers/report/resource/controller_test.go \
             pkg/controllers/report/resource/watch_kinds.go \
             pkg/controllers/report/resource/watch_plan_test.go
@@ -176,7 +184,7 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           set -euo pipefail
-          test -n "${DIGEST}"
+          [[ "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]
           cosign sign --yes "${IMAGE}@${DIGEST}"
           cosign verify \
             --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main" \
