@@ -6,14 +6,14 @@ on:
     paths:
       - .github/workflows/publish-coroot-node-agent-hotfix.yaml
       - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
-      - k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
+      - k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch
       - scripts/tests/test-coroot-node-agent-hotfix.sh
   push:
     branches: [main]
     paths:
       - .github/workflows/publish-coroot-node-agent-hotfix.yaml
       - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
-      - k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
+      - k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch
       - scripts/tests/test-coroot-node-agent-hotfix.sh
   workflow_dispatch:
 
@@ -24,11 +24,12 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  COROOT_NODE_AGENT_SOURCE_COMMIT: ee62018e73b90b1549f5b81ba0d3d6e28851a1df
-  UPSTREAM_IMAGE: ghcr.io/coroot/coroot-node-agent:1.35.8@sha256:a08143e4ea42420d4d8b8b2cd21f67dc76743d6e0e37ab9a97b304171e670b93
+  COROOT_NODE_AGENT_SOURCE_TAG: v1.38.1
+  COROOT_NODE_AGENT_SOURCE_COMMIT: e335bf21a4657e9c91f56945f726e28b5f56a589
+  UPSTREAM_IMAGE: ghcr.io/coroot/coroot-node-agent:1.38.1@sha256:a1488ca3e541703fe4b4cdefeff2dae992cc9f45affd18f9f41e5b12a8016cae
   IMAGE: ghcr.io/devantler-tech/platform-coroot-node-agent
-  IMAGE_TAG: v1.35.8-alerts.2-${{ github.sha }}
-  PATCH_PATH: k8s/bases/infrastructure/coroot/node-agent-v1.35.8-alert-remediation.patch
+  IMAGE_TAG: v1.38.1-alerts.1-${{ github.sha }}
+  PATCH_PATH: k8s/bases/infrastructure/coroot/node-agent-v1.38.1-alert-remediation.patch
   DOCKERFILE_PATH: k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
 
 jobs:
@@ -59,7 +60,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.24.9
+          go-version: 1.26.10
           cache: false
 
       - name: Install systemd development headers
@@ -71,11 +72,15 @@ jobs:
         working-directory: upstream
         env:
           EXPECTED_SOURCE_COMMIT: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+          EXPECTED_SOURCE_TAG: ${{ env.COROOT_NODE_AGENT_SOURCE_TAG }}
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
           VERSION: ${{ env.IMAGE_TAG }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          # The build stamps the module from this tag, so the binary names its release.
+          git fetch --depth=1 origin "refs/tags/${EXPECTED_SOURCE_TAG}:refs/tags/${EXPECTED_SOURCE_TAG}"
+          test "$(git rev-parse "refs/tags/${EXPECTED_SOURCE_TAG}^{commit}")" = "${EXPECTED_SOURCE_COMMIT}"
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
           git diff --check
@@ -83,6 +88,21 @@ jobs:
           CGO_ENABLED=1 go build -mod=readonly \
             -ldflags "-extldflags='-Wl,-z,lazy' -X 'github.com/coroot/coroot-node-agent/flags.Version=${VERSION}'" \
             -o coroot-node-agent .
+          go version -m coroot-node-agent | grep -qE "^[[:space:]]+mod[[:space:]]+github.com/coroot/coroot-node-agent[[:space:]]+${EXPECTED_SOURCE_TAG}\+dirty([[:space:]]|\$)"
+
+      - name: Refuse advisories the built binary reaches
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          report="${RUNNER_TEMP}/coroot-node-agent-govulncheck.json"
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -mode binary -format json coroot-node-agent >"${report}"
+          # A report that never listed the binary's modules examined nothing.
+          jq -es 'any(.[]; (.SBOM.modules // []) | length > 0)' "${report}" >/dev/null
+          # Public logs carry the counts only; advisory detail stays out of them.
+          found="$(jq -s '[.[] | .finding.osv // empty] | unique | length' "${report}")"
+          reached="$(jq -s '[.[] | select(.finding.trace[0].function != null) | .finding.osv] | unique | length' "${report}")"
+          printf 'Advisories in shipped modules: %s; reached by the binary: %s\n' "${found}" "${reached}"
+          test "${reached}" = 0
 
       - name: Build compatibility image without publishing
         working-directory: upstream
@@ -121,7 +141,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.24.9
+          go-version: 1.26.10
           cache: false
 
       - name: Install systemd development headers
@@ -133,17 +153,22 @@ jobs:
         working-directory: upstream
         env:
           EXPECTED_SOURCE_COMMIT: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}
+          EXPECTED_SOURCE_TAG: ${{ env.COROOT_NODE_AGENT_SOURCE_TAG }}
           HOTFIX_PATCH: ${{ github.workspace }}/${{ env.PATCH_PATH }}
           VERSION: ${{ env.IMAGE_TAG }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
+          # The build stamps the module from this tag, so the binary names its release.
+          git fetch --depth=1 origin "refs/tags/${EXPECTED_SOURCE_TAG}:refs/tags/${EXPECTED_SOURCE_TAG}"
+          test "$(git rev-parse "refs/tags/${EXPECTED_SOURCE_TAG}^{commit}")" = "${EXPECTED_SOURCE_COMMIT}"
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
           git diff --check
           CGO_ENABLED=1 go build -mod=readonly \
             -ldflags "-extldflags='-Wl,-z,lazy' -X 'github.com/coroot/coroot-node-agent/flags.Version=${VERSION}'" \
             -o coroot-node-agent .
+          go version -m coroot-node-agent | grep -qE "^[[:space:]]+mod[[:space:]]+github.com/coroot/coroot-node-agent[[:space:]]+${EXPECTED_SOURCE_TAG}\+dirty([[:space:]]|\$)"
 
       - name: Set up Buildx container driver
         uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
