@@ -338,6 +338,7 @@ current_root_bearer_curl_config="${work_dir}/current-root-curl-bearer.config"
 patch_file="${work_dir}/patch.json"
 variables_patch_file="${work_dir}/variables-patch.json"
 expected_normalized="${work_dir}/expected-normalized.json"
+expected_ksail_root_normalized="${work_dir}/expected-ksail-root-normalized.json"
 fanout_api_resources="${work_dir}/fanout-api-resources.txt"
 talos_auth_patch_file="${work_dir}/talos-registry-auth.json"
 talos_revision_patch_file="${work_dir}/talos-registry-revision.json"
@@ -4681,6 +4682,15 @@ record_runtime_proof() {
 decrypt_flux_ghcr_docker_config "${docker_config}" "${SECRET_FILE}"
 write_flux_ghcr_credentials "${docker_config}" "${credentials_file}"
 jq -S -c . "${docker_config}" >"${expected_normalized}"
+# KSail writes the root Secret on cluster update in this exact form. The deploy
+# hands KSail this same credential (run-ksail-prod-with-pull-auth.sh).
+jq -S -c '
+  {auths: {"ghcr.io": {
+    username,
+    password,
+    auth: ((.username + ":" + .password) | @base64)
+  }}}
+' "${credentials_file}" >"${expected_ksail_root_normalized}"
 
 # Build curl's Basic-auth config without putting the credential in argv or
 # stdout. Support both Docker config representations used in this repository:
@@ -6828,9 +6838,9 @@ eso_resource_is_reconciled() {
     ' "${state_file}" >/dev/null 2>&1
 }
 
-# Report whether a Secret's data key decodes to exactly the Git/SOPS docker
-# config. Read-only; an unreadable Secret or payload is a mismatch.
-secret_matches_sops_credential() {
+# Decode a Secret's data key into converged_decoded_file. Read-only; an unreadable
+# Secret or payload fails, and the file must then not be compared.
+read_converged_secret_credential() {
   local namespace="$1"
   local name="$2"
   local data_key="$3"
@@ -6842,8 +6852,26 @@ secret_matches_sops_credential() {
     -o json >"${converged_secret_file}" 2>/dev/null &&
     jq -er --arg key "${data_key}" '.data[$key] | @base64d' \
       "${converged_secret_file}" 2>/dev/null |
-    jq -S -c . >"${converged_decoded_file}" 2>/dev/null &&
+    jq -S -c . >"${converged_decoded_file}" 2>/dev/null
+}
+
+# Report whether a Secret's data key decodes to exactly the Git/SOPS docker
+# config. Read-only; an unreadable Secret or payload is a mismatch.
+secret_matches_sops_credential() {
+  read_converged_secret_credential "$1" "$2" "$3" &&
     cmp -s "${expected_normalized}" "${converged_decoded_file}"
+}
+
+# Report whether the root Secret holds the Git/SOPS credential: exactly the Git/SOPS
+# docker config, or exactly the form KSail writes for that same credential. Any
+# other payload, in either format, is a mismatch. Read-only.
+root_secret_matches_sops_credential() {
+  read_converged_secret_credential \
+    flux-system ksail-registry-credentials .dockerconfigjson &&
+    {
+      cmp -s "${expected_normalized}" "${converged_decoded_file}" ||
+        cmp -s "${expected_ksail_root_normalized}" "${converged_decoded_file}"
+    }
 }
 
 # Decide, without taking any fence or writing anything, whether the whole
@@ -6889,8 +6917,7 @@ ghcr_chain_is_converged_without_writes() {
 
   # Root auth and the staged seed source already hold the SOPS credential.
   converged_check=root-auth
-  secret_matches_sops_credential \
-    flux-system ksail-registry-credentials .dockerconfigjson || return 1
+  root_secret_matches_sops_credential || return 1
   converged_check=variables-base
   secret_matches_sops_credential \
     flux-system variables-base ghcr_dockerconfigjson || return 1
