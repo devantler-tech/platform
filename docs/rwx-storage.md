@@ -9,12 +9,14 @@ Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod). It sto
 The Longhorn dashboard is available at `https://longhorn.<platform-domain>`
 and through the Homepage Infrastructure group. It uses the existing Dex OIDC
 login and requires membership in the platform maintainer team. This browser
-access is read-only: the authentication proxy and network policies allow GET,
-HEAD and the explicit snapshot/backup listing and retrieval actions that
+access is read-only: the authentication proxy and network policies allow only
+audited GET/HEAD paths and the snapshot/backup listing and retrieval actions that
 Longhorn implements with POST. Administrative actions are denied, including
 changes made by sending API requests directly. Longhorn may still display
 administrative controls; using them does not grant write access. Operational
 changes continue through reviewed configuration and protected workflows.
+Diagnostic-bundle and backing-image downloads are unavailable in this view;
+Longhorn can delete a diagnostic bundle as a side effect of downloading it.
 
 The route exists only in the Hetzner deployment. Local Docker deployments
 continue without a Longhorn dashboard. Recheck the read-action list against

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"regexp/syntax"
 	"strings"
 	"testing"
 
@@ -119,6 +120,15 @@ var requests = []struct {
 	allowed      bool
 }{
 	{"GET", "/", true}, {"HEAD", "/index.html", true}, {"GET", "/v1/volumes", true}, {"GET", "/v1/nodes", true}, {"GET", "/v1/ws/volumes", true},
+	{"GET", "/index.abc123.js", true}, {"GET", "/static/logo.abc123.svg", true}, {"GET", "/favicon.ico", true},
+	{"GET", "/v1", true}, {"GET", "/v1/schemas", true}, {"GET", "/v1/settings?limit=100", true},
+	{"GET", "/v1/ws/1s/volumes", true}, {"GET", "/v1/ws/5s/snapshotgroups", true},
+	{"GET", "/v1/supportbundles/node/bundle/download", false}, {"HEAD", "/v1/supportbundles/node/bundle/download", false},
+	{"GET", "/v1/backingimages/fixture/download", false}, {"GET", "/v1/future-mutating-get", false},
+	{"GET", "/static/../v1/supportbundles/node/bundle/download", false},
+	{"GET", "/static/%2e%2e/v1/supportbundles/node/bundle/download", false},
+	{"POST", "/v1/volumes/%2e%2e%2fsupportbundles?action=snapshotList", false},
+	{"POST", "/v1/volumes/%252e%252e%252fsupportbundles?action=snapshotList", false},
 	{"POST", "/v1/volumes/fixture?action=snapshotList", true}, {"POST", "/v1/volumes/fixture?action=snapshotGet", true},
 	{"POST", "/v1/volumes/fixture?action=snapshotCRList", true}, {"POST", "/v1/volumes/fixture?action=recurringJobList", true},
 	{"POST", "/v1/backupvolumes/fixture?action=backupList", true}, {"POST", "/v1/backupvolumes/fixture?action=backupGet", true},
@@ -163,6 +173,23 @@ func TestLonghornNetworkBoundaryAllowsReadsAndRefusesWrites(t *testing.T) {
 		}
 		if len(httpRules) == 0 {
 			t.Fatalf("%s has no Longhorn read-only rules", boundary.name)
+		}
+		// Cilium's pinned Envoy rejects RE2 programs above 100 instructions.
+		// Go's instruction count is an estimate, so retain a margin and still
+		// require the live policy and browser acceptance after deployment.
+		for _, rule := range httpRules {
+			path, _ := field(rule, "path").(string)
+			expression, err := syntax.Parse(path, syntax.Perl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			program, err := syntax.Compile(expression.Simplify())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(program.Inst) > 80 {
+				t.Fatalf("%s has an oversized HTTP read rule (Go estimate %d); split it before native evaluation", boundary.name, len(program.Inst))
+			}
 		}
 		for _, req := range requests {
 			allowed := false
