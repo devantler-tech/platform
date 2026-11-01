@@ -206,7 +206,7 @@ func fenceTouch(raw []byte) ([]byte, error) {
 // once, because a write could not make any of them correct.
 func (c receiverClient) installFence(ctx context.Context, b binding, pause func(context.Context, time.Duration) error) (bool, error) {
 	wrote := false
-	last := errors.New("selected-policy-binding")
+	var last error
 	for {
 		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
 		if err == nil {
