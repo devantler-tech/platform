@@ -449,6 +449,15 @@ three reach the wider distribution manager only through AKS and OCI encryption
 code the Talos path never calls. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.205.1**, commit `51af0033df04e3c3f8f18f58802204f4e5d136ef`, is audited
+against 7.204.30. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. `go.mod` and `go.sum` change one module, the indirect
+`go-chi/chi` from v5.3.0 to v5.4.0. Talos machinery stays at v1.14.0-alpha.2 and
+the YAML encoders are unchanged. At this tag `go list -deps` finds the module in
+neither the Talos configuration manager, generator and cluster API, nor the wider
+distribution manager; the same read finds the machinery packages. This audit
+changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
