@@ -3981,3 +3981,18 @@ existing entry, HelmRelease dex/dex, from
 No authorization resource is added or removed. This approval records the
 declared callback change; deployed login and read-only acceptance are separate
 runtime checks.
+
+## 2026-11-01 — Receive PROXY traffic at the production Gateway
+
+For #5448, the production Cilium Helm values turn on
+`gatewayAPI.enableProxyProtocol`, together with the provider annotation on the
+Hetzner Gateway. The physical-peer fence stays selected. No RBAC, IAM policy,
+credential or permission grant changes.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly one
+existing entry, HelmRelease kube-system/cilium, from
+`583656039a7b6f65fab253ef1ce6ea63ffffd4437e404d5d42996208143a3c7a` to
+`43e3693035f610207181ac5fd7053306caad59bb4a7f48d4ea154ccce428bec4`.
+No authorization resource is added or removed. This approval records the
+declared transport change; the provider's effective setting, public routes and
+client identity are separate runtime checks.

@@ -1,0 +1,16 @@
+---
+# Prod-only: receive the original client address from the Hetzner load balancer.
+#
+# Cilium's Gateway listeners accept only PROXY traffic once this is on, so it
+# must match load-balancer.hetzner.cloud/uses-proxyprotocol in
+# ../../../patches/attach-hcloud-load-balancer.yaml. Rollback restores an
+# explicit false on both sides. See docs/operations/ingress-client-address.md.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: cilium
+  namespace: kube-system
+spec:
+  values:
+    gatewayAPI:
+      enableProxyProtocol: true
