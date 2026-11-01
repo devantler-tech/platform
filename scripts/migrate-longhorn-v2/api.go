@@ -109,6 +109,7 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 		{"volumes.longhorn.io", "longhorn-system", &s.volumes},
 		{"replicas.longhorn.io", "longhorn-system", &s.replicas},
 		{"engines.longhorn.io", "longhorn-system", &s.engines},
+		{"orphans.longhorn.io", "longhorn-system", &s.orphans},
 		{"pods", "*", &s.pods},
 	} {
 		objects, err := c.list(ctx, query.kind, query.namespace)
@@ -148,6 +149,10 @@ func sourceCurrent(ctx context.Context, run command, sha string) error {
 		return errors.New("the reviewed source is no longer current main")
 	}
 	return nil
+}
+
+func (c client) talosVolume(ctx context.Context, address, name string) (object, error) {
+	return c.talosResource(ctx, address, "volumestatus", name)
 }
 
 func (c client) verifyHost(ctx context.Context, address string, n object) error {

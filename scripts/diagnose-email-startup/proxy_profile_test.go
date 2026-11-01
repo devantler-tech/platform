@@ -12,7 +12,7 @@ import (
 // proxyFixture admits the declared public adapter, without company data or credentials.
 func proxyFixture(t *testing.T) ([]byte, []byte) {
 	t.Helper()
-	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
+	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:3c83be721743e85c455eaacb82d6db0ad442496c9d8c2d54b509430489ec9f82"
 	p := changePod(t, fixturePod(t), func(p map[string]any) {
 		spec := p["spec"].(map[string]any)
 		containers := spec["containers"].([]any)
@@ -65,9 +65,9 @@ func TestProxyObservationRejectsUnboundExecution(t *testing.T) {
 					case "unreviewed-image":
 						proxy["image"] = "unreviewed"
 					case "retired-serving-image":
-						spec["containers"].([]any)[0].(map[string]any)["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
+						spec["containers"].([]any)[0].(map[string]any)["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
 					case "retired-proxy-image":
-						proxy["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
+						proxy["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
 					case "injected-environment":
 						proxy["env"] = []any{map[string]any{"name": "PRIVATE_SENTINEL", "value": "unreviewed"}}
 					case "secret-mount":
