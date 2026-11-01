@@ -52,16 +52,49 @@ func prove(ctx context.Context, run executor) error {
 		{"longhorn-frontend.longhorn-system.svc.cluster.local", "80", "GET /main.5284f33a.async.js?697c2a38c2a3b317069c", "200"},
 	} {
 		// Raw HTTP never follows redirects or executes response data. Neither
-		// target nor request is an input. Only script responses need MIME data;
-		// bound their input and discard every other header and the entire body.
+		// target nor request is an input. BusyBox nc's stdin-EOF shutdown can
+		// cancel a proxied request before its response. Use its native -e mode
+		// to keep socket stdin/stdout in the request-reading process, preserving
+		// captured stdout on FD9 (nc itself uses FD3/4). A fixed remote timeout
+		// bounds that same nc -> shell PID; there are no socket-owning pipelines.
+		// NUL must be read as a delimiter, then rejected: ordinary ash read
+		// silently discards NUL before counting characters. Reading one byte
+		// at a time also counts CR/LF and ignored headers in the wire budget.
 		javascript := strings.Contains(p.request, ".js?")
-		program := fmt.Sprintf("set -eu; printf '%%s\\r\\n' '%s HTTP/1.1' 'Host: longhorn.platform.devantler.tech' 'Connection: close' 'Content-Length: 0' '' | nc -w 10 %s %s", p.request, p.host, p.port)
+		program := fmt.Sprintf(`set -eu
+LC_ALL=C
+export LC_ALL
+remaining=65536
+newline='
+'
+read_line() {
+  line=
+  while [ "$remaining" -gt 0 ]; do
+    character=
+    IFS= read -r -n 1 -d '' -t 10 character || return 1
+    remaining=$((remaining - 1))
+    [ -n "$character" ] || return 1
+    [ "$character" != "$newline" ] || return 0
+    line=$line$character
+  done
+  return 1
+}
+printf '%%s\r\n' '%s HTTP/1.1' 'Host: longhorn.platform.devantler.tech' 'Connection: close' 'Content-Length: 0' ''
+read_line
+printf '%%s\n' "$line" >&9
+`, p.request)
 		if javascript {
-			program += ` | head -c 65536 | { IFS= read -r status; printf '%s\n' "$status"; while IFS= read -r header; do case "$header" in [[:blank:]]*) exit 1;; ''|"$(printf '\r')") printf '\n'; break;; [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Tt][Yy][Pp][Ee]:*) printf '%s\n' "$header";; esac; done; }`
-		} else {
-			program += ` | { IFS= read -r status; printf '%s' "$status"; }`
+			program += `cr=$(printf '\r')
+while read_line; do
+  case "$line" in
+    [[:blank:]]*) exit 1 ;;
+    ''|"$cr") printf '\n' >&9; exit 0 ;;
+    [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Tt][Yy][Pp][Ee]:*) printf '%s\n' "$line" >&9 ;;
+  esac
+done
+exit 1`
 		}
-		out, err := run(ctx, "--context=admin@prod", "--request-timeout=20s", "-n", "oauth2-proxy", "exec", "deployment/auth-proxy", "-c", "traefik", "--", "/bin/sh", "-c", program)
+		out, err := run(ctx, "--context=admin@prod", "--request-timeout=20s", "-n", "oauth2-proxy", "exec", "deployment/auth-proxy", "-c", "traefik", "--", "/bin/sh", "-c", `exec 9>&1; exec "$@"`, "longhorn-ui-probe", "/bin/busybox", "timeout", "-s", "KILL", "15", "/bin/busybox", "nc", "-w", "10", p.host, p.port, "-e", "/bin/sh", "-c", program)
 		if err != nil {
 			failures = append(failures, fmt.Errorf("fixed dashboard probe %d transport failed; no response details logged", i+1))
 			if ctx.Err() != nil {
@@ -113,7 +146,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "refusing probe outside the first confirmed reviewed-main dispatch")
 		os.Exit(1)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
 	err := prove(ctx, func(ctx context.Context, args ...string) ([]byte, error) {
 		// Do not forward kubectl stderr: it can contain credentials or topology.
