@@ -373,3 +373,9 @@ spec:
         - Canary
         - ResourceGraphDefinition
         - Tenant
+      # The public CRD catalogue's Cilium 1.20.2 update (its commit 8f08f38d)
+      # uses a `\u` regular expression that kubeconform's Go engine cannot
+      # compile, which it reports as a missing schema. So stay on the revision
+      # just before it, in both configs. Remove once the catalogue compiles again.
+      schemaLocations:
+        - https://raw.githubusercontent.com/datreeio/CRDs-catalog/6ec4c804fcb9b0a90fec9dd468aa57b984be150a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
