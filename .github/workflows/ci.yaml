@@ -201,6 +201,7 @@ jobs:
               - 'scripts/openbao-backup-recovery/**'
               - 'scripts/run-openbao-backup-sandbox.sh'
               - 'scripts/tests/test-openbao-standby-canary.sh'
+              - 'scripts/tests/test-ksail-operator-startup-order.sh'
               - 'scripts/tests/test-openbao-strategy-transition.sh'
               - 'scripts/tests/openbao-strategy-transition/**'
               - 'scripts/tests/openbao-transport-runtime/**'
@@ -3466,6 +3467,11 @@ jobs:
           key: kubeconform-schema-cache-v1-render-regressions-${{ github.run_id }}
           restore-keys: |
             kubeconform-schema-cache-v1-
+      - name: 🔁 Validate KSail startup layer ordering
+        if: matrix.suite == 'contracts'
+        run: |
+          shellcheck scripts/tests/test-ksail-operator-startup-order.sh
+          bash scripts/tests/test-ksail-operator-startup-order.sh
       - name: 🔐 Prove snapshot readback with pinned static tooling
         if: matrix.suite == 'native'
         timeout-minutes: 5
