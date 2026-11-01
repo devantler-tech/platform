@@ -577,9 +577,15 @@ for mode in inventory-forbidden inventory-partial inventory-empty inventory-malf
     fail "$mode: an unread inventory was reported as a count"
 done
 # Reaching the shared deadline on this read must not refuse a settled rollout.
-run_case inventory-hang pass inventory-hang 15
-jq -e '.complete == true and .productInventory == "unavailable"' "${scratch}/inventory-hang/stdout" >/dev/null ||
+run_case inventory-deadline pass inventory-hang 8
+jq -e '.complete == true and .productInventory == "unavailable"' "${scratch}/inventory-deadline/stdout" >/dev/null ||
   fail 'the inventory deadline refused a settled rollout'
+# A stalled read gives up at its own short limit, well before the shared deadline.
+inventory_started=$SECONDS
+run_case inventory-hang pass inventory-hang 50
+jq -e '.complete == true and .productInventory == "unavailable"' "${scratch}/inventory-hang/stdout" >/dev/null ||
+  fail 'a stalled inventory refused a settled rollout'
+((SECONDS - inventory_started < 40)) || fail 'a stalled inventory waited for the shared deadline'
 for mode in inventory-clean inventory-ui inventory-forbidden; do
   if grep -Eq 'INVENTORY-NAME-CANARY|tenant-canary|PRIVATE-ERROR-CANARY' "${scratch}/${mode}/stdout"; then fail "$mode: the receipt exposed inventory values"; fi
 done
