@@ -84,8 +84,9 @@ jobs:
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
           git diff --check
-          go test ./ebpftracer ./node ./logs
-          CGO_ENABLED=1 go build -mod=readonly \
+          go test -tags slicelabels ./ebpftracer ./node ./logs
+          # The agent still reads Prometheus labels as a slice, which newer releases put behind this tag.
+          CGO_ENABLED=1 go build -mod=readonly -tags slicelabels \
             -ldflags "-extldflags='-Wl,-z,lazy' -X 'github.com/coroot/coroot-node-agent/flags.Version=${VERSION}'" \
             -o coroot-node-agent .
           go version -m coroot-node-agent | grep -qE "^[[:space:]]+mod[[:space:]]+github.com/coroot/coroot-node-agent[[:space:]]+${EXPECTED_SOURCE_TAG}\+dirty([[:space:]]|\$)"
@@ -165,7 +166,8 @@ jobs:
           git apply --check "${HOTFIX_PATCH}"
           git apply "${HOTFIX_PATCH}"
           git diff --check
-          CGO_ENABLED=1 go build -mod=readonly \
+          # The agent still reads Prometheus labels as a slice, which newer releases put behind this tag.
+          CGO_ENABLED=1 go build -mod=readonly -tags slicelabels \
             -ldflags "-extldflags='-Wl,-z,lazy' -X 'github.com/coroot/coroot-node-agent/flags.Version=${VERSION}'" \
             -o coroot-node-agent .
           go version -m coroot-node-agent | grep -qE "^[[:space:]]+mod[[:space:]]+github.com/coroot/coroot-node-agent[[:space:]]+${EXPECTED_SOURCE_TAG}\+dirty([[:space:]]|\$)"

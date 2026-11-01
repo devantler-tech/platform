@@ -70,9 +70,9 @@ grep -qF 'repository: coroot/coroot-node-agent' "${workflow}" ||
 # shellcheck disable=SC2016
 grep -qF 'ref: ${{ env.COROOT_NODE_AGENT_SOURCE_COMMIT }}' "${workflow}" ||
   fail 'the upstream checkout must use the exact pinned commit'
-grep -qF 'go test ./ebpftracer ./node ./logs' "${workflow}" ||
+grep -qF 'go test -tags slicelabels ./ebpftracer ./node ./logs' "${workflow}" ||
   fail 'all patched Coroot node-agent packages must run tests before publish'
-grep -qF 'CGO_ENABLED=1 go build -mod=readonly' "${workflow}" ||
+grep -qF 'CGO_ENABLED=1 go build -mod=readonly -tags slicelabels' "${workflow}" ||
   fail 'the reviewed source must be compiled before image creation'
 # shellcheck disable=SC2016
 grep -qF 'cosign sign --yes "${IMAGE}@${DIGEST}"' "${workflow}" ||
