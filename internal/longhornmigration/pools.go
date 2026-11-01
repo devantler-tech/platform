@@ -105,3 +105,52 @@ func VerifyNode(n Object, pool Pool) error {
 	}
 	return nil
 }
+
+// Eligible grants no writes. Readers still enforce ordinary compute-node
+// exclusion on false, and treat every returned error as a hold.
+func Eligible(data []byte, n, lh Object) (bool, error) {
+	enabled := text(lh, "metadata", "labels", EnabledLabel)
+	if enabled == "" {
+		return false, nil
+	}
+	if enabled != "true" {
+		return false, errors.New("migration storage authorization is malformed")
+	}
+	pools, err := ConfiguredPools(data)
+	if err != nil {
+		return false, err
+	}
+	role := text(n, "metadata", "labels", PoolLabel)
+	pool, ok := pools[role]
+	if !ok {
+		return false, errors.New("migration storage is outside the reviewed fixed pools")
+	}
+	if err = VerifyNode(n, pool); err != nil {
+		return false, err
+	}
+	if text(n, "metadata", "annotations", ScaleDownDisabled) != "true" || text(n, "metadata", "annotations", OwnerAnnotation) != OwnerValue ||
+		text(lh, "metadata", "name") != text(n, "metadata", "name") || text(lh, "metadata", "uid") == "" || value(lh, "metadata", "deletionTimestamp") != nil ||
+		value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false {
+		return false, errors.New("migration storage lacks its owned live protection")
+	}
+	disks, ok := value(lh, "spec", "disks").(map[string]any)
+	if !ok || len(disks) != 1 {
+		return false, errors.New("migration disk scope is incomplete")
+	}
+	var disk Object
+	if role == "v1" {
+		disk, _ = disks["migration-v1"].(map[string]any)
+		if text(disk, "path") != "/var/lib/longhorn" || text(disk, "diskType") != "filesystem" {
+			return false, errors.New("migration filesystem differs from its reviewed scope")
+		}
+	} else {
+		disk, _ = disks["longhorn-v2"].(map[string]any)
+		if text(disk, "path") != "/dev/mapper/luks2-r-longhorn" || text(disk, "diskType") != "block" || text(disk, "diskDriver") != "aio" {
+			return false, errors.New("migration raw disk differs from its reviewed scope")
+		}
+	}
+	if value(disk, "allowScheduling") != true || value(disk, "evictionRequested") != false {
+		return false, errors.New("migration disk scheduling state drifted")
+	}
+	return true, nil
+}
