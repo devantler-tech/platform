@@ -41,6 +41,7 @@ Use these PromQL queries to distinguish failure reasons and telemetry freshness:
 ```promql
 sum by (result) (increase(contract_probe_requests_total[1h]))
 contract_probe_requests_total
+contract_probe_failures_total
 contract_probe_ready
 time() - contract_probe_last_observation_timestamp_seconds
 ```
@@ -50,11 +51,32 @@ report zero for a failure that happened before its series was first scraped, so
 also read the raw per-pod counter. A non-zero raw value shows that the result
 occurred since that pod started, but cannot establish when it occurred.
 
-The counter's fixed reasons distinguish unavailable or invalid responses,
-configuration failures, cancellation and concurrent requests. They do not retain
-the upstream HTTP status or prove why a request failed. Missing series are an
-observation gap, not zero failures; a healthy latest sample does not clear earlier
-failures or establish long-term reliability.
+The result counter distinguishes unavailable or invalid responses, configuration
+failures, cancellation and concurrent requests. The separate failure counter
+records completed unavailable observations using fixed `stage`, `reason` and
+`http_status` labels. Stages distinguish request, rejected status and body reads;
+reasons classify typed DNS, timeout, TLS, connection and EOF failures. HTTP labels
+are bounded numeric statuses or `none`/`other`; raw errors, addresses, headers and
+bodies are never exported. These observations narrow the failure mechanism but
+do not establish its root cause. Cancelled work publishes no new failure event.
+Missing series are an observation gap, not zero failures; a healthy latest sample
+does not clear earlier failures or establish long-term reliability.
+
+The standalone probe uses signed KHoist 9.0.5, from source
+`1f616fea9d63bcb0fac4ea6b27e20dbb80f4b85a`. Its command, readiness behavior,
+network boundaries and request limits remain unchanged. The controller, chart and
+other workloads retain their legacy release. The deployment verifier binds the
+probe Deployment, current ReplicaSet and Pods to its exact checked-out image and
+resolves that image's runtime manifests independently. Controller runtime digests
+cannot satisfy the probe check, or vice versa. Rollback reads the rollback
+checkout's probe declaration and resolves its immutable image again.
+
+The services CI suite starts the declared image as a non-root user with no
+networking, a read-only filesystem and bounded resources. A local read-only
+client verifies startup, a completed isolated DNS failure, and two passive metric
+scrapes. A skipped or missing image test fails its receipt. This checks the
+published executable; live endpoint recovery and Coroot collection remain
+production acceptance.
 
 The offline regression suite exercises the actual verifier with controlled
 resource and transport responses, including invalid observations and private
