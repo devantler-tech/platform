@@ -153,6 +153,18 @@ func TestReadOnlyRequestsAgainstNativeTraefik(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	if native == "" {
+		id, readErr := os.ReadFile(containerIDFile)
+		if readErr != nil || !regexp.MustCompile(`^[0-9a-f]{64}\n?$`).Match(id) {
+			t.Fatal("native proxy proof lost its container identity")
+		}
+		// The reviewed production observer uses only this existing image's
+		// shell and netcat; prove those tools rather than installing anything
+		// in a serving Pod or assuming an image has them.
+		if err = exec.CommandContext(ctx, "docker", "exec", strings.TrimSpace(string(id)), "/bin/sh", "-c", "command -v nc").Run(); err != nil {
+			t.Fatal("deployed proxy image lacks the read-only observer's netcat")
+		}
+	}
 	for _, fixture := range requests {
 		t.Run(fixture.method+fixture.path, func(t *testing.T) {
 			before := calls.Load()

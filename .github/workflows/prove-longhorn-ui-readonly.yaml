@@ -1,0 +1,92 @@
+name: Prove Longhorn UI Read Only
+
+# Fixed, harmless requests from the existing authentication proxy prove the
+# deployed router and Cilium filters. No Pod, policy, or storage object is changed.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: prove-longhorn-ui-readonly"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  prove:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+    permissions:
+      contents: read
+    env:
+      LONGHORN_UI_READ_PROOF_CONFIRM: ${{ inputs.confirm }}
+    steps:
+      - name: Require the confirmed first-attempt main dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${GITHUB_REPOSITORY}" == devantler-tech/platform &&
+             "${GITHUB_EVENT_NAME}" == workflow_dispatch &&
+             "${GITHUB_REF}" == refs/heads/main &&
+             "${GITHUB_RUN_ATTEMPT}" == 1 &&
+             "${LONGHORN_UI_READ_PROOF_CONFIRM}" == prove-longhorn-ui-readonly ]]
+
+      - name: Checkout the reviewed dispatch revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go toolchain
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build the reviewed probe before restoring credentials
+        run: go build -o "$RUNNER_TEMP/prove-longhorn-ui-readonly" ./scripts/prove-longhorn-ui-readonly
+
+      - name: Install the repository-approved Kubernetes client
+        shell: bash
+        env:
+          KUBECTL_VERSION: v1.36.2
+          KUBECTL_SHA256: 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/longhorn-ui-proof-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" -o "$kubectl_path"
+          printf '%s  %s\n' "$KUBECTL_SHA256" "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/longhorn-ui-proof-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/longhorn-ui-proof-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/longhorn-ui-proof-tools" >> "$GITHUB_PATH"
+
+      - name: Read the deployed dashboard boundaries
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          if [[ -z "$KUBE_CONFIG" || ${#KUBE_CONFIG} -gt 1048576 ]]; then
+            printf '%s\n' 'LONGHORN_UI_READ_PROOF=UNVERIFIED'
+            exit 2
+          fi
+          proof_dir="$(mktemp -d /dev/shm/longhorn-ui-proof.XXXXXX)"
+          trap 'rm -rf "$proof_dir"' EXIT
+          export KUBECONFIG="$proof_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          if ! ./scripts/use-prod-stable-api-endpoint.sh > /dev/null 2> "$proof_dir/endpoint.stderr"; then
+            printf '%s\n' 'LONGHORN_UI_READ_PROOF=UNVERIFIED'
+            exit 2
+          fi
+          unset HCLOUD_TOKEN
+          "$RUNNER_TEMP/prove-longhorn-ui-readonly"
