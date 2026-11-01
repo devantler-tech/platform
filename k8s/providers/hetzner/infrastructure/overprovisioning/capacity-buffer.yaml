@@ -15,7 +15,8 @@
 #     needs the room it schedules onto that warm node instantly, and the
 #     autoscaler boots a replacement in the background to refill the buffer.
 #
-# Net steady state is unchanged from the balloon pattern (baseline workers + one
+# Net steady state outside migration windows (replicas below) is unchanged from
+# the balloon pattern (baseline workers + one
 # warm spare node, always ready) — but with NO real pause pods, so nothing ever
 # sits Pending. That is why this lives in the health-gated `infrastructure`
 # layer (wait: true) like any other resource, instead of the dedicated
