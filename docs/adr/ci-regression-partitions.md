@@ -10,13 +10,17 @@ a failed suite does not cancel the other diagnostics.
 Cluster policies have fixtures, tenant, services, placement, storage and
 observability suites. Every validation step belongs to exactly one declared
 suite. The publication-generator suite runs in its own required job with the same
-checkout, compiler and native tool setup. Repository guards and publication guards
+checkout, compiler and native tool setup. Repository guards and independent guards
 run in two fixed independent jobs, each with its own checkout and the same pinned
-compiler and native kubectl. Both retain unconditional steps, including the checks
+compiler and native kubectl. The independent job also runs the existing native
+gateway receiver proof, alongside the complete Go regression job. The proof keeps
+its original command, explicit enablement, eight-minute limit, pinned image,
+restricted container, physical-peer cases and logical-peer mutation control.
+Both guard jobs retain unconditional steps, including the checks
 that independently protect CI wiring. Required CI and production deployment wait
 for both jobs, and the aggregate explicitly refuses every non-success publication
-guard result. Adding a dependency from publication guards to repository guards is
-the equivalent serial diagnostic control; their commands and inputs stay identical.
+guard result. Making independent guards depend on repository guards and complete
+Go regressions is the serial diagnostic control; their commands and inputs stay identical.
 Regressions that share one shell environment remain in the same step.
 
 Move the independent OpenBao standby, Crossplane egress, native-mail, Kyverno
@@ -64,6 +68,19 @@ publication-guard job while the other 56 checks retain their existing job and
 order. This is an observational partition choice, not a predicted or demonstrated
 pipeline speedup; duplicate setup, cold compiler caches and runner waiting remain
 part of candidate and protected-delivery acceptance under #5495.
+
+Fresh successful protected runs
+[41340025399](https://github.com/devantler-tech/platform/actions/runs/41340025399),
+[41337419169](https://github.com/devantler-tech/platform/actions/runs/41337419169)
+and [41336495029](https://github.com/devantler-tech/platform/actions/runs/41336495029)
+show the complete Go job gating deployment at 594, 636 and 610 seconds. Its
+native gateway proof follows the ordinary suite and takes 111, 115 and 111
+seconds respectively. It consumes the checkout and pinned tools rather than
+outputs of that earlier suite, so the independent guard job now runs it first.
+The root suite keeps its eight-worker limit and all deadlines. A current local
+four-CPU, Go 1.26.10 baseline ran all 587 credential-bridge cases with no failures
+or skips in 309.66 seconds; this is profiling evidence, not a candidate speedup.
+Hosted validation and the full deployment path must establish the actual effect.
 
 The later [complete green run](https://github.com/devantler-tech/platform/actions/runs/40848728705)
 spent 10m14s in independent manifest regressions and 8m47s in complete Go
@@ -128,6 +145,9 @@ and prerequisites against the reviewed baseline.
 The fixed guard-family boundary exercises independent and serial dependency
 shapes, lost jobs and dependencies, conditional or tolerated checks, unexpected
 prerequisites, write-permission drift, and every non-success aggregate result.
+It also refuses a missing, duplicated, disabled, filtered or wrongly owned native
+receiver proof. Runtime proof remains the real isolated container test, including
+its negative mutation; workflow-shape checks do not substitute for that execution.
 The KSail startup regression renders both providers and their Flux dependency
 graph. It keeps the OIDC-dependent release alongside the Gateway, its signed
 source and namespace prerequisites earlier, production prune protection and

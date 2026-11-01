@@ -111,11 +111,6 @@ jobs:
       - name: 🧪 Validate the complete Go helper regression suite
         run: go test -parallel 8 -timeout 20m ./...
 
-      - name: 🧪 Validate gateway receiver policies with the native admission engine
-        env:
-          GATEWAY_RECEIVER_NATIVE_TEST: "1"
-        run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
-
   changes:
     name: 🔍 Detect Changes
     runs-on: ubuntu-latest
@@ -1372,10 +1367,11 @@ jobs:
           bash scripts/tests/test-verify-wedding-backup-cutover.sh
           go test ./scripts/verify-wedding-dedicated-restore
 
-  # Run the seven publication checks in their own checkout.
+  # Run publication checks and the native receiver proof in their own checkout.
+  # They consume source, not outputs of the complete Go regression suite.
   # Both fixed jobs must succeed before required CI or production can proceed.
-  validate-publication-guards:
-    name: 🔐 Validate Publication Guards
+  validate-independent-guards:
+    name: 🔐 Validate Independent Guards
     runs-on: ubuntu-latest
     permissions:
       contents: read # checkout repository
@@ -1409,6 +1405,11 @@ jobs:
           echo /usr/local/bin >> "$GITHUB_PATH"
           export PATH="/usr/local/bin:$PATH"
           kubectl version --client
+
+      - name: 🧪 Validate gateway receiver policies with the native admission engine
+        env:
+          GATEWAY_RECEIVER_NATIVE_TEST: "1"
+        run: go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./...
 
       # The shared pin guard proves every matcher pins A revision. It cannot say WHICH,
       # and narrowing them to approved revisions (#2818) needs that fact for each consumer.
@@ -4239,7 +4240,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
-        validate-publication-guards,
+        validate-independent-guards,
         test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
@@ -4609,7 +4610,7 @@ jobs:
       [
         changes,
         validate-repository-guards,
-        validate-publication-guards,
+        validate-independent-guards,
         test-publish-release-recovery,
         test-publish-release-recovery-disabled,
         validate-publication-generator,
@@ -4713,7 +4714,7 @@ jobs:
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}
-            ${{ needs.validate-publication-guards.result }}
+            ${{ needs.validate-independent-guards.result }}
             ${{ needs.test-publish-release-recovery.result }}
             ${{ needs.test-publish-release-recovery-disabled.result }}
             ${{ needs.validate-publication-generator.result }}
@@ -4747,12 +4748,12 @@ jobs:
             exit 1
           fi
 
-      - name: 🔐 Require publication guards
+      - name: 🔐 Require independent guards
         env:
-          PUBLICATION_GUARDS_RESULT: ${{ needs.validate-publication-guards.result }}
+          INDEPENDENT_GUARDS_RESULT: ${{ needs.validate-independent-guards.result }}
         run: |
-          if [ "$PUBLICATION_GUARDS_RESULT" != success ]; then
-            echo "::error::Publication guards did not succeed ($PUBLICATION_GUARDS_RESULT)"
+          if [ "$INDEPENDENT_GUARDS_RESULT" != success ]; then
+            echo "::error::Publication guards did not succeed ($INDEPENDENT_GUARDS_RESULT)"
             exit 1
           fi
 
