@@ -119,7 +119,10 @@ func (f *capacityAPI) run(ctx context.Context, input []byte, program string, arg
 				if err != nil {
 					f.base.t.Fatal(err)
 				}
-				before, _ := json.Marshal(o)
+				before, err := json.Marshal(o)
+				if err != nil {
+					f.base.t.Fatal(err)
+				}
 				after, err := patch.Apply(before)
 				if err != nil {
 					return nil, err

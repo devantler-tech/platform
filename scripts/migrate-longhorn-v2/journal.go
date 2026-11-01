@@ -72,6 +72,13 @@ func (p preparation) readRecord(ctx context.Context) (object, journal, error) {
 	return cm, j, validateJournal(j, p.target)
 }
 
+// reviewedWorkflowPath accepts the bare path GitHub returns today and the suffixed
+// form its documentation shows, which may only name main.
+func reviewedWorkflowPath(path string) bool {
+	const workflow = ".github/workflows/prepare-longhorn-v2-node.yaml"
+	return path == workflow || path == workflow+"@main" || path == workflow+"@refs/heads/main"
+}
+
 func (p preparation) previousOwnerCompleted(ctx context.Context, j journal) error {
 	b, err := p.c.run(ctx, nil, "gh", "api", "repos/devantler-tech/platform/actions/runs/"+j.OwnerRun+"/attempts/1")
 	if err != nil {
@@ -80,7 +87,7 @@ func (p preparation) previousOwnerCompleted(ctx context.Context, j journal) erro
 	var run object
 	if json.Unmarshal(b, &run) != nil || text(run, "status") != "completed" || text(run, "head_sha") != j.Source ||
 		text(run, "head_branch") != "main" || text(run, "event") != "workflow_dispatch" || value(run, "run_attempt") != float64(1) ||
-		text(run, "path") != ".github/workflows/prepare-longhorn-v2-node.yaml" {
+		!reviewedWorkflowPath(text(run, "path")) {
 		return errors.New("previous workflow is live, unknown or outside the reviewed procedure")
 	}
 	return nil

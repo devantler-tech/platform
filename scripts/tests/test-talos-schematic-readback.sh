@@ -155,7 +155,7 @@ journal_for draining worker-1-uid >"$tmp_dir/journal.json"
 jq '(.items[] | select(.metadata.name == "prod-worker-2")).spec.unschedulable = true' "$tmp_dir/changed.json" >"$tmp_dir/two.json"
 mv "$tmp_dir/two.json" "$tmp_dir/changed.json"
 assert_rejected 'a second cordon beside a journal-held worker'
-jq '(.items[] | select(.metadata.name == "prod-worker-1")).metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = "foreign"' \
+jq '(.items[] | select(.metadata.name == "prod-worker-1")) |= (.metadata.uid = "worker-1-uid" | .metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] = "foreign")' \
   "$tmp_dir/nodes.json" >"$tmp_dir/changed.json"
 jq '(.items[] | select(.metadata.name == "prod-worker-1")).spec.unschedulable = true' "$tmp_dir/changed.json" >"$tmp_dir/foreign.json"
 mv "$tmp_dir/foreign.json" "$tmp_dir/changed.json"

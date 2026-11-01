@@ -51,6 +51,13 @@ func ready(o Object) bool {
 	return false
 }
 
+// The reviewed hardware and location of both temporary migration pools. A
+// different value changes the capacity this migration was measured against.
+const (
+	reviewedServerType = "cpx42"
+	reviewedLocation   = "fsn1"
+)
+
 func ConfiguredPools(data []byte) (map[string]Pool, error) {
 	b, err := yaml.YAMLToJSONStrict(data)
 	var cfg Object
@@ -76,8 +83,8 @@ func ConfiguredPools(data []byte) (map[string]Pool, error) {
 		default:
 			return nil, errors.New("unknown pool uses the reserved migration namespace")
 		}
-		if !ok || result[role].Name != "" || value(p, "min") != float64(count) || value(p, "max") != float64(count) || text(p, "labels", PoolLabel) != role || text(p, "serverType") == "" || text(p, "location") == "" {
-			return nil, errors.New("migration pools must have their reviewed fixed sizes and role labels")
+		if !ok || result[role].Name != "" || value(p, "min") != float64(count) || value(p, "max") != float64(count) || text(p, "labels", PoolLabel) != role || text(p, "serverType") != reviewedServerType || text(p, "location") != reviewedLocation {
+			return nil, errors.New("migration pools must have their reviewed fixed sizes, hardware, location and role labels")
 		}
 		result[role] = Pool{Name: name, Role: role, ServerType: text(p, "serverType"), Count: count}
 	}

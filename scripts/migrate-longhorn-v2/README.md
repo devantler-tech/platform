@@ -93,7 +93,9 @@ replica removal, drains through Kubernetes disruption protections, and makes two
 complete observations before requesting the reset. Both attached and retained
 detached volumes must have three healthy copies on distinct other nodes.
 
-Each Kubernetes write tests the observed UID and resource version. Talos reads
+Each Kubernetes patch tests the observed UID and resource version, scratch
+deletions carry both as preconditions, and Pod evictions carry a UID precondition
+only. Talos reads
 must report the same hardware UUID as the selected Kubernetes worker before
 host configuration can be trusted or a host command can run. Benchmark journals
 retain each scratch resource's exact name, namespace and UID as it is created,

@@ -334,10 +334,14 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		if err = verifyBenchmarkPod(p, text(pod, "metadata", "uid")); err != nil {
 			return err
 		}
-		if text(p, "status", "phase") != "Succeeded" {
+		switch text(p, "status", "phase") {
+		case "Succeeded":
+			return nil
+		case "Failed":
+			return fmt.Errorf("benchmark consumer failed: %w", errReadinessTerminal)
+		default:
 			return errors.New("benchmark has not completed successfully")
 		}
-		return nil
 	}); err != nil {
 		return err
 	}

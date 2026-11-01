@@ -2,6 +2,7 @@ package longhornmigration
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -76,5 +77,20 @@ func TestFixedPoolMinimumCannotBeRemovedWhileStorageIsAuthorized(t *testing.T) {
 	delete(lh["metadata"].(Object)["labels"].(Object), EnabledLabel)
 	if ok, err := Eligible(nil, n, lh); ok || err != nil {
 		t.Fatal("ordinary compute classification depends on temporary migration source")
+	}
+}
+
+func TestConfiguredPoolsRefuseChangedHardwareOrLocation(t *testing.T) {
+	for _, change := range [][2]string{{`"serverType":"cpx42"`, `"serverType":"cpx52"`}, {`"location":"fsn1"`, `"location":"nbg1"`}} {
+		for _, name := range []string{"autoscale-longhorn-v1", "autoscale-longhorn-v2"} {
+			prefix := `"name":"` + name + `",`
+			source := strings.Replace(string(sourceFixture()), prefix+`"serverType":"cpx42","location":"fsn1"`, prefix+strings.Replace(`"serverType":"cpx42","location":"fsn1"`, change[0], change[1], 1), 1)
+			if source == string(sourceFixture()) {
+				t.Fatalf("fixture for %s did not change", name)
+			}
+			if _, err := ConfiguredPools([]byte(source)); err == nil {
+				t.Fatalf("%s accepted %s", name, change[1])
+			}
+		}
 	}
 }

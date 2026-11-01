@@ -3,10 +3,10 @@ package main
 import "testing"
 
 func desiredConfigFixture() (object, object) {
-	volume := func(name string, min, max float64, negative bool) object {
+	volume := func(name string, minSize, maxSize float64, negative bool) object {
 		return object{"metadata": object{"id": name}, "spec": object{
 			"type":         "partition",
-			"provisioning": object{"diskSelector": object{"match": "system_disk"}, "partitionSpec": object{"minSize": min, "maxSize": max, "negativeMaxSize": negative, "grow": false}},
+			"provisioning": object{"diskSelector": object{"match": "system_disk"}, "partitionSpec": object{"minSize": minSize, "maxSize": maxSize, "negativeMaxSize": negative, "grow": false}},
 			"encryption":   object{"provider": "luks2", "keys": []any{object{"slot": float64(0), "type": "nodeID", "lockToState": true}}},
 		}}
 	}
