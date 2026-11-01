@@ -14,7 +14,12 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [refresh-clients, benchmark-v1, benchmark-v2]
+        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2]
+      node:
+        description: Permanent storage worker for prepare-worker only
+        required: false
+        type: choice
+        options: [prod-worker-1, prod-worker-2, prod-worker-3]
       confirm:
         description: "Type the exact confirmation documented for the selected operation"
         required: true
@@ -57,6 +62,7 @@ jobs:
       cancel-in-progress: false
       queue: max
     env:
+      LONGHORN_V2_NODE: ${{ inputs.node }}
       LONGHORN_V2_OPERATION: ${{ inputs.operation }}
       LONGHORN_V2_CONFIRM: ${{ inputs.confirm }}
     steps:
@@ -68,6 +74,9 @@ jobs:
           set -euo pipefail
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
+            prepare-worker)
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
+              ;;
             refresh-clients)
               [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]
               ;;
