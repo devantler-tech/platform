@@ -221,6 +221,7 @@ func (c receiverClient) installFence(ctx context.Context, b binding, pause func(
 		return false, errors.New("receiver-observation-changed")
 	}
 	wrote := false
+	attempted := false
 	var last error
 	for {
 		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
@@ -245,7 +246,9 @@ func (c receiverClient) installFence(ctx context.Context, b binding, pause func(
 				}
 			}
 			if last == nil && fenceActive(raw, b) == nil {
-				if wrote {
+				if attempted {
+					// The write may have committed even when its response was
+					// lost. Readback still requires settling and public samples.
 					return true, pause(ctx, fenceSettle)
 				}
 				return false, nil
@@ -257,6 +260,7 @@ func (c receiverClient) installFence(ctx context.Context, b binding, pause func(
 				}
 				// A conflict or an API server still catching up on the policy
 				// shows up in the next read.
+				attempted = true
 				if _, err := c.command(ctx, touch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=merge", "--patch-file=/dev/stdin", "-o=json"); err != nil {
 					last = errors.New("receiver-write-refused")
 				} else {

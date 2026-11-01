@@ -18,6 +18,7 @@ func TestProfileApplicationPreservesItsObservedBoundary(t *testing.T) {
 	}{
 		{"disabled", false, false, 0, 0},
 		{"needs-fence", false, false, 1, 20},
+		{"lost-write-response", false, false, 1, 20},
 		{"recover-active", false, false, 0, 0},
 		{"gateway-lag", false, false, 0, 0},
 		{"active", true, false, 0, 20},
@@ -29,7 +30,7 @@ func TestProfileApplicationPreservesItsObservedBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Chdir(filepath.Join("..", ".."))
 			_, b := providerFixture()
-			phase, pauses, writes, probes, providerReads, receiverReads := 0, 0, 0, 0, 0, 0
+			phase, pauses, settles, writes, probes, providerReads, receiverReads := 0, 0, 0, 0, 0, 0, 0
 			c := receiverClient{context: "admin@prod"}
 			c.command = func(_ context.Context, _ []byte, args ...string) ([]byte, error) {
 				kind := ""
@@ -39,6 +40,9 @@ func TestProfileApplicationPreservesItsObservedBoundary(t *testing.T) {
 					}
 					if arg == "patch" {
 						writes++
+						if tc.name == "lost-write-response" {
+							return nil, errors.New("response-lost")
+						}
 						return []byte("{}"), nil
 					}
 					if arg == "get" {
@@ -68,7 +72,7 @@ func TestProfileApplicationPreservesItsObservedBoundary(t *testing.T) {
 					receiverReads++
 					config, _ := disabledFixture()
 					setFencePeer(config, "10.11.12.13", true)
-					if tc.name == "needs-fence" && writes == 0 {
+					if (tc.name == "needs-fence" || tc.name == "lost-write-response") && writes == 0 {
 						setFencePeer(config, "", false)
 					}
 					if active {
@@ -89,8 +93,11 @@ func TestProfileApplicationPreservesItsObservedBoundary(t *testing.T) {
 				}
 				return nil, errors.New("unexpected")
 			}
-			c.pause = func(ctx context.Context, _ time.Duration) error {
+			c.pause = func(ctx context.Context, duration time.Duration) error {
 				pauses++
+				if duration == fenceSettle {
+					settles++
+				}
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
@@ -128,6 +135,9 @@ func TestProfileApplicationPreservesItsObservedBoundary(t *testing.T) {
 			})
 			if (err != nil) != tc.fails || writes != tc.writes || probes != tc.probes || wrote != (tc.writes > 0) {
 				t.Fatalf("profile application did not preserve the bounded observation: writes=%d probes=%d wrote=%t error=%v", writes, probes, wrote, err)
+			}
+			if tc.writes > 0 && settles != 1 {
+				t.Fatal("a confirmed fence installation skipped the settling period")
 			}
 			if (tc.name == "recover-active" || tc.name == "gateway-lag") && phase != 1 {
 				t.Fatal("known transition was not observed before application")

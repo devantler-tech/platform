@@ -11,7 +11,7 @@ import (
 )
 
 func TestDisabledRecoveryWaitsOnlyForBoundTransportConvergence(t *testing.T) {
-	for _, scenario := range []string{"disabled", "receiver-converges", "provider-converges", "intent-converges", "status-converges", "gateway-converges", "provider-unknown", "receiver-unknown", "provider-replaced", "receiver-replaced", "binding-replaced", "source-replaced", "deadline"} {
+	for _, scenario := range []string{"disabled", "receiver-converges", "provider-converges", "intent-converges", "status-converges", "gateway-converges", "gateway-false", "gateway-unknown", "gateway-missing", "gateway-duplicate", "gateway-future", "gateway-invalid", "provider-unknown", "receiver-unknown", "provider-replaced", "receiver-replaced", "binding-replaced", "source-replaced", "deadline"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Chdir(filepath.Join("..", ".."))
 			_, b := providerFixture()
@@ -47,6 +47,30 @@ func TestDisabledRecoveryWaitsOnlyForBoundTransportConvergence(t *testing.T) {
 				case "gateway":
 					if phase == 0 && scenario == "gateway-converges" {
 						return []byte(strings.ReplaceAll(string(gatewayFixture()), `"observedGeneration":2`, `"observedGeneration":1`)), nil
+					}
+					if strings.HasPrefix(scenario, "gateway-") && scenario != "gateway-converges" {
+						var gateway map[string]any
+						if err := json.Unmarshal(gatewayFixture(), &gateway); err != nil {
+							t.Fatal(err)
+						}
+						status := gateway["status"].(map[string]any)
+						conditions := status["conditions"].([]any)
+						condition := conditions[0].(map[string]any)
+						switch scenario {
+						case "gateway-false":
+							condition["status"] = "False"
+						case "gateway-unknown":
+							condition["status"] = "Unknown"
+						case "gateway-missing":
+							delete(status, "conditions")
+						case "gateway-duplicate":
+							status["conditions"] = append(conditions, condition)
+						case "gateway-future":
+							condition["observedGeneration"] = 3
+						case "gateway-invalid":
+							condition["status"] = "TRUE"
+						}
+						return json.Marshal(gateway)
 					}
 					return gatewayFixture(), nil
 				case "secret":
@@ -114,6 +138,12 @@ func TestDisabledRecoveryWaitsOnlyForBoundTransportConvergence(t *testing.T) {
 			}
 			if ok && scenario != "disabled" && pauses != 1 {
 				t.Fatal("recovery did not wait for the known pending state exactly once")
+			}
+			if (scenario == "gateway-false" || scenario == "gateway-unknown" || scenario == "gateway-missing") && (pauses != 3 || err == nil || err.Error() != "transport-transition-unverified") {
+				t.Fatal("incomplete Gateway readiness did not remain unverified through the deadline")
+			}
+			if (scenario == "gateway-duplicate" || scenario == "gateway-future" || scenario == "gateway-invalid") && pauses != 0 {
+				t.Fatal("invalid Gateway readiness was retried as ordinary convergence")
 			}
 		})
 	}
