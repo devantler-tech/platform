@@ -8,7 +8,7 @@ Both provider and receiver PROXY settings remain explicitly disabled. Selecting
 the physical-peer component is a later reviewed activation, after this disabled
 baseline and its recovery path have merged and deployed.
 
-The eventual fence uses Envoy's `direct_source_prefix_ranges` on every TLS
+The fence uses Envoy's `direct_source_prefix_ranges` on every TLS
 filter chain. This matches the physical connection peer independently of any
 client address claimed by a PROXY header. Cilium's ingress identity alone does
 not establish that boundary: the pinned listener processes PROXY metadata before
@@ -84,12 +84,37 @@ a failed activation, removes the fence as before. A failed render, missing
 policies or a partial or foreign binding fails without a write.
 
 Selecting the component is still a separate activation. Admission applies only when
-the generated listener is written, so that change must also establish how the
-existing listener receives the fence, or its first `verify` fails. The same applies
-to recovery once main selects it: restoration writes nothing while selected, so a
-listener that lost the fence keeps failing `verify` until something rewrites it.
-Both steps still refuse an active PROXY listener, so turning the transport on needs
-its own change to this helper.
+the generated listener is written, and the controller does not rewrite an unchanged
+listener. So between those two steps, `apply-selected` waits a bounded time for the
+reviewed policies and bindings, which arrive with the later `infrastructure` Flux
+layer. It then writes only the ownership marker, conditional on the observed UID and
+resource version, and admission installs the fence on that write. That also repairs
+a listener that lost the fence, and rewrites one bound to an earlier peer. It writes
+nothing when the fence is already current or the source leaves it unselected, and
+refuses a foreign owner, an unexpected peer shape or an active PROXY listener. It then
+makes 40 public connections, because the object shows what is declared and only
+traffic shows that the listeners took it. Every step still refuses an active PROXY
+listener, so turning the transport on needs its own change to this helper.
+
+The verify step needs Flux to converge first. A fence that refuses public traffic can
+be what stops convergence, and Flux prunes the bindings without removing the fields
+they installed. So when convergence fails, the deployment still runs `restore-disabled`,
+which writes nothing while the checked-out source selects the fence.
+
+Restoration retries for a short time, because an API server still holding a removed
+binding reapplies the fence. It removes a fence bound to any single host, so a replaced
+load balancer cannot make the fence impossible to remove.
+
+## Recovery while selected
+
+If the fence itself refuses public traffic, revert the selection: the deployment on
+the reverted source removes the bindings and the fields.
+
+The bound peer belongs to one load balancer. If a replacement changes its private
+address, or a cluster is rebuilt, every public TLS route is refused and the binding is
+stale, so restoration and `verify` both stop at `source-secret`. Prepare the replacement
+binding and merge it. Its deployment applies the new peer, with no need to unselect
+first.
 
 With the component unselected, the following read-only check requires both bindings
 absent and the generated listener free of this fence and PROXY filters:
@@ -101,9 +126,8 @@ go run ./scripts/gateway-receiver-binding verify --context admin@prod
 It probes Homepage and OpenBao through the provider's actual public endpoint with
 normal hostname and TLS verification, bypassing edge caches, and repeats with
 unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED` establishes the
-prepared disabled baseline and positive public paths. It does not establish a
-live physical-peer fence, original-client attribution, Email administration, or
-protocol activation.
+declared state and positive public paths. It does not prove that another peer is
+refused, original-client attribution, Email administration, or protocol activation.
 
 Before activation, #5448 still requires native allowed and denied peer probes,
 forged PROXY metadata rejection, controller revision stability, the real Email
