@@ -51,7 +51,7 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 	}
 	namespace, class := tag, "lh-benchmark-"+phase+"-"+runID
 	meta := func(name string, namespaced bool) object {
-		m := object{"name": name, "labels": object{"storage.platform.devantler.tech/benchmark-run": runID}}
+		m := object{"name": name, "labels": object{"storage.platform.devantler.tech/benchmark-run": runID, "velero.io/exclude-from-backup": "true"}}
 		if namespaced {
 			m["namespace"] = namespace
 		}
@@ -65,7 +65,7 @@ func benchmarkResources(phase, runID, tag string) ([]object, error) {
 	nsMeta["labels"].(object)["pod-security.kubernetes.io/enforce-version"] = "latest"
 	return []object{
 		{"apiVersion": "v1", "kind": "Namespace", "metadata": nsMeta},
-		{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("default-deny", true),
+		{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": meta("fio-default-deny", true),
 			"spec": object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}},
 		{"apiVersion": "storage.k8s.io/v1", "kind": "StorageClass", "metadata": meta(class, false),
 			"provisioner": "driver.longhorn.io", "reclaimPolicy": "Retain", "volumeBindingMode": "WaitForFirstConsumer",

@@ -52,7 +52,12 @@ request and limit. Storage health is read every minute during the trials, and a 
 replica rebuilt at any point is detected from its identity. Three unproven reads in a row,
 from failed reads or a volume staying unhealthy, hold the comparison, so a shorter fault on
 another volume can go unseen. Other changes during the trials hold it too. fio keeps running
-until it finishes or reaches its deadline. V2's necessary CPU reservation is reported alongside the V1 context;
+until it finishes or reaches its deadline.
+
+A receipt records these checks, and it does not prove nothing else disturbed the trials: only
+rebuilds, volume health and the recorded configuration are observed. Scratch objects are excluded
+from backups. Compare receipts knowing that, and avoid dispatching around the 02:17 UTC backup,
+whose load on the same disks is not measured. V2's necessary CPU reservation is reported alongside the V1 context;
 the comparison does not assume the engines have identical CPU costs.
 A completed receipt requires healthy storage and
 explicit cleanup of only the owned scratch Pod, claim, retained PV, backend,

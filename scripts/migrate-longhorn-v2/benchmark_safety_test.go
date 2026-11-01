@@ -78,7 +78,7 @@ func TestComparisonCannotRunWithAnIncompleteOrForeignBaseline(t *testing.T) {
 	}
 	record.Resources = map[string]benchmarkResource{
 		"Namespace": {Name: record.Namespace, UID: "scratch-uid"}, "Pod": {Name: "fio", Namespace: record.Namespace, UID: "pod"},
-		"NetworkPolicy":         {Name: "default-deny", Namespace: record.Namespace, UID: "policy"},
+		"NetworkPolicy":         {Name: "fio-default-deny", Namespace: record.Namespace, UID: "policy"},
 		"PersistentVolumeClaim": {Name: "fio-data", Namespace: record.Namespace, UID: "claim"}, "StorageClass": {Name: "lh-benchmark-v1-1234", UID: "class"},
 		"PersistentVolume": {Name: "scratch-pv", UID: "pv"}, "LonghornVolume": {Name: "scratch-volume", Namespace: "longhorn-system", UID: "volume"},
 	}
@@ -161,8 +161,8 @@ func TestBenchmarkJournalAcceptsEveryCreatedAssetAndRejectsForeignPolicy(t *test
 	}
 	for name, policy := range map[string]benchmarkResource{
 		"different policy": {Name: "another-policy", Namespace: record.Namespace, UID: "policy"},
-		"other namespace":  {Name: "default-deny", Namespace: "production", UID: "policy"},
-		"missing UID":      {Name: "default-deny", Namespace: record.Namespace},
+		"other namespace":  {Name: "fio-default-deny", Namespace: "production", UID: "policy"},
+		"missing UID":      {Name: "fio-default-deny", Namespace: record.Namespace},
 	} {
 		t.Run(name, func(t *testing.T) {
 			record.Resources["NetworkPolicy"] = policy

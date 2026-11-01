@@ -86,3 +86,20 @@ func TestBenchmarkResourcesUseOnlyOwnedScratchStorageAndPermanentClient(t *testi
 		t.Fatal("unreviewed benchmark variant accepted")
 	}
 }
+
+// A nightly backup snapshots whatever it selects, which changes the path being measured.
+// The platform also generates a policy named default-deny in each new namespace.
+func TestScratchResourcesStayOutOfBackupsAndGeneratedNames(t *testing.T) {
+	objects, err := benchmarkResources("v1", "1234", "longhorn-benchmark-v1-1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range objects {
+		if text(o, "metadata", "labels", "velero.io/exclude-from-backup") != "true" {
+			t.Fatalf("%s can enter a backup", text(o, "kind"))
+		}
+		if text(o, "kind") == "NetworkPolicy" && text(o, "metadata", "name") == "default-deny" {
+			t.Fatal("the scratch policy collides with the generated default-deny")
+		}
+	}
+}

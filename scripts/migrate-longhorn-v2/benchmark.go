@@ -483,7 +483,7 @@ func benchmarkIdentity(o object) benchmarkResource {
 }
 
 func validateBenchmarkResources(record benchmarkRecord) error {
-	names := map[string]string{"Namespace": record.Namespace, "NetworkPolicy": "default-deny", "Pod": "fio", "PersistentVolumeClaim": "fio-data", "StorageClass": "lh-benchmark-" + record.Phase + "-" + record.Run, "PersistentVolume": "", "LonghornVolume": ""}
+	names := map[string]string{"Namespace": record.Namespace, "NetworkPolicy": "fio-default-deny", "Pod": "fio", "PersistentVolumeClaim": "fio-data", "StorageClass": "lh-benchmark-" + record.Phase + "-" + record.Run, "PersistentVolume": "", "LonghornVolume": ""}
 	if record.Cleaned && len(record.Resources) != len(names) {
 		return errors.New("completed benchmark scratch identities are incomplete")
 	}
