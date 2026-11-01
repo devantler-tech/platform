@@ -1,0 +1,136 @@
+package main
+
+import (
+	"encoding/json"
+	"testing"
+	"time"
+)
+
+func backupProofFixture() (object, object, sourceIdentity, invocation) {
+	env := confirmedInvocation()
+	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	source := sourceIdentity{podUID: "source-pod-uid", claimUID: "source-claim-uid", volume: "data", pv: "source-volume", claimSize: "2Gi"}
+	backup := object{"metadata": object{"name": i.namespace + "-backup", "namespace": "velero", "uid": "owned-backup-uid", "labels": object{recoveryLabel: i.run}}, "status": object{"phase": "Completed", "completionTimestamp": "2026-10-29T10:01:00Z", "errors": float64(0)}}
+	pvb := object{"metadata": object{"namespace": "velero", "uid": "volume-backup-uid", "ownerReferences": []any{object{"apiVersion": "velero.io/v1", "kind": "Backup", "name": i.namespace + "-backup", "uid": "owned-backup-uid", "controller": true}}}, "spec": object{"pod": object{"name": "private-mail-0", "namespace": "private-mail", "uid": "source-pod-uid"}, "volume": "data", "backupStorageLocation": "default", "uploaderType": "kopia"}, "status": object{"phase": "Completed", "snapshotID": "0123456789abcdef0123456789abcdef", "completionTimestamp": "2026-10-29T10:00:59Z", "progress": object{"totalBytes": float64(4000), "bytesDone": float64(4000)}}}
+	return backup, pvb, source, i
+}
+
+func TestCompletedSnapshotIsBoundToThisBackupAndServingVolume(t *testing.T) {
+	b, p, s, i := backupProofFixture()
+	snap, err := proveBackup(b, p, s, i, "owned-backup-uid", time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC))
+	if err != nil || snap != "0123456789abcdef0123456789abcdef" {
+		t.Fatal("completed, source-bound snapshot was refused")
+	}
+}
+
+// Velero backs up the serving pod's scratch volume too. Requiring one total
+// receipt would reject a valid data restore; accepting the first can pick scratch.
+func TestMailboxSnapshotSelectionIgnoresScratchButRequiresUniqueData(t *testing.T) {
+	b, data, s, i := backupProofFixture()
+	scratch := object{"spec": object{"volume": "temporary"}, "status": object{"snapshotID": "scratch-must-not-be-restored"}}
+	for _, volumes := range [][]object{{scratch, data}, {data, scratch}, {data}} {
+		selected, err := sourceVolumeBackup(volumes, "data")
+		if err != nil {
+			t.Fatalf("mailbox data backup was refused alongside scratch: %v", err)
+		}
+		snapshot, err := proveBackup(b, selected, s, i, "owned-backup-uid", time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC))
+		if err != nil || snapshot != "0123456789abcdef0123456789abcdef" {
+			t.Fatal("selection did not produce the source-bound mailbox snapshot")
+		}
+	}
+	for _, volumes := range [][]object{nil, {scratch}, {data, data}, {scratch, data, data}} {
+		if _, err := sourceVolumeBackup(volumes, "data"); err == nil {
+			t.Fatal("missing or duplicated mailbox backup was accepted")
+		}
+	}
+	if _, err := sourceVolumeBackup([]object{data}, ""); err == nil {
+		t.Fatal("an unspecified source volume was accepted")
+	}
+}
+
+// Removing any identity, completion or byte-accounting fence would accept one
+// of these foreign, stale, incomplete or empty backups as recovery evidence.
+func TestUnboundOrIncompleteBackupCannotBecomeRestoreInput(t *testing.T) {
+	mutations := map[string]func(object, object){
+		"foreign-backup":  func(b, p object) { child(b, "metadata")["uid"] = "replacement" },
+		"wrong-owner":     func(b, p object) { items(child(p, "metadata"), "ownerReferences")[0]["uid"] = "another-backup" },
+		"wrong-pod":       func(b, p object) { child(child(p, "spec"), "pod")["uid"] = "replacement-pod" },
+		"wrong-namespace": func(b, p object) { child(child(p, "spec"), "pod")["namespace"] = "other" },
+		"wrong-volume":    func(b, p object) { child(p, "spec")["volume"] = "another" },
+		"wrong-location":  func(b, p object) { child(p, "spec")["backupStorageLocation"] = "foreign" },
+		"incomplete":      func(b, p object) { child(p, "status")["phase"] = "InProgress" },
+		"partial":         func(b, p object) { child(child(p, "status"), "progress")["bytesDone"] = float64(3999) },
+		"empty": func(b, p object) {
+			child(child(p, "status"), "progress")["bytesDone"] = float64(0)
+			child(child(p, "status"), "progress")["totalBytes"] = float64(0)
+		},
+		"invalid-snapshot": func(b, p object) { child(p, "status")["snapshotID"] = "../foreign" },
+		"stale":            func(b, p object) { child(p, "status")["completionTimestamp"] = "2026-10-28T10:00:00Z" },
+		"backup-errors":    func(b, p object) { child(b, "status")["errors"] = float64(1) },
+	}
+	for name, mutate := range mutations {
+		t.Run(name, func(t *testing.T) {
+			b, p, s, i := backupProofFixture()
+			mutate(b, p)
+			if _, err := proveBackup(b, p, s, i, "owned-backup-uid", time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)); err == nil {
+				t.Fatal("unsafe backup was accepted")
+			}
+		})
+	}
+}
+
+func TestRecoveryMessageProofRequiresExactContentAndIdentity(t *testing.T) {
+	message := object{"id": "owned-email", "blobId": "owned-blob", "messageId": []any{"restore-proof@example.invalid"}, "mailboxIds": object{"owned-box": true}, "textBody": []any{object{"partId": "1"}}, "bodyValues": object{"1": object{"value": "unique recovery marker\r\n", "isTruncated": false}}}
+	expected := messageIdentity{email: "owned-email", blob: "owned-blob", mailbox: "owned-box", messageID: "restore-proof@example.invalid", body: "unique recovery marker"}
+	if !proveMessage(message, expected) {
+		t.Fatal("real recovered message was refused")
+	}
+	for _, key := range []string{"id", "blobId", "messageId", "mailboxIds", "bodyValues", "textBody"} {
+		data, err := json.Marshal(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var changed object
+		_ = json.Unmarshal(data, &changed)
+		delete(changed, key)
+		if proveMessage(changed, expected) {
+			t.Fatal("missing message identity or content was accepted")
+		}
+	}
+	child(child(message, "bodyValues"), "1")["isTruncated"] = true
+	if proveMessage(message, expected) {
+		t.Fatal("truncated recovery evidence was accepted")
+	}
+}
+
+func TestNativeSuccessfulBackupOmitsZeroErrorCount(t *testing.T) {
+	b, p, s, i := backupProofFixture()
+	delete(child(b, "status"), "errors")
+	if _, err := proveBackup(b, p, s, i, "owned-backup-uid", time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatal("native omitted zero-error count was refused")
+	}
+	child(b, "status")["errors"] = "0"
+	if _, err := proveBackup(b, p, s, i, "owned-backup-uid", time.Date(2026, 10, 29, 10, 0, 0, 0, time.UTC)); err == nil {
+		t.Fatal("malformed error count was accepted")
+	}
+}
+
+func TestJMAPBodyValueDefaultsDoNotWeakenExactContentProof(t *testing.T) {
+	expected := messageIdentity{email: "owned-email", blob: "stored-blob", mailbox: "owned-box", messageID: "proof@example.invalid", body: "unique marker"}
+	message := object{"id": "owned-email", "blobId": "stored-blob", "mailboxIds": object{"owned-box": true}, "messageId": []any{"proof@example.invalid"}, "textBody": []any{object{"partId": "1"}}, "bodyValues": object{"1": object{"value": "unique marker\r\n"}}}
+	if !proveMessage(message, expected) {
+		t.Fatal("omitted default-false BodyValue flags were refused")
+	}
+	body := child(child(message, "bodyValues"), "1")
+	for _, bad := range []any{true, "false", float64(0)} {
+		body["isTruncated"] = bad
+		if proveMessage(message, expected) {
+			t.Fatal("truncation or malformed flag weakened the content proof")
+		}
+	}
+	delete(body, "isTruncated")
+	body["value"] = "different body"
+	if proveMessage(message, expected) {
+		t.Fatal("omitted flags admitted different message content")
+	}
+}

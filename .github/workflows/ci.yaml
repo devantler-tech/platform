@@ -162,6 +162,7 @@ jobs:
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
               - 'scripts/verify-email-data-recovery/**'
+              - '.github/workflows/verify-email-data-recovery.yaml'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
