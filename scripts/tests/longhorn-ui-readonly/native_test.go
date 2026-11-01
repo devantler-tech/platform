@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -73,6 +74,7 @@ func TestReadOnlyRequestsAgainstNativeTraefik(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cmd *exec.Cmd
+	containerIDFile := filepath.Join(dir, "container-id")
 	if native != "" {
 		cmd = exec.CommandContext(ctx, native, "--configFile="+filepath.Join(dir, "static.yaml"))
 	} else {
@@ -88,7 +90,7 @@ func TestReadOnlyRequestsAgainstNativeTraefik(t *testing.T) {
 		if !strings.Contains(image, "@sha256:") {
 			t.Fatal("native proxy proof requires the deployment's immutable image")
 		}
-		cmd = exec.CommandContext(ctx, "docker", "run", "--rm", "--network=host", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65532:65532", "--volume="+dir+":/config:ro", "--entrypoint=traefik", image, "--configFile=/config/static.yaml")
+		cmd = exec.CommandContext(ctx, "docker", "run", "--rm", "--cidfile="+containerIDFile, "--network=host", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user=65532:65532", "--volume="+dir+":/config:ro", "--entrypoint=traefik", image, "--configFile=/config/static.yaml")
 	}
 	var logs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &logs, &logs
@@ -98,6 +100,27 @@ func TestReadOnlyRequestsAgainstNativeTraefik(t *testing.T) {
 	t.Cleanup(func() {
 		cancel()
 		_ = cmd.Wait()
+		// Killing the Docker client does not stop its container. Retire only
+		// the exact ID this invocation created, then require an empty readback.
+		if native == "" {
+			data, readErr := os.ReadFile(containerIDFile)
+			if readErr == nil {
+				id := strings.TrimSpace(string(data))
+				if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(id) {
+					t.Error("native proxy container identity is invalid")
+					return
+				}
+				cleanupCtx, stop := context.WithTimeout(context.Background(), 20*time.Second)
+				defer stop()
+				_ = exec.CommandContext(cleanupCtx, "docker", "rm", "--force", id).Run()
+				left, listErr := exec.CommandContext(cleanupCtx, "docker", "container", "ls", "--all", "--filter=id="+id, "--format={{.ID}}").Output()
+				if listErr != nil || len(bytes.TrimSpace(left)) != 0 {
+					t.Error("native proxy container cleanup was not verified")
+				}
+			} else if !os.IsNotExist(readErr) {
+				t.Error("native proxy container identity could not be read")
+			}
+		}
 		if t.Failed() {
 			t.Log(logs.String())
 		}
