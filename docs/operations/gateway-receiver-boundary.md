@@ -138,6 +138,10 @@ unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED` establishes the
 declared state and positive public paths. It does not prove that another peer is
 refused, original-client attribution, Email administration, or protocol activation.
 
+`Probe Gateway Denied Peer` is the dispatch-only denied-peer check: one short-lived pod connects
+directly to the gateway Service, and the Envoy no-chain counter supports the fence as the cause. It
+covers no PROXY metadata, client identity or Email behaviour.
+
 Before activation, #5448 still requires native allowed and denied peer probes,
 forged PROXY metadata rejection, controller revision stability, the real Email
 path, authenticated administration and observed recovery. Preserve all stored
