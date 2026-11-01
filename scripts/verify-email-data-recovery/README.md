@@ -30,6 +30,11 @@ fence each destructive request; unknown namespace workloads or claims block
 namespace disposal. The completed backup deliberately retains its normal
 24-hour expiry as a fresh recovery point.
 
+Cleanup recognizes only the four platform-generated network policies whose
+specs match this checkout and whose Kyverno labels name the created namespace
+UID and expected rule. Standard and Cilium policies are both inventoried;
+unknown policies or changed specs retain the namespace and recovery key.
+
 Any failed, ambiguous or interrupted operation is unverified. The driver retains
 uncertain resources and keys for inspection instead of retrying, adopting a
 replacement or deleting by name. Source markers can remain after a failure.
@@ -49,3 +54,5 @@ and the package's normal lint check. The native Email configuration fixture also
 runs the real driver client against the pinned server to exercise message
 import, content validation and safe cleanup. Production recovery remains
 unverified until the confirmed protected workflow itself passes.
+The native restored server also uses the reader's generated capability settings,
+proving that the pinned executable can start with its required file capability.

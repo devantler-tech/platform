@@ -49,8 +49,10 @@ func recoveryReader(i invocation, image string) object {
 		"securityContext": object{"runAsNonRoot": true, "runAsUser": float64(2000), "runAsGroup": float64(2000), "fsGroup": float64(2000), "fsGroupChangePolicy": "OnRootMismatch", "seccompProfile": object{"type": "RuntimeDefault"}},
 		"containers": []any{object{
 			"name": "reader", "image": image, "command": []any{"/usr/local/bin/stalwart"}, "args": []any{"--config", "/etc/stalwart/config.json"},
-			"env":             []any{object{"name": "STALWART_RECOVERY_MODE", "value": "1"}, object{"name": "STALWART_RECOVERY_MODE_PORT", "value": "8080"}, object{"name": "STALWART_RECOVERY_ADMIN", "valueFrom": object{"secretKeyRef": object{"name": "test-authentication", "key": "credential"}}}},
-			"securityContext": object{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "runAsNonRoot": true, "seLinuxOptions": object{}, "seccompProfile": object{"type": "RuntimeDefault"}, "capabilities": object{"drop": []any{"ALL"}}},
+			"env": []any{object{"name": "STALWART_RECOVERY_MODE", "value": "1"}, object{"name": "STALWART_RECOVERY_MODE_PORT", "value": "8080"}, object{"name": "STALWART_RECOVERY_ADMIN", "valueFrom": object{"secretKeyRef": object{"name": "test-authentication", "key": "credential"}}}},
+			// The pinned executable retains an effective NET_BIND_SERVICE file
+			// capability, including when recovery binds the unprivileged port.
+			"securityContext": object{"allowPrivilegeEscalation": false, "readOnlyRootFilesystem": true, "runAsNonRoot": true, "seLinuxOptions": object{}, "seccompProfile": object{"type": "RuntimeDefault"}, "capabilities": object{"drop": []any{"ALL"}, "add": []any{"NET_BIND_SERVICE"}}},
 			"resources":       object{"requests": object{"cpu": "25m", "memory": "128Mi"}, "limits": object{"cpu": "1", "memory": "512Mi"}},
 			"volumeMounts":    []any{object{"name": "data", "mountPath": "/var/lib/stalwart"}, object{"name": "config", "mountPath": "/etc/stalwart", "readOnly": true}, object{"name": "tmp", "mountPath": "/tmp"}},
 		}},

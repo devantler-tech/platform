@@ -94,6 +94,13 @@ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" test -c -o "$scratch/email-r
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
 bash "$root/scripts/private-mail-config/stage-webui.sh" "$scratch/build"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
+mkdir "$scratch/reader-proof"
+docker run --rm --network none --read-only --user "$fixture_user" --cpus 1 --memory 128m \
+  --cap-drop ALL --security-opt no-new-privileges:true --env EMAIL_RECOVERY_NATIVE_TEST=1 \
+  --mount "type=bind,source=$scratch/reader-proof,target=/proof" \
+  --mount "type=bind,source=$scratch/email-recovery-native.test,target=/reader-proof.test,readonly" \
+  --entrypoint /reader-proof.test "$name-bootstrap-image" \
+  -test.run '^TestNativeRecoveryReaderSecurity$' -test.timeout 30s
 [ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
   echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
 }
@@ -140,8 +147,16 @@ run_bootstrap() {
 start_server() {
   local mode=$1 health_port=8080
   local data_dir=${2:-$scratch/data}
-  local -a recovery=() application_assets=()
-  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ]; then
+  local -a recovery=() application_assets=() executable_capability=(--cap-add NET_BIND_SERVICE)
+  if [ "$mode" = recovery-reader ]; then
+    jq -e '.allowPrivilegeEscalation == false and .readOnlyRootFilesystem == true and .runAsNonRoot == true and .capabilities.drop == ["ALL"] and ((.capabilities.add // []) | type == "array" and all(. == "NET_BIND_SERVICE"))' \
+      "$scratch/reader-proof/reader-security.json" >/dev/null
+    executable_capability=()
+    if jq -e '(.capabilities.add // []) | index("NET_BIND_SERVICE") != null' "$scratch/reader-proof/reader-security.json" >/dev/null; then
+      executable_capability=(--cap-add NET_BIND_SERVICE)
+    fi
+  fi
+  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ] || [ "$mode" = recovery-reader ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
   fi
   if [ "$mode" = isolated-preparation ]; then
@@ -152,7 +167,7 @@ start_server() {
     application_assets=(--mount "type=bind,source=$scratch/stale-assets,target=/usr/local/share/stalwart,readonly")
   fi
   docker run --detach --name "$name" --network "$network" --read-only \
-    --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL "${executable_capability[@]}" \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
     --mount "type=bind,source=$data_dir,target=/var/lib/stalwart" \
@@ -591,7 +606,7 @@ docker rm "$name" >/dev/null
 ) >"$scratch/source-before-recovery.sha256"
 test -s "$scratch/source-before-recovery.sha256"
 cp -a "$scratch/data" "$scratch/recovered-data"
-start_server preparation "$scratch/recovered-data"
+start_server recovery-reader "$scratch/recovered-data"
 recovery_mail_status=$(protocol_curl --silent --show-error --max-time 10 \
   --config /proof/human.curl --header 'Content-Type: application/json' \
   --data-binary @/proof/receiving-query.json --output /dev/null \

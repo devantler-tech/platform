@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -28,8 +30,9 @@ func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]by
 		}
 		if strings.Contains(kind, ",") {
 			out := []any{}
+			resourceNames := map[string]string{"Pod": "pods", "PersistentVolumeClaim": "persistentvolumeclaims", "Secret": "secrets", "ConfigMap": "configmaps", "Service": "services", "ServiceAccount": "serviceaccounts", "Deployment": "deployments.apps", "StatefulSet": "statefulsets.apps", "DaemonSet": "daemonsets.apps", "Job": "jobs.batch", "CronJob": "cronjobs.batch", "CiliumNetworkPolicy": "ciliumnetworkpolicies.cilium.io", "NetworkPolicy": "networkpolicies.networking.k8s.io"}
 			for _, o := range a.objects {
-				if text(child(o, "metadata"), "namespace") == ns {
+				if resource, known := resourceNames[text(o, "kind")]; known && text(child(o, "metadata"), "namespace") == ns && strings.Contains(","+kind+",", ","+resource+",") {
 					out = append(out, o)
 				}
 			}
@@ -57,6 +60,13 @@ func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]by
 		}
 		deleting := a.objects[key]
 		delete(a.objects, key)
+		if text(deleting, "kind") == "Namespace" {
+			for childKey, childObject := range a.objects {
+				if text(child(childObject, "metadata"), "namespace") == text(child(deleting, "metadata"), "name") {
+					delete(a.objects, childKey)
+				}
+			}
+		}
 		if text(deleting, "kind") == "PersistentVolumeClaim" {
 			if a.blockBackend {
 				a.cancel()
@@ -80,6 +90,15 @@ func cleanupFixture(t *testing.T, blocked bool) (*recoveryDriver, *cleanupAPI, c
 	t.Cleanup(cancel)
 	a := &cleanupAPI{objects: map[string]object{}, paths: map[string]string{}, blockBackend: blocked, cancel: cancel}
 	d := &recoveryDriver{i: i, image: fixtureImage, k: a, refs: map[string]ownedReference{}, volumeName: "pvc-target-volume", volumeUID: "target-longhorn-uid", pvUID: "target-pv-uid"}
+	policySource, err := os.Open("../../" + namespacePolicySource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = policySource.Close() })
+	d.namespacePolicies, err = readNamespacePolicies(policySource)
+	if err != nil {
+		t.Fatal(err)
+	}
 	graph := append(recoveryResources(i, "test-key", "test-admin"), recoveryReader(i, fixtureImage), downloadManifest(i, "0123456789abcdef0123456789abcdef"), backupManifest(i))
 	for _, o := range graph {
 		m := child(o, "metadata")
@@ -155,6 +174,93 @@ func TestCleanupRetainsAnUnexpectedClaimAndItsNamespace(t *testing.T) {
 	for _, key := range []string{key, cleanupKey("Namespace", "", d.i.namespace), cleanupKey("Secret", d.i.namespace, "storage-key")} {
 		if _, found := a.objects[key]; !found {
 			t.Fatal("foreign data or retained recovery custody was destroyed")
+		}
+	}
+}
+
+// These are hand-checked API shapes of the four platform-generated policies,
+// independent of the source parser used by the cleanup guard.
+func generatedNamespacePolicyFixture(namespace, namespaceUID string) []object {
+	policies := []object{
+		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": object{"name": "default-deny"}, "spec": object{"endpointSelector": object{}, "ingress": []any{object{}}, "egress": []any{object{}}, "enableDefaultDeny": object{"ingress": true, "egress": true}}},
+		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": object{"name": "allow-dns"}, "spec": object{"endpointSelector": object{}, "egress": []any{object{"toEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "kube-system", "k8s-app": "kube-dns"}}}, "toPorts": []any{object{"ports": []any{object{"port": "53", "protocol": "UDP"}, object{"port": "53", "protocol": "TCP"}}}}}}}},
+		{"apiVersion": "cilium.io/v2", "kind": "CiliumNetworkPolicy", "metadata": object{"name": "allow-cnpg-operator"}, "spec": object{"endpointSelector": object{"matchExpressions": []any{object{"key": "k8s:cnpg.io/cluster", "operator": "Exists"}}}, "ingress": []any{object{"fromEndpoints": []any{object{"matchLabels": object{"k8s:io.kubernetes.pod.namespace": "cnpg-system", "k8s:app.kubernetes.io/name": "cloudnative-pg", "k8s:app.kubernetes.io/instance": "cloudnative-pg"}}}, "toPorts": []any{object{"ports": []any{object{"port": "8000", "protocol": "TCP"}, object{"port": "5432", "protocol": "TCP"}}}}}}}},
+		{"apiVersion": "networking.k8s.io/v1", "kind": "NetworkPolicy", "metadata": object{"name": "default-deny"}, "spec": object{"podSelector": object{}, "policyTypes": []any{"Ingress", "Egress"}}},
+	}
+	for _, policy := range policies {
+		m := child(policy, "metadata")
+		name := text(m, "name")
+		rule := "generate-" + name
+		if text(policy, "kind") == "NetworkPolicy" {
+			rule = "generate-default-deny-networkpolicy"
+		}
+		m["namespace"], m["uid"] = namespace, "generated-"+text(policy, "kind")+"-"+name
+		m["labels"] = object{"app.kubernetes.io/managed-by": "kyverno", "generate.kyverno.io/policy-name": "add-default-deny", "generate.kyverno.io/policy-namespace": "", "generate.kyverno.io/rule-name": rule, "generate.kyverno.io/trigger-group": "", "generate.kyverno.io/trigger-kind": "Namespace", "generate.kyverno.io/trigger-namespace": "", "generate.kyverno.io/trigger-uid": namespaceUID, "generate.kyverno.io/trigger-version": "v1"}
+	}
+	return policies
+}
+
+func TestCleanupRecognizesOnlyBoundPlatformGeneratedPolicies(t *testing.T) {
+	d, api, ctx := cleanupFixture(t, false)
+	namespace, _ := d.ref("Namespace", d.i.namespace, "")
+	for _, policy := range generatedNamespacePolicyFixture(d.i.namespace, namespace.uid) {
+		api.objects[cleanupKey(text(policy, "kind"), d.i.namespace, text(child(policy, "metadata"), "name"))] = policy
+	}
+	if err := d.cleanupRestore(ctx); err != nil {
+		t.Fatalf("verified platform policies prevented owned namespace disposal: %s", err)
+	}
+	if _, exists := api.objects[cleanupKey("Namespace", "", d.i.namespace)]; exists {
+		t.Fatal("the verified disposable namespace was retained")
+	}
+	for _, o := range api.objects {
+		if text(child(o, "metadata"), "namespace") == d.i.namespace {
+			t.Fatal("namespace disposal left a generated resource")
+		}
+	}
+}
+
+func TestCleanupRetainsPoliciesWithChangedSpecsOrOwnership(t *testing.T) {
+	mutations := map[string]func(object){
+		"widened-spec": func(o object) {
+			if text(o, "kind") == "NetworkPolicy" {
+				child(o, "spec")["ingress"] = []any{object{}}
+			} else {
+				child(o, "spec")["egress"] = []any{object{"toEntities": []any{"all"}}}
+			}
+		},
+		"additional-specs": func(o object) { o["specs"] = []any{object{"endpointSelector": object{}, "egress": []any{object{}}}} },
+		"foreign-trigger": func(o object) {
+			child(child(o, "metadata"), "labels")["generate.kyverno.io/trigger-uid"] = "another-namespace-uid"
+		},
+		"missing-trigger": func(o object) { delete(child(child(o, "metadata"), "labels"), "generate.kyverno.io/trigger-uid") },
+		"foreign-rule": func(o object) {
+			child(child(o, "metadata"), "labels")["generate.kyverno.io/rule-name"] = "another-rule"
+		},
+		"foreign-manager": func(o object) {
+			child(child(o, "metadata"), "labels")["app.kubernetes.io/managed-by"] = "another-manager"
+		},
+		"foreign-name": func(o object) { child(o, "metadata")["name"] = "another-policy" },
+		"foreign-api":  func(o object) { o["apiVersion"] = "cilium.io/v3" },
+		"missing-uid":  func(o object) { delete(child(o, "metadata"), "uid") },
+	}
+	for name, mutate := range mutations {
+		for policyIndex := range 4 {
+			t.Run(fmt.Sprintf("%s/policy-%d", name, policyIndex), func(t *testing.T) {
+				d, api, ctx := cleanupFixture(t, false)
+				namespace, _ := d.ref("Namespace", d.i.namespace, "")
+				policy := generatedNamespacePolicyFixture(d.i.namespace, namespace.uid)[policyIndex]
+				mutate(policy)
+				key := cleanupKey(text(policy, "kind"), d.i.namespace, text(child(policy, "metadata"), "name"))
+				api.objects[key] = policy
+				if d.cleanupRestore(ctx) == nil {
+					t.Fatal("changed or unowned policy allowed namespace disposal")
+				}
+				for _, retained := range []string{key, cleanupKey("Namespace", "", d.i.namespace), cleanupKey("Secret", d.i.namespace, "storage-key")} {
+					if _, found := api.objects[retained]; !found {
+						t.Fatal("uncertain policy or recovery custody was removed")
+					}
+				}
+			})
 		}
 	}
 }

@@ -104,7 +104,14 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 }
 
 func (d *recoveryDriver) namespaceInventory(ctx context.Context) error {
-	resources, err := d.list(ctx, "pods,persistentvolumeclaims,secrets,configmaps,services,serviceaccounts,deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,ciliumnetworkpolicies.cilium.io", d.i.namespace, "")
+	namespace, err := d.ref("Namespace", d.i.namespace, "")
+	if err != nil || len(d.namespacePolicies) != 4 {
+		return errors.New("namespace-policy-source")
+	}
+	if _, err = d.owned(ctx, namespace); err != nil {
+		return err
+	}
+	resources, err := d.list(ctx, "pods,persistentvolumeclaims,secrets,configmaps,services,serviceaccounts,deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,ciliumnetworkpolicies.cilium.io,networkpolicies.networking.k8s.io", d.i.namespace, "")
 	if err != nil {
 		return err
 	}
@@ -115,6 +122,9 @@ func (d *recoveryDriver) namespaceInventory(ctx context.Context) error {
 			return errors.New("namespace-inventory")
 		}
 		if (kind == "ServiceAccount" && name == "default") || (kind == "ConfigMap" && name == "kube-root-ca.crt") {
+			continue
+		}
+		if policy, ok := d.namespacePolicies[kind+"/"+name]; ok && policy.matches(o, namespace.uid) {
 			continue
 		}
 		ref, e := d.ref(kind, name, d.i.namespace)

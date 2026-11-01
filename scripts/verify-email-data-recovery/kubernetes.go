@@ -56,6 +56,7 @@ type recoveryDriver struct {
 	volumeName, volumeUID string
 	pvUID                 string
 	source                sourceIdentity
+	namespacePolicies     map[string]namespacePolicy
 }
 
 func (d *recoveryDriver) lookup(ctx context.Context, kind, name, ns string) (object, bool, error) {

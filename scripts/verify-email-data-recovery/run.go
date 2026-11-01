@@ -51,6 +51,10 @@ func (d *recoveryDriver) preflight(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	d.namespacePolicies, err = loadNamespacePolicies()
+	if err != nil {
+		return "", err
+	}
 	velero, found, err := d.lookup(ctx, "Deployment", "velero", "velero")
 	if err != nil || !found {
 		return "", errors.New("backup-controller")

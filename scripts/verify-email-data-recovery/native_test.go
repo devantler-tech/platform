@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -15,6 +16,24 @@ import (
 type fixtureIdentityTransport struct {
 	base     http.RoundTripper
 	password string
+}
+
+// The native shell fixture starts the pinned server with this generated reader
+// security context, so removing a required capability changes actual execution.
+func TestNativeRecoveryReaderSecurity(t *testing.T) {
+	if os.Getenv("EMAIL_RECOVERY_NATIVE_TEST") != "1" {
+		t.Skip("requires the isolated native Email fixture")
+	}
+	env := confirmedInvocation()
+	i, err := authorizeDataRecovery(func(k string) string { return env[k] })
+	if err != nil {
+		t.Fatal("native fixture invocation refused")
+	}
+	reader := items(child(recoveryReader(i, fixtureImage), "spec"), "containers")[0]
+	encoded, err := json.Marshal(child(reader, "securityContext"))
+	if err != nil || os.WriteFile("/proof/reader-security.json", encoded, 0600) != nil {
+		t.Fatal("native reader security fixture unavailable")
+	}
 }
 
 func (f fixtureIdentityTransport) RoundTrip(request *http.Request) (*http.Response, error) {

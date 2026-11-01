@@ -2,9 +2,21 @@ package main
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestReaderCapabilitiesPermitThePinnedServerExecutable(t *testing.T) {
+	env := confirmedInvocation()
+	i, _ := authorizeDataRecovery(func(k string) string { return env[k] })
+	container := items(child(recoveryReader(i, fixtureImage), "spec"), "containers")[0]
+	security := child(container, "securityContext")
+	capabilities := child(security, "capabilities")
+	if !reflect.DeepEqual(capabilities["drop"], []any{"ALL"}) || !reflect.DeepEqual(capabilities["add"], []any{"NET_BIND_SERVICE"}) || security["allowPrivilegeEscalation"] != false {
+		t.Fatal("the reader cannot execute the pinned file-capability binary with the minimal bounded capability")
+	}
+}
 
 func TestRecoveryGraphNeverReplaysBackedUpWorkloadOrCredentials(t *testing.T) {
 	env := confirmedInvocation()
