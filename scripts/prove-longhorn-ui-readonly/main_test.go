@@ -12,14 +12,14 @@ import (
 )
 
 func TestProofRequiresEveryPositiveAndNegativeResponse(t *testing.T) {
-	for _, broken := range []int{-1, 0, 1, 2, 3, 4, 5} {
+	for broken := -1; broken < 14; broken++ {
 		t.Run(string(rune('A'+broken+1)), func(t *testing.T) {
 			calls := 0
 			execute := func(_ context.Context, args ...string) ([]byte, error) {
 				if strings.Join(args[:len(args)-1], " ") != "--context=admin@prod --request-timeout=20s -n oauth2-proxy exec deployment/auth-proxy -c traefik -- /bin/sh -c" {
 					t.Fatalf("unexpected command surface: %q", args)
 				}
-				code := []string{"200", "404", "200", "403", "403", "403"}[calls]
+				code := []string{"200", "404", "200", "403", "403", "403", "200", "200", "200", "200", "200", "200", "200", "200"}[calls]
 				if calls == broken {
 					code = "500"
 				}
@@ -30,8 +30,11 @@ func TestProofRequiresEveryPositiveAndNegativeResponse(t *testing.T) {
 			if (err == nil) != (broken == -1) {
 				t.Fatalf("broken response %d: %v", broken, err)
 			}
-			if broken == -1 && calls != 6 {
+			if calls != 14 {
 				t.Fatalf("only %d probes ran", calls)
+			}
+			if broken >= 0 && !strings.Contains(err.Error(), "received HTTP 500") {
+				t.Fatalf("missing safe status diagnostic: %v", err)
 			}
 		})
 	}
@@ -49,7 +52,7 @@ func TestNativeProbeSendsOnlyFixedHarmlessRequests(t *testing.T) {
 		if r.Method != "GET" && (r.Method != "POST" || !strings.Contains(r.URL.Path, absent) || r.URL.Query()["action"][0] != "UNRECOGNIZED-READ-ONLY-PROBE") {
 			t.Error("probe could issue a real write")
 		}
-		w.WriteHeader([]int{200, 404, 200, 403, 403, 403}[seen])
+		w.WriteHeader([]int{200, 404, 200, 403, 403, 403, 200, 200, 200, 200, 200, 200, 200, 200}[seen])
 		seen++
 		_, _ = w.Write([]byte("private response body must be discarded"))
 	}))
@@ -63,7 +66,7 @@ func TestNativeProbeSendsOnlyFixedHarmlessRequests(t *testing.T) {
 		program = strings.ReplaceAll(program, "nc -w 10 longhorn-frontend.longhorn-system.svc.cluster.local 80", "nc -w 2 "+address)
 		return exec.CommandContext(ctx, "/bin/sh", "-c", program).Output()
 	})
-	if err != nil || seen != 6 {
+	if err != nil || seen != 14 {
 		t.Fatalf("native request proof: seen=%d error=%v", seen, err)
 	}
 }
