@@ -58,6 +58,17 @@ func TestProviderBindingRequiresOnePrivateHostAndItsGatewayOwner(t *testing.T) {
 		})
 	}
 }
+
+func TestBindingRetainsServiceDestinationsForProviderReadback(t *testing.T) {
+	service := serviceFixture()
+	ports := service["spec"].(map[string]any)["ports"].([]any)
+	ports[0], ports[1] = ports[1], ports[0]
+	raw, _ := json.Marshal(service)
+	b, err := derive(raw, gatewayFixture())
+	if err != nil || b.HTTPNodePort != 31080 || b.HTTPSNodePort != 31443 {
+		t.Fatal("provider destinations were lost or associated with list order")
+	}
+}
 func TestGatewayBindingRefusesUnobservedControllerState(t *testing.T) {
 	raw, _ := json.Marshal(serviceFixture())
 	var g map[string]any

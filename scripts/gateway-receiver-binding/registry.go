@@ -235,24 +235,26 @@ func restoreDisabled(ctx context.Context, kubeContext string) error {
 	if err != nil {
 		return err
 	}
-	c := receiverClient{context: kubeContext, command: executeReceiver}
-	if err = c.restoreReceiver(ctx, before); err != nil && !isPolicyDrift(err) {
-		return err
-	}
-	restored := err
-	// A stale binding is reported after the removal for the same reason.
-	secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
-	if err != nil || !secretMatches(secret, before) {
-		return errors.New("source-secret")
-	}
-	if restored != nil {
-		return restored
-	}
-	after, err := collect(ctx, kubeContext)
-	if err != nil || before != after {
-		return errors.New("source-changed")
-	}
-	return c.bindingsAbsent(ctx)
+	return withProviderBaseline(ctx, before, readProvider, func() error {
+		c := receiverClient{context: kubeContext, command: executeReceiver}
+		if err = c.restoreReceiver(ctx, before); err != nil && !isPolicyDrift(err) {
+			return err
+		}
+		restored := err
+		// A stale binding is reported after the removal for the same reason.
+		secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
+		if err != nil || !secretMatches(secret, before) {
+			return errors.New("source-secret")
+		}
+		if restored != nil {
+			return restored
+		}
+		after, err := collect(ctx, kubeContext)
+		if err != nil || before != after {
+			return errors.New("source-changed")
+		}
+		return c.bindingsAbsent(ctx)
+	})
 }
 
 func isPolicyDrift(err error) bool {

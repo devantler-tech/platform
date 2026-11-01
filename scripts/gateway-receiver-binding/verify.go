@@ -54,32 +54,34 @@ func verifyDeployed(ctx context.Context, kubeContext string, selected bool) erro
 	if err != nil {
 		return err
 	}
-	for sample := 0; sample < 2; sample++ {
-		secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
-		if err != nil || !secretMatches(secret, before) {
-			return errors.New("source-secret")
-		}
-		c := receiverClient{context: kubeContext, command: executeReceiver}
-		if err := c.policies(ctx, before); err != nil {
-			return err
-		}
-		if err := c.receiverState(ctx, before, selected); err != nil {
-			return err
-		}
-		if err = probePublic(ctx, before.PublicIPv4); err != nil {
-			return err
-		}
-		if sample == 0 {
-			select {
-			case <-ctx.Done():
-				return errors.New("cancelled")
-			case <-time.After(time.Second):
+	return withProviderBaseline(ctx, before, readProvider, func() error {
+		for sample := 0; sample < 2; sample++ {
+			secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
+			if err != nil || !secretMatches(secret, before) {
+				return errors.New("source-secret")
+			}
+			c := receiverClient{context: kubeContext, command: executeReceiver}
+			if err := c.policies(ctx, before); err != nil {
+				return err
+			}
+			if err := c.receiverState(ctx, before, selected); err != nil {
+				return err
+			}
+			if err = probePublic(ctx, before.PublicIPv4); err != nil {
+				return err
+			}
+			if sample == 0 {
+				select {
+				case <-ctx.Done():
+					return errors.New("cancelled")
+				case <-time.After(time.Second):
+				}
 			}
 		}
-	}
-	after, err := collect(ctx, kubeContext)
-	if err != nil || after != before {
-		return errors.New("source-changed")
-	}
-	return nil
+		after, err := collect(ctx, kubeContext)
+		if err != nil || after != before {
+			return errors.New("source-changed")
+		}
+		return nil
+	})
 }
