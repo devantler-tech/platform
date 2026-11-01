@@ -7,7 +7,7 @@ Longhorn provides ReadWriteMany (RWX) storage on Hetzner clusters (prod). It sto
 ## Architecture
 
 The Longhorn dashboard is available at `https://longhorn.<platform-domain>`
-and through the Homepage Infrastructure group. It uses the existing Dex OIDC
+and through the Homepage Kubernetes group. It uses the existing Dex OIDC
 login and requires membership in the platform maintainer team. This browser
 access is read-only: the authentication proxy and network policies allow only
 audited GET/HEAD paths and the snapshot/backup listing and retrieval actions that
