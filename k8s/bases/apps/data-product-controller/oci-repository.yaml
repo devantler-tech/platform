@@ -7,11 +7,11 @@ metadata:
     security.devantler.tech/authorization-scope: isolated-chart
 spec:
   interval: 10m
-  url: oci://ghcr.io/devantler-tech/charts/data-product-controller
+  url: oci://ghcr.io/devantler-tech/charts/khoist
   ref:
-    # v2.9.1. Pin the content digest so a moved registry tag cannot change the
+    # v9.0.5. Pin the content digest so a moved registry tag cannot change the
     # chart Flux installs.
-    digest: sha256:86c93dba35f9c8904c3d31d9df06a44bd82f4ef056289eee611906c0ff8cc8bd
+    digest: sha256:ccb64ccf46b96802a37ac1f362c543e70cddb669025df62e7f59dfc62d814fd4
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy
@@ -19,7 +19,7 @@ spec:
     provider: cosign
     matchOIDCIdentity:
       # The chart is signed keylessly by its own repository's publish-chart.yaml,
-      # run on a release tag (devantler-tech/data-product-controller#27). Only a
+      # run on a release tag (devantler-tech/khoist#27). Only a
       # vX.Y.Z tag run of that workflow is trusted; a branch or pull request run is not.
       - issuer: '^https://token\.actions\.githubusercontent\.com$'
-        subject: '^https://github\.com/devantler-tech/data-product-controller/\.github/workflows/publish-chart\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+        subject: '^https://github\.com/devantler-tech/khoist/\.github/workflows/publish-chart\.yaml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
