@@ -350,3 +350,43 @@ func TestAMeasurementTakenDuringAStorageFaultIsNotComparable(t *testing.T) {
 		})
 	}
 }
+
+func TestTrialHealthCannotStayUnproven(t *testing.T) {
+	failedRead, unhealthy := errors.New("read failed"), func() error { return errors.New("unhealthy") }
+	healthy := func() error { return nil }
+	for name, samples := range map[string][]func(*int) error{
+		"reads never succeed": {
+			func(u *int) error { return judgeTrialSample(u, failedRead, healthy) },
+			func(u *int) error { return judgeTrialSample(u, failedRead, healthy) },
+			func(u *int) error { return judgeTrialSample(u, failedRead, healthy) },
+		},
+		"a volume stays unhealthy": {
+			func(u *int) error { return judgeTrialSample(u, nil, unhealthy) },
+			func(u *int) error { return judgeTrialSample(u, nil, unhealthy) },
+			func(u *int) error { return judgeTrialSample(u, nil, unhealthy) },
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			unproven := 0
+			var err error
+			for _, sample := range samples {
+				err = sample(&unproven)
+			}
+			if err == nil {
+				t.Fatal("the trial continued with health unproven")
+			}
+		})
+	}
+	unproven := 0
+	for range 2 {
+		if err := judgeTrialSample(&unproven, nil, unhealthy); err != nil {
+			t.Fatal("a short gap held the run")
+		}
+	}
+	if err := judgeTrialSample(&unproven, nil, healthy); err != nil || unproven != 0 {
+		t.Fatal("a healthy read did not clear a short gap")
+	}
+	if err := judgeTrialSample(&unproven, nil, func() error { return errScratchRebuilt }); err == nil {
+		t.Fatal("a rebuilt scratch replica did not hold at once")
+	}
+}

@@ -339,7 +339,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		return err
 	}
 	// The Pod's own deadline ends the trials first, and it reports Failed when it does.
-	sampled := time.Now()
+	sampled, unproven := time.Now(), 0
 	if err = waitReadyWithin(ctx, benchmarkCompletionLimit, func() error {
 		p, err := c.get(ctx, "pod", tag, "fio", false)
 		if err != nil {
@@ -356,11 +356,11 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		}
 		if time.Since(sampled) >= benchmarkSampleInterval {
 			sampled = time.Now()
-			// A failed read proves nothing either way; the ending check still has to pass.
-			if s, listErr := c.snapshot(ctx); listErr == nil {
-				if err = verifyTrialComparable(s, phase, machines, scratchName, replicas); err != nil {
-					return fmt.Errorf("%w: %w", errReadinessTerminal, err)
-				}
+			s, readErr := c.snapshot(ctx)
+			if err = judgeTrialSample(&unproven, readErr, func() error {
+				return verifyTrialComparable(s, phase, machines, scratchName, replicas)
+			}); err != nil {
+				return fmt.Errorf("%w: %w", errReadinessTerminal, err)
 			}
 		}
 		return errors.New("benchmark has not completed successfully")
@@ -375,7 +375,10 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
-	// The measurements exist only in this Pod's logs until they are saved.
+	// The measurements exist only in this Pod's logs until they are kept, and a later hold
+	// must not lose them.
+	public, _ := json.Marshal(record.Measurements)
+	fmt.Printf("Longhorn %s measurements: %s\n", phase, public)
 	if err = saveBenchmarkProgress(ctx, c, source, runID, record); err != nil {
 		return err
 	}
@@ -426,8 +429,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil || !reflect.DeepEqual(checked, record) {
 		return errors.New("completed benchmark receipt could not be read back")
 	}
-	public, _ := json.Marshal(record.Measurements)
-	fmt.Printf("Longhorn %s: completed eighteen controlled fio trials; scratch resources removed. Measurements: %s\n", phase, public)
+	fmt.Printf("Longhorn %s: completed eighteen controlled fio trials; scratch resources removed.\n", phase)
 	fmt.Println("Observed CPU configuration:", publicBenchmarkCPU(record.CPU))
 	return nil
 }
@@ -444,6 +446,26 @@ func scratchReplicas(s inventory, volume string) map[string]string {
 	return replicas
 }
 
+var errScratchRebuilt = errors.New("a scratch replica was rebuilt during the benchmark")
+
+// judgeTrialSample holds the run once health stays unproven for benchmarkUnprovenSamples reads
+// in a row, whether reads fail or a volume stays unhealthy. A shorter gap can be an ordinary
+// attach elsewhere on the cluster. A rebuilt scratch replica holds at once: its data path changed.
+func judgeTrialSample(unproven *int, readErr error, verify func() error) error {
+	err := readErr
+	if err == nil {
+		err = verify()
+	}
+	if err == nil {
+		*unproven = 0
+		return nil
+	}
+	if *unproven++; *unproven >= benchmarkUnprovenSamples || errors.Is(err, errScratchRebuilt) {
+		return errors.New("storage health stayed unproven during the benchmark")
+	}
+	return nil
+}
+
 // verifyTrialComparable holds a measurement taken while storage was not as it started.
 func verifyTrialComparable(s inventory, phase string, machines map[string]benchmarkMachine, volume string, replicas map[string]string) error {
 	current, err := benchmarkMachines(s, phase)
@@ -451,7 +473,7 @@ func verifyTrialComparable(s inventory, phase string, machines map[string]benchm
 		return errors.New("worker configuration or volume health changed during the benchmark")
 	}
 	if !reflect.DeepEqual(scratchReplicas(s, volume), replicas) {
-		return errors.New("a scratch replica was rebuilt during the benchmark")
+		return errScratchRebuilt
 	}
 	return nil
 }

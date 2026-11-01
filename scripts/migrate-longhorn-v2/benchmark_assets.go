@@ -14,6 +14,8 @@ const benchmarkDeadlineSeconds = 1500
 // every Longhorn volume, replica and engine.
 var benchmarkSampleInterval = time.Minute
 
+const benchmarkUnprovenSamples = 3
+
 // benchmarkCompletionLimit lets the Pod report Failed at its deadline rather than cutting it short.
 const benchmarkCompletionLimit = (benchmarkDeadlineSeconds + 120) * time.Second
 
