@@ -4,7 +4,6 @@ import "github.com/devantler-tech/platform/internal/longhornmigration"
 
 const (
 	migrationPoolLabel      = longhornmigration.PoolLabel
-	migrationEnabledLabel   = longhornmigration.EnabledLabel
 	capacityOwnerAnnotation = longhornmigration.OwnerAnnotation
 	capacityOwnerValue      = longhornmigration.OwnerValue
 	scaleDownDisabled       = longhornmigration.ScaleDownDisabled

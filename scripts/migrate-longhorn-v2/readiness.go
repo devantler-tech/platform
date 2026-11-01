@@ -9,9 +9,6 @@ import (
 // readinessPoll spaces waitReady's checks.
 var readinessPoll = 5 * time.Second
 
-// errReadinessTerminal marks a state further polling cannot change.
-var errReadinessTerminal = errors.New("required readiness can no longer be reached")
-
 func waitReady(ctx context.Context, check func() error) error {
 	deadline, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
@@ -19,9 +16,6 @@ func waitReady(ctx context.Context, check func() error) error {
 		err := check()
 		if err == nil {
 			return nil
-		}
-		if errors.Is(err, errReadinessTerminal) {
-			return err
 		}
 		timer := time.NewTimer(readinessPoll)
 		select {

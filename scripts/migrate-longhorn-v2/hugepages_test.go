@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -29,6 +30,9 @@ func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testin
 				case "git":
 					return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
 				case "kubectl":
+					if slices.Contains(args, "pods") {
+						return json.Marshal(object{"items": []object{podOnWorker(text(n, "metadata", "name"), "1Gi")}})
+					}
 					return json.Marshal(n)
 				case "talosctl":
 					if len(args) == 5 && args[2] == "systeminformation" {
@@ -196,5 +200,20 @@ func TestRefreshFitSubtractsOnlyUncountedHugepages(t *testing.T) {
 	}
 	if err := verifyRefreshFits(n, []object{podOnWorker(name, "13957Mi")}); err == nil {
 		t.Fatal("requests above the remaining allocatable were allowed")
+	}
+}
+
+func TestRefreshReportsPodsItsRestartRejected(t *testing.T) {
+	pod := func(uid, node, phase, reason string) object {
+		return object{"metadata": object{"uid": uid}, "spec": object{"nodeName": node}, "status": object{"phase": phase, "reason": reason}}
+	}
+	before := []object{pod("old-failure", "prod-worker-1", "Failed", "OutOfmemory"), pod("kept", "prod-worker-1", "Running", "")}
+	if err := verifyNoNewRejections("prod-worker-1", before, append(before, pod("job", "prod-worker-1", "Failed", "Error"), pod("elsewhere", "prod-worker-2", "Failed", "OutOfmemory"))); err != nil {
+		t.Fatal(err)
+	}
+	for _, reason := range []string{"OutOfmemory", "OutOfcpu", "UnexpectedAdmissionError"} {
+		if err := verifyNoNewRejections("prod-worker-1", before, []object{pod("kept", "prod-worker-1", "Failed", reason)}); err == nil {
+			t.Fatal("rejected Pod passed: " + reason)
+		}
 	}
 }

@@ -7,9 +7,9 @@ import (
 
 const fenceAnnotation = "storage.platform.devantler.tech/longhorn-v2-preparation"
 
-func verifyNode(n object, j journal, original bool) (string, error) {
+func verifyNode(n object, j journal) (string, error) {
 	if text(n, "metadata", "name") != j.Target || text(n, "spec", "providerID") != j.ProviderID ||
-		text(n, "status", "nodeInfo", "systemUUID") != j.MachineUUID || original && text(n, "metadata", "uid") != j.NodeUID ||
+		text(n, "status", "nodeInfo", "systemUUID") != j.MachineUUID || text(n, "metadata", "uid") != j.NodeUID ||
 		value(n, "metadata", "deletionTimestamp") != nil {
 		return "", errors.New("worker hardware or Kubernetes identity changed")
 	}

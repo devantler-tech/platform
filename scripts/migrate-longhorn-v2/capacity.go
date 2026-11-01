@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func verifyCapacityRoster(nodes []object, pools map[string]migrationPool, pinned bool) error {
+func verifyCapacityRoster(nodes []object, pools map[string]migrationPool) error {
 	byName, err := indexed(nodes)
 	if err != nil {
 		return fmt.Errorf("migration node inventory is unusable: %w", err)
@@ -27,9 +27,6 @@ func verifyCapacityRoster(nodes []object, pools map[string]migrationPool, pinned
 			return errors.New("every migration node must be Ready")
 		}
 		if strings.HasPrefix(name, "prod-worker-") {
-			if pinned && !hugepagesReady(n) {
-				return errors.New("permanent worker huge-page readiness is incomplete")
-			}
 			continue
 		}
 		role := text(n, "metadata", "labels", migrationPoolLabel)
@@ -37,13 +34,7 @@ func verifyCapacityRoster(nodes []object, pools map[string]migrationPool, pinned
 			if err = verifyMigrationNode(n, pool); err != nil {
 				return fmt.Errorf("migration node %s failed verification: %w", name, err)
 			}
-			if pinned && (text(n, "metadata", "annotations", scaleDownDisabled) != "true" || text(n, "metadata", "annotations", capacityOwnerAnnotation) != capacityOwnerValue) {
-				return errors.New("migration capacity lacks its owned scale-down protection")
-			}
 			migrationCounts[role]++
-			if pinned && !hugepagesReady(n) {
-				return errors.New("migration worker huge-page readiness is incomplete")
-			}
 			continue
 		}
 		labels, _ := value(n, "metadata", "labels").(map[string]any)

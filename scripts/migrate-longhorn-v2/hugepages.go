@@ -4,10 +4,22 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const (
+	talosReadLimit    = 30 * time.Second
+	talosRestartLimit = 2 * time.Minute
+)
+
+func (c client) talosCommand(ctx context.Context, limit time.Duration, address string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	return c.run(ctx, nil, "talosctl", append([]string{"--nodes=" + address}, args...)...)
+}
 
 func hugepagesReady(n object) bool {
 	status, _ := value(n, "status").(map[string]any)
@@ -42,7 +54,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		if err != nil {
 			return nil, "", err
 		}
-		address, err := verifyNode(n, j, true)
+		address, err := verifyNode(n, j)
 		status, _ := value(n, "status").(map[string]any)
 		cordoned := value(n, "spec", "unschedulable") == true
 		if err != nil || !ready(status) || cordoned && text(n, "metadata", "annotations", fenceAnnotation) != fence || text(n, "status", "nodeInfo", "bootID") != boot {
@@ -66,11 +78,11 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 			err = errors.Join(err, c.releaseRefreshCordon(release, j.Target))
 		}
 	}()
-	pages, err := c.run(ctx, nil, "talosctl", "--nodes="+address, "read", "/proc/sys/vm/nr_hugepages")
+	pages, err := c.talosCommand(ctx, talosReadLimit, address, "read", "/proc/sys/vm/nr_hugepages")
 	if err != nil || strings.TrimSpace(string(pages)) != "1024" {
 		return errors.New("the host has not allocated the reviewed huge pages")
 	}
-	modules, err := c.run(ctx, nil, "talosctl", "--nodes="+address, "read", "/proc/modules")
+	modules, err := c.talosCommand(ctx, talosReadLimit, address, "read", "/proc/modules")
 	if err != nil {
 		return errors.New("worker kernel modules could not be read")
 	}
@@ -86,8 +98,9 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if hugepagesReady(n) {
 		return nil
 	}
-	// Counted pages with pressure left are not stale capacity: a restart would not help.
-	if text(n, "status", "capacity", "hugepages-2Mi") == "2Gi" && text(n, "status", "allocatable", "hugepages-2Mi") == "2Gi" {
+	// A restart clears no pressure, and readiness could never be proven under it, so
+	// hold before any Pod moves.
+	if !workerPressureClear(n) {
 		return errors.New("worker " + text(n, "metadata", "name") + " reports resource pressure; a kubelet refresh would not clear it")
 	}
 	moves, err := planRefreshMoves(n, pods)
@@ -105,13 +118,21 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	if _, _, err = get(); err != nil {
+	if n, _, err = get(); err != nil {
+		return err
+	}
+	// Pods can land after the first measurement, with or without a cordon.
+	before, err := c.list(ctx, "pods", "*")
+	if err != nil {
+		return err
+	}
+	if err = verifyRefreshFits(n, before); err != nil {
 		return err
 	}
 	// Never repeat an uncertain service request. Positive capacity and identity
 	// readback, rather than its return code, establishes completion.
 	restarted = true
-	_, _ = c.run(ctx, nil, "talosctl", "--nodes="+address, "service", "kubelet", "restart")
+	_, _ = c.talosCommand(ctx, talosRestartLimit, address, "service", "kubelet", "restart")
 	if err = waitReady(ctx, func() error {
 		n, _, err := get()
 		if err != nil || !hugepagesReady(n) {
@@ -121,8 +142,49 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	}); err != nil {
 		return err
 	}
+	after, err := c.list(ctx, "pods", "*")
+	if err != nil {
+		return err
+	}
+	if err = verifyNoNewRejections(j.Target, before, after); err != nil {
+		return err
+	}
 	if held {
 		return c.releaseRefreshCordon(ctx, j.Target)
+	}
+	return nil
+}
+
+// verifyNoNewRejections fails when the restart made kubelet reject a Pod it was running.
+func verifyNoNewRejections(name string, before, after []object) error {
+	failed := map[string]bool{}
+	for _, pod := range before {
+		if text(pod, "status", "phase") == "Failed" {
+			failed[text(pod, "metadata", "uid")] = true
+		}
+	}
+	for _, pod := range after {
+		reason := text(pod, "status", "reason")
+		if text(pod, "spec", "nodeName") != name || text(pod, "status", "phase") != "Failed" || failed[text(pod, "metadata", "uid")] {
+			continue
+		}
+		if strings.HasPrefix(reason, "OutOf") || reason == "UnexpectedAdmissionError" {
+			return errors.New("kubelet rejected a Pod on " + name + " after its restart")
+		}
+	}
+	return nil
+}
+
+// releaseProvenRefreshCordons runs ahead of every other gate. Once kubelet reports the
+// smaller allocatable the cordon protects nothing, so an unrelated hold must not keep it.
+func (c client) releaseProvenRefreshCordons(ctx context.Context, nodes []object) error {
+	for _, n := range nodes {
+		name := text(n, "metadata", "name")
+		if value(n, "spec", "unschedulable") == true && text(n, "metadata", "annotations", fenceAnnotation) == refreshFencePrefix+name && hugepagesReady(n) {
+			if err := c.releaseRefreshCordon(ctx, name); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -135,9 +197,16 @@ func refreshClients(ctx context.Context, c client, source string, pools map[stri
 	if err != nil {
 		return err
 	}
-	if err = verifyCapacityRoster(s.nodes, pools, false); err != nil {
+	if err = c.releaseProvenRefreshCordons(ctx, s.nodes); err != nil {
 		return err
 	}
+	if err = verifyCapacityRoster(s.nodes, pools); err != nil {
+		return err
+	}
+	// A worker this procedure left cordoned goes first, so a hold on another cannot strand it.
+	sort.SliceStable(s.nodes, func(i, j int) bool {
+		return text(s.nodes[i], "metadata", "annotations", fenceAnnotation) != "" && text(s.nodes[j], "metadata", "annotations", fenceAnnotation) == ""
+	})
 	for _, n := range s.nodes {
 		if strings.HasPrefix(text(n, "metadata", "name"), "prod-control-plane-") {
 			continue
@@ -149,7 +218,7 @@ func refreshClients(ctx context.Context, c client, source string, pools map[stri
 		if err = verifyRedundancy(fresh); err != nil {
 			return err
 		}
-		if err = verifyCapacityRoster(fresh.nodes, pools, false); err != nil {
+		if err = verifyCapacityRoster(fresh.nodes, pools); err != nil {
 			return err
 		}
 		if err = refreshHugepages(ctx, c, source, n, fresh.pods); err != nil {

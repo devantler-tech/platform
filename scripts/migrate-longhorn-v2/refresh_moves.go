@@ -25,8 +25,8 @@ var refreshMovableWorker = regexp.MustCompile(`^prod-worker-[123]$`)
 // Only these volumes can be recreated elsewhere without losing anything.
 var replaceableVolumes = map[string]bool{"name": true, "projected": true, "configMap": true, "secret": true, "downwardAPI": true}
 
-// Moving a Pod here must never move data, storage, networking or delivery, so a Pod
-// qualifies only by what it positively is, and anything else holds the refresh.
+// Pods in these namespaces never move. Elsewhere a Pod qualifies only by what it
+// positively is, as movablePod decides.
 var refreshPinnedNamespaces = map[string]bool{"kube-system": true, "longhorn-system": true, "flux-system": true}
 
 func replicaSetOwner(pod object) string {
@@ -304,6 +304,16 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 		return err
 	}
 	owner := replicaSetOwner(pod)
+	// The plan is minutes old by now. Only the scanner may leave without another Ready replica.
+	keepsServing := func(live []object) error {
+		if !restartableScanner(pod) && readyPodsOf(owner, live) < 2 {
+			return errors.New(namespace + "/" + name + " no longer has another Ready replica, so it stays")
+		}
+		return nil
+	}
+	if err = keepsServing(pods); err != nil {
+		return err
+	}
 	wanted := readyPodsOf(owner, pods)
 	// A budget refuses with 429 meaning retry, and its status can lag a replacement turning Ready.
 	for attempt := range refreshAttempts {
@@ -312,9 +322,15 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 				return err
 			}
 			// A lost response can hide a success, and a retry would then only report the Pod missing.
-			if live, listErr := c.list(ctx, "pods", namespace); listErr == nil && !podListed(live, uid) {
+			live, listErr := c.list(ctx, "pods", namespace)
+			if listErr == nil && !podListed(live, uid) {
 				err = nil
 				break
+			}
+			if listErr == nil {
+				if err = keepsServing(live); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err = c.kubectl(ctx, eviction, "create", "--raw", "/api/v1/namespaces/"+namespace+"/pods/"+name+"/eviction", "-f", "-"); err == nil {
@@ -356,7 +372,11 @@ func (c client) moveForRefresh(ctx context.Context, n object, moves, pods []obje
 		return err
 	}
 	for _, pod := range moves {
-		if err = c.movePod(ctx, pod, pods); err != nil {
+		live, listErr := c.list(ctx, "pods", "*")
+		if listErr != nil {
+			return listErr
+		}
+		if err = c.movePod(ctx, pod, live); err != nil {
 			return err
 		}
 	}

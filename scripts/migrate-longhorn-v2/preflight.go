@@ -8,7 +8,7 @@ import (
 type object = map[string]any
 
 type inventory struct {
-	nodes, storageNodes, volumes, replicas, engines, pods, orphans []object
+	nodes, storageNodes, volumes, replicas, engines, pods []object
 }
 
 func value(o object, path ...string) any {
@@ -136,7 +136,7 @@ func verifyRedundancy(s inventory) error {
 			copies[node] = true
 		}
 		if len(copies) < 3 {
-			return errors.New("three healthy copies on distinct other nodes are not proven for every volume")
+			return errors.New("three healthy copies on distinct nodes are not proven for every volume")
 		}
 	}
 	return nil

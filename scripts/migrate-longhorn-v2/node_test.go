@@ -10,16 +10,16 @@ func healthyWorkerConditions() []any {
 	return []any{object{"type": "Ready", "status": "True"}, object{"type": "DiskPressure", "status": "False"}, object{"type": "MemoryPressure", "status": "False"}, object{"type": "PIDPressure", "status": "False"}}
 }
 
-func TestResetTargetMustRetainHardwareIdentityAndPrivateAddress(t *testing.T) {
-	j := journalFixture()
-	address, err := verifyNode(nodeFixture(), j, true)
+func TestRefreshTargetMustRetainHardwareIdentityAndPrivateAddress(t *testing.T) {
+	j := journal{Target: "prod-worker-1", NodeUID: "node-uid", ProviderID: "hcloud://42", MachineUUID: "machine-uuid"}
+	address, err := verifyNode(nodeFixture(), j)
 	if err != nil || address != "10.0.99.4" {
 		t.Fatalf("known worker rejected: %v", err)
 	}
 	for name, mutate := range map[string]func(object){
-		"replacement server":            func(n object) { n["spec"].(object)["providerID"] = "hcloud://43" },
-		"different machine":             func(n object) { n["status"].(object)["nodeInfo"].(object)["systemUUID"] = "other" },
-		"replacement node before reset": func(n object) { n["metadata"].(object)["uid"] = "replacement" },
+		"replacement server": func(n object) { n["spec"].(object)["providerID"] = "hcloud://43" },
+		"different machine":  func(n object) { n["status"].(object)["nodeInfo"].(object)["systemUUID"] = "other" },
+		"replacement node":   func(n object) { n["metadata"].(object)["uid"] = "replacement" },
 		"public address": func(n object) {
 			n["status"].(object)["addresses"] = []any{object{"type": "InternalIP", "address": "203.0.113.1"}}
 		},
@@ -30,14 +30,9 @@ func TestResetTargetMustRetainHardwareIdentityAndPrivateAddress(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			n := nodeFixture()
 			mutate(n)
-			if _, err := verifyNode(n, j, true); err == nil {
+			if _, err := verifyNode(n, j); err == nil {
 				t.Fatal("changed reset target accepted")
 			}
 		})
-	}
-	n := nodeFixture()
-	n["metadata"].(object)["uid"] = "reregistered"
-	if _, err := verifyNode(n, j, false); err != nil {
-		t.Fatal("same hardware may register a new Kubernetes UID after reset")
 	}
 }

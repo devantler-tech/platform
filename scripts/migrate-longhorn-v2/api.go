@@ -14,21 +14,15 @@ import (
 
 type command func(context.Context, []byte, string, ...string) ([]byte, error)
 
-// errConflict reports an API 409, the one failure a caller may retry with fresh state.
-var errConflict = errors.New("external command refused: the resource changed")
-
 func execute(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, program, args...)
 	cmd.Stdin = bytes.NewReader(input)
 	// Host configuration and provider replies never enter public workflow logs:
-	// stderr is only classified, never returned or printed.
+	// stderr is never returned or printed.
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	result, err := cmd.Output()
 	if err != nil {
-		if strings.Contains(stderr.String(), "Error from server (Conflict)") {
-			return nil, errConflict
-		}
 		return nil, errors.New("external command failed")
 	}
 	return result, nil
@@ -109,7 +103,6 @@ func (c client) snapshot(ctx context.Context) (inventory, error) {
 		{"volumes.longhorn.io", "longhorn-system", &s.volumes},
 		{"replicas.longhorn.io", "longhorn-system", &s.replicas},
 		{"engines.longhorn.io", "longhorn-system", &s.engines},
-		{"orphans.longhorn.io", "longhorn-system", &s.orphans},
 		{"pods", "*", &s.pods},
 	} {
 		objects, err := c.list(ctx, query.kind, query.namespace)
@@ -170,11 +163,11 @@ func (c client) talosResource(ctx context.Context, address, kind, name string) (
 	decoder := json.NewDecoder(bytes.NewReader(b))
 	var o object
 	if decoder.Decode(&o) != nil || text(o, "metadata", "id") != name {
-		return nil, errors.New("talos volume identity is incomplete")
+		return nil, errors.New("talos resource identity is incomplete")
 	}
 	var extra any
 	if decoder.Decode(&extra) != io.EOF {
-		return nil, errors.New("talos volume response is not singular")
+		return nil, errors.New("talos resource response is not singular")
 	}
 	return o, nil
 }

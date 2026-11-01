@@ -29,6 +29,8 @@ type refreshCluster struct {
 	slowDeparture  bool
 	loseEviction   bool
 	loseUncordon   bool
+	onEvict        func()
+	onRestart      func()
 }
 
 func movablePodOnWorker(worker, name, memory, owner string) object {
@@ -79,6 +81,9 @@ func (f *refreshCluster) list(items ...object) ([]byte, error) {
 func (f *refreshCluster) evict(args []string, input []byte) ([]byte, error) {
 	name := strings.Split(args[2], "/")[6]
 	f.events = append(f.events, "evict "+name)
+	if f.onEvict != nil {
+		f.onEvict()
+	}
 	if f.leaving > 0 {
 		f.t.Fatal("a second Pod left before the previous workload was back")
 	}
@@ -196,6 +201,9 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 			return []byte("nvme_tcp 1 0 - Live 0\nvfio_pci 1 0 - Live 0\nuio_pci_generic 1 0 - Live 0\n"), nil
 		case args[1] == "service":
 			f.events = append(f.events, "restart")
+			if f.onRestart != nil {
+				f.onRestart()
+			}
 			if !f.loseRestart {
 				f.node["status"].(object)["capacity"].(object)["hugepages-2Mi"] = "2Gi"
 				f.node["status"].(object)["allocatable"].(object)["hugepages-2Mi"] = "2Gi"
@@ -553,6 +561,87 @@ func TestOnlyTheNamedScannerMovesWithoutAPeer(t *testing.T) {
 	for name, pod := range map[string]object{"namespace": otherNamespace, "app": otherApp, "claim": withClaim, "owner": statefulSet, "leaving": leaving} {
 		if moves, err := planRefreshMoves(refreshWorker(), []object{podOnWorker(worker, "12Gi"), pod}); err == nil {
 			t.Fatalf("%s: planned %v", name, moveNames(moves))
+		}
+	}
+}
+
+func TestAMoveHoldsWhenItsPeerStoppedBeingReady(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "a", "1Gi", "a-rs"), movablePodOnWorker(worker, "b", "900Mi", "b-rs"))
+	f.onEvict = func() {
+		f.pods = slices.DeleteFunc(f.pods, func(pod object) bool { return text(pod, "metadata", "name") == "b-peer" })
+	}
+	if err := f.refresh(context.Background()); err == nil {
+		t.Fatal("a Pod left although its workload no longer had another Ready replica")
+	}
+	if want := []string{"cordon", "evict a", "uncordon"}; !slices.Equal(f.events, want) {
+		t.Fatalf("events %v, expected %v", f.events, want)
+	}
+}
+
+func TestRefreshHoldsUnderPressureBeforeAnyPodMoves(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	f.node["status"].(object)["conditions"] = []any{object{"type": "Ready", "status": "True"}, object{"type": "MemoryPressure", "status": "True"}}
+	if err := f.refresh(context.Background()); err == nil {
+		t.Fatal("a refresh started under memory pressure")
+	}
+	if len(f.events) != 0 {
+		t.Fatalf("a held refresh acted: %v", f.events)
+	}
+}
+
+func TestAPodThatLandedAfterMeasuringHoldsTheRestart(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "1Gi"))
+	measured := slices.Clone(f.pods)
+	f.pods = append(f.pods, podOnWorker(worker, "14Gi"))
+	if err := refreshHugepages(context.Background(), client{run: f.run, context: "admin@prod"}, strings.Repeat("1", 40), f.node, measured); err == nil {
+		t.Fatal("a restart went ahead on a stale measurement")
+	}
+	if len(f.events) != 0 {
+		t.Fatalf("a held refresh acted: %v", f.events)
+	}
+}
+
+func TestAPodRejectedByTheRestartFailsTheRunAndKeepsTheCordon(t *testing.T) {
+	worker := text(refreshWorker(), "metadata", "name")
+	f := newRefreshCluster(t, podOnWorker(worker, "12Gi"), movablePodOnWorker(worker, "large", "2Gi", "large-rs"))
+	f.onRestart = func() {
+		f.pods[0]["status"].(object)["phase"] = "Failed"
+		f.pods[0]["status"].(object)["reason"] = "OutOfmemory"
+	}
+	if err := f.refresh(context.Background()); err == nil {
+		t.Fatal("a rejected Pod was reported as success")
+	}
+	if value(f.node, "spec", "unschedulable") != true || slices.Contains(f.events, "uncordon") {
+		t.Fatalf("the cordon was released after a rejection: %v", f.events)
+	}
+}
+
+func TestAProvenCordonIsReleasedAheadOfOtherGates(t *testing.T) {
+	cordoned := func(annotation, pages string) (*refreshCluster, client) {
+		f := newRefreshCluster(t, podOnWorker(text(refreshWorker(), "metadata", "name"), "1Gi"))
+		f.node["spec"].(object)["unschedulable"] = true
+		f.node["metadata"].(object)["annotations"] = object{fenceAnnotation: annotation}
+		f.node["status"].(object)["capacity"].(object)["hugepages-2Mi"] = pages
+		f.node["status"].(object)["allocatable"].(object)["hugepages-2Mi"] = pages
+		return f, client{run: f.run, context: "admin@prod"}
+	}
+	f, c := cordoned(refreshFencePrefix+"prod-worker-1", "2Gi")
+	if err := c.releaseProvenRefreshCordons(context.Background(), []object{f.node}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(f.events, []string{"uncordon"}) {
+		t.Fatalf("a proven cordon stayed: %v", f.events)
+	}
+	for name, values := range map[string][2]string{"capacity unproven": {refreshFencePrefix + "prod-worker-1", "0"}, "foreign cordon": {"someone-else", "2Gi"}} {
+		f, c = cordoned(values[0], values[1])
+		if err := c.releaseProvenRefreshCordons(context.Background(), []object{f.node}); err != nil {
+			t.Fatal(err)
+		}
+		if len(f.events) != 0 {
+			t.Fatalf("%s: released: %v", name, f.events)
 		}
 	}
 }

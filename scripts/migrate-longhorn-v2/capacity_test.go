@@ -32,7 +32,7 @@ func TestClientRefreshRequiresTheCompleteFixedRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyCapacityRoster(capacityFixture(), pools, false); err != nil {
+	if err := verifyCapacityRoster(capacityFixture(), pools); err != nil {
 		t.Fatal(err)
 	}
 	for name, change := range map[string]func([]object) []object{
@@ -45,7 +45,7 @@ func TestClientRefreshRequiresTheCompleteFixedRoster(t *testing.T) {
 		"control plane missing":    func(nodes []object) []object { return nodes[:8] },
 	} {
 		t.Run(name, func(t *testing.T) {
-			if err := verifyCapacityRoster(change(capacityFixture()), pools, false); err == nil {
+			if err := verifyCapacityRoster(change(capacityFixture()), pools); err == nil {
 				t.Fatal("client refresh admitted without the complete ready roster")
 			}
 		})
