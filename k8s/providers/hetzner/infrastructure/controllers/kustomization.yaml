@@ -141,6 +141,7 @@ patches:
   - path: cilium/patches/enforce-wireguard-strict-mode.yaml
   # Require relay replicas to use separate nodes in prod; local retains soft spread.
   - path: cilium/patches/require-relay-node-spread.yaml
+  - path: cilium/patches/allow-relay-cache-eviction.yaml
   # Dormant prod-only SPIRE storage values. Authentication/SPIRE stay disabled
   # until a narrow policy consumer lands; if re-enabled, keep the datastore off
   # Longhorn to avoid the SPIRE <-> Longhorn <-> mTLS cycle — see file.

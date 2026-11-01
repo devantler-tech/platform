@@ -35,6 +35,8 @@ checked on 11 October 2026. That is **€16.49/month** with its Primary IPv4, or
 cost €29.99 instead.
 Remove the [capacity buffer](../k8s/providers/hetzner/infrastructure/overprovisioning/capacity-buffer.yaml)
 to run at the six-node figure, at the cost of slower scale-up.
+During the Longhorn V2 migration (#5582) the buffer is set to zero and the fixed
+migration workers supply the spare room; restore it when they are retired.
 
 ## Add storage and usage
 

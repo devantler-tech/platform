@@ -1,0 +1,12 @@
+# Normal graceful relocation of the cluster agent permits reclaiming ordinary
+# compute capacity (#5582). Its emptyDir holds buffered metrics, so relocation
+# can briefly interrupt telemetry; persistent Coroot data is separate.
+apiVersion: coroot.com/v1
+kind: Coroot
+metadata:
+  name: coroot
+  namespace: observability
+spec:
+  clusterAgent:
+    podAnnotations:
+      cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: tmp

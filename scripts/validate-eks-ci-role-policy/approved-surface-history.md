@@ -3981,3 +3981,17 @@ existing entry, HelmRelease dex/dex, from
 No authorization resource is added or removed. This approval records the
 declared callback change; deployed login and read-only acceptance are separate
 runtime checks.
+
+For #5655, two existing releases gain the autoscaler annotation that names the
+exact emptyDir caches it may move during ordinary eviction: Crossplane's
+`package-cache` and `function-cache`, and the Hubble relay's `tmp-volume`.
+Disruption budgets, ownership and scheduling checks still apply. No Kubernetes
+permission, service account or authorization resource changes.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly two
+existing entries: HelmRelease crossplane-system/crossplane from
+`8faec319d400ced8ebc0341fa5496bcd9e578b02cd7b456b7d0beee9334c5d68` to
+`fb717f7c9adb21b0f772e6a84554900e568a2675c91d375d1bb6ee76c2a0b1f3`, and
+HelmRelease kube-system/cilium from
+`583656039a7b6f65fab253ef1ce6ea63ffffd4437e404d5d42996208143a3c7a` to
+`62fd2d7681d498d256925e2ae8759d4c9f16bb8e359d98b5b6594d4288c2f36c`.
