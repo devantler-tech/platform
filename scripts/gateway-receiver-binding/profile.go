@@ -46,6 +46,7 @@ func sourceTransportValue(raw []byte, kind, name, version string) (bool, error) 
 			Spec       struct {
 				Infrastructure struct{ Annotations map[string]any }
 				Values         map[string]any
+				Listeners      []gatewayListener
 			}
 		}
 		if err := d.Decode(&object); err == io.EOF {
@@ -66,6 +67,9 @@ func sourceTransportValue(raw []byte, kind, name, version string) (bool, error) 
 				return false, bad
 			}
 			value = v == "true"
+			if value && !httpRouteBoundary(object.Spec.Listeners) {
+				return false, bad
+			}
 		} else {
 			api, ok := object.Spec.Values["gatewayAPI"].(map[string]any)
 			if !ok {

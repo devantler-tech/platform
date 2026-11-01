@@ -11,7 +11,7 @@ import (
 )
 
 func TestDisabledRecoveryWaitsOnlyForBoundTransportConvergence(t *testing.T) {
-	for _, scenario := range []string{"disabled", "receiver-converges", "provider-converges", "intent-converges", "status-converges", "provider-unknown", "receiver-unknown", "provider-replaced", "receiver-replaced", "binding-replaced", "source-replaced", "deadline"} {
+	for _, scenario := range []string{"disabled", "receiver-converges", "provider-converges", "intent-converges", "status-converges", "gateway-converges", "provider-unknown", "receiver-unknown", "provider-replaced", "receiver-replaced", "binding-replaced", "source-replaced", "deadline"} {
 		t.Run(scenario, func(t *testing.T) {
 			t.Chdir(filepath.Join("..", ".."))
 			_, b := providerFixture()
@@ -45,6 +45,9 @@ func TestDisabledRecoveryWaitsOnlyForBoundTransportConvergence(t *testing.T) {
 					}
 					return json.Marshal(s)
 				case "gateway":
+					if phase == 0 && scenario == "gateway-converges" {
+						return []byte(strings.ReplaceAll(string(gatewayFixture()), `"observedGeneration":2`, `"observedGeneration":1`)), nil
+					}
 					return gatewayFixture(), nil
 				case "secret":
 					return json.Marshal(map[string]any{"metadata": map[string]string{"name": "variables-gateway-receiver", "namespace": "flux-system", "uid": "33333333-3333-4333-8333-333333333333"}, "data": map[string][]byte{"gateway_receiver_source_cidr": []byte(b.CIDR), "gateway_receiver_service_uid": []byte(b.ServiceUID), "gateway_receiver_gateway_uid": []byte(b.GatewayUID)}})
@@ -99,7 +102,7 @@ func TestDisabledRecoveryWaitsOnlyForBoundTransportConvergence(t *testing.T) {
 				return id, nil
 			}
 			got, err := c.awaitDisabledTransport(context.Background(), provider)
-			ok := scenario == "disabled" || scenario == "receiver-converges" || scenario == "provider-converges" || scenario == "intent-converges" || scenario == "status-converges"
+			ok := scenario == "disabled" || scenario == "receiver-converges" || scenario == "provider-converges" || scenario == "intent-converges" || scenario == "status-converges" || scenario == "gateway-converges"
 			if (err == nil) != ok {
 				t.Fatalf("recovery misclassified known convergence or unknown state: %v", err)
 			}

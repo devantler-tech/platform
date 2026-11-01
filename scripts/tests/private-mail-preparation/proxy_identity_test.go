@@ -68,6 +68,14 @@ func TestProxyIdentityKeepsNativeBackendFencedAndProxyCredentialless(t *testing.
 func TestMaintainedProxyRemainsInactiveInProduction(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	pod := mapping(t, mapping(t, mapping(t, object(t, objects, "StatefulSet", "private-mail")["spec"])["template"])["spec"])
+	initializers := sequence(t, pod["initContainers"])
+	if len(initializers) != 1 {
+		t.Fatal("disabled transport must retain the managed initializer")
+	}
+	args := sequence(t, mapping(t, initializers[0])["args"])
+	if len(args) != 1 || args[0] != "--proxy-client-ip=false" {
+		t.Fatal("rollback must explicitly override a retained encrypted transport setting")
+	}
 	for _, item := range sequence(t, pod["containers"]) {
 		if mapping(t, item)["name"] == "client-proxy" {
 			t.Fatal("proxy must not activate before native and production trust proof")

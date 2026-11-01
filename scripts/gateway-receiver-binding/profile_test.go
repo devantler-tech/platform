@@ -16,6 +16,7 @@ func TestTransportSourceRequiresAnExplicitPairedProfile(t *testing.T) {
 		{"disabled", "false", "false", false, true, false},
 		{"fenced-disabled", "false", "false", true, true, false},
 		{"fenced-active", "true", "true", true, true, true},
+		{"raw-http-backend-namespace", "true", "true", true, false, false},
 		{"receiver-ahead", "false", "true", true, false, false},
 		{"provider-ahead", "true", "false", true, false, false},
 		{"unfenced-active", "true", "true", false, false, false},
@@ -34,6 +35,11 @@ func TestTransportSourceRequiresAnExplicitPairedProfile(t *testing.T) {
 			} else {
 				infra += "'" + tc.provider + "'\n"
 			}
+			httpFrom := "Same"
+			if tc.name == "raw-http-backend-namespace" {
+				httpFrom = "All"
+			}
+			infra += "  listeners:\n    - name: http\n      port: 80\n      protocol: HTTP\n      allowedRoutes:\n        namespaces:\n          from: " + httpFrom + "\n    - name: https\n      port: 443\n      protocol: HTTPS\n"
 			controllers := "apiVersion: helm.toolkit.fluxcd.io/v2\nkind: HelmRelease\nmetadata:\n  name: cilium\n  namespace: kube-system\nspec:\n  values:\n    gatewayAPI:\n      enableProxyProtocol: " + tc.receiver + "\n"
 			got, err := sourceTransportProfile([]byte(infra), []byte(controllers))
 			if (err == nil) != tc.valid || (tc.valid && got != (transportProfile{Fence: tc.fence, Proxy: tc.proxy})) {

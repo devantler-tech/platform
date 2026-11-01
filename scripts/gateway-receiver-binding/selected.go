@@ -167,12 +167,11 @@ func (c receiverClient) receiverState(ctx context.Context, b binding, selected b
 
 // restoreBaseline runs restoration only when the reviewed source leaves the
 // fence unselected, so main's ordinary recovery keeps answering for main.
-func restoreBaseline(rendered []byte, restore func() error) (bool, error) {
-	selected, err := fenceSelected(rendered)
-	if err != nil {
-		return false, err
+func restoreBaseline(profile transportProfile, restore func() error) (bool, error) {
+	if profile.Proxy && !profile.Fence {
+		return false, errors.New("transport-profile")
 	}
-	if selected {
+	if profile.Fence {
 		return true, nil
 	}
 	return false, restore()
@@ -281,49 +280,4 @@ func pauseFor(ctx context.Context, d time.Duration) error {
 	case <-time.After(d):
 		return nil
 	}
-}
-
-// applySelected installs the fence the reviewed source selects. It runs only in
-// the protected deployment and never rebinds or edits anything but the marker.
-func applySelected(ctx context.Context, kubeContext string) (bool, error) {
-	if kubeContext != "admin@prod" {
-		return false, errors.New("arguments")
-	}
-	before, err := collect(ctx, kubeContext)
-	if err != nil {
-		return false, err
-	}
-	// A replacement binding reaches the cluster through Flux, so a stale one waits too.
-	for {
-		secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
-		if err == nil && secretMatches(secret, before) {
-			break
-		}
-		if pauseFor(ctx, fencePollEvery) != nil {
-			return false, errors.New("source-secret")
-		}
-	}
-	c := receiverClient{context: kubeContext, command: executeReceiver}
-	wrote := false
-	err = withProviderBaseline(ctx, before, readProvider, func() error {
-		var installErr error
-		wrote, installErr = c.installFence(ctx, before, pauseFor)
-		if installErr != nil {
-			return installErr
-		}
-		// Enough fresh connections to reach most nodes behind the load balancer, once,
-		// when the listeners change. This shows the fence does not refuse the load
-		// balancer; it cannot show that a listener took the fence.
-		for round := 0; wrote && round < fenceProbeRounds; round++ {
-			if err := probePublic(ctx, before.PublicIPv4); err != nil {
-				return err
-			}
-		}
-		after, err := collect(ctx, kubeContext)
-		if err != nil || !sameReceiver(before, after) {
-			return errors.New("source-changed")
-		}
-		return nil
-	})
-	return wrote, err
 }

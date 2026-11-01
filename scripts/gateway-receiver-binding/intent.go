@@ -2,7 +2,7 @@ package main
 
 import "errors"
 
-type transportIntent struct{ Proxy, StatusProxy bool }
+type transportIntent struct{ Proxy, StatusProxy, Ready bool }
 
 func deriveObserved(service, gateway []byte) (binding, transportIntent, error) {
 	var observed serviceObject
@@ -17,5 +17,13 @@ func deriveObserved(service, gateway []byte) (binding, transportIntent, error) {
 	if err != nil {
 		return binding{}, transportIntent{}, err
 	}
-	return b, transportIntent{Proxy: want == "true", StatusProxy: observed.Status.LoadBalancer.Ingress[0].IPMode == "Proxy"}, nil
+	var actual gatewayObject
+	if strictJSON(gateway, &actual) != nil {
+		return binding{}, transportIntent{}, errors.New("unbound-provider")
+	}
+	ready, err := gatewayReadiness(actual)
+	if err != nil {
+		return binding{}, transportIntent{}, err
+	}
+	return b, transportIntent{Proxy: want == "true", StatusProxy: observed.Status.LoadBalancer.Ingress[0].IPMode == "Proxy", Ready: ready}, nil
 }

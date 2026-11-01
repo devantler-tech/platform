@@ -14,6 +14,10 @@ type receiverObservation struct {
 }
 
 func (c receiverClient) awaitDisabledTransport(ctx context.Context, observe func(context.Context, binding, bool) (providerIdentity, error)) (receiverObservation, error) {
+	return c.awaitTransport(ctx, false, observe)
+}
+
+func (c receiverClient) awaitTransport(ctx context.Context, wantProxy bool, observe func(context.Context, binding, bool) (providerIdentity, error)) (receiverObservation, error) {
 	bad := func(stage string) (receiverObservation, error) { return receiverObservation{}, errors.New(stage) }
 	if c.context != "admin@prod" || c.command == nil || observe == nil {
 		return bad("transport-capability")
@@ -31,6 +35,12 @@ func (c receiverClient) awaitDisabledTransport(ctx context.Context, observe func
 		gateway, err := c.read(ctx, "gateway", "kube-system", "platform")
 		if err != nil {
 			return receiverObservation{}, err
+		}
+		if wantProxy {
+			var actual gatewayObject
+			if strictJSON(gateway, &actual) != nil || !httpRouteBoundary(actual.Spec.Listeners) {
+				return bad("unsafe-http-route-boundary")
+			}
 		}
 		b, intent, err := deriveObserved(service, gateway)
 		if err != nil {
@@ -58,7 +68,10 @@ func (c receiverClient) awaitDisabledTransport(ctx context.Context, observe func
 		if err != nil {
 			return receiverObservation{}, err
 		}
-		provider, providerErr := observe(ctx, b, false)
+		if wantProxy && state.Mode == receiverDisabled {
+			return bad("receiver-not-fenced")
+		}
+		provider, providerErr := observe(ctx, b, wantProxy)
 		pending := errors.Is(providerErr, errProviderMode)
 		if providerErr != nil && !pending {
 			return receiverObservation{}, providerErr
@@ -71,7 +84,7 @@ func (c receiverClient) awaitDisabledTransport(ctx context.Context, observe func
 		}
 		pinned = receiverObservation{Binding: b, Provider: provider, ReceiverUID: state.UID, Bindings: bindings}
 		seen = true
-		if !intent.Proxy && !intent.StatusProxy && !pending && state.Mode != receiverFencedActive {
+		if intent.Ready && intent.Proxy == wantProxy && intent.StatusProxy == wantProxy && !pending && (state.Mode == receiverFencedActive) == wantProxy {
 			return pinned, nil
 		}
 		if c.wait(ctx, fencePollEvery) != nil {
