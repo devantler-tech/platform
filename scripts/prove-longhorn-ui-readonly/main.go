@@ -51,7 +51,7 @@ func prove(ctx context.Context, run executor) error {
 		javascript := strings.Contains(p.request, ".js?")
 		program := fmt.Sprintf("set -eu; printf '%%s\\r\\n' '%s HTTP/1.1' 'Host: longhorn.platform.devantler.tech' 'Connection: close' 'Content-Length: 0' '' | nc -w 10 %s %s", p.request, p.host, p.port)
 		if javascript {
-			program += ` | head -c 65536 | { IFS= read -r status; printf '%s\n' "$status"; while IFS= read -r header; do case "$header" in ''|"$(printf '\r')") printf '\n'; break;; [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Tt][Yy][Pp][Ee]:*) printf '%s\n' "$header";; esac; done; }`
+			program += ` | head -c 65536 | { IFS= read -r status; printf '%s\n' "$status"; while IFS= read -r header; do case "$header" in [[:blank:]]*) exit 1;; ''|"$(printf '\r')") printf '\n'; break;; [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Tt][Yy][Pp][Ee]:*) printf '%s\n' "$header";; esac; done; }`
 		} else {
 			program += ` | { IFS= read -r status; printf '%s' "$status"; }`
 		}

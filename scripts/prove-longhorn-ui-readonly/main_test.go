@@ -133,3 +133,44 @@ func TestProofRejectsHTMLAndMalformedJavaScriptHeaders(t *testing.T) {
 		}
 	}
 }
+
+// TestNativeReaderRejectsFoldedHeaders prevents filtering from repairing bad MIME.
+func TestNativeReaderRejectsFoldedHeaders(t *testing.T) {
+	for _, continuation := range []string{" text/html", "\ttext/html"} {
+		t.Run(strconv.Quote(continuation), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				connection, writer, err := w.(http.Hijacker).Hijack()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				defer func() { _ = connection.Close() }()
+				_, err = writer.WriteString("HTTP/1.1 200 OK\r\nContent-Type: application/javascript\r\n" + continuation + "\r\nX-Private-Fixture: private header\r\n\r\nprivate body")
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				if err = writer.Flush(); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+			address := strings.ReplaceAll(strings.TrimPrefix(server.URL, "http://"), ":", " ")
+			calls := 0
+			err := prove(t.Context(), func(ctx context.Context, args ...string) ([]byte, error) {
+				code := []string{"200", "404", "200", "403", "403", "403", "200", "200", "200", "200", "200", "200", "200", "200"}[calls]
+				calls++
+				program := args[len(args)-1]
+				if !strings.Contains(program, ".js?") {
+					return []byte("HTTP/1.1 " + code + " Expected\r\n"), nil
+				}
+				program = strings.ReplaceAll(program, "nc -w 10 127.0.0.1 8080", "nc -w 2 "+address)
+				program = strings.ReplaceAll(program, "nc -w 10 longhorn-frontend.longhorn-system.svc.cluster.local 80", "nc -w 2 "+address)
+				return exec.CommandContext(ctx, "/bin/sh", "-c", program).Output()
+			})
+			if err == nil || calls != 14 || strings.Contains(err.Error(), "private") {
+				t.Fatalf("folded header accepted or response leaked: %v", err)
+			}
+		})
+	}
+}
