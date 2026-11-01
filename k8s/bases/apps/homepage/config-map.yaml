@@ -82,13 +82,15 @@ data:
     # — and note tenant repositories carry their own routes, so a group can be
     # claimed from outside this repository.
     layout:
-      Kubernetes:
-        icon: si-talos-#FF7300
+      # Daily operations first: health, cluster management, then storage.
       Observability:
         # `coroot` is not in any icon set Homepage resolves; use an MDI icon.
         icon: mdi-chart-line
-      # Right after Observability: Umami is the other "how is it doing" view,
-      # for the sites rather than the cluster.
+      Kubernetes:
+        icon: si-talos-#FF7300
+      Storage:
+        icon: mdi-harddisk
+      # Site analytics follows the cluster's operational views.
       Analytics:
         icon: si-umami
       Secrets Management:
