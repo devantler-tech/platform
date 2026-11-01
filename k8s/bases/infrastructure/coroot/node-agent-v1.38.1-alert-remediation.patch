@@ -414,10 +414,10 @@ index 803286a..36ddb94 100644
  		}
 diff --git a/logs/journald_reader_test.go b/logs/journald_reader_test.go
 new file mode 100644
-index 0000000..0c7b634
+index 0000000..7c9ba5e
 --- /dev/null
 +++ b/logs/journald_reader_test.go
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,29 @@
 +//go:build linux
 +
 +package logs
@@ -425,7 +425,6 @@ index 0000000..0c7b634
 +import (
 +	"errors"
 +	"fmt"
-+	"os"
 +	"syscall"
 +	"testing"
 +)
