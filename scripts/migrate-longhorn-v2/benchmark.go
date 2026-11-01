@@ -316,6 +316,18 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
+	start, err := c.snapshot(ctx)
+	if err != nil {
+		return err
+	}
+	scratchName := text(volume, "metadata", "name")
+	replicas := scratchReplicas(start, scratchName)
+	if len(replicas) != 3 {
+		return errors.New("the scratch volume does not have exactly three replicas to observe")
+	}
+	if err = verifyTrialComparable(start, phase, machines, scratchName, replicas); err != nil {
+		return err
+	}
 	current, err := c.get(ctx, "pod", tag, "fio", false)
 	if err != nil {
 		return err
@@ -327,6 +339,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		return err
 	}
 	// The Pod's own deadline ends the trials first, and it reports Failed when it does.
+	sampled := time.Now()
 	if err = waitReadyWithin(ctx, benchmarkCompletionLimit, func() error {
 		p, err := c.get(ctx, "pod", tag, "fio", false)
 		if err != nil {
@@ -340,9 +353,17 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 			return nil
 		case "Failed":
 			return fmt.Errorf("benchmark consumer failed: %w", errReadinessTerminal)
-		default:
-			return errors.New("benchmark has not completed successfully")
 		}
+		if time.Since(sampled) >= benchmarkSampleInterval {
+			sampled = time.Now()
+			// A failed read proves nothing either way; the ending check still has to pass.
+			if s, listErr := c.snapshot(ctx); listErr == nil {
+				if err = verifyTrialComparable(s, phase, machines, scratchName, replicas); err != nil {
+					return fmt.Errorf("%w: %w", errReadinessTerminal, err)
+				}
+			}
+		}
+		return errors.New("benchmark has not completed successfully")
 	}); err != nil {
 		return err
 	}
@@ -354,13 +375,19 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
-	fresh, err := c.snapshot(ctx)
-	if err != nil {
+	// The measurements exist only in this Pod's logs until they are saved.
+	if err = saveBenchmarkProgress(ctx, c, source, runID, record); err != nil {
 		return err
 	}
-	endingMachines, err := benchmarkMachines(fresh, phase)
-	if err != nil || !reflect.DeepEqual(endingMachines, machines) {
-		return errors.New("worker configuration or volume health changed during the benchmark")
+	// Kubernetes now detaches the finished Pod's volume, so give that transition time.
+	if err = waitReady(ctx, func() error {
+		fresh, err := c.snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		return verifyTrialComparable(fresh, phase, machines, scratchName, replicas)
+	}); err != nil {
+		return err
 	}
 	current, err = c.get(ctx, "pod", tag, "fio", false)
 	if err != nil {
@@ -402,6 +429,30 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	public, _ := json.Marshal(record.Measurements)
 	fmt.Printf("Longhorn %s: completed eighteen controlled fio trials; scratch resources removed. Measurements: %s\n", phase, public)
 	fmt.Println("Observed CPU configuration:", publicBenchmarkCPU(record.CPU))
+	return nil
+}
+
+// scratchReplicas names each of the volume's replicas with the time it became healthy. A
+// rebuild changes one or the other, even when it finished before anything looked.
+func scratchReplicas(s inventory, volume string) map[string]string {
+	replicas := map[string]string{}
+	for _, r := range s.replicas {
+		if text(r, "spec", "volumeName") == volume {
+			replicas[text(r, "metadata", "name")] = text(r, "spec", "healthyAt")
+		}
+	}
+	return replicas
+}
+
+// verifyTrialComparable holds a measurement taken while storage was not as it started.
+func verifyTrialComparable(s inventory, phase string, machines map[string]benchmarkMachine, volume string, replicas map[string]string) error {
+	current, err := benchmarkMachines(s, phase)
+	if err != nil || !reflect.DeepEqual(current, machines) {
+		return errors.New("worker configuration or volume health changed during the benchmark")
+	}
+	if !reflect.DeepEqual(scratchReplicas(s, volume), replicas) {
+		return errors.New("a scratch replica was rebuilt during the benchmark")
+	}
 	return nil
 }
 

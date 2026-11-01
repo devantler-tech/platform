@@ -48,8 +48,10 @@ worker 3: random read, random write and 70:30 mixed I/O, queue depths 1 and 32,
 three 30-second trials after a 10-second ramp each. CPU limits, throttling, IOPS
 and p99 latency are recorded. The receipt also captures the admitted client CPU
 allocation and each permanent worker's actual instance-manager image, CPU
-request and limit. Missing observations or changes during the trials hold the
-comparison. V2's necessary CPU reservation is reported alongside the V1 context;
+request and limit. Storage health is read every minute during the trials, and a scratch
+replica rebuilt at any point is detected from its identity. Any volume losing health,
+missing observations or other changes during the trials hold the comparison, and fio keeps
+running until it finishes or reaches its deadline. V2's necessary CPU reservation is reported alongside the V1 context;
 the comparison does not assume the engines have identical CPU costs.
 A completed receipt requires healthy storage and
 explicit cleanup of only the owned scratch Pod, claim, retained PV, backend,

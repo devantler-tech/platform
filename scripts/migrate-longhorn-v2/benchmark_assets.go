@@ -10,6 +10,10 @@ import (
 // and the preparation pass, with room for slow storage.
 const benchmarkDeadlineSeconds = 1500
 
+// benchmarkSampleInterval spaces storage health reads during the trials. Each read lists
+// every Longhorn volume, replica and engine.
+var benchmarkSampleInterval = time.Minute
+
 // benchmarkCompletionLimit lets the Pod report Failed at its deadline rather than cutting it short.
 const benchmarkCompletionLimit = (benchmarkDeadlineSeconds + 120) * time.Second
 

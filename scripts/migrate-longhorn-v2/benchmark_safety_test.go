@@ -300,3 +300,53 @@ func TestExecuteClassifiesOnlyAConflictAndKeepsStderrPrivate(t *testing.T) {
 		}
 	}
 }
+
+func TestAMeasurementTakenDuringAStorageFaultIsNotComparable(t *testing.T) {
+	baseline := benchmarkInventoryFixture()
+	machines, err := benchmarkMachines(baseline, "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	volume := text(baseline.volumes[0], "metadata", "name")
+	replicas := scratchReplicas(baseline, volume)
+	if len(replicas) != 3 {
+		t.Fatalf("fixture has %d replicas", len(replicas))
+	}
+	if err := verifyTrialComparable(benchmarkInventoryFixture(), "v1", machines, volume, replicas); err != nil {
+		t.Fatal(err)
+	}
+	for name, change := range map[string]func(*inventory){
+		"a volume lost health": func(s *inventory) { s.volumes[0]["status"].(object)["robustness"] = "degraded" },
+		"a replica rebuilt in place": func(s *inventory) {
+			for _, r := range s.replicas {
+				if text(r, "spec", "volumeName") == volume {
+					r["spec"].(object)["healthyAt"] = "2030-01-01T00:00:00Z"
+					return
+				}
+			}
+		},
+		"a replica replaced": func(s *inventory) {
+			for _, r := range s.replicas {
+				if text(r, "spec", "volumeName") == volume {
+					r["metadata"].(object)["name"] = "replacement"
+					return
+				}
+			}
+		},
+		"a worker changed": func(s *inventory) {
+			for _, n := range s.nodes {
+				if text(n, "metadata", "name") == "prod-worker-1" {
+					n["status"].(object)["nodeInfo"].(object)["osImage"] = "changed"
+				}
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := benchmarkInventoryFixture()
+			change(&s)
+			if err := verifyTrialComparable(s, "v1", machines, volume, replicas); err == nil {
+				t.Fatal("the measurement was accepted")
+			}
+		})
+	}
+}
