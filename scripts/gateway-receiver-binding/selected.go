@@ -129,11 +129,12 @@ func fenceActive(raw []byte, b binding) error {
 }
 
 func (c receiverClient) bindingsSelected(ctx context.Context, b binding) error {
-	for _, r := range preparedBindings {
-		raw, err := c.read(ctx, r.Resource, "", "gateway-receiver")
-		if err != nil || !admissionMatches(raw, r, b) {
-			return errors.New("selected-policy-binding")
-		}
+	identities, err := c.fenceIdentities(ctx, b)
+	if err != nil {
+		return err
+	}
+	if c.expected != nil && c.expected.Bindings != identities {
+		return errors.New("receiver-observation-changed")
 	}
 	return nil
 }
@@ -143,6 +144,9 @@ func (c receiverClient) bindingsSelected(ctx context.Context, b binding) error {
 func (c receiverClient) receiverState(ctx context.Context, b binding, selected bool) error {
 	raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
 	if err != nil {
+		return err
+	}
+	if err := c.receiverObserved(raw, b); err != nil {
 		return err
 	}
 	if selected {
@@ -214,17 +218,32 @@ func fenceTouch(raw []byte) ([]byte, error) {
 // rewritten by the same write. A listener this helper does not own or an active
 // PROXY listener fails at once, because a write could not make either correct.
 func (c receiverClient) installFence(ctx context.Context, b binding, pause func(context.Context, time.Duration) error) (bool, error) {
+	if c.expected != nil && !sameReceiver(c.expected.Binding, b) {
+		return false, errors.New("receiver-observation-changed")
+	}
 	wrote := false
 	var last error
 	for {
 		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+		if c.expected != nil && err != nil {
+			return wrote, err
+		}
 		if err == nil {
+			if err := c.receiverObserved(raw, b); err != nil {
+				return wrote, err
+			}
 			if _, err := recoveryPatch(raw, b); err != nil {
 				return wrote, err
 			}
 			last = c.policies(ctx, b)
+			if c.expected != nil && last != nil {
+				return wrote, last
+			}
 			if last == nil {
 				last = c.bindingsSelected(ctx, b)
+				if c.expected != nil && last != nil {
+					return wrote, last
+				}
 			}
 			if last == nil && fenceActive(raw, b) == nil {
 				if wrote {

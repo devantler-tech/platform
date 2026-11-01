@@ -115,3 +115,14 @@ func convergenceReceiver(raw []byte, b binding) (receiverState, error) {
 	}
 	return receiverState{Mode: receiverDisabled, UID: object.Metadata.UID, Version: object.Metadata.ResourceVersion}, nil
 }
+
+func (c receiverClient) receiverObserved(raw []byte, b binding) error {
+	if c.expected == nil {
+		return nil
+	}
+	var object receiverConfig
+	if !sameReceiver(c.expected.Binding, b) || strictJSON(raw, &object) != nil || object.Metadata.UID != c.expected.ReceiverUID {
+		return errors.New("receiver-observation-changed")
+	}
+	return nil
+}
