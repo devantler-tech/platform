@@ -1,0 +1,11 @@
+# Existing partitions are not shrunk by configuration. The reviewed migration
+# first evacuates replicas and drains the worker, then resets only EPHEMERAL.
+apiVersion: v1alpha1
+kind: VolumeConfig
+name: EPHEMERAL
+provisioning:
+  diskSelector:
+    match: system_disk
+  minSize: 40GiB
+  maxSize: -104GiB
+  grow: false
