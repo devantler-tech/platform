@@ -307,7 +307,7 @@ spec:
               # Keyless-signed by the shared publish-app workflow this tenant's
               # cd.yaml calls. The legacy location retains its full-commit
               # compatibility rule; the maintained location requires the exact
-              # reviewed revisions during the v8 transition (#5213).
+              # reviewed revisions (v8.0.0 #5213, v19.0.5 #5404).
               # Tags and branches are refused at either location. Every
               # tenant's caller must also pass its independent
               # approval check. cosign's keyless attestation verification
@@ -315,7 +315,7 @@ spec:
               # identities are not supported at this time"), so any future
               # alternation must stay inside one subject regex.
               - issuer: '^https://token\.actions\.githubusercontent\.com$'
-                subject: '${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}|\\.github/\\.github/workflows/publish-app\\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
+                subject: '${schema.spec.source.publisherRevision == "" ? "^https://github\\.com/devantler-tech/(actions/\\.github/workflows/publish-app\\.yaml@[0-9a-f]{40}|\\.github/\\.github/workflows/publish-app\\.yaml@(467f07582436a26b62cf4aa756423512f85ba0c0|af042c540ce8db4d64add98c34b5c57691e0e812))$" : "^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@" + schema.spec.source.publisherRevision + "$"}'
     # --- Flux Kustomization (one of two variants by `sops`) ---------------
     # The impersonating Kustomization that reconciles the tenant's own artifact
     # under its namespaced SA (bound to the `tenant-edit` role). Two variants because the SOPS `decryption`
