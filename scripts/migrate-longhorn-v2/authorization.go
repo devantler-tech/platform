@@ -12,14 +12,14 @@ func authorize(getenv func(string) string, target string) error {
 	if getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "prepare-worker" {
 		return errors.New("the selected worker preparation operation is required")
 	}
-	return authorizeWorkflow(getenv, "prepare-longhorn-v2-node")
+	return authorizeWorkflow(getenv, "prepare-longhorn-v2-"+target)
 }
 
 func authorizeCapacity(getenv func(string) string, role string) error {
 	if role != "v1" && role != "v2" || getenv("LONGHORN_V2_POOL") != role || getenv("LONGHORN_V2_OPERATION") != "enable-capacity" {
 		return errors.New("only the explicitly selected migration pool may be enabled")
 	}
-	return authorizeWorkflow(getenv, "enable-longhorn-migration-capacity")
+	return authorizeWorkflow(getenv, "enable-longhorn-migration-capacity-"+role)
 }
 
 func authorizeWorkflow(getenv func(string) string, confirmation string) error {

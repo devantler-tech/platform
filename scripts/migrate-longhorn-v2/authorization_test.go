@@ -8,7 +8,7 @@ func dispatchFixture() map[string]string {
 		"GITHUB_REPOSITORY": "devantler-tech/platform", "GITHUB_RUN_ID": "1234", "GITHUB_RUN_ATTEMPT": "1",
 		"GITHUB_SHA": "1234567890123456789012345678901234567890", "RUNNER_ENVIRONMENT": "github-hosted",
 		"GITHUB_WORKFLOW_REF": "devantler-tech/platform/.github/workflows/prepare-longhorn-v2-node.yaml@refs/heads/main",
-		"LONGHORN_V2_CONFIRM": "prepare-longhorn-v2-node", "LONGHORN_V2_NODE": "prod-worker-1",
+		"LONGHORN_V2_CONFIRM": "prepare-longhorn-v2-prod-worker-1", "LONGHORN_V2_NODE": "prod-worker-1",
 		"LONGHORN_V2_OPERATION": "prepare-worker",
 	}
 }
@@ -45,7 +45,7 @@ func TestMutationRequiresTheReviewedNodePreparationDispatch(t *testing.T) {
 func TestCapacityActivationHasItsOwnExplicitOperationAndConfirmation(t *testing.T) {
 	env := dispatchFixture()
 	env["LONGHORN_V2_OPERATION"] = "enable-capacity"
-	env["LONGHORN_V2_CONFIRM"] = "enable-longhorn-migration-capacity"
+	env["LONGHORN_V2_CONFIRM"] = "enable-longhorn-migration-capacity-v1"
 	env["LONGHORN_V2_POOL"] = "v1"
 	if err := authorizeCapacity(func(k string) string { return env[k] }, "v1"); err != nil {
 		t.Fatal(err)
@@ -98,5 +98,33 @@ func TestBenchmarkAuthorizationDoesNotAuthorizeOtherMigrationWrites(t *testing.T
 		if authorizeBenchmark(getenv, phase) == nil {
 			t.Fatal("unreviewed branch benchmark authorized")
 		}
+	}
+}
+
+func TestConfirmationMustNameTheSelectedTarget(t *testing.T) {
+	worker := dispatchFixture()
+	worker["LONGHORN_V2_NODE"] = "prod-worker-2"
+	for _, confirmation := range []string{"prepare-longhorn-v2-prod-worker-1", "prepare-longhorn-v2-node"} {
+		worker["LONGHORN_V2_CONFIRM"] = confirmation
+		if err := authorize(func(k string) string { return worker[k] }, "prod-worker-2"); err == nil {
+			t.Fatalf("%s confirmed a reset of prod-worker-2", confirmation)
+		}
+	}
+	worker["LONGHORN_V2_CONFIRM"] = "prepare-longhorn-v2-prod-worker-2"
+	if err := authorize(func(k string) string { return worker[k] }, "prod-worker-2"); err != nil {
+		t.Fatal(err)
+	}
+	pool := dispatchFixture()
+	pool["LONGHORN_V2_OPERATION"] = "enable-capacity"
+	pool["LONGHORN_V2_POOL"] = "v2"
+	for _, confirmation := range []string{"enable-longhorn-migration-capacity-v1", "enable-longhorn-migration-capacity"} {
+		pool["LONGHORN_V2_CONFIRM"] = confirmation
+		if err := authorizeCapacity(func(k string) string { return pool[k] }, "v2"); err == nil {
+			t.Fatalf("%s confirmed the v2 pool", confirmation)
+		}
+	}
+	pool["LONGHORN_V2_CONFIRM"] = "enable-longhorn-migration-capacity-v2"
+	if err := authorizeCapacity(func(k string) string { return pool[k] }, "v2"); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -69,7 +69,7 @@ class and namespace. An incomplete run holds with its journal and resources
 preserved for explicit recovery.
 
 Select `enable-capacity`, a pool,
-and `enable-longhorn-migration-capacity` to activate temporary storage. The whole
+and `enable-longhorn-migration-capacity-<pool>` to activate temporary storage. The whole
 pool is checked and pinned before any disk is enabled. Its role, server type,
 hardware and encryption must match; an existing foreign pin or disk is a hold.
 New pool nodes remain excluded by admission until explicitly enabled. The V2 pool also holds until Longhorn's V2 data engine setting is on, because Longhorn refuses a block disk otherwise. Existing
@@ -85,7 +85,7 @@ latency alongside CPU throttling and concurrent platform load. These controlled
 measurements do not establish a universal fourfold performance claim.
 
 For a permanent worker, select `prepare-worker`, its node name, and
-`prepare-longhorn-v2-node`. The workflow shares the production deployment
+`prepare-longhorn-v2-<worker>`, for example `prepare-longhorn-v2-prod-worker-1`. The workflow shares the production deployment
 lock. It requires the current main source, the reviewed layout already loaded by
 Talos, the reconciled block-disk defaults, every temporary V1 worker enabled for
 replicas, and a Ready target without a foreign cordon. It writes a durable journal before requesting evacuation, waits for
@@ -122,8 +122,10 @@ trying a rerun. A prepared receipt is revalidated against live state.
 Prepared means the worker and encrypted disk layout passed these checks. Every
 V2 client node must advertise its required 2 GiB hugepage capacity before activation. V2
 instance-manager health, a successful three-replica canary, persistence,
-reattachment, backup/restore, application acceptance and comparable V1/V2 I/O
-measurements remain separate gates before data migration or iSCSI retirement.
+reattachment, backup/restore and application acceptance remain separate gates
+before data migration. The `benchmark-v1` baseline also comes before data
+migration. The V1/V2 comparison follows it, because `benchmark-v2` needs every
+volume on V2, and it must be reported before iSCSI retirement.
 
 Run offline checks with:
 

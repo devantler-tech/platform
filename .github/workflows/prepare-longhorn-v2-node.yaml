@@ -83,10 +83,10 @@ jobs:
           [[ "${DISPATCH_REF}" == refs/heads/main && "${GITHUB_RUN_ATTEMPT}" == 1 ]]
           case "${LONGHORN_V2_OPERATION}" in
             prepare-worker)
-              [[ "${LONGHORN_V2_CONFIRM}" == prepare-longhorn-v2-node && "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ ]]
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
             enable-capacity)
-              [[ "${LONGHORN_V2_CONFIRM}" == enable-longhorn-migration-capacity && "${LONGHORN_V2_POOL}" =~ ^v[12]$ ]]
+              [[ "${LONGHORN_V2_POOL}" =~ ^v[12]$ && "${LONGHORN_V2_CONFIRM}" == "enable-longhorn-migration-capacity-${LONGHORN_V2_POOL}" ]]
               ;;
             refresh-clients)
               [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]
