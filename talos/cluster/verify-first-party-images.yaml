@@ -57,7 +57,7 @@
 # pods, a compromised registry serving a tampered image).
 #
 # Scope: FIRST-PARTY images (ghcr.io/devantler-tech/*). All are keyless-cosign
-# signed through nine signing routes:
+# signed through eleven image routes:
 #   1. ghcr.io/devantler-tech/ksail — the ksail-operator image — is signed by
 #      ksail's OWN release pipeline (devantler-tech/ksail .github/workflows/
 #      cd.yaml; see that repo's GoReleaser `docker_signs` step), at a release tag.
@@ -80,7 +80,9 @@
 #   9. the app images (wedding-app, ascoachingogvaner, …) are signed by the
 #      shared publish-app.yaml workflow: legacy full-commit compatibility or an
 #      explicitly reviewed maintained revision, matching the app admission rule.
-# Talos evaluates rules in order, first match wins, so the eight specific rules
+# The two checkpoint compatibility images use the main-only
+# publish-coroot-checkpoint-hotfix.yaml workflow, separately from the node agent.
+# Talos evaluates rules in order, first match wins, so the ten specific rules
 # MUST precede the ghcr.io/devantler-tech/* catch-all.
 #
 # FAIL-OPEN by design for everything else: an image matching NO rule is pulled
@@ -176,6 +178,15 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-node-agent-hotfix\.yaml@refs/heads/main$
+  # Checkpoint server and collector share one reviewed main-only publisher.
+  - image: ghcr.io/devantler-tech/platform-coroot
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-checkpoint-hotfix\.yaml@refs/heads/main$
+  - image: ghcr.io/devantler-tech/platform-coroot-cluster-agent
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-coroot-checkpoint-hotfix\.yaml@refs/heads/main$
   # Exact zone repository, before the generic first-party app rule. The private
   # trial uses the game's own stable release workflow, not the shared publisher.
   - image: ghcr.io/devantler-tech/world-at-ruin/zone
@@ -187,11 +198,26 @@ rules:
     keyless:
       issuer: https://token.actions.githubusercontent.com
       subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-private-mail-bootstrap\.yaml@refs/heads/main$
+  # Reports-controller repair: exact repository before the generic app rule.
+  - image: ghcr.io/devantler-tech/platform-kyverno-reports
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-reports-hotfix\.yaml@refs/heads/main$
+  # Patched migration runtime: exact repository before the generic app rule.
+  - image: ghcr.io/devantler-tech/platform-kyverno-migrate
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-migration-runtime\.yaml@refs/heads/main$
+  # Patched background controller: exact repository before the generic app rule.
+  - image: ghcr.io/devantler-tech/platform-kyverno-background
+    keyless:
+      issuer: https://token.actions.githubusercontent.com
+      subjectRegex: ^https://github\.com/devantler-tech/platform/\.github/workflows/publish-kyverno-background-hotfix\.yaml@refs/heads/main$
   # First-party APP images retain legacy full-commit verification and accept the
-  # reviewed maintained publisher revisions (v8.0.0 #5213, v13.2.15 #5404).
+  # two reviewed maintained publisher revisions during the v8 transition (#5213).
   # Mutable refs, tags and other maintained commits are refused, as in the app
   # admission policy.
   - image: ghcr.io/devantler-tech/*
     keyless:
       issuer: https://token.actions.githubusercontent.com
-      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0|f5d078cc4b04ecb15432ed4e34cba1142a6279d4))$
+      subjectRegex: ^https://github\.com/devantler-tech/(actions/\.github/workflows/publish-app\.yaml@[0-9a-f]{40}|\.github/\.github/workflows/publish-app\.yaml@(0c7b6c3509b73adbc7537e030935bb01987e625b|467f07582436a26b62cf4aa756423512f85ba0c0))$

@@ -147,9 +147,67 @@ func compare(policy string, input io.Reader, _ io.Writer, diagnostic io.Writer) 
 	return 0
 }
 
+// Decode metadata IDs into strings directly. talosctl's JSON writer first
+// decodes resource YAML into an untyped map, interpreting 0010 as octal 8.
+// Keep the original ID and full rule spec, so ordering and signer comparison
+// use the node's actual decisions rather than that lossy intermediate form.
+func observeResources(kind string, input io.Reader, output, diagnostic io.Writer) int {
+	if kind != "imageverificationrules.security.talos.dev" && kind != "tuftrustedroots.security.talos.dev" {
+		fmt.Fprintln(diagnostic, "unsupported resource observation")
+		return 2
+	}
+	type observation struct {
+		ID           string         `json:"id"`
+		Phase        string         `json:"phase"`
+		Owner        string         `json:"owner"`
+		ImagePattern string         `json:"imagePattern"`
+		Spec         map[string]any `json:"spec"`
+	}
+	observations := make([]observation, 0)
+	seen := make(map[string]bool)
+	decoder := yaml.NewDecoder(input)
+	for {
+		var resource struct {
+			Metadata struct {
+				ID    string `yaml:"id"`
+				Phase string `yaml:"phase"`
+				Owner string `yaml:"owner"`
+			} `yaml:"metadata"`
+			Spec map[string]any `yaml:"spec"`
+		}
+		err := decoder.Decode(&resource)
+		if err == io.EOF {
+			break
+		}
+		if err != nil || resource.Metadata.ID == "" || seen[resource.Metadata.ID] {
+			fmt.Fprintln(diagnostic, "invalid or duplicate resource identity")
+			return 2
+		}
+		seen[resource.Metadata.ID] = true
+		row := observation{ID: resource.Metadata.ID, Phase: resource.Metadata.Phase, Owner: resource.Metadata.Owner}
+		if kind == "imageverificationrules.security.talos.dev" {
+			row.Spec = resource.Spec
+			row.ImagePattern, _ = resource.Spec["imagePattern"].(string)
+		}
+		observations = append(observations, row)
+	}
+	encoded, err := json.Marshal(observations)
+	if err != nil {
+		fmt.Fprintln(diagnostic, "could not encode complete resource observations")
+		return 2
+	}
+	if _, err := output.Write(append(encoded, '\n')); err != nil {
+		return 2
+	}
+	return 0
+}
+
 func run(args []string, input io.Reader, output, diagnostic io.Writer) int {
+	if len(args) == 2 && args[0] == "resources" {
+		return observeResources(args[1], input, output, diagnostic)
+	}
 	if len(args) != 2 || (args[0] != "normalize" && args[0] != "compare") {
-		fmt.Fprintln(diagnostic, "usage: validate-image-verification-policy <normalize|compare> <policy.yaml>")
+		fmt.Fprintln(diagnostic, "usage: validate-image-verification-policy <normalize|compare> <policy.yaml> | resources <resource-type>")
 		return 2
 	}
 	data, err := os.ReadFile(args[1])

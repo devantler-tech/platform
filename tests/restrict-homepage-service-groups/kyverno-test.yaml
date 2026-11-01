@@ -8,17 +8,20 @@ policies:
     ../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-homepage-service-groups.yaml
 resources:
   - resources.yaml
+  # Exercise the shipped route, rather than another synthetic group example.
+  - ../../k8s/providers/hetzner/infrastructure/controllers/longhorn/http-route.yaml
 results:
   # --- declared service groups pass ---
   - policy: restrict-homepage-service-groups
     rule: declared-service-group
     resources:
       - observability/declared-group
-      - crossview/infrastructure-as-code-group
+      - github-config/infrastructure-as-code-group
       - client-site/business-and-clients-group
       - personal-site/personal-group
       - openbao/secrets-management-group
       - policy-reporter/governance-group
+      - longhorn-system/longhorn
     kind: HTTPRoute
     result: pass
 

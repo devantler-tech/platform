@@ -257,6 +257,10 @@ Flux reconciliation.
 If this is the **first time** restoring after losing the SOPS keys, replace
 step 3 with the rotation flow in Scenario 6 first.
 
+> A rebuild also replaces the Gateway and its load balancer, so the Gateway receiver
+> binding is stale. Prepare a replacement before relying on public routes or on a
+> deploy: see [Gateway receiver binding](../operations/gateway-receiver-boundary.md).
+
 > After a rebuild the cluster has a new Talos and Kubernetes PKI, and possibly a
 > new API address (see Scenario 9), so the `prod` environment's `KUBE_CONFIG` /
 > `TALOS_CONFIG` secrets are now stale.

@@ -3,17 +3,65 @@
 set -Eeuo pipefail
 trap 'printf "FAIL: native mail proof stopped at line %s\n" "$LINENO" >&2' ERR
 umask 077
+assert_diagnostic_log_privacy() {
+  local log=$1 secret
+  shift
+  if ! grep -Fq 'server.startup' "$log"; then
+    echo 'FAIL: normal serving produced no startup diagnostic event' >&2; return 1
+  fi
+  for secret in "$@"; do
+    if grep -Fq -f "$secret" "$log"; then
+      echo 'FAIL: a generated fixture credential appeared in server logs' >&2; return 1
+    fi
+  done
+  if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$log"; then
+    echo 'FAIL: a recovery credential appeared in server logs' >&2; return 1
+  fi
+  if grep -Eqi '(^|[^[:alnum:]_-])(smtp|imap|jmap|auth|oauth|message|message-ingest|queue|delivery|http|websocket)\.[[:alnum:]_-]+' "$log"; then
+    echo 'FAIL: excluded message or authentication events appeared in server logs' >&2; return 1
+  fi
+  if grep -Fq -e 'Native policy proof' -e 'mail-policy@example.test' -e 'Preserved native mail fixture.' -e 'Human submission proof' -e 'Receiving continuity' -e 'Native client retention proof' -e 'private-canary' "$log"; then
+    echo 'FAIL: private fixture message content appeared in server logs' >&2; return 1
+  fi
+}
+test_diagnostic_log_privacy() (
+  local proof
+  proof=$(mktemp -d)
+  trap 'rm -rf "$proof"' EXIT
+  printf 'server.startup\n' >"$proof/log"
+  assert_diagnostic_log_privacy "$proof/log"
+  printf 'message-ingest.ham message not in the listed canaries\n' >>"$proof/log"
+  if assert_diagnostic_log_privacy "$proof/log" >"$proof/result" 2>&1; then
+    echo 'FAIL: diagnostic privacy check accepted an unlisted message-ingest event' >&2
+    exit 1
+  fi
+  grep -Fq 'excluded message or authentication events' "$proof/result"
+  printf 'server.startup\nprivate-canary\n' >"$proof/log"
+  if assert_diagnostic_log_privacy "$proof/log" >"$proof/result" 2>&1; then
+    echo 'FAIL: diagnostic privacy check accepted a listed message canary' >&2
+    exit 1
+  fi
+  grep -Fq 'private fixture message content' "$proof/result"
+  echo 'PASS: diagnostic log privacy controls'
+)
+test_diagnostic_log_privacy
+if [ "${1:-}" = --test-log-privacy ]; then exit 0; fi
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fixture_user="$(id -u):$(id -g)"
 [ "$(id -u)" != 0 ] || { echo 'FAIL: native mail proof requires an unprivileged fixture user' >&2; exit 1; }
 scratch="$(mktemp -d)"
 name="mail-config-$(basename "$scratch" | tr '[:upper:]' '[:lower:]')"
 network="${name}-network"
+proxy_name="${name}-client-proxy"
+proxy_started=0
 server='ghcr.io/stalwartlabs/stalwart:v0.16.27@sha256:c429b311c93db5606598abc1c68225a85a6953183848ae01bee9c6a98885836c'
 cli='ghcr.io/stalwartlabs/cli:1.0.13@sha256:9a1e07307d6f890a193322c4b737fc0868405f0f8486a19922cbf362f43884fd'
 cleanup() {
   local rc=$? cleanup_rc=0
   trap - EXIT
+  if [ "$proxy_started" = 1 ]; then
+    docker rm -fv "$proxy_name" > /dev/null 2>&1 || cleanup_rc=1
+  fi
   docker rm -fv "$name" > /dev/null 2>&1 || cleanup_rc=1
   docker network rm "$network" > /dev/null 2>&1 || cleanup_rc=1
   docker image rm "$name-bootstrap-image" > /dev/null 2>&1 || cleanup_rc=1
@@ -50,10 +98,21 @@ docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log
 }
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
-  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE' >"$scratch/image-assets.txt"
+  -ec '
+    sha256sum /usr/local/share/stalwart/webui-*.zip || { echo IMAGE_ASSET_FAILURE=archive >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-webui/LICENSE || { echo IMAGE_ASSET_FAILURE=webui-license >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-webui/SOURCE || { echo IMAGE_ASSET_FAILURE=webui-source >&2; exit 1; }
+    test -x /usr/local/share/licenses/caddy || { echo IMAGE_ASSET_FAILURE=proxy-license-directory >&2; exit 1; }
+    test -r /usr/local/share/licenses/caddy/LICENSE || { echo IMAGE_ASSET_FAILURE=proxy-license >&2; exit 1; }
+  ' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
+docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
+  --security-opt no-new-privileges:true --entrypoint /usr/local/bin/caddy \
+  "$name-bootstrap-image" version >"$scratch/client-proxy-version.txt"
+grep -Eq '^v2\.11\.7([[:space:]]|$)' "$scratch/client-proxy-version.txt"
 
 run_bootstrap() {
+  local bootstrap_status=0 bootstrap_stage
   # Bind-mounted files belong to the invoking unprivileged user. Keep one
   # identity through bootstrap and every restart, as the deployment requires.
   docker run --rm --name "$name-bootstrap" --network "$network" --read-only \
@@ -63,11 +122,23 @@ run_bootstrap() {
     --mount "type=bind,source=$scratch/inputs,target=/etc/private-mail,readonly" \
     --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
-    "$name-bootstrap-image" >"$scratch/bootstrap.log" 2>&1
+    "$name-bootstrap-image" "$@" >"$scratch/bootstrap.log" 2>&1 || bootstrap_status=$?
+  if [ "$bootstrap_status" != 0 ]; then
+    # Emit fixed stage labels only. Native diagnostics and fixture credentials
+    # stay in the private scratch directory, never the hosted job output.
+    for bootstrap_stage in 'initial inventory' 'native apply' 'policy readback'; do
+      if grep -Fq "$bootstrap_stage:" "$scratch/bootstrap.log"; then
+        printf 'NATIVE_BOOTSTRAP_FAILURE_STAGE=%s\n' "$bootstrap_stage" >&2
+      fi
+    done
+    printf 'NATIVE_BOOTSTRAP_FAILURE_CALLER=%s EXIT=%s\n' "${BASH_LINENO[0]}" "$bootstrap_status" >&2
+  fi
+  return "$bootstrap_status"
 }
 
 start_server() {
   local mode=$1 health_port=8080
+  local data_dir=${2:-$scratch/data}
   local -a recovery=() application_assets=()
   if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
@@ -83,7 +154,7 @@ start_server() {
     --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
-    --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
+    --mount "type=bind,source=$data_dir,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
     "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
@@ -102,6 +173,15 @@ native_cli() {
     --env STALWART_PASSWORD=private-mail-recovery-fixture-only \
     --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
 }
+administration_cli() (
+  # Pass the disposable credential through the environment, never an argv value.
+  STALWART_PASSWORD=$(cat "$scratch/inputs/administrator-password")
+  export STALWART_PASSWORD
+  docker run --rm --interactive --user "$fixture_user" --network "$network" --cap-drop ALL --security-opt no-new-privileges:true \
+    --workdir /proof/cli-home --env HOME=/proof/cli-home --env TMPDIR=/proof/cli-home \
+    --env "STALWART_URL=http://$name:8080" --env STALWART_USER=operator@example.test --env STALWART_PASSWORD \
+    --mount "type=bind,source=$scratch,target=/proof" "$cli" "$@"
+)
 protocol_curl() {
   # Keep protocol clients in the isolated network. An internal bridge need not
   # expose host port bindings, and a separate client retains non-loopback checks.
@@ -162,6 +242,33 @@ apply_plan() {
   native_cli apply --file /proof/plan.ndjson --json >"$scratch/apply.jsonl" 2>"$scratch/apply.err"
   jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/apply.jsonl" >/dev/null
 }
+verify_rendered_self_checks() {
+  local probe arg status rewritten i
+  local bundle=${1:-private-mail-administration} container=${2:-private-mail} target=${3:-$name} loopback=${4:-127.0.0.1:8080}
+  local -a check_command=() refused_command=()
+  kubectl kustomize "$root/k8s/bases/apps/$bundle" >"$scratch/health-render.yaml"
+  CONTAINER_NAME="$container" yq -o=json -I=0 'select(.kind == "StatefulSet" and .metadata.name == "private-mail").spec.template.spec.containers[] | select(.name == strenv(CONTAINER_NAME))' \
+    "$scratch/health-render.yaml" >"$scratch/health-container.json"
+  for probe in startupProbe readinessProbe livenessProbe; do
+    jq -e --arg probe "$probe" '.[$probe].exec.command | type=="array" and length>0 and all(.[];type=="string")' "$scratch/health-container.json" >/dev/null
+    check_command=()
+    while IFS= read -r -d '' arg; do check_command+=("$arg"); done < <(jq -j --arg probe "$probe" '.[$probe].exec.command[] | ., "\u0000"' "$scratch/health-container.json")
+    docker exec "$target" "${check_command[@]}" >"$scratch/$probe.stdout" 2>"$scratch/$probe.stderr"
+    [ ! -s "$scratch/$probe.stdout" ] || { echo 'FAIL: a self-check printed response content' >&2; exit 1; }
+    refused_command=("${check_command[@]}")
+    rewritten=0
+    for i in "${!refused_command[@]}"; do
+      refused_command[i]="${refused_command[i]//$loopback/127.0.0.1:1}"
+      if [[ "${refused_command[i]}" != "${check_command[i]}" ]]; then rewritten=$((rewritten+1)); fi
+    done
+    [ "$rewritten" = 1 ] || { echo 'FAIL: self-check lacks its unique loopback target' >&2; exit 1; }
+    status=0
+    docker exec "$target" "${refused_command[@]}" >"$scratch/$probe-refused.stdout" 2>"$scratch/$probe-refused.stderr" || status=$?
+    [ "$status" = 7 ] || { echo 'FAIL: the native connection-refusal control was not observed' >&2; exit 1; }
+    docker exec "$target" "${check_command[@]}" >"$scratch/$probe-recovered.stdout" 2>"$scratch/$probe-recovered.stderr"
+  done
+  echo 'PASS: actual rendered self-checks accept native health and reject an unreachable endpoint'
+}
 run_bootstrap
 # The actual pinned server must honor the recovery override while keeping the
 # normal Service's port closed. Probe from a separate network client, without
@@ -181,6 +288,15 @@ apply_plan
 native_cli query Account --fields id --json >"$scratch/accounts-before.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-before.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-before.jsonl"
+native_cli query Tracer --fields id --json >"$scratch/tracers-before.jsonl"
+# Permanent client rules are outside configuration ownership and must survive
+# both configuration replay and the later complete initializer re-entry.
+printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"protected-probe":{"address":"192.0.2.30","reason":"portScanning"},"protected-control":{"address":"192.0.2.31","reason":"manual"}}}' >"$scratch/protected-blocks.ndjson"
+native_cli apply --file /proof/protected-blocks.ndjson --json >"$scratch/protected-blocks-apply.jsonl" 2>"$scratch/protected-blocks-apply.err"
+jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/protected-blocks-apply.jsonl" >/dev/null
+native_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/protected-blocks-before.jsonl"
+jq -sS 'sort_by(.id)' "$scratch/protected-blocks-before.jsonl" >"$scratch/protected-blocks-before.json"
+jq -e 'length==2 and ([.[].address]|sort)==["192.0.2.30","192.0.2.31"] and ([.[].id]|unique|length)==2 and all(.[];.id!="" and has("expiresAt") and .expiresAt==null)' "$scratch/protected-blocks-before.json" >/dev/null
 
 # Primary addresses and aliases share a namespace across Users, Groups and
 # MailingLists. Free only the owned aliases before creating each negative.
@@ -302,8 +418,11 @@ native_cli update Domain "$domain_id" --file /proof/restore-alias-patch.json >"$
 
 # Seed a previously wider permission and an extra expression branch. Replay
 # must clear both maps rather than preserving keys absent from the new plan.
+# Also suspend the managed administrator: replay must restore its inherited
+# access, proved by the regular administrator's requests after serving starts.
 printf '%s\n' '{"@type":"upsert","object":"Domain","matchOn":["name"],"value":{"domain":{"name":"example.test"}}}' \
   '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"agents":{"@type":"User","name":"agents","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{"jmapEmailImport":true,"jmapEmailCreate":true}}}}}' \
+  '{"@type":"upsert","object":"Account","matchOn":["name","domainId"],"value":{"administrator":{"@type":"User","name":"operator","domainId":"#domain","permissions":{"@type":"Replace","enabledPermissions":{},"disabledPermissions":{}}}}}' \
   '{"@type":"update","object":"MtaStageRcpt","value":{"rewrite":{"match":{"9":{"if":"true","then":"'"'"'operator@example.test'"'"'"}}}}}' >"$scratch/wider.ndjson"
 native_cli apply --file /proof/wider.ndjson --json >"$scratch/wider-apply.jsonl" 2>"$scratch/wider-apply.err"
 prepare_plan "$scratch/replay.ndjson"
@@ -314,16 +433,18 @@ jq -e '.rewrite.match|keys|sort==["0","1"]' "$scratch/rcpt.json" >/dev/null
 native_cli query Account --fields id --json >"$scratch/accounts-after.jsonl"
 native_cli query Certificate --fields id --json >"$scratch/certificates-after.jsonl"
 native_cli query Application --fields id --json >"$scratch/applications-after.jsonl"
-for object in accounts certificates applications; do
+native_cli query Tracer --fields id --json >"$scratch/tracers-after.jsonl"
+for object in accounts certificates applications tracers; do
   jq -s '[.[].id]|sort' "$scratch/$object-before.jsonl" >"$scratch/before.ids"
   jq -s '[.[].id]|sort' "$scratch/$object-after.jsonl" >"$scratch/after.ids"
   cmp "$scratch/before.ids" "$scratch/after.ids"
 done
 inventory
-jq -e '.methodResponses[0][1].total==4' "$scratch/inputs/listener-inventory.json" >/dev/null
+jq -e '.methodResponses[0][1].total==5 and ([.methodResponses[1][1].list[].name]|sort)==["client-proxy","imaps","management","smtp-inbound","submission"]' "$scratch/inputs/listener-inventory.json" >/dev/null
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
+verify_rendered_self_checks
 agent_password=$(cat "$scratch/inputs/agent-password")
 human_password=$(cat "$scratch/inputs/maintainer-password")
 administrator_password=$(cat "$scratch/inputs/administrator-password")
@@ -331,6 +452,41 @@ printf 'user = "agents@example.test:%s"\n' "$agent_password" >"$scratch/agent.cu
 printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
 printf 'user = "operator@example.test:%s"\n' "$administrator_password" >"$scratch/administrator.curl"
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl "http://$name:8080/jmap/session" >"$scratch/administrator-session.json"
+# A native client credential is independently owned. Neither replay nor a full
+# initializer re-entry may remove it or clear primary authentication restrictions.
+jq -cn '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[["x:AppPassword/set",{create:{app:{description:"Native client retention proof",expiresAt:"2031-01-01T00:00:00Z"}}},"app"]]}' >"$scratch/client-create.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/client-create.json "http://$name:8080/jmap" >"$scratch/client-create-result.json"
+jq -er '.methodResponses[0][1].created.app.secret|select(type=="string" and length>0)' "$scratch/client-create-result.json" >"$scratch/client-password"
+jq -er '"user = " + ("maintainer@example.test:" + .methodResponses[0][1].created.app.secret|@json)' "$scratch/client-create-result.json" >"$scratch/client.curl"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/client.curl "http://$name:8080/jmap/session" >"$scratch/client-before.json"
+jq -cn --arg id "$maintainer_id" '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[["x:Account/set",{update:{($id):{"credentials/0/allowedIps":{"192.0.2.88/32":true}}}},"restrict"]]}' >"$scratch/primary-restriction.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/primary-restriction.json "http://$name:8080/jmap" >"$scratch/primary-restriction-result.json"
+jq -e --arg id "$maintainer_id" '.methodResponses[0][1].updated|has($id)' "$scratch/primary-restriction-result.json" >/dev/null
+primary_status=$(docker exec -i "$name" curl --disable --noproxy '*' --silent --show-error --max-time 10 \
+  --config - --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/jmap/session <"$scratch/human.curl")
+[ "$primary_status" = 403 ]
+cp "$scratch/inputs/maintainer-password" "$scratch/old-maintainer-password"
+openssl rand -hex 32 | tr -d '\n' >"$scratch/inputs/maintainer-password"
+human_password=$(cat "$scratch/inputs/maintainer-password")
+printf 'user = "maintainer@example.test:%s"\n' "$human_password" >"$scratch/human.curl"
+cp "$root/scripts/private-mail-config/inventory-request.json" "$scratch/client-inventory-request.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/client-inventory-request.json "http://$name:8080/jmap" >"$scratch/inputs/listener-inventory.json"
+go -C "$root" run ./scripts/private-mail-config --input-dir "$scratch/inputs" --output-file "$scratch/client-replay.ndjson"
+administration_cli apply --file /proof/client-replay.ndjson --json >"$scratch/client-replay-result.jsonl" 2>"$scratch/client-replay.err"
+jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/client-replay-result.jsonl" >/dev/null
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/client.curl "http://$name:8080/jmap/session" >"$scratch/client-after-replay.json"
+primary_status=$(docker exec -i "$name" curl --disable --noproxy '*' --silent --show-error --max-time 10 \
+  --config - --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8080/jmap/session <"$scratch/human.curl")
+[ "$primary_status" = 403 ]
+jq -cn --arg id "$maintainer_id" '{using:["urn:ietf:params:jmap:core","urn:stalwart:jmap"],methodCalls:[["x:Account/set",{update:{($id):{"credentials/0/allowedIps":{}}}},"restore"]]}' >"$scratch/primary-restore.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/administrator.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/primary-restore.json "http://$name:8080/jmap" >"$scratch/primary-restore-result.json"
+jq -e --arg id "$maintainer_id" '.methodResponses[0][1].updated|has($id)' "$scratch/primary-restore-result.json" >/dev/null
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl "http://$name:8080/jmap/session" >"$scratch/rotated-primary-session.json"
+echo 'PASS: native client credential and primary address restriction survive managed-password replay'
 # The private bridge has no external egress. Verify each served interface and
 # compare every script/style referenced by its entry page to the pinned ZIP.
 verify_administration_assets
@@ -412,7 +568,62 @@ grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
 # Prime the native application cache with a previous unversioned bundle. An
 # upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
+docker logs "$name" >"$scratch/smtp-auth-server.log" 2>&1
 docker rm "$name" >/dev/null
+# Establish which native protocol can inspect a recovered datastore before
+# designing the isolated restore worker. A recovery-only listener must not be
+# assumed to provide ordinary mailbox access. Both outcomes below are evidence
+# about the pinned server, never a claim that production data was restored.
+(
+  cd "$scratch/data"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$scratch/source-before-recovery.sha256"
+test -s "$scratch/source-before-recovery.sha256"
+cp -a "$scratch/data" "$scratch/recovered-data"
+start_server preparation "$scratch/recovered-data"
+recovery_mail_status=$(protocol_curl --silent --show-error --max-time 10 \
+  --config /proof/human.curl --header 'Content-Type: application/json' \
+  --data-binary @/proof/receiving-query.json --output /dev/null \
+  --write-out '%{http_code}' "http://$name:8080/jmap")
+if [ "$recovery_mail_status" = 200 ]; then
+  protocol_curl --fail --silent --show-error --max-time 10 \
+    --config /proof/human.curl --header 'Content-Type: application/json' \
+    --data-binary @/proof/receiving-query.json "http://$name:8080/jmap" \
+    >"$scratch/recovery-mail-result.json"
+  if jq -e '.methodResponses|length==2 and .[0][0]=="Email/query" and .[1][0]=="Email/get"' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    verify_receiving_aliases
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_READ_VERIFIED mode=recovery'
+  elif jq -e '.methodResponses|length>0 and all(.[]; .[0]=="error" and (.[1].type=="forbidden" or .[1].type=="unknownMethod"))' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+  else
+    echo 'FAIL: native recovery mailbox protocol returned an unclassified response' >&2; exit 1
+  fi
+elif [ "$recovery_mail_status" = 401 ] || [ "$recovery_mail_status" = 403 ]; then
+  echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+else
+  echo 'FAIL: native recovery mailbox protocol returned an unexpected status' >&2; exit 1
+fi
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+start_server serving "$scratch/recovered-data"
+verify_receiving_aliases
+for alias in former-a former-b; do
+  cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
+done
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" \
+  'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/recovered-read.eml"
+grep -q 'Preserved native mail fixture.' "$scratch/recovered-read.eml"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+(
+  cd "$scratch/data"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$scratch/source-after-recovery.sha256"
+cmp "$scratch/source-before-recovery.sha256" "$scratch/source-after-recovery.sha256"
+echo 'EMAIL_DATA_RECOVERY_FIXTURE=PASS messages=VERIFIED source=UNCHANGED'
 mkdir "$scratch/stale-assets" "$scratch/stale-source"
 printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
 (cd "$scratch/stale-source" && zip -q "$scratch/stale-assets/webui.zip" index.html)
@@ -436,8 +647,39 @@ docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 # Re-enter an explicitly owned recovery process after both cached UI and real
 # mail exist. A successful readback must not retain the previous cached bundle.
+jq -cn --arg id "$maintainer_id" '{"@type":"update",object:"Account",id:$id,value:{"credentials/0/expiresAt":"2000-01-01T00:00:00Z"}}' >"$scratch/primary-expiry.ndjson"
+# The preceding interface probe has stopped its server. Seed only the fixed
+# disposable account in recovery, then stop it before the real initializer.
+start_server preparation
+native_cli apply --file /proof/primary-expiry.ndjson --json >"$scratch/primary-expiry-result.jsonl" 2>"$scratch/primary-expiry.err"
+jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/primary-expiry-result.jsonl" >/dev/null
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+# Expiration keeps the primary credential usable for password recovery, but
+# downgrades its permissions. Bind the negative to a query that succeeds again
+# after restoring the expiry, rather than assuming session sign-in is refused.
+primary_account=$(jq -er '.primaryAccounts."urn:ietf:params:jmap:mail"' "$scratch/rotated-primary-session.json")
+jq -cn --arg account "$primary_account" '{using:["urn:ietf:params:jmap:core","urn:ietf:params:jmap:mail"],methodCalls:[["Email/query",{accountId:$account},"query"]]}' >"$scratch/expiry-query.json"
+start_server serving
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-before-bootstrap.json"
+jq -e '.methodResponses[0][0]=="error" and .methodResponses[0][1].type=="forbidden"' "$scratch/expiry-before-bootstrap.json" >/dev/null
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
 run_bootstrap
 start_server serving
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/client.curl "http://$name:8080/jmap/session" >"$scratch/client-after-bootstrap.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-after-bootstrap.json"
+jq -e '.methodResponses[0][0]=="error" and .methodResponses[0][1].type=="forbidden"' "$scratch/expiry-after-bootstrap.json" >/dev/null
+jq -cn --arg id "$maintainer_id" '{"@type":"update",object:"Account",id:$id,value:{"credentials/0/expiresAt":null}}' >"$scratch/primary-expiry-restore.ndjson"
+administration_cli apply --file /proof/primary-expiry-restore.ndjson --json >"$scratch/primary-expiry-restore-result.jsonl" 2>"$scratch/primary-expiry-restore.err"
+jq -se '[.[]|select(.status=="error")]|length==0' "$scratch/primary-expiry-restore-result.jsonl" >/dev/null
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl "http://$name:8080/jmap/session" >"$scratch/primary-after-bootstrap.json"
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --header 'Content-Type: application/json' --data-binary @/proof/expiry-query.json "http://$name:8080/jmap" >"$scratch/expiry-restored.json"
+jq -e '.methodResponses[0][0]=="Email/query"' "$scratch/expiry-restored.json" >/dev/null
+echo 'PASS: native client credential and primary expiration survive complete initializer re-entry'
 protocol_curl --fail --silent --show-error --max-time 10 "http://$name:8080/admin/login" >"$scratch/refreshed-interface.html"
 if grep -q 'previous-ui-cache-canary' "$scratch/refreshed-interface.html"; then
   echo 'FAIL: bootstrap reused the previous cached administration bundle' >&2; exit 1
@@ -458,6 +700,9 @@ run_bootstrap
 start_server preparation
 inventory
 jq -e --arg id "$maintainer_id" '.methodResponses[10][1].list|map(select(.id==$id))|length==1 and (.[0].aliases|length)==2' "$scratch/inputs/listener-inventory.json" >/dev/null
+native_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/protected-blocks-after.jsonl"
+jq -sS '[.[]|select(.address=="192.0.2.30" or .address=="192.0.2.31")]|sort_by(.id)' "$scratch/protected-blocks-after.jsonl" >"$scratch/protected-blocks-after.json"
+cmp "$scratch/protected-blocks-before.json" "$scratch/protected-blocks-after.json"
 docker stop --time 30 "$name" >/dev/null
 docker rm "$name" >/dev/null
 start_server serving
@@ -466,12 +711,112 @@ for alias in former-a former-b; do
   cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
 done
 docker logs "$name" >"$scratch/server.log" 2>&1
-for secret in "$scratch/inputs/"*-password; do
-  if grep -Fq -f "$secret" "$scratch/server.log"; then
-    echo 'FAIL: a generated fixture credential appeared in server logs' >&2; exit 1
-  fi
+for log in "$scratch/smtp-auth-server.log" "$scratch/server.log"; do
+  assert_diagnostic_log_privacy "$log" "$scratch/inputs/"*-password "$scratch/old-maintainer-password" "$scratch/client-password"
 done
 if grep -Eqi 'temporary administrator|private-mail-recovery-fixture-only' "$scratch/server.log"; then
   echo 'FAIL: a recovery credential appeared in server logs' >&2; exit 1
 fi
-echo 'PASS: native mail configuration, receiving continuity and ownership refusal, cached UI upgrade, replay, TLS and account restrictions'
+# The new transport policy is opt-in. Exercise native persisted readback in
+# both directions without changing the fixture's identities or mailbox data.
+for forwarded in true false; do
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  jq --argjson enabled "$forwarded" '.useForwardedClientIP=$enabled' \
+    "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
+  mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+  if [ "$forwarded" = true ] && run_bootstrap --proxy-client-ip=true; then
+    echo 'FAIL: bootstrap combined HTTP and transport identity modes' >&2; exit 1
+  fi
+  run_bootstrap
+  start_server serving
+done
+
+# Prove the maintained proxy against the real pinned mail server. These are
+# disposable identities on the existing internal fixture network, not a claim
+# about production Gateway trust or Cilium network-policy enforcement.
+administration_cli query AllowedIp --fields id,address --json >"$scratch/allowed-before.jsonl"
+jq -sS 'sort_by(.id)' "$scratch/allowed-before.jsonl" >"$scratch/allowed-before.json"
+printf '%s\n' '{"@type":"create","object":"BlockedIp","value":{"proxy-client":{"address":"198.51.100.9","reason":"manual"},"proxy-client-ipv6":{"address":"2001:db8::9","reason":"manual"}}}' >"$scratch/proxy-block.ndjson"
+administration_cli apply --file /proof/proxy-block.ndjson --json >"$scratch/proxy-block-apply.jsonl" 2>"$scratch/proxy-block-apply.err"
+jq -se 'any(.[];.status=="ok") and all(.[];.status!="error")' "$scratch/proxy-block-apply.jsonl" >/dev/null
+
+for proxy_enabled in true false; do
+  docker stop --time 30 "$name" >/dev/null
+  docker rm "$name" >/dev/null
+  jq '.useForwardedClientIP=false | .useProxyClientIP=false' \
+    "$scratch/inputs/settings.json" >"$scratch/inputs/settings.next"
+  mv "$scratch/inputs/settings.next" "$scratch/inputs/settings.json"
+  cp "$scratch/inputs/settings.json" "$scratch/proxy-settings-before.json"
+  run_bootstrap --proxy-client-ip="$proxy_enabled"
+  cmp "$scratch/proxy-settings-before.json" "$scratch/inputs/settings.json"
+  start_server serving
+  if [ "$proxy_enabled" = false ]; then
+    docker exec "$name" /usr/bin/curl --disable --noproxy '*' --fail --silent --show-error \
+      --max-time 3 http://127.0.0.1:18081/healthz/ready >/dev/null
+    continue
+  fi
+
+  # Native direct access cannot skip the required PROXY envelope.
+  direct_status=0
+  docker exec "$name" /usr/bin/curl --disable --noproxy '*' --silent \
+    --max-time 3 http://127.0.0.1:18081/healthz/ready >"$scratch/proxy-direct.out" 2>"$scratch/proxy-direct.err" || direct_status=$?
+  [ "$direct_status" != 0 ] || { echo 'FAIL: native proxy listener accepted a request without its transport envelope' >&2; exit 1; }
+
+  cp "$root/k8s/bases/apps/private-mail-proxy-identity/Caddyfile" "$scratch/ClientProxy.Caddyfile"
+  proxy_started=1
+  docker run --detach --name "$proxy_name" --network "container:$name" --read-only \
+    --user "$fixture_user" --cpus 0.1 --memory 64m --cap-drop ALL \
+    --security-opt no-new-privileges:true \
+    --mount "type=bind,source=$scratch/ClientProxy.Caddyfile,target=/etc/email-client-proxy/Caddyfile,readonly" \
+    --entrypoint /usr/local/bin/caddy "$name-bootstrap-image" \
+    run --config /etc/email-client-proxy/Caddyfile --adapter caddyfile >"$scratch/proxy-start.out" 2>"$scratch/proxy-start.err"
+  proxy_ready=0
+  for ((attempt=0; attempt<30; attempt++)); do
+    if docker exec "$proxy_name" /usr/bin/curl --disable --noproxy '*' --fail --silent \
+      --max-time 2 --header 'X-Forwarded-For: 127.0.0.1' http://127.0.0.1:8081/healthz/ready >/dev/null 2>&1; then
+      proxy_ready=1; break
+    fi
+    sleep 1
+  done
+  [ "$proxy_ready" = 1 ] || { echo 'FAIL: native proxy-to-mail health did not become ready' >&2; exit 1; }
+  verify_rendered_self_checks private-mail-proxy-identity client-proxy "$proxy_name" 127.0.0.1:8081
+
+  for client_ip in 198.51.100.9 198.51.100.10 2001:db8::9 2001:db8::10 10.20.30.40 fd00::9; do
+    expected=200
+    case "$client_ip" in 198.51.100.9|2001:db8::9) expected=502 ;; esac
+    status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
+      --header "X-Forwarded-For: $client_ip" --header 'Forwarded: for=203.0.113.22' \
+      --header 'X-Real-IP: 203.0.113.23' --header 'X-Email-Private-Canary: email-proxy-private-canary' \
+      "http://$name:8081/healthz/ready?private=email-proxy-private-canary")
+    [ "$status" = "$expected" ] || { echo 'FAIL: native mail ban or per-client identity did not survive proxying' >&2; exit 1; }
+  done
+  for malformed in missing duplicate chain invalid invalid-ipv6; do
+    header_args=()
+    case "$malformed" in
+      duplicate) header_args=(--header 'X-Forwarded-For: 198.51.100.9' --header 'X-Forwarded-For: 198.51.100.10') ;;
+      chain) header_args=(--header 'X-Forwarded-For: 198.51.100.9, 198.51.100.10') ;;
+      invalid) header_args=(--header 'X-Forwarded-For: 999.999.999.999') ;;
+      invalid-ipv6) header_args=(--header 'X-Forwarded-For: ::::') ;;
+    esac
+    status=$(protocol_curl --silent --show-error --max-time 5 --output /dev/null --write-out '%{http_code}' \
+      "${header_args[@]}" "http://$name:8081/healthz/ready")
+    [ "$status" = 400 ] || { echo 'FAIL: native proxy accepted missing or ambiguous identity metadata' >&2; exit 1; }
+  done
+  protocol_curl --fail --silent --show-error --max-time 5 --config /proof/administrator.curl \
+    --header 'X-Forwarded-For: 198.51.100.10' "http://$name:8081/jmap/session" >"$scratch/proxy-administrator-session.json"
+  jq -e '.accounts|type=="object" and length>0' "$scratch/proxy-administrator-session.json" >/dev/null
+  docker logs "$proxy_name" >"$scratch/proxy-runtime.log" 2>&1
+  if grep -Fq 'email-proxy-private-canary' "$scratch/proxy-runtime.log"; then
+    echo 'FAIL: private request metadata reached the proxy log' >&2; exit 1
+  fi
+  administration_cli query AllowedIp --fields id,address --json >"$scratch/allowed-after.jsonl"
+  jq -sS 'sort_by(.id)' "$scratch/allowed-after.jsonl" >"$scratch/allowed-after.json"
+  cmp "$scratch/allowed-before.json" "$scratch/allowed-after.json"
+  administration_cli query BlockedIp --fields id,address,reason,createdAt,expiresAt --json >"$scratch/proxy-retained-blocks.jsonl"
+  jq -sS '[.[]|select(.address=="192.0.2.30" or .address=="192.0.2.31")]|sort_by(.id)' "$scratch/proxy-retained-blocks.jsonl" >"$scratch/proxy-retained-blocks.json"
+  cmp "$scratch/protected-blocks-before.json" "$scratch/proxy-retained-blocks.json"
+  docker rm -fv "$proxy_name" >/dev/null
+  proxy_started=0
+done
+echo 'PASS: native mail configuration, receiving continuity, ownership refusal, cached UI upgrade, replay, TLS, account restrictions, per-client proxy bans and explicit rollback'

@@ -3861,6 +3861,23 @@ exercise the actual KSail validator; existing producer rules stay unchanged.
 These offline checks do not establish production deployment;
 the remaining policies in #4997 still need their own migrations.
 
+## Snapshot recovery activation (#5376)
+
+The main-owned retained replacement now has its two production snapshot
+consumers. Its preparation marker and the corresponding Pending-readiness
+exception are removed. The PVC predicate requires a non-terminating Bound claim;
+the native CEL regression rejects even a stale prepared marker on a Pending claim.
+
+Only that readiness predicate changes in the infrastructure Kustomization.
+Canonical comparison preserves every other field and health predicate, including
+reconciliation waiting, immutable-conflict protection, sources and decryption.
+No subject, verb, resource grant, credential or reconciliation scope is added.
+The exact rendered fingerprint becomes
+`f0ab6f11187056f9cb49c97d4e726df7ba0ef5c80947cbe3c0018bdcf812b77f`;
+its surface-ledger entry becomes
+`0cfe2fc47fa5c5ad7e0b696476d22361dc09ab095913995aca08c301156b2c3e`.
+All other approvals and validation rules remain unchanged.
+
 ## 2026-10-26 — Retire Crossview and Headlamp
 
 For #2496, on the maintainer's direction, both unused cluster UIs leave the
@@ -3896,25 +3913,71 @@ authority. This record does not claim deployment, nor deletion of the
 prune-protected namespaces, releases and retained claim that stay live until
 they are removed explicitly.
 
-## 2026-10-27 — Admit the reviewed v13.2.15 application publisher at the generic boundaries
+## 2026-10-31 — Accept the reviewed v19.0.3 AWS publisher alongside v7.2.10
 
-For #5404, the generic Tenant source rule, the app-image admission policy and
-the node-pull rule accept one more exact maintained publisher revision,
-`devantler-tech/.github@f5d078cc4b04ecb15432ed4e34cba1142a6279d4` (v13.2.15),
-beside `467f07582436a26b62cf4aa756423512f85ba0c0` (v8.0.0) and the deployed
-`0c7b6c3509b73adbc7537e030935bb01987e625b` (v7.23.0) signer. The range
-`467f0758…f5d078cc` was reviewed on #5404: the workflow gains a 60-minute job
-bound and a pinned harden-runner patch release, and its checked-out
-prebuilt-WebApp helper gains a bounded, credential-free rate-limit retry. No
-permission, signing identity or output changes. Per-consumer approval records
-and tenant `publisherRevision` pins are unchanged.
+For #5617, the canonical approvals for the `aws` manifest consumer add
+`devantler-tech/.github@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next
+to `2fa404276b0ce5c0527683b080e39045045c4e42` (v7.2.10). The AWS caller moved to
+v19.0.3 in devantler-tech/aws#69, and the current release was signed by v7.2.10,
+so both stay accepted until the first publication by v19.0.3 is verified.
 
-Changed: ResourceGraphDefinition tenant.kro.run moves from
-`24ef73925e497cac2805d326deedd7ff0f2f418520e2908cd5bd16e3ae4d4109` to
-`95a196713ff4ddaabaab3747e40b5b8e02d9c94ea0fea5382fbe86db89ef2b85` because its
-default publisher subject gains the one revision; nothing is added or removed.
+The publishing workflow is not byte-identical across these revisions. It gains
+`timeout-minutes: 60` on the publish job and moves the pinned harden-runner,
+docker/login-action and fluxcd/flux2 actions forward. No signing, permission or
+identity step changes. `require-unpublished-version.sh` and
+`recover-manifests-version.sh` have the same blob at both revisions.
 
-The ledger was recomputed locally with the existing surface evaluator, which
-is not the approved renderer; the required CI job re-renders with the approved
-renderer and is the authority. This record does not claim deployment or a
-publication from the new revision.
+Against the current main, the authorization ledger changes exactly one entry,
+with nothing added or removed:
+
+- OCIRepository aws/aws moves from
+  `0184f1f2d65811dea0626800e786ff76469e10d891d98fc4fc654e8303d697f3` to
+  `8ad26301961658e0c50fc13246f1f44894a8f922daeb2713ec8b8724957071c4`.
+
+The new hash is taken from the required CI job, which rendered with the approved
+tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
+This record does not establish deployed acceptance or a successful publication
+by the new signer. Deploy this acceptance before the next AWS release.
+
+## 2026-10-31 — Accept the reviewed v19.0.3 organization settings publisher
+
+For #5619, the canonical approvals for the `.github` manifest consumer move to
+`devantler-tech/.github@bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3) next
+to the current signer `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3), and
+retire `6f1dee9557a939cc24ca2c562ea775d05e01564d`, because a consumer accepts at
+most two canonical commits. The v19.0.3 tag's own caller pins v10.0.3, so the
+current release keeps verifying until the first publication by v19.0.3 is verified.
+
+The publishing workflow is not byte-identical across v10.0.3 and v19.0.3. It gains
+`timeout-minutes: 60` on the publish job and moves the pinned harden-runner and
+docker/login-action actions forward. No signing, permission or identity step
+changes. `require-unpublished-version.sh` and `recover-manifests-version.sh` have
+the same blob at both revisions.
+
+Against the current main, the authorization ledger changes exactly one entry,
+with nothing added or removed:
+
+- OCIRepository github-config/github-config moves from
+  `b5ab7e893cffdb3eaa01de448e1daa4ec95e6d9e9a72d4f47ab8439ad7e558e6` to
+  `4e8335871f17fb3b08946d6698e25db9d5b2e3e26df27c9c55293bd29b6731a0`.
+
+The new hash is taken from the required CI job, which rendered with the approved
+tools. No artifact URL, RBAC, IAM policy, credential or permission grant changes.
+This record does not establish deployed acceptance or a successful publication
+by the new signer. Deploy this acceptance before `.github` moves to v19.0.3.
+
+## 2026-11-01 — Register the read-only Longhorn dashboard login
+
+For #5649, Dex's existing confidential client gains the two HTTPS callback
+forms for the Longhorn dashboard, with omitted and explicit default port 443.
+The issuer, client identity, credentials, maintainer-team restriction and all
+Kubernetes permissions remain unchanged. Browser traffic still passes through
+oauth2-proxy before reaching the read-only Longhorn request boundary.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly one
+existing entry, HelmRelease dex/dex, from
+`3db343919ffde305fc4eb68664e0c12ecd8fe618b2f19f28b60b3413bf9237d7` to
+`8adfcbd4795a9b0f36ede017fa76233f9ebf4c18305b42b7fa16e1a9f4e9ab5d`.
+No authorization resource is added or removed. This approval records the
+declared callback change; deployed login and read-only acceptance are separate
+runtime checks.

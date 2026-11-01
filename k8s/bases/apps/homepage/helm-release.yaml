@@ -199,7 +199,7 @@ spec:
         - homepage-canary.homepage
     ingress:
       enabled: false
-    # Config changes hot-reload, without a pod restart. Three things make that
+    # Config changes hot-reload, without a pod restart. Four things make that
     # work end to end:
     #   1. The ConfigMap is mounted as a whole directory. A subPath mount is a
     #      copy taken at pod start and never receives ConfigMap updates.
@@ -208,6 +208,8 @@ spec:
     #      that only changes on a promotion — which also rolls every pod.
     #   3. Homepage re-reads its config on each request, and the open page polls
     #      /api/hash and reloads itself when the files change.
+    #   4. The HTTPRoute marks the mutable custom stylesheet and script private,
+    #      no-store, so an edge cache cannot retain the old theme at stable URLs.
     # A ConfigMap edit therefore reaches the live page within about a minute
     # (the kubelet's volume sync). The trade-off: config changes skip the canary
     # analysis, so CI's bookmark validator is their only gate.

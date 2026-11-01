@@ -47,6 +47,7 @@ data:
     # painted from custom.css below; cardBlur is omitted because there is
     # no underlying image for backdrop-filter to blur.
     headerStyle: clean
+    fullWidth: true
     statusStyle: dot
     iconStyle: gradient
     hideVersion: true
@@ -123,6 +124,8 @@ data:
         icon: mdi-briefcase
       Products:
         icon: mdi-book-open-page-variant
+      Email:
+        icon: mdi-email-outline
       Personal:
         icon: mdi-web
       # Bookmark groups (bookmarks.yaml). Listing them here is what gives them a
@@ -140,6 +143,8 @@ data:
         icon: mdi-shield-search
       Package Registries:
         icon: mdi-package-variant-closed
+      Marketplaces:
+        icon: mdi-storefront-outline
       Learning & Reference:
         icon: mdi-school
       Streaming:
@@ -190,11 +195,44 @@ data:
             icon: si-githubactions-#2088FF
             href: https://github.com/orgs/devantler-tech/actions/metrics/performance
             description: Actions run times, queue times and failure rates.
+        - GitHub Ruleset Dashboard:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/rules/dashboard
+            description: Organization-wide rule evaluation trends and bypasses.
+        - GitHub Ruleset Insights:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/rules/insights
+            description: Detailed rule evaluations across organization repositories.
+    - Governance:
+        - GitHub Rulesets:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/rules
+            description: Organization-wide repository rules.
+        - GitHub Repository Properties:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/custom-properties
+            description: Organization-wide repository metadata.
+        - GitHub Audit Log:
+            icon: si-github-#181717
+            href: https://github.com/organizations/devantler-tech/settings/audit-log
+            description: Organization activity and configuration history.
     - Cloud:
         - Hetzner Cloud:
             icon: hetzner
             href: https://console.hetzner.cloud/projects
             description: Hetzner Cloud infrastructure provider.
+        - Azure:
+            icon: azure.svg
+            href: https://portal.azure.com/
+            description: Microsoft Azure management portal.
+        - AWS:
+            icon: aws.svg
+            href: https://console.aws.amazon.com/
+            description: Amazon Web Services management console.
+        - Google Cloud:
+            icon: google-cloud.svg
+            href: https://console.cloud.google.com/
+            description: Google Cloud management console.
     - Network:
         - Cloudflare:
             icon: cloudflare
@@ -297,6 +335,9 @@ data:
         - GitHub Security:
             - icon: si-github-#181717
               href: https://github.com/orgs/devantler-tech/security/overview
+        - GitHub Code Quality:
+            - icon: si-github-#181717
+              href: https://github.com/orgs/devantler-tech/security/quality
         - Codex Findings:
             - icon: si-openai-#412991
               href: https://chatgpt.com/codex/cloud/security/findings
@@ -334,6 +375,10 @@ data:
         - skills.sh:
             - icon: mdi-certificate-outline
               href: https://skills.sh
+    - Marketplaces:
+        - GitHub Marketplace:
+            - icon: si-github-#181717
+              href: https://github.com/marketplace
     - Learning & Reference:
         - KodeKloud:
             - icon: mdi-school-outline
@@ -417,6 +462,28 @@ data:
     *:focus-visible {
       outline: 2px solid var(--dt-accent);
       outline-offset: 2px;
+    }
+
+    /* Pack whole groups into independent responsive columns. Homepage's flex
+       rows otherwise reserve the tallest group's height for every neighbour.
+       Reading and keyboard order follow the configured order down each column;
+       18rem columns naturally become a single column on narrow screens. */
+    #layout-groups,
+    #services,
+    #bookmarks {
+      display: block;
+      column-width: 18rem;
+      column-gap: 0;
+    }
+    #layout-groups > .services-group,
+    #layout-groups > .bookmark-group,
+    #services > .services-group,
+    #bookmarks > .bookmark-group {
+      display: inline-block;
+      width: 100%;
+      break-inside: avoid;
+      vertical-align: top;
+      margin-bottom: 0.5rem;
     }
 
     /* Service & bookmark cards: the theme already paints a translucent glass

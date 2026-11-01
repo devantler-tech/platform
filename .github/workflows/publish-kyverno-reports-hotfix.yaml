@@ -1,0 +1,185 @@
+name: Publish Kyverno Reports Hotfix
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kyverno-reports-hotfix.yaml
+      - k8s/bases/infrastructure/controllers/kyverno/ReportsWatchPlan.Dockerfile
+      - k8s/bases/infrastructure/controllers/kyverno/reports-v1.19.2-watch-plan.patch
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/publish-kyverno-reports-hotfix.yaml
+      - k8s/bases/infrastructure/controllers/kyverno/ReportsWatchPlan.Dockerfile
+      - k8s/bases/infrastructure/controllers/kyverno/reports-v1.19.2-watch-plan.patch
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SOURCE_COMMIT: e63308f1e16c05cd009ac4864be6ec25c66b49be
+  PATCHED_SOURCE_TREE: 55d2b33849e13fa3470646b0b25fda4970dd11b7
+  IMAGE: ghcr.io/devantler-tech/platform-kyverno-reports
+  IMAGE_TAG: v1.19.2-watch-plan.1-${{ github.sha }}
+
+jobs:
+  verify:
+    name: Verify reports controller
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact upstream release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kyverno/kyverno
+          ref: e63308f1e16c05cd009ac4864be6ec25c66b49be
+          path: upstream
+          persist-credentials: false
+
+      - name: Apply reviewed release patch
+        working-directory: upstream
+        env:
+          HOTFIX_PATCH: ${{ github.workspace }}/k8s/bases/infrastructure/controllers/kyverno/reports-v1.19.2-watch-plan.patch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          git apply --check --unidiff-zero "${HOTFIX_PATCH}"
+          git apply --unidiff-zero "${HOTFIX_PATCH}"
+          git diff --check
+          git add -- go.mod pkg/controllers/report/resource/controller.go \
+            pkg/controllers/report/resource/controller_test.go \
+            pkg/controllers/report/resource/watch_kinds.go \
+            pkg/controllers/report/resource/watch_plan_test.go
+          test "$(git write-tree)" = "${PATCHED_SOURCE_TREE}"
+          cp "${HOTFIX_PATCH}" reports-watch-plan.patch
+
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        with:
+          driver: docker-container
+
+      - name: Build tested release image without publishing
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./upstream
+          file: ./k8s/bases/infrastructure/controllers/kyverno/ReportsWatchPlan.Dockerfile
+          platforms: linux/amd64
+          push: false
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: VERSION=${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.kyverno-reports.upstream-revision=${{ env.SOURCE_COMMIT }}
+
+  publish:
+    name: Publish and sign reports controller
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+
+      - name: Check out platform contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out exact upstream release source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kyverno/kyverno
+          ref: e63308f1e16c05cd009ac4864be6ec25c66b49be
+          path: upstream
+          persist-credentials: false
+
+      - name: Apply reviewed release patch
+        working-directory: upstream
+        env:
+          HOTFIX_PATCH: ${{ github.workspace }}/k8s/bases/infrastructure/controllers/kyverno/reports-v1.19.2-watch-plan.patch
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT}"
+          git apply --check --unidiff-zero "${HOTFIX_PATCH}"
+          git apply --unidiff-zero "${HOTFIX_PATCH}"
+          git diff --check
+          git add -- go.mod pkg/controllers/report/resource/controller.go \
+            pkg/controllers/report/resource/controller_test.go \
+            pkg/controllers/report/resource/watch_kinds.go \
+            pkg/controllers/report/resource/watch_plan_test.go
+          test "$(git write-tree)" = "${PATCHED_SOURCE_TREE}"
+          cp "${HOTFIX_PATCH}" reports-watch-plan.patch
+
+      - name: Set up Buildx container driver
+        uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
+        with:
+          driver: docker-container
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push tested release image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ./upstream
+          file: ./k8s/bases/infrastructure/controllers/kyverno/ReportsWatchPlan.Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.IMAGE }}:${{ env.IMAGE_TAG }}
+          build-args: VERSION=${{ env.IMAGE_TAG }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ env.IMAGE_TAG }}
+            io.devantler.kyverno-reports.upstream-revision=${{ env.SOURCE_COMMIT }}
+
+      - name: Install checksum-verified supply-chain tools
+        run: bash .github/scripts/setup-supply-chain-tools.sh
+
+      - name: Sign and verify published digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign verify \
+            --certificate-identity "https://github.com/devantler-tech/platform/.github/workflows/publish-kyverno-reports-hotfix.yaml@refs/heads/main" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            "${IMAGE}@${DIGEST}"
+          printf 'Published signed image: %s@%s\n' "${IMAGE}" "${DIGEST}"

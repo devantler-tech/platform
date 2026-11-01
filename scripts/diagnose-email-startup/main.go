@@ -19,7 +19,9 @@ import (
 	"time"
 )
 
-const approvedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:e51d4d1f574405910f6f070d50efabc5e3c84ec65c33b44e5fad1684e25030d8"
+const approvedImage = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
+const approvedProxyMap = "email-client-proxy-kkm788c4m9"
+const approvedProxyConfigSHA = "400a77329e2fcda3fea17c821593ef18f7ad2ca8f1fa32acfbf3b5f36aa6fb4c"
 const maxOutput = 16384
 const maxAPIOutput = 1048576
 const publicConfig = `{"@type":"RocksDb","path":"/var/lib/stalwart/data","bufferSize":33554432,"cacheSize":33554432}`
@@ -48,6 +50,7 @@ type metadata struct{ Name, Namespace, UID, ResourceVersion string }
 type container struct {
 	Name, Image   string
 	Command, Args []string
+	Env, EnvFrom  []json.RawMessage
 	VolumeMounts  []struct {
 		Name, MountPath, SubPath string
 		ReadOnly                 bool
@@ -65,17 +68,20 @@ type pod struct {
 		}
 	}
 	Status struct {
-		ContainerStatuses []struct {
-			Name, ContainerID, ImageID string
-			RestartCount               int
-			Ready                      bool
-			State                      struct{ Running *struct{ StartedAt string } }
-		}
+		ContainerStatuses []containerStatus
 	}
 }
+type containerStatus struct {
+	Name, ContainerID, ImageID string
+	RestartCount               int
+	Ready                      bool
+	State                      struct{ Running *struct{ StartedAt string } }
+}
 type binding struct {
-	UID, Node, ContainerID, ImageID, StartedAt string
-	Restarts                                   int
+	UID, Node, ContainerID, ImageID, StartedAt                  string
+	Restarts                                                    int
+	ProxyConfig, ProxyContainerID, ProxyImageID, ProxyStartedAt string
+	ProxyRestarts                                               int
 }
 type configMap struct {
 	Metadata metadata
@@ -204,12 +210,15 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 		return binding{}, false, false, invalid
 	}
 	if p.Metadata.Name != "private-mail-0" || p.Metadata.Namespace != "private-mail" || !uuidPattern.MatchString(p.Metadata.UID) || p.Metadata.ResourceVersion == "" ||
-		p.Spec.NodeName == "" || p.Spec.ShareProcessNamespace || len(p.Spec.Containers) != 1 || len(p.Status.ContainerStatuses) != 1 {
+		p.Spec.NodeName == "" || p.Spec.ShareProcessNamespace || (len(p.Spec.Containers) != 1 && len(p.Spec.Containers) != 2) || len(p.Status.ContainerStatuses) != len(p.Spec.Containers) {
 		return binding{}, false, false, invalid
 	}
 	c := p.Spec.Containers[0]
+	if c.Name == "client-proxy" && len(p.Spec.Containers) == 2 {
+		c = p.Spec.Containers[1]
+	}
 	if c.Name != "private-mail" || c.Image != approvedImage || !reflect.DeepEqual(c.Command, []string{"/usr/local/bin/stalwart"}) ||
-		!reflect.DeepEqual(c.Args, []string{"--config", "/etc/stalwart/config.json"}) {
+		!reflect.DeepEqual(c.Args, []string{"--config", "/etc/stalwart/config.json"}) || len(c.Env) != 0 || len(c.EnvFrom) != 0 {
 		return binding{}, false, false, invalid
 	}
 	mounted := false
@@ -225,8 +234,8 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 	if !mounted {
 		return binding{}, false, false, invalid
 	}
-	s := p.Status.ContainerStatuses[0]
-	if s.Name != "private-mail" || s.RestartCount < 0 {
+	s, ok := statusFor(p, "private-mail")
+	if !ok || s.RestartCount < 0 {
 		return binding{}, false, false, invalid
 	}
 	id := binding{UID: p.Metadata.UID, Node: p.Spec.NodeName, ContainerID: s.ContainerID, ImageID: s.ImageID, Restarts: s.RestartCount}
@@ -240,7 +249,93 @@ func bindPod(b []byte) (binding, bool, bool, error) {
 		return binding{}, false, false, invalid
 	}
 	id.StartedAt = s.State.Running.StartedAt
-	return id, true, s.Ready, nil
+	proxyRunning, proxyReady, err := bindProxy(p, &id)
+	if err != nil {
+		return binding{}, false, false, invalid
+	}
+	return id, proxyRunning, s.Ready && proxyReady, nil
+}
+
+// statusFor refuses duplicate identities, independent of Kubernetes list ordering.
+func statusFor(p pod, name string) (containerStatus, bool) {
+	var result containerStatus
+	found := false
+	for _, status := range p.Status.ContainerStatuses {
+		if status.Name == name {
+			if found {
+				return containerStatus{}, false
+			}
+			result, found = status, true
+		}
+	}
+	return result, found
+}
+
+// bindProxy admits only the declared adapter, with no environment or credential mounts.
+func bindProxy(p pod, id *binding) (bool, bool, error) {
+	if len(p.Spec.Containers) == 1 {
+		return true, true, nil
+	}
+	invalid := errors.New("invalid proxy")
+	c := p.Spec.Containers[1]
+	if p.Spec.Containers[0].Name == "client-proxy" {
+		c = p.Spec.Containers[0]
+	}
+	if c.Name != "client-proxy" || c.Image != approvedImage ||
+		!reflect.DeepEqual(c.Command, []string{"/usr/local/bin/caddy"}) ||
+		!reflect.DeepEqual(c.Args, []string{"run", "--config", "/etc/email-client-proxy/Caddyfile", "--adapter", "caddyfile"}) ||
+		len(c.Env) != 0 || len(c.EnvFrom) != 0 || len(c.VolumeMounts) != 1 {
+		return false, false, invalid
+	}
+	m := c.VolumeMounts[0]
+	if m.Name != "client-proxy-config" || m.MountPath != "/etc/email-client-proxy" || m.SubPath != "" || !m.ReadOnly {
+		return false, false, invalid
+	}
+	matches := 0
+	for _, v := range p.Spec.Volumes {
+		if v.Name == m.Name && v.ConfigMap != nil && v.ConfigMap.Name == approvedProxyMap {
+			matches++
+		}
+	}
+	if matches != 1 {
+		return false, false, invalid
+	}
+	s, ok := statusFor(p, "client-proxy")
+	if !ok || s.RestartCount < 0 {
+		return false, false, invalid
+	}
+	id.ProxyConfig, id.ProxyContainerID, id.ProxyImageID, id.ProxyRestarts = approvedProxyMap, s.ContainerID, s.ImageID, s.RestartCount
+	if s.State.Running == nil {
+		return false, s.Ready, nil
+	}
+	if s.ContainerID == "" || s.ImageID == "" {
+		return false, false, invalid
+	}
+	if _, err := time.Parse(time.RFC3339, s.State.Running.StartedAt); err != nil {
+		return false, false, invalid
+	}
+	id.ProxyStartedAt = s.State.Running.StartedAt
+	return true, s.Ready, nil
+}
+
+// proxyConfiguration binds the public adapter contents as well as its named mount.
+func proxyConfiguration(ctx context.Context, run executor, id binding) (metadata, error) {
+	if id.ProxyConfig == "" {
+		return metadata{}, nil
+	}
+	invalid := errors.New("invalid proxy configuration")
+	if id.ProxyConfig != approvedProxyMap {
+		return metadata{}, invalid
+	}
+	raw, err := request(ctx, run, "get", "configmap", approvedProxyMap, "-n", "private-mail", "-o", "json")
+	var cm configMap
+	if err != nil || len(raw) > maxAPIOutput || json.Unmarshal(raw, &cm) != nil ||
+		cm.Metadata.Name != approvedProxyMap || cm.Metadata.Namespace != "private-mail" ||
+		!uuidPattern.MatchString(cm.Metadata.UID) || cm.Metadata.ResourceVersion == "" ||
+		len(cm.Data) != 1 || hashBytes([]byte(cm.Data["Caddyfile"])) != approvedProxyConfigSHA {
+		return metadata{}, invalid
+	}
+	return cm.Metadata, nil
 }
 
 // readPublicMap rejects unknown configuration fields before hashing the mounted file.
@@ -299,6 +394,10 @@ func collect(ctx context.Context, run executor, pause func(context.Context) erro
 	if e != nil {
 		return unknown()
 	}
+	proxyBefore, e := proxyConfiguration(ctx, run, before)
+	if e != nil {
+		return unknown()
+	}
 	raw, e = request(ctx, run, "exec", "-n", "private-mail", "private-mail-0", "-c", "private-mail", "--", "/bin/bash", "--noprofile", "--norc", "-euo", "pipefail", "-c", podProbe)
 	if e != nil {
 		return unknown()
@@ -321,6 +420,10 @@ func collect(ctx context.Context, run executor, pause func(context.Context) erro
 	}
 	afterMap, e := readPublicMap(raw)
 	if e != nil || afterMap.Metadata != cm.Metadata || !reflect.DeepEqual(afterMap.Data, cm.Data) {
+		return unknown()
+	}
+	proxyAfter, e := proxyConfiguration(ctx, run, after)
+	if e != nil || proxyAfter != proxyBefore {
 		return unknown()
 	}
 	verdict := classify(observed, observed.ConfigSHA256 == hashBytes([]byte(cm.Data["config.json"])), ready)
@@ -358,12 +461,21 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 
 // execute captures bounded stdout and suppresses all native error payloads.
 func execute(ctx context.Context, args ...string) ([]byte, error) {
+	return executeInput(ctx, nil, args...)
+}
+
+// executeInput keeps credential-bearing stdin out of arguments, files and output.
+func executeInput(ctx context.Context, input []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
+	cmd.Stdin = bytes.NewReader(input)
 	limit := maxAPIOutput
 	if len(args) > 3 && args[3] == "exec" {
 		limit = maxOutput
+		if input != nil {
+			limit = maxAccessOutput
+		}
 	}
 	out := &boundedBuffer{limit: limit}
 	cmd.Stdout = out
@@ -390,7 +502,14 @@ func wait(ctx context.Context) error {
 // main gives the entire observation a finite five-minute lifetime.
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-	code := runEntry(ctx, os.Getenv, execute, wait, os.Stdout)
+	var code int
+	if os.Getenv("MAIL_INGRESS_CONFIRM") != "" {
+		code = runIngressEntry(ctx, os.Getenv, execute, executeInput, wait, os.Stdout)
+	} else if os.Getenv("MAIL_ACCESS_CONFIRM") != "" {
+		code = runAccessEntry(ctx, os.Getenv, execute, executeInput, wait, os.Stdout)
+	} else {
+		code = runEntry(ctx, os.Getenv, execute, wait, os.Stdout)
+	}
 	cancel()
 	os.Exit(code)
 }

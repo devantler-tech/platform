@@ -21,12 +21,60 @@ spec:
       # platform#1881); rollback = pin back to 1.19.5. The required
       # experimental-channel Gateway API CRDs are already installed by ksail
       # (v1.5.1) and carry the externalAuth field — no CRD change needed here.
-      version: 1.20.3
+      version: 1.20.4
       sourceRef:
         kind: HelmRepository
         name: cilium
   interval: 10m0s
   timeout: 10m
+  postRenderStrategy: nohooks
+  # The chart does not expose its API proxy buffering setting. Keep its pinned
+  # nginx configuration intact apart from streaming the API responses (#5534).
+  # The rendered regression compares this against the actual upstream chart.
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              version: v1
+              kind: ConfigMap
+              name: hubble-ui-nginx
+              namespace: kube-system
+            patch: |-
+              - op: replace
+                path: /data/nginx.conf
+                value: |
+                  server {
+                      listen       8081;
+                      listen       [::]:8081;
+                      server_name  localhost;
+                      root /app;
+                      index index.html;
+                      client_max_body_size 1G;
+
+                      location / {
+                          proxy_set_header Host $host;
+                          proxy_set_header X-Real-IP $remote_addr;
+
+                          location /api {
+                              proxy_http_version 1.1;
+                              proxy_buffering off;
+                              proxy_pass_request_headers on;
+                              proxy_pass http://127.0.0.1:8090;
+                          }
+                          location / {
+                              if ($http_user_agent ~* "kube-probe") { access_log off; }
+                              # double `/index.html` is required here
+                              try_files $uri $uri/ /index.html /index.html;
+                          }
+
+                          # Liveness probe
+                          location /healthz {
+                              access_log off;
+                              add_header Content-Type text/plain;
+                              return 200 'ok';
+                          }
+                      }
+                  }
   # https://github.com/cilium/cilium/blob/main/install/kubernetes/cilium/values.yaml
   values:
     # Roll the agent DaemonSet whenever the cilium-config ConfigMap changes.
@@ -135,6 +183,10 @@ spec:
         # it at idle.
         replicas: ${hubble_ui_replicas:=1}
         rollOutPods: true
+        # Helm's checksum precedes post-rendering. This digest of the normalized
+        # effective config rolls only the UI when our override changes.
+        podAnnotations:
+          platform.devantler.tech/hubble-ui-nginx-sha256: c2a580fd43a3e3bf4f56e14793af05d1fadecd72fe8eee9f4976255a4cb7c990
         # The same two C-0211 defaults as hubble.relay. In this chart the UI's
         # pod-level context is `securityContext`, and each container has its own.
         securityContext:
@@ -417,3 +469,5 @@ spec:
     gatewayAPI:
       enabled: true
       enableAlpn: true
+      # Keep the receiving side explicit for a verified rollback baseline.
+      enableProxyProtocol: false

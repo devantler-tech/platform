@@ -15,7 +15,7 @@
 # The parameterized WebApp identities are additionally scanned after actual KRO resolution by
 # test-webapp-compiled-scan.sh: omitted defaults still report writable root and UID/GID <= 10000.
 # Disappearing low-ID rows below are not clearance for those compatibility defaults.
-1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	fb3a7aa0a0514e12f84e94c60b0e94c78106582c344805e234cf32528ebb74c9
+1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml	RGD-CONTENT	SHA256	16939512acb4d4dccb1ebe11caa3f48fe49503c8a9a8a4c44aafd328a5a45fdb
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0039	LOW	CAUSE-SHA256:160d7903f27fd68cb534c4ad47efe2cef25b76e19a268fafa1c83903ef3dd2e6
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/defaultDeny.yaml	KSV-0040	LOW	CAUSE-SHA256:160d7903f27fd68cb534c4ad47efe2cef25b76e19a268fafa1c83903ef3dd2e6
 1	k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml.resources/ghcrAuth.yaml	KSV-0039	LOW	CAUSE-SHA256:750882b7d754a99cde56b888172505440a74fe2ee336dcee832b4640d7c941cf

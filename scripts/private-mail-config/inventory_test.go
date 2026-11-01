@@ -63,13 +63,13 @@ func TestInventoryRefusesIncompleteOrUnexpectedServingProfiles(t *testing.T) {
 
 func emptyInventory(t *testing.T) []byte {
 	t.Helper()
-	v := inventoryFixture()
+	v := receivingInventory(nil, nil)
 	methods := v["methodResponses"].([]any)
 	methods[0].([]any)[1] = map[string]any{"ids": []string{}, "total": 0, "position": 0}
 	methods[1].([]any)[1] = map[string]any{"list": []any{}, "notFound": []string{}}
 	methods[5].([]any)[1] = map[string]any{"ids": []string{}, "total": 0, "position": 0}
 	methods[6].([]any)[1] = map[string]any{"list": []any{}, "notFound": []string{}}
-	b, err := json.Marshal(withApplicationInventory(v))
+	b, err := json.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
