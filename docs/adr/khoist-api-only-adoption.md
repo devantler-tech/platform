@@ -39,8 +39,9 @@ itself, roll back; delisting does not remove it. This settles Platform #4874.
 
 The rollout verifier takes the exact image and chart from this checkout and refuses
 caller digests or a live release that differ. It replaces the retired parts of the
-receipt with requirements that no product declares `spec.ui` and that no serving
-workload carries the retired settings. It also requires the in-place chart rename.
+receipt with requirements that its two named products do not declare `spec.ui` and that
+no serving workload carries the retired settings. Products elsewhere are counted, not
+refused. It also requires the in-place chart rename.
 
 ## Rollback
 

@@ -235,6 +235,7 @@ fi
 if [[ "$key" == all-products ]]; then
   case "${MODE:-}" in
     inventory-forbidden) printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    inventory-hang) sleep 60 ;;
     inventory-partial) cat "$FIXTURE/all-products.json"; exit 1 ;;
     inventory-empty) printf '{"items":[]}\n'; exit 0 ;;
     inventory-malformed) printf '{"items":[{"metadata":{}}]}\n'; exit 0 ;;
@@ -575,6 +576,10 @@ for mode in inventory-forbidden inventory-partial inventory-empty inventory-malf
   jq -e '.complete == true and .productInventory == "unavailable" and (has("productsDeclaringUI") | not)' "${scratch}/${mode}/stdout" >/dev/null ||
     fail "$mode: an unread inventory was reported as a count"
 done
+# Reaching the shared deadline on this read must not refuse a settled rollout.
+run_case inventory-hang pass inventory-hang 15
+jq -e '.complete == true and .productInventory == "unavailable"' "${scratch}/inventory-hang/stdout" >/dev/null ||
+  fail 'the inventory deadline refused a settled rollout'
 for mode in inventory-clean inventory-ui inventory-forbidden; do
   if grep -Eq 'INVENTORY-NAME-CANARY|tenant-canary|PRIVATE-ERROR-CANARY' "${scratch}/${mode}/stdout"; then fail "$mode: the receipt exposed inventory values"; fi
 done

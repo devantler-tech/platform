@@ -136,10 +136,12 @@ remaining() {
   left=$((deadline - SECONDS))
   [[ $left -gt 0 ]] || fail deadline_exceeded
 }
-# bounded runs one read within the remaining budget and reaps its process group.
-bounded() {
+# bounded_optional runs one read within the remaining budget and reaps its process
+# group. Reaching the deadline fails that read and leaves the verdict to the caller.
+bounded_optional() {
   local result=0
-  remaining
+  left=$((deadline - SECONDS))
+  ((left > 0)) || return 1
   "$@" &
   active=$!
   (
@@ -154,6 +156,13 @@ bounded() {
   kill -KILL -- "-$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
   watchdog=''
+  return "$result"
+}
+# bounded runs one required read and refuses the rollout at the shared deadline.
+bounded() {
+  local result=0
+  remaining
+  bounded_optional "$@" || result=$?
   remaining
   return "$result"
 }
@@ -897,7 +906,7 @@ if [[ -s "$scratch/public-retries" ]]; then retries_field=$(printf ',"publicRetr
 # The inventory reports and does not gate: a product elsewhere must not refuse this
 # rollout. Only counts leave the verifier, and an unread inventory never reads as zero.
 inventory_field=',"productInventory":"unavailable"'
-if bounded inventory_products && read -r inventoried with_ui <"$scratch/product-inventory" && [[ "$inventoried" =~ ^[1-9][0-9]*$ && "$with_ui" =~ ^(0|[1-9][0-9]*)$ ]]; then
+if bounded_optional inventory_products && read -r inventoried with_ui <"$scratch/product-inventory" && [[ "$inventoried" =~ ^[1-9][0-9]*$ && "$with_ui" =~ ^(0|[1-9][0-9]*)$ ]]; then
   inventory_field=$(printf ',"productsInventoried":%d,"productsDeclaringUI":%d' "$inventoried" "$with_ui")
 fi
 retries_field+=$inventory_field
