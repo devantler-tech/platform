@@ -52,5 +52,5 @@ the previous verifier in one revert. Flux re-applies the 2.9.1 CRD through
 ## Not established by this decision
 
 The deployment receipt does not prove browser behaviour or a separate consumer. Those
-are checked after the deploy and recorded on Platform #4890, along with the zero-UI
-inventory that ADR 0024 requires before KHoist removes the field.
+are checked after the deploy and recorded on Platform #4890. The receipt's product counts
+supply the zero-UI inventory that ADR 0024 requires before KHoist removes the field.

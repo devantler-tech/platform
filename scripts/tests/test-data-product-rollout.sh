@@ -149,6 +149,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
    (rs("data-product-controller-contract-probe";"contract-probe") | .metadata.name="dormant-probe-rs" | .metadata.uid="dormant-probe-rs-uid" | .spec.replicas=0 | .status.replicas=0 | .status.readyReplicas=0 | .status.availableReplicas=0)]},
  pods:{apiVersion:"v1",kind:"PodList",items:[pod("data-product-controller";"controller";1),pod("data-product-controller";"controller";2),pod("data-product-controller-harbour";"product";1),pod("data-product-controller-harbour";"product";2),pod("data-product-controller-publisher-review";"publisher-review";1),pod("data-product-controller-publisher-review";"publisher-review";2)]},
  "service-harbour":service("data-product-controller-harbour"),"service-publisher-review":service("data-product-controller-publisher-review"),
+ "all-products":{apiVersion:"v1",kind:"List",items:[{metadata:{name:"INVENTORY-NAME-CANARY",namespace:"tenant-canary"},spec:{}},{metadata:{name:"harbour-observations",namespace:"data-product-controller"},spec:{}}]},
  endpoints:{apiVersion:"discovery.k8s.io/v1",kind:"EndpointSliceList",metadata:{},items:[slice("data-product-controller-harbour"),slice("data-product-controller-publisher-review")]},
  "route-registry":route("registry";"data-products";{name:"oauth2-proxy",namespace:"oauth2-proxy",port:80}),
  "route-harbour":route("harbour";"harbour-data";{name:"data-product-controller-harbour",port:80}),
@@ -193,6 +194,7 @@ case "$namespace:$resource:$name" in
   data-product-controller:roles.rbac.authorization.k8s.io:data-product-readiness-observer) key=observer-role ;;
   data-product-controller:rolebindings.rbac.authorization.k8s.io:data-product-readiness-observer) key=observer-binding ;;
   data-product-controller:ciliumnetworkpolicies.cilium.io:allow-data-product-controller-contract-probe) key=probe-policy ;;
+  data-product-controller:dataproducts.data.devantler.tech:--all-namespaces) key=all-products ;;
   data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-registry) key=route-registry ;;
   data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-harbour) key=route-harbour ;;
   data-product-controller:httproutes.gateway.networking.k8s.io:data-product-controller-publisher-review) key=route-publisher-review ;;
@@ -229,6 +231,15 @@ if [[ "$key" == chart ]]; then
 fi
 if [[ "$key" == observer-role && "${MODE:-}" == partial-observer ]]; then
   cat "$FIXTURE/observer-role.json"; exit 1
+fi
+if [[ "$key" == all-products ]]; then
+  case "${MODE:-}" in
+    inventory-forbidden) printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+    inventory-partial) cat "$FIXTURE/all-products.json"; exit 1 ;;
+    inventory-empty) printf '{"items":[]}\n'; exit 0 ;;
+    inventory-malformed) printf '{"items":[{"metadata":{}}]}\n'; exit 0 ;;
+    inventory-ui) jq '.items[0].spec.ui={}' "$FIXTURE/all-products.json"; exit 0 ;;
+  esac
 fi
 if [[ "$key" == release-product ]]; then
   case "${MODE:-}" in
@@ -552,6 +563,21 @@ for mode in connection-refused-once empty-reply-once connection-reset-once; do
     fail "$mode: the accepted receipt lost the absorbed retry"
 done
 expected_urls=11
+# The cluster-wide inventory reports counts only, and never reads an unread list as zero.
+run_case inventory-clean pass ''
+jq -e '.productsInventoried == 2 and .productsDeclaringUI == 0 and (has("productInventory") | not)' "${scratch}/inventory-clean/stdout" >/dev/null ||
+  fail 'the receipt lost the product inventory'
+run_case inventory-ui pass inventory-ui
+jq -e '.productsInventoried == 2 and .productsDeclaringUI == 1' "${scratch}/inventory-ui/stdout" >/dev/null ||
+  fail 'the inventory missed a product declaring the retired field'
+for mode in inventory-forbidden inventory-partial inventory-empty inventory-malformed; do
+  run_case "$mode" pass "$mode"
+  jq -e '.complete == true and .productInventory == "unavailable" and (has("productsDeclaringUI") | not)' "${scratch}/${mode}/stdout" >/dev/null ||
+    fail "$mode: an unread inventory was reported as a count"
+done
+for mode in inventory-clean inventory-ui inventory-forbidden; do
+  if grep -Eq 'INVENTORY-NAME-CANARY|tenant-canary|PRIVATE-ERROR-CANARY' "${scratch}/${mode}/stdout"; then fail "$mode: the receipt exposed inventory values"; fi
+done
 # A retry never extends the deadline, and the refusal keeps the cause it could not retry.
 run_case dropped-at-deadline fail dropped-at-deadline 3
 # Which refusal fires first depends on the second the budget ran out in; both keep the cause.
