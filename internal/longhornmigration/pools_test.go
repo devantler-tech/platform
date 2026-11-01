@@ -45,6 +45,9 @@ func TestOnlyReviewedPinnedMigrationPoolsAreStorageExceptions(t *testing.T) {
 		"unready worker":        func(n, _ Object) { n["status"].(Object)["conditions"] = []any{} },
 		"foreign Longhorn node": func(_, lh Object) { lh["metadata"].(Object)["name"] = "other-worker" },
 		"evacuating storage":    func(_, lh Object) { lh["spec"].(Object)["evictionRequested"] = true },
+		"malformed authorization": func(_, lh Object) {
+			lh["metadata"].(Object)["labels"].(Object)[EnabledLabel] = "yes"
+		},
 		"foreign disk": func(_, lh Object) {
 			lh["spec"].(Object)["disks"] = Object{"other": Object{"diskType": "filesystem", "path": "/other"}}
 		},
