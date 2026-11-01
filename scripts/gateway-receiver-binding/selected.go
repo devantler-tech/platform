@@ -8,6 +8,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -171,4 +172,108 @@ func restoreBaseline(rendered []byte, restore func() error) (bool, error) {
 		return true, nil
 	}
 	return false, restore()
+}
+
+const (
+	// The deployment waits for infrastructure-controllers, and the bindings
+	// arrive later with the infrastructure layer.
+	fenceApplyBudget = 10 * time.Minute
+	fencePollEvery   = 5 * time.Second
+	// Each node's Envoy receives the listener after the object is written, and
+	// the public probes that follow must exercise the fenced listener.
+	fenceSettle = 20 * time.Second
+)
+
+// fenceTouch writes only the ownership marker, conditionally. Admission applies
+// only to writes and the controller does not rewrite an unchanged listener, so
+// this is what lets the reviewed policy install the fence on the existing object.
+func fenceTouch(raw []byte) ([]byte, error) {
+	var o receiverConfig
+	if strictJSON(raw, &o) != nil {
+		return nil, errors.New("receiver-input")
+	}
+	return json.Marshal(map[string]any{"metadata": map[string]any{
+		"uid":             o.Metadata.UID,
+		"resourceVersion": o.Metadata.ResourceVersion,
+		"annotations":     map[string]string{receiverOwner: "v1"},
+	}})
+}
+
+// installFence retries until the reviewed policies, the bindings and the fence
+// all read as current. Policies or bindings behind the source are the normal lag
+// behind Flux, so they wait and write nothing. A listener this
+// helper does not own, an active PROXY listener or a different peer fails at
+// once, because a write could not make any of them correct.
+func (c receiverClient) installFence(ctx context.Context, b binding, pause func(context.Context, time.Duration) error) (bool, error) {
+	wrote := false
+	last := errors.New("selected-policy-binding")
+	for {
+		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+		if err == nil {
+			if _, err := disabledPatch(raw, b); err != nil {
+				return wrote, err
+			}
+			last = c.policies(ctx, b)
+			if last == nil {
+				last = c.bindingsSelected(ctx, b)
+			}
+			if last == nil && fenceActive(raw, b) == nil {
+				if wrote {
+					return true, pause(ctx, fenceSettle)
+				}
+				return false, nil
+			}
+			if last == nil {
+				touch, err := fenceTouch(raw)
+				if err != nil {
+					return wrote, err
+				}
+				// A conflict or an API server still catching up on the policy
+				// shows up in the next read.
+				_, _ = c.command(ctx, touch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=merge", "--patch-file=/dev/stdin", "-o=json")
+				wrote = true
+				last = errors.New("receiver-not-fenced")
+			}
+		} else {
+			last = err
+		}
+		if pause(ctx, fencePollEvery) != nil {
+			return wrote, last
+		}
+	}
+}
+
+func pauseFor(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return errors.New("cancelled")
+	case <-time.After(d):
+		return nil
+	}
+}
+
+// applySelected installs the fence the reviewed source selects. It runs only in
+// the protected deployment and never rebinds or edits anything but the marker.
+func applySelected(ctx context.Context, kubeContext string) (bool, error) {
+	if kubeContext != "admin@prod" {
+		return false, errors.New("arguments")
+	}
+	before, err := collect(ctx, kubeContext)
+	if err != nil {
+		return false, err
+	}
+	secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
+	if err != nil || !secretMatches(secret, before) {
+		return false, errors.New("source-secret")
+	}
+	c := receiverClient{context: kubeContext, command: executeReceiver}
+	wrote, err := c.installFence(ctx, before, pauseFor)
+	if err != nil {
+		return wrote, err
+	}
+	after, err := collect(ctx, kubeContext)
+	if err != nil || after != before {
+		return wrote, errors.New("source-changed")
+	}
+	return wrote, nil
 }

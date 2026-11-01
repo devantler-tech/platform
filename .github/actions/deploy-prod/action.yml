@@ -657,7 +657,7 @@ runs:
       shell: bash
       run: ./scripts/verify-gateway-routes-applied.sh
 
-    - name: Restore and verify the prepared Gateway receiver baseline
+    - name: Restore or install and verify the reviewed Gateway receiver state
       if: >-
         !cancelled() &&
         steps.wait_flux_revision.outcome == 'success' &&
@@ -668,6 +668,7 @@ runs:
       shell: bash
       run: |
         go run ./scripts/gateway-receiver-binding restore-disabled --context admin@prod
+        go run ./scripts/gateway-receiver-binding apply-selected --context admin@prod
         go run ./scripts/gateway-receiver-binding verify --context admin@prod
 
     - name: Verify the deployed data product UI release

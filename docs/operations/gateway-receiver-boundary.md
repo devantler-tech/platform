@@ -2,11 +2,10 @@
 
 # Gateway receiver binding
 
-This revision prepares an encrypted provider binding and **unbound** native
-admission policies. It changes no listener matching or forwarding protocol.
-Both provider and receiver PROXY settings remain explicitly disabled. Selecting
-the physical-peer component is a later reviewed activation, after this disabled
-baseline and its recovery path have merged and deployed.
+An encrypted provider binding and native admission policies fence the application
+Gateway. Every TLS chain accepts only the load balancer's private address. The
+forwarding protocol does not change: provider and receiver PROXY settings remain
+explicitly disabled, and turning them on is a later reviewed activation.
 
 The eventual fence uses Envoy's `direct_source_prefix_ranges` on every TLS
 filter chain. This matches the physical connection peer independently of any
@@ -19,9 +18,9 @@ The mutating and validating policies target only the declared application
 Gateway's generated CiliumEnvoyConfig. They preserve its existing plain HTTP
 chain and other resources, require every TLS chain to use the same exact host
 prefix, and reject fallback chains, alternate matchers and protobuf field aliases
-that could evade that check. No global webhook selector is widened. The policies
-remain unbound until the separate `components/physical-peer-fence` component is
-explicitly selected.
+that could evade that check. No global webhook selector is widened. The
+`components/physical-peer-fence` component binds them, and the Hetzner Cilium
+layer selects it.
 
 ## Prepare or replace the binding
 
@@ -83,16 +82,29 @@ TLS chain. A revision that goes back to unselected, including main's recovery af
 a failed activation, removes the fence as before. A failed render, missing
 policies or a partial or foreign binding fails without a write.
 
-Selecting the component is still a separate activation. Admission applies only when
-the generated listener is written, so that change must also establish how the
-existing listener receives the fence, or its first `verify` fails. The same applies
-to recovery once main selects it: restoration writes nothing while selected, so a
-listener that lost the fence keeps failing `verify` until something rewrites it.
-Both steps still refuse an active PROXY listener, so turning the transport on needs
-its own change to this helper.
+Admission applies only when the generated listener is written, and the controller
+does not rewrite an unchanged listener. So between those two steps, `apply-selected`
+waits a bounded time for the reviewed policies and bindings, which arrive with the
+later `infrastructure` Flux layer, then writes only the ownership marker, conditional on the observed UID
+and resource version. Admission installs the fence on that write, including after a
+listener lost it. It writes nothing when the fence is already active or the source
+leaves it unselected, and refuses a foreign owner, a different peer or an active
+PROXY listener. Every step still refuses an active PROXY listener, so turning the
+transport on needs its own change to this helper.
 
-With the component unselected, the following read-only check requires both bindings
-absent and the generated listener free of this fence and PROXY filters:
+## Recovery while selected
+
+If the fence itself refuses public traffic, revert the selection: the deployment on
+the reverted source removes the bindings and the fields it installed.
+
+The bound peer belongs to one load balancer. A replacement that keeps the Gateway
+but changes the private address leaves a fence with the old peer, which refuses
+every public TLS route and fails `apply-selected`. Revert the selection, deploy,
+prepare the replacement binding, then select it again. A rebuilt cluster with a stale
+binding has the same problem, so unselect the fence before rebinding it.
+
+The following read-only check requires what the source selects, and the generated
+listener free of PROXY filters:
 
 ```sh
 go run ./scripts/gateway-receiver-binding verify --context admin@prod
@@ -100,12 +112,12 @@ go run ./scripts/gateway-receiver-binding verify --context admin@prod
 
 It probes Homepage and OpenBao through the provider's actual public endpoint with
 normal hostname and TLS verification, bypassing edge caches, and repeats with
-unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED` establishes the
-prepared disabled baseline and positive public paths. It does not establish a
-live physical-peer fence, original-client attribution, Email administration, or
-protocol activation.
+unchanged source identities. `GATEWAY_RECEIVER_SOURCE=VERIFIED fence_selected=true`
+establishes the fence on every TLS chain and positive public paths. It does not
+prove that another peer is refused, original-client attribution, Email
+administration, or protocol activation.
 
-Before activation, #5448 still requires native allowed and denied peer probes,
+Before turning the transport on, #5448 still requires native denied peer probes,
 forged PROXY metadata rejection, controller revision stability, the real Email
 path, authenticated administration and observed recovery. Preserve all stored
 access rules throughout that work.

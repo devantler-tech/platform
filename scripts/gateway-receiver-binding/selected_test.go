@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"gopkg.in/yaml.v3"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func renderedResources(kinds ...string) []byte {
@@ -108,15 +110,15 @@ func TestRealRendersSeeASelectionFromAnyLevel(t *testing.T) {
 	}
 }
 
-func TestReviewedLayerStillLeavesTheFenceUnselected(t *testing.T) {
+func TestReviewedLayerSelectsTheFence(t *testing.T) {
 	t.Chdir(filepath.Join("..", ".."))
 	rendered, err := renderLayer(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	selected, err := fenceSelected(rendered)
-	if err != nil || selected {
-		t.Fatalf("selected=%v err=%v: selecting the fence is a separate reviewed activation", selected, err)
+	if err != nil || !selected {
+		t.Fatalf("selected=%v err=%v: main deploys the fence, and unselecting it is a reviewed recovery", selected, err)
 	}
 }
 
@@ -280,5 +282,196 @@ func TestRestoreBaselineNeverRemovesASelectedFence(t *testing.T) {
 	failure := errors.New("restore")
 	if _, err := restoreBaseline(unselected, func() error { return failure }); !errors.Is(err, failure) {
 		t.Fatal("a failed restore was not reported")
+	}
+}
+
+// fenceAPI stands in for the API server: reads answer from state, and a marker
+// write installs the peer only while admission is live, as the bound policy does.
+type fenceAPI struct {
+	config        map[string]any
+	policies      map[string][]byte
+	bindings      map[string][]byte
+	admissionLive bool
+	writes        [][]byte
+}
+
+func (a *fenceAPI) command(_ context.Context, input []byte, args ...string) ([]byte, error) {
+	joined := strings.Join(args, " ")
+	switch {
+	case strings.Contains(joined, " patch ciliumenvoyconfig "):
+		a.writes = append(a.writes, input)
+		if a.admissionLive {
+			setFencePeer(a.config, "192.0.2.5", true)
+		}
+		return []byte("{}"), nil
+	case strings.Contains(joined, " get ciliumenvoyconfig "):
+		return json.Marshal(a.config)
+	}
+	for _, resource := range []map[string][]byte{a.policies, a.bindings} {
+		for name, raw := range resource {
+			if strings.Contains(joined, " get "+name+" ") {
+				return raw, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func setFencePeer(config map[string]any, peer string, marker bool) {
+	meta := config["metadata"].(map[string]any)
+	annotations := meta["annotations"].(map[string]any)
+	delete(annotations, receiverOwner)
+	if marker {
+		annotations[receiverOwner] = "v1"
+	}
+	listener := config["spec"].(map[string]any)["resources"].([]any)[1].(map[string]any)
+	for _, item := range listener["filterChains"].([]any) {
+		match := item.(map[string]any)["filterChainMatch"].(map[string]any)
+		if match["transportProtocol"] != "tls" {
+			continue
+		}
+		delete(match, "directSourcePrefixRanges")
+		if peer != "" {
+			match["directSourcePrefixRanges"] = []any{map[string]any{"addressPrefix": peer, "prefixLen": 32}}
+		}
+	}
+}
+
+func fenceAdmissionObject(t *testing.T, r admissionResource, b binding) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(receiverSourceDir, r.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var o map[string]any
+	if yaml.Unmarshal([]byte(strings.ReplaceAll(string(raw), "${gateway_receiver_source_cidr}", b.CIDR)), &o) != nil {
+		t.Fatal("source")
+	}
+	m := o["metadata"].(map[string]any)
+	m["uid"], m["resourceVersion"], m["generation"] = "44444444-4444-4444-8444-444444444444", "10", 1
+	o["status"] = map[string]any{"observedGeneration": 1}
+	out, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func newFenceAPI(t *testing.T) (*fenceAPI, binding) {
+	t.Helper()
+	config, b := disabledFixture()
+	setFencePeer(config, "", false)
+	api := &fenceAPI{config: config, policies: map[string][]byte{}, bindings: map[string][]byte{}, admissionLive: true}
+	for _, r := range preparedPolicies {
+		api.policies[r.Resource] = fenceAdmissionObject(t, r, b)
+	}
+	for _, r := range preparedBindings {
+		api.bindings[r.Resource] = fenceAdmissionObject(t, r, b)
+	}
+	return api, b
+}
+
+func TestInstallFenceWritesOnlyTheConditionalMarker(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	api, b := newFenceAPI(t)
+	var settled time.Duration
+	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(_ context.Context, d time.Duration) error { settled = d; return nil })
+	if err != nil || !wrote {
+		t.Fatalf("wrote=%v err=%v", wrote, err)
+	}
+	if len(api.writes) != 1 {
+		t.Fatalf("writes=%d", len(api.writes))
+	}
+	var touch map[string]map[string]any
+	if json.Unmarshal(api.writes[0], &touch) != nil || len(touch) != 1 || len(touch["metadata"]) != 3 {
+		t.Fatalf("the write reaches beyond the marker: %s", api.writes[0])
+	}
+	if touch["metadata"]["uid"] != "22222222-2222-4222-8222-222222222222" || touch["metadata"]["resourceVersion"] != "100" {
+		t.Fatalf("the write is not conditional on the observed object: %s", api.writes[0])
+	}
+	if settled != fenceSettle {
+		t.Fatalf("last pause %v: the public probes must follow the listener", settled)
+	}
+	again, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(context.Context, time.Duration) error { return nil })
+	if err != nil || again || len(api.writes) != 1 {
+		t.Fatalf("an installed fence was written again: wrote=%v err=%v writes=%d", again, err, len(api.writes))
+	}
+}
+
+func TestInstallFenceWaitsForTheFluxLayerWithoutWriting(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	api, b := newFenceAPI(t)
+	held := api.bindings
+	api.bindings = map[string][]byte{}
+	pauses := 0
+	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(_ context.Context, d time.Duration) error {
+		pauses++
+		if pauses <= 3 && len(api.writes) != 0 {
+			t.Fatal("wrote before the bindings arrived")
+		}
+		if pauses == 3 {
+			api.bindings = held
+		}
+		return nil
+	})
+	if err != nil || !wrote || len(api.writes) != 1 {
+		t.Fatalf("wrote=%v err=%v writes=%d", wrote, err, len(api.writes))
+	}
+}
+
+func TestInstallFenceRetriesAnAPIServerBehindOnThePolicy(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	api, b := newFenceAPI(t)
+	api.admissionLive = false
+	wrote, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(context.Context, time.Duration) error {
+		if len(api.writes) == 2 {
+			api.admissionLive = true
+		}
+		return nil
+	})
+	if err != nil || !wrote || len(api.writes) != 3 {
+		t.Fatalf("wrote=%v err=%v writes=%d", wrote, err, len(api.writes))
+	}
+}
+
+func TestInstallFenceStopsAtTheDeadlineAsUnverified(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	api, b := newFenceAPI(t)
+	api.admissionLive = false
+	pauses := 0
+	_, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(context.Context, time.Duration) error {
+		pauses++
+		if pauses == 3 {
+			return errors.New("cancelled")
+		}
+		return nil
+	})
+	if err == nil || err.Error() != "receiver-not-fenced" {
+		t.Fatalf("a listener that never took the fence reported %v", err)
+	}
+}
+
+func TestInstallFenceRefusesStateAWriteCannotCorrect(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	for name, change := range map[string]func(map[string]any){
+		"different peer": func(c map[string]any) { setFencePeer(c, "192.0.2.6", true) },
+		"foreign gateway": func(c map[string]any) {
+			c["metadata"].(map[string]any)["ownerReferences"].([]any)[0].(map[string]any)["uid"] = "99999999-9999-4999-8999-999999999999"
+		},
+		"active proxy": func(c map[string]any) {
+			c["spec"].(map[string]any)["resources"].([]any)[1].(map[string]any)["listenerFilters"] = []any{map[string]any{"name": "envoy.filters.listener.proxy_protocol"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			api, b := newFenceAPI(t)
+			change(api.config)
+			_, err := receiverClient{context: "admin@prod", command: api.command}.installFence(context.Background(), b, func(context.Context, time.Duration) error {
+				t.Fatal("waited on a state no write can correct")
+				return nil
+			})
+			if err == nil || len(api.writes) != 0 {
+				t.Fatalf("err=%v writes=%d", err, len(api.writes))
+			}
+		})
 	}
 }
