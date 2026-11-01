@@ -195,3 +195,38 @@ func TestUnprovedConvergenceTakesTheFullFence(t *testing.T) {
 		})
 	}
 }
+
+// A no-write path that silently never fires costs every deploy the full fenced
+// transaction, twice (#5495). The fall-through must name the check that ended it.
+func TestFallThroughNamesTheCheckThatEndedTheNoWritePath(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		env   map[string]string
+		stage string
+	}{
+		"stale seed probe": {map[string]string{"FAKE_SEED_PROBE_STALE": "true"}, "seed-probe"},
+		"drifted admission": {
+			map[string]string{"FAKE_IMAGE_VERIFICATION_POLICY_DRIFTED": "true"},
+			"admission-policy",
+		},
+		"lease claimed during the checks": {
+			map[string]string{"FAKE_SYNC_LEASE_CLAIMED_DURING_CONVERGENCE": "true"},
+			"lease-unchanged",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			requireSuccessResult(t, f.runHelper(validConfig(), nil, map[string]string{
+				"FAKE_TALOS_NODES_CURRENT": "true",
+			}))
+			overrides := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+			for key, value := range tc.env {
+				overrides[key] = value
+			}
+			result := f.runHelperPreservingClusterState(validConfig(), nil, overrides)
+			requireSuccessResult(t, result)
+			requireContains(t, result.stdout, "GHCR no-write path ended at check="+tc.stage+";")
+		})
+	}
+}
