@@ -178,7 +178,7 @@ func TestLonghornNetworkBoundaryAllowsReadsAndRefusesWrites(t *testing.T) {
 	}
 }
 
-func TestNoLonghornWriteVerbCanReachItsReadOnlyRouter(t *testing.T) {
+func TestLonghornRouterUsesExplicitReadActionPredicates(t *testing.T) {
 	config := authConfig(t, render(t, "hetzner"))
 	rule, _ := field(config, "http", "routers", "longhorn", "rule").(string)
 	if !strings.Contains(rule, "Method(`GET`)") || !strings.Contains(rule, "Method(`POST`)") || !strings.Contains(rule, "QueryRegexp(`action`") {

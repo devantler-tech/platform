@@ -34,6 +34,10 @@ func TestReadOnlyRequestsAgainstNativeTraefik(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		if r.Header.Get("X-Forwarded-Proto") != "https" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		w.Header().Set("X-Longhorn-Read-Proof", "upstream")
 		w.WriteHeader(http.StatusOK)
 	}))

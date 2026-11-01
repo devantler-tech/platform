@@ -46,7 +46,7 @@ data:
             ((PathRegexp(`^/v1/volumes/[^/]+$`) && QueryRegexp(`action`, `^(snapshotList|snapshotGet|snapshotCRList|snapshotCRGet|recurringJobList)$`)) ||
             (PathRegexp(`^/v1/backupvolumes/[^/]+$`) && QueryRegexp(`action`, `^(backupList|backupListByVolume|backupGet)$`)))))
           entryPoints: ["web"]
-          middlewares: ["longhorn-read-only-headers"]
+          middlewares: ["longhorn-read-only-headers", "forwarded-proto-https"]
           service: longhorn
         # Actual Budget handles its own OIDC login too, but it is a personal
         # finance app, so public Gateway traffic first passes through the
