@@ -11,11 +11,17 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 const receiverSourceDir = "k8s/providers/hetzner/infrastructure/cilium/gateway-receiver"
+
+const (
+	restoreAttempts  = 8
+	restorePollEvery = 5 * time.Second
+)
 
 type admissionResource struct{ Kind, Resource, File string }
 
@@ -78,6 +84,14 @@ func executeReceiver(ctx context.Context, input []byte, args ...string) ([]byte,
 type receiverClient struct {
 	context string
 	command receiverCommand
+	pause   func(context.Context, time.Duration) error
+}
+
+func (c receiverClient) wait(ctx context.Context, d time.Duration) error {
+	if c.pause != nil {
+		return c.pause(ctx, d)
+	}
+	return pauseFor(ctx, d)
 }
 
 func (c receiverClient) read(ctx context.Context, resource, namespace, name string) ([]byte, error) {
@@ -147,36 +161,49 @@ func (c receiverClient) removeBindings(ctx context.Context, b binding) error {
 	return nil
 }
 func (c receiverClient) restoreConfig(ctx context.Context, b binding) error {
-	raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
-	if err != nil {
-		return err
+	uid := ""
+	// An API server still holding a removed binding reapplies the fence, so a
+	// patch can have no effect for a moment after the bindings are gone.
+	for attempt := 0; attempt < restoreAttempts; attempt++ {
+		raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+		if err != nil {
+			return err
+		}
+		patch, err := recoveryPatch(raw, b)
+		if err != nil {
+			return err
+		}
+		if len(patch) == 0 {
+			return nil
+		}
+		var observed receiverConfig
+		if strictJSON(raw, &observed) != nil || (uid != "" && observed.Metadata.UID != uid) {
+			return errors.New("receiver-replacement")
+		}
+		uid = observed.Metadata.UID
+		_, _ = c.command(ctx, patch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=json", "--patch-file=/dev/stdin", "-o=json")
+		after, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+		if err != nil {
+			return err
+		}
+		var newObject receiverConfig
+		if strictJSON(after, &newObject) != nil || newObject.Metadata.UID != uid {
+			return errors.New("receiver-replacement")
+		}
+		remaining, err := recoveryPatch(after, b)
+		if err != nil {
+			return errors.New("receiver-restoration-unverified")
+		}
+		if len(remaining) == 0 {
+			return nil
+		}
+		if c.wait(ctx, restorePollEvery) != nil {
+			break
+		}
 	}
-	patch, err := disabledPatch(raw, b)
-	if err != nil {
-		return err
-	}
-	if len(patch) == 0 {
-		return nil
-	}
-	_, _ = c.command(ctx, patch, "--context="+c.context, "--request-timeout=20s", "-n", "kube-system", "patch", "ciliumenvoyconfig", "cilium-gateway-platform", "--type=json", "--patch-file=/dev/stdin", "-o=json")
-	after, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
-	if err != nil {
-		return err
-	}
-	var oldObject, newObject receiverConfig
-	if strictJSON(raw, &oldObject) != nil || strictJSON(after, &newObject) != nil || oldObject.Metadata.UID != newObject.Metadata.UID {
-		return errors.New("receiver-replacement")
-	}
-	remaining, err := disabledPatch(after, b)
-	if err != nil || len(remaining) != 0 {
-		return errors.New("receiver-restoration-unverified")
-	}
-	return nil
+	return errors.New("receiver-restoration-unverified")
 }
 func (c receiverClient) restoreReceiver(ctx context.Context, b binding) error {
-	if err := c.policies(ctx, b); err != nil {
-		return err
-	}
 	// An active PROXY listener must retain its physical-peer fence. Inspect
 	// the receiver before removing either binding, then inspect it again at
 	// the conditional patch to reject a concurrent configuration change.
@@ -184,7 +211,7 @@ func (c receiverClient) restoreReceiver(ctx context.Context, b binding) error {
 	if err != nil {
 		return err
 	}
-	if _, err = disabledPatch(raw, b); err != nil {
+	if _, err = recoveryPatch(raw, b); err != nil {
 		return err
 	}
 	if err := c.removeBindings(ctx, b); err != nil {
@@ -193,7 +220,12 @@ func (c receiverClient) restoreReceiver(ctx context.Context, b binding) error {
 	if err := c.restoreConfig(ctx, b); err != nil {
 		return err
 	}
-	return c.bindingsAbsent(ctx)
+	if err := c.bindingsAbsent(ctx); err != nil {
+		return err
+	}
+	// Checked after the removal: the fence may be what stops Flux from delivering
+	// the policies. The deployment still fails, with public traffic restored.
+	return c.policies(ctx, b)
 }
 func restoreDisabled(ctx context.Context, kubeContext string) error {
 	if kubeContext != "admin@prod" {
@@ -203,17 +235,26 @@ func restoreDisabled(ctx context.Context, kubeContext string) error {
 	if err != nil {
 		return err
 	}
+	c := receiverClient{context: kubeContext, command: executeReceiver}
+	if err = c.restoreReceiver(ctx, before); err != nil && !isPolicyDrift(err) {
+		return err
+	}
+	restored := err
+	// A stale binding is reported after the removal for the same reason.
 	secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
 	if err != nil || !secretMatches(secret, before) {
 		return errors.New("source-secret")
 	}
-	c := receiverClient{context: kubeContext, command: executeReceiver}
-	if err = c.restoreReceiver(ctx, before); err != nil {
-		return err
+	if restored != nil {
+		return restored
 	}
 	after, err := collect(ctx, kubeContext)
 	if err != nil || before != after {
 		return errors.New("source-changed")
 	}
 	return c.bindingsAbsent(ctx)
+}
+
+func isPolicyDrift(err error) bool {
+	return err != nil && err.Error() == "source-admission-policy"
 }

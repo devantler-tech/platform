@@ -149,8 +149,9 @@ func main() {
 	kubeContext := "oidc@prod"
 	outputPath := destination
 	verify := len(os.Args) == 4 && os.Args[1] == "verify" && os.Args[2] == "--context" && os.Args[3] == "admin@prod"
+	apply := len(os.Args) == 4 && os.Args[1] == "apply-selected" && os.Args[2] == "--context" && os.Args[3] == "admin@prod"
 	restore := len(os.Args) == 4 && os.Args[1] == "restore-disabled" && os.Args[2] == "--context" && os.Args[3] == "admin@prod"
-	if verify || restore {
+	if verify || restore || apply {
 		kubeContext = "admin@prod"
 	} else {
 		seen := map[string]bool{}
@@ -175,8 +176,28 @@ func main() {
 			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	budget := 90 * time.Second
+	if apply {
+		budget = fenceApplyBudget
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
+	if apply {
+		rendered, err := renderLayer(ctx)
+		selected, wrote := false, false
+		if err == nil {
+			selected, err = fenceSelected(rendered)
+		}
+		if err == nil && selected {
+			wrote, err = applySelected(ctx, kubeContext)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_FENCE=UNVERIFIED stage=%s\n", err.Error())
+			os.Exit(2)
+		}
+		fmt.Printf("GATEWAY_RECEIVER_FENCE=VERIFIED selected=%t wrote=%t\n", selected, wrote)
+		return
+	}
 	if restore {
 		rendered, err := renderLayer(ctx)
 		selected := false
