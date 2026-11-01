@@ -184,7 +184,24 @@ controller revision stability, the real Email
 path, authenticated administration and observed recovery. Preserve all stored
 access rules throughout that work.
 
-References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.38.6/api-v3/config/listener/v3/listener_components.proto),
+The native admission package includes a repeatable packet-boundary proof:
+
+```sh
+GATEWAY_RECEIVER_NATIVE_TEST=1 go -C scripts/tests/gateway-receiver-admission test -run '^TestNativeEnvoyPhysicalPeerBoundary$' -count=1 -v
+```
+
+It requires Docker and runs the pinned Cilium Envoy build in an unprivileged,
+read-only container with external networking disabled. The real admission
+expressions generate the listener. Correct peers must work, while another
+physical peer claiming the allowed address must fail for both PROXY versions
+and every TLS chain. An unfenced positive control and an intentionally incorrect
+logical-address matcher prove that the refusal is caused by the physical fence.
+The rendered Cilium chart and forwarded-address settings must match the audited
+fixture. CI enables this proof explicitly; missing container capability fails it.
+This checks the proxy boundary, while live controller attachment, provider state
+and recovery convergence retain their separate acceptance gates.
+
+References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.39.5/api-v3/config/listener/v3/listener_components.proto),
 [native Kubernetes mutation policies](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/),
-[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.3/operator/pkg/model/translation/envoy_listener.go),
+[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.4/operator/pkg/model/translation/envoy_listener.go),
 [the provider controller's status construction](https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/v1.39.1/hcloud/load_balancers.go).
