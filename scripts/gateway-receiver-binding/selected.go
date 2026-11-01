@@ -289,9 +289,10 @@ func applySelected(ctx context.Context, kubeContext string) (bool, error) {
 	if err != nil {
 		return wrote, err
 	}
-	// Enough fresh connections to reach most nodes behind the load balancer. The
-	// object says the fence is declared, and only traffic says the listeners took it.
-	for round := 0; round < fenceProbeRounds; round++ {
+	// Enough fresh connections to reach most nodes behind the load balancer, once,
+	// when the listeners change. This shows the fence does not refuse the load
+	// balancer; it cannot show that a listener took the fence.
+	for round := 0; wrote && round < fenceProbeRounds; round++ {
 		if err := probePublic(ctx, before.PublicIPv4); err != nil {
 			return wrote, err
 		}

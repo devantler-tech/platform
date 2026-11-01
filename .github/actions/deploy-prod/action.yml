@@ -678,6 +678,7 @@ runs:
       # while the checked-out source selects the fence.
       if: >-
         !cancelled() &&
+        steps.publish_platform_manifest.outcome == 'success' &&
         steps.wait_flux_revision.outcome != 'success'
       shell: bash
       run: go run ./scripts/gateway-receiver-binding restore-disabled --context admin@prod

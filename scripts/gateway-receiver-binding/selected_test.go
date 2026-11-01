@@ -613,3 +613,47 @@ func TestRestorationRemovesAFenceBoundToAnEarlierPeer(t *testing.T) {
 		t.Fatalf("patch=%s err=%v", p, err)
 	}
 }
+
+func TestRecoveryRemovesOnlyTheShapeThePolicyInstalls(t *testing.T) {
+	host := map[string]any{"addressPrefix": "192.0.2.6", "prefixLen": float64(32)}
+	if !singleHostPeer([]any{host}) {
+		t.Fatal("a single host was refused")
+	}
+	for name, value := range map[string]any{
+		"none":       []any{},
+		"two":        []any{host, host},
+		"extra key":  []any{map[string]any{"addressPrefix": "192.0.2.6", "prefixLen": float64(32), "other": true}},
+		"wider":      []any{map[string]any{"addressPrefix": "192.0.2.6", "prefixLen": float64(24)}},
+		"ipv6":       []any{map[string]any{"addressPrefix": "2001:db8::1", "prefixLen": float64(32)}},
+		"not an ip":  []any{map[string]any{"addressPrefix": "example.invalid", "prefixLen": float64(32)}},
+		"not a list": host,
+	} {
+		if singleHostPeer(value) {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
+// The policies are read after the removal, because the fence may be what stops
+// Flux from delivering them.
+func TestRestorationRemovesTheFenceBeforeReportingStalePolicies(t *testing.T) {
+	t.Chdir(filepath.Join("..", ".."))
+	c, config, _ := restoreFake(t, "192.0.2.6", 0)
+	_, b := disabledFixture()
+	inner := c.command
+	c.command = func(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "ciliumenvoyconfig") {
+			return inner(ctx, input, args...)
+		}
+		return nil, nil // no bindings, and the policies have not arrived
+	}
+	err := c.restoreReceiver(context.Background(), b)
+	if !isPolicyDrift(err) {
+		t.Fatalf("err=%v", err)
+	}
+	raw, _ := json.Marshal(config)
+	if p, perr := disabledPatch(raw, b); perr != nil || len(p) != 0 {
+		t.Fatalf("the fence stayed: patch=%s err=%v", p, perr)
+	}
+}

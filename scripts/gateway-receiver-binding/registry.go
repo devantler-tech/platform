@@ -204,9 +204,6 @@ func (c receiverClient) restoreConfig(ctx context.Context, b binding) error {
 	return errors.New("receiver-restoration-unverified")
 }
 func (c receiverClient) restoreReceiver(ctx context.Context, b binding) error {
-	if err := c.policies(ctx, b); err != nil {
-		return err
-	}
 	// An active PROXY listener must retain its physical-peer fence. Inspect
 	// the receiver before removing either binding, then inspect it again at
 	// the conditional patch to reject a concurrent configuration change.
@@ -223,7 +220,12 @@ func (c receiverClient) restoreReceiver(ctx context.Context, b binding) error {
 	if err := c.restoreConfig(ctx, b); err != nil {
 		return err
 	}
-	return c.bindingsAbsent(ctx)
+	if err := c.bindingsAbsent(ctx); err != nil {
+		return err
+	}
+	// Checked after the removal: the fence may be what stops Flux from delivering
+	// the policies. The deployment still fails, with public traffic restored.
+	return c.policies(ctx, b)
 }
 func restoreDisabled(ctx context.Context, kubeContext string) error {
 	if kubeContext != "admin@prod" {
@@ -233,17 +235,26 @@ func restoreDisabled(ctx context.Context, kubeContext string) error {
 	if err != nil {
 		return err
 	}
+	c := receiverClient{context: kubeContext, command: executeReceiver}
+	if err = c.restoreReceiver(ctx, before); err != nil && !isPolicyDrift(err) {
+		return err
+	}
+	restored := err
+	// A stale binding is reported after the removal for the same reason.
 	secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
 	if err != nil || !secretMatches(secret, before) {
 		return errors.New("source-secret")
 	}
-	c := receiverClient{context: kubeContext, command: executeReceiver}
-	if err = c.restoreReceiver(ctx, before); err != nil {
-		return err
+	if restored != nil {
+		return restored
 	}
 	after, err := collect(ctx, kubeContext)
 	if err != nil || before != after {
 		return errors.New("source-changed")
 	}
 	return c.bindingsAbsent(ctx)
+}
+
+func isPolicyDrift(err error) bool {
+	return err != nil && err.Error() == "source-admission-policy"
 }

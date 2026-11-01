@@ -65,8 +65,8 @@ match reviewed source and the validating policy's current generation to have
 completed type checking without warnings.
 
 Before restoring disabled state, the helper checks the generated listener and
-both bindings. An active PROXY listener, unknown owner, changed peer, foreign
-binding, or ambiguous configuration refuses every planned write. The helper
+both bindings. An active PROXY listener, unknown owner, foreign binding or ambiguous configuration
+refuses every planned write. The helper
 removes only its exact bindings with observed UID and resource-version deletion
 preconditions, then conditionally removes only its owned peer fields and marker.
 It preserves all other controller configuration and metadata. Readback resolves
@@ -91,19 +91,21 @@ layer. It then writes only the ownership marker, conditional on the observed UID
 resource version, and admission installs the fence on that write. That also repairs
 a listener that lost the fence, and rewrites one bound to an earlier peer. It writes
 nothing when the fence is already current or the source leaves it unselected, and
-refuses a foreign owner, an unexpected peer shape or an active PROXY listener. It then
-makes 40 public connections, because the object shows what is declared and only
-traffic shows that the listeners took it. Every step still refuses an active PROXY
+refuses a foreign owner, an unexpected peer shape or an active PROXY listener. After a write it
+makes 40 public connections, which shows the fence does not refuse the load balancer
+but cannot show that a listener took it. Every step still refuses an active PROXY
 listener, so turning the transport on needs its own change to this helper.
 
-The verify step needs Flux to converge first. A fence that refuses public traffic can
+The verify step needs Flux to converge first. A fence that refuses public traffic could
 be what stops convergence, and Flux prunes the bindings without removing the fields
-they installed. So when convergence fails, the deployment still runs `restore-disabled`,
-which writes nothing while the checked-out source selects the fence.
+they installed. So when a deployment published its source and convergence then fails,
+it still runs `restore-disabled`, which writes nothing while that source selects the
+fence.
 
-Restoration retries for a short time, because an API server still holding a removed
-binding reapplies the fence. It removes a fence bound to any single host, so a replaced
-load balancer cannot make the fence impossible to remove.
+Restoration does not need the binding or the policies to have converged, and removes a
+fence bound to any single host. It reports a stale binding or policy afterwards, so the
+deployment still fails with the fence gone. It retries for a short time, because an API
+server still holding a removed binding reapplies the fence.
 
 ## Recovery while selected
 
@@ -112,9 +114,15 @@ the reverted source removes the bindings and the fields.
 
 The bound peer belongs to one load balancer. If a replacement changes its private
 address, or a cluster is rebuilt, every public TLS route is refused and the binding is
-stale, so restoration and `verify` both stop at `source-secret`. Prepare the replacement
-binding and merge it. Its deployment applies the new peer, with no need to unselect
-first.
+stale, so `apply-selected` waits for its whole budget and fails at `source-secret`.
+Prepare the replacement binding and merge it. When Flux can converge, its deployment
+applies the new peer with no need to unselect first.
+
+**Known limit.** If public traffic being refused also stops Flux from converging, these
+merges cannot finish on their own. The failed run of a revert removes the fence, but
+that run is evicted from the queue, and the recovery from main, which still selects the
+fence, installs it again. Whether Flux depends on public routes in this way has not been
+measured. If it happens, the maintainer has to land the revert outside the queue.
 
 With the component unselected, the following read-only check requires both bindings
 absent and the generated listener free of this fence and PROXY filters:
