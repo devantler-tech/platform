@@ -158,14 +158,28 @@ func (c client) create(ctx context.Context, source string, o object) (object, er
 
 func benchmarkTags(ctx context.Context, c client, source, tag string, adding bool) error {
 	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
-		n, err := c.get(ctx, "nodes.longhorn.io", "longhorn-system", name, false)
-		if err != nil {
+		if err := c.setBenchmarkTag(ctx, source, tag, name, adding); err != nil {
 			return err
 		}
-		owner := text(n, "metadata", "annotations", benchmarkOwner)
-		if adding && owner != "" || !adding && owner != tag {
-			return errors.New("benchmark node tag is owned by another operation")
+	}
+	return nil
+}
+
+// setBenchmarkTag judges every attempt from a fresh read. A node's resource version moves
+// often, and an unretried patch would strand a finished run with no way to recover it.
+func (c client) setBenchmarkTag(ctx context.Context, source, tag, name string, adding bool) error {
+	var err error
+	for attempt := range refreshAttempts {
+		if attempt > 0 {
+			if pause := refreshPause(ctx); pause != nil {
+				return errors.Join(err, pause)
+			}
 		}
+		var n object
+		if n, err = c.get(ctx, "nodes.longhorn.io", "longhorn-system", name, false); err != nil {
+			continue
+		}
+		owner := text(n, "metadata", "annotations", benchmarkOwner)
 		old, _ := value(n, "spec", "tags").([]any)
 		tags, found := []any{}, false
 		for _, existing := range old {
@@ -174,6 +188,13 @@ func benchmarkTags(ctx context.Context, c client, source, tag string, adding boo
 			} else {
 				tags = append(tags, existing)
 			}
+		}
+		// Only this run's retry can find its own write: a lost response hid its success.
+		if attempt > 0 && (adding && owner == tag && found || !adding && owner == "" && !found) {
+			return nil
+		}
+		if adding && owner != "" || !adding && owner != tag {
+			return errors.New("benchmark node tag is owned by another operation")
 		}
 		if adding && found || !adding && !found {
 			return errors.New("benchmark tag and ownership disagree")
@@ -188,11 +209,11 @@ func benchmarkTags(ctx context.Context, c client, source, tag string, adding boo
 		if err = sourceCurrent(ctx, c.run, source); err != nil {
 			return err
 		}
-		if err = c.patch(ctx, "nodes.longhorn.io", "longhorn-system", n, changes...); err != nil {
-			return err
+		if err = c.patch(ctx, "nodes.longhorn.io", "longhorn-system", n, changes...); err == nil {
+			return nil
 		}
 	}
-	return nil
+	return err
 }
 
 func verifyBenchmarkPod(p object, uid string) error {

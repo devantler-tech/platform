@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 func benchmarkInventoryFixture() inventory {
@@ -389,4 +390,69 @@ func TestTrialHealthCannotStayUnproven(t *testing.T) {
 	if err := judgeTrialSample(&unproven, nil, func() error { return errScratchRebuilt }); err == nil {
 		t.Fatal("a rebuilt scratch replica did not hold at once")
 	}
+}
+
+func TestBenchmarkTagsSurviveAMovedResourceVersion(t *testing.T) {
+	delay := refreshRetryDelay
+	refreshRetryDelay = time.Millisecond
+	t.Cleanup(func() { refreshRetryDelay = delay })
+	const tag = "longhorn-benchmark-v1-1234"
+	setup := func(tags []any, owner string, patch func(calls int, apply func()) error) (client, *int) {
+		n := resource("prod-worker-1")
+		n["spec"] = object{"tags": tags}
+		n["metadata"].(object)["annotations"] = object{}
+		if owner != "" {
+			n["metadata"].(object)["annotations"].(object)[benchmarkOwner] = owner
+		}
+		calls := 0
+		return client{context: "admin@prod", run: func(_ context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+			if program == "git" {
+				return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
+			}
+			if args[2] == "patch" {
+				calls++
+				return nil, patch(calls, func() {
+					n["spec"].(object)["tags"] = []any{tag}
+					n["metadata"].(object)["annotations"].(object)[benchmarkOwner] = tag
+				})
+			}
+			return json.Marshal(n)
+		}}, &calls
+	}
+	source := strings.Repeat("1", 40)
+	t.Run("a stale write is retried", func(t *testing.T) {
+		c, calls := setup([]any{}, "", func(calls int, apply func()) error {
+			if calls < 3 {
+				return errors.New("external command failed")
+			}
+			apply()
+			return nil
+		})
+		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err != nil || *calls != 3 {
+			t.Fatalf("err %v after %d patches", err, *calls)
+		}
+	})
+	t.Run("a lost response is not a refusal", func(t *testing.T) {
+		c, calls := setup([]any{}, "", func(_ int, apply func()) error {
+			apply()
+			return errors.New("external command failed")
+		})
+		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err != nil || *calls != 1 {
+			t.Fatalf("err %v after %d patches", err, *calls)
+		}
+	})
+	t.Run("a first read of an owned node never writes", func(t *testing.T) {
+		for _, owner := range []string{"someone-else", tag} {
+			c, calls := setup([]any{tag}, owner, func(int, func()) error { return nil })
+			if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err == nil || *calls != 0 {
+				t.Fatalf("owner %s: err %v after %d patches", owner, err, *calls)
+			}
+		}
+	})
+	t.Run("retries stop at their bound", func(t *testing.T) {
+		c, calls := setup([]any{}, "", func(int, func()) error { return errors.New("external command failed") })
+		if err := c.setBenchmarkTag(context.Background(), source, tag, "prod-worker-1", true); err == nil || *calls != refreshAttempts {
+			t.Fatalf("err %v after %d patches", err, *calls)
+		}
+	})
 }
