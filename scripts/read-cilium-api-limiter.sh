@@ -2,9 +2,11 @@
 # Reviewed workflow only: five finite, fixed Cilium CLI metric reads per ready agent (#4329).
 # No API listener, setting, workload or policy is changed. Raw responses stay in a private
 # temporary directory. Output is delayed until every read and identity comparison succeeds.
-# Cilium v1.20.3 sources: cilium-dbg/cmd/metrics_list.go, pkg/metrics/cmd.go,
+# Cilium v1.20.4 sources: cilium-dbg/cmd/metrics_list.go, pkg/metrics/cmd.go,
 # pkg/metrics/metrics.go and pkg/rate/metrics/metrics.go. These are rolling gauges,
 # not a latency distribution or proof of Coroot request attribution or recovery.
+# A limiter series exists only after that agent's first processed request for that call,
+# and the registry encodes no match as JSON null. Such an agent is counted and refused.
 set -euo pipefail
 if [[ "$#" -ne 2 || "$1" != --context || "$2" != admin@prod ]]; then
   printf 'Usage: %s --context admin@prod\n' "$(basename "$0")" >&2
@@ -82,7 +84,7 @@ roster() {
     [$d.spec.template.spec.containers[] | select(.name=="cilium-agent")] as $dc |
     if ($d.metadata.uid|type)!="string" or ($d.metadata.uid|length)==0 or
       ($dc|length)!=1 or
-      ($dc[0].image|test("^quay.io/cilium/cilium:v1\\.20\\.3(@sha256:[a-f0-9]{64})?$"))!=true or
+      ($dc[0].image|test("^quay.io/cilium/cilium:v1\\.20\\.4(@sha256:[a-f0-9]{64})?$"))!=true or
       ($d.status.desiredNumberScheduled|type)!="number" or
       $d.status.desiredNumberScheduled<1 or $d.status.desiredNumberScheduled>32 or
       $d.status.desiredNumberScheduled!=$d.status.numberAvailable or
@@ -119,11 +121,28 @@ jq -r '.agents[].name' "${work_dir}/before.identity" >"${work_dir}/names"
 for sample in 1 2 3 4 5; do
   [[ "${sample}" -eq 1 ]] || sleep 15
   agent=0
+  unobserved=0
   while IFS= read -r pod; do
     agent=$((agent + 1))
-    read_json "${work_dir}/metrics" exec --namespace kube-system "${pod}" --container cilium-agent \
-      -- cilium-dbg metrics list --output json --match-pattern '^cilium_api_limiter_' ||
-      inconclusive "an agent metric read failed (${read_failure})."
+    if ! read_json "${work_dir}/metrics" exec --namespace kube-system "${pod}" --container cilium-agent \
+      -- cilium-dbg metrics list --output json --match-pattern '^cilium_api_limiter_'; then
+      [[ "${read_failure}" == JSON_NULL ]] ||
+        inconclusive "an agent metric read failed (${read_failure})."
+      # The version series is created at agent start, so it separates "no limiter series yet"
+      # from a registry or selector defect on the same command path.
+      read_json "${work_dir}/control" exec --namespace kube-system "${pod}" --container cilium-agent \
+        -- cilium-dbg metrics list --output json --match-pattern '^cilium_version' ||
+        inconclusive "an agent metric read failed (JSON_NULL; control ${read_failure})."
+      jq -e 'type=="array" and any(.[]; .name=="cilium_version")' "${work_dir}/control" >/dev/null 2>&1 ||
+        inconclusive 'an agent metric read failed (JSON_NULL; control REGISTRY_EMPTY).'
+      unobserved=$((unobserved + 1))
+      continue
+    fi
+    if jq -e 'type=="array" and any(.[]; .name|startswith("cilium_api_limiter_")) and
+      all(.[]; .labels.api_call!="endpoint-create")' "${work_dir}/metrics" >/dev/null 2>&1; then
+      unobserved=$((unobserved + 1))
+      continue
+    fi
     captured_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     if ! jq -e -c --argjson sample "${sample}" --argjson agent "${agent}" --arg time "${captured_at}" '
       def metric_key: .name+"/"+(.labels.value//"");
@@ -158,6 +177,13 @@ for sample in 1 2 3 4 5; do
       inconclusive 'a complete finite metric set could not be established.'
     fi
   done <"${work_dir}/names"
+  if [[ "${unobserved}" -gt 0 ]]; then
+    # A replaced agent also starts with no series, so only a stable roster may claim this.
+    roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
+    cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||
+      inconclusive 'agent identity or container state changed during collection.'
+    inconclusive "${unobserved} of ${agent} agents have processed no endpoint-create request since they started (LIMITER_UNOBSERVED)."
+  fi
 done
 roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
 cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||

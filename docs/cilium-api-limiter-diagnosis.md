@@ -8,10 +8,19 @@ limiter setting, network policy or workload is changed.
 
 The fixed command is `cilium-dbg metrics list --output json --match-pattern
 '^cilium_api_limiter_'`. The implementation follows the
-[Cilium v1.20.3 CLI](https://github.com/cilium/cilium/blob/v1.20.3/cilium-dbg/cmd/metrics_list.go)
-and [limiter observer](https://github.com/cilium/cilium/blob/v1.20.3/pkg/rate/metrics/metrics.go).
+[Cilium v1.20.4 CLI](https://github.com/cilium/cilium/blob/v1.20.4/cilium-dbg/cmd/metrics_list.go)
+and [limiter observer](https://github.com/cilium/cilium/blob/v1.20.4/pkg/rate/metrics/metrics.go).
 The diagnostic refuses other agent versions. A later version needs a source audit
 and matching fixture updates before dispatch.
+
+A limiter series exists only after that agent's first processed request for that
+call, and the [metric registry](https://github.com/cilium/cilium/blob/v1.20.4/pkg/metrics/cmd.go)
+encodes no match as JSON null. On a null read the diagnostic makes one further
+fixed read, of `^cilium_version`, whose series exists from agent start. If that
+read finds the series, or the limiter read has series only for other calls, the
+agent counts as unobserved. The run then ends `INCONCLUSIVE` with the count of
+such agents (`LIMITER_UNOBSERVED`) and publishes no samples. A failed or empty
+control read is reported as its own read failure.
 
 Public output contains opaque agent indices, capture times, endpoint-create
 rolling mean/estimated processing durations, mean/min/max waiting durations,
