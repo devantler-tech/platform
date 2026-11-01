@@ -458,6 +458,17 @@ neither the Talos configuration manager, generator and cluster API, nor the wide
 distribution manager; the same read finds the machinery packages. This audit
 changes no cluster configuration or vulnerability exception.
 
+**7.205.3**, commit `720eb6f50e57a5cd1d3849c500ec1081b6e95214`, is audited
+against 7.205.1; 7.205.2 has the inputs audited at 7.205.1. The configuration
+manager, Talos generator, cluster API and charts are byte-identical. `go.mod` and
+`go.sum` change one module: `loft-sh/log` drops the `devantler/log` fork and moves
+to the upstream commit holding the same fix. Talos machinery stays at
+v1.14.0-alpha.2 and the YAML encoders are unchanged. At this tag `go list -deps`
+finds the module in neither the Talos configuration manager, generator nor cluster
+API. It reaches the wider distribution manager only through KSail's vCluster
+provisioner and the vCluster packages it imports, which the Talos path never calls.
+This audit changes no cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml
