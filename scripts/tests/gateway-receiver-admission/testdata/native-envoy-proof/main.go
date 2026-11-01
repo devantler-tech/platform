@@ -1,4 +1,5 @@
-// Disposable Linux proof. No production inputs, network routes or credentials.
+// Disposable Linux proof. Its standalone module is vulnerability-scanned.
+// No production inputs, network routes or credentials.
 package main
 
 import (

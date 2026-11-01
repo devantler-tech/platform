@@ -89,7 +89,8 @@ func TestNativeEnvoyPhysicalPeerBoundary(t *testing.T) {
 		t.Fatal("native admitted listener")
 	}
 	binary := filepath.Join(work, "proof")
-	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", binary, "./testdata/native-envoy-proof.go")
+	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", binary, ".")
+	build.Dir = "testdata/native-envoy-proof"
 	for _, entry := range os.Environ() {
 		if !strings.HasPrefix(entry, "GOOS=") && !strings.HasPrefix(entry, "GOARCH=") && !strings.HasPrefix(entry, "CGO_ENABLED=") {
 			build.Env = append(build.Env, entry)
