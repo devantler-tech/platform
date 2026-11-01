@@ -91,7 +91,7 @@ func providerMatches(lb providerBalancer, b binding, wantProxy bool) (providerId
 		servers[target.Server.ID] = true
 	}
 	if modeMismatch {
-		return providerIdentity{}, errProviderMode
+		return providerIdentity{ID: lb.ID, NetworkID: lb.PrivateNet[0].Network}, errProviderMode
 	}
 	return providerIdentity{ID: lb.ID, NetworkID: lb.PrivateNet[0].Network}, nil
 }
@@ -186,19 +186,22 @@ func observeProvider(ctx context.Context, client *http.Client, token string, b b
 	if p.Page == nil || *p.Page != 1 || p.PerPage == nil || *p.PerPage != 50 || p.LastPage == nil || *p.LastPage != 1 || p.TotalEntries == nil || *p.TotalEntries != 1 || !bytes.Equal(bytes.TrimSpace(p.NextPage), []byte("null")) || len(response.Balancers) != 1 {
 		return providerIdentity{}, errors.New("provider-inventory")
 	}
-	before, err := providerMatches(response.Balancers[0], b, wantProxy)
-	if err != nil {
-		return providerIdentity{}, err
+	before, beforeErr := providerMatches(response.Balancers[0], b, wantProxy)
+	if beforeErr != nil && !errors.Is(beforeErr, errProviderMode) {
+		return providerIdentity{}, beforeErr
 	}
 	var detail struct {
 		Balancer providerBalancer `json:"load_balancer"`
 	}
-	if err = get("/v1/load_balancers/"+strconv.FormatInt(before.ID, 10), nil, &detail); err != nil {
+	if err := get("/v1/load_balancers/"+strconv.FormatInt(before.ID, 10), nil, &detail); err != nil {
 		return providerIdentity{}, err
 	}
-	after, err := providerMatches(detail.Balancer, b, wantProxy)
-	if err != nil || before != after {
+	after, afterErr := providerMatches(detail.Balancer, b, wantProxy)
+	if (afterErr != nil && !errors.Is(afterErr, errProviderMode)) || before != after {
 		return providerIdentity{}, errors.New("provider-changed")
+	}
+	if beforeErr != nil || afterErr != nil {
+		return after, errProviderMode
 	}
 	return after, nil
 }

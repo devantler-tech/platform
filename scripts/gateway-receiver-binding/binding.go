@@ -105,6 +105,18 @@ func strictJSON(raw []byte, v any) error {
 	return nil
 }
 func derive(service, gateway []byte) (binding, error) {
+	return deriveTransport(service, gateway, false)
+}
+
+func deriveRecovery(service, gateway []byte) (binding, error) {
+	return deriveTransport(service, gateway, true)
+}
+
+func deriveTransport(service, gateway []byte, recovering bool) (binding, error) {
+	return deriveExpectedTransport(service, gateway, false, recovering)
+}
+
+func deriveExpectedTransport(service, gateway []byte, wantProxy, recovering bool) (binding, error) {
 	refuse := func() (binding, error) { return binding{}, errors.New("unbound-provider") }
 	var s serviceObject
 	var g gatewayObject
@@ -135,7 +147,11 @@ func derive(service, gateway []byte) (binding, error) {
 	if len(refs) != 1 || refs[0].APIVersion != "gateway.networking.k8s.io/v1" || refs[0].Kind != "Gateway" || refs[0].Name != "platform" || refs[0].UID != g.Metadata.UID || !refs[0].Controller {
 		return refuse()
 	}
-	for key, want := range map[string]string{"load-balancer.hetzner.cloud/name": "platform-gateway", "load-balancer.hetzner.cloud/use-private-ip": "true", "load-balancer.hetzner.cloud/uses-proxyprotocol": "false"} {
+	proxy, expectedMode := "false", "VIP"
+	if wantProxy {
+		proxy, expectedMode = "true", "Proxy"
+	}
+	for key, want := range map[string]string{"load-balancer.hetzner.cloud/name": "platform-gateway", "load-balancer.hetzner.cloud/use-private-ip": "true", "load-balancer.hetzner.cloud/uses-proxyprotocol": proxy} {
 		if s.Metadata.Annotations[key] != want {
 			return refuse()
 		}
@@ -164,11 +180,14 @@ func derive(service, gateway []byte) (binding, error) {
 	seen := map[netip.Addr]bool{}
 	var private netip.Addr
 	var public netip.Addr
+	mode := ""
 	for _, entry := range s.Status.LoadBalancer.Ingress {
 		ip, err := netip.ParseAddr(entry.IP)
-		if err != nil || !ip.IsGlobalUnicast() || ip.Is4In6() || ip.Zone() != "" || seen[ip] || entry.IPMode != "VIP" {
+		if err != nil || !ip.IsGlobalUnicast() || ip.Is4In6() || ip.Zone() != "" || seen[ip] ||
+			(entry.IPMode != expectedMode && (!recovering || (entry.IPMode != "VIP" && entry.IPMode != "Proxy"))) || (mode != "" && mode != entry.IPMode) {
 			return refuse()
 		}
+		mode = entry.IPMode
 		seen[ip] = true
 		if ip.IsPrivate() {
 			if !ip.Is4() || private.IsValid() {
