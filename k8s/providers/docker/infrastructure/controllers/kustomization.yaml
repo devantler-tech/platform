@@ -64,6 +64,7 @@ resources:
   #   - ../../../../bases/infrastructure/controllers/chaos-mesh/
   # Utilities:
   #   - ../../../../bases/infrastructure/controllers/reloader/
+  # KSail prerequisites (pair with infrastructure/ksail-operator release):
   #   - ../../../../bases/infrastructure/controllers/ksail-operator/
   # KRO controller (pair with infrastructure/resource-graph-definitions/
   # for the Tenant #1932 / WebApp #1933 RGDs — needed for the local-first pilot):
