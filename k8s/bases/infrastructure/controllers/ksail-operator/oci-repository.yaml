@@ -11,7 +11,7 @@ spec:
   # the source exposes real readiness.
   url: oci://ghcr.io/devantler-tech/charts/ksail-operator
   ref:
-    tag: 7.205.3
+    tag: 7.206.1
   layerSelector:
     mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
     operation: copy
