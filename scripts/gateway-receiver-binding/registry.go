@@ -59,7 +59,7 @@ func admissionMatches(raw []byte, r admissionResource, b binding) bool {
 		return false
 	}
 	var expected struct{ Spec map[string]any }
-	if yaml.Unmarshal([]byte(strings.ReplaceAll(string(source), "${gateway_receiver_source_cidr}", b.CIDR)), &expected) != nil || !reflect.DeepEqual(actual.Spec, expected.Spec) {
+	if yaml.Unmarshal([]byte(strings.NewReplacer("${gateway_receiver_source_cidr}", b.CIDR, "${gateway_receiver_gateway_uid}", b.GatewayUID).Replace(string(source))), &expected) != nil || !reflect.DeepEqual(actual.Spec, expected.Spec) {
 		return false
 	}
 	if r.Kind == "ValidatingAdmissionPolicy" && (actual.Metadata.Generation < 1 || actual.Status.ObservedGeneration != actual.Metadata.Generation || len(actual.Status.TypeChecking.ExpressionWarnings) != 0) {

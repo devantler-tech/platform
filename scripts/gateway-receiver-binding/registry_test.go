@@ -20,7 +20,7 @@ func TestRenderedPoliciesMatchTheExactDeployedReadback(t *testing.T) {
 	if err != nil {
 		t.Fatal("native policy render")
 	}
-	decoder := yaml.NewDecoder(strings.NewReader(strings.ReplaceAll(string(raw), "${gateway_receiver_source_cidr}", b.CIDR)))
+	decoder := yaml.NewDecoder(strings.NewReader(strings.NewReplacer("${gateway_receiver_source_cidr}", b.CIDR, "${gateway_receiver_gateway_uid}", b.GatewayUID).Replace(string(raw))))
 	seen := 0
 	for {
 		var rendered map[string]any
@@ -57,7 +57,7 @@ func registryFixture(t *testing.T, r admissionResource, b binding) []byte {
 		t.Fatal(err)
 	}
 	var o map[string]any
-	if yaml.Unmarshal([]byte(strings.ReplaceAll(string(raw), "${gateway_receiver_source_cidr}", b.CIDR)), &o) != nil {
+	if yaml.Unmarshal([]byte(strings.NewReplacer("${gateway_receiver_source_cidr}", b.CIDR, "${gateway_receiver_gateway_uid}", b.GatewayUID).Replace(string(raw))), &o) != nil {
 		t.Fatal("source")
 	}
 	m := o["metadata"].(map[string]any)
