@@ -7,7 +7,7 @@
 # hold values from the last finished request, so they are not a latency distribution or
 # proof of Coroot request attribution or recovery. The JSON omits a value of exactly zero.
 # A limiter series exists only after that agent's first processed request for that call,
-# and the registry encodes no match as JSON null. Such an agent is counted and refused.
+# and the registry encodes no match as JSON null. Such an agent is counted, never given values.
 set -euo pipefail
 if [[ "$#" -ne 2 || "$1" != --context || "$2" != admin@prod ]]; then
   printf 'Usage: %s --context admin@prod\n' "$(basename "$0")" >&2
@@ -119,10 +119,10 @@ roster() {
 roster "${work_dir}/before" || inconclusive 'the ready agent roster could not be established.'
 jq -r '.agents[].name' "${work_dir}/before.identity" >"${work_dir}/names"
 : >"${work_dir}/safe"
+: >"${work_dir}/unobserved"
 for sample in 1 2 3 4 5; do
   [[ "${sample}" -eq 1 ]] || sleep 15
   agent=0
-  unobserved=0
   while IFS= read -r pod; do
     agent=$((agent + 1))
     if ! read_json "${work_dir}/metrics" exec --namespace kube-system "${pod}" --container cilium-agent \
@@ -136,12 +136,12 @@ for sample in 1 2 3 4 5; do
         inconclusive "an agent metric read failed (JSON_NULL; control ${read_failure})."
       jq -e 'type=="array" and any(.[]; .name=="cilium_version")' "${work_dir}/control" >/dev/null 2>&1 ||
         inconclusive 'an agent metric read failed (JSON_NULL; control REGISTRY_EMPTY).'
-      unobserved=$((unobserved + 1))
+      printf '%s\n' "${agent}" >>"${work_dir}/unobserved"
       continue
     fi
     if jq -e 'type=="array" and length>0 and all(.[]; (.name|startswith("cilium_api_limiter_")) and
       (.labels.api_call|type)=="string" and .labels.api_call!="endpoint-create")' "${work_dir}/metrics" >/dev/null 2>&1; then
-      unobserved=$((unobserved + 1))
+      printf '%s\n' "${agent}" >>"${work_dir}/unobserved"
       continue
     fi
     captured_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
@@ -180,16 +180,22 @@ for sample in 1 2 3 4 5; do
       inconclusive 'a complete finite metric set could not be established.'
     fi
   done <"${work_dir}/names"
-  if [[ "${unobserved}" -gt 0 ]]; then
-    # A replaced agent also starts with no series, so only a stable roster may claim this.
-    roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
-    cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||
-      inconclusive 'agent identity or container state changed during collection.'
-    inconclusive "${unobserved} of ${agent} agents report no endpoint-create limiter series (LIMITER_UNOBSERVED)."
-  fi
 done
 roster "${work_dir}/after" || inconclusive 'the final agent roster could not be established.'
 cmp -s "${work_dir}/before.identity" "${work_dir}/after.identity" ||
   inconclusive 'agent identity or container state changed during collection.'
+# A replaced agent also starts with no series, so the roster is compared before any count.
+# Each agent must be complete in all five samples or lack series in all five.
+complete="$(jq -s 'group_by(.agent)|map(select(length==5))|length' "${work_dir}/safe")"
+absent="$(sort -n "${work_dir}/unobserved" | uniq -c | awk '$1==5' | wc -l | tr -d ' ')"
+[[ "$((complete + absent))" -eq "${agent}" ]] ||
+  inconclusive 'an agent gained or lost its endpoint-create limiter series during collection.'
+[[ "${complete}" -gt 0 ]] ||
+  inconclusive "${absent} of ${agent} agents report no endpoint-create limiter series (LIMITER_UNOBSERVED)."
 cat "${work_dir}/safe"
+if [[ "${absent}" -gt 0 ]]; then
+  printf 'PARTIAL: five complete samples for %s of %s stable ready agents; %s report no endpoint-create limiter series; gauges hold values from the last finished request.\n' \
+    "${complete}" "${agent}" "${absent}"
+  exit 0
+fi
 printf 'MEASURED: five complete samples per stable ready agent; gauges hold values from the last finished request.\n'

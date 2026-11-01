@@ -21,8 +21,10 @@ call, and the [metric registry](https://github.com/cilium/cilium/blob/v1.20.4/pk
 encodes no match as JSON null. On a null read the diagnostic makes one further
 fixed read, of `^cilium_version`, whose series exists from agent start. If that
 read finds the series, or the limiter read has well-formed series only for other
-calls, the agent counts as unobserved. The run then ends `INCONCLUSIVE` with the
-count of such agents (`LIMITER_UNOBSERVED`) and publishes no samples. That shows
+calls, the agent counts as unobserved and gets no values. An agent that lacks the
+series in all five samples is reported only by count. When other agents are
+complete, the run ends `PARTIAL` (exit 0), publishing their samples; when none is,
+it ends `INCONCLUSIVE` (`LIMITER_UNOBSERVED`). That shows
 the agent reports no limiter series, which normally means no finished
 endpoint-create request since it started; disabling the metric through the agent's
 `--metrics` setting would look the same, and this repository sets no such flag.
@@ -36,8 +38,11 @@ temporary directory which is removed on exit. No raw artifact is uploaded.
 
 `MEASURED` requires a complete finite metric set for every sample and the same
 ready DaemonSet, Pod UID, node name, container ID, image ID and restart count at
-both ends. Missing metrics, a failed read or a changed identity is
-`INCONCLUSIVE` (exit 3). There is no successful partial result. Agent indices
+both ends. `PARTIAL` requires the same identity at both ends, and each agent either complete
+in all five samples or without the series in all five. Other missing metrics, a
+failed read, a series that appears or disappears between samples or a changed
+identity is `INCONCLUSIVE` (exit 3). An unobserved agent says nothing about its
+own timing, so `PARTIAL` describes only the agents it publishes. Agent indices
 follow sorted Pod names, so they repeat between runs while the agents are
 unchanged, and they are not mapped to nodes or Coroot machines.
 

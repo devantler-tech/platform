@@ -38,7 +38,11 @@ case "$*" in
     cat "${FIXTURE}/control.json"
     ;;
   'exec --namespace kube-system cilium-fghij --container cilium-agent -- cilium-dbg metrics list --output json --match-pattern ^cilium_api_limiter_')
-    cat "${FIXTURE}/second-metrics.json"
+    # second-late.json, when present, replaces the response from the third sample on.
+    printf 'read\n' >>"${FIXTURE}/second-reads"
+    if [[ -f "${FIXTURE}/second-late.json" && "$(wc -l <"${FIXTURE}/second-reads")" -ge 3 ]]; then
+      cat "${FIXTURE}/second-late.json"
+    else cat "${FIXTURE}/second-metrics.json"; fi
     ;;
   'exec --namespace kube-system cilium-fghij --container cilium-agent -- cilium-dbg metrics list --output json --match-pattern ^cilium_version')
     cat "${FIXTURE}/control.json"
@@ -199,13 +203,41 @@ require_inconclusive
   printf 'FAIL: other calls only: %s\n' "${output}" >&2; exit 1;
 }
 ! grep -q 'match-pattern ^cilium_version' "${fixture}/calls" || exit 1
-# Every agent is counted before refusing, and the observed agent's samples stay private.
+# A stable agent proven to have no series is counted beside the complete agent, with no values.
 reset_fixture
 add_second_agent
 printf 'null' >"${fixture}/second-metrics.json"
+run_read --context admin@prod
+[[ "${rc}" -eq 0 && "${output}" == *'PARTIAL: five complete samples for 1 of 2 stable ready agents; 1 report no endpoint-create limiter series;'* && "${output}" != *MEASURED* ]] || {
+  printf 'FAIL: partial result: %s (%s)\n' "${output}" "${rc}" >&2; exit 1;
+}
+[[ "$(printf '%s\n' "${output}" | grep '^{' | jq -s -r '([.[].agent] | unique | tojson) + " " + (length | tostring)')" == '[1] 5' ]] || {
+  printf 'FAIL: partial samples: %s\n' "${output}" >&2; exit 1;
+}
+# A series that appears or disappears between samples is neither complete nor absent.
+reset_fixture
+add_second_agent
+printf 'null' >"${fixture}/second-metrics.json"
+cp "${fixture}/metrics.json" "${fixture}/second-late.json"
 require_inconclusive
-[[ "${output}" == 'INCONCLUSIVE: 1 of 2 agents report no endpoint-create limiter series (LIMITER_UNOBSERVED).' ]] || {
-  printf 'FAIL: mixed agents: %s\n' "${output}" >&2; exit 1;
+[[ "${output}" == 'INCONCLUSIVE: an agent gained or lost its endpoint-create limiter series during collection.' ]] || {
+  printf 'FAIL: series appeared mid-run: %s\n' "${output}" >&2; exit 1;
+}
+reset_fixture
+add_second_agent
+printf 'null' >"${fixture}/second-late.json"
+require_inconclusive
+[[ "${output}" == 'INCONCLUSIVE: an agent gained or lost its endpoint-create limiter series during collection.' ]] || {
+  printf 'FAIL: series vanished mid-run: %s\n' "${output}" >&2; exit 1;
+}
+# A partial result still requires the same stable roster.
+reset_fixture
+add_second_agent
+printf 'null' >"${fixture}/second-metrics.json"
+jq '.items[1].metadata.uid="33333333-3333-3333-3333-333333333333"' "${fixture}/pods.json" >"${fixture}/after.json"
+require_inconclusive
+[[ "${output}" == 'INCONCLUSIVE: agent identity or container state changed during collection.' ]] || {
+  printf 'FAIL: replaced agent in a partial result: %s\n' "${output}" >&2; exit 1;
 }
 reset_fixture
 add_second_agent
