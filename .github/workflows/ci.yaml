@@ -1943,6 +1943,19 @@ jobs:
           bash scripts/tests/test-umami-tracking-probe.sh
           shellcheck scripts/verify-umami-tracking.sh
 
+      - name: 🧪 Prove the published contract-probe diagnostics
+        if: matrix.suite == 'services'
+        timeout-minutes: 5
+        env:
+          CONTRACT_PROBE_IMAGE_NATIVE_TEST: '1'
+        run: |
+          set -euo pipefail
+          go test -count=1 -timeout 4m -json ./scripts/tests/contract-probe-image |
+            tee "${RUNNER_TEMP}/contract-probe-image.jsonl"
+          # A skipped or missing native test is not a published-image proof.
+          jq -es 'any(.[]; .Action == "pass" and .Test == "TestPublishedProbeImage")' \
+            "${RUNNER_TEMP}/contract-probe-image.jsonl"
+
       - name: ⚖️ Validate cluster policies (placement)
         if: matrix.suite == 'placement'
         run: |
