@@ -79,6 +79,9 @@ func render(v inputs) ([]byte, error) {
 	// after a later identity cutover has suspended the ordinary account.
 	administrator["permissions"] = map[string]any{"@type": "Inherit"}
 	maintainer := account(v.Maintainer, v.maintainerPassword, "User")
+	// Fresh recovery has no generated Role objects. Replace makes the declared
+	// mailbox independent of role defaults and excludes administrative grants.
+	maintainer["permissions"] = map[string]any{"@type": "Replace", "enabledPermissions": normalMailboxPermissions(), "disabledPermissions": map[string]bool{}}
 	if v.MaintainerAliases != nil {
 		maintainer["aliases"] = receivingAliases(v.MaintainerAliases, "#domain")
 	}
