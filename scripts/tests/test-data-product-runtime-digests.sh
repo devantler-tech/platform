@@ -11,6 +11,7 @@ mkdir -p "${scratch}/bin" "${scratch}/scripts" "${scratch}/k8s/clusters/prod/boo
   "${scratch}/k8s/providers/hetzner/infrastructure/controllers/flux-instance"
 for file in k8s/clusters/prod/bootstrap/config-map.yaml \
   k8s/bases/apps/data-product-controller/helm-release.yaml \
+  k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml \
   k8s/bases/apps/data-product-controller/oci-repository.yaml \
   k8s/providers/hetzner/infrastructure/controllers/flux-instance/flux-instance.yaml; do
   cp "${root_dir}/${file}" "${scratch}/${file}"
@@ -19,6 +20,12 @@ index="sha256:$(printf 'a%.0s' {1..64})"
 amd64="sha256:$(printf 'b%.0s' {1..64})"
 arm64="sha256:$(printf 'c%.0s' {1..64})"
 export index amd64 arm64
+probe_index="sha256:$(printf 'e%.0s' {1..64})"
+probe_child="sha256:$(printf 'f%.0s' {1..64})"
+probe_image="ghcr.io/devantler-tech/khoist:9.0.5@${probe_index}"
+export probe_index probe_child probe_image
+probe_manifest="${scratch}/k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml"
+probe_image="$probe_image" yq -i '.spec.template.spec.containers[0].image = strenv(probe_image)' "$probe_manifest"
 image_manifest="${scratch}/k8s/bases/apps/data-product-controller/helm-release.yaml"
 index="$index" yq -i '.spec.values.image.digest = strenv(index)' "$image_manifest"
 yq -r '.runs.steps[] | select(.name == "Verify the deployed data product UI release") | .run' \
@@ -29,18 +36,26 @@ legacy_runtime="$(yq -r '.runs.steps[] | select(.name == "Verify the deployed da
 cat >"${scratch}/bin/docker" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[[ "$*" == "buildx imagetools inspect ghcr.io/devantler-tech/khoist@${index} --raw" ]] || exit 91
-[[ "${REGISTRY_FAILURE:-false}" != empty ]] || exit 92
-cat "$REGISTRY_MANIFEST"
-[[ "${REGISTRY_FAILURE:-false}" == false ]] || exit 92
+case "$*" in
+  "buildx imagetools inspect ghcr.io/devantler-tech/khoist@${index} --raw")
+    manifest=$REGISTRY_MANIFEST; failure=${REGISTRY_FAILURE:-false} ;;
+  "buildx imagetools inspect ${probe_image} --raw")
+    manifest=$REGISTRY_PROBE_MANIFEST; failure=${PROBE_REGISTRY_FAILURE:-false} ;;
+  *) exit 91 ;;
+esac
+[[ "$failure" != empty ]] || exit 92
+cat "$manifest"
+[[ "$failure" == false ]] || exit 92
 SH
 cat >"${scratch}/scripts/verify-data-product-rollout.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 actual=()
+actual_probe=()
 while (($#)); do
   case "$1" in
     --runtime-digest) actual+=("$2"); shift 2 ;;
+    --probe-runtime-digest) actual_probe+=("$2"); shift 2 ;;
     --image-digest) [[ "$2" == "$index" ]] || exit 93; shift 2 ;;
     --context|--domain|--chart-digest|--apps-digest|--apps-verify-file) shift 2 ;;
     *) exit 94 ;;
@@ -48,19 +63,30 @@ while (($#)); do
 done
 printf '%s\n' "${actual[@]}" | sort -u >"${RUNNER_TEMP}/actual"
 cmp -s "${RUNNER_TEMP}/expected" "${RUNNER_TEMP}/actual" || exit 95
+[[ ${#actual_probe[@]} -gt 0 ]] || exit 96
+printf '%s\n' "${actual_probe[@]}" | sort -u >"${RUNNER_TEMP}/actual-probe"
+cmp -s "${RUNNER_TEMP}/expected-probe" "${RUNNER_TEMP}/actual-probe" || exit 97
 touch "${RUNNER_TEMP}/verified"
 SH
 chmod +x "${scratch}/bin/docker" "${scratch}/scripts/verify-data-product-rollout.sh"
 export REGISTRY_MANIFEST="${scratch}/manifest.json"
+export REGISTRY_PROBE_MANIFEST="${scratch}/probe-manifest.json"
 export RUNNER_TEMP="$scratch"
+jq -n --arg child "$probe_child" '{schemaVersion:2,mediaType:"application/vnd.oci.image.index.v1+json",manifests:[
+  {digest:$child,platform:{os:"linux",architecture:"amd64"}},
+  {digest:"sha256:attestation-not-a-runtime",platform:{os:"unknown",architecture:"unknown"}}]}' >"$REGISTRY_PROBE_MANIFEST"
+# Native CRI status can report the published index instead of its platform child.
+# Both identities belong to this validated immutable release; attestations do not.
+printf '%s\n' "$probe_index" "$probe_child" | sort -u >"${scratch}/expected-probe"
 
 run_case() {
-  local name=$1 expected=$2 registry_failure=${3:-false} result=0
+  local name=$1 expected=$2 registry_failure=${3:-false} probe_registry_failure=${4:-false} result=0
   rm -f "${scratch}/verified" "${scratch}/actual"
   (
     cd "$scratch"
     PATH="${scratch}/bin:$PATH" DPC_RUNTIME_DIGEST="$legacy_runtime" \
       PLATFORM_MANIFEST_DIGEST="$index" REGISTRY_FAILURE="$registry_failure" \
+      PROBE_REGISTRY_FAILURE="$probe_registry_failure" \
       bash -e -o pipefail verify.sh
   ) >"${scratch}/stdout" 2>"${scratch}/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
@@ -81,7 +107,7 @@ jq -n --arg amd64 "$amd64" --arg arm64 "$arm64" '{schemaVersion:2,mediaType:"app
   {digest:$amd64,platform:{os:"linux",architecture:"amd64"}},
   {digest:$arm64,platform:{os:"linux",architecture:"arm64"}},
   {digest:"sha256:attestation-not-a-runtime",platform:{os:"unknown",architecture:"unknown"}}]}' >"$REGISTRY_MANIFEST"
-printf '%s\n' "$amd64" "$arm64" | sort -u >"${scratch}/expected"
+printf '%s\n' "$index" "$amd64" "$arm64" | sort -u >"${scratch}/expected"
 run_case changed-multi-platform-release pass
 
 jq '.mediaType="application/vnd.docker.distribution.manifest.list.v2+json"' "$REGISTRY_MANIFEST" >"${scratch}/docker-index.json"
@@ -113,3 +139,15 @@ run_case invalid-json fail
 printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}\n' >"$REGISTRY_MANIFEST"
 run_case registry-read-failure fail true
 run_case empty-registry-read-failure fail empty
+
+run_case probe-registry-read-failure fail false true
+run_case empty-probe-registry-read-failure fail false empty
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[]}\n' >"$REGISTRY_PROBE_MANIFEST"
+run_case empty-probe-index fail
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.index.v1+json","manifests":[{"digest":"latest","platform":{"os":"linux","architecture":"amd64"}}]}\n' >"$REGISTRY_PROBE_MANIFEST"
+run_case malformed-probe-runtime fail
+printf '{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json","config":{},"layers":[]}\n' >"$REGISTRY_PROBE_MANIFEST"
+printf '%s\n' "$probe_index" >"${scratch}/expected-probe"
+run_case single-platform-probe pass
+probe_image='unapproved.example/other:latest' yq -i '.spec.template.spec.containers[0].image = strenv(probe_image)' "$probe_manifest"
+run_case unapproved-probe-image fail

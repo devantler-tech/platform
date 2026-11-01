@@ -68,6 +68,11 @@ cat >"${scratch}/bin/yq" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $# == 3 && "$1" == -o=json ]] || exit 91
+if [[ "$3" == "$EXPECTED_PROBE_FILE" ]]; then
+  [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
+  cat "$FIXTURE/expected-probe.json"
+  exit 0
+fi
 if [[ "$3" == "$EXPECTED_PUBLISHER_FILE" ]]; then
   [[ "$2" == '.spec.template.spec.containers' ]] || exit 91
   cat "$FIXTURE/expected-publisher.json"
@@ -158,6 +163,7 @@ printf 'false\n' >"${scratch}/healthy/expected-ksail.json"
 jq '[."deployment-publisher-review".spec.template.spec.containers[] | select(.name=="publisher-review")]' "${scratch}/all.json" >"${scratch}/healthy/expected-publisher.json"
 jq '.helm.spec.values.image' "${scratch}/all.json" >"${scratch}/healthy/expected-image.json"
 jq '{url:.chart.spec.url,digest:.chart.spec.ref.digest}' "${scratch}/all.json" >"${scratch}/healthy/expected-chart.json"
+jq '."deployment-probe".spec.template.spec.containers' "${scratch}/all.json" >"${scratch}/healthy/expected-probe.json"
 jq '.root.spec.verify' "${scratch}/all.json" >"${scratch}/apps-verify.json"
 
 cat >"${scratch}/bin/kubectl" <<'SH'
@@ -392,12 +398,15 @@ run_case() {
     cp "${scratch}/healthy/"*.json "$fixture/"
   }
   if [[ $# -lt 4 && "$expected" != pass && "$mode" != http-failure && "$mode" != redirect && "$mode" != *csp && "$mode" != wrong-body && "$mode" != wrong-asset && "$mode" != unsafe-storage ]]; then timeout_seconds=3; fi
+  local probe_runtime="$child"
+  if [[ -f "$fixture/expected-probe-runtime" ]]; then probe_runtime=$(cat "$fixture/expected-probe-runtime"); fi
   PATH="${scratch}/bin:$PATH" REAL_JQ="$real_jq" FIXTURE="$fixture" MODE="$mode" KUBECONFIG="${scratch}/kubeconfig" \
     EXPECTED_HELM_FILE="${root_dir}/k8s/bases/apps/data-product-controller/helm-release.yaml" \
     EXPECTED_CHART_FILE="${root_dir}/k8s/bases/apps/data-product-controller/oci-repository.yaml" \
     EXPECTED_PUBLISHER_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-publisher-review.yaml" \
+    EXPECTED_PROBE_FILE="${root_dir}/k8s/bases/apps/data-product-controller/deployment-contract-probe.yaml" \
     bash "$script" --context synthetic-ci --domain example.com --image-digest "$index" \
-    --runtime-digest "$child" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
+    --runtime-digest "$child" --probe-runtime-digest "$probe_runtime" --chart-digest "$chart" --apps-digest "$apps" --apps-verify-file "${scratch}/apps-verify.json" --timeout "$timeout_seconds" \
     >"$fixture/stdout" 2>"$fixture/stderr" || result=$?
   if [[ "$expected" == pass ]]; then
     local expected_state expected_pods public_count ksail publisher
@@ -753,7 +762,41 @@ while IFS= read -r key; do jq --arg key "$key" '.[$key]' "${scratch}/active.json
 printf '[true,true,false]\n' >"${scratch}/active/expected-flags.json"
 printf 'false\n' >"${scratch}/active/expected-ksail.json"
 cp "${scratch}/healthy/expected-publisher.json" "${scratch}/healthy/expected-image.json" "${scratch}/healthy/expected-chart.json" "${scratch}/active/"
+cp "${scratch}/healthy/expected-probe.json" "${scratch}/active/expected-probe.json"
 run_case active pass
+
+# The probe may consume a diagnostic release independently. Both its declared
+# image and actual runtime must match; the controller retains its own pins.
+mkdir "${scratch}/independent-probe"
+cp "${scratch}/active/"*.json "${scratch}/independent-probe/"
+probe_image="ghcr.io/devantler-tech/khoist:9.0.5@sha256:$(printf 'e%.0s' {1..64})"
+probe_runtime="sha256:$(printf 'f%.0s' {1..64})"
+printf '%s\n' "$probe_runtime" >"${scratch}/independent-probe/expected-probe-runtime"
+jq --arg image "$probe_image" '.[0].image=$image' "${scratch}/active/expected-probe.json" >"${scratch}/independent-probe/expected-probe.json"
+jq --arg image "$probe_image" '.spec.template.spec.containers[0].image=$image' "${scratch}/active/deployment-probe.json" >"${scratch}/independent-probe/deployment-probe.json"
+jq --arg image "$probe_image" '(.items[] | select(.spec.template.spec.containers[0].name=="contract-probe") | .spec.template.spec.containers[0].image)=$image' "${scratch}/active/replicasets.json" >"${scratch}/independent-probe/replicasets.json"
+jq --arg image "$probe_image" --arg runtime "$probe_runtime" '(.items[] | select(.spec.containers[0].name=="contract-probe")) |=
+  (.spec.containers[0].image=$image | .status.containerStatuses[0].imageID=("containerd://"+$runtime))' "${scratch}/active/pods.json" >"${scratch}/independent-probe/pods.json"
+run_case independent-probe pass
+# independent_probe_mutation checks a real exact-image/runtime refusal in the
+# active two-replica snapshot, without replacing any public or ownership check.
+independent_probe_mutation() {
+  local name=$1 key=$2 mutation=$3
+  mkdir "${scratch}/$name"
+  cp "${scratch}/independent-probe/"*.json "${scratch}/$name/"
+  cp "${scratch}/independent-probe/expected-probe-runtime" "${scratch}/$name/"
+  jq "$mutation" "${scratch}/independent-probe/$key.json" >"${scratch}/$name/$key.json"
+  run_case "$name" fail '' 3
+  [[ -s "${scratch}/$name/rejections" ]] || fail "$name: rejection did not reach snapshot validation"
+}
+independent_probe_mutation probe-wrong-deployment-image deployment-probe '.spec.template.spec.containers[0].image="ghcr.io/devantler-tech/khoist:9.0.4@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"'
+independent_probe_mutation probe-wrong-replicaset-image replicasets '(.items[] | select(.spec.template.spec.containers[0].name=="contract-probe") | .spec.template.spec.containers[0].image)="ghcr.io/devantler-tech/khoist@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+independent_probe_mutation probe-wrong-pod-image pods '(.items[] | select(.spec.containers[0].name=="contract-probe") | .spec.containers[0].image)="ghcr.io/devantler-tech/data-product-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
+independent_probe_mutation probe-legacy-runtime pods '(.items[] | select(.spec.containers[0].name=="contract-probe") | .status.containerStatuses[0].imageID)="containerd://sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"'
+independent_probe_mutation probe-wrong-runtime-repository pods '(.items[] | select(.spec.containers[0].name=="contract-probe") | .status.containerStatuses[0].imageID)="ghcr.io/devantler-tech/data-product-controller@sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+independent_probe_mutation controller-cannot-use-probe-runtime pods '.items[0].status.containerStatuses[0].imageID="containerd://sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"'
+independent_probe_mutation controller-cannot-use-probe-image deployment-controller '.spec.template.spec.containers[0].image="ghcr.io/devantler-tech/khoist:9.0.5@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"'
+independent_probe_mutation probe-live-declaration-mismatch expected-probe '.[0].image="ghcr.io/devantler-tech/data-product-controller@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"'
 # A declared public product must exist at its exact current generation and
 # actual workload setting; source data is never fetched by this cluster receipt.
 mkdir "${scratch}/ksail"

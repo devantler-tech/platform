@@ -6,11 +6,13 @@ umask 077
 # the caller's context; this script never changes context or kubeconfig contents.
 # --context NAME --domain PUBLIC_DOMAIN --image-digest sha256:...
 # --runtime-digest sha256:... (repeat) --chart-digest sha256:...
+# --probe-runtime-digest sha256:... (repeat, resolved from the declared probe image)
 # --apps-digest sha256:... --apps-verify-file /absolute/public-policy.json [--timeout SECONDS]
 # Expected readiness activation comes from this checkout's Helm declaration.
 # Browser authentication remains a separate acceptance check. This helper reads no Secrets or authenticated URLs.
 context='' domain='' image_digest='' chart_digest='' apps_digest='' apps_verify_file='' timeout_seconds=300
 runtime_digests=() scratch='' active='' watchdog='' changed='' started_at=$SECONDS
+probe_runtime_digests=()
 phase=''
 readonly repository='ghcr.io/devantler-tech/khoist'
 readonly namespace='data-product-controller'
@@ -20,6 +22,8 @@ expected_publisher_file="$(dirname "$expected_helm_file")/deployment-publisher-r
 readonly expected_publisher_file
 expected_chart_file="$(dirname "$expected_helm_file")/oci-repository.yaml"
 readonly expected_chart_file
+expected_probe_file="$(dirname "$expected_helm_file")/deployment-contract-probe.yaml"
+readonly expected_probe_file
 # fail emits a sanitized refusal with any observed change names, then exits.
 fail() {
   local detail='' role='' reason='' extra='' http_code='' curl_code=''
@@ -102,6 +106,7 @@ while (($#)); do
     --domain) domain=$2 ;;
     --image-digest) image_digest=$2 ;;
     --runtime-digest) runtime_digests+=("$2") ;;
+    --probe-runtime-digest) probe_runtime_digests+=("$2") ;;
     --chart-digest) chart_digest=$2 ;;
     --apps-digest) apps_digest=$2 ;;
     --apps-verify-file) apps_verify_file=$2 ;;
@@ -116,7 +121,8 @@ done
 [[ ${#domain} -le 253 && "$domain" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ && ! "$domain" =~ ^[0-9.]+$ ]] || fail invalid_arguments 2
 case "$domain" in *.local | *.localhost | *.lan | *.invalid | *.test) fail invalid_arguments 2 ;; esac
 [[ ${#runtime_digests[@]} -gt 0 && ${#runtime_digests[@]} -le 8 ]] || fail invalid_arguments 2
-for value in "$image_digest" "$chart_digest" "$apps_digest" "${runtime_digests[@]}"; do
+[[ ${#probe_runtime_digests[@]} -gt 0 && ${#probe_runtime_digests[@]} -le 8 ]] || fail invalid_arguments 2
+for value in "$image_digest" "$chart_digest" "$apps_digest" "${runtime_digests[@]}" "${probe_runtime_digests[@]}"; do
   [[ "$value" =~ ^sha256:[a-f0-9]{64}$ ]] || fail invalid_arguments 2
 done
 [[ "$timeout_seconds" =~ ^[1-9][0-9]{0,2}$ && "$timeout_seconds" -le 600 ]] || fail invalid_arguments 2
@@ -195,6 +201,18 @@ read_expected_publisher() {
 }
 bounded read_expected_publisher || fail invalid_expected_state 2
 expected_publisher=$(<"$scratch/publisher-state")
+# read_expected_probe binds the standalone probe's exact declared immutable
+# image separately from the installed chart and controller workloads.
+read_expected_probe() {
+  yq -o=json '.spec.template.spec.containers' "$expected_probe_file" 2>/dev/null |
+    jq -ers 'if length==1 and (.[0]|type=="array" and length==1) and .[0][0].name=="contract-probe" and
+      (.[0][0].image|type=="string" and test("^ghcr.io/devantler-tech/(data-product-controller|khoist)(:[0-9]+\\.[0-9]+\\.[0-9]+)?@sha256:[0-9a-f]{64}$"))
+      then .[0][0].image else error("invalid probe declaration") end' >"$scratch/probe-image" 2>/dev/null
+}
+bounded read_expected_probe || fail invalid_expected_state 2
+probe_image=$(<"$scratch/probe-image")
+probe_repository=${probe_image%@*}
+probe_repository=${probe_repository%%:*}
 # read_verify_policy validates and copies the single public artifact identity policy.
 read_verify_policy() {
   [[ $(wc -c <"$apps_verify_file") -le 16384 ]] || return 1
@@ -306,7 +324,7 @@ def owned($kind;$name;$uid): [.metadata.owners[]? | select(.controller==true)] a
   ($owners|length)==1 and $owners[0].apiVersion=="apps/v1" and $owners[0].kind==$kind and $owners[0].name==$name and $owners[0].uid==$uid;
 def image($tag): .==($repository+"@"+$image_digest) or .==($repository+":"+$tag+"@"+$image_digest);
 def named_image($container;$tag): [.spec.containers[]? | select(.name==$container)] as $containers |
-  ($containers|length)==1 and ($containers[0].image|image($tag));
+  ($containers|length)==1 and (if $container=="contract-probe" then $containers[0].image==$probe_image else $containers[0].image|image($tag) end);
 def no_retired_settings: all(.spec.containers[]?;.retiredSettings==[]);
 def publisher_flag_ready($container):
   if $container!="publisher-review" then true else
@@ -315,9 +333,12 @@ def publisher_flag_ready($container):
       ($flags|type=="array" and all(.[];.indirect==false and (.value|type)=="string")) and
       (if $publisher_enabled then [$flags[].value]==["true"] else $flags==[] or [$flags[].value]==["false"] end))
   end;
-def runtime: . as $id | any($runtime_digests[]; . as $digest |
+def runtime($container): . as $id |
+  (if $container=="contract-probe" then $probe_runtime_digests else $runtime_digests end) as $digests |
+  (if $container=="contract-probe" then $probe_repository else $repository end) as $runtime_repository |
+  any($digests[]; . as $digest |
   $id==$digest or $id==("containerd://"+$digest) or $id==("docker://"+$digest) or
-  $id==("cri-o://"+$digest) or $id==($repository+"@"+$digest) or $id==("docker-pullable://"+$repository+"@"+$digest));
+  $id==("cri-o://"+$digest) or $id==($runtime_repository+"@"+$digest) or $id==("docker-pullable://"+$runtime_repository+"@"+$digest));
 def inventory($kind;$version): (.items|type=="array" and length<=4096) and
   all(.items[]; .kind==$kind and .apiVersion==$version and .metadata.namespace==$namespace and
     (.metadata.name|type=="string" and length>0) and (.metadata.uid|type=="string" and length>0)) and
@@ -329,7 +350,7 @@ def pod_ready($rs;$container;$tag):
   any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and publisher_flag_ready($container) and no_retired_settings and
   ([.status.containers[]? | select(.name==$container)] as $containers | ($containers|length)==1 and
     $containers[0].ready==true and $containers[0].running==true and $containers[0].waiting==false and
-    $containers[0].terminated==false and ($containers[0].imageID|runtime));
+    $containers[0].terminated==false and ($containers[0].imageID|runtime($container)));
 def workload($deployment;$container;$tag;$sets;$pods):
   ($deployment|identity("Deployment";"apps/v1";$deployment.metadata.name;$namespace)) and
   ($deployment.metadata.revision|type=="string" and test("^[1-9][0-9]*$")) and
@@ -609,11 +630,16 @@ aggregate() {
 make_runtime_json() { printf '%s\n' "${runtime_digests[@]}" | jq -Rsc 'split("\n")[:-1]|unique' >"$scratch/runtime-digests.json"; }
 bounded make_runtime_json || fail read_incomplete
 runtime_json=$(<"$scratch/runtime-digests.json")
+# make_probe_runtime_json keeps the probe's resolved runtimes independent.
+make_probe_runtime_json() { printf '%s\n' "${probe_runtime_digests[@]}" | jq -Rsc 'split("\n")[:-1]|unique' >"$scratch/probe-runtime-digests.json"; }
+bounded make_probe_runtime_json || fail read_incomplete
+probe_runtime_json=$(<"$scratch/probe-runtime-digests.json")
 # check requires the snapshot to satisfy the declared identities and readiness state.
 check() {
   local result=0
   jq -ce --arg repository "$repository" --arg namespace "$namespace" --arg domain "$domain" --arg image_digest "$image_digest" --arg expected_tag "$expected_tag" --arg readiness_state "$expected_state" --argjson ksail_enabled "$expected_releases" --argjson publisher_enabled "$expected_publisher" \
     --arg chart_digest "$chart_digest" --arg apps_digest "$apps_digest" --argjson apps_verify "$apps_verify" --argjson runtime_digests "$runtime_json" \
+    --arg probe_image "$probe_image" --arg probe_repository "$probe_repository" --argjson probe_runtime_digests "$probe_runtime_json" \
     -f "$scratch/check.jq" "$1/snapshot" >"$scratch/check-result" 2>/dev/null || result=$?
   if ((result == 0)); then
     rm -f "$scratch/snapshot-failure"
