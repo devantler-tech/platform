@@ -72,6 +72,9 @@ func verifyNativeEnvoyProfile(t *testing.T) {
 // forged-header failure proves that the negative cases reach that boundary.
 func TestNativeEnvoyPhysicalPeerBoundary(t *testing.T) {
 	if os.Getenv("GATEWAY_RECEIVER_NATIVE_TEST") != "1" {
+		if os.Getenv("GITHUB_ACTIONS") == "true" {
+			t.Fatal("CI must enable the native proxy proof explicitly")
+		}
 		t.Skip("native container proof is enabled explicitly by CI")
 	}
 	verifyNativeEnvoyProfile(t)
