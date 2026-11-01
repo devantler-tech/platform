@@ -58,6 +58,7 @@ done
 
 jq -e '[.[] | select(.kind == "HelmRelease" and .metadata.namespace == "data-product-controller")
   | ((.spec.values | has("registryUI") | not) and .spec.values.demoProduct.enabled == true
+     and .spec.upgrade.chartNameChangeStrategy == "InPlaceUpdate"
      and (.spec.values | has("uiContract") | not)
      and (.spec.values | has("uiAppearance") | not)
      and .spec.values.demoProduct.publicBaseURL == "https://harbour-data.${domain}"

@@ -20,11 +20,12 @@ KHoist 9.0.5 in one revision:
 - chart `oci://ghcr.io/devantler-tech/charts/khoist@sha256:ccb64ccf46b96802a37ac1f362c543e70cddb669025df62e7f59dfc62d814fd4`,
   signed by KHoist's own `publish-chart` workflow from a release tag.
 
-The Namespace, HelmRelease, workload names, selectors and public registry address stay
 as they are. The chart render differs only by artifact names and the removed
 presentation settings and `spec.ui` declarations. The release upgrades CRDs through
 `crds: CreateReplace`, so the admission rule that rejects new `spec.ui` values applies
 before the workloads change; removing the field from a stored product stays allowed.
+The release sets `chartNameChangeStrategy: InPlaceUpdate`: its default would uninstall the
+release because the chart name changes, deleting the workloads and registrations.
 
 `/ui-kit` no longer carries product sessions, so `product-ui.${domain}` is retired.
 The offline report tool keeps its separate release gate and moves to the dedicated
@@ -39,7 +40,7 @@ itself, roll back; delisting does not remove it. This settles Platform #4874.
 The rollout verifier takes the exact image and chart from this checkout and refuses
 caller digests or a live release that differ. It replaces the retired parts of the
 receipt with requirements that no product declares `spec.ui` and that no serving
-workload carries the retired settings.
+workload carries the retired settings. It also requires the in-place chart rename.
 
 ## Rollback
 

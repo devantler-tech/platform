@@ -218,7 +218,8 @@ def containers: [.[]? | {name,image,ports:[.ports[]? | {name,containerPort,proto
   env:[.env[]? | select(.name=="CONTRACT_PROBE_URL" or .name=="CONTRACT_READINESS_ENABLED" or .name=="CONNECTOR_READINESS_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") |
     {name,value,indirect:(.valueFrom!=null)}],
   publisherFlags:[.env[]? | select(.name=="PUBLISHER_PREFLIGHT_ENABLED") |
-    {name,value,indirect:(.valueFrom!=null)}],environmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
+    {name,value,indirect:(.valueFrom!=null)}],
+  retiredSettings:[.env[]? | select(.name=="UI_CONTRACT_ENABLED" or .name=="UI_APPEARANCE_ENABLED" or .name=="UI_HOST_ORIGINS" or .name=="REGISTRY_UI_ENABLED" or .name=="KSAIL_RELEASES_ENABLED") | .name],environmentLiteral:(.envFrom==null or .envFrom==[]),readinessProbe,livenessProbe,securityContext}];
 def workload: {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{replicas:.spec.replicas,selector:.spec.selector,labels:.spec.template.metadata.labels,
     metricsAnnotations:(.spec.template.metadata.annotations|metrics_annotations),containers:(.spec.template.spec.containers|containers),
@@ -268,7 +269,7 @@ elif $role == "product" then {apiVersion,kind,metadata:(.metadata|metadata),
 elif $role|startswith("service-") then {apiVersion,kind,metadata:(.metadata|metadata),
   spec:{type:.spec.type,selector:.spec.selector,ports:[.spec.ports[]? | {name,port,targetPort,protocol:(.protocol//"TCP")}]}}
 elif $role == "helm" then {apiVersion,kind,metadata:(.metadata|metadata),
-  spec:{suspend:.spec.suspend,chartRef:.spec.chartRef,values:{image:(.spec.values.image|{repository,tag,digest}),
+  spec:{suspend:.spec.suspend,chartRef:.spec.chartRef,upgradeChartNameChangeStrategy:.spec.upgrade.chartNameChangeStrategy,values:{image:(.spec.values.image|{repository,tag,digest}),
     controller:{replicas:.spec.values.controller.replicas},demoProduct:(.spec.values.demoProduct|{enabled,replicas,publicBaseURL,ksailReleasesEnabled:(.ksailReleases.enabled//false)}),route:(.spec.values.route|{enabled,host}),
     observationFlags:[.spec.values | .connectorReadiness.enabled,.contractReadiness.enabled,.contractProbe.enabled]}},
   status:{observedGeneration:.status.observedGeneration,conditions:(.status.conditions|conditions),
@@ -306,6 +307,7 @@ def owned($kind;$name;$uid): [.metadata.owners[]? | select(.controller==true)] a
 def image($tag): .==($repository+"@"+$image_digest) or .==($repository+":"+$tag+"@"+$image_digest);
 def named_image($container;$tag): [.spec.containers[]? | select(.name==$container)] as $containers |
   ($containers|length)==1 and ($containers[0].image|image($tag));
+def no_retired_settings: all(.spec.containers[]?;.retiredSettings==[]);
 def publisher_flag_ready($container):
   if $container!="publisher-review" then true else
     [.spec.containers[]? | select(.name==$container)] as $containers |
@@ -324,7 +326,7 @@ def inventory($kind;$version): (.items|type=="array" and length<=4096) and
 def pod_ready($rs;$container;$tag):
   owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid) and .metadata.deletionTimestamp==null and
   .status.phase=="Running" and ([.status.conditions[]? | select(.type=="Ready")]|length)==1 and
-  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and publisher_flag_ready($container) and
+  any(.status.conditions[]?;.type=="Ready" and .status=="True") and named_image($container;$tag) and publisher_flag_ready($container) and no_retired_settings and
   ([.status.containers[]? | select(.name==$container)] as $containers | ($containers|length)==1 and
     $containers[0].ready==true and $containers[0].running==true and $containers[0].waiting==false and
     $containers[0].terminated==false and ($containers[0].imageID|runtime));
@@ -333,14 +335,14 @@ def workload($deployment;$container;$tag;$sets;$pods):
   ($deployment.metadata.revision|type=="string" and test("^[1-9][0-9]*$")) and
   $deployment.spec.replicas==2 and $deployment.status.observedGeneration==$deployment.metadata.generation and
   all([$deployment.status.replicas,$deployment.status.updatedReplicas,$deployment.status.readyReplicas,$deployment.status.availableReplicas][];.==2) and
-  ($deployment|named_image($container;$tag) and publisher_flag_ready($container)) and
+  ($deployment|named_image($container;$tag) and publisher_flag_ready($container) and no_retired_settings) and
   ([$sets[] | select(owned("Deployment";$deployment.metadata.name;$deployment.metadata.uid))] as $owned |
     [$owned[] | select(.metadata.revision==$deployment.metadata.revision)] as $current |
     ($current|length)==1 and
     ($current[0]|identity("ReplicaSet";"apps/v1";.metadata.name;$namespace)) and
     $current[0].spec.replicas==2 and $current[0].status.observedGeneration==$current[0].metadata.generation and
     all([$current[0].status.replicas,$current[0].status.readyReplicas,$current[0].status.availableReplicas][];.==2) and
-    ($current[0]|named_image($container;$tag) and publisher_flag_ready($container)) and
+    ($current[0]|named_image($container;$tag) and publisher_flag_ready($container) and no_retired_settings) and
     all($owned[] | select(.metadata.uid!=$current[0].metadata.uid); .spec.replicas==0 and (.status.replicas//0)==0) and
     ([$pods[] | . as $pod | select(any($owned[]; . as $rs | $pod | owned("ReplicaSet";$rs.metadata.name;$rs.metadata.uid)))] as $owned_pods |
       ($owned_pods|length)==2 and all($owned_pods[];pod_ready($current[0];$container;$tag))));
@@ -473,6 +475,7 @@ try (
   (.status.artifact.revision|revision($chart_digest)) and (.status.artifact.digest|digest)) | demand("chart")) and
 ((.helm|identity("HelmRelease";"helm.toolkit.fluxcd.io/v2";"data-product-controller";$namespace) and
   (.spec.suspend//false)==false and .status.observedGeneration==.metadata.generation and ready(["Ready"]) and
+  .spec.upgradeChartNameChangeStrategy=="InPlaceUpdate" and
   .spec.chartRef.kind=="OCIRepository" and .spec.chartRef.name=="data-product-controller" and (.spec.chartRef.namespace//$namespace)==$namespace and
   .spec.values.image.repository==$repository and .spec.values.image.digest==$image_digest and
   $tag==$expected_tag and

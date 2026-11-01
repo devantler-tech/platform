@@ -119,7 +119,7 @@ def route($suffix;$host;$backend): {apiVersion:"gateway.networking.k8s.io/v1",ki
  root:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("flux-system";"flux-system"),spec:{suspend:false,verify:root_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:("latest@"+$apps),digest:("sha256:"+([range(64)|"e"]|join("")))}}},
  chart:{apiVersion:"source.toolkit.fluxcd.io/v1",kind:"OCIRepository",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,url:"oci://ghcr.io/devantler-tech/charts/khoist",ref:{digest:$chart},verify:chart_verify},status:{observedGeneration:3,conditions:[condition("Ready"),condition("SourceVerified")],artifact:{revision:$chart,digest:("sha256:"+([range(64)|"e"]|join("")))}}},
  product:{apiVersion:"data.devantler.tech/v1alpha1",kind:"DataProduct",metadata:meta("harbour-observations";"data-product-controller"),spec:{outputs:[{name:"observations",url:"https://harbour-data.example.com/api/observations",contractUrl:"https://harbour-data.example.com/openapi.json"}]},status:{observedGeneration:3,conditions:[condition("Ready")]}},
- helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"},connectorReadiness:{enabled:false},contractReadiness:{enabled:false},contractProbe:{enabled:false}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"khoist",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
+ helm:{apiVersion:"helm.toolkit.fluxcd.io/v2",kind:"HelmRelease",metadata:meta("data-product-controller";"data-product-controller"),spec:{suspend:false,chartRef:{kind:"OCIRepository",name:"data-product-controller"},upgrade:{chartNameChangeStrategy:"InPlaceUpdate"},values:{image:{repository:$repo,tag:"1.20.0",digest:$index},controller:{replicas:2},demoProduct:{enabled:true,replicas:2,publicBaseURL:"https://harbour-data.example.com"},route:{enabled:true,host:"data-products.example.com"},connectorReadiness:{enabled:false},contractReadiness:{enabled:false},contractProbe:{enabled:false}}},status:{observedGeneration:3,conditions:[condition("Ready")],lastAttemptedRevision:("1.20.0+"+$chart[7:19]),lastAttemptedRevisionDigest:$chart,lastAttemptedConfigDigest:("sha256:"+([range(64)|"f"]|join(""))),history:[{name:"data-product-controller",namespace:"data-product-controller",chartName:"khoist",chartVersion:("1.20.0+"+$chart[7:19]),ociDigest:$chart,configDigest:("sha256:"+([range(64)|"f"]|join(""))),status:"deployed",version:10}]}},
  "deployment-controller":(deployment("data-product-controller";"controller") | .spec.template.spec.containers[0].env=[
    {name:"CONNECTOR_READINESS_ENABLED",value:"false"},{name:"CONTRACT_READINESS_ENABLED",value:"false"}]),
  "deployment-harbour":deployment("data-product-controller-harbour";"product"),
@@ -678,6 +678,16 @@ for mutation in 'expected-image.json|.digest="sha256:"+("0"*64)' 'expected-image
   jq -e '.failure=="invalid_expected_state"' "${scratch}/$name/stdout" >/dev/null || fail "$name: unbound release was not refused in preflight"
   [[ ! -e "${scratch}/$name/reads" ]] || fail "$name: unbound release reached the cluster"
 done
+# Retired settings are refused on every serving object, in each workload.
+for setting in UI_CONTRACT_ENABLED UI_APPEARANCE_ENABLED UI_HOST_ORIGINS REGISTRY_UI_ENABLED; do
+  for key in deployment-controller deployment-harbour deployment-publisher-review; do
+    mutate_case "retired-$setting-$key" "$key" ".spec.template.spec.containers[0].env += [{name:\"$setting\",value:\"true\"}]"
+  done
+  mutate_case "retired-$setting-pod" pods ".items[0].spec.containers[0].env += [{name:\"$setting\",value:\"true\"}]"
+  mutate_case "retired-$setting-replicaset" replicasets ".items[0].spec.template.spec.containers[0].env += [{name:\"$setting\",value:\"true\"}]"
+done
+mutate_case helm-reinstalls-on-rename helm 'del(.spec.upgrade.chartNameChangeStrategy)'
+mutate_case helm-explicit-reinstall helm '.spec.upgrade.chartNameChangeStrategy="Reinstall"'
 mutate_case helm-other-tag helm '.spec.values.image.tag="1.20.1"'
 mutate_case harbour-indirect-environment deployment-harbour '.spec.template.spec.containers[0].envFrom=[{configMapRef:{name:"environment-canary"}}]'
 
