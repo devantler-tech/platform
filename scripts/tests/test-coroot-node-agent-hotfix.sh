@@ -63,6 +63,10 @@ grep -qF '.SBOM.modules' <<<"${audit_step}" ||
 # shellcheck disable=SC2016
 grep -qF 'test "${reached}" = 0' <<<"${audit_step}" ||
   fail 'a reached advisory must stop the workflow'
+grep -qF '.path != "github.com/coroot/coroot-cluster-agent"' <<<"${audit_step}" ||
+  fail 'publication must refuse an advisory listed for the locally built cluster agent'
+grep -qF '.path == "stdlib"' <<<"${audit_step}" ||
+  fail 'an advisory index that omits the standard library must not pass the cluster-agent check'
 [[ "$(yq -er '.jobs.publish.needs' "${workflow}")" == 'verify' ]] ||
   fail 'publication must wait for the audit in the verify job'
 
@@ -117,7 +121,9 @@ grep -qF 'klog.ErrorfDepth' "${patch_file}" ||
   fail 'unexpected TLS uprobe failures must remain errors'
 grep -qF 'journald is unavailable at' "${patch_file}" ||
   fail 'Talos journal absence must remain visible without becoming a log-error alert'
-grep -qF 'if os.IsNotExist(err)' "${patch_file}" ||
+grep -qF 'return errors.Is(err, os.ErrNotExist)' "${patch_file}" ||
+  fail 'sdjournal wraps the missing-journal errno, so its check must unwrap it'
+grep -qF 'if isJournalMissing(err)' "${patch_file}" ||
   fail 'only a genuinely absent Talos journal path may be demoted'
 grep -qF 'journal permission denied' "${patch_file}" ||
   fail 'unexpected journal failures need an executable severity-boundary regression test'
