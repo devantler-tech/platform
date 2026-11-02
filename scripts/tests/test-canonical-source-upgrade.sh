@@ -287,6 +287,19 @@ cp "$upgrade_test_work/candidate/$tenant_path" "$tree/$tenant_path"
 record="$(jq -c '.bindings[0]' "$binding_file")"
 main >"$upgrade_test_work/generator-second-pending"
 cmp "$upgrade_test_work/applied-identities.tsv" "$APPROVED_IDENTITIES_FILE"
+# Readiness of the new digest alone cannot apply its proposed signer while
+# the actual source still verifies against the previous publisher matcher.
+cp "$binding_file" "$upgrade_test_work/second-pending-binding.json"
+cp "$APPROVED_IDENTITIES_FILE" "$upgrade_test_work/second-pending-identities.tsv"
+jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
+ .items[0].metadata.generation=4 | .items[0].status.observedGeneration=4 | .items[0].status.conditions[].observedGeneration=4' \
+ "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
+if (main) >"$upgrade_test_work/generator-old-matcher" 2>&1; then
+  echo 'old approved matcher accepted for the proposed publisher' >&2
+  exit 1
+fi
+cmp "$upgrade_test_work/second-pending-binding.json" "$binding_file"
+cmp "$upgrade_test_work/second-pending-identities.tsv" "$APPROVED_IDENTITIES_FILE"
 # The new signer must stay proposed until the actual new source is observed.
 jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
  .items[0].spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$" |
