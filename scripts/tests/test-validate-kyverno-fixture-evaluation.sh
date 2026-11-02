@@ -110,15 +110,15 @@ fi
 
 # A rule named only by `skip` rows passes the Excluded check, so only the
 # existence check can catch its removal.
-root="$(copy skip-only restrict-tenant-issuer-refs)"
+root="$(copy skip-only restrict-tenant-network-policies)"
 mkdir -p "${root}/skip-only"
-mv "${root}/tests/restrict-tenant-issuer-refs" "${root}/skip-only/"
-yq -i '.results |= map(select(.result == "skip"))' "${root}/skip-only/restrict-tenant-issuer-refs/kyverno-test.yaml"
+mv "${root}/tests/restrict-tenant-network-policies" "${root}/skip-only/"
+yq -i '.results |= map(select(.result == "skip"))' "${root}/skip-only/restrict-tenant-network-policies/kyverno-test.yaml"
 expect_pass "a skip-only fixture whose rule exists" "${root}" skip-only
-yq -i 'del(.spec.rules[] | select(.name == "certificate-no-cluster-scoped-issuer"))' \
-  "${root}/${policies}/restrict-tenant-issuer-refs.yaml"
+yq -i 'del(.spec.rules[] | select(.name == "cnp-ingress-sources-must-be-constrained"))' \
+  "${root}/${policies}/restrict-tenant-network-policies.yaml"
 if kyverno_passes "skip-only rule removed" "${root}" skip-only; then
-  expect_fail "skip-only rule removed" "${root}" 1 "names rule certificate-no-cluster-scoped-issuer" skip-only
+  expect_fail "skip-only rule removed" "${root}" 1 "names rule cnp-ingress-sources-must-be-constrained" skip-only
 fi
 
 # #3392: a results entry naming a resource the test never loads gets no row at all.

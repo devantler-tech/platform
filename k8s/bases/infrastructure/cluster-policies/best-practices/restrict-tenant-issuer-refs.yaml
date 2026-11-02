@@ -17,18 +17,18 @@
 # legitimately use a ClusterIssuer (kube-system's gateway-certificate,
 # cert-manager, cnpg-system, …) are unaffected.
 #
-# Allow-list, not deny-list: the rules deny any issuerRef.kind that is not in
+# Allow-list, not deny-list: the validations deny any issuerRef.kind that is not in
 # the allowed set, rather than denying `ClusterIssuer` by name. External issuer
 # projects conventionally ship BOTH a namespaced and a cluster-scoped kind
 # (AWSPCAIssuer/AWSPCAClusterIssuer, step-issuer, google-cas, …), so a
 # name-based deny silently misses every cluster-scoped kind except
 # cert-manager's own. Extending the boundary later means adding the namespaced
-# kind to `value:` below — a visible, reviewable edit.
+# kind to `namespacedIssuer` below — a visible, reviewable edit.
 #
-# `kind` is OPTIONAL and defaults to `Issuer` when omitted, so both rules
-# default the empty case to `Issuer` before comparing. This is not theoretical:
-# 2 of the 9 Certificates live on prod omit `kind` entirely. A naive
-# `NotEquals Issuer` on the raw field would deny every one of them.
+# `kind` is OPTIONAL and defaults to `Issuer` when omitted, so `namespacedIssuer`
+# treats the empty case as `Issuer`. This is not theoretical:
+# 2 of the 9 Certificates live on prod omit `kind` entirely. A naive comparison
+# with `Issuer` on the raw field would deny every one of them.
 #
 # Platform carve-out: the deny targets only resources applied by a TENANT — i.e.
 # by the impersonated tenant ServiceAccount (the tenant's deploy/ Kustomization
@@ -49,11 +49,11 @@
 # ClusterRole grants read only), so this rule is defense-in-depth that holds if
 # that RBAC ever regresses.
 #
-# Because both excludes match on request.userInfo, the policy is admission-only
-# (background: false); every escalation is a create/update that passes through
+# Because both exclusions match on request.userInfo, the policy is admission-only
+# (background disabled); every escalation is a create/update that passes through
 # admission, so enforcement is unaffected.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-tenant-issuer-refs
   annotations:
@@ -61,7 +61,7 @@ metadata:
     policies.kyverno.io/category: Security, cert-manager
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: Certificate, CertificateRequest
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Blocks tenant-applied Certificate and CertificateRequest resources in
       ksail tenant namespaces from referencing a cluster-scoped issuer via
@@ -71,80 +71,54 @@ metadata:
       kustomize-controller) and cert-manager's own derived CertificateRequests
       are excluded.
 spec:
-  # Admission-only: the excludes match on request.userInfo (the applying
+  failurePolicy: Fail
+  validationActions:
+    - Deny
+  # Admission-only: the exclusions match on request.userInfo (the applying
   # ServiceAccount), which is unavailable during background scans. Every
   # escalation path is a create/update that passes through admission, so
   # enforcement is fully preserved.
-  background: false
-  rules:
-    - name: certificate-no-cluster-scoped-issuer
-      match:
-        any:
-          - resources:
-              kinds:
-                - Certificate
-              namespaceSelector:
-                matchExpressions:
-                  - key: app.kubernetes.io/managed-by
-                    operator: In
-                    values: [ksail, kro]
-      # Exclude platform-authored resources: the tenant registration dir is
-      # reconciled by the apps-layer Flux Kustomization as flux-system's own
-      # kustomize-controller SA (no impersonation). A tenant's deploy/ artifact
-      # is applied as its impersonated tenant SA, so it stays subject to the deny.
-      exclude:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: kustomize-controller
-                namespace: flux-system
-      validate:
-        failureAction: Enforce
-        message: >-
-          Tenant Certificates must reference a namespaced Issuer
-          (kind: Issuer), not a cluster-scoped issuer such as ClusterIssuer.
-          Create an Issuer in this namespace and point spec.issuerRef at it.
-        deny:
-          conditions:
-            any:
-              - key: "{{ request.object.spec.issuerRef.kind || 'Issuer' }}"
-                operator: AnyNotIn
-                value:
-                  - Issuer
-    - name: certificaterequest-no-cluster-scoped-issuer
-      match:
-        any:
-          - resources:
-              kinds:
-                - CertificateRequest
-              namespaceSelector:
-                matchExpressions:
-                  - key: app.kubernetes.io/managed-by
-                    operator: In
-                    values: [ksail, kro]
-      # Same platform carve-out as the Certificate rule above, plus cert-manager
-      # itself: it derives a CertificateRequest from every Certificate under its
-      # own identity and copies the issuerRef, so denying it here would break
-      # issuance for any Certificate the flux-system carve-out admitted.
-      exclude:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: kustomize-controller
-                namespace: flux-system
-          - subjects:
-              - kind: ServiceAccount
-                name: cert-manager
-                namespace: cert-manager
-      validate:
-        failureAction: Enforce
-        message: >-
-          Tenant CertificateRequests must reference a namespaced Issuer
-          (kind: Issuer), not a cluster-scoped issuer such as ClusterIssuer.
-        deny:
-          conditions:
-            any:
-              - key: "{{ request.object.spec.issuerRef.kind || 'Issuer' }}"
-                operator: AnyNotIn
-                value:
-                  - Issuer
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    namespaceSelector:
+      matchExpressions:
+        - key: app.kubernetes.io/managed-by
+          operator: In
+          values: [ksail, kro]
+    resourceRules:
+      - apiGroups: ["cert-manager.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["certificates", "certificaterequests"]
+  matchConditions:
+    # Exclude platform-authored resources: the tenant registration dir is
+    # reconciled by the apps-layer Flux Kustomization as flux-system's own
+    # kustomize-controller SA (no impersonation). A tenant's deploy/ artifact
+    # is applied as its impersonated tenant SA, so it stays subject to the deny.
+    - name: not-platform-applied
+      expression: >-
+        request.userInfo.username != 'system:serviceaccount:flux-system:kustomize-controller'
+    # cert-manager derives a CertificateRequest from every Certificate under its
+    # own identity and copies the issuerRef, so denying it here would break
+    # issuance for any Certificate the flux-system carve-out admitted.
+    - name: not-cert-manager-derived-request
+      expression: >-
+        object.kind != 'CertificateRequest' ||
+        request.userInfo.username != 'system:serviceaccount:cert-manager:cert-manager'
+  variables:
+    - name: issuerKind
+      expression: "object.spec.?issuerRef.?kind.orValue('')"
+    - name: namespacedIssuer
+      expression: "variables.issuerKind in ['', 'Issuer']"
+  validations:
+    - expression: "object.kind != 'Certificate' || variables.namespacedIssuer"
+      message: >-
+        Tenant Certificates must reference a namespaced Issuer
+        (kind: Issuer), not a cluster-scoped issuer such as ClusterIssuer.
+        Create an Issuer in this namespace and point spec.issuerRef at it.
+    - expression: "object.kind != 'CertificateRequest' || variables.namespacedIssuer"
+      message: >-
+        Tenant CertificateRequests must reference a namespaced Issuer
+        (kind: Issuer), not a cluster-scoped issuer such as ClusterIssuer.

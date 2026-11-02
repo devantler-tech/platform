@@ -83,4 +83,30 @@ unpinned="$(yq eval \
 [ -z "${unpinned// /}" ] ||
   fail "these Gateway listeners do not pin allowedRoutes.kinds to exactly [HTTPRoute]: ${unpinned}— an unpinned HTTPS listener also accepts GRPCRoute, which restrict-tenant-route-hostnames does not match."
 
+# --- Layer 3: what the policy's CLI fixtures cannot show ---------------------
+# A ValidatingPolicy's operations only decide which requests the webhook
+# receives, so the CLI evaluates a DELETE fixture the same way as a create.
+policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-route-hostnames.yaml"
+action="$(yq -r '.spec.validationActions | join(",")' "${policy}")"
+[ "${action}" = "Deny" ] ||
+  fail "restrict-tenant-route-hostnames must set validationActions: [Deny] (found: '${action}')"
+
+# Retired tenant resources must stay removable after their allow-list entry is gone.
+rules="$(yq -o=json -I=0 '[.spec.matchConstraints.resourceRules[] | {"group": .apiGroups[0], "resource": .resources[0], "operations": (.operations | sort)}]' "${policy}")"
+expected_rules='[{"group":"gateway.networking.k8s.io","resource":"httproutes","operations":["CREATE","UPDATE"]}]'
+[ "${rules}" = "${expected_rules}" ] ||
+  fail "restrict-tenant-route-hostnames must match HTTPRoute on CREATE and UPDATE only (found: ${rules})"
+
+# The namespace selector is the policy's only scope, so an allow-listed tenant
+# whose namespace lost the label would fall outside the policy altogether.
+selector_values="$(yq -r '.spec.matchConstraints.namespaceSelector.matchExpressions[] | select(.key == "app.kubernetes.io/managed-by") | .values[]' "${policy}" | sort | tr '\n' ' ')"
+[ "${selector_values}" = "kro ksail " ] ||
+  fail "restrict-tenant-route-hostnames must select namespaces managed by ksail or kro (found: '${selector_values}')"
+for tenant in wedding-app ascoachingogvaner; do
+  namespace_file="${repo_root}/k8s/bases/apps/${tenant}/namespace.yaml"
+  owner="$(yq -r '.metadata.labels."app.kubernetes.io/managed-by" // ""' "${namespace_file}")"
+  [ "${owner}" = "ksail" ] ||
+    fail "${namespace_file} must carry app.kubernetes.io/managed-by: ksail or its routes escape restrict-tenant-route-hostnames (found: '${owner}')"
+done
+
 echo "Tenant route-kind boundary holds: RBAC grants HTTPRoute only and all ${listener_count} listeners pin kinds to HTTPRoute."

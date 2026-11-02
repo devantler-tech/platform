@@ -16,6 +16,19 @@ test_work="$(mktemp -d)"
 trap 'rm -rf "$test_work"' EXIT
 # Name any otherwise silent stop; the test still fails with the same result.
 trap 'echo "Fixture stopped at line $LINENO (exit $?)" >&2' ERR
+# Exercise the production lookup in isolation with input larger than a pipe.
+# An early reader exit must not turn a successful first match into SIGPIPE.
+awk '/^lookup\(\) \{$/ {copy=1} copy {print} copy && /^}$/ {exit}' \
+  "$test_root/scripts/publish-workflow-approved-revisions.lib.sh" >"$test_work/lookup.sh"
+(
+  # shellcheck source=scripts/publish-workflow-approved-revisions.lib.sh
+  source "$test_work/lookup.sh"
+  records=$(awk 'BEGIN {print "wanted\tfirst-record"; for (i=0;i<20000;i++) printf "filler-%05d\t%080d\n",i,i; print "wanted\tsecond-record"}')
+  actual=$(lookup "$records" wanted)
+  [[ "$actual" == first-record ]] || { echo 'Lookup did not preserve the first match' >&2; exit 1; }
+  actual=$(lookup $'100\tdecimal\n1e2\texponent' 1e2)
+  [[ "$actual" == exponent ]] || { echo 'Lookup compared numeric-looking keys as numbers' >&2; exit 1; }
+)
 # shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
 source "$test_root/scripts/tests/lib/legacy-consumer-fixture.sh"
 build_legacy_consumer_fixture "$test_root" "$test_work/consumers"
