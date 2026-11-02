@@ -17,9 +17,9 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas]
+        options: [prepare-worker, prepare-unused-temporary-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas]
       node:
-        description: Permanent worker to prepare, or a fixed read-only inventory selection
+        description: Permanent worker or fixed temporary-worker selection for the chosen operation
         required: false
         type: choice
         options: [prod-worker-1, prod-worker-2, prod-worker-3, temporary-v1-1, temporary-v1-2, temporary-v2-1]
@@ -79,6 +79,9 @@ jobs:
           case "${LONGHORN_V2_OPERATION}" in
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
+              ;;
+            prepare-unused-temporary-worker)
+              [[ "${LONGHORN_V2_NODE}" =~ ^temporary-v1-[12]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-unused-longhorn-v2-${LONGHORN_V2_NODE}" ]]
               ;;
             inventory-replicas)
               [[ "${LONGHORN_V2_NODE}" =~ ^(prod-worker-[123]|temporary-v1-[12]|temporary-v2-1)$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-replicas-${LONGHORN_V2_NODE}" ]]

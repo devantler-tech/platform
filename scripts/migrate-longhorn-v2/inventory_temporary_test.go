@@ -251,6 +251,13 @@ func TestTemporaryInventoryNativeWorkflowGuardPreservesResetBoundary(t *testing.
 		operation, node, ref, attempt, confirm string
 		allowed                                bool
 	}{
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/main", "1", "prepare-unused-longhorn-v2-temporary-v1-1", true},
+		{"prepare-unused-temporary-worker", "temporary-v1-2", "refs/heads/main", "1", "prepare-unused-longhorn-v2-temporary-v1-2", true},
+		{"prepare-unused-temporary-worker", "temporary-v2-1", "refs/heads/main", "1", "prepare-unused-longhorn-v2-temporary-v2-1", false},
+		{"prepare-unused-temporary-worker", "prod-worker-1", "refs/heads/main", "1", "prepare-unused-longhorn-v2-prod-worker-1", false},
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/feature", "1", "prepare-unused-longhorn-v2-temporary-v1-1", false},
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/main", "2", "prepare-unused-longhorn-v2-temporary-v1-1", false},
+		{"prepare-unused-temporary-worker", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-1", false},
 		{"inventory-replicas", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-1", true},
 		{"inventory-replicas", "temporary-v1-2", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-2", true},
 		{"inventory-replicas", "temporary-v2-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v2-1", true},

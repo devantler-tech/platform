@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -14,6 +15,8 @@ func main() {
 	switch operation {
 	case "prepare-worker":
 		authorization = authorize(os.Getenv, target)
+	case "prepare-unused-temporary-worker":
+		authorization = authorizeTemporaryPreparation(os.Getenv, target)
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case "inventory-replicas":
@@ -51,6 +54,50 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == "prepare-unused-temporary-worker" {
+		c := client{run: execute, context: "admin@prod", inventoryPools: pools}
+		nodes, readErr := c.list(ctx, "nodes", "")
+		if readErr != nil {
+			fmt.Fprintln(os.Stderr, "Temporary preparation held: node inventory is unreadable.")
+			os.Exit(1)
+		}
+		resolved, _, resolveErr := resolveTemporaryInventoryTarget(target, nodes, pools)
+		if resolveErr != nil {
+			// Recovery may begin with the selected worker's owned cordon. A
+			// journal, not the ordinal alone, must prove that exception.
+			cm, cmErr := c.get(ctx, "configmap", "longhorn-system", "longhorn-v2-prepare-"+target, true)
+			if cmErr != nil || cm == nil {
+				fmt.Fprintln(os.Stderr, "Temporary preparation held: reviewed pool selection is unproven.")
+				os.Exit(1)
+			}
+			var record journal
+			if json.Unmarshal([]byte(text(cm, "data", "record")), &record) != nil || record.TemporarySelection != target {
+				fmt.Fprintln(os.Stderr, "Temporary preparation held: recovery identity is unproven.")
+				os.Exit(1)
+			}
+			if record.Phase == "reset-requested" {
+				resolved, resolveErr = resolveTemporaryResetRecovery(target, nodes, pools, record)
+			} else {
+				view, viewErr := temporaryInventoryNodes(nodes, &record)
+				if viewErr != nil {
+					fmt.Fprintln(os.Stderr, "Temporary preparation held: owned cordon is unproven.")
+					os.Exit(1)
+				}
+				resolved, _, resolveErr = resolveTemporaryInventoryTarget(target, view, pools)
+			}
+			if resolveErr != nil || resolved != record.Target {
+				fmt.Fprintln(os.Stderr, "Temporary preparation held: recovery roster changed.")
+				os.Exit(1)
+			}
+		}
+		p := temporaryPreparation{preparation: preparation{c: c, target: resolved, name: "longhorn-v2-prepare-" + target, temporarySelection: target, source: os.Getenv("GITHUB_SHA"), owner: os.Getenv("GITHUB_RUN_ID"), pools: pools}}
+		if err = p.prepare(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "Unused temporary preparation held:", err)
+			fmt.Fprintln(os.Stderr, "Preserve its journal and owned cordon; uncertain resets are never replayed.")
+			os.Exit(1)
+		}
+		return
 	}
 	if operation == "prepare-worker" {
 		p := preparation{c: client{run: execute, context: "admin@prod"}, target: target, name: "longhorn-v2-prepare-" + target,

@@ -1,0 +1,264 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+type unusedPreparationFixture struct {
+	base                        *preparationAPI
+	baseline                    object
+	nativeCalls                 int
+	badNativeAfter              int
+	missingBaseline, noRecovery bool
+	afterReset                  func()
+	dropPinWrites               bool
+}
+
+func unusedBaselineFixture(t *testing.T, s inventory) object {
+	t.Helper()
+	machines, err := benchmarkMachines(s, "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	metrics, err := parseFIO(fioFixture(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := benchmarkRecord{Version: 2, Phase: "v1", Source: strings.Repeat("1", 40), Run: "5678", Image: fioImage, Workload: benchmarkWorkload(), Namespace: "longhorn-benchmark-v1-5678", NamespaceUID: "scratch-uid", Machines: machines, Measurements: metrics, Cleaned: true, CompletedAt: "2026-10-29T18:00:00Z"}
+	compute, managers, probe := benchmarkComputeFixture()
+	record.CPU, err = benchmarkCompute(compute, managers, probe, "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Resources = map[string]benchmarkResource{
+		"Namespace": {Name: record.Namespace, UID: "scratch-uid"}, "Pod": {Name: "fio", Namespace: record.Namespace, UID: "pod"},
+		"NetworkPolicy": {Name: "fio-default-deny", Namespace: record.Namespace, UID: "policy"}, "PersistentVolumeClaim": {Name: "fio-data", Namespace: record.Namespace, UID: "claim"},
+		"StorageClass": {Name: "lh-benchmark-v1-5678", UID: "class"}, "PersistentVolume": {Name: "scratch-pv", UID: "pv"}, "LonghornVolume": {Name: "scratch-volume", Namespace: "longhorn-system", UID: "volume"},
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := resource("longhorn-v2-benchmark-v1")
+	cm["data"] = object{"record": string(encoded)}
+	return cm
+}
+
+func unusedPreparationAPI(t *testing.T) (*unusedPreparationFixture, temporaryPreparation) {
+	t.Helper()
+	base, old := newPreparationAPI(t, "evacuating")
+	base.s = benchmarkInventoryFixture()
+	base.s.nodes = append(base.s.nodes, capacityFixture()[3:]...)
+	for i, n := range base.s.nodes {
+		n["metadata"].(object)["uid"] = "uid-" + text(n, "metadata", "name")
+		if value(n, "metadata", "annotations") == nil {
+			n["metadata"].(object)["annotations"] = object{}
+		}
+		if value(n, "spec") == nil {
+			n["spec"] = object{}
+		}
+		n["spec"].(object)["providerID"] = fmt.Sprintf("hcloud://%d", 500+i)
+		n["status"].(object)["nodeInfo"] = object{"systemUUID": "hardware-" + text(n, "metadata", "name"), "bootID": fmt.Sprintf("12345678-1234-4234-8234-%012x", i+1), "osImage": "Talos fixture", "architecture": "amd64"}
+		n["status"].(object)["addresses"] = []any{object{"type": "InternalIP", "address": fmt.Sprintf("10.0.99.%d", 4+i)}}
+		if i >= 3 && i < 6 {
+			delete(n["metadata"].(object)["annotations"].(object), scaleDownDisabled)
+			delete(n["metadata"].(object)["annotations"].(object), capacityOwnerAnnotation)
+			lh := resource(text(n, "metadata", "name"))
+			lh["spec"] = object{"allowScheduling": false, "evictionRequested": true, "disks": object{}}
+			lh["status"] = object{"diskStatus": object{}}
+			base.s.storageNodes = append(base.s.storageNodes, lh)
+		}
+	}
+	base.node, base.storage, base.cm = base.s.nodes[3], base.s.storageNodes[3], nil
+	base.v2Off = true
+	f := &unusedPreparationFixture{base: base}
+	f.baseline = unusedBaselineFixture(t, base.s)
+	p := temporaryPreparation{preparation: preparation{target: text(base.node, "metadata", "name"), name: "longhorn-v2-prepare-temporary-v1-1", temporarySelection: "temporary-v1-1", source: old.source, owner: old.owner, pools: old.pools}}
+	p.c = client{context: "admin@prod", run: f.run, inventoryPools: old.pools}
+	p.reader = func(_ context.Context, address string) (nativeReplicaReader, func() error, error) {
+		f.nativeCalls++
+		if address != "10.0.99.7" {
+			t.Fatal("temporary inspection selected another endpoint")
+		}
+		return temporaryNativeReader{boot: text(base.node, "status", "nodeInfo", "bootID"), unmatched: f.badNativeAfter > 0 && f.nativeCalls >= f.badNativeAfter}, func() error { return nil }, nil
+	}
+	return f, p
+}
+
+func (f *unusedPreparationFixture) run(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+	f.base.t.Helper()
+	if program == "gh" {
+		return json.Marshal(object{"status": "completed", "head_sha": strings.Repeat("1", 40), "head_branch": "main", "event": "workflow_dispatch", "run_attempt": 1, "path": ".github/workflows/prepare-longhorn-v2-node.yaml"})
+	}
+	if program == "kubectl" && len(args) > 3 {
+		if args[2] == "get" && strings.HasPrefix(args[3], "--raw=") {
+			api, kind := "v1", "NodeList"
+			var items []object
+			switch args[3] {
+			case "--raw=" + inventoryKubeNodes:
+				items = f.base.s.nodes
+			case "--raw=" + inventoryStorageNodes:
+				api = "longhorn.io/v1beta2"
+				items = f.base.s.storageNodes
+			case "--raw=" + inventoryReplicas:
+				api, kind = "longhorn.io/v1beta2", "ReplicaList"
+				items = f.base.s.replicas
+			default:
+				f.base.t.Fatal("unexpected raw request")
+			}
+			return json.Marshal(object{"apiVersion": api, "kind": kind, "metadata": object{"resourceVersion": "1"}, "items": items})
+		}
+		if len(args) > 4 && args[2] == "get" && args[3] == "configmap" && args[4] == "longhorn-v2-benchmark-v1" {
+			if f.missingBaseline {
+				return nil, nil
+			}
+			return json.Marshal(f.baseline)
+		}
+		if len(args) > 4 && (args[2] == "get" || args[2] == "patch") && args[3] == "node" {
+			if args[2] == "patch" && f.dropPinWrites {
+				var patch []object
+				if json.Unmarshal(input, &patch) != nil {
+					f.base.t.Fatal("malformed test patch")
+				}
+				for _, change := range patch {
+					if text(change, "path") == "/metadata/annotations" && text(valueObject(change, "value"), capacityOwnerAnnotation) == capacityOwnerValue {
+						return nil, nil
+					}
+				}
+			}
+			for _, node := range f.base.s.nodes {
+				if text(node, "metadata", "name") == args[4] {
+					original := f.base.node
+					f.base.node = node
+					defer func() { f.base.node = original }()
+					return f.base.run(ctx, input, program, args...)
+				}
+			}
+			f.base.t.Fatal("unknown node request")
+		}
+	}
+	if program == "talosctl" && len(args) > 1 && args[1] == "reset" {
+		want := []string{"--nodes=10.0.99.7", "reset", "--system-labels-to-wipe=EPHEMERAL", "--reboot", "--graceful=true", "--wait", "--timeout=15m"}
+		var j journal
+		if !reflect.DeepEqual(args, want) || json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &j) != nil || j.Schema != 2 || j.Phase != "reset-requested" || f.nativeCalls < 3 {
+			f.base.t.Fatal("reset lacked its separate journal, fresh physical proof or exact EPHEMERAL scope")
+		}
+		f.base.resets++
+		if !f.noRecovery {
+			f.base.postReset = true
+			f.base.node["status"].(object)["nodeInfo"].(object)["bootID"] = "12345678-1234-4234-8234-000000000099"
+		}
+		if f.afterReset != nil {
+			f.afterReset()
+		}
+		if f.base.resetError {
+			return nil, errors.New("accepted, response lost")
+		}
+		return nil, nil
+	}
+	data, err := f.base.run(ctx, input, program, args...)
+	if err == nil && f.base.postReset && program == "talosctl" && len(args) == 5 && args[2] == "volumestatus" && args[3] == "EPHEMERAL" {
+		var volume object
+		if json.Unmarshal(data, &volume) != nil {
+			f.base.t.Fatal("malformed fixture volume")
+		}
+		volume["spec"].(object)["size"] = float64(128 << 30)
+		return json.Marshal(volume)
+	}
+	return data, err
+}
+
+func TestUnusedTemporaryPreparationPreservesV1AndLeavesRawStorageFenced(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	before, _ := json.Marshal(f.base.s.storageNodes[:3])
+	if err := p.prepare(context.Background()); err != nil {
+		t.Fatalf("empty temporary worker could not be prepared: %v (phase=%s native=%d resets=%d snapshots=%d)", err, p.j.Phase, f.nativeCalls, f.base.resets, f.base.snapshots)
+	}
+	after, _ := json.Marshal(f.base.s.storageNodes[:3])
+	if f.base.resets != 1 || p.j.Phase != "prepared" || !reflect.DeepEqual(before, after) || value(f.base.storage, "spec", "allowScheduling") != false || value(f.base.storage, "spec", "evictionRequested") != true || len(valueObject(f.base.storage, "spec", "disks")) != 0 || value(f.base.node, "spec", "unschedulable") == true || text(f.base.node, "metadata", "annotations", fenceAnnotation) != "" {
+		t.Fatal("temporary preparation changed V1 storage, enabled raw storage, or failed to recover its node")
+	}
+	if err := p.prepare(context.Background()); err != nil || f.base.resets != 1 {
+		t.Fatal("prepared recovery replayed a reset:", err)
+	}
+}
+
+func TestUnusedTemporaryPreparationHoldsBeforeResetOnLostEvidence(t *testing.T) {
+	for _, scenario := range []string{"missing baseline", "native data", "native data after drain", "foreign pin", "unready peer", "source changed", "layout changed"} {
+		t.Run(scenario, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			switch scenario {
+			case "missing baseline":
+				f.missingBaseline = true
+			case "native data":
+				f.badNativeAfter = 1
+			case "native data after drain":
+				f.badNativeAfter = 2
+			case "foreign pin":
+				f.base.s.nodes[4]["metadata"].(object)["annotations"].(object)[capacityOwnerAnnotation] = "foreign"
+			case "unready peer":
+				f.base.s.nodes[5]["status"].(object)["conditions"] = []any{}
+			case "source changed":
+				f.base.staleSource = true
+			case "layout changed":
+				f.base.staleLayout = true
+			}
+			if p.prepare(context.Background()) == nil || f.base.resets != 0 {
+				t.Fatal("lost evidence authorized a temporary reset")
+			}
+		})
+	}
+}
+
+func TestUncertainTemporaryResetIsNeverReplayed(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	f.base.resetError, f.noRecovery = true, true
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.afterReset = cancel
+	if p.prepare(ctx) == nil || f.base.resets != 1 || p.j.Phase != "reset-requested" {
+		t.Fatal("uncertain reset lost its durable intent")
+	}
+	ctx2, cancel2 := context.WithTimeout(context.Background(), time.Second)
+	defer cancel2()
+	if p.prepare(ctx2) == nil || f.base.resets != 1 {
+		t.Fatal("recovery replayed the uncertain destructive request")
+	}
+}
+
+func TestTemporaryPreparationRebindsIdentityAndStorageBeforeResumingWrites(t *testing.T) {
+	for _, scenario := range []string{"storage enabled", "node replaced", "unexpected reboot"} {
+		t.Run(scenario, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			if err := p.beginUnused(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			switch scenario {
+			case "storage enabled":
+				f.base.storage["spec"].(object)["allowScheduling"] = true
+			case "node replaced":
+				f.base.node["metadata"].(object)["uid"] = "replacement"
+			case "unexpected reboot":
+				f.base.node["status"].(object)["nodeInfo"].(object)["bootID"] = "12345678-1234-4234-8234-000000000099"
+			}
+			if p.prepare(context.Background()) == nil || f.base.resets != 0 || value(f.base.node, "spec", "unschedulable") == true || text(f.base.node, "metadata", "annotations", capacityOwnerAnnotation) != "" {
+				t.Fatal("changed storage or node identity reached a preparation write")
+			}
+		})
+	}
+}
+
+func TestTemporaryCordonRequiresObservedPoolProtection(t *testing.T) {
+	f, p := unusedPreparationAPI(t)
+	f.dropPinWrites = true
+	if p.prepare(context.Background()) == nil || f.base.resets != 0 || value(f.base.node, "spec", "unschedulable") == true {
+		t.Fatal("an acknowledgement without live scale-down protection reached the worker cordon")
+	}
+}

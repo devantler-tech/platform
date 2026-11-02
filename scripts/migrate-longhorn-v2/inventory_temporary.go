@@ -11,6 +11,10 @@ import (
 // Resolve an ordinal only from the complete reviewed pool roster. The roster
 // commitment binds the second observation even when another pool member changes.
 func resolveTemporaryInventoryTarget(selection string, nodes []object, pools map[string]migrationPool) (string, string, error) {
+	return resolveTemporarySelection(selection, nodes, pools, nil)
+}
+
+func resolveTemporarySelection(selection string, nodes []object, pools map[string]migrationPool, postReset *journal) (string, string, error) {
 	var role string
 	var ordinal int
 	switch selection {
@@ -45,7 +49,11 @@ func resolveTemporaryInventoryTarget(selection string, nodes []object, pools map
 			continue
 		}
 		pool, exists := pools[nodeRole]
-		if !exists || verifyMigrationNode(node, pool) != nil || !inventoryBoot.MatchString(text(node, "status", "nodeInfo", "bootID")) {
+		memberErr := verifyMigrationNode(node, pool)
+		if postReset != nil && name == postReset.Target {
+			memberErr = verifyTemporaryResetMember(node, pool, *postReset)
+		}
+		if !exists || memberErr != nil || !inventoryBoot.MatchString(text(node, "status", "nodeInfo", "bootID")) {
 			return "", "", errInventory
 		}
 		identity := object{"name": name, "uid": text(node, "metadata", "uid"), "providerID": text(node, "spec", "providerID"),

@@ -3,15 +3,40 @@
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 
-This tool lands in stages (platform#5655). Today it has `refresh-clients`, `prepare-worker` and the
-benchmarks. `refresh-clients` holds until the fixed migration workers are Ready and the host
+This tool lands in stages (platform#5655). It includes `refresh-clients`, `prepare-worker`,
+`prepare-unused-temporary-worker`, read-only replica inventories and the benchmarks.
+`refresh-clients` holds until the fixed migration workers are Ready and the host
 huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
 capacity follows in its own change.
 
+For the unused temporary-worker route (platform#5787), finish the client refresh and the
+cleaned V1 baseline first. Select `prepare-unused-temporary-worker`, `temporary-v1-1` or
+`temporary-v1-2`, and the matching confirmation `prepare-unused-longhorn-v2-temporary-v1-1`
+or `prepare-unused-longhorn-v2-temporary-v1-2`. Each selection is resolved from the complete,
+reviewed two-member V1 pool and one-member V2 pool. The fresh V2 pool has no reset operation.
+
+This operation wipes **only the selected temporary worker's EPHEMERAL partition** and reboots
+it. Its separate journal binds the original node UID, provider and hardware identities, boot,
+encrypted partition UUID, and native empty-storage receipt. It requires unregistered, fenced
+Longhorn storage, complete native replica listings and block-resource inventories, and no
+allocated raw partition. Unaccounted replica-root entries, incomplete reads or changed identities hold the run.
+All three temporary workers receive owned scale-down protection before the selected worker is
+cordoned. Drain uses eviction and respects disruption budgets. Two fresh storage observations
+after drain precede the recorded reset intent.
+
+Recovery from `reset-requested` only observes post-state. An uncertain response never causes a
+second reset. A new boot and encrypted EPHEMERAL UUID, the reviewed 96 GiB encrypted raw
+partition, loaded configuration and huge-page readiness must be observed before releasing the
+owned cordon. CPX42 workers retain their larger root capacity; the permanent-worker root-size
+cap does not apply to this separate profile. The raw disk remains unregistered and fenced;
+storage activation and volume migration follow separately. Original storage replicas remain on
+the permanent workers throughout this preparation route.
+
 Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
-`talos/workers/enable-longhorn-v2.yaml` deploys: the hosts then hold the pages, but kubelet
-still counts them as free memory, so an unrelated kubelet restart could reject Pods.
-Select `refresh-clients` with
+`talos/workers/enable-longhorn-v2.yaml` deploys. That configuration requests the pages;
+the refresh must prove the actual allocation before changing kubelet capacity. Until
+capacity is refreshed, kubelet can still count reserved pages as free memory, so an
+unrelated kubelet restart could reject Pods. Select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
