@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,5 +97,71 @@ func TestReviewedWorkflowBoundary(t *testing.T) {
 			t.Fatalf("actual workflow guard accepted unsafe %s", key)
 		}
 		good[key] = old
+	}
+}
+
+func TestObservationStepPreservesEndpointMasks(t *testing.T) {
+	data, err := os.ReadFile("../../.github/workflows/observe-runtime-health.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Steps []struct {
+				Run string `yaml:"run"`
+			} `yaml:"steps"`
+		} `yaml:"jobs"`
+	}
+	if err := yaml.Unmarshal(data, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	steps := workflow.Jobs["observe"].Steps
+	if len(steps) == 0 {
+		t.Fatal("missing observation step")
+	}
+	mktemp, err := exec.LookPath("mktemp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, helperExit := range []int{0, 1} {
+		t.Run(fmt.Sprintf("helper_exit_%d", helperExit), func(t *testing.T) {
+			root := t.TempDir()
+			for _, dir := range []string{"scripts", "tools"} {
+				if err := os.Mkdir(filepath.Join(root, dir), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			fixtures := map[string]string{
+				"scripts/use-prod-stable-api-endpoint.sh": "#!/bin/bash\nprintf '%s\\n' '::add-mask::192.0.2.1' >&2\nprintf '%s\\n' 'helper stdout must stay private'\nexit \"$OBS_TEST_HELPER_EXIT\"\n",
+				"tools/mktemp":                 fmt.Sprintf("#!/bin/bash\nexec %q -d \"$OBS_TEST_TMPDIR/runtime-health.XXXXXX\"\n", mktemp),
+				"tools/observe-runtime-health": "#!/bin/bash\n[[ -z ${KUBE_CONFIG+x} && -z ${HCLOUD_TOKEN+x} ]] || exit 99\nprintf '%s\\n' 'observer called'\n",
+			}
+			for path, content := range fixtures {
+				if err := os.WriteFile(filepath.Join(root, path), []byte(content), 0700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cmd := exec.Command("bash", "-c", steps[len(steps)-1].Run)
+			cmd.Dir = root
+			cmd.Env = []string{
+				"PATH=" + filepath.Join(root, "tools") + string(os.PathListSeparator) + os.Getenv("PATH"),
+				"RUNNER_TEMP=" + filepath.Join(root, "tools"), "OBS_TEST_TMPDIR=" + root,
+				fmt.Sprintf("OBS_TEST_HELPER_EXIT=%d", helperExit), "KUBE_CONFIG=synthetic-config", "HCLOUD_TOKEN=synthetic-token",
+			}
+			output, runErr := cmd.CombinedOutput()
+			if !strings.Contains(string(output), "::add-mask::192.0.2.1\n") || strings.Contains(string(output), "helper stdout must stay private") {
+				t.Fatalf("endpoint masks must reach the runner while helper stdout stays private: %q", output)
+			}
+			if helperExit == 0 {
+				if runErr != nil || !strings.Contains(string(output), "observer called\n") {
+					t.Fatalf("successful helper did not reach the observer: %v, %q", runErr, output)
+				}
+			} else {
+				exitErr, ok := runErr.(*exec.ExitError)
+				if !ok || exitErr.ExitCode() != 2 || !strings.Contains(string(output), "RUNTIME_HEALTH_OBSERVATION=UNVERIFIED\n") || strings.Contains(string(output), "observer called") {
+					t.Fatalf("failed helper did not stop observation with an unverified verdict: %v, %q", runErr, output)
+				}
+			}
+		})
 	}
 }

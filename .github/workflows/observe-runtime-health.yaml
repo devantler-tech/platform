@@ -86,6 +86,6 @@ jobs:
           if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
             printf '%s\n' 'RUNTIME_HEALTH_OBSERVATION=UNVERIFIED'
             exit 2
-          fi 2>"$observation_dir/endpoint.stderr"
+          fi
           unset HCLOUD_TOKEN
           "$RUNNER_TEMP/observe-runtime-health"
