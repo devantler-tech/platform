@@ -14,6 +14,8 @@ func main() {
 	switch operation {
 	case "prepare-worker":
 		authorization = authorize(os.Getenv, target)
+	case "enable-capacity":
+		authorization = authorizeCapacity(os.Getenv, os.Getenv("LONGHORN_V2_POOL"))
 	case "benchmark-v1", "benchmark-v2":
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case "inventory-replicas":
@@ -51,6 +53,13 @@ func main() {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+	if operation == "enable-capacity" {
+		if err = activateCapacityAfterBaseline(ctx, client{run: execute, context: "admin@prod"}, os.Getenv("GITHUB_SHA"), pools[os.Getenv("LONGHORN_V2_POOL")]); err != nil {
+			fmt.Fprintln(os.Stderr, "Migration capacity activation held:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	if operation == "prepare-worker" {
 		p := preparation{c: client{run: execute, context: "admin@prod"}, target: target, name: "longhorn-v2-prepare-" + target,

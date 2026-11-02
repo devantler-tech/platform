@@ -6,7 +6,15 @@ platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCS
 This tool lands in stages (platform#5655). Today it has `refresh-clients`, `prepare-worker` and the
 benchmarks. `refresh-clients` holds until the V2 migration pool is in
 `ksail.prod.yaml`, the fixed migration workers are Ready and the host huge-page
-settings are loaded. Worker preparation is below and is dormant; temporary capacity follows in its own change.
+settings are loaded. Worker preparation is below and is dormant.
+
+Select `enable-capacity`, a pool, and `enable-longhorn-migration-capacity-<pool>` to activate
+temporary storage. The whole pool is checked and pinned before any disk is enabled. Its role, server
+type, hardware and encryption must match; an existing foreign pin or disk is a hold. New pool nodes
+remain excluded by admission until explicitly enabled. The V2 pool also holds until Longhorn's V2
+data engine setting is on, because Longhorn refuses a block disk otherwise. Activation requires the
+completed, cleaned baseline from a terminal main workflow and matching permanent hardware and OS
+identities, and that baseline does not exist yet, so a dispatch today holds with no write.
 
 Dispatch only the merged workflow on `main`. Select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
