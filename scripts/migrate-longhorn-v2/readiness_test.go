@@ -66,3 +66,21 @@ func TestReadinessPassesItsDeadlineIntoCallbacks(t *testing.T) {
 		t.Fatal("bounded callback changed its parent context")
 	}
 }
+
+// A deadline can have passed before its cancellation notification is delivered.
+// Readiness authorization must follow the deadline itself in that interval.
+type delayedCancellationContext struct {
+	context.Context
+	at time.Time
+}
+
+func (c delayedCancellationContext) Deadline() (time.Time, bool) { return c.at, true }
+
+func TestReadinessRejectsAnExpiredDeadlineBeforeCancellationDelivery(t *testing.T) {
+	ctx := delayedCancellationContext{Context: context.Background(), at: time.Now().Add(-time.Second)}
+	checks := 0
+	err := waitReadyWithin(ctx, time.Minute, func(context.Context) error { checks++; return nil })
+	if !errors.Is(err, context.DeadlineExceeded) || checks != 0 {
+		t.Fatal("delayed cancellation extended expired readiness authorization")
+	}
+}

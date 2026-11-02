@@ -19,15 +19,21 @@ func waitReady(ctx context.Context, check func(context.Context) error) error {
 func waitReadyWithin(ctx context.Context, limit time.Duration, check func(context.Context) error) error {
 	deadline, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	ends, _ := deadline.Deadline()
+	hasExpired := func() bool { return deadline.Err() != nil || !time.Now().Before(ends) }
 	expired := func() error {
-		return errors.Join(errors.New("required readiness was not proven within the bounded recovery window"), deadline.Err())
+		cause := deadline.Err()
+		if cause == nil {
+			cause = context.DeadlineExceeded
+		}
+		return errors.Join(errors.New("required readiness was not proven within the bounded recovery window"), cause)
 	}
 	for {
-		if deadline.Err() != nil {
+		if hasExpired() {
 			return expired()
 		}
 		err := check(deadline)
-		if deadline.Err() != nil {
+		if hasExpired() {
 			return expired()
 		}
 		if err == nil {
@@ -36,7 +42,7 @@ func waitReadyWithin(ctx context.Context, limit time.Duration, check func(contex
 		if errors.Is(err, errReadinessTerminal) {
 			return err
 		}
-		timer := time.NewTimer(readinessPoll)
+		timer := time.NewTimer(min(readinessPoll, time.Until(ends)))
 		select {
 		case <-deadline.Done():
 			timer.Stop()
