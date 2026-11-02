@@ -20,17 +20,22 @@ for f in "${config_map}" "${policy}"; do
   }
 done
 
-# --- 1. the rule must ENFORCE, via the non-deprecated field -------------------
-action="$(yq -r '.spec.rules[] | select(.name == "declared-service-group") | .validate.failureAction // "unset"' "${policy}")"
-if [ "${action}" != "Enforce" ]; then
-  echo "::error::declared-service-group must set validate.failureAction: Enforce (found: ${action})"
+# --- 1. the policy must DENY, on creates and updates only ---------------------
+action="$(yq -r '.spec.validationActions | join(",")' "${policy}")"
+if [ "${action}" != "Deny" ]; then
+  echo "::error::the policy must set validationActions: [Deny] (found: ${action})"
   exit 1
 fi
 
-# Kyverno's v1 CRD calls the spec-level field deprecated. A new policy using it
-# would still work, but this keeps the modern form from silently regressing.
-if [ "$(yq -r '.spec.validationFailureAction // "unset"' "${policy}")" != "unset" ]; then
-  echo "::error::policy uses the deprecated spec.validationFailureAction; use validate.failureAction"
+# Deleting a route is never this policy's business (#4732). A retirement removes
+# a group from the allow-list and the last route using it in one deploy, and the
+# infrastructure layer lands first, so the route is deleted while its group is
+# already undeclared. The CLI cannot show this: a ValidatingPolicy's operations
+# only decide which requests the webhook receives.
+rules="$(yq -o=json -I=0 '[.spec.matchConstraints.resourceRules[] | {"group": .apiGroups[0], "resource": .resources[0], "operations": (.operations | sort)}]' "${policy}")"
+expected='[{"group":"gateway.networking.k8s.io","resource":"httproutes","operations":["CREATE","UPDATE"]},{"group":"networking.k8s.io","resource":"ingresses","operations":["CREATE","UPDATE"]}]'
+if [ "${rules}" != "${expected}" ]; then
+  echo "::error::the policy must match HTTPRoute and Ingress on CREATE and UPDATE only (found: ${rules})"
   exit 1
 fi
 
@@ -50,9 +55,8 @@ layout_groups="$(printf '%s\n' "${settings}" | yq -r '.layout | keys | .[]' | so
 bookmark_groups="$(printf '%s\n' "${bookmarks}" | yq -r '.[] | keys | .[0]' | sort -u)"
 service_groups="$(comm -23 <(printf '%s\n' "${layout_groups}") <(printf '%s\n' "${bookmark_groups}"))"
 
-policy_groups="$(yq -r '
-  .spec.rules[] | select(.name == "declared-service-group")
-  | .validate.deny.conditions.any[] | .value[]' "${policy}" | sort -u)"
+policy_groups="$(yq -r '.spec.variables[] | select(.name == "declaredGroups") | .expression' "${policy}" |
+  grep -o "'[^']*'" | tr -d "'" | sort -u)"
 
 # Proof-of-life: an empty side would make the comparison pass vacuously.
 for pair in "layout:${layout_groups}" "bookmark:${bookmark_groups}" "service:${service_groups}" "policy:${policy_groups}"; do
@@ -89,10 +93,9 @@ EOF
 # read the layout. That is a THIRD copy of the list, so pin it too — otherwise the
 # admission error goes stale exactly when a group is added, which is when someone
 # is most likely to be reading it.
-message="$(yq -r '
-  .spec.rules[] | select(.name == "declared-service-group") | .validate.message' "${policy}")"
+message="$(yq -r '.spec.validations[0].message' "${policy}")"
 if [ -z "${message}" ] || [ "${message}" = "null" ]; then
-  echo "::error::the rule has no validate.message"
+  echo "::error::the policy has no validation message"
   exit 1
 fi
 while IFS= read -r g; do
@@ -124,4 +127,4 @@ if [ "${business_sites}" != '[{"group":"Business & Clients"}]' ]; then
 fi
 
 count="$(printf '%s\n' "${service_groups}" | grep -c .)"
-echo "Homepage layout, Kyverno allow-list and deny message agree on ${count} service groups; rule enforces."
+echo "Homepage layout, Kyverno allow-list and deny message agree on ${count} service groups; policy denies."

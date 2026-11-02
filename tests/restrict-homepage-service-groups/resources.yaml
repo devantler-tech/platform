@@ -248,3 +248,62 @@ metadata:
 spec:
   hostnames:
     - retired-business.platform.devantler.tech
+---
+# An empty group is denied like a missing one.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: empty-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: ""
+spec:
+  hostnames:
+    - empty-group.platform.devantler.tech
+---
+# No annotations at all: the opt-in lookup must not fail on the absent map.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: no-annotations
+  namespace: whoami
+spec:
+  hostnames:
+    - no-annotations.platform.devantler.tech
+---
+# The opt-in is the exact string "true"; Homepage's own discovery reads no other.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: opt-in-wrong-case
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "True"
+    gethomepage.dev/group: Fun
+spec:
+  hostnames:
+    - opt-in-wrong-case.platform.devantler.tech
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-declared-group
+  namespace: whoami
+  annotations:
+    gethomepage.dev/enabled: "true"
+    gethomepage.dev/group: Network
+spec:
+  rules:
+    - host: ingress-declared.platform.devantler.tech
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ingress-not-opted-in
+  namespace: whoami
+  annotations:
+    gethomepage.dev/group: Fun
+spec:
+  rules:
+    - host: ingress-not-opted-in.platform.devantler.tech
