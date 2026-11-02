@@ -9,6 +9,46 @@ import (
 
 var kubernetesName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
+// Both serving profiles use the reviewed bundle. Bind runtime identities in a
+// fixed name order so source retention detects replacement and restart drift.
+func servingProfile(pod object, expectedImage string) ([2]sourceContainer, error) {
+	var binding [2]sourceContainer
+	fail := func() ([2]sourceContainer, error) { return binding, errors.New("serving-profile") }
+	containers, statuses := items(child(pod, "spec"), "containers"), items(child(pod, "status"), "containerStatuses")
+	if expectedImage == "" || len(containers) < 1 || len(containers) > 2 || len(statuses) != len(containers) {
+		return fail()
+	}
+	specs, observed := map[string]object{}, map[string]object{}
+	for _, container := range containers {
+		name := text(container, "name")
+		if (name != "private-mail" && name != "client-proxy") || specs[name] != nil || text(container, "image") != expectedImage {
+			return fail()
+		}
+		specs[name] = container
+	}
+	if specs["private-mail"] == nil {
+		return fail()
+	}
+	for _, status := range statuses {
+		name := text(status, "name")
+		if specs[name] == nil || observed[name] != nil || status["ready"] != true || text(status, "imageID") == "" {
+			return fail()
+		}
+		observed[name] = status
+	}
+	for index, name := range []string{"private-mail", "client-proxy"} {
+		if specs[name] == nil {
+			continue
+		}
+		restarts, ok := observed[name]["restartCount"].(float64)
+		if !ok || restarts < 0 || restarts > 1<<31-1 || restarts != float64(int64(restarts)) {
+			return fail()
+		}
+		binding[index] = sourceContainer{image: text(specs[name], "image"), runtime: text(observed[name], "imageID"), restarts: int64(restarts)}
+	}
+	return binding, nil
+}
+
 func proveServingSource(pod, pvc, pv object, expectedImage string) (sourceIdentity, error) {
 	pm, cm, vm := child(pod, "metadata"), child(pvc, "metadata"), child(pv, "metadata")
 	fail := func() (sourceIdentity, error) { return sourceIdentity{}, errors.New("serving-source") }
@@ -33,8 +73,8 @@ func proveServingSource(pod, pvc, pv object, expectedImage string) (sourceIdenti
 			ready = true
 		}
 	}
-	containers := items(child(pod, "spec"), "containers")
-	if !ready || text(child(pod, "status"), "phase") != "Running" || len(containers) != 1 || text(containers[0], "name") != "private-mail" || expectedImage == "" || text(containers[0], "image") != expectedImage {
+	containers, err := servingProfile(pod, expectedImage)
+	if !ready || text(child(pod, "status"), "phase") != "Running" || err != nil {
 		return fail()
 	}
 	found := false
@@ -53,7 +93,7 @@ func proveServingSource(pod, pvc, pv object, expectedImage string) (sourceIdenti
 	if reclaim != "Retain" && reclaim != "Delete" {
 		return fail()
 	}
-	return sourceIdentity{podUID: text(pm, "uid"), claimUID: text(cm, "uid"), volume: "data", pv: name, claimSize: "2Gi", pvUID: text(vm, "uid"), reclaim: reclaim}, nil
+	return sourceIdentity{podUID: text(pm, "uid"), claimUID: text(cm, "uid"), volume: "data", pv: name, claimSize: "2Gi", pvUID: text(vm, "uid"), reclaim: reclaim, containers: containers}, nil
 }
 func (d *recoveryDriver) readSource(ctx context.Context) (sourceIdentity, error) {
 	pod, found, err := d.lookup(ctx, "Pod", "private-mail-0", "private-mail")

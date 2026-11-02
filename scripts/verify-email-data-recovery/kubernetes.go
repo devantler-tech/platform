@@ -14,7 +14,7 @@ import (
 type kubernetes interface {
 	call(context.Context, []byte, ...string) ([]byte, error)
 }
-type kubectl struct{}
+type kubectl struct{ context string }
 type cappedBuffer struct {
 	bytes.Buffer
 	exceeded bool
@@ -27,10 +27,14 @@ func (b *cappedBuffer) Write(p []byte) (int, error) {
 	}
 	return b.Buffer.Write(p)
 }
-func (kubectl) call(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+func (k kubectl) call(ctx context.Context, input []byte, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context=admin@prod", "--request-timeout=20s"}, args...)...)
+	contextName := k.context
+	if contextName == "" {
+		contextName = "admin@prod"
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context=" + contextName, "--request-timeout=20s"}, args...)...)
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Stderr = io.Discard
 	var out cappedBuffer

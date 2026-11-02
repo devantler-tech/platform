@@ -11,7 +11,15 @@ type object = map[string]any
 
 const recoveryLabel = "email.devantler.tech/data-recovery"
 
-type sourceIdentity struct{ podUID, claimUID, volume, pv, claimSize, pvUID, reclaim string }
+type sourceIdentity struct {
+	podUID, claimUID, volume, pv, claimSize, pvUID, reclaim string
+	containers                                              [2]sourceContainer
+}
+
+type sourceContainer struct {
+	image, runtime string
+	restarts       int64
+}
 type messageIdentity struct{ email, blob, mailbox, messageID, body string }
 
 // Scratch receipts may coexist with the data receipt. Select one data volume;

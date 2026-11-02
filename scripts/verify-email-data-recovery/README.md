@@ -18,6 +18,10 @@ A single reviewed administration declaration supplies the exact runtime digest
 for both source validation and the recovery reader. The declared binary base must
 remain compatible with the native datastore proof; missing or changed facts stop
 preflight before the diagnostic message is created.
+Source validation accepts the administration profile and its optional named
+client proxy only when every component uses that reviewed bundle. Each component
+must be ready with a runtime image identity and a valid restart count. Both are
+bound across source-retention reads; API list ordering does not change identity.
 A namespace policy denies external ingress and egress. The API client uses only
 private Kubernetes port forwarding to IPv4 loopback and never follows redirects.
 
@@ -56,3 +60,10 @@ import, content validation and safe cleanup. Production recovery remains
 unverified until the confirmed protected workflow itself passes.
 The native restored server also uses the reader's generated capability settings,
 proving that the pinned executable can start with its required file capability.
+
+To evaluate only the source guard with an existing read-only Kubernetes context,
+set `EMAIL_RECOVERY_READONLY_SOURCE_CONTEXT` and run
+`go test -run '^TestServingSourceLiveReadOnly$' -count=1 ./scripts/verify-email-data-recovery`
+from the repository root. This opt-in reads only the fixed serving Pod, claim
+and volume twice. It does not invoke recovery, import a message or create any
+resources, and is skipped during normal tests.
