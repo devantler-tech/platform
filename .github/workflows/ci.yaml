@@ -1561,7 +1561,7 @@ jobs:
           shellcheck -x scripts/tests/test-canonical-publisher-regeneration.sh
           shellcheck scripts/run-publication-generator-tests.sh scripts/tests/test-run-publication-generator-tests.sh
           bash scripts/tests/test-run-publication-generator-tests.sh
-          bash scripts/run-publication-generator-tests.sh --jobs 2
+          bash scripts/run-publication-generator-tests.sh --jobs 4
 
   validate-consumer-discovery:
     name: 🔐 Validate Consumer Discovery Regressions
