@@ -119,9 +119,14 @@
 # Without this a tenant would simply PATCH the generated floor into a permissive
 # body, leaving the object present and the namespace open.
 #
-# Scope and carve-outs: only ksail-generated tenant namespaces (labelled
-# app.kubernetes.io/managed-by: ksail), so the 50+ platform CiliumNetworkPolicies
-# are untouched. Two applying identities are excluded — flux-system's
+# The business-site staging hold additionally reserves one exact name in its
+# exact namespace, including DELETE, without depending on namespace labels.
+# Reserved names refuse tenant UPDATE even when an old platform-authored body
+# already fails that rule for the tenant identity.
+#
+# General scope and carve-outs: generated tenant namespaces (labelled
+# app.kubernetes.io/managed-by: ksail or kro), plus the exact staging hold above,
+# so other platform CiliumNetworkPolicies are untouched. Two applying identities are excluded — flux-system's
 # kustomize-controller, which applies what the PLATFORM ships into a tenant
 # namespace, and kyverno's background-controller, which is what actually creates
 # and re-synchronises the generated default-deny, allow-dns and
@@ -165,11 +170,6 @@ spec:
     background:
       enabled: false
   matchConstraints:
-    namespaceSelector:
-      matchExpressions:
-        - key: app.kubernetes.io/managed-by
-          operator: In
-          values: [ksail, kro]
     resourceRules:
       # DELETE is here for the reserved names only: without it a tenant could
       # remove the generated floor. Every other check reads the submitted body,
@@ -179,6 +179,12 @@ spec:
         operations: ["CREATE", "UPDATE", "DELETE"]
         resources: ["ciliumnetworkpolicies"]
   matchConditions:
+    # A selector on the whole policy would make the exact rollout hold depend
+    # on mutable namespace labels. Preserve the original rule's OR scope here.
+    - name: tenant-namespace-or-exact-staging-hold
+      expression: >-
+        namespaceObject.?metadata.?labels[?'app.kubernetes.io/managed-by'].orValue('') in ['ksail', 'kro'] ||
+        (request.namespace == 'business-site' && request.name == 'business-site-staging-hold')
     - name: not-platform-applied
       expression: >-
         request.userInfo.username != 'system:serviceaccount:flux-system:kustomize-controller'
@@ -186,6 +192,9 @@ spec:
       expression: >-
         request.userInfo.username != 'system:serviceaccount:kyverno:kyverno-background-controller'
   variables:
+    - name: isTenantNamespace
+      expression: >-
+        namespaceObject.?metadata.?labels[?'app.kubernetes.io/managed-by'].orValue('') in ['ksail', 'kro']
     - name: isDelete
       expression: "request.operation == 'DELETE'"
     - name: policyName
@@ -334,6 +343,7 @@ spec:
         (!('k8sServiceSelector' in service) || service.k8sServiceSelector.?namespace.orValue('') == request.namespace))
   validations:
     - expression: >-
+        !variables.isTenantNamespace ||
         variables.fromEndpointsConstrained && variables.fromEndpointKeysAllowed &&
         variables.ingressRulesNameSources && variables.ingressOmitsNodesAndGroups &&
         variables.fromEntitiesAllowed && variables.fromCIDRSetsLiteral && variables.fromAddressesAllowed
@@ -358,6 +368,7 @@ spec:
         source removes this namespace's isolation regardless of the generated
         default-deny.
     - expression: >-
+        !variables.isTenantNamespace ||
         variables.toEndpointsConstrained && variables.toEndpointKeysAllowed &&
         variables.egressRulesNameDestinations && variables.egressOmitsNodesAndGroups &&
         variables.toFQDNsNameADestination && variables.toEntitiesAllowed &&
@@ -383,6 +394,7 @@ spec:
         Service namespace matches Services across namespaces.
         Name the destinations this workload actually needs.
     - expression: >-
+        !variables.isTenantNamespace ||
         variables.spec.?enableDefaultDeny.?ingress.orValue(true) != false &&
         variables.spec.?enableDefaultDeny.?egress.orValue(true) != false
       message: >-
@@ -390,19 +402,22 @@ spec:
         The namespace's whitelist mode is what the generated default-deny
         establishes; opting out of it is never something a tenant allow-list
         needs to do.
-    - expression: "!(variables.policyName in ['default-deny', 'allow-dns', 'allow-cnpg-operator'])"
+    - expression: >-
+        !(variables.isTenantNamespace && variables.policyName in ['default-deny', 'allow-dns', 'allow-cnpg-operator']) &&
+        !(request.namespace == 'business-site' && variables.policyName == 'business-site-staging-hold')
       message: >-
         `default-deny`, `allow-dns` and `allow-cnpg-operator` are generated and
         re-synchronised by the
         platform (cluster-policies/best-practices/add-default-deny.yaml) and
-        are reserved names. Add your allow-list as a separate policy — Cilium
+        are reserved names. `business-site-staging-hold` in `business-site`
+        is also a platform-owned rollout control. Add your allow-list as a separate policy — Cilium
         unions allow rules, so a policy of your own is additive and does not
         need to replace the floor.
     # CiliumNetworkPolicy accepts EITHER a single `spec` or a plural `specs` list.
     # Every check above reads `spec`, so a rule under `specs` is invisible to them.
     # Refusing the container is preferred over mirroring every check across both
     # paths, which re-opens the boundary the first time one is added to one path.
-    - expression: "variables.isDelete || size(object.?specs.orValue([])) == 0"
+    - expression: "!variables.isTenantNamespace || variables.isDelete || size(object.?specs.orValue([])) == 0"
       message: >-
         A tenant CiliumNetworkPolicy must carry its rules under `spec`, not the
         plural `specs` container. Every boundary check in this policy reads

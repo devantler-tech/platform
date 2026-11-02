@@ -15,11 +15,16 @@ trap 'rm -rf "${work}"' EXIT
 # second gate, asserting the exact allow/deny counts rather than an exit code.
 apply() {
   local resources="$1" values="$2" userinfo="$3"
+  apply_status=0
   kyverno apply "${policy}" \
     --resource "${resources}" \
     --values-file "${values}" \
     --userinfo "${userinfo}" \
-    --remove-color >"${output_file}" 2>&1 || true
+    --remove-color >"${output_file}" 2>&1 || apply_status=$?
+  if [[ "${apply_status}" -gt 1 ]]; then
+    cat "${output_file}" >&2
+    exit "${apply_status}"
+  fi
 }
 
 expect_summary() {
@@ -33,9 +38,10 @@ expect_summary() {
 
 # 1. The tenant fixture set: 78 boundary-dissolving shapes denied, the ordinary
 #    additive allow-lists admitted. A drop in the fail count means a shape that
-#    used to be refused now admits.
+#    used to be refused now admits. The unmanaged namespace control is an explicit
+#    match-condition skip; a namespaceSelector previously omitted its result.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 18, fail: 78, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 18, fail: 78, warn: 0, error: 0, skip: 1" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These
@@ -185,6 +191,19 @@ control() {
     + (if $object == null then {} else {object: $object} end)
     + (if $old == null then {} else {oldObject: $old} end)'
 }
+hold_control() {
+  local label="$1" actor="$2" operation="$3" namespace="$4" name="$5" expected="$6" managed="$7"
+  yq -o=json '.' "${repo_root}/k8s/providers/hetzner/apps/business-site/cilium-network-policy-staging-hold.yaml" |
+    jq -c --arg label "${label}" --arg actor "${actor}" --arg operation "${operation}" \
+      --arg namespace "${namespace}" --arg name "${name}" --arg expected "${expected}" --arg managed "${managed}" '
+      .metadata.namespace = $namespace | .metadata.name = $name | . as $resource |
+      {label: $label, policy: "restrict-tenant-network-policies", actor: $actor,
+       operation: $operation, expected: $expected,
+       namespaces: [{metadata: {name: $namespace, labels:
+         (if $managed == "" then {} else {"app.kubernetes.io/managed-by": $managed} end)}}]}
+      + (if $operation == "DELETE" then {} else {object: $resource} end)
+      + (if $operation == "CREATE" then {} else {oldObject: $resource} end)'
+}
 {
   control tenant-deletes-own-policy "${tenant}" DELETE allow-web pass
   for reserved in default-deny allow-dns allow-cnpg-operator; do
@@ -194,6 +213,28 @@ control() {
     control "flux-deletes-${reserved}" "${flux_sa}" DELETE "${reserved}" skip
   done
   control tenant-updates-own-policy "${tenant}" UPDATE allow-web pass
+  # The committed rollout hold is protected independently of namespace labels.
+  # UPDATE carries the same already-invalid old body; DELETE carries only oldObject.
+  for managed in kro ''; do
+    for operation in CREATE UPDATE DELETE; do
+      hold_control "tenant-hold-${operation}-${managed:-unlabelled}" \
+        system:serviceaccount:business-site:business-site "${operation}" \
+        business-site business-site-staging-hold fail "${managed}"
+      hold_control "spoofed-controller-hold-${operation}-${managed:-unlabelled}" \
+        system:serviceaccount:business-site:kustomize-controller "${operation}" \
+        business-site business-site-staging-hold fail "${managed}"
+      for actor in "${kyverno_sa}" "${flux_sa}"; do
+        hold_control "platform-hold-${operation}-${managed:-unlabelled}-${actor}" \
+          "${actor}" "${operation}" business-site business-site-staging-hold skip "${managed}"
+      done
+      hold_control "other-name-${operation}-${managed:-unlabelled}" "${tenant}" \
+        "${operation}" business-site tenant-allow-gateway \
+        "$(if [[ -n "${managed}" ]]; then echo pass; else echo skip; fi)" "${managed}"
+      hold_control "other-namespace-${operation}-${managed:-unlabelled}" "${tenant}" \
+        "${operation}" other-tenant business-site-staging-hold \
+        "$(if [[ -n "${managed}" ]]; then echo pass; else echo skip; fi)" "${managed}"
+    done
+  done
 } >"${work}/controls.jsonl"
 (
   cd "${repo_root}/scripts/tests/tenant-webapp-admission"

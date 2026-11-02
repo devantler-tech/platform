@@ -71,7 +71,7 @@ connection_error() {
 }
 if [[ "${verb}" == get ]]; then
   case "$1" in
-    clusterpolicy) file=policy.json ;;
+    validatingpolicy) file=policy.json ;;
     teams.team.github.m.upbound.io) file=teams.json ;;
     pods) file=pods.json ;;
     *) touch "${FIXTURES}/UNEXPECTED_READ"; exit 1 ;;
@@ -160,10 +160,9 @@ reset_fixtures() {
   rm -rf "${fixtures}"
   mkdir -p "${fixtures}/answers"
   cat >"${fixtures}/policy.json" <<'JSON'
-{"kind":"ClusterPolicy","spec":{"rules":[{"name":"teams-external-name-is-an-approved-identity",
- "validate":{"failureAction":"Enforce","deny":{"conditions":{"all":[{"key":
- "{{ contains(['admins/7000001', 'maintainers/7000002'], join('/', [name, externalName])) }}"}]}}}}]},
- "status":{"conditions":[{"type":"Ready","status":"True"}]}}
+{"kind":"ValidatingPolicy","spec":{"validationActions":["Deny"],"validations":[{"expression":
+ "name + '/' + externalName in ['admins/7000001', 'maintainers/7000002']"}]},
+ "status":{"conditionStatus":{"ready":true}}}
 JSON
   jq -n --arg a "${admins_identity}" --arg m "${maintainers_identity}" '
     def team($name; $id): {apiVersion: "team.github.m.upbound.io/v1alpha1", kind: "Team",
@@ -324,12 +323,12 @@ rm "${fixtures}/policy.json"
 precondition 'an unreadable policy'
 
 reset_fixtures
-jq '.status.conditions[0].status = "False"' "${fixtures}/policy.json" >"${fixtures}/p.json"
+jq '.status.conditionStatus.ready = false' "${fixtures}/policy.json" >"${fixtures}/p.json"
 mv "${fixtures}/p.json" "${fixtures}/policy.json"
 precondition 'a policy that is not Ready'
 
 reset_fixtures
-jq '.spec.rules[0].validate.failureAction = "Audit"' "${fixtures}/policy.json" >"${fixtures}/p.json"
+jq '.spec.validationActions = ["Audit"]' "${fixtures}/policy.json" >"${fixtures}/p.json"
 mv "${fixtures}/p.json" "${fixtures}/policy.json"
 precondition 'a policy in Audit'
 

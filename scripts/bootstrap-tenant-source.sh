@@ -98,7 +98,7 @@ canonical_upgrade_preparation() (
   set -euo pipefail
   trap - EXIT
   local upgrade_root="$REPO_ROOT" upgrade_output='' tag='' source_sha='' digest='' seen=':' option
-  local original record receipt first_snapshot second_snapshot today uid_hash snapshot_hash prepared_root prior_node
+  local original record receipt first_snapshot second_snapshot today uid_hash snapshot_hash prepared_root prior_node upgrade_approvals approvals_snapshot publisher_revision
   while [ "$#" -gt 0 ]; do
     option="$1"
     case "$seen" in *":$option:"*) return 2 ;; esac
@@ -126,6 +126,7 @@ canonical_upgrade_preparation() (
   upgrade_tenant=k8s/providers/hetzner/apps/business-site/tenant.yaml
   graph_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
   [ -z "${CANONICAL_TENANT_BINDINGS_FILE:-}" ] || return 2
+  upgrade_approvals="${CANONICAL_APPROVALS_FILE:-$upgrade_root/scripts/publish-workflow-canonical-approvals.tsv}"
   original="$(canonical_tenant_bindings "$upgrade_root")" || return 1
   record="$(printf '%s\n' "$original" | jq -cer '.bindings|select(length==1)|.[0]|select(.kind!="published-upgrade")')" || return 1
   canonical_observation_consistent "$record" "${APPROVED_IDENTITIES_FILE:-$upgrade_root/scripts/publish-workflow-approved-revisions.identities.tsv}" || return 1
@@ -134,9 +135,17 @@ canonical_upgrade_preparation() (
   discover_consumers "$upgrade_root" >/dev/null || return 1
   prepared_root="$(mktemp -d "$output_parent/.canonical-upgrade.XXXXXX")" || return 1
   trap 'rm -rf "$prepared_root"' EXIT
+  mkdir -p "$prepared_root/scripts"
+  approvals_snapshot="$prepared_root/scripts/publish-workflow-canonical-approvals.tsv"
+  [ -f "$upgrade_approvals" ] && [ ! -L "$upgrade_approvals" ] || return 1
+  # Verification and prepared discovery consume these same private bytes.
+  # -P avoids dereferencing a source replaced by a symlink during the copy.
+  cp -P "$upgrade_approvals" "$approvals_snapshot" || return 1
+  [ -f "$approvals_snapshot" ] && [ ! -L "$approvals_snapshot" ] || return 1
   kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$prepared_root/first-inventory.json" || return 1
   first_snapshot="$(canonical_source_observation "$record" "$prepared_root/first-inventory.json")" || return 1
-  receipt="$(business_site_manifest_evidence --consumer business-site --verify-only --tag "$tag" --source-sha "$source_sha" --digest "$digest")" || return 1
+  receipt="$(CANONICAL_APPROVALS_FILE="$approvals_snapshot" business_site_manifest_evidence --consumer business-site --verify-only --tag "$tag" --source-sha "$source_sha" --digest "$digest")" || return 1
+  publisher_revision="$(printf '%s\n' "$receipt" | jq -er '.publisherIdentity|split("@")[1]|select(test("^[0-9a-f]{40}$"))')" || return 1
   today="${APPROVED_REVISIONS_OBSERVED_ON:-$(date -u +%Y-%m-%d)}"
   is_date "$today" || return 1
   uid_hash="$(printf '%s' "$(printf '%s\n' "$first_snapshot" | jq -r .metadata.uid)" | shasum -a 256 | awk '{print $1}')" || return 1
@@ -152,9 +161,9 @@ canonical_upgrade_preparation() (
         callerWorkflow:$evidence.callerWorkflow,event:$evidence.event,workflowRunId:$evidence.workflowRunId,
         workflowRunAttempt:$evidence.workflowRunAttempt,verifiedOn:$date})]}' >"$prepared_root/scripts/canonical-tenant-source-bindings.json" || return 1
   cp "$upgrade_root/$graph_path" "$prepared_root/$graph_path"
-  cp "$upgrade_root/scripts/publish-workflow-canonical-approvals.tsv" "$prepared_root/scripts/"
   cp "${APPROVED_IDENTITIES_FILE:-$upgrade_root/scripts/publish-workflow-approved-revisions.identities.tsv}" "$prepared_root/scripts/"
-  UPGRADE_PREPARED_DIGEST="$digest" yq '.spec.source.digest=strenv(UPGRADE_PREPARED_DIGEST)' "$upgrade_root/$upgrade_tenant" >"$prepared_root/$upgrade_tenant" || return 1
+  UPGRADE_PREPARED_DIGEST="$digest" UPGRADE_PREPARED_PUBLISHER="$publisher_revision" \
+    yq '.spec.source.digest=strenv(UPGRADE_PREPARED_DIGEST)|.spec.source.publisherRevision=strenv(UPGRADE_PREPARED_PUBLISHER)' "$upgrade_root/$upgrade_tenant" >"$prepared_root/$upgrade_tenant" || return 1
   # The same strict reader and raw discovery used by CI must accept generated output.
   APPROVED_IDENTITIES_FILE="$prepared_root/scripts/publish-workflow-approved-revisions.identities.tsv" \
     CANONICAL_APPROVALS_FILE="$prepared_root/scripts/publish-workflow-canonical-approvals.tsv" \
@@ -162,6 +171,8 @@ canonical_upgrade_preparation() (
   kubectl --context "$PUBLISH_KUBE_CONTEXT" get ocirepositories.source.toolkit.fluxcd.io -A -o json >"$prepared_root/second-inventory.json" || return 1
   second_snapshot="$(canonical_source_observation "$record" "$prepared_root/second-inventory.json")" || return 1
   [ "$first_snapshot" = "$second_snapshot" ] || return 1
+  [ -f "$upgrade_approvals" ] && [ ! -L "$upgrade_approvals" ] || return 1
+  cmp "$upgrade_approvals" "$approvals_snapshot" || return 1
   [ "$(canonical_tenant_bindings "$upgrade_root")" = "$original" ] || return 1
   [ "$(yq -o=json -I=0 '.' "$upgrade_root/$upgrade_tenant" | jq -ces 'select(length==1)|.[0]')" = "$prior_node" ] || return 1
   canonical_tenant_projection "$upgrade_root" "$prior_node" >/dev/null || return 1
