@@ -76,7 +76,7 @@ helm.toolkit.fluxcd.io/v2|HelmRelease|kube-system|tetragon 5781451a70a8dee38ed71
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|alertmanager be4e40e80964e37494dde9c1df0662a58b9b8976d2a57b9efed9c65aebdb9611
 
-helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape 6a352e2f5cb05f56d3558dcb9a11b1a56275b70c62b508f67e9c5366c79ce390
+helm.toolkit.fluxcd.io/v2|HelmRelease|kubescape|kubescape d173c38693c99ad1683f4408829c54293fef90f92b1d2a7d855590e692b65667
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|kyverno|kyverno b910afb7d7bcbb10e14430ec948732454c95e649bcdb71d16a3855fea07e7fbe
 
