@@ -1,5 +1,8 @@
 name: Measure CI Runtime
 on:
+  pull_request:
+    branches: [main]
+    paths: [.github/workflows/measure-ci-runtime.yaml]
   workflow_dispatch:
     inputs:
       confirmation:
@@ -41,16 +44,26 @@ jobs:
       BENCHMARK_SUITE: ${{ matrix.suite }}
       BENCHMARK_WORKERS: ${{ matrix.workers }}
     steps:
-      - name: Require the confirmed default-branch experiment
+      - name: Require an approved measurement invocation
         env:
           CONFIRMATION: ${{ inputs.confirmation }}
         run: |
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] ||
-             [ "$GITHUB_REF" != refs/heads/main ] ||
-             [ "$CONFIRMATION" != 'measure current main' ]; then
-            echo '::error::Run this experiment on main with the stated confirmation'
-            exit 1
-          fi
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              if [ "$GITHUB_REF" != refs/heads/main ] ||
+                 [ "$CONFIRMATION" != 'measure current main' ]; then
+                echo '::error::Run this experiment on main with the stated confirmation'
+                exit 1
+              fi
+              ;;
+            pull_request)
+              if [ "${GITHUB_BASE_REF:-}" != main ]; then
+                echo '::error::Benchmark workflow validation requires a main-bound PR'
+                exit 1
+              fi
+              ;;
+            *) echo '::error::Unsupported measurement event'; exit 1 ;;
+          esac
           case "$BENCHMARK_SUITE:$BENCHMARK_WORKERS" in
             go:4|go:8|publication:2|publication:4) ;;
             *) echo '::error::Unknown fixed benchmark arm'; exit 1 ;;

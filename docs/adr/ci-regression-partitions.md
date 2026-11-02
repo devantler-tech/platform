@@ -60,8 +60,10 @@ production verifier and all fixture assertions and real deadlines stay intact.
 
 ## Evidence and alternatives
 
-`Measure CI Runtime` is a manual comparison on one immutable dispatch revision.
+`Measure CI Runtime` compares settings on one immutable event revision.
 Run `measure-ci-runtime.yaml` on `main` with confirmation `measure current main`.
+Changes to that workflow also run the comparison as PR validation, before it is
+promoted. Both entrypoints check out the event's exact commit.
 It runs the existing complete Go suite with four and eight test workers, then
 the complete nine publication fixtures with two and four workers. Only one
 standard runner is used at a time; each arm has its own checkout and Go setup
