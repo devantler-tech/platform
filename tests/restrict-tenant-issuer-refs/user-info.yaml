@@ -4,7 +4,8 @@ kind: UserInfo
 metadata:
   name: tenant-author
 userInfo:
-  username: system:serviceaccount:wedding-app:wedding-app
+  username: system:serviceaccount:tenant-ns:tenant
   groups:
     - system:serviceaccounts
+    - system:serviceaccounts:tenant-ns
     - system:authenticated

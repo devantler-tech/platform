@@ -127,7 +127,7 @@ jobs:
         id: scan
         continue-on-error: true
         timeout-minutes: 30
-        uses: devantler-tech/.github/.github/actions/govulncheck@5b5777ddfcb1f0273eeece79eebf6ad01a5f3df9 # v19.0.1
+        uses: devantler-tech/.github/.github/actions/govulncheck@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
         with:
           work-dir: ${{ matrix.directory }}
           go-version-file: ${{ matrix.directory }}/go.mod
