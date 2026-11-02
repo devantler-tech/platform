@@ -27,6 +27,7 @@ type r2Settings struct {
 type r2Credentials struct {
 	AccessKeyID     string `json:"accessKeyId"`
 	SecretAccessKey string `json:"secretAccessKey"`
+	SessionToken    string `json:"sessionToken,omitempty"`
 }
 
 type r2ObjectAPI interface {
@@ -69,13 +70,16 @@ func newR2JournalStore(facts r2Settings, credential r2Credentials) (*r2JournalSt
 			return nil, errStore
 		}
 	}
+	if credential.SessionToken != "" && (len(credential.SessionToken) < 16 || len(credential.SessionToken) > 6144 || !regexp.MustCompile(`^[A-Za-z0-9/+=_.-]+$`).MatchString(credential.SessionToken)) {
+		return nil, errStore
+	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
 	transport.DisableCompression = true
 	client := s3.New(s3.Options{
 		Region: "auto", BaseEndpoint: aws.String("https://" + facts.AccountID + ".r2.cloudflarestorage.com"), UsePathStyle: true,
 		Credentials: aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
-			return aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey, Source: "explicit-private-file"}, nil
+			return aws.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey, SessionToken: credential.SessionToken, Source: "explicit-private-file"}, nil
 		}),
 		HTTPClient: &http.Client{Transport: transport, Timeout: 10 * time.Second, CheckRedirect: noRedirect},
 		Retryer:    aws.NopRetryer{}, RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired, ResponseChecksumValidation: aws.ResponseChecksumValidationWhenRequired,

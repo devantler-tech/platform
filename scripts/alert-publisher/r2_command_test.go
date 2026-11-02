@@ -205,7 +205,7 @@ func TestR2PrivateInputRefusesANonRegularFileWithoutWaitingForAWriter(t *testing
 	done := make(chan error, 1)
 	go func() {
 		var value r2Settings
-		done <- privateR2JSON(path, &value, "accountId", "bucket", "key", "instance")
+		done <- privateR2JSON(path, &value, []string{"accountId", "bucket", "key", "instance"})
 	}()
 	select {
 	case err := <-done:

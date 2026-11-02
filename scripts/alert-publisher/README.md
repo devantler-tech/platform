@@ -99,7 +99,14 @@ hex characters; the bucket is a 3–63 character lower-case bucket name without
 dots. The object key is a lower-case relative path ending in `.json`, using
 letters, digits, slashes, underscores and hyphens. The explicit instance name
 uses 1–64 lower-case letters, digits and hyphens, starting with a letter or digit.
-Credentials have exactly `accessKeyId` and `secretAccessKey`. Both files are
+Credentials have `accessKeyId` and `secretAccessKey`, with an optional
+`sessionToken` for explicitly supplied short-lived R2 sessions. When present,
+the session token must be a nonempty 16–6144 character string containing only
+letters, digits, slash, plus, equals, underscore, dot or hyphen. The SDK signs
+and sends that exact token with each storage request; ambient session tokens
+are never loaded. Expired or refused credentials fail the storage operation
+without automatic refresh, retry or a fallback credential. This command does
+not mint, renew or persist provider credentials. Both files are
 bounded at 8 KiB, regular, and inaccessible to other users; write permission for
 the projected credential's group is refused. Unknown, duplicate, missing or
 malformed facts are refused without echoing them. Operator facts never come
