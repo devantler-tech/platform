@@ -4,6 +4,18 @@ Run **Verify Email Provider SMTP** on reviewed `main`, with confirmation
 `verify-email-provider-smtp`, once the Email serving image has converged.
 Do not rerun a failed attempt before investigating its fixed failure stage.
 
+The source check accepts the administration profile and its named client proxy.
+Every container must use the reviewed serving image and be ready, with an image
+identity and valid restart count. All identities are bound before and after the
+probe; API list order is immaterial. Unknown or duplicate components are refused.
+
+For an operator's source-only evaluation, set
+`EMAIL_PROVIDER_READONLY_SOURCE_CONTEXT` to an existing read-only production
+context and run `go test -run TestServingSourceLiveReadOnly -count=1
+./scripts/verify-email-provider` from the repository root. This reads the serving
+pod, controller and node twice. It creates no resource and performs no SMTP
+session; ordinary test runs skip it.
+
 The workflow holds the production deployment lock. It reads the ready Email
 pod, its StatefulSet and its provider node, then schedules one restricted,
 credential-free diagnostic pod on that same node. A temporary network policy
