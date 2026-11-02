@@ -190,8 +190,10 @@ func readRuleBaseline(ctx context.Context, read readFunc, s *snapshot) error {
 		Items *[]struct {
 			Spec struct {
 				Rules []struct {
-					ID      *string `json:"id"`
-					Enabled *bool   `json:"enabled"`
+					ID      *string  `json:"id"`
+					Name    *string  `json:"name"`
+					Tags    []string `json:"tags"`
+					Enabled *bool    `json:"enabled"`
 				} `json:"rules"`
 			} `json:"spec"`
 		} `json:"items"`
@@ -201,19 +203,28 @@ func readRuleBaseline(ctx context.Context, read readFunc, s *snapshot) error {
 		return errEvidence
 	}
 	enabled := false
+	portForwardNames := map[string]bool{}
+	portForwardTags := map[string]bool{}
+	otherEnabledNames := map[string]bool{}
 	s.RuleObjects = len(*rules.Items)
 	for _, object := range *rules.Items {
 		if object.Spec.Rules == nil {
 			return errEvidence
 		}
 		for _, rule := range object.Spec.Rules {
-			if rule.ID == nil || *rule.ID == "" || rule.Enabled == nil {
+			if rule.ID == nil || *rule.ID == "" || rule.Name == nil || rule.Enabled == nil {
 				return errEvidence
 			}
 			if *rule.Enabled {
 				s.EnabledRules++
 				if *rule.ID == "R2001" {
 					enabled = true
+					portForwardNames[*rule.Name] = true
+					for _, tag := range rule.Tags {
+						portForwardTags[tag] = true
+					}
+				} else {
+					otherEnabledNames[*rule.Name] = true
 				}
 			}
 		}
@@ -222,7 +233,9 @@ func readRuleBaseline(ctx context.Context, read readFunc, s *snapshot) error {
 		Items *[]struct {
 			Spec struct {
 				Rules []struct {
-					ID string `json:"ruleID"`
+					ID   string   `json:"ruleID"`
+					Name string   `json:"ruleName"`
+					Tags []string `json:"ruleTags"`
 				} `json:"rules"`
 			} `json:"spec"`
 		} `json:"items"`
@@ -238,8 +251,26 @@ func readRuleBaseline(ctx context.Context, read readFunc, s *snapshot) error {
 		}
 		for _, rule := range binding.Spec.Rules {
 			s.BoundEntries++
-			if enabled && rule.ID == "R2001" {
-				s.PortForwardEnabledAndBound = true
+			// The released node-agent resolves ID first, then exact name, then any
+			// matching tag. An invalid earlier selector cannot fall through.
+			switch {
+			case rule.ID != "":
+				if enabled && rule.ID == "R2001" {
+					s.PortForwardEnabledAndBound = true
+				}
+			case rule.Name != "":
+				if portForwardNames[rule.Name] && otherEnabledNames[rule.Name] {
+					return errEvidence
+				}
+				if portForwardNames[rule.Name] {
+					s.PortForwardEnabledAndBound = true
+				}
+			default:
+				for _, tag := range rule.Tags {
+					if portForwardTags[tag] {
+						s.PortForwardEnabledAndBound = true
+					}
+				}
 			}
 		}
 	}

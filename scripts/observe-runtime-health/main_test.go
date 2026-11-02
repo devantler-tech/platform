@@ -56,7 +56,7 @@ func TestFindingsAreNotDiscarded(t *testing.T) {
 		case strings.Contains(path, "/alerts?"):
 			return `{"context":{"status":{"status":"ok"},"alerts":{}},"data":{"total":4,"firing":3,"resolved":0,"alerts":[{}]}}`
 		case path == rulesPath:
-			return `{"items":[{"spec":{"rules":[{"id":"R2001","enabled":true}]}}]}`
+			return `{"items":[{"spec":{"rules":[{"id":"R2001","name":"Port forward to pod","enabled":true}]}}]}`
 		case path == bindingsPath:
 			return `{"items":[{"spec":{"rules":[{"ruleID":"R2001"}]}}]}`
 		default:
@@ -172,6 +172,37 @@ func TestOtherSurfacesRefuseIncompleteEvidence(t *testing.T) {
 }
 
 type onlyReader struct{ io.Reader }
+
+func TestRuleNamesResolveExactly(t *testing.T) {
+	for _, tc := range []struct {
+		name, reference string
+		want            bool
+	}{
+		{"stable ID", `{"ruleID":"R2001"}`, true},
+		{"exact name", `{"ruleName":"Port forward to pod"}`, true},
+		{"chart mismatch", `{"ruleName":"Port forward"}`, false},
+		{"unknown name", `{"ruleName":"other"}`, false},
+		{"ID precedes name", `{"ruleID":"R0000","ruleName":"Port forward to pod"}`, false},
+		{"name precedes tags", `{"ruleName":"other","ruleTags":["k8s"]}`, false},
+		{"matching tag", `{"ruleTags":["other","k8s"]}`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			reader := fixtureReader(func(path, body string) string {
+				if path == rulesPath {
+					return `{"items":[{"spec":{"rules":[{"id":"R2001","name":"Port forward to pod","tags":["k8s"],"enabled":true}]}}]}`
+				}
+				if path == bindingsPath {
+					return `{"items":[{"spec":{"rules":[` + tc.reference + `]}}]}`
+				}
+				return body
+			})
+			s, err := observe(context.Background(), reader, time.Now())
+			if err != nil || s.PortForwardEnabledAndBound != tc.want {
+				t.Fatalf("resolved=%v want=%v err=%v", s.PortForwardEnabledAndBound, tc.want, err)
+			}
+		})
+	}
+}
 
 func TestNativeResponseSizeIsBounded(t *testing.T) {
 	var output boundedOutput

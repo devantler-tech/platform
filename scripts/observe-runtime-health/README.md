@@ -23,7 +23,11 @@ collection. The unresolved total includes the dedicated query's complete count,
 independently of its one-entry detail limit. Dismissed risks remain in the total,
 and unknown statuses are reported separately.
 
-The rule readback proves object presence and explicit ID references only. It
+Rule counts cover the Kubescape namespace; binding counts cover cluster-scoped
+bindings. References resolve by ID, exact name or tags, in the released
+node-agent's precedence order. The chart's mismatched `Port forward` name does
+not resolve to the `Port forward to pod` definition. Ambiguous names are unknown.
+The rule readback proves object presence and references only. It
 does not trigger a detector or prove delivery, namespace coverage or complete
 runtime security. `full_platform_acceptance_verified` deliberately remains false:
 this diagnostic is one evidence source, never a platform all-clear.
