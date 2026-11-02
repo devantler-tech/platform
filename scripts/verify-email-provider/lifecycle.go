@@ -84,6 +84,46 @@ func (r *runner) read(ctx context.Context, args ...string) (object, error) {
 	return o, nil
 }
 
+// Accept the administration profile and its named client proxy. Bind every
+// observed container image and restart count so a sidecar change cannot pass as
+// an unchanged source. API list order is not part of a container's identity.
+func servingContainers(pod object, expectedImage string) ([]any, error) {
+	containers, statuses := rows(pod, "spec", "containers"), rows(pod, "status", "containerStatuses")
+	if len(containers) < 1 || len(containers) > 2 || len(statuses) != len(containers) {
+		return nil, fmt.Errorf("source-image")
+	}
+	specs, observed := map[string]object{}, map[string]object{}
+	for _, container := range containers {
+		name := str(container, "name")
+		if (name != "private-mail" && name != "client-proxy") || specs[name] != nil || str(container, "image") != expectedImage {
+			return nil, fmt.Errorf("source-image")
+		}
+		specs[name] = container
+	}
+	if specs["private-mail"] == nil {
+		return nil, fmt.Errorf("source-image")
+	}
+	for _, status := range statuses {
+		name := str(status, "name")
+		if specs[name] == nil || observed[name] != nil || at(status, "ready") != true || str(status, "imageID") == "" {
+			return nil, fmt.Errorf("source-image")
+		}
+		observed[name] = status
+	}
+	var binding []any
+	for _, name := range []string{"private-mail", "client-proxy"} {
+		if specs[name] == nil {
+			continue
+		}
+		restarts, ok := at(observed[name], "restartCount").(float64)
+		if !ok || restarts < 0 {
+			return nil, fmt.Errorf("source-restarts")
+		}
+		binding = append(binding, []any{name, str(specs[name], "image"), str(observed[name], "imageID"), restarts})
+	}
+	return binding, nil
+}
+
 // Bind the probe to the same ready pod, controller and provider node before and
 // after. This deliberately proves no stable address, reverse DNS or delivery.
 func (r *runner) source(ctx context.Context) (string, string, error) {
@@ -91,13 +131,9 @@ func (r *runner) source(ctx context.Context) (string, string, error) {
 	if err != nil || !ready(pod) || str(pod, "status", "phase") != "Running" || str(pod, "metadata", "uid") == "" || at(pod, "metadata", "deletionTimestamp") != nil {
 		return "", "", fmt.Errorf("source-pod")
 	}
-	containers, statuses := rows(pod, "spec", "containers"), rows(pod, "status", "containerStatuses")
-	if len(containers) != 1 || len(statuses) != 1 || str(containers[0], "name") != "private-mail" || str(containers[0], "image") != r.expectedImage || str(statuses[0], "name") != "private-mail" || at(statuses[0], "ready") != true || str(statuses[0], "imageID") == "" {
-		return "", "", fmt.Errorf("source-image")
-	}
-	restarts, ok := at(statuses[0], "restartCount").(float64)
-	if !ok || restarts < 0 {
-		return "", "", fmt.Errorf("source-restarts")
+	containers, err := servingContainers(pod, r.expectedImage)
+	if err != nil {
+		return "", "", err
 	}
 	sts, err := r.read(ctx, "get", "statefulset", "private-mail", "-n", "private-mail", "-o", "json")
 	if err != nil || str(sts, "metadata", "uid") == "" || at(sts, "spec", "replicas") != float64(1) || at(sts, "status", "readyReplicas") != float64(1) {
@@ -115,7 +151,7 @@ func (r *runner) source(ctx context.Context) (string, string, error) {
 	if err != nil || !ready(node) || str(node, "metadata", "uid") == "" || str(node, "metadata", "labels", "kubernetes.io/hostname") != name || !regexp.MustCompile(`^hcloud://[1-9][0-9]*$`).MatchString(str(node, "spec", "providerID")) {
 		return "", "", fmt.Errorf("source-node")
 	}
-	binding := []any{str(pod, "metadata", "uid"), str(sts, "metadata", "uid"), name, str(node, "metadata", "uid"), str(node, "spec", "providerID"), str(statuses[0], "imageID"), restarts}
+	binding := []any{str(pod, "metadata", "uid"), str(sts, "metadata", "uid"), name, str(node, "metadata", "uid"), str(node, "spec", "providerID"), containers}
 	return name, string(marshal(binding)), nil
 }
 

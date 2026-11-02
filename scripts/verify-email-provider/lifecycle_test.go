@@ -63,9 +63,56 @@ func TestFailedSessionKeepsOnlyBoundedNumericDiagnostics(t *testing.T) {
 	}
 }
 
+func TestProviderProofWithClientProxy(t *testing.T) {
+	for _, profile := range []string{"paired", "reordered", "unknown-container", "duplicate-container", "duplicate-status", "proxy-not-ready", "proxy-no-id", "proxy-status-missing", "main-absent", "unmatched-status", "proxy-malformed-restarts", "proxy-negative-restarts", "proxy-unreviewed-image", "proxy-restarted", "proxy-replaced", "proxy-image-drift"} {
+		t.Run(profile, func(t *testing.T) {
+			f := &providerFixture{t: t, profile: profile, live: map[string]map[string]any{}}
+			r := runner{k: f, run: "123", sha: strings.Repeat("a", 40), expectedImage: "reviewed-image@sha256:" + strings.Repeat("b", 64), receipt: filepath.Join(t.TempDir(), "ownership.json"), pause: func(context.Context, time.Duration) error { return nil }}
+			err := r.execute(context.Background())
+			wantSuccess := profile == "paired" || profile == "reordered"
+			if (err == nil) != wantSuccess {
+				t.Fatalf("profile %s: %v", profile, err)
+			}
+			afterProbe := profile == "proxy-restarted" || profile == "proxy-replaced" || profile == "proxy-image-drift"
+			if !wantSuccess && !afterProbe && f.creates != 0 {
+				t.Fatal("invalid serving profile wrote to production")
+			}
+			if (wantSuccess || afterProbe) && (f.creates != 2 || f.deletes != 2 || len(f.live) != 0) {
+				t.Fatal("known-identity probe was not cleaned up")
+			}
+		})
+	}
+}
+
+// Explicit operator evaluation of source selection only: the production
+// lifecycle is never called and the client performs only the source's GETs.
+func TestServingSourceLiveReadOnly(t *testing.T) {
+	ctxName := os.Getenv("EMAIL_PROVIDER_READONLY_SOURCE_CONTEXT")
+	if ctxName == "" {
+		t.Skip("operator-only source observation")
+	}
+	t.Chdir(filepath.Join("..", ".."))
+	image, err := sourceImage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := runner{k: kubectl{context: ctxName}, expectedImage: image}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	_, before, err := r.source(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, after, err := r.source(ctx)
+	if err != nil || before == "" || before != after {
+		t.Fatal("serving source changed or was unverified")
+	}
+}
+
 type providerFixture struct {
 	t                       *testing.T
 	fault                   string
+	profile                 string
 	reads, creates, deletes int
 	live                    map[string]map[string]any
 }
@@ -84,7 +131,56 @@ func (f *providerFixture) call(_ context.Context, input []byte, args ...string) 
 		if f.fault == "source-restarted" && f.reads > 1 {
 			restarts = 1
 		}
-		return encode(map[string]any{"metadata": map[string]any{"name": "private-mail-0", "uid": "source-uid", "ownerReferences": []any{map[string]any{"kind": "StatefulSet", "name": "private-mail", "uid": "sts-uid", "controller": true}}}, "spec": map[string]any{"nodeName": "node-a", "containers": []any{map[string]any{"name": "private-mail", "image": image}}}, "status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}, "containerStatuses": []any{map[string]any{"name": "private-mail", "image": image, "imageID": "containerd://sha256:" + strings.Repeat("b", 64), "ready": true, "restartCount": restarts}}}})
+		containers := []any{map[string]any{"name": "private-mail", "image": image}}
+		statuses := []any{map[string]any{"name": "private-mail", "image": image, "imageID": "containerd://sha256:" + strings.Repeat("b", 64), "ready": true, "restartCount": restarts}}
+		if f.profile != "" {
+			proxy := map[string]any{"name": "client-proxy", "image": "reviewed-image@sha256:" + strings.Repeat("b", 64)}
+			status := map[string]any{"name": "client-proxy", "imageID": "containerd://sha256:" + strings.Repeat("c", 64), "ready": true, "restartCount": 0}
+			switch f.profile {
+			case "unknown-container":
+				proxy["name"] = "unknown"
+			case "duplicate-container":
+				proxy["name"] = "private-mail"
+			case "duplicate-status":
+				status["name"] = "private-mail"
+			case "proxy-not-ready":
+				status["ready"] = false
+			case "proxy-no-id":
+				status["imageID"] = ""
+			case "unmatched-status":
+				status["name"] = "unknown"
+			case "proxy-malformed-restarts":
+				status["restartCount"] = "1"
+			case "proxy-negative-restarts":
+				status["restartCount"] = -1
+			case "proxy-unreviewed-image":
+				proxy["image"] = "other-image"
+			case "proxy-restarted":
+				if f.reads > 1 {
+					status["restartCount"] = 1
+				}
+			case "proxy-replaced":
+				if f.reads > 1 {
+					status["imageID"] = "containerd://sha256:" + strings.Repeat("d", 64)
+				}
+			case "proxy-image-drift":
+				if f.reads > 1 {
+					proxy["image"] = "other-proxy"
+				}
+			}
+			containers = append(containers, proxy)
+			if f.profile != "proxy-status-missing" {
+				statuses = append(statuses, status)
+			}
+			if f.profile == "main-absent" {
+				containers, statuses = []any{proxy}, []any{status}
+			}
+			if f.profile == "reordered" && f.reads > 1 {
+				containers[0], containers[1] = containers[1], containers[0]
+				statuses[0], statuses[1] = statuses[1], statuses[0]
+			}
+		}
+		return encode(map[string]any{"metadata": map[string]any{"name": "private-mail-0", "uid": "source-uid", "ownerReferences": []any{map[string]any{"kind": "StatefulSet", "name": "private-mail", "uid": "sts-uid", "controller": true}}}, "spec": map[string]any{"nodeName": "node-a", "containers": containers}, "status": map[string]any{"phase": "Running", "conditions": []any{map[string]any{"type": "Ready", "status": "True"}}, "containerStatuses": statuses}})
 	}
 	if a == "get statefulset private-mail -n private-mail -o json" {
 		return encode(map[string]any{"metadata": map[string]any{"uid": "sts-uid"}, "spec": map[string]any{"replicas": 1}, "status": map[string]any{"readyReplicas": 1}})
