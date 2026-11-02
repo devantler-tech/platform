@@ -1,11 +1,11 @@
 # Privileged RBAC enforcement
 
-The `audit-privileged-rbac` Kyverno ClusterPolicy rejects Role and ClusterRole
+The `audit-privileged-rbac` Kyverno ValidatingPolicy rejects Role and ClusterRole
 rules that grant wildcard administration, RBAC `bind`/`escalate`, or identity
 impersonation. Wildcard verbs, resources and API groups are evaluated as effective
 permissions, so renaming a chart's administrative role does not hide it.
 
-The policy runs in **Enforce** mode, set on its rule. A create or update that
+The policy runs in **Deny** mode. A create or update that
 introduces such a grant is refused at admission, whatever renders it, including
 charts that Flux renders in-cluster and CI never sees. Background scanning stays on,
 so violations appear in PolicyReports as `fail`. A `resourceNames` restriction is
@@ -20,11 +20,12 @@ Crossplane, KRO, KSail operator, Longhorn and Velero controllers. Adding one
 means changing the policy and the pinned list in
 `scripts/tests/test-audit-privileged-rbac.sh` in the same reviewed change.
 
-The exclusions are a false precondition keyed on each object's
-`kind|namespace|name`, not a rule `exclude`. The background scan therefore records
-an excluded role as a current `skip`, so a role that was accepted after it was first
-reported shows as accepted instead of keeping its old warning. See
-[Policy reports](policy-reports.md) for why an `exclude` leaves that warning behind.
+The exclusions are part of the validation, keyed on each object's
+`kind|namespace|name`, not a `matchConditions` entry. The background scan therefore
+records an excluded role as a current `pass`, so a role that was accepted after it was
+first reported shows as accepted instead of keeping its old failure. See
+[Policy reports](policy-reports.md) for why a false `matchConditions` entry leaves that
+failure behind.
 
 The excluded names come from the charts and releases that create those roles. A
 chart change that renames one of them, or adds a new privileged role, is refused at

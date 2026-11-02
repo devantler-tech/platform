@@ -4,7 +4,7 @@
   "restrict-arc-openbao-listener/public-listener-settings-only": "Enforce",
   "require-baseline-workers-for-hcloud-volumes": "Enforce",
   "report-hcloud-claim-lookup-failure": "Audit",
-  "audit-privileged-rbac/privileged-rules": "Enforce",
+  "audit-privileged-rbac": "Enforce",
   "disallow-latest-tag": "Audit",
   "restrict-github-team-external-identity/teammemberships-external-name-matches-declared-member": "Enforce",
   "restrict-github-team-external-identity/teamrepositories-external-name-matches-declared-grant": "Enforce",
