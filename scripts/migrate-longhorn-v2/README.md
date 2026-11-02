@@ -73,6 +73,22 @@ Each Kubernetes patch tests the observed UID and resource version, and Pod evict
 carry a UID precondition. Talos reads must report the same hardware UUID as the selected
 Kubernetes worker before host configuration can be trusted or a host command can run.
 
+## Benchmark retirement safeguards
+
+Recovery builds per-run admission policies from all seven original resource UID receipts. One
+protects the retained PV's original claim and backend handle; one keeps the original backend
+detached after its Kubernetes status clears naturally; and one keeps the recorded engines,
+replicas, frontends and attachment objects stopped under a fresh recovery checkpoint. These
+policies permit normal stopped-state and finalizer updates, and reject replacement identities,
+new attachments, restarts and changes to the original ownership chain.
+
+The builders return unbound policies. A recovery workflow still needs complete dependency
+inventories, activation proof on every serving API server, UID/resource-version checkpoint
+writes, and direct instance-manager observations under stable controller and process identities.
+The instance-manager registry is an observation of native runtime state, not an independent
+disk or kernel audit. The builders and stopped-state checks alone do not authorize backend
+retirement. Complete that recovery path before dispatching a benchmark.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
