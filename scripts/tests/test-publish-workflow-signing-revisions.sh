@@ -2138,7 +2138,10 @@ fi
 # `grep -q` exits at its first match, so under pipefail a writer still printing into it can fail on
 # the closed pipe and turn a found value into "not found". That made the identity floor refuse a
 # consumer it had discovered, at random, in CI (`printf: Broken pipe` beside "not discovered: aws").
-early_exit_pipes="$(grep -nE '\|[[:space:]]*grep[[:space:]]+-[a-zA-Z]*q' "$SCRIPT" || true)"
+early_exit_pipes="$(
+  awk '/\|[[:space:]]*$/ { printf "%s ", $0; next } { print }' "$SCRIPT" |
+    grep -nE '\|[[:space:]]*grep([[:space:]]+-[^[:space:]]+)*[[:space:]]+(-[a-zA-Z]*q|--quiet)' || true
+)"
 if [ -z "$early_exit_pipes" ]; then
   pass 'the report never pipes into an early-exiting grep'
 else
