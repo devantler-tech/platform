@@ -15,7 +15,8 @@
 #     needs the room it schedules onto that warm node instantly, and the
 #     autoscaler boots a replacement in the background to refill the buffer.
 #
-# Net steady state is unchanged from the balloon pattern (baseline workers + one
+# Net steady state outside migration windows (replicas below) is unchanged from
+# the balloon pattern (baseline workers + one
 # warm spare node, always ready) — but with NO real pause pods, so nothing ever
 # sits Pending. That is why this lives in the health-gated `infrastructure`
 # layer (wait: true) like any other resource, instead of the dedicated
@@ -37,9 +38,11 @@ metadata:
     app.kubernetes.io/component: cluster-buffer
     app.kubernetes.io/part-of: platform
 spec:
-  # One warm spare node. Raise to widen the buffer (N chunks ~= N warm nodes),
-  # bounded by ksail.prod.yaml's maxNodesTotal: 9.
-  replicas: 1
+  # Temporary during #5582: the fixed migration workers supply spare capacity.
+  # Release ordinary virtual demand so its compute node can retire and leave
+  # room for the V2 worker within the existing nine-node ceiling.
+  # Restore the normal one-chunk buffer when migration capacity is retired.
+  replicas: 0
   # Shape of one chunk — see pod-template.yaml (same namespace).
   podTemplateRef:
     name: overprovisioning

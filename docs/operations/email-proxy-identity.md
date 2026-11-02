@@ -1,8 +1,8 @@
 # Prepared Email client transport
 
-The optional `private-mail-proxy-identity` bundle prepares a maintained Caddy
-adapter for the existing Email administration route. It remains absent from
-production. Activation and availability proof belong to #5448 and #5412.
+The `private-mail-proxy-identity` bundle runs a maintained Caddy adapter for the
+existing Email administration route. Production selects it. Production identity
+and availability proof belong to #5448 and #5412.
 
 The Gateway replaces the client address header with connection metadata. The
 adapter accepts one canonical address from that trusted path, removes HTTP

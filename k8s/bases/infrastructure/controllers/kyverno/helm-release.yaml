@@ -165,6 +165,13 @@ spec:
       # preserve availability while the PDB limits voluntary disruption to one
       # replica. The 1Gi limit above is the OOM safety boundary.
       container:
+        # Policy validation reads API discovery inside its webhook call, which
+        # the API server gives 10 seconds. At the default 100 requests a second
+        # this client queued for about 20 seconds during a deploy, and the
+        # timeout evicted a healthy change from the merge queue (#5692).
+        extraArgs:
+          clientRateLimitQPS: 300
+          clientRateLimitBurst: 600
         resources:
           requests:
             cpu: 100m

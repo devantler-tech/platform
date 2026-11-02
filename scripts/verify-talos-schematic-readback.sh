@@ -50,7 +50,31 @@ jq -e 'all(.[]; (.name | test("^autoscale-longhorn-v[12]$")) and
   exit 1
 }
 
+# A failed worker preparation deliberately keeps its cordon and journal for
+# explicit recovery. Accept exactly that cordon, so a deploy that may carry the
+# recovery fix is not evicted by it. Any other cordon still fails this gate.
+journal_held_worker() {
+  local nodes_json=$1 candidates worker journal_name record
+  candidates=$(jq -c '[.items[] | select(.spec.unschedulable == true)]' <<<"$nodes_json") || return 0
+  [[ $(jq 'length' <<<"$candidates") == 1 ]] || return 0
+  worker=$(jq -r '.[0].metadata.name' <<<"$candidates")
+  [[ "$worker" =~ ^prod-worker-[1-9][0-9]*$ ]] || return 0
+  journal_name="longhorn-v2-prepare-$worker"
+  jq -e --arg journal "$journal_name" '.[0].metadata.annotations["storage.platform.devantler.tech/longhorn-v2-preparation"] == $journal' \
+    <<<"$candidates" >/dev/null || return 0
+  record=$("$kubectl_bin" --context "$kube_context" --request-timeout=15s \
+    get configmap "$journal_name" --namespace=longhorn-system -o json 2>/dev/null) || return 0
+  jq -e --arg worker "$worker" --argjson candidates "$candidates" '
+    (.data.record | fromjson) as $journal |
+    $journal.schema == 1 and $journal.target == $worker and
+    $journal.nodeUID == $candidates[0].metadata.uid and
+    ($journal.phase == "evacuating" or $journal.phase == "draining" or $journal.phase == "reset-requested")
+  ' <<<"$record" >/dev/null 2>&1 || return 0
+  printf '%s' "$worker"
+}
+
 deadline_epoch=$(( $(date +%s) + max_seconds ))
+held_worker=''
 last_nodes_json=''
 for ((attempt = 1; attempt <= max_attempts; attempt++)); do
   # Cluster Autoscaler may register a replacement before its 2–3 minute
@@ -59,12 +83,13 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
   if nodes_json=$("$kubectl_bin" --context "$kube_context" \
     --request-timeout=15s get nodes -o json 2>/dev/null); then
     last_nodes_json=$nodes_json
+    held_worker=$(journal_held_worker "$nodes_json")
     if jq -e \
       --arg schematic "$expected_schematic" \
       --arg os_image "Talos ($expected_version)" \
       --argjson control_planes "$expected_control_planes" \
       --argjson workers "$expected_workers" \
-      --argjson pools "$expected_migration_pools" '
+      --argjson pools "$expected_migration_pools" --arg held_worker "$held_worker" '
         .items as $nodes |
         (.items | type) == "array" and
         ([.items[] | select(.metadata.name | startswith("prod-control-plane-"))] | length) == $control_planes and
@@ -81,12 +106,15 @@ for ((attempt = 1; attempt <= max_attempts; attempt++)); do
         all(.items[];
           .metadata.annotations["extensions.talos.dev/schematic"] == $schematic and
           .status.nodeInfo.osImage == $os_image and
-          (.spec.unschedulable != true) and
+          (.spec.unschedulable != true or .metadata.name == $held_worker) and
           any(.status.conditions[]; .type == "Ready" and .status == "True")
         )
       ' <<<"$nodes_json" >/dev/null 2>&1; then
       printf 'PASS: all Talos nodes run %s with schematic %s and are Ready/schedulable\n' \
         "$expected_version" "$expected_schematic"
+      if [[ -n "$held_worker" ]]; then
+        printf '::warning::HELD: %s stays cordoned by its Longhorn V2 preparation journal; recover it before the next preparation\n' "$held_worker"
+      fi
       exit 0
     fi
   fi

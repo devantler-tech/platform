@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -65,5 +66,17 @@ func TestCapacityActivationBindsPoolIdentityAndCurrentHardware(t *testing.T) {
 				t.Fatal("unproven migration-capacity identity accepted")
 			}
 		})
+	}
+}
+
+// main reads this before any preparation step, so a dispatch holds with no write
+// until the V2 pool lands. Whoever adds that pool replaces this test on purpose.
+func TestPreparationStaysDormantUntilTheV2PoolLands(t *testing.T) {
+	config, err := os.ReadFile("../../ksail.prod.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = configuredMigrationPools(config); err == nil {
+		t.Fatal("the reviewed configuration now resolves both pools; re-prove what a dispatch can reach")
 	}
 }

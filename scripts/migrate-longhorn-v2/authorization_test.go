@@ -48,3 +48,47 @@ func TestBenchmarkAuthorizationDoesNotAuthorizeOtherMigrationWrites(t *testing.T
 		}
 	}
 }
+
+func TestMutationRequiresTheReviewedNodePreparationDispatch(t *testing.T) {
+	env := dispatchFixture()
+	if err := authorize(func(k string) string { return env[k] }, "prod-worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	for key, wrong := range map[string]string{
+		"GITHUB_ACTIONS": "false", "GITHUB_EVENT_NAME": "pull_request", "GITHUB_REF": "refs/heads/candidate",
+		"GITHUB_REPOSITORY": "other/platform", "GITHUB_RUN_ID": "", "GITHUB_RUN_ATTEMPT": "2",
+		"GITHUB_SHA": "1234", "RUNNER_ENVIRONMENT": "self-hosted", "GITHUB_WORKFLOW_REF": "other-workflow",
+		"LONGHORN_V2_CONFIRM": "", "LONGHORN_V2_NODE": "prod-worker-2",
+		"LONGHORN_V2_OPERATION": "enable-capacity",
+	} {
+		t.Run(key, func(t *testing.T) {
+			e := dispatchFixture()
+			e[key] = wrong
+			if err := authorize(func(k string) string { return e[k] }, "prod-worker-1"); err == nil {
+				t.Fatal("foreign or unconfirmed dispatch may mutate production")
+			}
+		})
+	}
+	if err := authorize(func(string) string { return "" }, "prod-worker-1"); err == nil {
+		t.Fatal("local execution may mutate production")
+	}
+	env["LONGHORN_V2_NODE"] = "prod-control-plane-1"
+	if err := authorize(func(k string) string { return env[k] }, "prod-control-plane-1"); err == nil {
+		t.Fatal("control plane reset was authorized")
+	}
+}
+
+func TestConfirmationMustNameTheSelectedWorker(t *testing.T) {
+	worker := dispatchFixture()
+	worker["LONGHORN_V2_NODE"] = "prod-worker-2"
+	for _, confirmation := range []string{"prepare-longhorn-v2-prod-worker-1", "prepare-longhorn-v2-node"} {
+		worker["LONGHORN_V2_CONFIRM"] = confirmation
+		if err := authorize(func(k string) string { return worker[k] }, "prod-worker-2"); err == nil {
+			t.Fatalf("%s confirmed a reset of prod-worker-2", confirmation)
+		}
+	}
+	worker["LONGHORN_V2_CONFIRM"] = "prepare-longhorn-v2-prod-worker-2"
+	if err := authorize(func(k string) string { return worker[k] }, "prod-worker-2"); err != nil {
+		t.Fatal(err)
+	}
+}

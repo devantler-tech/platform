@@ -22,6 +22,12 @@ that could evade that check. No global webhook selector is widened. The
 `components/physical-peer-fence` component binds them, and the Hetzner Cilium
 layer selects it.
 
+The Hetzner Gateway reserves its plain HTTP listener for routes in its own
+namespace, where the backend-free redirect lives. Application routes use HTTPS;
+the Umami Canary explicitly selects that listener. This keeps tenant HTTP
+backends outside the unfenced plain HTTP chain. The active transport profile
+requires that rendered and live namespace boundary as well as the TLS fence.
+
 ## Prepare or replace the binding
 
 From an isolated checkout of the reviewed Platform revision, run:
@@ -64,11 +70,11 @@ match reviewed source and the validating policy's current generation to have
 completed type checking without warnings.
 
 Receiver operations also require a read-only observation of the load balancer's
-effective disabled transport. The Service annotation and `ipMode` are controller
+effective declared transport. The Service annotation and `ipMode` are controller
 intent, so they do not establish that the provider has applied the setting.
 Using the existing protected deployment credential, the helper discovers the
 unique load balancer labelled for the bound Service UID and reads it again by
-its returned identifier. Both services must explicitly report PROXY disabled,
+its returned identifier. Both services must explicitly report the selected PROXY mode,
 with the bound public/private endpoints, destination NodePorts and private server
 targets. Missing, partial, changed or unreadable facts fail before a receiver
 operation. A second provider observation brackets a successful operation and
@@ -79,8 +85,10 @@ The helper sends only GET requests to the fixed provider API origin, refuses
 redirects and incomplete inventory, and prints categorical errors. Neither
 credentials nor provider response content enter its output. Selected-fence
 installation, unselected restoration and deployed public verification use this
-same gate. This adds no transport activation or asynchronous recovery support;
-an effective active setting still refuses the disabled baseline.
+same gate. Provider and Cilium receiver settings must be explicit and agree in
+the rendered source before any of these commands reaches a live operation.
+An enabled profile additionally requires the selected fence. The current
+production source continues to select disabled transport.
 
 Before restoring disabled state, the helper checks the generated listener and
 both bindings. An active PROXY listener, unknown owner, foreign binding or ambiguous configuration
@@ -92,8 +100,8 @@ lost acknowledgements; a replacement or uncertain outcome never reports success.
 This mutation runs only in the reviewed protected deployment, never directly from
 an agent session.
 
-Both deployment steps follow what the checked-out Hetzner infrastructure layer
-renders. While it renders neither binding, they restore and verify the disabled
+All three deployment commands follow what the checked-out Hetzner infrastructure
+and controller layers render. While they render neither binding, they restore and verify the disabled
 baseline. When it renders both, from any level of the overlay, `restore-disabled` writes nothing
 and reports `GATEWAY_RECEIVER_DISABLED=NOT-APPLICABLE fence=selected`, and `verify`
 requires both reviewed bindings, the ownership marker and the exact peer on every
@@ -109,10 +117,23 @@ layer. It then writes only the ownership marker, conditional on the observed UID
 resource version, and admission installs the fence on that write. That also repairs
 a listener that lost the fence, and rewrites one bound to an earlier peer. It writes
 nothing when the fence is already current or the source leaves it unselected, and
-refuses a foreign owner, an unexpected peer shape or an active PROXY listener. After a write it
+refuses a foreign owner or an unexpected peer shape. A disabled-profile write
+still refuses an active PROXY listener. After a confirmed write it
 makes 40 public connections, which shows the fence does not refuse the load balancer
-but cannot show that a listener took it. Every step still refuses an active PROXY
-listener, so turning the transport on needs its own change to this helper.
+but cannot show that a listener took it. A lost write response does not skip the
+settling period or samples when readback confirms that the fence was installed.
+
+For a selected fence, application first observes bounded transport convergence
+without changing provider settings, receiver filters or bindings. It recognizes
+only known disabled and fully fenced active states. Missing or stale Gateway
+readiness stays unverified until current Accepted and Programmed conditions
+arrive; malformed conditions fail immediately. Source, provider, listener and
+binding identities must remain stable throughout the observation and subsequent
+operation. Unknown or replaced resources fail closed.
+
+An enabled source profile verifies the existing fully fenced active listener
+without a receiver write and makes the same 40 public connections. This prepares
+verification for a future reviewed activation; it does not select that activation.
 
 The verify step needs Flux to converge first. A fence that refuses public traffic could
 be what stops convergence, and Flux prunes the bindings without removing the fields
@@ -138,11 +159,11 @@ reachable, unfenced, with the same failure until rebound.
 Prepare the replacement binding and merge it. When Flux can converge, its deployment
 applies the new peer with no need to unselect first.
 
-**Known limit.** If public traffic being refused also stops Flux from converging, these
-merges cannot finish on their own. The failed run of a revert removes the fence, but
-that run is evicted from the queue, and the recovery from main, which still selects the
-fence, installs it again. Whether Flux depends on public routes in this way has not been
-measured. If it happens, the maintainer has to land the revert outside the queue.
+**Known limit.** This late observer does not independently reconcile provider and
+receiver declarations. A deployment-order dependency that prevents those
+declarations from converging remains a separate blocker for activation. Prove
+their independent convergence and recovery through the protected pipeline before
+selecting the enabled profile; preserving the selected fence is not that proof.
 
 With the component unselected, the following read-only check requires both bindings
 absent and the generated listener free of this fence and PROXY filters:
@@ -162,11 +183,29 @@ directly to the gateway Service, and the Envoy no-chain counter supports the fen
 covers no PROXY metadata, client identity or Email behaviour.
 
 Before activation, #5448 still requires native allowed and denied peer probes,
-forged PROXY metadata rejection, controller revision stability, the real Email
+forged PROXY metadata rejection, actual HTTP/HTTPS route attachment boundaries,
+controller revision stability, the real Email
 path, authenticated administration and observed recovery. Preserve all stored
 access rules throughout that work.
 
-References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.38.6/api-v3/config/listener/v3/listener_components.proto),
+The native admission package includes a repeatable packet-boundary proof:
+
+```sh
+GATEWAY_RECEIVER_NATIVE_TEST=1 go -C scripts/tests/gateway-receiver-admission test -run '^TestNativeEnvoyPhysicalPeerBoundary$' -count=1 -v
+```
+
+It requires Docker and runs the pinned Cilium Envoy build in an unprivileged,
+read-only container with external networking disabled. The real admission
+expressions generate the listener. Correct peers must work, while another
+physical peer claiming the allowed address must fail for both PROXY versions
+and every TLS chain. An unfenced positive control and an intentionally incorrect
+logical-address matcher prove that the refusal is caused by the physical fence.
+The rendered Cilium chart and forwarded-address settings must match the audited
+fixture. CI enables this proof explicitly; missing container capability fails it.
+This checks the proxy boundary, while live controller attachment, provider state
+and recovery convergence retain their separate acceptance gates.
+
+References: [Envoy's physical peer match](https://www.envoyproxy.io/docs/envoy/v1.39.5/api-v3/config/listener/v3/listener_components.proto),
 [native Kubernetes mutation policies](https://kubernetes.io/docs/reference/access-authn-authz/mutating-admission-policy/),
-[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.3/operator/pkg/model/translation/envoy_listener.go),
+[the pinned Cilium Gateway translator](https://github.com/cilium/cilium/blob/v1.20.4/operator/pkg/model/translation/envoy_listener.go),
 [the provider controller's status construction](https://github.com/hetznercloud/hcloud-cloud-controller-manager/blob/v1.39.1/hcloud/load_balancers.go).

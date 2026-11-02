@@ -13,7 +13,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const helmReleasePath = "k8s/bases/infrastructure/controllers/ksail-operator/helm-release.yaml"
+const helmReleasePath = "k8s/bases/infrastructure/ksail-operator/helm-release.yaml"
 
 type container struct {
 	Name string `yaml:"name"`

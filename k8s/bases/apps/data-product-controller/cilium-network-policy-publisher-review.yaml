@@ -1,14 +1,14 @@
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
 metadata:
-  name: allow-data-product-controller-ui-kit
+  name: allow-data-product-controller-publisher-review
   namespace: data-product-controller
 spec:
   endpointSelector:
     matchLabels:
       k8s:app.kubernetes.io/name: data-product-controller
       k8s:app.kubernetes.io/instance: data-product-controller
-      k8s:app.kubernetes.io/component: ui-kit
+      k8s:app.kubernetes.io/component: publisher-review
   ingress:
     # The public host serves packaged assets without outbound connections.
     - fromEntities:

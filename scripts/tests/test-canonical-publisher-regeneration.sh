@@ -14,6 +14,8 @@ esac
 test_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 test_work="$(mktemp -d)"
 trap 'rm -rf "$test_work"' EXIT
+# Name any otherwise silent stop; the test still fails with the same result.
+trap 'echo "Fixture stopped at line $LINENO (exit $?)" >&2' ERR
 # shellcheck source=scripts/tests/lib/legacy-consumer-fixture.sh
 source "$test_root/scripts/tests/lib/legacy-consumer-fixture.sh"
 build_legacy_consumer_fixture "$test_root" "$test_work/consumers"
@@ -127,6 +129,12 @@ for variation in incomplete-page ambiguous-family mismatched-ref unknown-family;
 done
 
 cp "$test_work/seed.tsv" "$test_work/approved.tsv"
+assert_not_approved_refusal() {
+  grep -q 'canonical publisher.*not approved' "$test_work/refusal" && return 0
+  echo 'Generator refused for another reason:' >&2
+  cat "$test_work/refusal" >&2
+  return 1
+}
 run_generator() {
   APPROVED_REVISIONS_FILE="$test_work/approved.tsv" \
   APPROVED_REVISION_OBSERVER="$test_work/observe" APPROVED_REVISION_PIN_RESOLVER="$test_work/pin" \
@@ -189,7 +197,7 @@ export CANONICAL_PIN_SHA=7777777777777777777777777777777777777777
 if run_generator >"$test_work/refusal" 2>&1; then
   echo 'Unapproved canonical current pin was admitted' >&2; exit 1
 fi
-grep -q 'canonical publisher.*not approved' "$test_work/refusal"
+assert_not_approved_refusal
 cmp "$test_work/seed.tsv" "$test_work/approved.tsv"
 cmp "$test_work/identities-before" "$test_work/approved.identities.tsv"
 unset CANONICAL_PIN_SHA
@@ -199,7 +207,7 @@ export CANONICAL_TEST_SHA=7777777777777777777777777777777777777777
 if run_generator >"$test_work/refusal" 2>&1; then
   echo 'Unapproved canonical signer was admitted' >&2; exit 1
 fi
-grep -q 'canonical publisher.*not approved' "$test_work/refusal"
+assert_not_approved_refusal
 cmp "$test_work/seed.tsv" "$test_work/approved.tsv"
 cmp "$test_work/identities-before" "$test_work/approved.identities.tsv"
 printf 'PASS: %s canonical signing identity, retained compatibility, idempotence, every approved pin and unapproved refusal\n' "$CANONICAL_TEST_WORKFLOW"

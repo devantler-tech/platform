@@ -22,6 +22,8 @@ spec:
         - name: configure
           image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
           imagePullPolicy: IfNotPresent
+          # Rollback overrides a retained encrypted activation setting.
+          args: ["--proxy-client-ip=false"]
           resources:
             requests:
               cpu: 50m

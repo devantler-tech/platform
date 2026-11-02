@@ -19,6 +19,8 @@ resources:
   - cluster-issuers/
   #
   # --- Opt-in (enable together with the matching controller) --------------
+  # KSail (pair with controllers/ksail-operator prerequisites; local OIDC stays off):
+  #   - ../../../bases/infrastructure/ksail-operator/
   # Observability (needs controllers/coroot):
   #   - ../../../bases/infrastructure/coroot/
   # Progressive delivery (needs controllers/flagger):

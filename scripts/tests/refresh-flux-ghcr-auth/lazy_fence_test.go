@@ -1,6 +1,8 @@
 package refreshfluxghcrauth
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -227,6 +229,104 @@ func TestFallThroughNamesTheCheckThatEndedTheNoWritePath(t *testing.T) {
 			result := f.runHelperPreservingClusterState(validConfig(), nil, overrides)
 			requireSuccessResult(t, result)
 			requireContains(t, result.stdout, "GHCR no-write path ended at check="+tc.stage+";")
+		})
+	}
+}
+
+// ksailRootDockerConfig builds the root Secret payload the way KSail writes it on
+// every cluster update (buildDockerConfigJSON): username, password and auth.
+func ksailRootDockerConfig(t *testing.T, username, password, auth string) string {
+	t.Helper()
+	config, err := json.Marshal(map[string]any{
+		"auths": map[string]any{
+			"ghcr.io": map[string]string{"username": username, "password": password, "auth": auth},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal KSail docker config: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(config)
+}
+
+func setRootSecretValue(t *testing.T, f *fixture, encoded string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(f.syncStateDir, "root-secret-value"), []byte(encoded), 0o600); err != nil {
+		t.Fatalf("model the live root Secret: %v", err)
+	}
+}
+
+// KSail rewrites the root Secret on cluster update from the same Git/SOPS
+// credential, adding the fields its own format always has, so the second reassert
+// of a deploy could never take the no-write path (#5650).
+func TestRootSecretInKSailFormOfTheSameCredentialStaysOnTheNoWritePath(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+	requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+	restarts := persistedClusterMarker(t, f, "flux-controller-restart-count")
+	auth := base64.StdEncoding.EncodeToString([]byte("devantler:fixture-secret-token"))
+	setRootSecretValue(t, f, ksailRootDockerConfig(t, "devantler", "fixture-secret-token", auth))
+
+	result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+	requireSuccessResult(t, result)
+	requireContains(t, result.stdout, "no fence or write was needed")
+	if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got != restarts {
+		t.Errorf("KSail form of the same credential restarted kustomize-controller: %s -> %s", restarts, got)
+	}
+	requireNotContains(t, result.stdout+result.stderr, "fixture-secret-token")
+}
+
+// Any other payload is still a mismatch, in KSail's format or not.
+func TestRootSecretThatIsNotTheSameCredentialTakesTheFullFence(t *testing.T) {
+	t.Parallel()
+	goodAuth := base64.StdEncoding.EncodeToString([]byte("devantler:fixture-secret-token"))
+	for name, build := range map[string]func(t *testing.T) string{
+		"other token in KSail form": func(t *testing.T) string {
+			auth := base64.StdEncoding.EncodeToString([]byte("devantler:other-token"))
+			return ksailRootDockerConfig(t, "devantler", "other-token", auth)
+		},
+		"other username in KSail form": func(t *testing.T) string {
+			auth := base64.StdEncoding.EncodeToString([]byte("other-user:fixture-secret-token"))
+			return ksailRootDockerConfig(t, "other-user", "fixture-secret-token", auth)
+		},
+		"auth field disagrees with the password": func(t *testing.T) string {
+			auth := base64.StdEncoding.EncodeToString([]byte("devantler:other-token"))
+			return ksailRootDockerConfig(t, "devantler", "fixture-secret-token", auth)
+		},
+		"auth field empty": func(t *testing.T) string {
+			return ksailRootDockerConfig(t, "devantler", "fixture-secret-token", "")
+		},
+		"extra registry beside the KSail entry": func(t *testing.T) string {
+			config, err := json.Marshal(map[string]any{"auths": map[string]any{
+				"ghcr.io": map[string]string{
+					"username": "devantler", "password": "fixture-secret-token", "auth": goodAuth,
+				},
+				"registry.example": map[string]string{"auth": goodAuth},
+			}})
+			if err != nil {
+				t.Fatalf("marshal docker config: %v", err)
+			}
+			return base64.StdEncoding.EncodeToString(config)
+		},
+		"unparsable payload": func(_ *testing.T) string {
+			return base64.StdEncoding.EncodeToString([]byte("not json"))
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t)
+			current := map[string]string{"FAKE_TALOS_NODES_CURRENT": "true"}
+			requireSuccessResult(t, f.runHelper(validConfig(), nil, current))
+			restarts := persistedClusterMarker(t, f, "flux-controller-restart-count")
+			setRootSecretValue(t, f, build(t))
+
+			result := f.runHelperPreservingClusterState(validConfig(), nil, current)
+			requireSuccessResult(t, result)
+			requireContains(t, result.stdout, "GHCR no-write path ended at check=root-auth;")
+			requireNotContains(t, result.stdout, "no fence or write was needed")
+			if got := persistedClusterMarker(t, f, "flux-controller-restart-count"); got == restarts {
+				t.Errorf("%s took the no-write path", name)
+			}
 		})
 	}
 }

@@ -27,6 +27,10 @@ spec:
         name: crossplane
   # https://github.com/crossplane/crossplane/blob/main/cluster/charts/crossplane/values.yaml
   values:
+    # Only these emptyDir caches may move during ordinary autoscaler eviction.
+    # PDB, ownership and scheduling checks still apply (#5582).
+    customAnnotations:
+      cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: package-cache,function-cache
     provider:
       # Providers in this cluster declare SafeStart, so their ManagedResource-
       # Definitions install Inactive. An empty list here stops the chart from
