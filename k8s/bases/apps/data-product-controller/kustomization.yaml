@@ -13,12 +13,12 @@ resources:
   - cilium-network-policy-harbour.yaml
   - http-route-registry.yaml
   - http-route-harbour.yaml
-  - deployment-ui-kit.yaml
-  - service-ui-kit.yaml
-  - service-account-ui-kit.yaml
-  - pod-disruption-budget-ui-kit.yaml
-  - cilium-network-policy-ui-kit.yaml
-  - http-route-ui-kit.yaml
+  - deployment-publisher-review.yaml
+  - service-publisher-review.yaml
+  - service-account-publisher-review.yaml
+  - pod-disruption-budget-publisher-review.yaml
+  - cilium-network-policy-publisher-review.yaml
+  - http-route-publisher-review.yaml
   - deployment-contract-probe.yaml
   - pod-disruption-budget-contract-probe.yaml
   - service-account-contract-probe.yaml

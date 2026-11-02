@@ -196,6 +196,32 @@ pass "normal autosuppressor lifecycle output is structured as info"
 pass "Coroot alert and application UI counters are emitted as structured evidence"
 pass "Coroot risk counters and bounded offender identities omit raw payloads"
 
+# An aggregate Node event has no individual name. It must remain visible
+# without aborting the matcher before a later, fully reviewed Node event.
+aggregate_node_dir="$(setup_scenario aggregate-node false)"
+jq '.data.alerts += [
+  {id:"aggregate-node",suppressed:false,resolved_at:null,
+   rule_id:"kubernetes-events",application_id:":::",opened_at:1,updated_at:1,
+   details:[
+     {name:"Labels",value:"cluster=\"platform\"\nkind=\"Node\"\nreason=\"NodeNotReady\"\nsource=\"node-controller\""},
+     {name:"Event message",value:"Node is not ready"}
+   ]},
+  {id:"reviewed-node",suppressed:false,resolved_at:null,
+   rule_id:"kubernetes-events",application_id:":::",opened_at:1,updated_at:1,
+   details:[
+     {name:"Labels",value:"cluster=\"platform\"\nkind=\"Node\"\nname=\"autoscale-fixture\"\nreason=\"Rebooted\"\nsource=\"kubelet\""},
+     {name:"Event message",value:"Node autoscale-fixture has been rebooted, boot id: 11111111-1111-1111-1111-111111111111"}
+   ]}
+]' "${aggregate_node_dir}/alerts.json" >"${aggregate_node_dir}/aggregate-alerts.json"
+mv "${aggregate_node_dir}/aggregate-alerts.json" "${aggregate_node_dir}/alerts.json"
+run_scenario "${aggregate_node_dir}" >"${aggregate_node_dir}/output" 2>"${aggregate_node_dir}/errors"
+[ ! -s "${aggregate_node_dir}/errors" ] ||
+  fail "an aggregate Node event without a name produced a parser error"
+jq -e '.ids | sort == ["kubelet-probe-noise","reviewed-node"]' \
+  "${aggregate_node_dir}/suppressed.json" >/dev/null ||
+  fail "an aggregate Node event was hidden or prevented a later reviewed match"
+pass "aggregate Node alerts remain visible without blocking later reviewed matches"
+
 invalid_state_dir="$(setup_scenario invalid-state false)"
 cat >"${invalid_state_dir}/applications.json" <<'JSON'
 {"context":{"alerts":{"critical":"0","warning":0}},"data":{"applications":[]}}

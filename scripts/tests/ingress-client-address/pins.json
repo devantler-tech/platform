@@ -1,4 +1,4 @@
 {
-  "cilium": "1.20.3",
-  "image": "quay.io/cilium/cilium-envoy@sha256:d6c8c0c91954d1885026d82a31b341f37dcd34a4b127fdaf1587e43ddd224cef"
+  "cilium": "1.20.4",
+  "image": "quay.io/cilium/cilium-envoy@sha256:547ab45f6092f681d9f54f3be9fa8fb1e705c9c5dc2df388efe3a52aa6965629"
 }

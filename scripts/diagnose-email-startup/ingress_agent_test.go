@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const ingressAgentSample = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"cilium-abcde","namespace":"kube-system","uid":"11111111-1111-1111-1111-111111111111","resourceVersion":"10","labels":{"k8s-app":"cilium"},"ownerReferences":[{"apiVersion":"apps/v1","kind":"DaemonSet","name":"cilium","uid":"22222222-2222-2222-2222-222222222222","controller":true}]},"spec":{"nodeName":"worker-1","serviceAccountName":"cilium","hostNetwork":true,"containers":[{"name":"cilium-agent","image":"quay.io/cilium/cilium:v1.20.3@sha256:95cfa5c2427cc6b452c00908778d0566311f572589284af949d06a013db1a849"}]},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","imageID":"quay.io/cilium/cilium@sha256:95cfa5c2427cc6b452c00908778d0566311f572589284af949d06a013db1a849","containerID":"containerd://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ready":true,"restartCount":0,"state":{"running":{"startedAt":"2026-10-28T00:00:00Z"}}}]}}]}`
+const ingressAgentSample = `{"apiVersion":"v1","kind":"PodList","items":[{"metadata":{"name":"cilium-abcde","namespace":"kube-system","uid":"11111111-1111-1111-1111-111111111111","resourceVersion":"10","labels":{"k8s-app":"cilium"},"ownerReferences":[{"apiVersion":"apps/v1","kind":"DaemonSet","name":"cilium","uid":"22222222-2222-2222-2222-222222222222","controller":true}]},"spec":{"nodeName":"worker-1","serviceAccountName":"cilium","hostNetwork":true,"containers":[{"name":"cilium-agent","image":"quay.io/cilium/cilium:v1.20.4@sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e"}]},"status":{"phase":"Running","containerStatuses":[{"name":"cilium-agent","imageID":"quay.io/cilium/cilium@sha256:20fe92e4c86641233a450098c158d2d29085f3419931ab6bf681d2485dedf16e","containerID":"containerd://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ready":true,"restartCount":0,"state":{"running":{"startedAt":"2026-10-28T00:00:00Z"}}}]}}]}`
 
 // An unrelated, replaced or unready privileged container must never become an
 // execution target merely because it carries the controller's label.
@@ -44,7 +44,7 @@ func TestIngressAgentRequiresOwnedPinnedRunningContainer(t *testing.T) {
 		{"wrong namespace", strings.Replace(ingressAgentSample, `"namespace":"kube-system"`, `"namespace":"other"`, 1), false},
 		{"wrong service account", strings.Replace(ingressAgentSample, `"serviceAccountName":"cilium"`, `"serviceAccountName":"other"`, 1), false},
 		{"not host network", strings.Replace(ingressAgentSample, `"hostNetwork":true`, `"hostNetwork":false`, 1), false},
-		{"unexpected image", strings.Replace(ingressAgentSample, "v1.20.3@sha256:", "v1.20.4@sha256:", 1), false},
+		{"unexpected image", strings.Replace(ingressAgentSample, "v1.20.4@sha256:", "v1.20.5@sha256:", 1), false},
 		{"unready", strings.Replace(ingressAgentSample, `"ready":true`, `"ready":false`, 1), false},
 		{"not running", strings.Replace(ingressAgentSample, `"running":`, `"terminated":`, 1), false},
 		{"negative restart", strings.Replace(ingressAgentSample, `"restartCount":0`, `"restartCount":-1`, 1), false},

@@ -2,27 +2,29 @@
 
 # Ingress client-address transport
 
-The current transport baseline explicitly disables PROXY protocol on both sides:
-`gatewayAPI.enableProxyProtocol: false` in the Cilium Helm values and
-`load-balancer.hetzner.cloud/uses-proxyprotocol: "false"` on the Hetzner Gateway.
+Production enables PROXY protocol on both sides:
+`gatewayAPI.enableProxyProtocol: true` in the Hetzner Cilium patch and
+`load-balancer.hetzner.cloud/uses-proxyprotocol: "true"` on the Hetzner Gateway.
 The Gateway controller propagates the provider annotation to its generated
-LoadBalancer Service. These settings retain the existing transport behavior.
+LoadBalancer Service. The base stays `false`, because a local cluster has no
+load balancer sending PROXY traffic.
+
+The rollback baseline explicitly disables both settings. Until the two sides
+match, every route on the Gateway can fail, because Cilium's listeners accept
+only PROXY traffic once its setting is on.
 
 Keep the provider annotation explicit during rollback. Omitting it can leave a
 previously enabled setting active, as recorded in the upstream
 [controller issue](https://github.com/hetznercloud/hcloud-cloud-controller-manager/issues/876).
 A receiver restored to disabled mode must not receive a leftover PROXY prefix.
 
-Before a coordinated forwarding change, merge this disabled baseline, verify
-the generated Service annotation and the provider's effective setting, and
-confirm the receiver configuration and existing public routes. A later change
-must preserve the private backend boundary and prove client identity with
-native traffic, including rejection of forged metadata and untrusted direct
-connections. Rollback restores both explicit disabled values and verifies the
-effective provider setting and public routes again; deleting the annotation is
-not a recovery procedure.
+A later change must preserve the private backend boundary and prove client
+identity with native traffic, including rejection of forged metadata and
+untrusted direct connections. Rollback restores both explicit disabled values
+and verifies the effective provider setting and public routes again; deleting
+the annotation is not a recovery procedure.
 
-This baseline does not establish client-address preservation or Email
+These settings alone do not establish client-address preservation or Email
 availability. Those acceptance checks remain tracked in
 [#5448](https://github.com/devantler-tech/platform/issues/5448) and
 [#5412](https://github.com/devantler-tech/platform/issues/5412).

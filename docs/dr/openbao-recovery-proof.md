@@ -87,3 +87,54 @@ fresh bootstrap bundle only for an explicitly declared new installation, never
 while an existing installation awaits restoration. A fresh production bootstrap
 must restore the retained-custody overlay before routine operation. Missing
 records or regenerated caches alone never establish fresh-install intent.
+
+## Preparing the Email storage key
+
+`Prepare Email Storage Key` is a protected first-attempt, main-only operation,
+confirmed with `prepare-email-storage-key`. Before creating anything, it repeats
+an independent restore of the three canonical Email accounts and compares those complete values
+with their fixed infrastructure destinations. The private connection files stay
+outside the restore sandbox. A fresh key uses 256 bits of system randomness and
+a create-only KV-v2 write. Existing valid keys are preserved. Deleted history,
+conflicts, changed account values, uncertain writes and changed key readback
+refuse success without retrying or replacing the key.
+
+Its `EMAIL_STORAGE_KEY=PREPARED` receipt explicitly says `recovered=false`.
+Preparation does not select or migrate an Email volume. The service key lives in
+OpenBao, while the existing approved independent recovery credentials recover
+OpenBao itself. No per-client certificate or new host-only recovery copy is
+created.
+
+After the configured off-cluster backup contains the new record, confirm
+`verify-email-storage-key-recovery` in `Verify Email Storage Key Recovery`.
+Its fixed collection and restoration modes include all three canonical accounts
+and `infrastructure/email/storage`, whose sole field is the exact 64-character
+hexadecimal passphrase. The normal three-account and legacy modes remain
+separate. Native Linux tests restore all four synthetic records with the pinned
+server and refuse an altered storage passphrase, corrupt snapshot, wrong unseal
+key or wrong custody scope.
+
+Only the actual independent result
+`OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.6.3` clears this key's recovery
+prerequisite. A prepared key, a recent snapshot missing the key, a skipped native
+test or an offline fixture is insufficient. Encrypted-volume canary, data
+migration, restoration and activation remain separate reviewed operations; keep
+the current mailbox volume until those checks and rollback are proven.
+
+### Refresh the durable snapshot after custody changes
+
+`Refresh Email Recovery Backup` is a confirmed, first-attempt main-only operation
+with confirmation `refresh-email-recovery-backup`. It starts one run of the
+current reviewed daily snapshot template, retaining its CronJob controller owner
+and its existing service account, recovery volume and off-cluster mirror. It does
+not change the schedule, retention, account credentials or storage key. An active
+run, unexpected template, changed source, uncertain creation or replacement Job
+refuses a completion claim; the operation never deletes uncertain resources.
+
+Run it after the canonical credential copy and again after storage-key
+preparation. A completed snapshot and mirror is still `restore=UNVERIFIED`:
+follow it with `Verify OpenBao Backup Recovery` for the three canonical records,
+or `Verify Email Storage Key Recovery` for all four records after key preparation.
+Only the corresponding independent restore clears recovery. The temporary
+backup uses the daily template's existing bounded deadline and normal CronJob
+history management.

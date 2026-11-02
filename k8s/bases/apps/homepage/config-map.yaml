@@ -47,6 +47,7 @@ data:
     # painted from custom.css below; cardBlur is omitted because there is
     # no underlying image for backdrop-filter to blur.
     headerStyle: clean
+    fullWidth: true
     statusStyle: dot
     iconStyle: gradient
     hideVersion: true
@@ -81,13 +82,15 @@ data:
     # — and note tenant repositories carry their own routes, so a group can be
     # claimed from outside this repository.
     layout:
-      Kubernetes:
-        icon: si-talos-#FF7300
+      # Daily operations first: health, cluster management, then storage.
       Observability:
         # `coroot` is not in any icon set Homepage resolves; use an MDI icon.
         icon: mdi-chart-line
-      # Right after Observability: Umami is the other "how is it doing" view,
-      # for the sites rather than the cluster.
+      Kubernetes:
+        icon: si-talos-#FF7300
+      Storage:
+        icon: mdi-harddisk
+      # Site analytics follows the cluster's operational views.
       Analytics:
         icon: si-umami
       Secrets Management:
@@ -220,6 +223,18 @@ data:
             icon: hetzner
             href: https://console.hetzner.cloud/projects
             description: Hetzner Cloud infrastructure provider.
+        - Azure:
+            icon: azure.svg
+            href: https://portal.azure.com/
+            description: Microsoft Azure management portal.
+        - AWS:
+            icon: aws.svg
+            href: https://console.aws.amazon.com/
+            description: Amazon Web Services management console.
+        - Google Cloud:
+            icon: google-cloud.svg
+            href: https://console.cloud.google.com/
+            description: Google Cloud management console.
     - Network:
         - Cloudflare:
             icon: cloudflare
@@ -449,6 +464,28 @@ data:
     *:focus-visible {
       outline: 2px solid var(--dt-accent);
       outline-offset: 2px;
+    }
+
+    /* Pack whole groups into independent responsive columns. Homepage's flex
+       rows otherwise reserve the tallest group's height for every neighbour.
+       Reading and keyboard order follow the configured order down each column;
+       18rem columns naturally become a single column on narrow screens. */
+    #layout-groups,
+    #services,
+    #bookmarks {
+      display: block;
+      column-width: 18rem;
+      column-gap: 0;
+    }
+    #layout-groups > .services-group,
+    #layout-groups > .bookmark-group,
+    #services > .services-group,
+    #bookmarks > .bookmark-group {
+      display: inline-block;
+      width: 100%;
+      break-inside: avoid;
+      vertical-align: top;
+      margin-bottom: 0.5rem;
     }
 
     /* Service & bookmark cards: the theme already paints a translucent glass

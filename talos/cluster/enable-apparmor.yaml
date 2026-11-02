@@ -1,7 +1,7 @@
 machine:
   install:
     extraKernelArgs:
-      # Keep Talos v1.13.11's CONFIG_LSM list, but select AppArmor before
+      # Keep Talos v1.13.12's CONFIG_LSM list, but select AppArmor before
       # SELinux: these major LSMs are exclusive, so only the first activates.
       # AppArmor must also precede BPF, whose audit-context hook otherwise
       # takes precedence and causes "audit: error in audit_log_subj_ctx".

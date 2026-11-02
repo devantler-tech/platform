@@ -57,8 +57,27 @@ func (e engine) replicaExclusion(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	kubeNodes, err := e.c.list(ctx, "nodes", "")
+	if err != nil {
+		return err
+	}
+	byName := map[string]object{}
+	for _, n := range kubeNodes {
+		byName[str(n, "metadata", "name")] = n
+	}
+	migrationStorage := map[string]bool{}
 	for _, n := range nodes {
-		if strings.HasPrefix(str(n, "metadata", "name"), "autoscale-") && (val(n, "spec", "allowScheduling") != false || val(n, "spec", "evictionRequested") != true) {
+		name := str(n, "metadata", "name")
+		if !strings.HasPrefix(name, "autoscale-") {
+			continue
+		}
+		eligible, proofErr := e.migrationStorageEligible(byName[name], n)
+		if proofErr != nil {
+			return proofErr
+		}
+		if eligible {
+			migrationStorage[name] = true
+		} else if val(n, "spec", "allowScheduling") != false || val(n, "spec", "evictionRequested") != true {
 			return errors.New("existing compute-worker replica exclusion is unproven")
 		}
 	}
@@ -67,7 +86,7 @@ func (e engine) replicaExclusion(ctx context.Context) error {
 		return err
 	}
 	for _, r := range replicas {
-		if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") {
+		if strings.HasPrefix(str(r, "spec", "nodeID"), "autoscale-") && !migrationStorage[str(r, "spec", "nodeID")] {
 			return errors.New("compute-worker replica storage exists")
 		}
 	}

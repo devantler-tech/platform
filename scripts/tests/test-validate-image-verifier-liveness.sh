@@ -176,6 +176,8 @@ readonly coroot_node_agent_pattern='ghcr.io/devantler-tech/platform-coroot-node-
 readonly checkpoint_server_pattern='ghcr.io/devantler-tech/platform-coroot'
 readonly checkpoint_collector_pattern='ghcr.io/devantler-tech/platform-coroot-cluster-agent'
 readonly reports_pattern='ghcr.io/devantler-tech/platform-kyverno-reports'
+readonly migrate_pattern='ghcr.io/devantler-tech/platform-kyverno-migrate'
+readonly background_pattern='ghcr.io/devantler-tech/platform-kyverno-background'
 readonly zone_pattern='ghcr.io/devantler-tech/world-at-ruin/zone'
 readonly mail_pattern='ghcr.io/devantler-tech/platform-private-mail-bootstrap'
 readonly app_pattern='ghcr.io/devantler-tech/*'
@@ -239,7 +241,9 @@ write_healthy_rules() {
     resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
     resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
     resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${reports_pattern}"
-    resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
+    resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
+    resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
+    resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${app_pattern}"
   } | write_rules "${node}"
 }
 
@@ -265,7 +269,7 @@ run_script() {
 healthy_node good
 output="$(run_script TALOS_NODES=good 2>&1)" || fail "case 1: expected exit 0 for a node that can enforce"
 require_text "${output}" 'OK   good' 'case 1: reports the healthy node'
-require_text "${output}" '12 rule(s) in phase running' 'case 1: counts every declared running rule'
+require_text "${output}" '14 rule(s) in phase running' 'case 1: counts every declared running rule'
 require_text "${output}" 'with exact declared decisions' 'case 1: confirms complete rule decisions were compared'
 require_text "${output}" 'All 1 node(s) can enforce image verification.' 'case 1: reports the summary'
 
@@ -318,7 +322,9 @@ write_node driftrules
   resource_obj 0008 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${zone_pattern}"
   resource_obj 0009 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${mail_pattern}"
   resource_obj 0010 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${reports_pattern}"
-  resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
+  resource_obj 0011 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${migrate_pattern}"
+  resource_obj 0012 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' "${background_pattern}"
+  resource_obj 0013 running "${rules_owner}" 'ImageVerificationRules.security.talos.dev' 'ghcr.io/devantler-tech/stale-*'
 } | write_rules driftrules
 resource_obj trusted_root.json running "${roots_owner}" 'TUFTrustedRoots.security.talos.dev' |
   write_roots driftrules

@@ -91,7 +91,7 @@ esac
 lookup() {
   # `$1 "" == k ""` forces a STRING compare: awk compares two numeric-looking strings as
   # numbers, so `100` would match a key of `1e2`.
-  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '$1 "" == k "" { sub(/^[^\t]*\t/, ""); print; exit }'
+  printf '%s\n' "$1" | awk -F'\t' -v k="$2" '!found && $1 "" == k "" { sub(/^[^\t]*\t/, ""); print; found=1 }'
 }
 
 # approved_revisions <signer> <pin> <candidate> → each distinct approved revision on its own line,

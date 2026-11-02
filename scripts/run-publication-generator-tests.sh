@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the reviewed independent publication fixtures with a bounded worker pool.
-# Serial is the default; CI opts into two workers on its existing runner.
+# Serial is the default; CI opts into one worker per vCPU of its existing runner.
 set -euo pipefail
 umask 077
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -39,8 +39,8 @@ fi
 
 workers=1
 if [[ $# != 0 ]]; then
-  [[ $# == 2 && $1 == --jobs ]] || die 'usage: run-publication-generator-tests.sh [--jobs 1|2]'
-  case "$2" in 1|2) workers="$2" ;; *) die 'worker limit must be 1 or 2' ;; esac
+  [[ $# == 2 && $1 == --jobs ]] || die 'usage: run-publication-generator-tests.sh [--jobs 1|2|4]'
+  case "$2" in 1|2|4) workers="$2" ;; *) die 'worker limit must be 1, 2 or 4' ;; esac
 fi
 command -v xargs >/dev/null 2>&1 || die 'xargs is required'
 for test_file in "${tests[@]}"; do

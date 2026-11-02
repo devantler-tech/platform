@@ -98,7 +98,7 @@ spec:
           A route with gethomepage.dev/enabled="true" must set
           gethomepage.dev/group to a service group declared in the Homepage
           layout (k8s/bases/apps/homepage/config-map.yaml): Kubernetes,
-          Observability, Analytics, Secrets Management, Governance,
+          Observability, Storage, Analytics, Secrets Management, Governance,
           Diagnostics, Device Management, Infrastructure as Code, Cloud,
           Network, Home, Finance, Data, Business & Clients, Products,
           Personal, or Email.
@@ -115,6 +115,7 @@ spec:
                 value:
                   - Kubernetes
                   - Observability
+                  - Storage
                   - Analytics
                   - Secrets Management
                   - Governance

@@ -64,7 +64,17 @@ spec:
           - apiVersion: longhorn.io/v1beta2
             kind: Node
             namespace: longhorn-system
-            name: "autoscale-*"
+            # Mutate only the matched trigger; a compute node must never
+            # cause a broad retrofit across protected migration capacity.
+            name: "{{ request.object.metadata.name }}"
+            # Judge the live target, not the trigger: a delayed UpdateRequest
+            # carries the Node as queued, which can predate its migration label.
+            preconditions:
+              all:
+                - key: >-
+                    {{ regex_match('^autoscale-longhorn-v[12]-[0-9a-f]{16}$', target.metadata.name) && (target.metadata.labels."storage.platform.devantler.tech/migration-enabled" || '') == 'true' }}
+                  operator: Equals
+                  value: false
         patchStrategicMerge:
           spec:
             allowScheduling: false

@@ -140,7 +140,8 @@ jobs:
 
   native-coroot:
     name: Exercise released Coroot dashboards and capture browser evidence
-    runs-on: ubuntu-latest
+    # Playwright 1.56.1 supports Noble; ubuntu-latest is moving to Ubuntu 26.04.
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read

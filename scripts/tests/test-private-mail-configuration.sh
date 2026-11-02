@@ -90,15 +90,29 @@ docker pull "$cli" >/dev/null
 docker network create --internal "$network" >/dev/null
 mkdir "$scratch/build"
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" build -trimpath -ldflags='-s -w' -o "$scratch/build/private-mail-bootstrap" ./scripts/private-mail-config
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C "$root" test -c -o "$scratch/email-recovery-native.test" ./scripts/verify-email-data-recovery
 cp "$root/scripts/private-mail-config/Dockerfile" "$scratch/build/Dockerfile"
 bash "$root/scripts/private-mail-config/stage-webui.sh" "$scratch/build"
 docker build --tag "$name-bootstrap-image" "$scratch/build" >"$scratch/build.log" 2>&1
+mkdir "$scratch/reader-proof"
+docker run --rm --network none --read-only --user "$fixture_user" --cpus 1 --memory 128m \
+  --cap-drop ALL --security-opt no-new-privileges:true --env EMAIL_RECOVERY_NATIVE_TEST=1 \
+  --mount "type=bind,source=$scratch/reader-proof,target=/proof" \
+  --mount "type=bind,source=$scratch/email-recovery-native.test,target=/reader-proof.test,readonly" \
+  --entrypoint /reader-proof.test "$name-bootstrap-image" \
+  -test.run '^TestNativeRecoveryReaderSecurity$' -test.timeout 30s
 [ "$(docker image inspect "$name-bootstrap-image" --format '{{.Config.User}}')" = '2000:2000' ] || {
   echo 'FAIL: bootstrap image lost its unprivileged deployment identity' >&2; exit 1;
 }
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /bin/sh "$name-bootstrap-image" \
-  -ec 'sha256sum /usr/local/share/stalwart/webui-*.zip; test -r /usr/local/share/licenses/stalwart-webui/LICENSE; test -r /usr/local/share/licenses/stalwart-webui/SOURCE; test -r /usr/local/share/licenses/caddy/LICENSE' >"$scratch/image-assets.txt"
+  -ec '
+    sha256sum /usr/local/share/stalwart/webui-*.zip || { echo IMAGE_ASSET_FAILURE=archive >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-webui/LICENSE || { echo IMAGE_ASSET_FAILURE=webui-license >&2; exit 1; }
+    test -r /usr/local/share/licenses/stalwart-webui/SOURCE || { echo IMAGE_ASSET_FAILURE=webui-source >&2; exit 1; }
+    test -x /usr/local/share/licenses/caddy || { echo IMAGE_ASSET_FAILURE=proxy-license-directory >&2; exit 1; }
+    test -r /usr/local/share/licenses/caddy/LICENSE || { echo IMAGE_ASSET_FAILURE=proxy-license >&2; exit 1; }
+  ' >"$scratch/image-assets.txt"
 [ "$(cut -d ' ' -f 1 "$scratch/image-assets.txt")" = "$(jq -er .sha256 "$root/scripts/private-mail-config/webui-pins.json")" ]
 docker run --rm --network none --read-only --user 2000:2000 --cap-drop ALL \
   --security-opt no-new-privileges:true --entrypoint /usr/local/bin/caddy \
@@ -132,8 +146,17 @@ run_bootstrap() {
 
 start_server() {
   local mode=$1 health_port=8080
-  local -a recovery=() application_assets=()
-  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ]; then
+  local data_dir=${2:-$scratch/data}
+  local -a recovery=() application_assets=() executable_capability=(--cap-add NET_BIND_SERVICE)
+  if [ "$mode" = recovery-reader ]; then
+    jq -e '.allowPrivilegeEscalation == false and .readOnlyRootFilesystem == true and .runAsNonRoot == true and .capabilities.drop == ["ALL"] and ((.capabilities.add // []) | type == "array" and all(. == "NET_BIND_SERVICE"))' \
+      "$scratch/reader-proof/reader-security.json" >/dev/null
+    executable_capability=()
+    if jq -e '(.capabilities.add // []) | index("NET_BIND_SERVICE") != null' "$scratch/reader-proof/reader-security.json" >/dev/null; then
+      executable_capability=(--cap-add NET_BIND_SERVICE)
+    fi
+  fi
+  if [ "$mode" = preparation ] || [ "$mode" = old-interface-preparation ] || [ "$mode" = isolated-preparation ] || [ "$mode" = recovery-reader ]; then
     recovery=(--env STALWART_RECOVERY_MODE=1 --env STALWART_RECOVERY_ADMIN=fixture:private-mail-recovery-fixture-only)
   fi
   if [ "$mode" = isolated-preparation ]; then
@@ -144,10 +167,10 @@ start_server() {
     application_assets=(--mount "type=bind,source=$scratch/stale-assets,target=/usr/local/share/stalwart,readonly")
   fi
   docker run --detach --name "$name" --network "$network" --read-only \
-    --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL --cap-add NET_BIND_SERVICE \
+    --user "$fixture_user" --cpus 1 --memory 512m --cap-drop ALL "${executable_capability[@]}" \
     --security-opt no-new-privileges:true \
     --mount "type=bind,source=$scratch/etc,target=/etc/stalwart,readonly" \
-    --mount "type=bind,source=$scratch/data,target=/var/lib/stalwart" \
+    --mount "type=bind,source=$data_dir,target=/var/lib/stalwart" \
     --mount "type=bind,source=$scratch/tmp,target=/tmp" \
     "${recovery[@]}" "${application_assets[@]}" --entrypoint /usr/local/bin/stalwart "$name-bootstrap-image" --config /etc/stalwart/config.json >/dev/null
   for ((attempt=0;attempt<60;attempt++)); do
@@ -558,11 +581,75 @@ upload_status=$(protocol_curl --silent --max-time 10 --config /proof/agent.curl 
 [ "$upload_status" = 403 ]
 protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" 'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/known-read.eml"
 grep -q 'Preserved native mail fixture.' "$scratch/known-read.eml"
+# Exercise the recovery driver's real JMAP lifecycle before taking the copy.
+# Only the synthetic fixture identity is translated; requests and cleanup run
+# against the same pinned server used by the production recovery reader.
+docker run --rm --network "container:$name" --user "$fixture_user" --cpus 1 --memory 128m \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true --workdir /proof \
+  --env EMAIL_RECOVERY_NATIVE_TEST=1 \
+  --mount "type=bind,source=$scratch,target=/proof,readonly" \
+  --entrypoint /proof/email-recovery-native.test "$name-bootstrap-image" \
+  -test.run '^TestNativeRecoveryMarkerLifecycle$' -test.timeout 120s -test.v
+
 # Prime the native application cache with a previous unversioned bundle. An
 # upgrade must invalidate that cache while preserving the Application identity.
 docker stop --time 30 "$name" >/dev/null
 docker logs "$name" >"$scratch/smtp-auth-server.log" 2>&1
 docker rm "$name" >/dev/null
+# Establish which native protocol can inspect a recovered datastore before
+# designing the isolated restore worker. A recovery-only listener must not be
+# assumed to provide ordinary mailbox access. Both outcomes below are evidence
+# about the pinned server, never a claim that production data was restored.
+(
+  cd "$scratch/data"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$scratch/source-before-recovery.sha256"
+test -s "$scratch/source-before-recovery.sha256"
+cp -a "$scratch/data" "$scratch/recovered-data"
+start_server recovery-reader "$scratch/recovered-data"
+recovery_mail_status=$(protocol_curl --silent --show-error --max-time 10 \
+  --config /proof/human.curl --header 'Content-Type: application/json' \
+  --data-binary @/proof/receiving-query.json --output /dev/null \
+  --write-out '%{http_code}' "http://$name:8080/jmap")
+if [ "$recovery_mail_status" = 200 ]; then
+  protocol_curl --fail --silent --show-error --max-time 10 \
+    --config /proof/human.curl --header 'Content-Type: application/json' \
+    --data-binary @/proof/receiving-query.json "http://$name:8080/jmap" \
+    >"$scratch/recovery-mail-result.json"
+  if jq -e '.methodResponses|length==2 and .[0][0]=="Email/query" and .[1][0]=="Email/get"' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    verify_receiving_aliases
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_READ_VERIFIED mode=recovery'
+  elif jq -e '.methodResponses|length>0 and all(.[]; .[0]=="error" and (.[1].type=="forbidden" or .[1].type=="unknownMethod"))' \
+    "$scratch/recovery-mail-result.json" >/dev/null; then
+    echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+  else
+    echo 'FAIL: native recovery mailbox protocol returned an unclassified response' >&2; exit 1
+  fi
+elif [ "$recovery_mail_status" = 401 ] || [ "$recovery_mail_status" = 403 ]; then
+  echo 'EMAIL_RECOVERY_PROTOCOL=MAILBOX_UNAVAILABLE mode=recovery'
+else
+  echo 'FAIL: native recovery mailbox protocol returned an unexpected status' >&2; exit 1
+fi
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+start_server serving "$scratch/recovered-data"
+verify_receiving_aliases
+for alias in former-a former-b; do
+  cmp "$scratch/$alias-receiving-before.json" "$scratch/$alias-receiving-metadata.json"
+done
+protocol_curl --fail --silent --show-error --max-time 10 --config /proof/human.curl \
+  --cacert /proof/etc/tls/tls.crt --connect-to "mail.example.test:1993:$name:1993" \
+  'imaps://mail.example.test:1993/INBOX;UID=1' >"$scratch/recovered-read.eml"
+grep -q 'Preserved native mail fixture.' "$scratch/recovered-read.eml"
+docker stop --time 30 "$name" >/dev/null
+docker rm "$name" >/dev/null
+(
+  cd "$scratch/data"
+  find . -type f -print0 | sort -z | xargs -0 sha256sum
+) >"$scratch/source-after-recovery.sha256"
+cmp "$scratch/source-before-recovery.sha256" "$scratch/source-after-recovery.sha256"
+echo 'EMAIL_DATA_RECOVERY_FIXTURE=PASS messages=VERIFIED source=UNCHANGED'
 mkdir "$scratch/stale-assets" "$scratch/stale-source"
 printf '%s' '<!doctype html><html><head><base href="/" /></head><body>previous-ui-cache-canary</body></html>' >"$scratch/stale-source/index.html"
 (cd "$scratch/stale-source" && zip -q "$scratch/stale-assets/webui.zip" index.html)
@@ -702,7 +789,8 @@ for proxy_enabled in true false; do
     --max-time 3 http://127.0.0.1:18081/healthz/ready >"$scratch/proxy-direct.out" 2>"$scratch/proxy-direct.err" || direct_status=$?
   [ "$direct_status" != 0 ] || { echo 'FAIL: native proxy listener accepted a request without its transport envelope' >&2; exit 1; }
 
-  cp "$root/k8s/bases/apps/private-mail-proxy-identity/Caddyfile" "$scratch/ClientProxy.Caddyfile"
+  yq -r '.configMapGenerator[0].literals[0] | sub("^Caddyfile=", "")' "$root/k8s/bases/apps/private-mail-proxy-identity/kustomization.yaml" >"$scratch/ClientProxy.Caddyfile"
+  [ -s "$scratch/ClientProxy.Caddyfile" ] || { echo 'FAIL: the client proxy configuration could not be read' >&2; exit 1; }
   proxy_started=1
   docker run --detach --name "$proxy_name" --network "container:$name" --read-only \
     --user "$fixture_user" --cpus 0.1 --memory 64m --cap-drop ALL \

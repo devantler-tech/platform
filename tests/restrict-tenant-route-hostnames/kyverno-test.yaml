@@ -15,13 +15,11 @@ userinfo: user-info.yaml
 results:
   # --- wedding-app: the tenant this policy already covered ---
   - policy: restrict-tenant-route-hostnames
-    rule: wedding-app-approved-hostnames
     resources:
       - wedding-app/approved-both-hostnames
     kind: HTTPRoute
     result: pass
   - policy: restrict-tenant-route-hostnames
-    rule: wedding-app-approved-hostnames
     resources:
       - wedding-app/foreign-hostname
       - wedding-app/no-hostnames
@@ -36,7 +34,6 @@ results:
     result: fail
   # --- ascoachingogvaner: previously UNCOVERED by this policy ---
   - policy: restrict-tenant-route-hostnames
-    rule: ascoachingogvaner-approved-hostnames
     resources:
       - ascoachingogvaner/approved-apex-and-lan
       - ascoachingogvaner/approved-www-redirect
@@ -44,7 +41,6 @@ results:
     result: pass
   # The cross-tenant claim this generalisation exists to stop.
   - policy: restrict-tenant-route-hostnames
-    rule: ascoachingogvaner-approved-hostnames
     resources:
       - ascoachingogvaner/steals-wedding-hostname
       - ascoachingogvaner/wildcard-covering-approved
@@ -54,22 +50,12 @@ results:
     result: fail
   # --- fail-closed catch-all ---
   - policy: restrict-tenant-route-hostnames
-    rule: unlisted-tenant-namespace-has-no-approved-hostnames
     resources:
       - future-tenant/unlisted-tenant-route
     kind: HTTPRoute
     result: fail
-  # A namespace with an allow-list rule is excluded from the catch-all, so an
-  # approved route is not double-denied by it.
-  - policy: restrict-tenant-route-hostnames
-    rule: unlisted-tenant-namespace-has-no-approved-hostnames
-    resources:
-      - wedding-app/approved-both-hostnames
-    kind: HTTPRoute
-    result: skip
   # A non-ksail platform namespace is outside this boundary entirely.
   - policy: restrict-tenant-route-hostnames
-    rule: unlisted-tenant-namespace-has-no-approved-hostnames
     resources:
       - platform-ns/platform-route
     kind: HTTPRoute

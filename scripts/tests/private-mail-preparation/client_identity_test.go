@@ -51,18 +51,22 @@ func TestClientIdentityBundleReplacesUntrustedForwardingHeaders(t *testing.T) {
 	}
 }
 
-func TestClientIdentityRemainsInactiveInProduction(t *testing.T) {
+func TestProductionRouteCarriesGatewayClientIdentity(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	route := object(t, objects, "HTTPRoute", "private-mail")
 	annotations := mapping(t, mapping(t, route["metadata"])["annotations"])
-	if annotations["external-dns.kubernetes.io/cloudflare-proxied"] != nil {
-		t.Fatal("prepared DNS must not change production before activation")
+	if annotations["external-dns.kubernetes.io/cloudflare-proxied"] != "false" {
+		t.Fatal("a proxied DNS record would hide the client address from the Gateway")
 	}
+	modifiers := 0
 	for _, value := range sequence(t, mapping(t, route["spec"])["rules"]) {
 		for _, filter := range sequence(t, mapping(t, value)["filters"]) {
 			if mapping(t, filter)["type"] == "RequestHeaderModifier" {
-				t.Fatal("prepared forwarding must not activate before native trust and rollback proof")
+				modifiers++
 			}
 		}
+	}
+	if modifiers != 1 {
+		t.Fatalf("production must set the client address header exactly once, got %d filters", modifiers)
 	}
 }

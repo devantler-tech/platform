@@ -1,0 +1,141 @@
+name: Verify Email Storage Key Recovery
+
+"on":
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: verify-email-storage-key-recovery"
+        required: true
+        type: string
+
+permissions: {}
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  verify:
+    name: Restore an independent backup without changing production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require main and typed confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch || "$GITHUB_REF" != refs/heads/main || "$GITHUB_REPOSITORY" != devantler-tech/platform || "$GITHUB_RUN_ATTEMPT" != 1 || "$CONFIRM" != verify-email-storage-key-recovery ]]; then
+            printf '%s\n' 'OPENBAO_BACKUP_RESTORE=UNVERIFIED' >&2
+            exit 2
+          fi
+
+      - name: Check out the confirmed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up the repository Go version
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Install the repository-approved Kubernetes reader
+        shell: bash
+        run: |
+          set -euo pipefail
+          kubectl_path="$RUNNER_TEMP/openbao-recovery-kubectl"
+          curl --disable --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --max-redirs 3 --connect-timeout 10 --max-time 60 \
+            https://dl.k8s.io/release/v1.36.2/bin/linux/amd64/kubectl -o "$kubectl_path"
+          printf '%s  %s\n' 1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82 "$kubectl_path" | sha256sum --check
+          mkdir -p "$RUNNER_TEMP/openbao-recovery-tools"
+          install -m 0755 "$kubectl_path" "$RUNNER_TEMP/openbao-recovery-tools/kubectl"
+          printf '%s\n' "$RUNNER_TEMP/openbao-recovery-tools" >> "$GITHUB_PATH"
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/openbao-recovery-tools/verifier" ./scripts/openbao-backup-recovery
+
+      - name: Read the fixed backup inputs and prove isolated recovery
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          set +x
+          set -euo pipefail
+          umask 077
+          ulimit -c 0
+          stage=workspace
+          fail() {
+            printf 'OPENBAO_BACKUP_STAGE=%s\n' "$stage" >&2
+            printf '%s\n' 'OPENBAO_BACKUP_RESTORE=UNVERIFIED' >&2
+            exit 2
+          }
+          [[ $(id -u) != 0 && $(findmnt -n -o FSTYPE --target /dev/shm) == tmpfs ]] || fail
+          stage=current-source
+          latest=$(git ls-remote --exit-code https://github.com/devantler-tech/platform.git refs/heads/main) || fail
+          [[ "$latest" == "$GITHUB_SHA"$'\trefs/heads/main' ]] || fail
+          proof_dir=$(mktemp -d /dev/shm/openbao-recovery.XXXXXXXX)
+          forward_pid=''
+          cleanup() {
+            if [[ -n "$forward_pid" ]]; then
+              kill "$forward_pid" 2>/dev/null || true
+              wait "$forward_pid" 2>/dev/null || true
+            fi
+            rm -rf "$proof_dir"
+          }
+          trap cleanup EXIT
+          binary="$RUNNER_TEMP/openbao-recovery-tools/verifier"
+          stage=private-inputs
+          [[ -n "$KUBE_CONFIG" && ${#KUBE_CONFIG} -le 1048576 ]] || fail
+          export KUBECONFIG="$proof_dir/kubeconfig"
+          printf '%s' "$KUBE_CONFIG" > "$KUBECONFIG"
+          unset KUBE_CONFIG
+          stage=stable-api
+          if ! ./scripts/use-prod-stable-api-endpoint.sh >/dev/null; then
+            fail
+          fi
+          unset HCLOUD_TOKEN
+          stage=live-connection
+          kubectl --context=admin@prod -n openbao port-forward --address=127.0.0.1 service/openbao-active 38200:8200 > "$proof_dir/forward.log" 2>&1 &
+          forward_pid=$!
+          ready=false
+          for ((attempt=0; attempt<20; attempt++)); do
+            kill -0 "$forward_pid" 2>/dev/null || fail
+            if curl --disable --silent --fail --noproxy '*' --connect-timeout 1 --max-time 2 \
+                http://127.0.0.1:38200/v1/sys/health > /dev/null 2>"$proof_dir/health.log"; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          [[ "$ready" == true ]] || fail
+          export OPENBAO_RECOVERY_DIR="$proof_dir"
+          stage=collection
+          if ! "$binary" collect-email-storage > "$proof_dir/collection-result" 2>"$proof_dir/collection.log"; then
+            # Raw diagnostics stay private; only these closed failure codes leave scratch storage.
+            grep -E '^OPENBAO_BACKUP_INPUTS=UNVERIFIED stage=(private-workspace|snapshot-job-read|snapshot-job-admission|live-health|deployment-inputs|backup-target|recovery-inputs|recovery-backup-read|recovery-backup-admission|recovery-key-download|live-records|snapshot-download|private-handoff|collection)$' "$proof_dir/collection.log" >&2 || true
+            fail
+          fi
+          [[ $(cat "$proof_dir/collection-result") == OPENBAO_BACKUP_INPUTS=PASS ]] || fail
+          stage=private-handoff
+          kill "$forward_pid" 2>/dev/null || fail
+          wait "$forward_pid" 2>/dev/null || true
+          forward_pid=''
+          unset OPENBAO_RECOVERY_DIR KUBECONFIG
+          rm -- "$proof_dir/kubeconfig"
+          stage=image
+          image=$("$binary" image) || fail
+          if ! docker pull "$image" > "$proof_dir/pull.log" 2>&1; then fail; fi
+          stage=isolated-restore
+          if ! bash scripts/run-openbao-backup-sandbox.sh verify-email-storage "$proof_dir" "$binary" > "$proof_dir/verification-result" 2>"$proof_dir/verification.log"; then
+            grep -E '^OPENBAO_BACKUP_RESTORE=FAIL stage=(mode|sandbox|server|initialization|inputs|snapshot|restore|seal|unseal|records|membership|restored_state|fixture|verification|runtime)$' "$proof_dir/verification.log" >&2 || true
+            fail
+          fi
+          stage=proof-format
+          result=$(cat "$proof_dir/verification-result")
+          [[ "$result" == 'OPENBAO_BACKUP_RESTORE=PASS records=4 version=2.6.3' ]] || fail
+          printf '%s\n' "$result"

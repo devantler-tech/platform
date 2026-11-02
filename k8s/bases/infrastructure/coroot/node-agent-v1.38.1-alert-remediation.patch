@@ -1,0 +1,826 @@
+diff --git a/ebpftracer/tls.go b/ebpftracer/tls.go
+index 771b96a..a1f63af 100644
+--- a/ebpftracer/tls.go
++++ b/ebpftracer/tls.go
+@@ -25,6 +25,19 @@ var silentErrors = []string{
+ 	"permission denied",
+ }
+ 
++var expectedCapabilityErrors = []string{
++	"no symbols found",
++}
++
++func isExpectedCapabilityError(err error) bool {
++	for _, suffix := range expectedCapabilityErrors {
++		if strings.HasSuffix(err.Error(), suffix) {
++			return true
++		}
++	}
++	return false
++}
++
+ func uprobeLog(pid uint32, prefix string) func(string, error) {
+ 	return func(msg string, err error) {
+ 		if err != nil {
+@@ -33,6 +46,10 @@ func uprobeLog(pid uint32, prefix string) func(string, error) {
+ 					return
+ 				}
+ 			}
++			if isExpectedCapabilityError(err) {
++				klog.WarningfDepth(2, "pid=%d%s: %s: %s", pid, prefix, msg, err)
++				return
++			}
+ 			klog.ErrorfDepth(2, "pid=%d%s: %s: %s", pid, prefix, msg, err)
+ 			return
+ 		}
+diff --git a/ebpftracer/tls_test.go b/ebpftracer/tls_test.go
+new file mode 100644
+index 0000000..1e9a55c
+--- /dev/null
++++ b/ebpftracer/tls_test.go
+@@ -0,0 +1,24 @@
++package ebpftracer
++
++import (
++	"errors"
++	"testing"
++)
++
++func TestExpectedCapabilityErrors(t *testing.T) {
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "stripped Go binary", err: errors.New("no symbols found"), want: true},
++		{name: "unexpected attach failure", err: errors.New("operation not permitted"), want: false},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if got := isExpectedCapabilityError(tt.err); got != tt.want {
++				t.Fatalf("isExpectedCapabilityError(%q) = %t, want %t", tt.err, got, tt.want)
++			}
++		})
++	}
++}
+diff --git a/ebpftracer/tracer.go b/ebpftracer/tracer.go
+index c6a1c7b..353337e 100644
+--- a/ebpftracer/tracer.go
++++ b/ebpftracer/tracer.go
+@@ -30,7 +30,10 @@ import (
+ 	"k8s.io/klog/v2"
+ )
+ 
+-const MaxPayloadSize = 1024
++const (
++	MaxPayloadSize        = 1024
++	l7PerfBufferSizePages = 512
++)
+ 
+ var minKernelVersion = common.NewVersion(4, 16, 0)
+ 
+@@ -366,7 +369,7 @@ func (t *Tracer) ebpf(ch chan<- Event) error {
+ 	}
+ 
+ 	if !t.disableL7Tracing {
+-		perfMaps = append(perfMaps, perfMap{name: "l7_events", typ: perfMapTypeL7Events, perCPUBufferSizePages: 32})
++		perfMaps = append(perfMaps, perfMap{name: "l7_events", typ: perfMapTypeL7Events, perCPUBufferSizePages: l7PerfBufferSizePages})
+ 	}
+ 
+ 	pageSize := os.Getpagesize()
+diff --git a/ebpftracer/tracer_test.go b/ebpftracer/tracer_test.go
+index 1ebcc2f..2e7c763 100644
+--- a/ebpftracer/tracer_test.go
++++ b/ebpftracer/tracer_test.go
+@@ -29,6 +29,10 @@ func skipIfNotVM(t *testing.T) {
+ 	}
+ }
+ 
++func TestL7PerfBufferHasBurstHeadroom(t *testing.T) {
++	assert.Equal(t, 512, l7PerfBufferSizePages)
++}
++
+ func TestProcessEvents(t *testing.T) {
+ 	skipIfNotVM(t)
+ 	src := `
+diff --git a/go.mod b/go.mod
+index 4cd9b06..e82b749 100644
+--- a/go.mod
++++ b/go.mod
+@@ -16,8 +16,8 @@ require (
+ 	github.com/florianl/go-conntrack v0.3.0
+ 	github.com/gobwas/glob v0.2.3
+ 	github.com/godbus/dbus/v5 v5.2.2
+-	github.com/golang/snappy v0.0.4
+-	github.com/google/pprof v0.0.0-20260202012954-cb029daf43ef
++	github.com/golang/snappy v1.0.0
++	github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc
+ 	github.com/google/winops v0.0.0-20260218212338-878c3f651658
+ 	github.com/grafana/jfr-parser v0.15.0
+ 	github.com/hashicorp/golang-lru/v2 v2.0.7
+@@ -31,13 +31,13 @@ require (
+ 	github.com/prometheus/client_golang v1.24.1
+ 	github.com/prometheus/client_model v0.6.2
+ 	github.com/prometheus/common v0.70.1
+-	github.com/prometheus/prometheus v0.51.2
++	github.com/prometheus/prometheus v0.311.3
+ 	github.com/pyroscope-io/dotnetdiag v1.2.1
+ 	github.com/samber/lo v1.53.0
+ 	github.com/shirou/gopsutil/v4 v4.26.5
+ 	github.com/siderolabs/go-smbios v0.3.3
+ 	github.com/stretchr/testify v1.12.1
+-	github.com/ulikunitz/xz v0.5.12
++	github.com/ulikunitz/xz v0.5.15
+ 	github.com/vishvananda/netlink v1.3.1
+ 	github.com/vishvananda/netns v0.0.5
+ 	github.com/xin053/hsperfdata v0.2.3
+@@ -45,13 +45,13 @@ require (
+ 	go.opentelemetry.io/otel v1.46.0
+ 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0
+ 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0
+-	go.opentelemetry.io/otel/log v0.20.0
++	go.opentelemetry.io/otel/log v0.21.0
+ 	go.opentelemetry.io/otel/sdk v1.46.0
+ 	go.opentelemetry.io/otel/trace v1.46.0
+ 	golang.org/x/arch v0.4.0
+-	golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b
+-	golang.org/x/net v0.58.0
+-	golang.org/x/sys v0.48.0
++	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
++	golang.org/x/net v0.62.0
++	golang.org/x/sys v0.49.0
+ 	golang.org/x/time v0.16.0
+ 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
+ 	gopkg.in/yaml.v2 v2.4.0
+@@ -60,7 +60,7 @@ require (
+ )
+ 
+ require (
+-	filippo.io/edwards25519 v1.1.0 // indirect
++	filippo.io/edwards25519 v1.1.1 // indirect
+ 	github.com/blang/semver v3.5.1+incompatible // indirect
+ 	github.com/dustin/go-humanize v1.0.1 // indirect
+ 	github.com/go-kit/log v0.2.1 // indirect
+@@ -78,9 +78,9 @@ require (
+ 	github.com/xdg-go/scram v1.1.2 // indirect
+ 	github.com/xdg-go/stringprep v1.0.4 // indirect
+ 	github.com/youmark/pkcs8 v0.0.0-20240726163527-a2c0da244d78 // indirect
+-	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 // indirect
+-	go.opentelemetry.io/otel/sdk/log v0.20.0 // indirect
+-	golang.org/x/crypto v0.56.0 // indirect
++	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 // indirect
++	go.opentelemetry.io/otel/sdk/log v0.21.0 // indirect
++	golang.org/x/crypto v0.58.0 // indirect
+ 	k8s.io/klog v1.0.0 // indirect
+ )
+ 
+@@ -116,7 +116,7 @@ require (
+ 	github.com/golang/glog v1.2.5 // indirect
+ 	github.com/google/go-cmp v0.7.0 // indirect
+ 	github.com/google/uuid v1.6.0 // indirect
+-	github.com/grafana/regexp v0.0.0-20221123153739-15dc172cd2db // indirect
++	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 // indirect
+ 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
+ 	github.com/josharian/native v1.1.0 // indirect
+ 	github.com/lufia/plan9stats v0.0.0-20211012122336-39d0f177ccd0 // indirect
+@@ -146,8 +146,8 @@ require (
+ 	go.yaml.in/yaml/v3 v3.0.5 // indirect
+ 	go4.org/intern v0.0.0-20211027215823-ae77deb06f29 // indirect
+ 	go4.org/unsafe/assume-no-moving-gc v0.0.0-20230525183740-e7c30c78aeb2 // indirect
+-	golang.org/x/sync v0.23.0 // indirect
+-	golang.org/x/text v0.41.0 // indirect
++	golang.org/x/sync v0.24.0 // indirect
++	golang.org/x/text v0.43.0 // indirect
+ 	google.golang.org/genproto/googleapis/api v0.0.0-20260825221802-da73d73af1c5 // indirect
+ 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
+ 	google.golang.org/grpc v1.83.2 // indirect
+@@ -158,3 +158,5 @@ replace (
+ 	github.com/optiopay/kafka => github.com/cilium/kafka v0.0.0-20180809090225-01ce283b732b
+ 	github.com/pyroscope-io/dotnetdiag => github.com/coroot/dotnetdiag v1.2.2
+ )
++
++replace github.com/coroot/coroot-cluster-agent => ../cluster-agent
+diff --git a/go.sum b/go.sum
+index 98da4bc..95308dd 100644
+--- a/go.sum
++++ b/go.sum
+@@ -1,7 +1,7 @@
+ bitbucket.org/creachadair/stringset v0.0.9 h1:L4vld9nzPt90UZNrXjNelTshD74ps4P5NGs3Iq6yN3o=
+ bitbucket.org/creachadair/stringset v0.0.9/go.mod h1:t+4WcQ4+PXTa8aQdNKe40ZP6iwesoMFWAxPGd3UGjyY=
+-filippo.io/edwards25519 v1.1.0 h1:FNf4tywRC1HmFuKW5xopWpigGjJKiJSV0Cqo0cJWDaA=
+-filippo.io/edwards25519 v1.1.0/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
++filippo.io/edwards25519 v1.1.1 h1:YpjwWWlNmGIDyXOn8zLzqiD+9TyIlPhGFG96P39uBpw=
++filippo.io/edwards25519 v1.1.1/go.mod h1:BxyFTGdWcka3PhytdK4V28tE5sGfRvvvRV7EaN4VDT4=
+ github.com/0xrawsec/golang-etw v1.6.2 h1:ZXOEL2+hfWBz7QK3iSPVhKeB1VYjz47xGl/WfdqdpzA=
+ github.com/0xrawsec/golang-etw v1.6.2/go.mod h1:nTLqX2X4dxf/XpYiFmVfWSrjER/CO3A1WOsvc8cac6I=
+ github.com/0xrawsec/golang-utils v1.3.1 h1:jjiBzsxzcQPkmEV5KONJY4OnCoqTTW1eQMJcpSdk3hw=
+@@ -61,8 +61,6 @@ github.com/containerd/typeurl/v2 v2.3.0 h1:HZHPhRWo5XMy3QGQoPrUzbW/2ckwjfweHmOwl
+ github.com/containerd/typeurl/v2 v2.3.0/go.mod h1:Qk+PAdUYArVj41TnGi6rJ+48RF0PkcTc4i/taoBcK0w=
+ github.com/coreos/go-systemd/v22 v22.7.0 h1:LAEzFkke61DFROc7zNLX/WA2i5J8gYqe0rSj9KI28KA=
+ github.com/coreos/go-systemd/v22 v22.7.0/go.mod h1:xNUYtjHu2EDXbsxz1i41wouACIwT7Ybq9o0BQhMwD0w=
+-github.com/coroot/coroot-cluster-agent v1.11.8 h1:qQ7Bkj8ta1tFFLwt1Box3xOttj3d4+4FzaK0GP7JC34=
+-github.com/coroot/coroot-cluster-agent v1.11.8/go.mod h1:1gaf6PXWO25xCH1sES5Lxk4oNSwMlG4JrKBgio0LSzg=
+ github.com/coroot/dotnetdiag v1.2.2 h1:PVP/By8o+xhPjfVolJYcjHLbFQInM7pkaD6/otPLc8Q=
+ github.com/coroot/dotnetdiag v1.2.2/go.mod h1:veXCMlFzm1yNl7wwJb/ZLxO4WbzhDBoy1VG1XtkH2ls=
+ github.com/coroot/logger v1.0.0 h1:n8iNkGk6ete9wp/L49FXsZlNiySuA+IJ7TsTkYkiqPc=
+@@ -119,8 +117,8 @@ github.com/golang/glog v1.2.5 h1:DrW6hGnjIhtvhOIiAKT6Psh/Kd/ldepEa81DKeiRJ5I=
+ github.com/golang/glog v1.2.5/go.mod h1:6AhwSGph0fcJtXVM/PEHPqZlFeoLxhs7/t5UDAwmO+w=
+ github.com/golang/protobuf v1.5.4 h1:i7eJL8qZTpSEXOPTxNKhASYpMn+8e5Q6AdndVa1dWek=
+ github.com/golang/protobuf v1.5.4/go.mod h1:lnTiLA8Wa4RWRcIUkrtSVa5nRhsEGBg48fD6rSs7xps=
+-github.com/golang/snappy v0.0.4 h1:yAGX7huGHXlcLOEtBnF4w7FQwA26wojNCwOYAEhLjQM=
+-github.com/golang/snappy v0.0.4/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
++github.com/golang/snappy v1.0.0 h1:Oy607GVXHs7RtbggtPBnr2RmDArIsAefDwvrdWvRhGs=
++github.com/golang/snappy v1.0.0/go.mod h1:/XxbfmMg8lxefKM7IXC3fBNl/7bRcc72aCRzEWrmP2Q=
+ github.com/gomodule/redigo v1.8.5/go.mod h1:P9dn9mFrCBvWhGE1wpxx6fgq7BAeLBk+UUUzlpkBYO0=
+ github.com/gomodule/redigo v1.9.2 h1:HrutZBLhSIU8abiSfW8pj8mPhOyMYjZT/wcA4/L9L9s=
+ github.com/gomodule/redigo v1.9.2/go.mod h1:KsU3hiK/Ay8U42qpaJk+kuNa3C+spxapWpM+ywhcgtw=
+@@ -133,16 +131,16 @@ github.com/google/go-cmp v0.5.5/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/
+ github.com/google/go-cmp v0.5.6/go.mod h1:v8dTdLbMG2kIc/vJvl+f65V22dbkXbowE6jgT/gNBxE=
+ github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
+ github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
+-github.com/google/pprof v0.0.0-20260202012954-cb029daf43ef h1:xpF9fUHpoIrrjX24DURVKiwHcFpw19ndIs+FwTSMbno=
+-github.com/google/pprof v0.0.0-20260202012954-cb029daf43ef/go.mod h1:MxpfABSjhmINe3F1It9d+8exIHFvUqtLIRCdOGNXqiI=
++github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc h1:VBbFa1lDYWEeV5FZKUiYKYT0VxCp9twUmmaq9eb8sXw=
++github.com/google/pprof v0.0.0-20260302011040-a15ffb7f9dcc/go.mod h1:MxpfABSjhmINe3F1It9d+8exIHFvUqtLIRCdOGNXqiI=
+ github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
+ github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
+ github.com/google/winops v0.0.0-20260218212338-878c3f651658 h1:TLRvGW+2zxbeIeS35tM07zrpiu3uvP82g48i43AOorI=
+ github.com/google/winops v0.0.0-20260218212338-878c3f651658/go.mod h1:LzJ1k+theAY9oqZYuOpAxE559bLZqxDt6qi8epvQ15g=
+ github.com/grafana/jfr-parser v0.15.0 h1:CS78x/oV72Z+q17spr2N6AUFkucAWMKPwHYvj1uemWA=
+ github.com/grafana/jfr-parser v0.15.0/go.mod h1:2vR91w+TYF6Jrw+WJMd/uyAiNxE2BUY5xOsvglXXe78=
+-github.com/grafana/regexp v0.0.0-20221123153739-15dc172cd2db h1:7aN5cccjIqCLTzedH7MZzRZt5/lsAHch6Z3L2ZGn5FA=
+-github.com/grafana/regexp v0.0.0-20221123153739-15dc172cd2db/go.mod h1:M5qHK+eWfAv8VR/265dIuEpL3fNfeC21tXXp9itM24A=
++github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853 h1:cLN4IBkmkYZNnk7EAJ0BHIethd+J6LqxFNw5mSiI2bM=
++github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853/go.mod h1:+JKpmjMGhpgPL+rXZ5nsZieVzvarn86asRlBg4uNGnk=
+ github.com/grobie/gomemcache v0.0.0-20230213081705-239240bbc445 h1:FlKQKUYPZ5yDCN248M3R7x8yu2E3yEZ0H7aLomE4EoE=
+ github.com/grobie/gomemcache v0.0.0-20230213081705-239240bbc445/go.mod h1:L69/dBlPQlWkcnU76WgcppK5e4rrxzQdi6LhLnK/ytA=
+ github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 h1:/Tnpcb2E0Pz/tN9s3bfEY2Q8ePCEX9iuS+cneUwncnw=
+@@ -255,8 +253,8 @@ github.com/prometheus/memcached_exporter v0.14.3 h1:Of+E4D+VysIicZjLDoSvlWAM7Yu0
+ github.com/prometheus/memcached_exporter v0.14.3/go.mod h1:5RnZhcAXAu6rwwlGl4pz8NJjAjvBdHr1ZL5F8vYLJnU=
+ github.com/prometheus/procfs v0.21.1 h1:GljZCt+zSTS+NZq88cyQ1LjZ+RCHp3uVuabBWA5+OJI=
+ github.com/prometheus/procfs v0.21.1/go.mod h1:aB55Cww9pdSJVHk0hUf0inxWyyjPogFIjmHKYgMKmtY=
+-github.com/prometheus/prometheus v0.51.2 h1:U0faf1nT4CB9DkBW87XLJCBi2s8nwWXdTbyzRUAkX0w=
+-github.com/prometheus/prometheus v0.51.2/go.mod h1:yv4MwOn3yHMQ6MZGHPg/U7Fcyqf+rxqiZfSur6myVtc=
++github.com/prometheus/prometheus v0.311.3 h1:3IrVxQv6v5i/ZCGi6OrYeBhtCwaPTn6Z3DYruXoYm3M=
++github.com/prometheus/prometheus v0.311.3/go.mod h1:gjsCxTKtHO1Q8T9333u1s+lUR1OjPyM7ruuGH8RvVyo=
+ github.com/rogpeppe/go-internal v1.14.1 h1:UQB4HGPB6osV0SQTLymcB4TgvyWu6ZyliaW0tI/otEQ=
+ github.com/rogpeppe/go-internal v1.14.1/go.mod h1:MaRKkUm5W0goXpeCfT7UZI6fk/L7L7so1lCWt35ZSgc=
+ github.com/samber/lo v1.53.0 h1:t975lj2py4kJPQ6haz1QMgtId2gtmfktACxIXArw3HM=
+@@ -283,8 +281,8 @@ github.com/tklauser/go-sysconf v0.3.16 h1:frioLaCQSsF5Cy1jgRBrzr6t502KIIwQ0MArYI
+ github.com/tklauser/go-sysconf v0.3.16/go.mod h1:/qNL9xxDhc7tx3HSRsLWNnuzbVfh3e7gh/BmM179nYI=
+ github.com/tklauser/numcpus v0.11.0 h1:nSTwhKH5e1dMNsCdVBukSZrURJRoHbSEQjdEbY+9RXw=
+ github.com/tklauser/numcpus v0.11.0/go.mod h1:z+LwcLq54uWZTX0u/bGobaV34u6V7KNlTZejzM6/3MQ=
+-github.com/ulikunitz/xz v0.5.12 h1:37Nm15o69RwBkXM0J6A5OlE67RZTfzUxTj8fB3dfcsc=
+-github.com/ulikunitz/xz v0.5.12/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
++github.com/ulikunitz/xz v0.5.15 h1:9DNdB5s+SgV3bQ2ApL10xRc35ck0DuIX/isZvIk+ubY=
++github.com/ulikunitz/xz v0.5.15/go.mod h1:nbz6k7qbPmH4IRqmfOplQw/tblSgqTqBwxkY0oWt/14=
+ github.com/vishvananda/netlink v1.3.1 h1:3AEMt62VKqz90r0tmNhog0r/PpWKmrEShJU0wJW6bV0=
+ github.com/vishvananda/netlink v1.3.1/go.mod h1:ARtKouGSTGchR8aMwmkzC0qiNPrrWO5JS/XMVl45+b4=
+ github.com/vishvananda/netns v0.0.5 h1:DfiHV+j8bA32MFM7bfEunvT8IAqQ/NzSJHtcmW5zdEY=
+@@ -312,22 +310,22 @@ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0 h1:3g7B90U
+ go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0/go.mod h1:Ef8SuTh59BT7+ofpDxN9z+yOlc4t2GjLmKDgYNJL/NU=
+ go.opentelemetry.io/otel v1.46.0 h1:FHt5/CDyVxi/8IM1CH7VE/rRgq3kLHa2mSTVMO8AWyc=
+ go.opentelemetry.io/otel v1.46.0/go.mod h1:Gj3SEScelsNC45tp4nSxRYlS+f5iez7W8XPMCt905kE=
+-go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0 h1:owlhcJ3QO3X0YTDTCcDZ4V+6aVDkWbNmBoQ5NUp7Oww=
+-go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.20.0/go.mod h1:MP4eemTiI9zC8fgg+DYynhYDYf3ba72S376TvP+Ye0Q=
++go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0 h1:fvNHGyo3CdRv/DQveXqhqBxnKTDyRaC5sMSQxilX/A0=
++go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp v0.21.0/go.mod h1:zyGrjRKL2B/6+Jc/m4/otPoZqV2MY9ZjC/aBraRO7zc=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0 h1:OFnwLJr+pF3iHrlGSzbxyuo6/6HyBlnlN1CWEJmBVcw=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.46.0/go.mod h1:716wFneO0ov19A2beH5hjfh9AK5z/VWNAtDijp1Y0/g=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0 h1:KrC1YrQeSt46ITMWAbgQx1M1eV1/1TKzttrBzymPmss=
+ go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.46.0/go.mod h1:zDSEzoEqsOrgBeGvH66KRgxh90VonFyJqBHA0Pk3+rM=
+-go.opentelemetry.io/otel/log v0.20.0 h1:/5i0vuHxCLWUfChWG41K9wkM0jafruPw9NU1/RCJirs=
+-go.opentelemetry.io/otel/log v0.20.0/go.mod h1:wOcMcjsZpG8x7Bak7IhSi/lg8wscV2C1VdrKCLPlt0E=
++go.opentelemetry.io/otel/log v0.21.0 h1:SLsVDGmtyBrdw8/a2Z0bOIxou/+bN4z56GebH7T0LvA=
++go.opentelemetry.io/otel/log v0.21.0/go.mod h1:iReetQrZL9Wyg84cCkOoCmqDHS5RCFfyxC7J+r8fn8g=
+ go.opentelemetry.io/otel/metric v1.46.0 h1:yBnkXvgV7AXFILZc5K6IZe/CBFF3OS7BJ8ov6/lj0K8=
+ go.opentelemetry.io/otel/metric v1.46.0/go.mod h1:iPmdWqifKUdzziPkvvzIJXITl56fQx2mGM/DHLB3/2o=
+ go.opentelemetry.io/otel/sdk v1.46.0 h1:h5CNQQjEbuQXY/JfZtgt3i7HVFV3aHPO2OAwO2eTYPI=
+ go.opentelemetry.io/otel/sdk v1.46.0/go.mod h1:GAERFXFt5SYCEB+YiKUbMBeza6UaDH7GmGOZEfh2gSM=
+-go.opentelemetry.io/otel/sdk/log v0.20.0 h1:vM3xI7TQgKPiSghe6urZtAkyFY7SodrSpC83CffDFuY=
+-go.opentelemetry.io/otel/sdk/log v0.20.0/go.mod h1:Knej2nmsTUzN79T2eeXdRsjjPcoxoq2pUyUHz9TFyyU=
+-go.opentelemetry.io/otel/sdk/log/logtest v0.20.0 h1:OqdRZ1guyzamK3M6LlRsmGqRrjkHWw6WZOKKli5ELpg=
+-go.opentelemetry.io/otel/sdk/log/logtest v0.20.0/go.mod h1:PuMIlm7zAt7c3z8zfOI5ox4iT1Z87We+PF6YoINux/M=
++go.opentelemetry.io/otel/sdk/log v0.21.0 h1:QsE7XSR0ktQdKmRKGnR+f1ObGF32WG+7MER/P9KgmYc=
++go.opentelemetry.io/otel/sdk/log v0.21.0/go.mod h1:m9mApjCoD2/1QuKCAptjv+BrG9WKOvQLVdNx+iBldTo=
++go.opentelemetry.io/otel/sdk/log/logtest v0.21.0 h1:X+JBBgKlswCGYsmgL0CnoUUtlE//VB345c84jYAYkdQ=
++go.opentelemetry.io/otel/sdk/log/logtest v0.21.0/go.mod h1:HD1575K8e6sIFBBDd5tZB3t9DlMytWXq9FuR+Y4rfjE=
+ go.opentelemetry.io/otel/sdk/metric v1.46.0 h1:0piZ26EG4RBfebb2jhDH6ERCYHoVWduc3kLgPCwSnSE=
+ go.opentelemetry.io/otel/sdk/metric v1.46.0/go.mod h1:I1PbKrdVc8Qu8HYVDNtqVIwLwjNrhsV/uFuxfwg8mO4=
+ go.opentelemetry.io/otel/trace v1.46.0 h1:OULy7ccdJnZtJ0UDYFOIGaCmiWzJ8Vi2G/Rsu60qs1c=
+@@ -351,10 +349,10 @@ golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACk
+ golang.org/x/crypto v0.0.0-20191011191535-87dc89f01550/go.mod h1:yigFU9vqHzYiE8UmvKecakEJjdnWj3jj499lnFckfCI=
+ golang.org/x/crypto v0.0.0-20200622213623-75b288015ac9/go.mod h1:LzIPMQfyMNhhGPhUkYOs5KpL4U8rLKemX1yGLhDgUto=
+ golang.org/x/crypto v0.0.0-20210921155107-089bfa567519/go.mod h1:GvvjBRRGRdwPK5ydBHafDWAxML/pGHZbMvKqRZ5+Abc=
+-golang.org/x/crypto v0.56.0 h1:GUh5Ii4J5jtcseSMiRqr1jXCNHoxjeV9Fmekc2oLy6Y=
+-golang.org/x/crypto v0.56.0/go.mod h1:OMW5y6CY9l38uPLmxU6l6pwcXp1obtLo3e6gT7gQR2I=
+-golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b h1:DXr+pvt3nC887026GRP39Ej11UATqWDmWuS99x26cD0=
+-golang.org/x/exp v0.0.0-20250819193227-8b4c13bb791b/go.mod h1:4QTo5u+SEIbbKW1RacMZq1YEfOBqeXa19JeshGi+zc4=
++golang.org/x/crypto v0.58.0 h1:COkYLr4k7nDI4r6QtMML2AfzeIswWHAJthLS6K/M/54=
++golang.org/x/crypto v0.58.0/go.mod h1:Xh+kl5A+M0gMiWDytH2Hhr5Z7WbNCpv/eB/EFgfSk+w=
++golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa h1:Zt3DZoOFFYkKhDT3v7Lm9FDMEV06GpzjG2jrqW+QTE0=
++golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa/go.mod h1:K79w1Vqn7PoiZn+TkNpx3BUWUQksGO3JcVX6qIjytmA=
+ golang.org/x/mod v0.2.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+ golang.org/x/mod v0.3.0/go.mod h1:s0Qsj1ACt9ePp/hMypM3fl4fZqREWJwdYDEqhRiZZUA=
+ golang.org/x/mod v0.6.0-dev.0.20220419223038-86c51ed26bb4/go.mod h1:jJ57K6gSWd91VN4djpZkiMVwK6gcyfeH4XE8wZrZaV4=
+@@ -375,14 +373,14 @@ golang.org/x/net v0.0.0-20210226172049-e18ecbb05110/go.mod h1:m0MpNAwzfU5UDzcl9v
+ golang.org/x/net v0.0.0-20210525063256-abc453219eb5/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
+ golang.org/x/net v0.0.0-20210813160813-60bc85c4be6d/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
+ golang.org/x/net v0.0.0-20220722155237-a158d28d115b/go.mod h1:XRhObCWvk6IyKnWLug+ECip1KBveYUHfp+8e9klMJ9c=
+-golang.org/x/net v0.58.0 h1:ynWG7rqYi4ccpTEuPZ2QGWHktVEM9DMCj9yzDE0Q7To=
+-golang.org/x/net v0.58.0/go.mod h1:YwCddHnFlT7eLQqVprV19OnhLGtc5xOKgE0RyqgfWAU=
++golang.org/x/net v0.62.0 h1:18ELalfM5+XNRwzM2nYqXsZQ9ByS1uhj2O/U7+5jqRY=
++golang.org/x/net v0.62.0/go.mod h1:WgDCOTH8iwtB66T4/GfI94AHo/hhdb7Hah9NDseQfiI=
+ golang.org/x/sync v0.0.0-20190423024810-112230192c58/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+ golang.org/x/sync v0.0.0-20190911185100-cd5d95a43a6e/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+ golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+ golang.org/x/sync v0.0.0-20220722155255-886fb9371eb4/go.mod h1:RxMgew5VJxzue5/jJTE5uejpjVlOe/izrB70Jof72aM=
+-golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=
+-golang.org/x/sync v0.23.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
++golang.org/x/sync v0.24.0 h1:iqiDrGoDgyuvAKrhLQthUEzU/R378N78gXbBjxed7oA=
++golang.org/x/sync v0.24.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=
+ golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
+ golang.org/x/sys v0.0.0-20190312061237-fead79001313/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+ golang.org/x/sys v0.0.0-20190411185658-b44545bcd369/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
+@@ -412,8 +410,8 @@ golang.org/x/sys v0.0.0-20220722155257-8c9f86f7a55f/go.mod h1:oPkhp1MJrh7nUepCBc
+ golang.org/x/sys v0.1.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.2.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+ golang.org/x/sys v0.10.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
+-golang.org/x/sys v0.48.0 h1:bbX/i/6MgT9BVLM9RT1thmxL04yeTAhbEz4SyadbXoo=
+-golang.org/x/sys v0.48.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
++golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
++golang.org/x/sys v0.49.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
+ golang.org/x/term v0.0.0-20201126162022-7de9c90e9dd1/go.mod h1:bj7SfCRtBDWHUb9snDiAeCFNEtKQo2Wmx5Cou7ajbmo=
+ golang.org/x/term v0.0.0-20210927222741-03fcf44c2211/go.mod h1:jbD1KX2456YbFQfuXm/mYQcufACuNUgVhRMnK/tPxf8=
+ golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
+@@ -421,8 +419,8 @@ golang.org/x/text v0.3.3/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
+ golang.org/x/text v0.3.6/go.mod h1:5Zoc/QRtKVWzQhOtBMvqHzDpF6irO9z98xDceosuGiQ=
+ golang.org/x/text v0.3.7/go.mod h1:u+2+/6zg+i71rQMx5EYifcz6MCKuco9NR6JIITiCfzQ=
+ golang.org/x/text v0.3.8/go.mod h1:E6s5w1FMmriuDzIBO73fBruAKo1PCIq6d2Q6DHfQ8WQ=
+-golang.org/x/text v0.41.0 h1:vz/seA0lnX87Othu2f/0L24RcgrXD9/YFTSuGjj3rH8=
+-golang.org/x/text v0.41.0/go.mod h1:jvf1O8ajNzZqhSrQBPbutR/EB83Cc0CFrezNQIwbb5M=
++golang.org/x/text v0.43.0 h1:1QivrlhwAsnMOcqgOdl9my7s9OyZl8O5/UGUTJVXoWc=
++golang.org/x/text v0.43.0/go.mod h1:hbSIYA/amXcRXTFSZqh8tWHEoqRvvbKPJ2uz/KU+a+s=
+ golang.org/x/time v0.16.0 h1:vMb6ptszcQMkcwiRTAuNNU50gom6++Q/6gY2hDM6VDE=
+ golang.org/x/time v0.16.0/go.mod h1:rVKOqvZeKvrDKTQiAHJ7wmwP0RzleSphoEA9RcdLA0s=
+ golang.org/x/tools v0.0.0-20180917221912-90fa682c2a6e/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
+diff --git a/logs/journald_reader.go b/logs/journald_reader.go
+index 803286a..36ddb94 100644
+--- a/logs/journald_reader.go
++++ b/logs/journald_reader.go
+@@ -3,7 +3,9 @@
+ package logs
+ 
+ import (
++	"errors"
+ 	"fmt"
++	"os"
+ 	"strings"
+ 	"sync"
+ 	"time"
+@@ -24,6 +26,11 @@ type JournaldReader struct {
+ 	lock        sync.Mutex
+ }
+ 
++// isJournalMissing reads through the wrapping sdjournal adds, which os.IsNotExist does not.
++func isJournalMissing(err error) bool {
++	return errors.Is(err, os.ErrNotExist)
++}
++
+ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+ 	r := &JournaldReader{
+ 		until:       make(chan time.Time),
+@@ -32,7 +39,11 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+ 	var err error
+ 	for _, journalPath := range journalPaths {
+ 		if r.journal, err = sdjournal.NewJournalFromDir(journalPath); err != nil {
+-			klog.Errorf("failed to get journal at %s: %s", journalPath, err)
++			if isJournalMissing(err) {
++				klog.Warningf("journald is unavailable at %s: %s", journalPath, err)
++			} else {
++				klog.Errorf("failed to get journal at %s: %s", journalPath, err)
++			}
+ 			continue
+ 		}
+ 		usage, err := r.journal.GetUsage()
+@@ -41,7 +52,7 @@ func NewJournaldReader(journalPaths ...string) (*JournaldReader, error) {
+ 			continue
+ 		}
+ 		if usage == 0 {
+-			klog.Errorf("journal at %s is empty", journalPath)
++			klog.Warningf("journal at %s is empty", journalPath)
+ 			r.journal = nil
+ 			continue
+ 		}
+diff --git a/logs/journald_reader_test.go b/logs/journald_reader_test.go
+new file mode 100644
+index 0000000..7c9ba5e
+--- /dev/null
++++ b/logs/journald_reader_test.go
+@@ -0,0 +1,29 @@
++//go:build linux
++
++package logs
++
++import (
++	"errors"
++	"fmt"
++	"syscall"
++	"testing"
++)
++
++func TestJournalOpenSeverityBoundary(t *testing.T) {
++	tests := []struct {
++		name string
++		err  error
++		want bool
++	}{
++		{name: "Talos journal path absent", err: fmt.Errorf("failed to open journal in directory %q: %w", "/var/log/journal", syscall.ENOENT), want: true},
++		{name: "journal permission denied", err: fmt.Errorf("failed to open journal in directory %q: %w", "/var/log/journal", syscall.EACCES), want: false},
++		{name: "unexpected journal corruption", err: errors.New("journal header is corrupt"), want: false},
++	}
++	for _, tt := range tests {
++		t.Run(tt.name, func(t *testing.T) {
++			if got := isJournalMissing(tt.err); got != tt.want {
++				t.Fatalf("isJournalMissing(%q) = %t, want %t", tt.err, got, tt.want)
++			}
++		})
++	}
++}
+diff --git a/logs/otel.go b/logs/otel.go
+index 64713b9..abf7be4 100644
+--- a/logs/otel.go
++++ b/logs/otel.go
+@@ -99,7 +99,7 @@ func normalizeTraceContextKey(k string) string {
+ 	return ""
+ }
+ 
+-func logRecordAttrs(source, patternHash string, attributes map[string]string) ([]log.KeyValue, trace.SpanContext) {
++func logRecordAttrs(source, patternHash string, attributes map[string]string) ([]attribute.KeyValue, trace.SpanContext) {
+ 	var traceId trace.TraceID
+ 	var spanId trace.SpanID
+ 	for k, v := range attributes {
+@@ -115,16 +115,16 @@ func logRecordAttrs(source, patternHash string, attributes map[string]string) ([
+ 		}
+ 	}
+ 	sc := trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceId, SpanID: spanId})
+-	attrs := make([]log.KeyValue, 0, len(attributes)+2)
+-	attrs = append(attrs, log.String("pattern.hash", patternHash))
++	attrs := make([]attribute.KeyValue, 0, len(attributes)+2)
++	attrs = append(attrs, attribute.String("pattern.hash", patternHash))
+ 	if source != "" {
+-		attrs = append(attrs, log.String(LogSourceAttribute, source))
++		attrs = append(attrs, attribute.String(LogSourceAttribute, source))
+ 	}
+ 	for k, v := range attributes {
+ 		if sc.IsValid() && normalizeTraceContextKey(k) != "" {
+ 			continue
+ 		}
+-		attrs = append(attrs, log.String(k, v))
++		attrs = append(attrs, attribute.String(k, v))
+ 	}
+ 	return attrs, sc
+ }
+@@ -150,7 +150,7 @@ func OtelLogEmitter(containerId, source string) logparser.OnMsgCallbackF {
+ 		record.SetObservedTimestamp(ts)
+ 		record.SetSeverityText(level.String())
+ 		record.SetSeverity(cacommon.LogSeverity(level))
+-		record.SetBody(log.StringValue(msg))
++		record.SetBody(attribute.StringValue(msg))
+ 		record.AddAttributes(attrs...)
+ 		ctx := context.Background()
+ 		if sc.IsValid() {
+diff --git a/node/collector.go b/node/collector.go
+index 202eeea..707cc9f 100644
+--- a/node/collector.go
++++ b/node/collector.go
+@@ -14,11 +14,7 @@ type Collector struct {
+ }
+ 
+ func NewCollector(hostname, kernelVersion string, overrides metadata.Overrides) *Collector {
+-	md := metadata.GetInstanceMetadata()
+-	if md == nil {
+-		md = &metadata.CloudMetadata{}
+-	}
+-	md.ApplyOverrides(overrides)
++	md := resolveInstanceMetadata(overrides, metadata.GetInstanceMetadata)
+ 	klog.Infof("instance metadata: %+v", md)
+ 	return &Collector{
+ 		hostname:         hostname,
+@@ -27,6 +23,18 @@ func NewCollector(hostname, kernelVersion string, overrides metadata.Overrides)
+ 	}
+ }
+ 
++func resolveInstanceMetadata(overrides metadata.Overrides, discover func() *metadata.CloudMetadata) *metadata.CloudMetadata {
++	var md *metadata.CloudMetadata
++	if overrides.Provider == "" {
++		md = discover()
++	}
++	if md == nil {
++		md = &metadata.CloudMetadata{}
++	}
++	md.ApplyOverrides(overrides)
++	return md
++}
++
+ func (c *Collector) Metadata() *metadata.CloudMetadata {
+ 	return c.instanceMetadata
+ }
+diff --git a/node/collector_test.go b/node/collector_test.go
+new file mode 100644
+index 0000000..e288a5b
+--- /dev/null
++++ b/node/collector_test.go
+@@ -0,0 +1,35 @@
++package node
++
++import (
++	"testing"
++
++	"github.com/coroot/coroot-node-agent/node/metadata"
++)
++
++func TestResolveInstanceMetadataSkipsDiscoveryForDeclaredProvider(t *testing.T) {
++	discoveryCalled := false
++	md := resolveInstanceMetadata(metadata.Overrides{Provider: "Hetzner"}, func() *metadata.CloudMetadata {
++		discoveryCalled = true
++		return &metadata.CloudMetadata{Provider: metadata.CloudProviderAWS}
++	})
++	if discoveryCalled {
++		t.Fatal("metadata discovery must be skipped when the provider is declared")
++	}
++	if md.Provider != metadata.CloudProviderHetzner {
++		t.Fatalf("provider = %q, want %q", md.Provider, metadata.CloudProviderHetzner)
++	}
++}
++
++func TestResolveInstanceMetadataDiscoversWhenProviderIsUnknown(t *testing.T) {
++	discoveryCalled := false
++	md := resolveInstanceMetadata(metadata.Overrides{}, func() *metadata.CloudMetadata {
++		discoveryCalled = true
++		return &metadata.CloudMetadata{Provider: metadata.CloudProviderAWS}
++	})
++	if !discoveryCalled {
++		t.Fatal("metadata discovery must run when the provider is not declared")
++	}
++	if md.Provider != metadata.CloudProviderAWS {
++		t.Fatalf("provider = %q, want %q", md.Provider, metadata.CloudProviderAWS)
++	}
++}
+diff --git a/node/net_dump_linux_test.go b/node/net_dump_linux_test.go
+new file mode 100644
+index 0000000..10a0bff
+--- /dev/null
++++ b/node/net_dump_linux_test.go
+@@ -0,0 +1,120 @@
++package node
++
++import (
++	"errors"
++	"net"
++	"testing"
++
++	"github.com/vishvananda/netlink"
++	"github.com/vishvananda/netlink/nl"
++	"golang.org/x/sys/unix"
++)
++
++// scriptedNetlinkDump supplies partial and complete kernel responses without
++// changing the host network namespace or requiring elevated test permissions.
++type scriptedNetlinkDump struct {
++	links     func() ([]netlink.Link, error)
++	addresses func(netlink.Link, int) ([]netlink.Addr, error)
++}
++
++func (s scriptedNetlinkDump) LinkList() ([]netlink.Link, error) {
++	return s.links()
++}
++
++func (s scriptedNetlinkDump) AddrList(link netlink.Link, family int) ([]netlink.Addr, error) {
++	return s.addresses(link, family)
++}
++
++// TestNetDeviceDumpRecovery exercises both production API call sites and proves
++// partial interface or address data never escapes a failed dump.
++func TestNetDeviceDumpRecovery(t *testing.T) {
++	permission := errors.New("permission denied")
++	for _, tc := range []struct {
++		name     string
++		stage    string
++		failures int
++		err      error
++		wantErr  error
++	}{
++		{name: "links recover", stage: "links", failures: 1, err: nl.ErrDumpInterrupted},
++		{name: "addresses recover", stage: "addresses", failures: 1, err: nl.ErrDumpInterrupted},
++		{name: "links exhausted", stage: "links", failures: 3, err: nl.ErrDumpInterrupted, wantErr: nl.ErrDumpInterrupted},
++		{name: "addresses exhausted", stage: "addresses", failures: 3, err: nl.ErrDumpInterrupted, wantErr: nl.ErrDumpInterrupted},
++		{name: "links refuse unrelated", stage: "links", failures: 1, err: permission, wantErr: permission},
++		{name: "addresses refuse unrelated", stage: "addresses", failures: 1, err: permission, wantErr: permission},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			linkCalls, addressCalls := 0, 0
++			goodLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{
++				Name: "eth0", OperState: netlink.OperUp,
++				Statistics: &netlink.LinkStatistics{RxBytes: 12, TxBytes: 34, RxPackets: 5, TxPackets: 6},
++			}}
++			partialLink := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: "eth99"}}
++			handle := scriptedNetlinkDump{
++				links: func() ([]netlink.Link, error) {
++					linkCalls++
++					if tc.stage == "links" && linkCalls <= tc.failures {
++						return []netlink.Link{partialLink}, tc.err
++					}
++					return []netlink.Link{goodLink}, nil
++				},
++				addresses: func(link netlink.Link, _ int) ([]netlink.Addr, error) {
++					addressCalls++
++					if link != goodLink {
++						t.Fatal("address lookup consumed a partial link response")
++					}
++					if tc.stage == "addresses" && addressCalls <= tc.failures {
++						return []netlink.Addr{{IPNet: &net.IPNet{IP: net.ParseIP("203.0.113.9").To4(), Mask: net.CIDRMask(24, 32)}}}, tc.err
++					}
++					return []netlink.Addr{{IPNet: &net.IPNet{IP: net.ParseIP("192.0.2.3").To4(), Mask: net.CIDRMask(24, 32)}}}, nil
++				},
++			}
++			got, err := netDevicesFromHandle(handle)
++			if !errors.Is(err, tc.wantErr) {
++				t.Fatalf("error = %v, want %v", err, tc.wantErr)
++			}
++			if tc.wantErr != nil {
++				if got != nil {
++					t.Fatalf("partial network snapshot escaped with error: %v", got)
++				}
++			} else if len(got) != 1 || got[0].Name != "eth0" || got[0].Up != 1 || got[0].RxBytes != 12 || len(got[0].IPPrefixes) != 1 || got[0].IPPrefixes[0].IP().String() != "192.0.2.3" {
++				t.Fatalf("not the complete final network snapshot: %v", got)
++			}
++			calls := linkCalls
++			if tc.stage == "addresses" {
++				calls = addressCalls
++			}
++			wantCalls := tc.failures
++			if tc.wantErr == nil {
++				wantCalls++
++			}
++			if calls != wantCalls {
++				t.Fatalf("API calls = %d, want %d", calls, wantCalls)
++			}
++		})
++	}
++}
++
++// TestNetDeviceDumpReadsRealKernel runs the production collection path against
++// read-only route-netlink queries in the test process's existing namespace.
++func TestNetDeviceDumpReadsRealKernel(t *testing.T) {
++	handle, err := netlink.NewHandle(unix.NETLINK_ROUTE)
++	if err != nil {
++		t.Fatal("cannot open the read-only route-netlink handle:", err)
++	}
++	defer handle.Delete()
++	devices, err := netDevicesFromHandle(handle)
++	if err != nil {
++		t.Fatal("cannot collect a complete real-kernel network snapshot:", err)
++	}
++	if len(devices) == 0 {
++		t.Fatal("the Linux validation runner returned no supported network interface")
++	}
++	seen := make(map[string]bool)
++	for _, device := range devices {
++		if device.Name == "" || seen[device.Name] {
++			t.Fatal("the real-kernel snapshot contains an empty or duplicate interface")
++		}
++		seen[device.Name] = true
++	}
++}
+diff --git a/node/net_dump_retry.go b/node/net_dump_retry.go
+new file mode 100644
+index 0000000..f2a1e95
+--- /dev/null
++++ b/node/net_dump_retry.go
+@@ -0,0 +1,21 @@
++package node
++
++import "errors"
++
++// retryNetlinkDump reads one complete kernel dump. Interrupted snapshots must
++// never contribute data to a later successful attempt.
++func retryNetlinkDump[T any](read func() (T, error), interrupted error) (T, error) {
++	var zero T
++	var err error
++	for attempt := 0; attempt < 3; attempt++ {
++		var result T
++		result, err = read()
++		if err == nil {
++			return result, nil
++		}
++		if !errors.Is(err, interrupted) {
++			return zero, err
++		}
++	}
++	return zero, err
++}
+diff --git a/node/net_dump_retry_test.go b/node/net_dump_retry_test.go
+new file mode 100644
+index 0000000..765deda
+--- /dev/null
++++ b/node/net_dump_retry_test.go
+@@ -0,0 +1,55 @@
++package node
++
++import (
++	"errors"
++	"fmt"
++	"reflect"
++	"testing"
++)
++
++// TestRetryNetlinkDump requires a complete result, a bounded recovery attempt,
++// and immediate propagation of errors unrelated to interrupted kernel dumps.
++func TestRetryNetlinkDump(t *testing.T) {
++	interrupted := errors.New("interrupted kernel dump")
++	permission := errors.New("permission denied")
++	lookalike := errors.New(interrupted.Error())
++	for _, tc := range []struct {
++		name      string
++		failures  []error
++		wantCalls int
++		wantError error
++	}{
++		{name: "complete first result", wantCalls: 1},
++		{name: "recover one interruption", failures: []error{interrupted}, wantCalls: 2},
++		{name: "recover wrapped interruption", failures: []error{fmt.Errorf("dump: %w", interrupted)}, wantCalls: 2},
++		{name: "recover final bounded attempt", failures: []error{interrupted, interrupted}, wantCalls: 3},
++		{name: "exhausted interruption", failures: []error{interrupted, interrupted, interrupted}, wantCalls: 3, wantError: interrupted},
++		{name: "unrelated error", failures: []error{permission}, wantCalls: 1, wantError: permission},
++		{name: "unrelated error after interruption", failures: []error{interrupted, permission}, wantCalls: 2, wantError: permission},
++		{name: "text alone is not interruption", failures: []error{lookalike}, wantCalls: 1, wantError: lookalike},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			calls := 0
++			got, err := retryNetlinkDump(func() ([]int, error) {
++				calls++
++				if calls <= len(tc.failures) {
++					return []int{99}, tc.failures[calls-1]
++				}
++				return []int{1, 2}, nil
++			}, interrupted)
++			if calls != tc.wantCalls {
++				t.Errorf("read calls = %d, want %d", calls, tc.wantCalls)
++			}
++			if !errors.Is(err, tc.wantError) {
++				t.Errorf("error = %v, want %v", err, tc.wantError)
++			}
++			if tc.wantError != nil {
++				if got != nil {
++					t.Errorf("partial data escaped with error: %v", got)
++				}
++			} else if !reflect.DeepEqual(got, []int{1, 2}) {
++				t.Errorf("result = %v, want complete snapshot [1 2]", got)
++			}
++		})
++	}
++}
+diff --git a/node/net_linux.go b/node/net_linux.go
+index 4dd66c1..46a11f1 100644
+--- a/node/net_linux.go
++++ b/node/net_linux.go
+@@ -6,6 +6,7 @@ import (
+ 
+ 	"github.com/coroot/coroot-node-agent/proc"
+ 	"github.com/vishvananda/netlink"
++	"github.com/vishvananda/netlink/nl"
+ 	"golang.org/x/sys/unix"
+ 	"inet.af/netaddr"
+ )
+@@ -37,7 +38,18 @@ func NetDevices() ([]NetDeviceInfo, error) {
+ 		return nil, err
+ 	}
+ 	defer h.Delete()
+-	links, err := h.LinkList()
++	return netDevicesFromHandle(h)
++}
++
++type netDeviceDumpHandle interface {
++	LinkList() ([]netlink.Link, error)
++	AddrList(netlink.Link, int) ([]netlink.Addr, error)
++}
++
++// netDevicesFromHandle publishes only complete link and address dumps. Kernel
++// interruption gets a bounded retry; persistent and unrelated errors propagate.
++func netDevicesFromHandle(h netDeviceDumpHandle) ([]NetDeviceInfo, error) {
++	links, err := retryNetlinkDump(h.LinkList, nl.ErrDumpInterrupted)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+@@ -58,7 +70,9 @@ func NetDevices() ([]NetDeviceInfo, error) {
+ 			info.Up = 1
+ 		}
+ 
+-		addrs, err := h.AddrList(link, unix.AF_UNSPEC)
++		addrs, err := retryNetlinkDump(func() ([]netlink.Addr, error) {
++			return h.AddrList(link, unix.AF_UNSPEC)
++		}, nl.ErrDumpInterrupted)
+ 		if err != nil {
+ 			return nil, err
+ 		}

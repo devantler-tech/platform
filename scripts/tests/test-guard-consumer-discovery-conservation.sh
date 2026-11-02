@@ -1107,6 +1107,37 @@ YAML
   printf '  - mutation.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
   expect_pass 'a literal Pod-only mutation does not alter consumers' "$root" '2 consumer(s)'
 
+  # The native Gateway receiver mutates only its fixed Envoy peer fields.
+  # Exercise the actual policy file, then change complete spec surfaces one at
+  # a time. A familiar kind, name or path alone must never inherit approval.
+  root="$(fixture reviewed-native-gateway-peer)"
+  cp "$REPO_ROOT/k8s/providers/hetzner/infrastructure/cilium/gateway-receiver/mutating-admission-policy-gateway-receiver.yaml" "$root/k8s/providers/prod/apps/gateway-peer.yaml"
+  printf '  - gateway-peer.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+  expect_pass 'the complete native Gateway peer mutation preserves consumer discovery' "$root" '2 consumer(s)'
+  for variant in source-target wildcard-group extra-resource condition variables patch-path patch-value extra-mutation extra-field failure-policy api-version; do
+    root="$(fixture "native-gateway-peer-$variant")"
+    cp "$WORK/reviewed-native-gateway-peer/k8s/providers/prod/apps/gateway-peer.yaml" "$root/k8s/providers/prod/apps/gateway-peer.yaml"
+    policy="$root/k8s/providers/prod/apps/gateway-peer.yaml"
+    case "$variant" in
+      source-target) yq -i '.spec.matchConstraints.resourceRules[0] |= (.apiGroups = ["source.toolkit.fluxcd.io"] | .resources = ["ocirepositories"])' "$policy" ;;
+      wildcard-group) yq -i '.spec.matchConstraints.resourceRules[0].apiGroups = ["*"]' "$policy" ;;
+      extra-resource) yq -i '.spec.matchConstraints.resourceRules[0].resources += ["ocirepositories"]' "$policy" ;;
+      condition) yq -i '.spec.matchConditions[0].expression = "true"' "$policy" ;;
+      variables) yq -i '.spec.variables[0].expression = "object"' "$policy" ;;
+      patch-path) yq -i '.spec.mutations[0].jsonPatch.expression = "[JSONPatch{op: \"add\", path: \"/spec/ref\", value: {}}]"' "$policy" ;;
+      patch-value) yq -i '.spec.mutations[1].jsonPatch.expression += " + [JSONPatch{op: \"remove\", path: \"/spec\"}]"' "$policy" ;;
+      extra-mutation) yq -i '.spec.mutations += [.spec.mutations[0]]' "$policy" ;;
+      extra-field) yq -i '.spec.extra = true' "$policy" ;;
+      failure-policy) yq -i '.spec.failurePolicy = "Ignore"' "$policy" ;;
+      api-version) yq -i '.apiVersion = "admissionregistration.k8s.io/v1alpha1"' "$policy" ;;
+    esac
+    if cmp -s "$WORK/reviewed-native-gateway-peer/k8s/providers/prod/apps/gateway-peer.yaml" "$policy"; then
+      fail "native Gateway peer negative control did not change $variant"
+    fi
+    printf '  - gateway-peer.yaml\n' >>"$root/k8s/providers/prod/apps/kustomization.yaml"
+    expect_refusal "an altered native Gateway peer $variant cannot inherit approval" "$root" 'CEL admission mutation' 'consumers are UNKNOWN'
+  done
+
   # #5096: the one reviewed CEL mutation shape passes; each variant widens
   # exactly one thing and must be refused again.
   root="$(fixture reviewed-cel-mutation)"
