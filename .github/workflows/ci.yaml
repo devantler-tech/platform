@@ -250,6 +250,7 @@ jobs:
               - 'scripts/tests/test-flux-kustomization-prune.sh'
               - 'scripts/tests/test-github-config-role-activation-parity.sh'
               - 'scripts/tests/test-restrict-tenant-secret-stores.sh'
+              - 'scripts/tests/test-github-team-management-checks.sh'
               - 'scripts/tests/test-tenant-kro-pull-secret.sh'
               - 'scripts/tests/test-tenant-controller-namespace-coverage.sh'
               - 'scripts/tests/test-arc-listener-public-content.sh'
@@ -1956,6 +1957,8 @@ jobs:
           bash scripts/tests/test-arc-listener-admission.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
+          shellcheck scripts/tests/test-github-team-management-checks.sh
+          bash scripts/tests/test-github-team-management-checks.sh
           shellcheck scripts/tests/test-tenant-controller-namespace-coverage.sh
           bash scripts/tests/test-tenant-controller-namespace-coverage.sh
           shellcheck scripts/tests/test-restrict-tenant-network-policies.sh
