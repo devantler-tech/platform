@@ -251,6 +251,12 @@ func TestTemporaryInventoryNativeWorkflowGuardPreservesResetBoundary(t *testing.
 		operation, node, ref, attempt, confirm string
 		allowed                                bool
 	}{
+		{"inventory-storage-root", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-temporary-v1-1", true},
+		{"inventory-storage-root", "temporary-v2-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-temporary-v2-1", true},
+		{"inventory-storage-root", "prod-worker-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-prod-worker-1", true},
+		{"inventory-storage-root", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-1", false},
+		{"inventory-storage-root", "temporary-v1-1", "refs/heads/main", "2", "inventory-longhorn-storage-root-temporary-v1-1", false},
+		{"inventory-storage-root", "temporary-v1-1", "refs/heads/feature", "1", "inventory-longhorn-storage-root-temporary-v1-1", false},
 		{"inventory-replicas", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-1", true},
 		{"inventory-replicas", "temporary-v1-2", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v1-2", true},
 		{"inventory-replicas", "temporary-v2-1", "refs/heads/main", "1", "inventory-longhorn-replicas-temporary-v2-1", true},
