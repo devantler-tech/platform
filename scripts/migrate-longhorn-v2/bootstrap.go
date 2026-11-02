@@ -87,6 +87,46 @@ func sameCapacityNode(current, original object, pool migrationPool) error {
 	return nil
 }
 
+// verifyActivatedCapacity re-reads one activated node, so success never rests on the state read
+// before the writes: a replaced host, a lost pin or a disk Longhorn cannot use is not yet capacity.
+func verifyActivatedCapacity(ctx context.Context, c client, binding capacityBinding, pool migrationPool) error {
+	name := text(binding.node, "metadata", "name")
+	n, err := c.get(ctx, "node", "", name, false)
+	if err != nil {
+		return err
+	}
+	if err = sameCapacityNode(n, binding.node, pool); err != nil {
+		return err
+	}
+	if err = verifyCapacityPin(n, true); err != nil {
+		return err
+	}
+	lh, err := c.get(ctx, "nodes.longhorn.io", "longhorn-system", name, false)
+	if err != nil {
+		return err
+	}
+	if text(lh, "metadata", "uid") != text(binding.storage, "metadata", "uid") || value(lh, "metadata", "deletionTimestamp") != nil {
+		return errors.New("migration storage identity changed during activation")
+	}
+	if text(lh, "metadata", "labels", migrationEnabledLabel) != "true" || value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false || !sameDisks(value(lh, "spec", "disks"), binding.disks) {
+		return errors.New("migration storage activation is not reconciled")
+	}
+	if !conditionsTrue(valueObject(lh, "status"), "Ready", "Schedulable") {
+		return errors.New("migration storage node is not Ready and Schedulable")
+	}
+	statuses, _ := value(lh, "status", "diskStatus").(map[string]any)
+	if len(statuses) != len(binding.disks) {
+		return errors.New("migration storage disk status is not exact")
+	}
+	for diskName := range binding.disks {
+		disk, _ := statuses[diskName].(map[string]any)
+		if text(disk, "diskUUID") == "" || !conditionsTrue(disk, "Ready", "Schedulable") {
+			return errors.New("migration disk is not Ready and Schedulable")
+		}
+	}
+	return nil
+}
+
 func bootstrapCapacity(ctx context.Context, c client, source string, pool migrationPool) error {
 	if pool.role == "v2" {
 		if err := verifyV2EngineEnabled(ctx, c); err != nil {
@@ -234,21 +274,11 @@ func bootstrapCapacity(ctx context.Context, c client, source string, pool migrat
 	}
 	if err = waitReady(ctx, func(ctx context.Context) error {
 		for _, binding := range plan {
-			lh, readErr := c.get(ctx, "nodes.longhorn.io", "longhorn-system", text(binding.node, "metadata", "name"), false)
-			if readErr != nil {
-				return readErr
-			}
-			if text(lh, "metadata", "labels", migrationEnabledLabel) != "true" || value(lh, "spec", "allowScheduling") != true || value(lh, "spec", "evictionRequested") != false || !sameDisks(value(lh, "spec", "disks"), binding.disks) {
-				return errors.New("migration storage activation is not reconciled")
-			}
-			if pool.role == "v1" {
-				disk, _ := value(lh, "status", "diskStatus", "migration-v1").(map[string]any)
-				if text(disk, "diskUUID") == "" || !ready(disk) {
-					return errors.New("temporary filesystem is not Ready")
-				}
+			if checkErr := verifyActivatedCapacity(ctx, c, binding, pool); checkErr != nil {
+				return checkErr
 			}
 		}
-		return nil
+		return sourceCurrent(ctx, c.run, source)
 	}); err != nil {
 		return err
 	}

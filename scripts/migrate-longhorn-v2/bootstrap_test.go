@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 )
@@ -56,15 +57,21 @@ type capacityAPI struct {
 	failPin        string
 	storageWrites  int
 	afterPins      func(*capacityAPI)
+	afterStorage   func(*capacityAPI)
 }
 
 func newCapacityAPI(t *testing.T) (*capacityAPI, client, migrationPool) {
 	t.Helper()
+	return newCapacityAPIFor(t, "v1", "0123456789abcdef", "1123456789abcdef")
+}
+
+func newCapacityAPIFor(t *testing.T, role string, suffixes ...string) (*capacityAPI, client, migrationPool) {
+	t.Helper()
 	base, _ := newPreparationAPI(t, "evacuating")
 	base.s = evacuatedFixture()
 	f := &capacityAPI{base: base, nodes: map[string]object{}, storage: map[string]object{}}
-	for _, suffix := range []string{"0123456789abcdef", "1123456789abcdef"} {
-		n := migrationNodeFixture("v1", suffix)
+	for _, suffix := range suffixes {
+		n := migrationNodeFixture(role, suffix)
 		name := text(n, "metadata", "name")
 		f.nodes[name] = n
 		lh := resource(name)
@@ -77,7 +84,7 @@ func newCapacityAPI(t *testing.T) (*capacityAPI, client, migrationPool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return f, client{run: f.run, context: "admin@prod"}, pools["v1"]
+	return f, client{run: f.run, context: "admin@prod"}, pools[role]
 }
 
 func (f *capacityAPI) run(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
@@ -86,7 +93,10 @@ func (f *capacityAPI) run(ctx context.Context, input []byte, program string, arg
 		if len(args) == 5 && args[2] == "systeminformation" {
 			return f.base.encode(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": "machine-uuid"}})
 		}
-		_, e := rawFixture()
+		raw, e := rawFixture()
+		if len(args) == 5 && args[3] == "r-longhorn" {
+			return f.base.encode(raw)
+		}
 		e["spec"].(object)["size"] = float64(280 * 1024 * 1024 * 1024)
 		return f.base.encode(e)
 	}
@@ -132,9 +142,18 @@ func (f *capacityAPI) run(ctx context.Context, input []byte, program string, arg
 					f.base.t.Fatal(err)
 				}
 				if a[1] == "nodes.longhorn.io" {
-					updated["status"] = object{"conditions": readyConditions(), "diskStatus": object{"migration-v1": object{"diskUUID": "new-disk", "conditions": readyConditions()}}}
+					statuses := object{}
+					for disk := range valueObject(updated, "spec", "disks") {
+						statuses[disk] = object{"diskUUID": "new-disk", "conditions": schedulableConditions()}
+					}
+					updated["status"] = object{"conditions": schedulableConditions(), "diskStatus": statuses}
 				}
 				objects[a[2]] = updated
+				if a[1] == "nodes.longhorn.io" && f.afterStorage != nil && f.storageWrites == len(f.storage) {
+					change := f.afterStorage
+					f.afterStorage = nil
+					change(f)
+				}
 				if a[1] == "node" && f.afterPins != nil {
 					allPinned := true
 					for _, node := range f.nodes {
@@ -179,6 +198,74 @@ func TestCapacityActivationRechecksTheWholePinnedPoolBeforeStorage(t *testing.T)
 	if err := bootstrapCapacity(context.Background(), c, journalFixture().Source, pool); err == nil || f.storageWrites != 0 {
 		t.Fatal("hardware drift in the second node allowed the first disk to be enabled")
 	}
+}
+
+func TestCapacityActivationSucceedsOnlyOnCurrentProtectedSchedulableCapacity(t *testing.T) {
+	// The poll runs until the injected fault's grace ends, never counting time before the writes.
+	const pollGrace = 200 * time.Millisecond
+	onlyDisk := func(lh object) object {
+		for _, disk := range valueObject(lh, "status", "diskStatus") {
+			return disk.(map[string]any)
+		}
+		t.Fatal("fixture has no disk status")
+		return nil
+	}
+	faults := map[string]func(n, lh object){
+		"missing disk status": func(_, lh object) { lh["status"].(object)["diskStatus"] = object{} },
+		"extra disk status":   func(_, lh object) { valueObject(lh, "status", "diskStatus")["other"] = object{"diskUUID": "x"} },
+		"empty disk UUID":     func(_, lh object) { onlyDisk(lh)["diskUUID"] = "" },
+		"failed disk": func(_, lh object) {
+			onlyDisk(lh)["conditions"] = []any{object{"type": "Ready", "status": "False"}, object{"type": "Schedulable", "status": "True"}}
+		},
+		"unschedulable disk": func(_, lh object) { onlyDisk(lh)["conditions"] = readyConditions() },
+		"unschedulable node": func(_, lh object) { lh["status"].(object)["conditions"] = readyConditions() },
+		"replaced storage":   func(_, lh object) { lh["metadata"].(object)["uid"] = "other" },
+		"replaced node":      func(n, _ object) { n["metadata"].(object)["uid"] = "other" },
+		"changed provider":   func(n, _ object) { n["spec"].(object)["providerID"] = "hcloud://99" },
+		"changed boot":       func(n, _ object) { n["status"].(object)["nodeInfo"].(object)["bootID"] = "other" },
+		"lost protection":    func(n, _ object) { delete(n["metadata"].(object)["annotations"].(object), scaleDownDisabled) },
+	}
+	for _, engine := range []struct {
+		role     string
+		suffixes []string
+	}{
+		{"v1", []string{"0123456789abcdef", "1123456789abcdef"}},
+		{"v2", []string{"0123456789abcdef"}},
+	} {
+		t.Run(engine.role+"/control", func(t *testing.T) {
+			f, c, pool := newCapacityAPIFor(t, engine.role, engine.suffixes...)
+			if err := bootstrapCapacity(context.Background(), c, journalFixture().Source, pool); err != nil || f.storageWrites != len(engine.suffixes) {
+				t.Fatalf("complete capacity was refused after %d writes: %v", f.storageWrites, err)
+			}
+		})
+		for name, fault := range faults {
+			t.Run(engine.role+"/"+name, func(t *testing.T) {
+				f, c, pool := newCapacityAPIFor(t, engine.role, engine.suffixes...)
+				node := "autoscale-longhorn-" + engine.role + "-0123456789abcdef"
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				f.afterStorage = func(f *capacityAPI) {
+					fault(f.nodes[node], f.storage[node])
+					time.AfterFunc(pollGrace, cancel)
+				}
+				if err := bootstrapCapacity(ctx, c, journalFixture().Source, pool); err == nil || f.storageWrites != len(engine.suffixes) {
+					t.Fatalf("activation after %d writes reported %v", f.storageWrites, err)
+				}
+			})
+		}
+	}
+	t.Run("stale source", func(t *testing.T) {
+		f, c, pool := newCapacityAPI(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		f.afterStorage = func(f *capacityAPI) {
+			f.base.staleSource = true
+			time.AfterFunc(pollGrace, cancel)
+		}
+		if err := bootstrapCapacity(ctx, c, journalFixture().Source, pool); err == nil || f.storageWrites != 2 {
+			t.Fatalf("activation with a stale source after %d writes reported %v", f.storageWrites, err)
+		}
+	})
 }
 
 func TestCapacityActivationCannotUseStaleSource(t *testing.T) {
