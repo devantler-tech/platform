@@ -16,6 +16,12 @@ type nativeReplicaReader interface {
 
 type inventoryReaderFactory func(context.Context, string) (nativeReplicaReader, func() error, error)
 
+const (
+	inventoryKubeNodes    = "/api/v1/nodes"
+	inventoryStorageNodes = "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/nodes"
+	inventoryReplicas     = "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/replicas"
+)
+
 type inventoryReceipt struct {
 	Schema              int                      `json:"schema"`
 	ObservationOnly     bool                     `json:"observationOnly"`
@@ -27,17 +33,20 @@ type inventoryReceipt struct {
 func (c client) inventoryProjection(ctx context.Context, target string) (inventoryProjection, object, error) {
 	var nodes, storage, replicas []object
 	for _, query := range []struct {
-		kind, namespace string
-		destination     *[]object
+		path, apiVersion, kind string
+		destination            *[]object
 	}{
-		{"nodes", "", &nodes}, {"nodes.longhorn.io", "longhorn-system", &storage}, {"replicas.longhorn.io", "longhorn-system", &replicas},
+		{inventoryKubeNodes, "v1", "NodeList", &nodes},
+		{inventoryStorageNodes, "longhorn.io/v1beta2", "NodeList", &storage},
+		{inventoryReplicas, "longhorn.io/v1beta2", "ReplicaList", &replicas},
 	} {
-		args := append([]string{"get", query.kind, "--output=json", "--chunk-size=0"}, namespaceArgs(query.namespace)...)
-		data, err := c.kubectl(ctx, nil, args...)
+		// Ordinary kubectl printing flattens the typed list and discards its
+		// collection revision. Preserve the server envelope with a fixed raw GET.
+		data, err := c.kubectl(ctx, nil, "get", "--raw="+query.path)
 		if err != nil {
 			return inventoryProjection{}, nil, errInventory
 		}
-		*query.destination, err = decodeInventory(data)
+		*query.destination, err = decodeInventoryCollection(data, query.apiVersion, query.kind)
 		if err != nil {
 			return inventoryProjection{}, nil, err
 		}
