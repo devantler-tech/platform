@@ -62,9 +62,10 @@ jobs:
 
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
-  validate-go-regressions:
-    name: 🧪 Validate Complete Go Regressions
+  validate-go-lint:
+    name: 🧹 Validate Complete Go Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -96,6 +97,24 @@ jobs:
       - name: 🧹 Lint every tracked Go source module
         timeout-minutes: 10
         run: bash scripts/check-go-modules-lint.sh
+
+  validate-go-regressions:
+    name: 🧪 Validate Complete Go Regressions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -4264,6 +4283,7 @@ jobs:
         validate-independent-guards,
         test-publish-release-recovery,
         validate-publication-generator,
+        validate-go-lint,
         validate-go-regressions,
         validate-webapp-compiler,
         validate-consumer-discovery,
@@ -4636,6 +4656,7 @@ jobs:
         test-publish-release-recovery-disabled,
         validate-publication-generator,
         validate-manifest-regressions,
+        validate-go-lint,
         validate-go-regressions,
         validate-webapp-compiler,
         validate-consumer-discovery,
@@ -4740,6 +4761,7 @@ jobs:
             ${{ needs.test-publish-release-recovery-disabled.result }}
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
+            ${{ needs.validate-go-lint.result }}
             ${{ needs.validate-go-regressions.result }}
             ${{ needs.validate-webapp-compiler.result }}
             ${{ needs.validate-consumer-discovery.result }}
@@ -4800,6 +4822,15 @@ jobs:
             exit 1
             ;;
           esac
+
+      - name: 🧹 Require complete Go lint
+        env:
+          LINT_RESULT: ${{ needs.validate-go-lint.result }}
+        run: |
+          if [[ "$LINT_RESULT" != success ]]; then
+            echo "The unconditional Go lint job must succeed, got: $LINT_RESULT" >&2
+            exit 1
+          fi
 
       - name: 🧪 Require complete Go regressions
         env:

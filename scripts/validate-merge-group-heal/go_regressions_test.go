@@ -19,12 +19,13 @@ type regressionRunDefaults struct {
 type regressionWorkflow struct {
 	Defaults regressionRunDefaults `yaml:"defaults"`
 	Jobs     map[string]struct {
-		Defaults    regressionRunDefaults `yaml:"defaults"`
-		If          string                `yaml:"if"`
-		Needs       []string              `yaml:"needs"`
-		Continue    any                   `yaml:"continue-on-error"`
-		Permissions map[string]string     `yaml:"permissions"`
-		Steps       []struct {
+		TimeoutMinutes int                   `yaml:"timeout-minutes"`
+		Defaults       regressionRunDefaults `yaml:"defaults"`
+		If             string                `yaml:"if"`
+		Needs          []string              `yaml:"needs"`
+		Continue       any                   `yaml:"continue-on-error"`
+		Permissions    map[string]string     `yaml:"permissions"`
+		Steps          []struct {
 			Name             string            `yaml:"name"`
 			Uses             string            `yaml:"uses"`
 			With             map[string]any    `yaml:"with"`
@@ -39,7 +40,18 @@ type regressionWorkflow struct {
 
 func TestGoLintIsAnUnconditionalReadOnlyGate(t *testing.T) {
 	workflow := readRegressionWorkflow(t)
-	job := workflow.Jobs["validate-go-regressions"]
+	job, found := workflow.Jobs["validate-go-lint"]
+	if !found || len(job.Needs) != 0 || job.If != "" || job.Continue != nil || job.TimeoutMinutes != 15 {
+		t.Fatal("complete lint needs its own unconditional independent job within 15 minutes")
+	}
+	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
+		t.Fatal("the lint runner needs only read-only checkout permission")
+	}
+	for _, name := range []string{"deploy-prod", "ci-required-checks"} {
+		if !slices.Contains(workflow.Jobs[name].Needs, "validate-go-lint") {
+			t.Fatalf("%s must wait for complete Go lint", name)
+		}
+	}
 	install, control, lint := -1, -1, -1
 	for index, step := range job.Steps {
 		switch {
@@ -61,8 +73,36 @@ func TestGoLintIsAnUnconditionalReadOnlyGate(t *testing.T) {
 		}
 	}
 	if install < 0 || control <= install || lint <= control {
-		t.Fatal("required regressions must install lint, verify its real controls, then lint the tracked modules")
+		t.Fatal("independent lint must install the linter, verify its real controls, then lint the tracked modules")
 	}
+}
+
+func TestGoLintRejectsEveryNonSuccessResult(t *testing.T) {
+	workflow := readRegressionWorkflow(t)
+	gate := workflow.Jobs["ci-required-checks"]
+	if gate.If != "always()" {
+		t.Fatal("the aggregate must still run after a failed dependency")
+	}
+	for _, step := range gate.Steps {
+		if step.Name != "🧹 Require complete Go lint" {
+			continue
+		}
+		if step.If != "" || step.Continue != nil || step.Env["LINT_RESULT"] != "${{ needs.validate-go-lint.result }}" {
+			t.Fatal("complete lint enforcement must be unconditional and bind the real job")
+		}
+		for _, result := range []string{"success", "failure", "cancelled", "skipped", "", "unknown"} {
+			t.Run(result, func(t *testing.T) {
+				command := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
+				command.Env = append(os.Environ(), "LINT_RESULT="+result)
+				output, err := command.CombinedOutput()
+				if (err == nil) != (result == "success") {
+					t.Fatalf("result %q: error=%v, output=%s", result, err, output)
+				}
+			})
+		}
+		return
+	}
+	t.Fatal("required aggregate has no complete-lint result enforcement")
 }
 
 // readRegressionWorkflow loads the actual CI workflow rather than a separate fixture.
