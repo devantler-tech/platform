@@ -24,7 +24,7 @@ while IFS=$'\t' read -r family passed denied; do
   done
 done <<'CASES'
 restrict-tenant-secret-stores	5	7
-restrict-tenant-issuer-refs	3	3
+restrict-tenant-issuer-refs	4	3
 restrict-tenant-route-hostnames	3	13
 restrict-tenant-network-policies	309	78
 CASES
