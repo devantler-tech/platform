@@ -7,8 +7,8 @@ import (
 	"github.com/devantler-tech/platform/internal/longhornmigration"
 )
 
-// ksail.prod.yaml holds no V2 pool until a later slice of #5655, and the check
-// requires both pools, so this source is the configuration that slice adds.
+// The check requires both pools. This fixed source keeps these tests independent
+// of ksail.prod.yaml, which retires the pools when #5582 ends.
 const reviewedPoolsSource = `{"spec":{"cluster":{"controlPlanes":3,"workers":3,"autoscaler":{"node":{"maxNodesTotal":9,"pools":[{"name":"autoscale-longhorn-v1","serverType":"cpx42","location":"fsn1","min":2,"max":2,"labels":{"storage.platform.devantler.tech/migration-pool":"v1"}},{"name":"autoscale-longhorn-v2","serverType":"cpx42","location":"fsn1","min":1,"max":1,"labels":{"storage.platform.devantler.tech/migration-pool":"v2"}}]}}},"provider":{"hetzner":{"serverLimit":10}}}}`
 
 // protectedMigrationFixture holds one armed V1 migration worker carrying a replica.

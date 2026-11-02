@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	jsonpatch "gopkg.in/evanphx/json-patch.v5"
+	jsonpatch "gopkg.in/evanphx/json-patch.v4"
 )
 
 func TestCapacityProtectionDoesNotBorrowForeignAnnotations(t *testing.T) {

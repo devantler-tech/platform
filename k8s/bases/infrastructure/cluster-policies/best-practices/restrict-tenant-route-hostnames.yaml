@@ -11,7 +11,7 @@
 # escalation in its strongest form: a route with no hostnames matches EVERY
 # hostname on the listener.
 #
-# Coverage: every namespace bound to the tenant-edit ClusterRole gets a rule.
+# Coverage: every namespace bound to the tenant-edit ClusterRole gets a validation.
 # Two namespaces reconcile tenant-controlled manifests as a tenant
 # ServiceAccount today — wedding-app and ascoachingogvaner — and each has its own
 # allow-list below, because tenant hostnames are not derivable from the namespace
@@ -20,15 +20,15 @@
 # deploy/httproute.yaml, covering the production hostname and the *.platform.lan
 # name used on local/dev clusters where the tenant declares one.
 #
-# Fail-closed for anything NOT listed: the final rule denies every HTTPRoute in a
-# ksail tenant namespace that has no allow-list rule above, so a newly onboarded
+# Fail-closed for anything NOT listed: the final validation denies every HTTPRoute in a
+# ksail tenant namespace that has no allow-list above, so a newly onboarded
 # tenant cannot publish until its hostnames are added here — a visible, reviewable
 # edit. That is the same allow-list-not-deny-list posture as the two sibling
 # tenant policies (restrict-tenant-issuer-refs, restrict-tenant-secret-stores),
-# and it is why a tenant added without a rule fails loudly at admission instead of
+# and it is why a tenant added without an allow-list fails loudly at admission instead of
 # silently inheriting the wildcard.
 #
-# Platform carve-out: every rule targets only resources applied by a TENANT — i.e.
+# Platform carve-out: the policy targets only resources applied by a TENANT — i.e.
 # by the impersonated tenant ServiceAccount (each tenant's deploy Kustomization
 # sets spec.serviceAccountName: <tenant>). Resources the PLATFORM ships into a
 # tenant namespace are reconciled by the apps-layer Flux Kustomization, which sets
@@ -37,13 +37,13 @@
 # identity, which a tenant cannot forge. This mirrors
 # restrict-tenant-secret-stores.yaml so all three tenant boundaries share one rule.
 #
-# Because the excludes match on request.userInfo, the policy is admission-only
+# Because the exclusion matches on request.userInfo, the policy is admission-only
 # (background: false); every escalation is a create/update that passes through
 # admission, so enforcement is unaffected. DELETE is deliberately excluded:
 # removing a route cannot claim a hostname, and retired tenant resources must
 # remain removable after their allow-list entry is gone.
-apiVersion: kyverno.io/v1
-kind: ClusterPolicy
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
 metadata:
   name: restrict-tenant-route-hostnames
   annotations:
@@ -51,128 +51,74 @@ metadata:
     policies.kyverno.io/category: Multi-Tenancy, Gateway API
     policies.kyverno.io/severity: high
     policies.kyverno.io/subject: HTTPRoute
-    policies.kyverno.io/minversion: 1.13.0
+    policies.kyverno.io/minversion: 1.17.0
     policies.kyverno.io/description: >-
       Restricts HTTPRoute hostnames in every tenant namespace to that tenant's
       approved hostnames, so tenant-controlled manifests cannot claim arbitrary
       platform wildcard subdomains — or another tenant's hostname — on the shared
-      Gateway. A ksail tenant namespace with no allow-list rule is denied every
+      Gateway. A ksail tenant namespace with no allow-list is denied every
       hostname rather than inheriting the wildcard.
 spec:
-  # Admission-only: the exclude blocks match on request.userInfo (the applying
+  failurePolicy: Fail
+  validationActions:
+    - Deny
+  # Admission-only: the exclusion matches on request.userInfo (the applying
   # ServiceAccount), which is unavailable during background scans. Every
   # escalation path is a create/update that passes through admission, so
   # enforcement is fully preserved.
-  background: false
-  rules:
-    - name: wedding-app-approved-hostnames
-      match:
-        any:
-          - resources:
-              kinds:
-                - HTTPRoute
-              operations:
-                - CREATE
-                - UPDATE
-              namespaces:
-                - wedding-app
-      exclude:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: kustomize-controller
-                namespace: flux-system
-      validate:
-        failureAction: Enforce
-        message: >-
-          wedding-app HTTPRoutes must set spec.hostnames and may only use
-          wedding.platform.devantler.tech or wedding.platform.lan. Omitting
-          hostnames claims every hostname on the shared platform Gateway listener.
-        deny:
-          conditions:
-            any:
-              # Omitting hostnames makes the route match every hostname on the
-              # listener, which is equivalent to claiming the platform wildcard.
-              - key: "{{ length(request.object.spec.hostnames || `[]`) }}"
-                operator: Equals
-                value: 0
-              # #4527: every hostname must EQUAL an approved one. A Kyverno list
-              # operator (AnyNotIn here before) reads * and ? in either operand
-              # as wildcards, so a wildcard hostname covering an approved name
-              # counted as being on the list. JMESPath contains() compares each
-              # hostname exactly; the count is of the hostnames that are not
-              # on the list.
-              - key: "{{ length((request.object.spec.hostnames || `[]`)[?!contains(['wedding.platform.devantler.tech', 'wedding.platform.lan'], @)]) == `0` }}"
-                operator: Equals
-                value: false
-    - name: ascoachingogvaner-approved-hostnames
-      match:
-        any:
-          - resources:
-              kinds:
-                - HTTPRoute
-              operations:
-                - CREATE
-                - UPDATE
-              namespaces:
-                - ascoachingogvaner
-      exclude:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: kustomize-controller
-                namespace: flux-system
-      validate:
-        failureAction: Enforce
-        message: >-
-          ascoachingogvaner HTTPRoutes must set spec.hostnames and may only use
-          ascoachingogvaner.dk, www.ascoachingogvaner.dk or
-          ascoachingogvaner.platform.lan. Omitting hostnames claims every hostname
-          on the shared platform Gateway listener.
-        deny:
-          conditions:
-            any:
-              - key: "{{ length(request.object.spec.hostnames || `[]`) }}"
-                operator: Equals
-                value: 0
-              # Literal for the same reason as the wedding-app rule above.
-              - key: "{{ length((request.object.spec.hostnames || `[]`)[?!contains(['ascoachingogvaner.dk', 'www.ascoachingogvaner.dk', 'ascoachingogvaner.platform.lan'], @)]) == `0` }}"
-                operator: Equals
-                value: false
-    # Catch-all: any ksail tenant namespace without an allow-list rule above. This
-    # is what makes onboarding fail loudly instead of silently unrestricted — the
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    # Both allow-listed namespaces carry this label too, which
+    # scripts/tests/test-tenant-route-hostname-boundary.sh pins: the selector is
+    # the one boundary for all three validations below.
+    namespaceSelector:
+      matchExpressions:
+        - key: app.kubernetes.io/managed-by
+          operator: In
+          values: [ksail, kro]
+    resourceRules:
+      - apiGroups: ["gateway.networking.k8s.io"]
+        apiVersions: ["*"]
+        operations: ["CREATE", "UPDATE"]
+        resources: ["httproutes"]
+  matchConditions:
+    - name: not-platform-applied
+      expression: >-
+        request.userInfo.username != 'system:serviceaccount:flux-system:kustomize-controller'
+  variables:
+    - name: hostnames
+      expression: "object.spec.?hostnames.orValue([])"
+  # Omitting hostnames makes the route match every hostname on the listener,
+  # which is equivalent to claiming the platform wildcard, so an empty list is
+  # denied. CEL's `in` compares each hostname as text (#4527): a wildcard hostname
+  # covering an approved name is not itself on the list.
+  validations:
+    - expression: >-
+        object.metadata.namespace != 'wedding-app' ||
+        (size(variables.hostnames) > 0 &&
+        variables.hostnames.all(h, h in ['wedding.platform.devantler.tech', 'wedding.platform.lan']))
+      message: >-
+        wedding-app HTTPRoutes must set spec.hostnames and may only use
+        wedding.platform.devantler.tech or wedding.platform.lan. Omitting
+        hostnames claims every hostname on the shared platform Gateway listener.
+    - expression: >-
+        object.metadata.namespace != 'ascoachingogvaner' ||
+        (size(variables.hostnames) > 0 &&
+        variables.hostnames.all(h, h in ['ascoachingogvaner.dk', 'www.ascoachingogvaner.dk', 'ascoachingogvaner.platform.lan']))
+      message: >-
+        ascoachingogvaner HTTPRoutes must set spec.hostnames and may only use
+        ascoachingogvaner.dk, www.ascoachingogvaner.dk or
+        ascoachingogvaner.platform.lan. Omitting hostnames claims every hostname
+        on the shared platform Gateway listener.
+    # Catch-all: any ksail tenant namespace without an allow-list above. This is
+    # what makes onboarding fail loudly instead of silently unrestricted, the
     # exact gap that once left this policy covering only wedding-app while other
     # tenants shared the same wildcard Gateway.
-    - name: unlisted-tenant-namespace-has-no-approved-hostnames
-      match:
-        any:
-          - resources:
-              kinds:
-                - HTTPRoute
-              operations:
-                - CREATE
-                - UPDATE
-              namespaceSelector:
-                matchExpressions:
-                  - key: app.kubernetes.io/managed-by
-                    operator: In
-                    values: [ksail, kro]
-      exclude:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: kustomize-controller
-                namespace: flux-system
-          # The namespaces handled by the allow-list rules above.
-          - resources:
-              namespaces:
-                - wedding-app
-                - ascoachingogvaner
-      validate:
-        failureAction: Enforce
-        message: >-
-          This tenant namespace has no approved hostnames. Add an allow-list rule
-          for it to the restrict-tenant-route-hostnames ClusterPolicy (naming the
-          hostnames this tenant may serve) before publishing an HTTPRoute on the
-          shared platform Gateway.
-        deny: {}
+    - expression: "object.metadata.namespace in ['wedding-app', 'ascoachingogvaner']"
+      message: >-
+        This tenant namespace has no approved hostnames. Add an allow-list
+        validation for it to the restrict-tenant-route-hostnames ValidatingPolicy
+        (naming the hostnames this tenant may serve) before publishing an
+        HTTPRoute on the shared platform Gateway.

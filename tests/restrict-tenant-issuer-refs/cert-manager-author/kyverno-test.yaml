@@ -1,0 +1,26 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: restrict-tenant-issuer-refs-cert-manager-author
+policies:
+  - >-
+    ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-issuer-refs.yaml
+resources:
+  - resources.yaml
+variables: values.yaml
+userinfo: user-info.yaml
+results:
+  # cert-manager derives a CertificateRequest from each admitted Certificate
+  # and copies its issuerRef, so denying it would break issuance.
+  - policy: restrict-tenant-issuer-refs
+    resources:
+      - tenant-ns/cluster-issuer-request
+    kind: CertificateRequest
+    result: skip
+  # That carve-out covers derived requests only, never a Certificate.
+  - policy: restrict-tenant-issuer-refs
+    resources:
+      - tenant-ns/cluster-issuer-certificate
+    kind: Certificate
+    result: fail

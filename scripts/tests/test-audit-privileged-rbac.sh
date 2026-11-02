@@ -21,19 +21,18 @@ yq -o=json "$grant" | jq -e '
 ' >/dev/null
 
 # EXACT SHAPE, not a blocklist. Many single-field edits weaken an Enforce policy while
-# leaving its expression untouched: spec.admission false, failureActionOverrides back to
-# Audit, match operations limited to CREATE, preconditions keyed on a label, a
-# webhookConfiguration matchCondition, or a `scored: "false"` annotation that reports
-# every rejection as a warn. Pinning the complete key set of each level rejects all of
-# them, and any field Kyverno adds later, until this test is changed in review.
+# leaving its expression untouched: validationActions back to Audit, admission turned
+# off, match operations limited to CREATE, a matchConditions entry keyed on a label, or
+# a `scored: "false"` annotation that reports every rejection as a warn. Pinning the
+# complete key set of each level rejects all of them, and any field Kyverno adds later,
+# until this test is changed in review.
 #
-# The exclusions are one false precondition keyed on the exact kind|namespace|name of
-# the object (the namespace is empty for a ClusterRole), so a Role exclusion never
-# covers the same name in another namespace or as a ClusterRole. The key is pinned
-# verbatim, the values carry no `*` or `?` (Kyverno treats both as wildcards), and the
-# value set must equal the reviewed list exactly. A precondition rather than an
-# `exclude` makes the background scan record a current `skip` for an accepted role
-# instead of leaving its last warning in the report (platform#3900).
+# The exclusions are one list of exact kind|namespace|name identities (the namespace is
+# empty for a ClusterRole), so a Role exclusion never covers the same name in another
+# namespace or as a ClusterRole. The identity expression is pinned verbatim, and the
+# list must equal the reviewed list exactly. Folding the list into the validation rather
+# than a matchConditions entry makes the background scan record a current `pass` for an
+# accepted role instead of leaving its last failure in the report (platform#3900).
 expected='[
   "ClusterRole||admin",
   "ClusterRole||cluster-admin",
@@ -52,49 +51,45 @@ expected='[
 ]'
 if ! yq -o=json '.' "$policy" | jq -e --argjson expected "$expected" '
   def literal: type == "string" and length > 0 and (test("[*?]") | not);
-  .apiVersion == "kyverno.io/v1" and .kind == "ClusterPolicy" and
+  ([.spec.variables[0].expression | scan("\\x27([^\\x27]*)\\x27") | .[0]]) as $listed |
+  .apiVersion == "policies.kyverno.io/v1" and .kind == "ValidatingPolicy" and
   .metadata.name == "audit-privileged-rbac" and
   (.metadata | keys) == ["annotations", "name"] and
   (.metadata.annotations | has("policies.kyverno.io/scored") | not) and
-  (.spec | keys) == ["background", "rules"] and
-  .spec.background == true and
-  (.spec.rules | length) == 1 and
-  (.spec.rules[0] | keys) == ["match", "name", "preconditions", "validate"] and
-  .spec.rules[0].name == "privileged-rules" and
-  .spec.rules[0].match == {"any": [{"resources": {"kinds": [
-    "rbac.authorization.k8s.io/v1/Role",
-    "rbac.authorization.k8s.io/v1/ClusterRole"]}}]} and
-  (.spec.rules[0].validate | keys) == ["cel", "failureAction"] and
-  .spec.rules[0].validate.failureAction == "Enforce" and
-  (.spec.rules[0].validate.cel | keys) == ["expressions"] and
-  (.spec.rules[0].validate.cel.expressions | length) == 1 and
-  (.spec.rules[0].validate.cel.expressions[0] | keys) == ["expression", "message"] and
+  (.spec | keys) == ["evaluation", "failurePolicy", "matchConstraints", "validationActions", "validations", "variables"] and
+  .spec.failurePolicy == "Fail" and
+  .spec.validationActions == ["Deny"] and
+  .spec.evaluation == {"background": {"enabled": true}} and
+  .spec.matchConstraints == {"resourceRules": [{
+    "apiGroups": ["rbac.authorization.k8s.io"],
+    "apiVersions": ["v1"],
+    "operations": ["CREATE", "UPDATE"],
+    "resources": ["roles", "clusterroles"]}]} and
+  ([.spec.variables[].name]) == ["reviewedExclusions", "reviewed"] and
+  all(.spec.variables[]; keys == ["expression", "name"]) and
+  .spec.variables[1].expression ==
+    "(object.kind + '"'|'"' + object.metadata.?namespace.orValue('"''"') + '"'|'"' + object.metadata.name) in variables.reviewedExclusions" and
+  all($listed[]; literal) and ($listed | sort) == ($expected | sort) and
+  (.spec.validations | length) == 1 and
+  (.spec.validations[0] | keys) == ["expression", "message"] and
   # Kubernetes CEL types Role.rules and ClusterRole.rules as lists. has() covers
   # absence and the type() guard preserves YAML-null fixtures; comparing the typed
   # list value directly with null is rejected by the live Kyverno policy compiler.
-  (.spec.rules[0].validate.cel.expressions[0].expression |
-    startswith("!has(object.rules) || type(object.rules) == null_type || object.rules.all(rule,")) and
-  (.spec.rules[0].preconditions | keys) == ["all"] and
-  (.spec.rules[0].preconditions.all | length) == 1 and
-  (.spec.rules[0].preconditions.all[0] | keys) == ["key", "operator", "value"] and
-  .spec.rules[0].preconditions.all[0].key ==
-    "{{ request.object.kind || request.oldObject.kind || '"''"' }}|{{ request.object.metadata.namespace || request.oldObject.metadata.namespace || '"''"' }}|{{ request.object.metadata.name || request.oldObject.metadata.name || '"''"' }}" and
-  .spec.rules[0].preconditions.all[0].operator == "AnyNotIn" and
-  all(.spec.rules[0].preconditions.all[0].value[]; literal) and
-  (.spec.rules[0].preconditions.all[0].value | sort) == ($expected | sort)
+  (.spec.validations[0].expression |
+    startswith("variables.reviewed || !has(object.rules) || type(object.rules) == null_type || object.rules.all(rule,"))
 ' >/dev/null; then
   echo 'RBAC policy differs from the reviewed Enforce shape or exact-identity exclusion list' >&2
   exit 1
 fi
 
 # kyverno apply exits 1 when an Enforce rule fails, which the fixtures do on purpose;
-# anything higher is a real error. `fail: 24, skip: 2` proves both exclusion fixtures
-# were skipped (fail would be 26 otherwise) while their lookalikes were not.
+# anything higher is a real error. `pass: 17, fail: 24` counts both exclusion fixtures
+# among the passes; the control below proves they pass only because they are listed.
 apply_status=0
 kyverno apply "$policy" \
   --resource "${repo_root}/tests/audit-privileged-rbac/resources.yaml" \
   >"$result" 2>&1 || apply_status=$?
-if [ "$apply_status" -gt 1 ] || ! grep -Fq 'pass: 15, fail: 24, warn: 0, error: 0, skip: 2' "$result"; then
+if [ "$apply_status" -gt 1 ] || ! grep -Fq 'pass: 17, fail: 24, warn: 0, error: 0, skip: 0' "$result"; then
   cat "$result"
   echo 'RBAC Enforce fixture census did not match the expected results' >&2
   exit 1
@@ -102,27 +97,54 @@ fi
 
 # The census counts results but not whose they are, and kyverno test pairs rows by
 # name alone, so it cannot tell velero/velero-server from its sample/ lookalike. The
-# policy report names every resource: exactly the two reviewed fixtures must be a
-# background-scan `skip`, and each same-name lookalike must still fail.
+# policy report names every resource: the two reviewed fixtures must pass and each
+# same-name lookalike must still fail, with every result from the background scan.
+identities='[.results[] | {
+    id: "\(.resources[0].kind)|\(.resources[0].namespace // "")|\(.resources[0].name)",
+    result, process: .properties.process
+  }]'
 report_status=0
 kyverno apply "$policy" \
   --resource "${repo_root}/tests/audit-privileged-rbac/resources.yaml" \
   --policy-report --output-format json >"$result" 2>&1 || report_status=$?
-if [ "$report_status" -gt 1 ] || ! awk '/^\{/ { found = 1 } found' "$result" | jq -e '
-  [.results[] | {
-    id: "\(.resources[0].kind)|\(.resources[0].namespace // "")|\(.resources[0].name)",
-    result, process: .properties.process
-  }] as $all |
-  ([$all[] | select(.result == "skip") | .id] | sort) ==
-    ["ClusterRole||crossplane-rbac-manager", "Role|velero|velero-server"] and
-  all($all[] | select(.result == "skip"); .process == "background scan") and
-  ([$all[] | select(.id == (
-      "ClusterRole||crossplane-rbac-manager-lookalike",
-      "ClusterRole||velero-server",
-      "Role|sample|velero-server")) | .result] == ["fail", "fail", "fail"])
-' >/dev/null; then
+if [ "$report_status" -gt 1 ] || ! awk '/^\{/ { found = 1 } found' "$result" | jq -e "
+  ${identities} as \$all |
+  all(\$all[]; .process == \"background scan\") and
+  ([\$all[] | select(.id == (
+      \"ClusterRole||crossplane-rbac-manager\",
+      \"Role|velero|velero-server\")) | .result] == [\"pass\", \"pass\"]) and
+  ([\$all[] | select(.id == (
+      \"ClusterRole||crossplane-rbac-manager-lookalike\",
+      \"ClusterRole||velero-server\",
+      \"Role|sample|velero-server\")) | .result] == [\"fail\", \"fail\", \"fail\"])
+" >/dev/null; then
   cat "$result"
-  echo 'RBAC policy report did not skip exactly the reviewed exclusions' >&2
+  echo 'RBAC policy report did not pass exactly the reviewed exclusions' >&2
   exit 1
 fi
-echo 'RBAC Enforce: 15 ordinary or inert grants pass, 24 privileged grants fail, 2 reviewed exclusions are recorded as a current skip; reporting access is read-only.'
+
+# Control: a pass on those two fixtures means nothing unless the list is what produced
+# it. With the list emptied, the same two must fail and nothing else may change.
+# kyverno apply loads a policy file only by its .yaml extension.
+control_dir="$(mktemp -d)"
+trap 'rm -rf "$result" "$control_dir"' EXIT
+empty_list_policy="${control_dir}/policy.yaml"
+yq '(.spec.variables[] | select(.name == "reviewedExclusions") | .expression) = "dyn([])"' \
+  "$policy" >"$empty_list_policy"
+control_status=0
+kyverno apply "$empty_list_policy" \
+  --resource "${repo_root}/tests/audit-privileged-rbac/resources.yaml" \
+  --policy-report --output-format json >"$result" 2>&1 || control_status=$?
+if [ "$control_status" -gt 1 ] || ! awk '/^\{/ { found = 1 } found' "$result" | jq -e "
+  ${identities} as \$all |
+  ([\$all[] | select(.result == \"fail\")] | length) == 26 and
+  ([\$all[] | select(.result == \"pass\")] | length) == 15 and
+  ([\$all[] | select(.id == (
+      \"ClusterRole||crossplane-rbac-manager\",
+      \"Role|velero|velero-server\")) | .result] == [\"fail\", \"fail\"])
+" >/dev/null; then
+  cat "$result"
+  echo 'RBAC exclusion control: the reviewed fixtures did not fail with the list emptied' >&2
+  exit 1
+fi
+echo 'RBAC Enforce: 15 ordinary or inert grants pass, 24 privileged grants fail, 2 reviewed exclusions pass only because they are listed; reporting access is read-only.'

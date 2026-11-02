@@ -107,6 +107,12 @@ new_fixture
 expect 'an unchanged fixture passes' 0 'unsigned probe image guard OK'
 
 new_fixture
+mkdir -p "${fixture}/scripts/prove-kyverno-cache-recovery"
+cp "${root_dir}/scripts/prove-kyverno-cache-recovery/main.go" \
+  "${fixture}/scripts/prove-kyverno-cache-recovery/main.go"
+expect 'the fixed server-dry-run admission consumer passes' 0 'unsigned probe image guard OK'
+
+new_fixture
 printf '# cosign sign, sigstore and attest are named here only in a comment\n' >>"${fixture}/${publisher_rel}"
 expect 'a comment naming a signing tool passes' 0 'unsigned probe image guard OK'
 

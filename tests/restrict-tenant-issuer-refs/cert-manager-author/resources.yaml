@@ -1,0 +1,26 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: cluster-issuer-certificate
+  namespace: tenant-ns
+spec:
+  secretName: cluster-issuer-tls
+  dnsNames:
+    - platform.example.com
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+---
+apiVersion: cert-manager.io/v1
+kind: CertificateRequest
+metadata:
+  name: cluster-issuer-request
+  namespace: tenant-ns
+spec:
+  request: dGVzdA==
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: letsencrypt-prod
