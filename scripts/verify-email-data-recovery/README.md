@@ -10,8 +10,12 @@ uniquely identified diagnostic message into an unsubscribed test mailbox. JMAP
 import does not submit an outgoing message. The current account credential stays
 in runner memory and is never installed in the restored pod.
 
-A fresh Velero filesystem backup includes only the selected Email pod and its data
-volume. The restore uses the completed, source-bound Kopia snapshot as bytes;
+A fresh Velero filesystem backup selects the Email pod and includes its related
+claim, which the controller needs to capture persistent data. Scratch-volume
+receipts may coexist; acceptance requires the exact data-volume receipt, not
+the backup's overall Completed phase. Velero reads explicitly select its API
+group so another installed Backup resource cannot shadow the recovery object.
+The restore uses the completed, source-bound Kopia snapshot as bytes;
 backed-up pods, hooks, routes and credentials are not replayed. A fixed recovery
 server reads a separate, three-replica encrypted volume with a new diagnostic key.
 A single reviewed administration declaration supplies the exact runtime digest
@@ -67,3 +71,10 @@ set `EMAIL_RECOVERY_READONLY_SOURCE_CONTEXT` and run
 from the repository root. This opt-in reads only the fixed serving Pod, claim
 and volume twice. It does not invoke recovery, import a message or create any
 resources, and is skipped during normal tests.
+
+To check native backup-resource selection after a retained trial, also set
+`EMAIL_RECOVERY_READONLY_BACKUP_NAME` to that trial's
+`email-data-recovery-<run>-backup` name and run
+`go test -run '^TestReadOnlyVeleroBackupAPISelection$' -count=1 -v ./scripts/verify-email-data-recovery`.
+It reads only the selected Velero backup and its volume receipts. It does not
+establish a complete datastore backup or restore result.

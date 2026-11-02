@@ -14,6 +14,16 @@ type boundaryAPI struct {
 	lostAck, replaced bool
 }
 
+// The fixture stores objects by manifest kind, while kubectl reads use GVRs.
+func fixtureReadKind(resource string) string {
+	for kind, name := range map[string]string{"Backup": "backups.velero.io", "PodVolumeBackup": "podvolumebackups.velero.io", "DataDownload": "datadownloads.velero.io", "BackupStorageLocation": "backupstoragelocations.velero.io", "BackupRepository": "backuprepositories.velero.io"} {
+		if resource == name {
+			return kind
+		}
+	}
+	return resource
+}
+
 func (a *boundaryAPI) call(_ context.Context, input []byte, args ...string) ([]byte, error) {
 	if len(args) == 0 {
 		return nil, errors.New("empty-command")
@@ -35,7 +45,7 @@ func (a *boundaryAPI) call(_ context.Context, input []byte, args ...string) ([]b
 		if len(args) < 3 {
 			return nil, errors.New("get")
 		}
-		o, ok := a.objects[args[1]]
+		o, ok := a.objects[fixtureReadKind(args[1])]
 		if !ok {
 			return nil, nil
 		}
