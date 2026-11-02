@@ -26,11 +26,19 @@ guards_job="$(awk '
   in_guards { print }
 ' "${ci_workflow}")"
 grep -Fq 'bash scripts/tests/test-velero-kopia-renovate-pin.sh' <<<"${guards_job}" ||
-  fail 'the Kopia pin test must run unconditionally in the repository guards job'
+  fail 'the Kopia pin test must run in the repository guards job'
+step="$(awk '
+  /- name: 📌 Validate the Velero Kopia Renovate pin$/ { in_step = 1; next }
+  in_step && /- name: / { exit }
+  in_step { print }
+' <<<"${guards_job}")"
+if grep -Eq '^[[:space:]]+if:' <<<"${step}"; then
+  fail 'the Kopia pin test must run unconditionally, on pull requests and merge groups alike'
+fi
 
 replacement="$(awk -v module="${module}" '$1 == "replace" && $4 == module { print $5 }' "${go_mod}")"
 [[ -n "${replacement}" ]] || fail "go.mod must replace github.com/kopia/kopia with ${module}"
-[[ "${replacement}" =~ ^v0\.0\.0-[0-9]{14}-[0-9a-f]{12}$ ]] ||
+[[ "${replacement}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?[.-][0-9]{14}-[0-9a-f]{12}$ ]] ||
   fail "the ${module} replacement ${replacement} is no longer a pseudo-version: remove this rule and test"
 
 rules="$(jq -c --arg module "${module}" '
@@ -43,10 +51,8 @@ rules="$(jq -c --arg module "${module}" '
   fail "the ${module} rule must match the gomod manager only"
 [[ "$(jq -r '.[0].enabled' <<<"${rules}")" == 'false' ]] ||
   fail "the ${module} rule must disable updates: every tag ranks above the pin"
-for narrowing in matchFileNames matchUpdateTypes matchCurrentVersion matchDepTypes; do
-  [[ "$(jq -r --arg key "${narrowing}" '.[0] | has($key)' <<<"${rules}")" == 'false' ]] ||
-    fail "the ${module} rule must not be narrowed by ${narrowing}"
-done
+extra="$(jq -r '.[0] | keys - ["description", "enabled", "matchManagers", "matchPackageNames"] | join(",")' <<<"${rules}")"
+[[ -z "${extra}" ]] || fail "the ${module} rule must not be narrowed, found: ${extra}"
 
 # Renovate applies package rules in order and a later match wins, so a later
 # rule naming this module or enabling every gomod update would undo this one.
