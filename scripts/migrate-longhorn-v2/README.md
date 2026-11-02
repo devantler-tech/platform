@@ -159,3 +159,16 @@ snapshot, backup, proof of historical recoverability or permission to wipe. An
 unmatched directory must be investigated and preserved before any rebuild. The
 existing preparation operation still requires its separate preservation and
 recovery gates; this inventory operation does not authorize it.
+
+To inspect unused temporary capacity, select `temporary-v1-1`,
+`temporary-v1-2` or `temporary-v2-1` with the same `inventory-replicas`
+operation and `inventory-longhorn-replicas-<selection>` confirmation. These
+are ordinal selections from the sorted, complete pool roster in the reviewed
+`ksail.prod.yaml`, not hostnames. Both observations must retain every pool
+member's identity and boot state. A changed roster holds the observation.
+
+Temporary storage must still be fenced, unregistered and without placed
+replicas. Its native listing must be empty and accounted for; unexpected
+directories hold the observation. This can inform a later reviewed decision
+to reuse capacity for V2. It changes no disk, pool, host setting or volume,
+and does not authorize preparing a temporary worker through `prepare-worker`.
