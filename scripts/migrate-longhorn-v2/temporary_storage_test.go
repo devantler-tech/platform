@@ -1,10 +1,17 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	cosiresource "github.com/cosi-project/runtime/pkg/resource"
+	"github.com/cosi-project/runtime/pkg/state"
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 	"github.com/siderolabs/talos/pkg/machinery/resources/block"
+	"google.golang.org/grpc/metadata"
 )
 
 func temporaryPartitionFixture() (cosiresource.List, cosiresource.List, string) {
@@ -65,6 +72,101 @@ func TestNativeTemporaryPartitionRequiresPositiveOriginalAndNoRawStorage(t *test
 			mutate(&s, &d)
 			if verifyUnusedTemporaryPartition(s, d, uuid) == nil {
 				t.Fatal("unknown or existing storage was accepted as empty")
+			}
+		})
+	}
+}
+
+type temporaryBlockReaderFixture struct {
+	t                    *testing.T
+	statuses, discovered cosiresource.List
+	calls, failAt        int
+	allocateAfterFirst   bool
+}
+
+func (r *temporaryBlockReaderFixture) Get(context.Context, cosiresource.Pointer, ...state.GetOption) (cosiresource.Resource, error) {
+	r.t.Fatal("temporary storage proof attempted an unreviewed resource request")
+	return nil, errInventory
+}
+
+func (r *temporaryBlockReaderFixture) List(ctx context.Context, kind cosiresource.Kind, options ...state.ListOption) (cosiresource.List, error) {
+	r.t.Helper()
+	r.calls++
+	deadline, bounded := ctx.Deadline()
+	md, _ := metadata.FromOutgoingContext(ctx)
+	if !bounded || time.Until(deadline) > 20*time.Second || len(md.Get("node")) != 1 || md.Get("node")[0] != "10.0.99.4" || len(md.Get("nodes")) != 0 || kind.Namespace() != block.NamespaceName || len(options) != 0 {
+		r.t.Fatal("native resource proof lost its bounded exact-node scope")
+	}
+	var result cosiresource.List
+	if r.calls%2 == 1 {
+		if kind.Type() != block.VolumeStatusType {
+			r.t.Fatal("unexpected volume resource query")
+		}
+		if r.allocateAfterFirst && r.calls > 2 {
+			r.statuses.Items[1].(*block.VolumeStatus).TypedSpec().Phase = block.VolumePhaseReady
+		}
+		result = r.statuses
+	} else {
+		if kind.Type() != block.DiscoveredVolumeType {
+			r.t.Fatal("unexpected physical discovery query")
+		}
+		result = r.discovered
+	}
+	if r.calls == r.failAt {
+		return result, errors.New("partial-native-list-private-detail")
+	}
+	return result, nil
+}
+
+type temporaryFileReaderFixture struct{ calls int }
+
+func (*temporaryFileReaderFixture) BootID(context.Context) (string, error) { return "unused", nil }
+func (r *temporaryFileReaderFixture) ListReplicas(context.Context) (longhorninventory.Listing, error) {
+	r.calls++
+	return longhorninventory.Listing{Complete: true}, nil
+}
+
+func TestTemporaryNativeProofStopsBeforeFilesOnPartialOrChangedStorage(t *testing.T) {
+	for _, scenario := range []string{"complete", "partial status", "partial discovery", "raw allocated between observations", "canceled", "missing original binding"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, d, uuid := temporaryPartitionFixture()
+			blocks := &temporaryBlockReaderFixture{t: t, statuses: s, discovered: d}
+			files := &temporaryFileReaderFixture{}
+			reader := unusedTemporaryReader{nativeReplicaReader: files, blocks: blocks, address: "10.0.99.4", ephemeralUUID: uuid}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch scenario {
+			case "partial status":
+				blocks.failAt = 1
+			case "partial discovery":
+				blocks.failAt = 2
+			case "raw allocated between observations":
+				blocks.allocateAfterFirst = true
+			case "canceled":
+				cancel()
+			case "missing original binding":
+				reader.ephemeralUUID = ""
+			}
+			first, err := reader.ListReplicas(ctx)
+			if scenario == "complete" || scenario == "raw allocated between observations" {
+				if err != nil || !first.Complete || files.calls != 1 {
+					t.Fatal("complete physical proof did not reach file inspection:", err)
+				}
+				second, secondErr := reader.ListReplicas(ctx)
+				if scenario == "complete" {
+					if secondErr != nil || !second.Complete || files.calls != 2 {
+						t.Fatal("second independent physical proof did not complete")
+					}
+				} else if secondErr == nil || second.Complete || files.calls != 1 {
+					t.Fatal("a raw partition appeared without invalidating the second observation")
+				}
+				return
+			}
+			if err == nil || first.Complete || files.calls != 0 || strings.Contains(err.Error(), "private-detail") {
+				t.Fatal("incomplete physical proof reached file inspection or leaked details")
+			}
+			if (scenario == "canceled" || scenario == "missing original binding") && blocks.calls != 0 {
+				t.Fatal("an unauthorized or expired observation started an API request")
 			}
 		})
 	}

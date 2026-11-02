@@ -121,6 +121,10 @@ func inventoryExecuteCommand(ctx context.Context, program string, args ...string
 }
 
 func newInventoryReader(ctx context.Context, address string) (nativeReplicaReader, func() error, error) {
+	return openInventoryReader(ctx, address, "")
+}
+
+func openInventoryReader(ctx context.Context, address, unusedEphemeralUUID string) (nativeReplicaReader, func() error, error) {
 	directory := os.Getenv("LONGHORN_V2_CREDENTIAL_DIR")
 	if !regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+$`).MatchString(directory) || os.Getenv("TALOSCONFIG") != filepath.Join(directory, "talosconfig") {
 		return nil, nil, errInventory
@@ -158,7 +162,11 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 	if err != nil {
 		return nil, nil, errInventory
 	}
-	return longhorninventory.Native{API: connection.MachineClient, Target: address}, connection.Close, nil
+	var reader nativeReplicaReader = longhorninventory.Native{API: connection.MachineClient, Target: address}
+	if unusedEphemeralUUID != "" {
+		reader = unusedTemporaryReader{nativeReplicaReader: reader, blocks: connection.COSI, address: address, ephemeralUUID: unusedEphemeralUUID}
+	}
+	return reader, connection.Close, nil
 }
 
 func runReplicaInventory(ctx context.Context, target, source, runID string) error {
