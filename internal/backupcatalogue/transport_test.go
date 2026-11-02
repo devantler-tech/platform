@@ -360,28 +360,48 @@ type blockedClose struct {
 func (*blockedClose) Read([]byte) (int, error) { return 0, io.EOF }
 func (b *blockedClose) Close() error           { b.once.Do(func() { close(b.entered) }); <-b.release; return nil }
 
-func TestGuardExpiredResponseCannotCompleteDuringCleanup(t *testing.T) {
+func TestGuardCancelledResponseCannotCompleteDuringCleanup(t *testing.T) {
 	body := &blockedClose{entered: make(chan struct{}), release: make(chan struct{})}
+	entered := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(body.release) }) }
+	t.Cleanup(release)
 	g, err := NewReadTransport(t.Context(), testPolicy(), roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		close(entered)
 		<-r.Context().Done()
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: body, ContentLength: 0}, nil
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Millisecond)
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	r := request(t, "GET", "velero/kopia/fixture/x").WithContext(ctx)
 	result := make(chan error, 1)
 	go func() { _, readErr := g.RoundTrip(r); result <- readErr }()
-	<-body.entered
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("transport did not start")
+	}
+	cancel()
+	select {
+	case <-body.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("response cleanup did not start")
+	}
 	held := g.Err()
-	close(body.release)
-	if err = <-result; err == nil {
-		t.Fatal("expired response accepted")
+	release()
+	select {
+	case err = <-result:
+		if err == nil {
+			t.Fatal("cancelled response accepted")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("response cleanup did not complete")
 	}
 	if held == nil {
-		t.Fatal("expired response reported complete while cleanup was blocked")
+		t.Fatal("cancelled response reported complete while cleanup was blocked")
 	}
 }
 
