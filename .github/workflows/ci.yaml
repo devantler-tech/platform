@@ -159,6 +159,7 @@ jobs:
               - 'scripts/tests/test-private-mail-configuration.sh'
               - 'scripts/private-mail-config/**'
               - 'scripts/verify-email-data-recovery/**'
+              - '.github/workflows/verify-email-data-recovery.yaml'
               - 'ksail.yaml'
               - 'ksail.prod.yaml'
               - '.sops.yaml'
@@ -209,6 +210,7 @@ jobs:
               - 'scripts/tests/kyverno-auth-reviews/**'
               - 'scripts/tests/test-tenant-webapp-boundary.sh'
               - 'scripts/tests/test-arc-listener-admission.sh'
+              - 'scripts/tests/test-github-team-identity-admission.sh'
               - 'scripts/tests/tenant-webapp-admission/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
@@ -1957,6 +1959,8 @@ jobs:
           # Reuse the same pinned native compiler build within this job.
           shellcheck scripts/tests/test-arc-listener-admission.sh
           bash scripts/tests/test-arc-listener-admission.sh
+          shellcheck scripts/tests/test-github-team-identity-admission.sh
+          bash scripts/tests/test-github-team-identity-admission.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-tenant-controller-namespace-coverage.sh
@@ -3697,7 +3701,7 @@ jobs:
 
       - name: 🏷️ Validate naming conventions
         id: naming
-        uses: devantler-tech/.github/actions/validate-naming@84f4cddc69d6a5a937a7e83d2bd77a438d932f26 # v17.0.0
+        uses: devantler-tech/.github/actions/validate-naming@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
 
       - name: Confirm naming validation completed
         env:
@@ -4713,7 +4717,7 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@5b5777ddfcb1f0273eeece79eebf6ad01a5f3df9 # v19.0.1
+        uses: devantler-tech/.github/actions/aggregate-job-checks@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
         with:
           job-results: >-
             ${{ needs.changes.result }}

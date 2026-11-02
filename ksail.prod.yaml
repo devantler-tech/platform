@@ -62,9 +62,9 @@ spec:
     # maxNodesTotal is the HARD CEILING ON TOTAL CLUSTER NODES, INCLUDING the
     # static baseline. 9 = the Hetzner account cap (10) MINUS ONE RESERVED SLOT:
     # Normally 6 static (3 control-planes + 3 workers) + up to 3 autoscaler nodes.
-    # During #5582, 2 fixed migration-pool workers use 2 of those slots,
-    # leaving room for 1 compute overflow node. The Image Factory builder slot
-    # stays reserved. KSail
+    # During #5582, 3 fixed migration-pool workers use those slots. Existing
+    # compute overflow must be gone before adding the V2 migration worker.
+    # The Image Factory builder slot stays reserved. KSail
     # passes it to cluster-autoscaler --max-nodes-total, which counts every node,
     # so this total framing already matches the runtime. The general pools each
     # allow 4 nodes; the isolated organization runner pool allows 1. Any mix shares the
@@ -134,6 +134,16 @@ spec:
             max: 2
             labels:
               storage.platform.devantler.tech/migration-pool: v1
+          # Fresh raw-disk capacity; created after the worker layout changed.
+          # Together with rebuilt permanent workers 1 and 2, this provides three
+          # V2 targets while V1 retains worker 3 and its two migration workers.
+          - name: autoscale-longhorn-v2
+            serverType: cpx42
+            location: fsn1
+            min: 1
+            max: 1
+            labels:
+              storage.platform.devantler.tech/migration-pool: v2
           - name: autoscale-cx43
             serverType: cx43
             location: fsn1

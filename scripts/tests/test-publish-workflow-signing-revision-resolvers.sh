@@ -147,8 +147,8 @@ for test_case in malformed comment different same failed unpublished healthy; do
       if (helper=="deployed" && mutation=="unpublished" && /\[ "\$exact_pub" -eq 0 \] \|\| return 1/) {
         sub(/\[ "\$exact_pub" -eq 0 \] \|\| return 1/, ":"); changed++
       }
-      if (helper=="deployed" && mutation=="healthy" && !changed && /if ! printf.*registry_tags.*registry_version/) {
-        sub(/if ! printf/, "if printf"); changed++
+      if (helper=="deployed" && mutation=="healthy" && !changed && /if ! grep -qxF.*registry_version.*registry_tags/) {
+        sub(/if ! grep/, "if grep"); changed++
       }
       print
       if (/^}/) helper=""
