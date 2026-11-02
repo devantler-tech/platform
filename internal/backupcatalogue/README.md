@@ -38,6 +38,12 @@ identical. The private comparison digest includes Secret data and never enters
 the returned catalogue. Backend HTTP uses a dedicated transport without ambient
 proxies, with TLS, connection, request, response and total-read limits.
 
+A failed observation prints a fixed phase such as `source-before`,
+`deployment-bind-before` or `repository-metadata`. It never prints the
+underlying command, provider or credential error. A phase identifies where the
+attempt was held; it does not establish completeness or authorize a retry,
+restore, migration or disk reset. Failed and partial catalogues remain withheld.
+
 Velero constructs Kopia paths from the BSL prefix, `kopia` and the repository's
 `volumeNamespace`; the BackupRepository UID is not an object-key prefix. The
 repository password comes from `velero/velero-repo-credentials`, key

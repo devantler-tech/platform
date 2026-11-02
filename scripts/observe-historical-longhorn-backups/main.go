@@ -78,40 +78,51 @@ func run(ctx context.Context, get func(string) string, execute command, observe 
 	result := receipt{MetadataOnly: true, Source: get("GITHUB_SHA"), Run: get("GITHUB_RUN_ID")}
 	for _, namespace := range []string{"wedding-app", "actual-budget"} {
 		if requireSource(ctx, execute, result.Source) != nil {
-			return receipt{}, errHeld
+			return receipt{}, observationFailure{"source-before"}
 		}
 		load := func(ctx context.Context) (backupcatalogue.DeploymentDocuments, error) {
 			return readDocuments(ctx, execute, namespace)
 		}
 		catalogue, err := observe(ctx, namespace, policy, load, parent)
-		if err != nil || !active(ctx) || !catalogue.MetadataOnly || !receiptDigest.MatchString(catalogue.Digest) || !receiptDigest.MatchString(catalogue.RepositoryDigest) ||
+		if err != nil {
+			return receipt{}, observationFailure{backupcatalogue.FailureStage(err)}
+		}
+		if !active(ctx) || !catalogue.MetadataOnly || !receiptDigest.MatchString(catalogue.Digest) || !receiptDigest.MatchString(catalogue.RepositoryDigest) ||
 			catalogue.Snapshots < 0 || catalogue.Incomplete < 0 || catalogue.Incomplete > catalogue.Snapshots {
-			return receipt{}, errHeld
+			return receipt{}, observationFailure{"receipt-validation"}
 		}
 		result.Repositories = append(result.Repositories, repositoryReceipt{Consumer: namespace, Catalogue: catalogue,
 			MetadataCandidatesBeforeJune17: catalogue.MetadataEndingBefore(time.Date(2026, 6, 17, 0, 0, 0, 0, time.UTC))})
 	}
 	if requireSource(ctx, execute, result.Source) != nil || !active(ctx) {
-		return receipt{}, errHeld
+		return receipt{}, observationFailure{"source-after"}
 	}
 	return result, nil
 }
 
 func main() {
-	if authorize(os.Getenv) != nil || requireCredentialFiles(os.Getenv) != nil {
-		fmt.Fprintln(os.Stderr, errHeld)
+	if authorize(os.Getenv) != nil {
+		fmt.Fprintln(os.Stderr, observationFailure{"authorization"})
+		os.Exit(1)
+	}
+	if requireCredentialFiles(os.Getenv) != nil {
+		fmt.Fprintln(os.Stderr, observationFailure{"credential-files"})
 		os.Exit(1)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 22*time.Minute)
 	defer cancel()
 	policy, err := reviewedPolicy(ctx)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, errHeld)
+		fmt.Fprintln(os.Stderr, observationFailure{"reviewed-policy"})
 		os.Exit(1)
 	}
 	result, err := run(ctx, os.Getenv, executeRead, backupcatalogue.ObserveDeployment, policy, os.Getenv("LONGHORN_CATALOGUE_CREDENTIAL_DIR"))
-	if err != nil || !active(ctx) || json.NewEncoder(os.Stdout).Encode(result) != nil {
-		fmt.Fprintln(os.Stderr, errHeld)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, observationFailure{failureStage(err)})
+		os.Exit(1)
+	}
+	if !active(ctx) || json.NewEncoder(os.Stdout).Encode(result) != nil {
+		fmt.Fprintln(os.Stderr, observationFailure{"receipt-output"})
 		os.Exit(1)
 	}
 }
