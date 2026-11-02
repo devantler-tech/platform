@@ -250,10 +250,22 @@ func (p preparation) removeOriginalDisks(ctx context.Context, lh object, schedul
 			return err
 		}
 	}
-	return waitReady(ctx, func() error {
+	return waitReady(ctx, func(ctx context.Context) error {
 		current, err := p.storageNode(ctx)
 		if err != nil {
 			return err
+		}
+		if value(current, "spec", "allowScheduling") != false || value(current, "spec", "evictionRequested") != true {
+			return fmt.Errorf("%w: storage evacuation fence changed", errReadinessTerminal)
+		}
+		disks := value(current, "spec", "disks")
+		if reflect.DeepEqual(disks, object{}) {
+			// A previously accepted removal may have lost its response. No replay
+			// or further disk mutation is needed after observing the empty map.
+			return nil
+		}
+		if !reflect.DeepEqual(disks, disabledDisks(p.j.OriginalDisks)) {
+			return fmt.Errorf("%w: original disabled disk map changed", errReadinessTerminal)
 		}
 		return p.mutate(ctx, "nodes.longhorn.io", "longhorn-system", current, object{"op": "replace", "path": "/spec/disks", "value": object{}})
 	})
@@ -280,7 +292,7 @@ func (p preparation) rebuilt(ctx context.Context) error {
 }
 
 func (p *preparation) finish(ctx context.Context) error {
-	err := waitReady(ctx, func() error { return p.rebuilt(ctx) })
+	err := waitReady(ctx, func(ctx context.Context) error { return p.rebuilt(ctx) })
 	if err != nil {
 		return err
 	}

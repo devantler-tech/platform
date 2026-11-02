@@ -49,7 +49,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if j.NodeUID == "" || j.ProviderID == "" || j.MachineUUID == "" || boot == "" {
 		return errors.New("worker identity is incomplete for a kubelet refresh")
 	}
-	get := func() (object, string, error) {
+	get := func(ctx context.Context) (object, string, error) {
 		n, err := c.get(ctx, "node", "", j.Target, false)
 		if err != nil {
 			return nil, "", err
@@ -65,7 +65,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 		}
 		return n, address, nil
 	}
-	n, address, err := get()
+	n, address, err := get(ctx)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
 		return err
 	}
-	if n, _, err = get(); err != nil {
+	if n, _, err = get(ctx); err != nil {
 		return err
 	}
 	if !workerPressureClear(n) {
@@ -136,8 +136,8 @@ func refreshHugepages(ctx context.Context, c client, source string, original obj
 	// readback, rather than its return code, establishes completion.
 	restarted = true
 	_, _ = c.talosCommand(ctx, talosRestartLimit, address, "service", "kubelet", "restart")
-	if err = waitReady(ctx, func() error {
-		n, _, err := get()
+	if err = waitReady(ctx, func(ctx context.Context) error {
+		n, _, err := get(ctx)
 		if err != nil || !hugepagesReady(n) {
 			return errors.New("kubelet has not reported the required huge-page capacity")
 		}

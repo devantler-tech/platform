@@ -50,7 +50,7 @@ func removeScratch(ctx context.Context, c client, source, kind, namespace, path 
 			return err
 		}
 	}
-	return waitReady(ctx, func() error {
+	return waitReady(ctx, func(ctx context.Context) error {
 		o, err := c.get(ctx, kind, namespace, text(original, "metadata", "name"), true)
 		if err != nil {
 			return err
@@ -82,7 +82,7 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 	if err := removeScratch(ctx, c, source, "pod", namespace, "/api/v1/namespaces/"+namespace+"/pods/fio", created["Pod"]); err != nil {
 		return err
 	}
-	if err := waitReady(ctx, func() error {
+	if err := waitReady(ctx, func(ctx context.Context) error {
 		v, err := c.get(ctx, "volumes.longhorn.io", "longhorn-system", text(volume, "metadata", "name"), false)
 		if err != nil {
 			return err
@@ -97,7 +97,7 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 	if err := removeScratch(ctx, c, source, "persistentvolumeclaim", namespace, "/api/v1/namespaces/"+namespace+"/persistentvolumeclaims/fio-data", claim); err != nil {
 		return err
 	}
-	if err := waitReady(ctx, func() error {
+	if err := waitReady(ctx, func(ctx context.Context) error {
 		current, err := c.get(ctx, "persistentvolume", "", text(pv, "metadata", "name"), false)
 		if err != nil {
 			return err
@@ -136,7 +136,7 @@ func cleanupBenchmark(ctx context.Context, c client, source, namespace string, c
 	if err := removeScratch(ctx, c, source, "volumes.longhorn.io", "longhorn-system", "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes/"+text(volume, "metadata", "name"), volume); err != nil {
 		return err
 	}
-	if err := waitReady(ctx, func() error {
+	if err := waitReady(ctx, func(ctx context.Context) error {
 		replicas, err := c.list(ctx, "replicas.longhorn.io", "longhorn-system")
 		if err != nil {
 			return err

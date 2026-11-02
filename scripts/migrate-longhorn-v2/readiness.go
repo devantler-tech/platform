@@ -12,15 +12,24 @@ var readinessPoll = 5 * time.Second
 // errReadinessTerminal marks a state further polling cannot change.
 var errReadinessTerminal = errors.New("required readiness can no longer be reached")
 
-func waitReady(ctx context.Context, check func() error) error {
+func waitReady(ctx context.Context, check func(context.Context) error) error {
 	return waitReadyWithin(ctx, 15*time.Minute, check)
 }
 
-func waitReadyWithin(ctx context.Context, limit time.Duration, check func() error) error {
+func waitReadyWithin(ctx context.Context, limit time.Duration, check func(context.Context) error) error {
 	deadline, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	expired := func() error {
+		return errors.Join(errors.New("required readiness was not proven within the bounded recovery window"), deadline.Err())
+	}
 	for {
-		err := check()
+		if deadline.Err() != nil {
+			return expired()
+		}
+		err := check(deadline)
+		if deadline.Err() != nil {
+			return expired()
+		}
 		if err == nil {
 			return nil
 		}
@@ -31,7 +40,7 @@ func waitReadyWithin(ctx context.Context, limit time.Duration, check func() erro
 		select {
 		case <-deadline.Done():
 			timer.Stop()
-			return errors.New("required readiness was not proven within the bounded recovery window")
+			return expired()
 		case <-timer.C:
 		}
 	}
