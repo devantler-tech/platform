@@ -579,7 +579,13 @@ read_resource() {
   fi
   args+=(-o json)
   printf '%s read_incomplete\n' "$role" >"$scratch/read-failure"
-  bounded project_read "$role" "$directory/$role.json" "$allow_absent" "${args[@]}" || fail read_incomplete
+  # One failed read proves nothing about the rollout, so it is read once more
+  # inside the shared deadline. A second failure still refuses, and the snapshot
+  # pair still has to agree, so a retried read accepts nothing the first would not.
+  if ! bounded project_read "$role" "$directory/$role.json" "$allow_absent" "${args[@]}"; then
+    printf '%s\n' "$role" >>"$scratch/read-retries"
+    bounded project_read "$role" "$directory/$role.json" "$allow_absent" "${args[@]}" || fail read_incomplete
+  fi
 }
 # collect gathers every resource needed to judge a complete rollout snapshot.
 collect() {
@@ -880,10 +886,11 @@ done
 remaining
 if [[ "$expected_state" == active ]]; then expected_pods=8; else expected_pods=6; fi
 if [[ "$expected_releases" == true ]]; then public_count=13; else public_count=11; fi
-# An accepted receipt still counts the dropped connections it absorbed, so a
-# retry cannot hide a dependency that keeps dropping them.
+# An accepted receipt still counts the dropped connections and failed reads it
+# absorbed, so a retry cannot hide a dependency that keeps dropping them.
 retries_field=''
 if [[ -s "$scratch/public-retries" ]]; then retries_field=$(printf ',"publicRetries":%d' "$(wc -l <"$scratch/public-retries")"); fi
+if [[ -s "$scratch/read-retries" ]]; then retries_field+=$(printf ',"readRetries":%d' "$(wc -l <"$scratch/read-retries")"); fi
 # Keep the accepted state and the names of changes that settled in one receipt.
 # A retake reports only role/field names; no cluster values leave the verifier.
 if ((attempt > 1)); then

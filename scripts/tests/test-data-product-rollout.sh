@@ -227,6 +227,17 @@ if [[ "$key" == chart ]]; then
     multi) cat "$FIXTURE/chart.json" "$FIXTURE/chart.json"; exit 0 ;;
   esac
 fi
+if [[ "$key" == service-harbour ]]; then
+  case "${MODE:-}" in
+    read-dropped-once)
+      if [[ ! -f "$FIXTURE/read-dropped" ]]; then
+        : >"$FIXTURE/read-dropped"
+        printf 'PRIVATE-ERROR-CANARY\n' >&2
+        exit 1
+      fi ;;
+    read-dropped-always) printf 'PRIVATE-ERROR-CANARY\n' >&2; exit 1 ;;
+  esac
+fi
 if [[ "$key" == observer-role && "${MODE:-}" == partial-observer ]]; then
   cat "$FIXTURE/observer-role.json"; exit 1
 fi
@@ -574,6 +585,17 @@ jq -e '.failure=="deadline_exceeded" and .phase=="initial_readiness" and .role==
 run_case initial-unreadable fail forbidden 10
 jq -e '.failure=="read_incomplete" and .phase=="initial_readiness" and .role=="chart" and .reason=="read_incomplete"' \
   "${scratch}/initial-unreadable/stdout" >/dev/null || fail 'initial-unreadable: failed read has no safe diagnostic'
+[[ $(grep -cx chart "${scratch}/initial-unreadable/reads") -eq 2 ]] || fail 'initial-unreadable: a failed read was not retried exactly once'
+
+# One failed read recovers, and the accepted receipt still counts it.
+run_case read-dropped-once pass read-dropped-once
+jq -e '.complete == true and .readRetries == 1' "${scratch}/read-dropped-once/stdout" >/dev/null ||
+  fail 'read-dropped-once: the accepted receipt lost the absorbed read'
+# A read that keeps failing still refuses, naming the role it could not read.
+run_case read-dropped-always fail read-dropped-always 10
+jq -e '.failure=="read_incomplete" and .phase=="initial_readiness" and .role=="service-harbour" and .reason=="read_incomplete"' \
+  "${scratch}/read-dropped-always/stdout" >/dev/null || fail 'read-dropped-always: a failed retry lost its diagnostic'
+[[ $(grep -cx service-harbour "${scratch}/read-dropped-always/reads") -eq 2 ]] || fail 'read-dropped-always: a failed read was not retried exactly once'
 
 mkdir "${scratch}/initial-malformed"
 cp "${scratch}/healthy/"*.json "${scratch}/initial-malformed/"
