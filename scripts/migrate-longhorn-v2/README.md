@@ -112,7 +112,7 @@ canary, backup and restore, and application acceptance remain separate gates.
 Run offline checks with:
 
 ```sh
-go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration
+go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 actionlint .github/workflows/prepare-longhorn-v2-node.yaml
 zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 ```
@@ -120,3 +120,38 @@ zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 The workflow's read-only test job runs on PRs and merge groups. Production credentials are
 restored only for a confirmed manual dispatch from main. Host configuration and provider
 responses are not printed into public logs.
+
+## Read native replica directories
+
+Select `inventory-replicas`, a permanent worker, and
+`inventory-longhorn-replicas-<worker>`. This operation reads the fixed historical
+V1 path `/var/lib/longhorn/replicas` through Talos's native List API. It does not
+create a workload, execute a command on the node, change a storage record or reset
+a partition. It shares the protected workflow's source, first-attempt and
+production-lock boundaries.
+
+Complete Kubernetes and Longhorn lists bind the selected worker's UID, hardware,
+boot identity, address and filesystem disk registration to every placed replica,
+including failed, inactive, stopped and terminating replicas. An unresolved
+placement fails the observation. Every native directory is retained even when it
+has no Replica or Orphan record. Missing expected directories are counted
+separately. The historical fixed path is still inspected when its registration is
+gone and no remaining API owner can be resolved there.
+
+The operation requires two identical complete native listings, an unchanged API
+projection, independently checked hardware and the actual kernel boot ID on both
+sides. Transport errors, error envelopes, partial data, duplicate identities,
+symlinks, unexpected file types, path escapes and exceeded response bounds fail
+closed. The configured TLS context and one explicitly selected endpoint come only
+from the workflow's protected in-memory Talos configuration; there is no default
+configuration fallback.
+
+Public output contains counts and SHA-256 commitments, with source and workflow
+run identity. Directory names, replica identities and host addresses are not
+printed. A failed observation reports a fixed stage name, including source,
+identity, listing, consistency and close checks; provider error text is withheld.
+This is a pair of consistent observations, not an atomic filesystem
+snapshot, backup, proof of historical recoverability or permission to wipe. An
+unmatched directory must be investigated and preserved before any rebuild. The
+existing preparation operation still requires its separate preservation and
+recovery gates; this inventory operation does not authorize it.
