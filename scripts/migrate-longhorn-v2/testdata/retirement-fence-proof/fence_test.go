@@ -78,7 +78,8 @@ func TestNativeOriginalReferenceFences(t *testing.T) {
 				t.Run(phase+"/"+policy.Name+"/"+string(mode), func(t *testing.T) {
 					compiler := admissioncel.NewConditionCompiler(environment.MustBaseEnvSet(version.MajorMinor(1, 36)))
 					opts := admissioncel.OptionalVariableDeclarations{}
-					filter := compiler.CompileCondition([]admissioncel.ExpressionAccessor{&validating.ValidationCondition{Expression: policy.Spec.Validations[0].Expression}}, opts, mode)
+					definition := policy.Spec.Validations[0]
+					filter := compiler.CompileCondition([]admissioncel.ExpressionAccessor{&validating.ValidationCondition{Expression: definition.Expression, Message: definition.Message, Reason: definition.Reason}}, opts, mode)
 					condition := matchconditions.MatchCondition(policy.Spec.MatchConditions[0])
 					conditions := compiler.CompileCondition([]admissioncel.ExpressionAccessor{&condition}, opts, mode)
 					if len(filter.CompilationErrors())+len(conditions.CompilationErrors()) != 0 {
@@ -149,8 +150,11 @@ func TestNativeOriginalReferenceFences(t *testing.T) {
 							}
 							if !tc.allowed {
 								var status *apierrors.StatusError
-								if !errors.As(dispatchErr, &status) || status.ErrStatus.Code < 400 || status.ErrStatus.Code >= 500 {
+								if !errors.As(dispatchErr, &status) || status.ErrStatus.Code != 403 || status.ErrStatus.Reason != metav1.StatusReasonForbidden {
 									t.Fatalf("native dispatcher failed to deny: %v", dispatchErr)
+								}
+								if status.ErrStatus.Details == nil || len(status.ErrStatus.Details.Causes) != 1 || status.ErrStatus.Details.Causes[0].Message != "ValidatingAdmissionPolicy '"+policy.Name+"' with binding '"+binding.Name+"' denied request: "+policy.Spec.Validations[0].Message {
+									t.Fatalf("native denial was not attributed to the exact guard: %v", dispatchErr)
 								}
 							}
 						})

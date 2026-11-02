@@ -85,7 +85,7 @@ func benchmarkRetirementFences(record benchmarkRecord) ([]object, error) {
 					"resourceRules": []any{object{"apiGroups": []any{group}, "apiVersions": []any{version}, "resources": resources, "operations": []any{"CREATE", "UPDATE"}, "scope": scope}},
 				},
 				"matchConditions": []any{object{"name": "references-original-benchmark", "expression": match}},
-				"validations":     []any{object{"expression": invariant, "message": "Benchmark backend references are fenced for retirement"}},
+				"validations":     []any{object{"expression": invariant, "reason": "Forbidden", "message": "Benchmark backend references are fenced for retirement"}},
 			},
 		}
 	}

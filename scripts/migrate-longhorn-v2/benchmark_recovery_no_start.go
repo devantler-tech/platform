@@ -57,7 +57,7 @@ func benchmarkRetirementInstanceFence(record benchmarkRecord, groups map[string]
 	emptyMap := func(path string) string { return "(!has(" + path + ") || " + path + ".size() == 0)" }
 	instance := strings.Join([]string{
 		"object.spec.volumeName == " + quote(backend.Name), "object.spec.dataEngine == " + quote(record.Phase),
-		`object.spec.desireState == "stopped"`, `object.status.currentState == "stopped"`,
+		`object.spec.desireState == "stopped"`, `has(object.status) && has(object.status.currentState) && object.status.currentState == "stopped"`,
 		falseFlag("object.status.starting"), falseFlag("object.status.started"),
 		"object.status.ownerID == " + literal(owners) + "[" + uid + "]",
 		"(!has(object.status.instanceManagerName) || object.status.instanceManagerName == \"\" || object.status.instanceManagerName == " + literal(managers) + "[" + uid + "])",
@@ -67,7 +67,7 @@ func benchmarkRetirementInstanceFence(record benchmarkRecord, groups map[string]
 		`request.operation == "UPDATE"`, uid + " in " + literal(uids) + "[request.resource.resource]",
 		"dyn(oldObject.metadata).uid == " + uid, "object.metadata.name == " + literal(names) + "[" + uid + "]",
 		`(!has(object.metadata.namespace) || object.metadata.namespace == "longhorn-system")`,
-		"dyn(object.metadata).ownerReferences == " + literal(references) + "[" + uid + "]", "object.spec == oldObject.spec",
+		"has(dyn(object.metadata).ownerReferences) && dyn(object.metadata).ownerReferences == " + literal(references) + "[" + uid + "]", "object.spec == oldObject.spec",
 		"has(object.metadata.annotations) && " + quote(retirementCheckpointAnnotation) + " in object.metadata.annotations && object.metadata.annotations[" + quote(retirementCheckpointAnnotation) + "] == " + quote(checkpoint),
 		"(request.resource.resource == \"volumeattachments\" ? (" + attachment + ") : (" + instance + "))",
 	}, " && ")
@@ -75,7 +75,7 @@ func benchmarkRetirementInstanceFence(record benchmarkRecord, groups map[string]
 		"failurePolicy":    "Fail",
 		"matchConstraints": object{"matchPolicy": "Equivalent", "objectSelector": object{}, "namespaceSelector": object{}, "resourceRules": []any{object{"apiGroups": []any{"longhorn.io"}, "apiVersions": []any{"v1beta2"}, "resources": []any{"engines", "engines/status", "replicas", "replicas/status", "enginefrontends", "enginefrontends/status", "volumeattachments", "volumeattachments/status"}, "operations": []any{"CREATE", "UPDATE"}, "scope": "Namespaced"}}},
 		"matchConditions":  []any{object{"name": "references-original-benchmark", "expression": "request.namespace == \"longhorn-system\" && (" + refers("object") + " || (oldObject != null && " + refers("oldObject") + "))"}},
-		"validations":      []any{object{"expression": invariant, "message": "Benchmark instance creation and attachment are fenced for retirement"}},
+		"validations":      []any{object{"expression": invariant, "reason": "Forbidden", "message": "Benchmark instance creation and attachment are fenced for retirement"}},
 	}}
 	if literalErr != nil {
 		return nil, literalErr
