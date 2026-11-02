@@ -9,6 +9,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/devantler-tech/platform/internal/strictjson"
 	"github.com/kopia/kopia/repo"
@@ -28,6 +29,19 @@ type Catalogue struct {
 	RepositoryDigest string `json:"repositoryDigest,omitempty"`
 	Incomplete       int    `json:"incompleteMetadata"`
 	entries          []catalogueEntry
+}
+
+// MetadataEndingBefore counts every metadata candidate in the interval,
+// including unknown historical producers and incomplete snapshots. A count is
+// not proof of content integrity, recoverability or original-state equivalence.
+func (c Catalogue) MetadataEndingBefore(boundary time.Time) int {
+	count := 0
+	for _, entry := range c.entries {
+		if entry.Snapshot.EndTime.ToTime().Before(boundary) {
+			count++
+		}
+	}
+	return count
 }
 
 func safeEnvironment() bool {
