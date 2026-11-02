@@ -10,6 +10,7 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   push:
     branches: [main]
@@ -20,6 +21,7 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   workflow_dispatch:
 
@@ -38,6 +40,9 @@ env:
   SUMMARY_REPAIR_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
   NATIVE_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
   SBOM_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
+  DEPENDENCY_SECURITY_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch
+  STORAGE_GO_VERSION: "1.26.10"
+  GOTOOLCHAIN: local
 
 jobs:
   verify:
@@ -67,7 +72,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: upstream/go.mod
+          go-version: ${{ env.STORAGE_GO_VERSION }}
           cache: false
 
       - name: Apply and test compatibility patch
@@ -79,6 +84,7 @@ jobs:
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
           NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
           SBOM_CODEC_PATCH: ${{ github.workspace }}/${{ env.SBOM_CODEC_PATCH_PATH }}
+          DEPENDENCY_SECURITY_PATCH: ${{ github.workspace }}/${{ env.DEPENDENCY_SECURITY_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -105,8 +111,34 @@ jobs:
           test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 2d85a42091d0512b6d3ccb23e9044b426abb25f2
           test "$(git hash-object pkg/apis/softwarecomposition/packagemetadata/forward.go)" = 2414195cc561eeeb36770260d11d111472a9e2b8
           test "$(git hash-object pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go)" = 7280eebef1916127dc21642e3f6663b19ca44a46
+          test "$(git hash-object go.mod)" = 46719c0bae6a2f5ada53cb07c4f44380a142407e
+          test "$(git hash-object go.sum)" = 2fc66f0552bb939c9331ab0228ad8c63be8b8ec3
+          test "$(git hash-object build/Dockerfile)" = e57051966907363749904344c08679d79771c8a0
+          git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          git apply --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          test "$(git hash-object go.mod)" = a2c6f7d0c07f3f3254d3ec51f804174397c430ea
+          test "$(git hash-object go.sum)" = ea04b6bd297b61ba4ffb84649a28da1692d49b85
+          test "$(git hash-object build/Dockerfile)" = b38800dc24c63c9ba3abf6992a8d6a2bdaea91c5
           git diff --check
           go test -race ./pkg/apis/softwarecomposition/... ./pkg/registry/file
+
+      - name: Audit both storage executables
+        working-directory: upstream
+        run: |
+          set -euo pipefail
+          audit_dir="$(mktemp -d "${RUNNER_TEMP}/kubescape-storage-audit.XXXXXX")"
+          GOBIN="${audit_dir}" go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${audit_dir}/storage" .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "${audit_dir}/migration" ./cmd/migration/main.go
+          for binary in storage migration; do
+            if "${audit_dir}/govulncheck" -mode=binary "${audit_dir}/${binary}" >"${audit_dir}/${binary}.log" 2>&1; then
+              printf '%s binary audit: no matched affected functions\n' "${binary}"
+            else
+              audit_status=$?
+              printf '%s binary audit failed (exit %d); reproduce with the pinned source and toolchain before publication\n' "${binary}" "${audit_status}" >&2
+              exit "${audit_status}"
+            fi
+          done
 
       - name: Build compatibility image without publishing
         working-directory: upstream
@@ -156,6 +188,7 @@ jobs:
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
           NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
           SBOM_CODEC_PATCH: ${{ github.workspace }}/${{ env.SBOM_CODEC_PATCH_PATH }}
+          DEPENDENCY_SECURITY_PATCH: ${{ github.workspace }}/${{ env.DEPENDENCY_SECURITY_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -182,6 +215,14 @@ jobs:
           test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 2d85a42091d0512b6d3ccb23e9044b426abb25f2
           test "$(git hash-object pkg/apis/softwarecomposition/packagemetadata/forward.go)" = 2414195cc561eeeb36770260d11d111472a9e2b8
           test "$(git hash-object pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go)" = 7280eebef1916127dc21642e3f6663b19ca44a46
+          test "$(git hash-object go.mod)" = 46719c0bae6a2f5ada53cb07c4f44380a142407e
+          test "$(git hash-object go.sum)" = 2fc66f0552bb939c9331ab0228ad8c63be8b8ec3
+          test "$(git hash-object build/Dockerfile)" = e57051966907363749904344c08679d79771c8a0
+          git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          git apply --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"
+          test "$(git hash-object go.mod)" = a2c6f7d0c07f3f3254d3ec51f804174397c430ea
+          test "$(git hash-object go.sum)" = ea04b6bd297b61ba4ffb84649a28da1692d49b85
+          test "$(git hash-object build/Dockerfile)" = b38800dc24c63c9ba3abf6992a8d6a2bdaea91c5
           git diff --check
 
       - name: Set up Buildx container driver

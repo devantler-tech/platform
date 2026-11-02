@@ -10,6 +10,7 @@ readonly cleanup_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/ku
 readonly summary_repair_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch"
 readonly native_codec_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch"
 readonly sbom_codec_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch"
+readonly dependency_security_patch_file="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch"
 readonly helm_release="${root_dir}/k8s/bases/infrastructure/controllers/kubescape/helm-release.yaml"
 readonly source_commit='b35788b68337134fc2514574cde1ba7f1225fd43'
 readonly image_repository='ghcr.io/devantler-tech/platform-kubescape-storage'
@@ -28,6 +29,7 @@ command -v yq >/dev/null 2>&1 || fail 'yq v4 is required'
 [[ -f "${native_codec_patch_file}" ]] || fail 'the Kubescape native-metadata codec patch is missing'
 
 [[ -f "${sbom_codec_patch_file}" ]] || fail 'the SBOM forward-metadata compatibility patch is missing'
+[[ -f "${dependency_security_patch_file}" ]] || fail 'the dependency security patch is missing'
 
 [[ "$(yq -er '.permissions | length' "${workflow}")" == '0' ]] ||
   fail 'the hotfix workflow must deny permissions by default'
@@ -205,6 +207,8 @@ fi
   fail 'the workflow must apply the reviewed native-metadata codec repair patch'
 [[ "$(yq -er '.env.SBOM_CODEC_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch' ]] ||
   fail 'the workflow must apply the reviewed SBOM forward-metadata patch'
+[[ "$(yq -er '.env.DEPENDENCY_SECURITY_PATCH_PATH' "${workflow}")" == 'k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch' ]] ||
+  fail 'the workflow must apply the reviewed dependency security patch'
 for job in verify publish; do
 
   job_script="$(JOB="${job}" yq -er '
@@ -212,12 +216,12 @@ for job in verify publish; do
   ' "${workflow}")" || fail "could not read how the ${job} job applies its patches"
   # The literal shell variables are the contract.
   # shellcheck disable=SC2016
-  apply_order="$(grep -E '^\s*git apply( --unidiff-zero)? "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR|NATIVE_CODEC|SBOM_CODEC)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
+  apply_order="$(grep -E '^\s*git apply( --unidiff-zero)? "\$\{(HOTFIX|CLEANUP|SUMMARY_REPAIR|NATIVE_CODEC|SBOM_CODEC|DEPENDENCY_SECURITY)_PATCH\}"$' <<<"${job_script}" | tr -d ' ' | tr '\n' ' ')"
   # shellcheck disable=SC2016
-  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" gitapply--unidiff-zero"${NATIVE_CODEC_PATCH}" gitapply--unidiff-zero"${SBOM_CODEC_PATCH}" ' ]] ||
-    fail "the ${job} job must apply compatibility, cleanup, summary repair, native codec and SBOM metadata patches in order, once each"
-  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '10' ]] ||
-    fail "the ${job} job must run exactly one check and one apply for each of the five patches"
+  [[ "${apply_order}" == 'gitapply"${HOTFIX_PATCH}" gitapply"${CLEANUP_PATCH}" gitapply"${SUMMARY_REPAIR_PATCH}" gitapply--unidiff-zero"${NATIVE_CODEC_PATCH}" gitapply--unidiff-zero"${SBOM_CODEC_PATCH}" gitapply--unidiff-zero"${DEPENDENCY_SECURITY_PATCH}" ' ]] ||
+    fail "the ${job} job must apply compatibility, cleanup, summary repair, native codec, SBOM metadata and dependency security patches in order, once each"
+  [[ "$(grep -cE '^\s*git apply( |$)' <<<"${job_script}")" == '12' ]] ||
+    fail "the ${job} job must run exactly one check and one apply for each of the six patches"
   # shellcheck disable=SC2016
   grep -qF 'git apply --check "${CLEANUP_PATCH}"' <<<"${job_script}" ||
     fail "the ${job} job must check the cleanup patch before applying it"
@@ -230,6 +234,9 @@ for job in verify publish; do
   # shellcheck disable=SC2016
   grep -qF 'git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"' <<<"${job_script}" ||\
     fail "the ${job} job must check the SBOM metadata patch before applying it"
+  # shellcheck disable=SC2016
+  grep -qF 'git apply --check --unidiff-zero "${DEPENDENCY_SECURITY_PATCH}"' <<<"${job_script}" ||
+    fail "the ${job} job must check the dependency security patch before applying it"
 done
 for trigger in pull_request push; do
 
@@ -239,10 +246,11 @@ for trigger in pull_request push; do
       "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch",
       "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch",
       "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch",
-      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch"
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch",
+      "k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-security-dependencies.patch"
     ])
   ' "${workflow}" >/dev/null ||
-    fail "a cleanup, summary repair, native codec or SBOM metadata patch change must start the workflow on ${trigger}"
+    fail "a cleanup, summary repair, native codec, SBOM metadata or dependency security patch change must start the workflow on ${trigger}"
 done
 
 [[ "$(grep -c '^diff --git ' "${cleanup_patch_file}")" == '5' ]] ||
