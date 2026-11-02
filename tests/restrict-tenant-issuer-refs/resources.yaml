@@ -104,3 +104,17 @@ spec:
     group: cert-manager.io
     kind: Issuer
     name: letsencrypt-prod
+---
+# An explicitly empty kind resolves to Issuer exactly as an omitted one does.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: tenant-cert-kind-empty
+  namespace: tenant-ns
+spec:
+  secretName: tenant-tls-empty
+  dnsNames:
+    - empty.example.com
+  issuerRef:
+    kind: ""
+    name: tenant-issuer
