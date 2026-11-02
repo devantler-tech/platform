@@ -61,6 +61,7 @@ readonly allowed_refs=(
   "$probe"
   'scripts/guard-unsigned-probe-image-publisher.sh'
   'scripts/tests/test-guard-unsigned-probe-image-publisher.sh'
+  'scripts/prove-kyverno-cache-recovery/main.go'
 )
 
 status=0

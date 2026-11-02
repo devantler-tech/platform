@@ -65,7 +65,7 @@ func TestPinnedOpenBaoPreservesValuesAndVersions(t *testing.T) {
 	command.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir()}
 	id, err := command.Output()
 	if err != nil || !regexp.MustCompile(`^[a-f0-9]{64}$`).Match(bytes.TrimSpace(id)) {
-		t.Fatal("isolated native OpenBao container could not start")
+		t.Fatalf("isolated native OpenBao container could not start: %s", nativeStartFailure(err))
 	}
 	t.Cleanup(func() {
 		if err := exec.Command("docker", "rm", "--force", strings.TrimSpace(string(id))).Run(); err != nil {
