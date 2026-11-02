@@ -150,9 +150,16 @@ func bindDeployment(namespace string, expected Policy, docs DeploymentDocuments)
 	// Velero 1.18.4 provider/unified_repo.go uses the BSL prefix, the fixed
 	// backend and volumeNamespace. The CR name/UID is not an object-key prefix.
 	expected.Prefix += "kopia/" + namespace + "/"
-	// Compare complete raw responses in memory across the observation. This
-	// private digest includes Secret data and must never enter a public receipt.
-	encoded, err := json.Marshal(docs)
+	// Bind validated identity, scope, readiness and credential data. API resource
+	// versions and unconsumed validation timestamps can advance during a read
+	// without changing those facts. Resource versions still must be present on
+	// each complete native response. This digest includes Secret data and stays
+	// private; it is never part of a serialized catalogue.
+	objects := []bindingObject{location, repository, cloud, passwordSecret}
+	for i := range objects {
+		objects[i].Metadata.ResourceVersion = ""
+	}
+	encoded, err := json.Marshal(objects)
 	if err != nil {
 		return deploymentBinding{}, errReadHeld
 	}

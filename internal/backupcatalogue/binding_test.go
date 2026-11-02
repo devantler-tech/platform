@@ -171,3 +171,36 @@ func TestDeploymentBindingDetectsCredentialOrIdentityChanges(t *testing.T) {
 		t.Fatal("credential change not bound")
 	}
 }
+
+func TestBindingKeepsEachObjectIdentityWhileAllowingResourceVersionChurn(t *testing.T) {
+	for index, name := range []string{"location", "repository", "cloud credentials", "repository credentials"} {
+		t.Run(name, func(t *testing.T) {
+			policy, docs := bindingFixture(t, "wedding-app")
+			before, err := bindDeployment("wedding-app", policy, docs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := []*[]byte{&docs.Location, &docs.Repository, &docs.CloudSecret, &docs.RepositorySecret}[index]
+			*target = changeBinding(t, *target, func(v map[string]any) {
+				v["metadata"].(map[string]any)["resourceVersion"] = "124"
+			})
+			heartbeat, err := bindDeployment("wedding-app", policy, docs)
+			if err != nil || before.digest != heartbeat.digest {
+				t.Fatal("resource version alone invalidated an unchanged binding")
+			}
+			*target = changeBinding(t, *target, func(v map[string]any) {
+				v["metadata"].(map[string]any)["uid"] = "replacement-fixture-uid"
+			})
+			replaced, err := bindDeployment("wedding-app", policy, docs)
+			if err != nil || replaced.digest == before.digest {
+				t.Fatal("replacement identity was not bound")
+			}
+			*target = changeBinding(t, *target, func(v map[string]any) {
+				delete(v["metadata"].(map[string]any), "resourceVersion")
+			})
+			if _, err := bindDeployment("wedding-app", policy, docs); err == nil {
+				t.Fatal("an incomplete native response qualified")
+			}
+		})
+	}
+}
