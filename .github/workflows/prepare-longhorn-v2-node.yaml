@@ -7,6 +7,9 @@ on:
       - .github/workflows/prepare-longhorn-v2-node.yaml
       - scripts/migrate-longhorn-v2/**
       - internal/longhornmigration/**
+      - internal/longhorninventory/**
+      - go.mod
+      - go.sum
   merge_group:
   workflow_dispatch:
     inputs:
@@ -14,9 +17,9 @@ on:
         description: The guarded migration step to run
         required: true
         type: choice
-        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2]
+        options: [prepare-worker, refresh-clients, benchmark-v1, benchmark-v2, inventory-replicas]
       node:
-        description: Permanent storage worker for prepare-worker only
+        description: Permanent storage worker for preparation or read-only inventory
         required: false
         type: choice
         options: [prod-worker-1, prod-worker-2, prod-worker-3]
@@ -45,7 +48,7 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Test complete observations and interrupted recovery
-        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration
+        run: go test -race -count=1 -timeout=5m ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 
   prepare:
     name: Run the selected guarded migration step
@@ -76,6 +79,9 @@ jobs:
           case "${LONGHORN_V2_OPERATION}" in
             prepare-worker)
               [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "prepare-longhorn-v2-${LONGHORN_V2_NODE}" ]]
+              ;;
+            inventory-replicas)
+              [[ "${LONGHORN_V2_NODE}" =~ ^prod-worker-[123]$ && "${LONGHORN_V2_CONFIRM}" == "inventory-longhorn-replicas-${LONGHORN_V2_NODE}" ]]
               ;;
             refresh-clients)
               [[ "${LONGHORN_V2_CONFIRM}" == refresh-longhorn-v2-clients ]]
