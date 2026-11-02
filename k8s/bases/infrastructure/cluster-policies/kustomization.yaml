@@ -119,6 +119,12 @@ patches:
                   # platform-owned namespaces; it still gets the default LimitRange
                   # from add-default-limitrange, so backup pods keep sane defaults.
                   - velero
+                  # Virtual autoscaler demand. CapacityBuffers create no Pods here,
+                  # but the buffer controller still limits their replicas by this
+                  # quota: the Longhorn migration buffers need more than the generic
+                  # cap, and a buffer limited to zero silently requests no node
+                  # (#5655). Node demand is bounded by the pools and maxNodesTotal.
+                  - overprovisioning
       - op: add
         path: /spec/rules/0/generate/generateExisting
         value: true
