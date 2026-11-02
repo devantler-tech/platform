@@ -129,13 +129,18 @@ a rerun. A prepared receipt is revalidated against live state.
 Prepared means the worker and its encrypted disk layout passed these checks. V2 activation, a
 canary, backup and restore, and application acceptance remain separate gates.
 
-Run offline checks with:
+Run the local checks with:
 
 ```sh
 go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 actionlint .github/workflows/prepare-longhorn-v2-node.yaml
 zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 ```
+
+The Go checks make no cluster calls, but a clean module cache needs network access to the
+configured Go module proxy and checksum database. This includes the native admission proof's
+nested module at `testdata/retirement-fence-proof`; its committed `go.sum` is required. Populate
+both modules' dependencies before running in a network-restricted environment.
 
 The workflow's read-only test job runs on PRs and merge groups. Production credentials are
 restored only for a confirmed manual dispatch from main. Host configuration and provider
