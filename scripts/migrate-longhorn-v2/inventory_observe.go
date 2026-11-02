@@ -54,12 +54,20 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 		}
 	}
 	selectionDigest := ""
+	var projectionErr error
+	nodes, projectionErr = temporaryInventoryNodes(nodes, c.inventoryPreparation)
+	if projectionErr != nil {
+		return inventoryProjection{}, nil, projectionErr
+	}
 	if !inventoryTarget.MatchString(target) {
 		var err error
 		target, selectionDigest, err = resolveTemporaryInventoryTarget(target, nodes, c.inventoryPools)
 		if err != nil {
 			return inventoryProjection{}, nil, err
 		}
+	}
+	if c.inventoryPreparation != nil && target != c.inventoryPreparation.Target {
+		return inventoryProjection{}, nil, errInventory
 	}
 	var node, lh object
 	for _, item := range nodes {
