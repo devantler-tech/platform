@@ -24,7 +24,11 @@ func allowedDispatch(getEnv func(string) string) bool {
 }
 
 func runObservation(ctx context.Context, getEnv func(string) string, read executor, expected map[string]string, checksum string, now time.Time, out io.Writer) int {
-	unknown := func() int { fmt.Fprintln(out, "CROSSPLANE_RECOVERY=UNKNOWN"); return 3 }
+	unknown := func() int {
+		// An unavailable diagnostic cannot turn the unknown result into success.
+		_, _ = fmt.Fprintln(out, "CROSSPLANE_RECOVERY=UNKNOWN")
+		return 3
+	}
 	if !allowedDispatch(getEnv) {
 		return unknown()
 	}
@@ -51,10 +55,14 @@ func runObservation(ctx context.Context, getEnv func(string) string, read execut
 		return unknown()
 	}
 	if count != 0 {
-		fmt.Fprintf(out, "CROSSPLANE_RECOVERY=ALERTS_PRESENT peer_alert_records=%d\n", count)
+		if _, err := fmt.Fprintf(out, "CROSSPLANE_RECOVERY=ALERTS_PRESENT peer_alert_records=%d\n", count); err != nil {
+			return 3
+		}
 		return 1
 	}
-	fmt.Fprintln(out, "CROSSPLANE_RECOVERY=RECOVERED")
+	if _, err := fmt.Fprintln(out, "CROSSPLANE_RECOVERY=RECOVERED"); err != nil {
+		return 3
+	}
 	return 0
 }
 

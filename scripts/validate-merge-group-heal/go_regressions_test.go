@@ -26,6 +26,8 @@ type regressionWorkflow struct {
 		Permissions map[string]string     `yaml:"permissions"`
 		Steps       []struct {
 			Name             string            `yaml:"name"`
+			Uses             string            `yaml:"uses"`
+			With             map[string]any    `yaml:"with"`
 			If               string            `yaml:"if"`
 			Run              string            `yaml:"run"`
 			Continue         any               `yaml:"continue-on-error"`
@@ -33,6 +35,34 @@ type regressionWorkflow struct {
 			WorkingDirectory string            `yaml:"working-directory"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
+}
+
+func TestGoLintIsAnUnconditionalReadOnlyGate(t *testing.T) {
+	workflow := readRegressionWorkflow(t)
+	job := workflow.Jobs["validate-go-regressions"]
+	install, control, lint := -1, -1, -1
+	for index, step := range job.Steps {
+		switch {
+		case strings.HasPrefix(step.Uses, "golangci/golangci-lint-action@"):
+			if install >= 0 || len(strings.TrimPrefix(step.Uses, "golangci/golangci-lint-action@")) != 40 || step.With["version"] != "v2.14.0" || step.With["install-only"] != true || step.If != "" || step.Continue != nil {
+				t.Fatal("lint must install one pinned, catalogue-aligned binary unconditionally")
+			}
+			install = index
+		case strings.TrimSpace(step.Run) == "bash scripts/tests/test-go-modules-lint.sh":
+			if control >= 0 || step.If != "" || step.Continue != nil || step.WorkingDirectory != "" {
+				t.Fatal("real linter negative controls must run unconditionally from the root")
+			}
+			control = index
+		case strings.TrimSpace(step.Run) == "bash scripts/check-go-modules-lint.sh":
+			if lint >= 0 || step.If != "" || step.Continue != nil || step.WorkingDirectory != "" {
+				t.Fatal("complete module lint must run unconditionally from the root")
+			}
+			lint = index
+		}
+	}
+	if install < 0 || control <= install || lint <= control {
+		t.Fatal("required regressions must install lint, verify its real controls, then lint the tracked modules")
+	}
 }
 
 // readRegressionWorkflow loads the actual CI workflow rather than a separate fixture.

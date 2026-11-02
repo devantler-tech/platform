@@ -21,6 +21,29 @@ Start with [contributor guidance](../CONTRIBUTING.md#validation). The complete
 [validation contract](../AGENTS.md#validation) covers affected Go/Bash tests and
 CI path filters.
 
+## Go lint
+
+The required `validate-go-regressions` job installs golangci-lint v2.14.0 using
+the Go toolchain from `go.mod`. It lints every tracked module's loadable
+first-party packages for the runner's target, including tests, with the standard
+linter policy. A tools-only module with no packages is reported separately;
+its upstream tool's source is not claimed as linted. An empty source module,
+unreadable package graph or missing module boundary fails validation.
+
+With that linter installed, run:
+
+```bash
+bash scripts/check-go-modules-lint.sh
+bash scripts/tests/test-go-modules-lint.sh
+```
+
+The check ignores ambient workspace and Go configuration, disables automatic
+toolchain downloads and source fixes, and loads dependencies read-only. Its real
+controls reject unchecked errors in root, nested and newly indexed modules and
+check that a missing nested manifest cannot fall back to its parent. Update the
+workflow's tool pin, the script's version check and the regression contract
+together when adopting a reviewed linter release.
+
 ## WebApp compiler
 
 Run the committed WebApp and Tenant graphs through the pinned KRO compiler:

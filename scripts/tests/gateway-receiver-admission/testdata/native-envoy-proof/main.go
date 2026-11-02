@@ -56,7 +56,7 @@ func main() {
 	check(err == nil && bytes.Contains(version, []byte("/1.39.5/")), "proxy-version")
 	work := "/tmp/email-proxy-native"
 	check(os.Mkdir(work, 0700) == nil, "workspace")
-	defer os.RemoveAll(work)
+	defer func() { check(os.RemoveAll(work) == nil, "workspace-cleanup") }()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	check(err == nil, "certificate-key")
 	certificate := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "mail.example.test"}, DNSNames: []string{"mail.example.test"}, IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, IsCA: true, BasicConstraintsValid: true}
@@ -163,7 +163,7 @@ func main() {
 		dialer := net.Dialer{Timeout: time.Second, LocalAddr: &net.TCPAddr{IP: net.ParseIP(peer)}}
 		conn, err := dialer.Dial("tcp4", "127.0.0.1:18443")
 		check(err == nil, "physical-connect")
-		defer conn.Close()
+		defer func() { _ = conn.Close() }() // Read-only connection cleanup after each proof attempt.
 		_ = conn.SetDeadline(time.Now().Add(2 * time.Second))
 		if version != 0 {
 			_, err = conn.Write(proxyHeader(version, claim))
@@ -187,7 +187,7 @@ func main() {
 		if err != nil {
 			return true, 0, ""
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }() // Body validity is checked by ReadAll below.
 		body, err := io.ReadAll(io.LimitReader(response.Body, 1000))
 		check(err == nil && string(body) == "native-peer-proof", "proxy-response")
 		return true, response.StatusCode, response.Header.Get("x-observed-client")

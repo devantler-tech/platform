@@ -145,7 +145,7 @@ func TestNativeTLSAndCertificateReload(t *testing.T) {
 		if err != nil {
 			return 0, err
 		}
-		defer response.Body.Close()
+		defer func() { _ = response.Body.Close() }()
 		_, _ = io.Copy(io.Discard, response.Body)
 		if response.StatusCode != 501 || response.TLS == nil || len(response.TLS.PeerCertificates) == 0 {
 			return 0, fmt.Errorf("unexpected native empty-store health response")

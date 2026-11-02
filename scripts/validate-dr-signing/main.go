@@ -1649,14 +1649,6 @@ func stringListContains(value any, want string) bool {
 	return false
 }
 
-func containsLine(block string, want string) bool {
-	for _, line := range strings.Split(block, "\n") {
-		if strings.Contains(line, want) {
-			return true
-		}
-	}
-	return false
-}
 func run(workflowPath string, configPath string, stdout io.Writer, stderr io.Writer) int {
 	workflow, err := os.ReadFile(workflowPath) //nolint:gosec // The explicit CLI path is the validator input.
 	if err != nil {

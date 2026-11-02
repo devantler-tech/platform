@@ -83,15 +83,11 @@ DISABLE_LINTERS:
   # because APPLY_FIXES is forced on, it committed that. A formatter that damages the document
   # it formats is worse than no formatter; markdownlint still governs table syntax.
   - MARKDOWN_MARKDOWN_TABLE_FORMATTER
-  # golangci-lint ALREADY runs as its own job in the org's validate-go-project workflow, on the Go
-  # version this repository declares, and that job is what gates the pull request. The copy inside
-  # MegaLinter runs in the MegaLinter container instead, which ships its own older Go and sets
-  # GOTOOLCHAIN=local, so it cannot honour the `go` directive and fails to load the packages at all:
-  #   go.mod requires go >= 1.26.6 (running go 1.26.3; GOTOOLCHAIN=local)
-  # That is a container-version failure, not a finding — it reports nothing about this code, and it
-  # recurs on every bump that outruns the image. No lint coverage is lost by removing it: the
-  # dedicated `🧹 Lint - golangci-lint` check runs the same linter with the correct toolchain and
-  # must stay green. ksail disables it for the same reason.
+  # Platform's required validate-go-regressions job installs golangci-lint on
+  # the Go toolchain declared by go.mod and checks every tracked source module.
+  # The primarily Shell repository does not inherit the org's Go workflow.
+  # Keep the container copy disabled: its separate toolchain can lag go.mod.
+  # The local required job and its real refusal controls supply lint coverage.
   - GO_GOLANGCI_LINT
 
 DISABLE_ERRORS_LINTERS:

@@ -435,7 +435,7 @@ type boundedOutput struct{ bytes.Buffer }
 
 func (b *boundedOutput) Write(p []byte) (int, error) {
 	if b.Len()+len(p) > 1<<20 {
-		return 0, errors.New("Kubernetes response too large")
+		return 0, errors.New("kubernetes response too large")
 	}
 	return b.Buffer.Write(p)
 }
@@ -462,7 +462,8 @@ func (c commandClient) run(ctx context.Context, input []byte, args ...string) ([
 	started := time.Now()
 	if err := cmd.Run(); err != nil {
 		if c.diagnostics != nil {
-			fmt.Fprintf(c.diagnostics, "kubectl %s: %v after %s, deadline: %v\n", args[0], err, time.Since(started).Round(time.Millisecond), requestCtx.Err())
+			// The request already failed; tracing is best effort and fixture-only.
+			_, _ = fmt.Fprintf(c.diagnostics, "kubectl %s: %v after %s, deadline: %v\n", args[0], err, time.Since(started).Round(time.Millisecond), requestCtx.Err())
 		}
 		return nil, errors.New("bounded Kubernetes request failed")
 	}

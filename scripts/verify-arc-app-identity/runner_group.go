@@ -164,7 +164,7 @@ func (api groupAPI) call(ctx context.Context, method, path string, body []byte, 
 	if err != nil {
 		return 0, "HOLD_CAPABILITY"
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }() // Read-only cleanup after the bounded API read.
 	if response.StatusCode != expected {
 		return response.StatusCode, "HOLD_CAPABILITY"
 	}
