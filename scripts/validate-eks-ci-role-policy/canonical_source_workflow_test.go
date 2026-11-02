@@ -15,7 +15,7 @@ import (
 )
 
 var canonicalCICommands = map[string]string{
-	"bash scripts/run-publication-generator-tests.sh --jobs 2":   "validate-publication-generator",
+	"bash scripts/run-publication-generator-tests.sh --jobs 4":   "validate-publication-generator",
 	"bash scripts/tests/test-run-publication-generator-tests.sh": "validate-publication-generator",
 	"bash scripts/tests/test-tenant-source-discovery.sh":         "validate-independent-guards",
 	"./scripts/guard-consumer-discovery-conservation.sh":         "validate-independent-guards",
@@ -103,7 +103,7 @@ func TestCanonicalPublicationRunnerKeepsEveryFixtureAndFailure(t *testing.T) {
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
-			output, err := exec.CommandContext(ctx, "bash", runner, "--jobs", "2").CombinedOutput()
+			output, err := exec.CommandContext(ctx, "bash", runner, "--jobs", "4").CombinedOutput()
 			if ctx.Err() != nil {
 				t.Fatalf("runner exceeded the bounded fixture deadline: %v\n%s", ctx.Err(), output)
 			}

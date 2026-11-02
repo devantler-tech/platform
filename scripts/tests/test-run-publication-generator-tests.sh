@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The bounded runner must retain every test and every failure in either mode.
+# The bounded runner must retain every test and every failure in every mode.
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fail() {
@@ -83,7 +83,7 @@ release_probe() {
 
 # Account for each child once, enforcing the dispatch bound and full completion.
 collect() {
-  local active=0 maximum=0 overlap=0 first='' event name
+  local active=0 maximum=0 overlap=0 held='' event name waiting
   while IFS=' ' read -r -t 10 event name <&3; do
     if [[ "$event" == finish && -z "$name" ]]; then
       [[ "$active" == 0 ]] || return 1
@@ -100,13 +100,11 @@ collect() {
       active=$((active + 1))
       ((active <= PROBE_LIMIT)) || return 1
       ((maximum >= active)) || maximum=$active
-      if [[ "$PROBE_LIMIT" == 2 && "$overlap" == 0 ]]; then
-        if [[ "$active" == 1 ]]; then
-          first=$name
-        else
-          # Neither first child can finish before both are observed running.
-          release_probe "$first"
-          release_probe "$name"
+      if ((PROBE_LIMIT > 1 && overlap == 0)); then
+        held+=" $name"
+        if ((active == PROBE_LIMIT)); then
+          # No first child can finish before the whole bound is observed running.
+          for waiting in $held; do release_probe "$waiting"; done
           overlap=1
         fi
       else
@@ -151,7 +149,7 @@ run_case() {
   collector_pid=''
   exec 3>&-
 }
-for jobs in 1 2; do
+for jobs in 1 2 4; do
   run_case "$jobs" 0 "green-$jobs"
   [[ "$rc" == 0 ]] || {
     cat "$state/output" >&2
@@ -187,4 +185,4 @@ run_case 2 0 missing
 [[ "$rc" == 2 && ! -e "$state/started" && ! -e "$state/dispatched-limit" ]] ||
   fail 'an incomplete test set was dispatched'
 completed=1
-printf 'PASS: both worker limits preserve nine tests, all output, and all failures; invalid and incomplete runs are refused.\n'
+printf 'PASS: every worker limit preserves nine tests, all output, and all failures; invalid and incomplete runs are refused.\n'
