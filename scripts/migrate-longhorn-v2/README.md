@@ -8,8 +8,11 @@ benchmarks. `refresh-clients` holds until the fixed migration workers are Ready 
 huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
 capacity follows in its own change.
 
-Dispatch only the merged workflow on `main`. Select `refresh-clients` with
-`refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
+Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
+`talos/workers/enable-longhorn-v2.yaml` deploys: the hosts then hold the pages, but kubelet
+still counts them as free memory, so an unrelated kubelet restart could reject Pods.
+Select `refresh-clients` with
+`refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
 2 GiB of 2 MiB huge pages. Containers and disks are preserved. Kubelet would reject
 any Pod that no longer fits once huge pages count, so when a permanent worker's Pods
