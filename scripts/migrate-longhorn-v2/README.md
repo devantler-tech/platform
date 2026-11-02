@@ -148,7 +148,9 @@ configuration fallback.
 
 Public output contains counts and SHA-256 commitments, with source and workflow
 run identity. Directory names, replica identities and host addresses are not
-printed. This is a pair of consistent observations, not an atomic filesystem
+printed. A failed observation reports a fixed stage name, including source,
+identity, listing, consistency and close checks; provider error text is withheld.
+This is a pair of consistent observations, not an atomic filesystem
 snapshot, backup, proof of historical recoverability or permission to wipe. An
 unmatched directory must be investigated and preserved before any rebuild. The
 existing preparation operation still requires its separate preservation and

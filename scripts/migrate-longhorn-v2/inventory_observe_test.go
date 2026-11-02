@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
@@ -36,7 +37,7 @@ func (r *replicaReaderFixture) ListReplicas(context.Context) (longhorninventory.
 }
 
 func TestInventoryBracketsNodeAndDiskObservationsWithoutPublishingPrivateNames(t *testing.T) {
-	for _, scenario := range []string{"stable", "boot changed", "API changed", "disk changed", "close failed", "hardware changed"} {
+	for _, scenario := range []string{"stable", "boot changed", "API changed", "disk changed", "close failed", "hardware changed", "client failed"} {
 		t.Run(scenario, func(t *testing.T) {
 			node, storage, replicas := inventoryFixture()
 			nodeReads, hardwareReads := 0, 0
@@ -82,6 +83,9 @@ func TestInventoryBracketsNodeAndDiskObservationsWithoutPublishingPrivateNames(t
 				if address != "10.0.99.4" {
 					t.Fatal("factory was routed elsewhere")
 				}
+				if scenario == "client failed" {
+					return nil, nil, errors.New("private-provider-detail")
+				}
 				return reader, func() error {
 					closed = true
 					if scenario == "close failed" {
@@ -90,10 +94,15 @@ func TestInventoryBracketsNodeAndDiskObservationsWithoutPublishingPrivateNames(t
 					return nil
 				}, nil
 			})
-			if !closed || (err == nil) != (scenario == "stable") {
+			if closed != (scenario != "client failed") || (err == nil) != (scenario == "stable") {
 				t.Fatalf("identity/observation gate failed: %v", err)
 			}
 			if err != nil {
+				expected := map[string]string{"boot changed": "boot-after", "API changed": "api-consistency", "disk changed": "listing-consistency", "close failed": "close", "hardware changed": "host-after", "client failed": "client"}
+				message := inventoryFailureMessage(err)
+				if !strings.Contains(message, "stage="+expected[scenario]) || strings.Contains(message, "private-provider-detail") {
+					t.Fatal("hold lost its safe failure stage")
+				}
 				if receipt.Schema != 0 {
 					t.Fatal("failed observation retained a success receipt")
 				}
@@ -105,5 +114,34 @@ func TestInventoryBracketsNodeAndDiskObservationsWithoutPublishingPrivateNames(t
 				t.Fatal("receipt omitted unresolved data or exposed private identity")
 			}
 		})
+	}
+}
+
+func TestInventoryFailureMessageNeverPrintsAnUnknownProviderError(t *testing.T) {
+	message := inventoryFailureMessage(errors.New("private-provider-detail"))
+	if strings.Contains(message, "private-provider-detail") || !strings.Contains(message, "stage=unknown") {
+		t.Fatal("public hold exposed an unclassified provider error")
+	}
+}
+
+type delayedInventoryCancellation struct {
+	context.Context
+	expires time.Time
+}
+
+func (c delayedInventoryCancellation) Deadline() (time.Time, bool) { return c.expires, true }
+
+func TestInventoryDoesNotStartAfterAnUnsignalledDeadline(t *testing.T) {
+	ctx := delayedInventoryCancellation{Context: context.Background(), expires: time.Now().Add(-time.Second)}
+	c := client{context: "admin@prod", run: func(context.Context, []byte, string, ...string) ([]byte, error) {
+		t.Fatal("expired inventory started an API request")
+		return nil, nil
+	}}
+	_, err := observeReplicaInventory(ctx, c, "prod-worker-1", func(context.Context, string) (nativeReplicaReader, func() error, error) {
+		t.Fatal("expired inventory opened a native client")
+		return nil, nil, nil
+	})
+	if err == nil {
+		t.Fatal("expired inventory produced a success receipt")
 	}
 }

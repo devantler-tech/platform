@@ -156,18 +156,21 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 func runReplicaInventory(ctx context.Context, target, source, runID string) error {
 	c := client{run: inventoryReadCommand, context: "admin@prod"}
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
-		return errInventory
+		return stageSourceBefore
 	}
 	receipt, err := observeReplicaInventory(ctx, c, target, newInventoryReader)
 	if err != nil {
-		return errInventory
+		return err
 	}
 	if err = sourceCurrent(ctx, c.run, source); err != nil {
-		return errInventory
+		return stageSourceAfter
 	}
-	return json.NewEncoder(os.Stdout).Encode(struct {
+	if err = json.NewEncoder(os.Stdout).Encode(struct {
 		Source    string           `json:"source"`
 		Run       string           `json:"run"`
 		Inventory inventoryReceipt `json:"inventory"`
-	}{source, runID, receipt})
+	}{source, runID, receipt}); err != nil {
+		return stageOutput
+	}
+	return nil
 }

@@ -29,7 +29,7 @@ func main() {
 	defer cancel()
 	if operation == "inventory-replicas" {
 		if err := runReplicaInventory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
-			fmt.Fprintln(os.Stderr, "Native replica inventory held; no complete observation or reset clearance is established.")
+			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
 			os.Exit(1)
 		}
 		return

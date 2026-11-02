@@ -40,7 +40,16 @@ func (n Native) requestContext(ctx context.Context) (context.Context, context.Ca
 		return nil, nil, errNative
 	}
 	ctx, cancel := context.WithTimeout(talos.WithNode(ctx, n.Target), 15*time.Second)
+	if !active(ctx) {
+		cancel()
+		return nil, nil, errNative
+	}
 	return ctx, cancel, nil
+}
+
+func active(ctx context.Context) bool {
+	deadline, bounded := ctx.Deadline()
+	return bounded && ctx.Err() == nil && time.Now().Before(deadline)
 }
 
 func (n Native) ListReplicas(ctx context.Context) (Listing, error) {
@@ -57,25 +66,27 @@ func (n Native) ListReplicas(ctx context.Context) (Listing, error) {
 	total := 0
 	for {
 		item, recvErr := stream.Recv()
-		if recvErr == io.EOF && ctx.Err() == nil {
+		// gRPC defines successful completion as canonical, unwrapped io.EOF.
+		// Wrapped or joined EOF may carry a failure and must never clear a disk.
+		if recvErr == io.EOF && active(ctx) {
 			listing.Complete = true
-			if _, err = Analyze(listing, nil); err != nil {
+			if _, err = Analyze(listing, nil); err != nil || !active(ctx) {
 				return Listing{}, errNative
 			}
 			return listing, nil
 		}
-		if recvErr != nil || ctx.Err() != nil || item == nil {
+		if recvErr != nil || !active(ctx) || item == nil {
 			return Listing{}, errNative
 		}
 		size := proto.Size(item)
 		total += size
 		if size > maxMessageBytes || total > MaxMetadataBytes || len(listing.Entries) >= MaxEntries ||
-			!n.validMetadata(item.Metadata) || item.Error != "" || item.Link != "" || len(item.Xattrs) != 0 ||
-			(!baseName(item.RelativeName) && item.RelativeName != ".") || item.Name != path.Join(ReplicaRoot, item.RelativeName) {
+			!n.validMetadata(item.GetMetadata()) || item.GetError() != "" || item.GetLink() != "" || len(item.GetXattrs()) != 0 ||
+			(!baseName(item.GetRelativeName()) && item.GetRelativeName() != ".") || item.GetName() != path.Join(ReplicaRoot, item.GetRelativeName()) {
 			return Listing{}, errNative
 		}
-		listing.Entries = append(listing.Entries, Entry{Name: item.RelativeName, Mode: item.Mode, UID: item.Uid, GID: item.Gid,
-			IsDir: item.IsDir, Size: item.Size, Modified: item.Modified})
+		listing.Entries = append(listing.Entries, Entry{Name: item.GetRelativeName(), Mode: item.GetMode(), UID: item.GetUid(), GID: item.GetGid(),
+			IsDir: item.GetIsDir(), Size: item.GetSize(), Modified: item.GetModified()})
 	}
 }
 
@@ -94,22 +105,22 @@ func (n Native) BootID(ctx context.Context) (string, error) {
 	var content []byte
 	for messages := 0; messages < 64; messages++ {
 		item, recvErr := stream.Recv()
-		if recvErr == io.EOF && ctx.Err() == nil {
-			if !bootFormat.Match(content) {
+		if recvErr == io.EOF && active(ctx) {
+			if !bootFormat.Match(content) || !active(ctx) {
 				return "", errNative
 			}
 			return strings.TrimSuffix(string(content), "\n"), nil
 		}
-		if recvErr != nil || ctx.Err() != nil || item == nil || proto.Size(item) > maxMessageBytes ||
-			!n.validMetadata(item.Metadata) || len(content)+len(item.Bytes) > 37 {
+		if recvErr != nil || !active(ctx) || item == nil || proto.Size(item) > maxMessageBytes ||
+			!n.validMetadata(item.GetMetadata()) || len(content)+len(item.GetBytes()) > 37 {
 			return "", errNative
 		}
-		content = append(content, item.Bytes...)
+		content = append(content, item.GetBytes()...)
 	}
 	return "", errNative
 }
 
-func (n Native) validMetadata(metadata *common.Metadata) bool {
+func (n Native) validMetadata(metadata proto.Message) bool {
 	if metadata == nil {
 		// Native One2One routing does not inject a metadata envelope. Hardware and
 		// boot identity must be bracketed independently by the caller.
@@ -119,6 +130,9 @@ func (n Native) validMetadata(metadata *common.Metadata) bool {
 	// Inspect their wire descriptors while using the current One2One API rather
 	// than switching to the deprecated aggregating routing API.
 	message := metadata.ProtoReflect()
+	if !message.IsValid() {
+		return true
+	}
 	fields := message.Descriptor().Fields()
 	if len(message.GetUnknown()) != 0 || message.Get(fields.ByName("error")).String() != "" {
 		return false

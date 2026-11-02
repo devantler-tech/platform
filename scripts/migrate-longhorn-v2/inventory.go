@@ -23,6 +23,52 @@ var errInventory = errors.New("replica inventory identity, placement or complete
 var inventoryBoot = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var inventoryTarget = regexp.MustCompile(`^prod-worker-[123]$`)
 
+type inventoryStage uint8
+
+const (
+	stageUnknown inventoryStage = iota
+	stageDeadline
+	stageProjectionBefore
+	stageClient
+	stageHostBefore
+	stageBootBefore
+	stageListingBefore
+	stageOwnershipBefore
+	stageListingAfter
+	stageProjectionAfter
+	stageAPIConsistency
+	stageHostAfter
+	stageBootAfter
+	stageOwnershipAfter
+	stageListingConsistency
+	stageClose
+	stageSourceBefore
+	stageSourceAfter
+	stageOutput
+)
+
+func (stage inventoryStage) Error() string {
+	names := [...]string{"unknown", "deadline", "projection-before", "client", "host-before", "boot-before", "listing-before",
+		"ownership-before", "listing-after", "projection-after", "api-consistency", "host-after", "boot-after", "ownership-after",
+		"listing-consistency", "close", "source-before", "source-after", "output"}
+	if int(stage) >= len(names) {
+		stage = stageUnknown
+	}
+	return "Native replica inventory held [stage=" + names[stage] + "]; no complete observation or reset clearance is established."
+}
+
+func (stage inventoryStage) Unwrap() error { return errInventory }
+
+// Only the closed stage vocabulary enters public logs, even if a future caller
+// accidentally returns or wraps an unclassified provider error.
+func inventoryFailureMessage(err error) string {
+	var stage inventoryStage
+	if errors.As(err, &stage) {
+		return stage.Error()
+	}
+	return stageUnknown.Error()
+}
+
 func projectInventory(target string, node, storage object, replicas []object) (inventoryProjection, error) {
 	p := inventoryProjection{BootID: text(node, "status", "nodeInfo", "bootID")}
 	if !inventoryTarget.MatchString(target) || !inventoryBoot.MatchString(p.BootID) ||

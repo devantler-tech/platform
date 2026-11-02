@@ -83,53 +83,71 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 func observeReplicaInventory(ctx context.Context, c client, target string, factory inventoryReaderFactory) (receipt inventoryReceipt, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
+	expires, _ := ctx.Deadline()
+	active := func() bool { return ctx.Err() == nil && time.Now().Before(expires) }
+	if !active() {
+		return inventoryReceipt{}, stageDeadline
+	}
 	before, node, err := c.inventoryProjection(ctx, target)
 	if err != nil {
-		return inventoryReceipt{}, err
+		return inventoryReceipt{}, stageProjectionBefore
 	}
 	reader, closeReader, err := factory(ctx, before.Address)
 	if err != nil || reader == nil || closeReader == nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageClient
 	}
 	defer func() {
 		if closeErr := closeReader(); closeErr != nil {
 			receipt = inventoryReceipt{}
-			err = errors.Join(err, errInventory)
+			err = errors.Join(err, stageClose)
+		}
+		if !active() {
+			receipt = inventoryReceipt{}
+			err = errors.Join(err, stageDeadline)
 		}
 	}()
 	if err = c.verifyHost(ctx, before.Address, node); err != nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageHostBefore
 	}
 	boot, err := reader.BootID(ctx)
 	if err != nil || boot != before.BootID {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageBootBefore
 	}
 	first, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageListingBefore
 	}
 	firstReport, err := longhorninventory.Analyze(first, before.Replicas)
 	if err != nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageOwnershipBefore
 	}
 	second, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageListingAfter
 	}
 	after, node, err := c.inventoryProjection(ctx, target)
-	if err != nil || before.Digest != after.Digest {
-		return inventoryReceipt{}, errInventory
+	if err != nil {
+		return inventoryReceipt{}, stageProjectionAfter
+	}
+	if before.Digest != after.Digest {
+		return inventoryReceipt{}, stageAPIConsistency
 	}
 	if err = c.verifyHost(ctx, after.Address, node); err != nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageHostAfter
 	}
 	boot, err = reader.BootID(ctx)
 	if err != nil || boot != before.BootID || ctx.Err() != nil {
-		return inventoryReceipt{}, errInventory
+		return inventoryReceipt{}, stageBootAfter
 	}
 	report, err := longhorninventory.Analyze(second, after.Replicas)
-	if err != nil || report.Digest != firstReport.Digest {
-		return inventoryReceipt{}, errInventory
+	if err != nil {
+		return inventoryReceipt{}, stageOwnershipAfter
+	}
+	if report.Digest != firstReport.Digest {
+		return inventoryReceipt{}, stageListingConsistency
+	}
+	if !active() {
+		return inventoryReceipt{}, stageDeadline
 	}
 	return inventoryReceipt{Schema: 1, ObservationOnly: true, Registered: before.Registered, APIProjectionDigest: before.Digest, Report: report}, nil
 }
