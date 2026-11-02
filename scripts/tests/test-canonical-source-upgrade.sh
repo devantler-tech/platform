@@ -26,6 +26,11 @@ awk -F '\t' '$1!="business-site"' "$tree/scripts/publish-workflow-approved-revis
 mv "$upgrade_test_work/seed-identities.tsv" "$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 cp "$binding_file" "$upgrade_test_work/original-binding.json"
 cp "$tree/$tenant_path" "$upgrade_test_work/original-tenant.yaml"
+# Keep the old actual publication exact while the selected publisher is approved.
+awk -F '\t' '!($1=="business-site" && $4=="af042c540ce8db4d64add98c34b5c57691e0e812")' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/two-approved.tsv"
+printf 'business-site\tpublish-app\tdevantler-tech/.github\taf042c540ce8db4d64add98c34b5c57691e0e812\n' >>"$upgrade_test_work/two-approved.tsv"
+mv "$upgrade_test_work/two-approved.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
+cp "$tree/scripts/publish-workflow-canonical-approvals.tsv" "$upgrade_test_work/original-approvals.tsv"
 export PUBLISH_CONSUMER_ROOT="$tree" APPROVED_REVISIONS_FILE="$tree/scripts/publish-workflow-approved-revisions.tsv"
 export APPROVED_IDENTITIES_FILE="$tree/scripts/publish-workflow-approved-revisions.identities.tsv"
 export CANONICAL_APPROVALS_FILE="$tree/scripts/publish-workflow-canonical-approvals.tsv"
@@ -57,6 +62,9 @@ kubectl() {
   if [ -n "${input_race:-}" ]; then
     if [ -e "$upgrade_test_work/read-once" ]; then
       case "$input_race" in
+        approvals)
+          awk -F '\t' '!($1=="business-site" && $4=="af042c540ce8db4d64add98c34b5c57691e0e812")' "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/raced-approvals.tsv"
+          mv "$upgrade_test_work/raced-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv" ;;
         registry)
           jq '.bindings[0].publication.workflowRunAttempt=2' "$binding_file" >"$upgrade_test_work/raced.json"
           mv "$upgrade_test_work/raced.json" "$binding_file" ;;
@@ -77,6 +85,20 @@ prepare() {
   PUBLISH_KUBE_CONTEXT=fixture CANONICAL_APPROVALS_FILE="$tree/scripts/publish-workflow-canonical-approvals.tsv" \
     bootstrap_tenant_source --prepare-canonical-upgrade --source-root "$tree" --output "$upgrade_test_work/candidate" \
     --tag "$next_tag" --source-sha "$next_source" --digest "$next_digest"
+}
+# The registry parser must refuse non-scalar identities before emitting data.
+for value in '[.bindings[0].publication.publisherIdentity]' '[]'; do
+  jq ".bindings[0].publication.publisherIdentity=$value" "$binding_file" >"$upgrade_test_work/array-binding.json"
+  if CANONICAL_TENANT_BINDINGS_FILE="$upgrade_test_work/array-binding.json" canonical_tenant_bindings "$tree" >"$upgrade_test_work/array-result" 2>&1; then
+    echo 'array-valued publisher accepted by the binding reader' >&2
+    exit 1
+  fi
+done
+observed_business_tuple() {
+  local file="$1" tag="$2" digest="$3" publisher="$4"
+  awk -F '\t' -v tag="$tag" -v digest="$digest" -v publisher="$publisher" '
+    $1=="business-site" {n++; if($3!=tag || $4!=digest || $5!=publisher) bad=1}
+    END {exit bad || n!=1}' "$file"
 }
 prepare >"$upgrade_test_work/result" 2>"$upgrade_test_work/error" || { cat "$upgrade_test_work/error" >&2; echo 'real upgrade preparation failed' >&2; exit 1; }
 candidate_record="$upgrade_test_work/candidate/scripts/canonical-tenant-source-bindings.json"
@@ -107,7 +129,7 @@ test ! -e "$upgrade_test_work/candidate"
 observation_race=0
 graph_path=k8s/bases/infrastructure/resource-graph-definitions/tenant/resource-graph-definition.yaml
 cp "$tree/$graph_path" "$upgrade_test_work/original-graph.yaml"
-for input_race in registry tenant constructor output; do
+for input_race in registry tenant constructor output approvals; do
   rm -f "$upgrade_test_work/read-once"
   if prepare >"$upgrade_test_work/result" 2>&1; then echo "changed $input_race input accepted" >&2; exit 1; fi
   if [ "$input_race" = output ]; then
@@ -118,6 +140,7 @@ for input_race in registry tenant constructor output; do
   cp "$upgrade_test_work/original-binding.json" "$binding_file"
   cp "$upgrade_test_work/original-tenant.yaml" "$tree/$tenant_path"
   cp "$upgrade_test_work/original-graph.yaml" "$tree/$graph_path"
+  cp "$upgrade_test_work/original-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
 done
 input_race=''
 for mutation in \
@@ -161,7 +184,9 @@ default_observer() {
   else awk -F '\t' -v c="$1" '$1==c {print $3 "\t" $4 "\t" $5}' "$APPROVED_REVISIONS_FILE"; fi
 }
 default_pin_resolver() {
-  if [ "$1" = business-site ]; then printf '%s\n' "$record" | jq -r .publication.publisherIdentity
+  if [ "$1" = business-site ]; then
+    if [ -n "${TEST_MAIN_PUBLISHER:-}" ]; then printf '%s\n' "$TEST_MAIN_PUBLISHER"
+    else printf '%s\n' "$record" | jq -r .publication.publisherIdentity; fi
   elif [ "$1" = data-product-controller ]; then jq -r '.publications[]|select(.consumer=="data-product-controller")|.mainPinSHA' "$PUBLISH_BOOTSTRAP_FILE"
   else awk -F '\t' -v c="$1" '$1==c {print $6}' "$APPROVED_REVISIONS_FILE"; fi
 }
@@ -210,24 +235,55 @@ cp "$upgrade_test_work/replacement-ready.json" "$upgrade_test_work/inventory.jso
 main >"$upgrade_test_work/generator-observed"
 test "$(jq -r '.bindings[0].kind' "$binding_file")" = published-binding
 jq -e '.bindings[0]|has("previousBinding")|not' "$binding_file" >/dev/null
-awk -F '\t' -v digest="$next_digest" '$1=="business-site" {n++; if($3!="2.0.0" || $4!=digest) exit 1} END {exit n!=1}' "$APPROVED_IDENTITIES_FILE"
+observed_business_tuple "$APPROVED_IDENTITIES_FILE" 2.0.0 "$next_digest" devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
 cp "$binding_file" "$upgrade_test_work/applied.json"
 cp "$APPROVED_IDENTITIES_FILE" "$upgrade_test_work/applied-identities.tsv"
 main >"$upgrade_test_work/generator-repeat"
 cmp "$upgrade_test_work/applied.json" "$binding_file"
 cmp "$upgrade_test_work/applied-identities.tsv" "$APPROVED_IDENTITIES_FILE"
+# A main-pin change alone is not a new applied publication. The complete
+# generator must refuse and preserve every generated output in this interval.
+cp "$APPROVED_REVISIONS_FILE" "$upgrade_test_work/gap-revisions.tsv"
+cp "$PUBLISH_BOOTSTRAP_FILE" "$upgrade_test_work/gap-bootstrap.json"
+if (TEST_MAIN_PUBLISHER=devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812; export TEST_MAIN_PUBLISHER; main) >"$upgrade_test_work/gap-result" 2>&1; then
+  echo 'main pin alone changed the current publication identity' >&2
+  exit 1
+fi
+cmp "$upgrade_test_work/applied.json" "$binding_file"
+cmp "$upgrade_test_work/applied-identities.tsv" "$APPROVED_IDENTITIES_FILE"
+cmp "$upgrade_test_work/gap-revisions.tsv" "$APPROVED_REVISIONS_FILE"
+cmp "$upgrade_test_work/gap-bootstrap.json" "$PUBLISH_BOOTSTRAP_FILE"
 # A subsequent transition must also preserve a real existing applied row.
 next_tag=v2.1.0
 next_digest="sha256:$(printf '%064d' 9)"
 next_source="$(printf '%040d' 8)"
 jq --arg tag "$next_tag" --arg digest "$next_digest" --arg source "$next_source" \
-  '.gitTag=$tag|.digest=$digest|.sourceSHA=$source' "$upgrade_test_work/good-receipt.json" >"$upgrade_test_work/receipt.json"
+  '.gitTag=$tag|.digest=$digest|.sourceSHA=$source|.publisherIdentity="devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"' "$upgrade_test_work/good-receipt.json" >"$upgrade_test_work/receipt.json"
 rm -rf "$upgrade_test_work/candidate"
 prepare >"$upgrade_test_work/result"
-jq -e '.bindings[0].previousBinding.kind=="published-binding"' "$candidate_record" >/dev/null
+jq -e '.bindings[0] | .previousBinding.kind=="published-binding" and
+ .previousBinding.publication.publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0" and
+ .publication.publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"' "$candidate_record" >/dev/null
+test "$(yq '.spec.source.publisherRevision' "$upgrade_test_work/candidate/$tenant_path")" = af042c540ce8db4d64add98c34b5c57691e0e812
 cp "$candidate_record" "$binding_file"
 cp "$upgrade_test_work/candidate/$tenant_path" "$tree/$tenant_path"
 record="$(jq -c '.bindings[0]' "$binding_file")"
 main >"$upgrade_test_work/generator-second-pending"
 cmp "$upgrade_test_work/applied-identities.tsv" "$APPROVED_IDENTITIES_FILE"
+# The new signer must stay proposed until the actual new source is observed.
+jq --arg digest "$next_digest" '.items[0].spec.ref.digest=$digest | .items[0].status.artifact.revision=$digest |
+ .items[0].spec.verify.matchOIDCIdentity[0].subject="^https://github\\.com/devantler-tech/\\.github/\\.github/workflows/publish-app\\.yaml@af042c540ce8db4d64add98c34b5c57691e0e812$" |
+ .items[0].metadata.generation=4 | .items[0].status.observedGeneration=4 | .items[0].status.conditions[].observedGeneration=4' \
+ "$upgrade_test_work/original-inventory.json" >"$upgrade_test_work/inventory.json"
+main >"$upgrade_test_work/generator-selected-observed"
+test "$(jq -r '.bindings[0].kind' "$binding_file")" = published-binding
+jq -e '.bindings[0].publication.publisherIdentity=="devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812"' "$binding_file" >/dev/null
+observed_business_tuple "$APPROVED_IDENTITIES_FILE" 2.1.0 "$next_digest" devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+for column in 3 4 5; do
+  awk -F '\t' -v column="$column" 'BEGIN {OFS="\t"} $1=="business-site" {$column="incorrect"} {print}' "$APPROVED_IDENTITIES_FILE" >"$upgrade_test_work/wrong-tuple.tsv"
+  if observed_business_tuple "$upgrade_test_work/wrong-tuple.tsv" 2.1.0 "$next_digest" devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812; then
+    echo "wrong observed tuple column accepted: $column" >&2
+    exit 1
+  fi
+done
 printf 'Canonical upgrade: distinct proposed/observed states, portable candidate, real discovery/regeneration and refusal controls passed.\n'
