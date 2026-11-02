@@ -19,7 +19,7 @@ func TestApprovedSignerMembershipCoversPublicationRoutes(t *testing.T) {
 	for _, route := range []struct {
 		file, gate, publisher, ref string
 	}{
-		{"ci.yaml", "validate-repository-guards", "deploy-prod", ""},
+		{"ci.yaml", "validate-independent-guards", "deploy-prod", ""},
 		{"cd.yaml", "validate-eks-authorization", "deploy-prod", ""},
 		{"validate-main.yaml", "validate-eks-authorization", "", ""},
 		{"dr-rebuild.yaml", "supersession-gate", "rebuild", ""},

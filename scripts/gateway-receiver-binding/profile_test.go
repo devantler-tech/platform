@@ -63,12 +63,12 @@ func TestTransportSourceRequiresAnExplicitPairedProfile(t *testing.T) {
 	}
 }
 
-func TestCurrentNativeRendersSelectTheFencedDisabledTransport(t *testing.T) {
+func TestCurrentNativeRendersSelectTheFencedActiveTransport(t *testing.T) {
 	t.Chdir(filepath.Join("..", ".."))
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	got, err := renderTransportProfile(ctx)
-	if err != nil || got != (transportProfile{Fence: true, Proxy: false}) {
-		t.Fatalf("current native Kustomize renders do not establish the expected paired disabled baseline: %v", err)
+	if err != nil || got != (transportProfile{Fence: true, Proxy: true}) {
+		t.Fatalf("current native Kustomize renders do not establish the expected paired active transport: %v", err)
 	}
 }

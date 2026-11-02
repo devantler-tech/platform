@@ -17,8 +17,8 @@ import (
 var canonicalCICommands = map[string]string{
 	"bash scripts/run-publication-generator-tests.sh --jobs 2":   "validate-publication-generator",
 	"bash scripts/tests/test-run-publication-generator-tests.sh": "validate-publication-generator",
-	"bash scripts/tests/test-tenant-source-discovery.sh":         "validate-repository-guards",
-	"./scripts/guard-consumer-discovery-conservation.sh":         "validate-repository-guards",
+	"bash scripts/tests/test-tenant-source-discovery.sh":         "validate-independent-guards",
+	"./scripts/guard-consumer-discovery-conservation.sh":         "validate-independent-guards",
 }
 
 var canonicalCIPaths = []string{
@@ -275,20 +275,20 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 		},
 		"workflow shell override": func(w *workflow) {
 			w.Defaults.Run.Shell = "bash {0}"
-			j := w.Jobs["validate-repository-guards"]
+			j := w.Jobs["validate-independent-guards"]
 			j.Defaults.Run.Shell = ""
 			for i := range j.Steps {
 				j.Steps[i].Shell = ""
 			}
-			w.Jobs["validate-repository-guards"] = j
+			w.Jobs["validate-independent-guards"] = j
 		},
 		"job shell override": func(w *workflow) {
-			j := w.Jobs["validate-repository-guards"]
+			j := w.Jobs["validate-independent-guards"]
 			j.Defaults.Run.Shell = "bash {0}"
 			for i := range j.Steps {
 				j.Steps[i].Shell = ""
 			}
-			w.Jobs["validate-repository-guards"] = j
+			w.Jobs["validate-independent-guards"] = j
 		},
 		"missing changes job": func(w *workflow) { delete(w.Jobs, "changes") },
 		"conditional changes": func(w *workflow) {
@@ -356,7 +356,7 @@ func TestCanonicalSourceCIRejectsGateAndFilterBypasses(t *testing.T) {
 	for _, scope := range []string{"job", "step"} {
 		wf = canonicalCIWorkflow(t)
 		wf.Defaults.Run.Shell = "bash {0}"
-		for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
+		for _, name := range []string{"validate-repository-guards", "validate-independent-guards", "validate-publication-generator"} {
 			j = wf.Jobs[name]
 			j.Defaults.Run.Shell = "bash"
 			if scope == "step" {
@@ -430,7 +430,7 @@ func TestCanonicalGeneratorCIRejectsLostRequiredJob(t *testing.T) {
 
 // canonicalSourceCIContract verifies source coverage and the required path to production authorization.
 func canonicalSourceCIContract(wf workflow) error {
-	for _, name := range []string{"validate-repository-guards", "validate-publication-generator"} {
+	for _, name := range []string{"validate-repository-guards", "validate-independent-guards", "validate-publication-generator"} {
 		guard, ok := wf.Jobs[name]
 		if !ok || guard.If != "" || errorIsTolerated(guard.ContinueOnError) {
 			return fmt.Errorf("canonical source contracts require unconditional %s", name)
@@ -440,6 +440,9 @@ func canonicalSourceCIContract(wf workflow) error {
 		needs, valid := wf.Jobs[consumer].needsOf()
 		if !valid || !slices.Contains(needs, "validate-publication-generator") {
 			return fmt.Errorf("%s must require the publication generator", consumer)
+		}
+		if !slices.Contains(needs, "validate-independent-guards") {
+			return fmt.Errorf("%s must require the independent guards", consumer)
 		}
 	}
 	for command, owner := range canonicalCICommands {
@@ -491,7 +494,7 @@ func canonicalSourceCIContract(wf workflow) error {
 			return fmt.Errorf("k8s selection omits canonical input %s", path)
 		}
 	}
-	return approvedSignerRoute(wf, "validate-repository-guards", "deploy-prod", "")
+	return approvedSignerRoute(wf, "validate-independent-guards", "deploy-prod", "")
 }
 
 // Every non-comment line in this fixed CI block must remain a simple command.

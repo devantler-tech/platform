@@ -122,6 +122,85 @@ reject_partition "repeated manifest regression" \
   "(.jobs[\"$job\"].steps[] | select(.if != null)) |= del(.if)"
 echo 'PASS: both manifest worker limits retain complete routing; 9 broken routings refused'
 
+# The two fixed guard jobs use separate checkouts and remain required for every
+# event. A serial diagnostic dependency may order them, but no path selection,
+# missing result or tolerated failure may turn either family into a green gate.
+cat >"${work}/guards.jq" <<'JQ'
+  . as $workflow |
+  "go -C scripts/tests/gateway-receiver-admission test -timeout 8m ./..." as $native_command |
+  [$workflow.jobs | to_entries[] | .key as $owner | .value.steps[]? |
+    select(.run == $native_command or .env.GATEWAY_RECEIVER_NATIVE_TEST != null) |
+    {owner: $owner, step: .}] as $native |
+  ($native | length == 1) and
+  ($native[0].owner == "validate-independent-guards") and
+  ($native[0].step.run == $native_command) and
+  ($native[0].step.env == {GATEWAY_RECEIVER_NATIVE_TEST: "1"}) and
+  all(["validate-repository-guards", "validate-independent-guards"][]; . as $name |
+    $workflow.jobs[$name] as $job |
+    ($job | type == "object") and
+    ($job["runs-on"] == "ubuntu-latest") and
+    ($job.permissions == {contents: "read"}) and
+    ($job | has("if") | not) and
+    (($job["continue-on-error"] // false) == false) and
+    (($job.steps | length) > 3) and
+    all(($job.steps // [])[]; .if == null and ((.["continue-on-error"] // false) == false))) and
+  (.jobs["validate-repository-guards"] | has("needs") | not) and
+  (.jobs["validate-go-regressions"] | has("needs") | not) and
+  ((.jobs["validate-independent-guards"].needs // []) as $needs |
+    $needs == [] or $needs == ["validate-repository-guards", "validate-go-regressions"]) and
+  all(["deploy-prod", "ci-required-checks"][]; . as $consumer |
+    ($workflow.jobs[$consumer].needs | index("validate-independent-guards") != null))
+JQ
+yq -o=json '.' "$workflow" >"${work}/workflow.json"
+if ! jq -e -f "${work}/guards.jq" "${work}/workflow.json" >/dev/null; then
+  echo 'FAIL: guard families and the native receiver proof must stay unconditional and required' >&2
+  exit 1
+fi
+jq '.jobs["validate-independent-guards"].needs = ["validate-repository-guards", "validate-go-regressions"]' \
+  "${work}/workflow.json" >"${work}/serial-guards.json"
+jq -e -f "${work}/guards.jq" "${work}/serial-guards.json" >/dev/null
+for mutation in \
+  'del(.jobs["validate-independent-guards"])' \
+  '.jobs["validate-independent-guards"].if = "false"' \
+  '.jobs["validate-independent-guards"]["continue-on-error"] = true' \
+  '.jobs["validate-independent-guards"].steps[3]["continue-on-error"] = true' \
+  '.jobs["validate-independent-guards"].steps[3].if = "false"' \
+  '.jobs["validate-independent-guards"].needs = ["changes"]' \
+  '.jobs["validate-independent-guards"].permissions.contents = "write"' \
+  '.jobs["deploy-prod"].needs -= ["validate-independent-guards"]' \
+  '.jobs["ci-required-checks"].needs -= ["validate-independent-guards"]' \
+  '.jobs["validate-independent-guards"].steps |= map(select(.env.GATEWAY_RECEIVER_NATIVE_TEST == null))' \
+  '.jobs["validate-independent-guards"].steps += [.jobs["validate-independent-guards"].steps[] | select(.env.GATEWAY_RECEIVER_NATIVE_TEST != null)]' \
+  '(.jobs["validate-independent-guards"].steps[] | select(.env.GATEWAY_RECEIVER_NATIVE_TEST != null)).env.GATEWAY_RECEIVER_NATIVE_TEST = "0"' \
+  '(.jobs["validate-independent-guards"].steps[] | select(.env.GATEWAY_RECEIVER_NATIVE_TEST != null)).run = "go test -run=TestDoesNotExist ./..."' \
+  '.jobs["validate-go-regressions"].steps += [.jobs["validate-independent-guards"].steps[] | select(.env.GATEWAY_RECEIVER_NATIVE_TEST != null)] | .jobs["validate-independent-guards"].steps |= map(select(.env.GATEWAY_RECEIVER_NATIVE_TEST == null))'; do
+  jq "$mutation" "${work}/workflow.json" >"${work}/mutated-guards.json"
+  actual=0
+  jq -e -f "${work}/guards.jq" "${work}/mutated-guards.json" >/dev/null || actual=$?
+  if [ "$actual" -ne 1 ]; then
+    printf 'FAIL: incomplete guard family must be rejected, got %s: %s\n' "$actual" "$mutation" >&2
+    exit 1
+  fi
+done
+guard_step="$(jq -c '[.steps[] | select(.name == "🔐 Require independent guards")]' <<<"${gate}")"
+jq -e 'length == 1 and .[0].env == {
+  INDEPENDENT_GUARDS_RESULT: "${{ needs.validate-independent-guards.result }}"
+} and (.[0] | has("if") | not)
+  and ((.[0]["continue-on-error"] // false) == false)
+  and (.[0].run | type == "string" and length > 0)' <<<"${guard_step}" >/dev/null
+jq -r '.[0].run' <<<"${guard_step}" >"${work}/publication-guard-gate.sh"
+for result in success failure cancelled skipped pending unknown ''; do
+  actual=0
+  INDEPENDENT_GUARDS_RESULT="$result" bash -e "${work}/publication-guard-gate.sh" >"${work}/guard-output" 2>&1 || actual=$?
+  expected=1
+  [ "$result" != success ] || expected=0
+  if [ "$actual" -ne "$expected" ]; then
+    printf 'FAIL: independent guards result=%s expected=%s actual=%s\n' "$result" "$expected" "$actual" >&2
+    exit 1
+  fi
+done
+echo 'PASS: both guard families retain the native proof; 14 incomplete routes and every non-success result refused'
+
 jq -e '
   .jobs["validate-publication-generator"] as $job |
   ($job.permissions == {contents: "read"}) and

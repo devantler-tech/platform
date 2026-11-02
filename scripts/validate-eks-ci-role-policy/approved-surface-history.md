@@ -4011,3 +4011,18 @@ wedding-app/wedding-app to
 
 This record does not establish a publication by the new signer. Deploy this
 acceptance before any consumer moves its pin to v19.0.5.
+
+## 2026-11-01 — Raise the Kyverno admission client rate limit
+
+For #5692, the Kyverno admission controller's client rate limit rises from its
+default of 100 requests a second and burst of 200 to 300 and 600, because a
+policy webhook timeout during a deploy evicted a healthy change from the merge
+queue. This changes how fast the controller may call the API server. All
+Kubernetes permissions, webhook rules and policies remain unchanged.
+
+The approved kubectl v1.36.2 / Kustomize v5.8.1 render changes exactly one
+existing entry, HelmRelease kyverno/kyverno, from
+`a853fca682a534b6fd53166c7909a8efc2e850a32ec5cb74ca8049b983520ab7` to
+`2586f7b07844eaab117a75a736e6670dbdf58ab3ef54ec10f614b309d170f547`.
+No authorization resource is added or removed. This approval records the
+declared flag change; whether it stops the timeout is a separate runtime check.
