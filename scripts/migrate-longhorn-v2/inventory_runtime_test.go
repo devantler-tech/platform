@@ -79,6 +79,26 @@ func TestInventoryCommandCannotExecuteMutationOrSelectAnotherScope(t *testing.T)
 	}
 }
 
+func TestInventoryAllowsOnlyNativeFixedAPILists(t *testing.T) {
+	for _, path := range []string{"/api/v1/nodes", "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/nodes", "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/replicas"} {
+		if !inventoryReadAllowed("kubectl", "--context=admin@prod", "--request-timeout=20s", "get", "--raw="+path) {
+			t.Fatalf("native list denied: %s", path)
+		}
+	}
+	for _, args := range [][]string{
+		{"--context=admin@prod", "--request-timeout=20s", "get", "nodes", "--output=json", "--chunk-size=0"},
+		{"--context=other", "--request-timeout=20s", "get", "--raw=/api/v1/nodes"},
+		{"--context=admin@prod", "--request-timeout=20s", "get", "--raw=/api/v1/nodes?limit=1"},
+		{"--context=admin@prod", "--request-timeout=20s", "get", "--raw=/api/v1/secrets"},
+		{"--context=admin@prod", "--request-timeout=20s", "get", "--raw=https://example.invalid/api/v1/nodes"},
+		{"--context=admin@prod", "--request-timeout=20s", "get", "--raw=/api/v1/nodes", "--server=https://example.invalid"},
+	} {
+		if inventoryReadAllowed("kubectl", args...) {
+			t.Fatal("non-native or foreign list command allowed")
+		}
+	}
+}
+
 func TestInventoryOutputBoundDoesNotAcceptTruncatedSuccess(t *testing.T) {
 	w := inventoryOutput{limit: 4}
 	if _, err := w.Write([]byte("1234")); err != nil {

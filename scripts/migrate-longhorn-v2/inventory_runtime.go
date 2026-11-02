@@ -82,11 +82,18 @@ func inventoryReadCommand(ctx context.Context, input []byte, program string, arg
 	if input != nil {
 		return nil, errInventory
 	}
+	if !inventoryReadAllowed(program, args...) {
+		return nil, errInventory
+	}
+	return inventoryExecuteCommand(ctx, program, args...)
+}
+
+func inventoryReadAllowed(program string, args ...string) bool {
 	allowed := false
 	switch program {
 	case "kubectl":
-		for _, query := range []struct{ kind, namespace string }{{"nodes", ""}, {"nodes.longhorn.io", "longhorn-system"}, {"replicas.longhorn.io", "longhorn-system"}} {
-			expected := append([]string{"--context=admin@prod", "--request-timeout=20s", "get", query.kind, "--output=json", "--chunk-size=0"}, namespaceArgs(query.namespace)...)
+		for _, path := range []string{inventoryKubeNodes, inventoryStorageNodes, inventoryReplicas} {
+			expected := []string{"--context=admin@prod", "--request-timeout=20s", "get", "--raw=" + path}
 			allowed = allowed || slices.Equal(args, expected)
 		}
 	case "talosctl":
@@ -97,9 +104,10 @@ func inventoryReadCommand(ctx context.Context, input []byte, program string, arg
 	case "git":
 		allowed = slices.Equal(args, []string{"ls-remote", "--exit-code", "https://github.com/devantler-tech/platform.git", "refs/heads/main"})
 	}
-	if !allowed {
-		return nil, errInventory
-	}
+	return allowed
+}
+
+func inventoryExecuteCommand(ctx context.Context, program string, args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	stdout, stderr := inventoryOutput{limit: 16 << 20}, inventoryOutput{limit: 64 << 10}

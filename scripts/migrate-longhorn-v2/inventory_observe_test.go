@@ -56,26 +56,38 @@ func TestInventoryBracketsNodeAndDiskObservationsWithoutPublishingPrivateNames(t
 					}
 					return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": uuid}})
 				}
-				if program != "kubectl" || len(args) < 6 || args[2] != "get" || args[4] != "--output=json" || args[5] != "--chunk-size=0" {
+				if program != "kubectl" || len(args) < 4 || args[2] != "get" {
 					t.Fatal("inventory escaped its read-only request scope")
 				}
 				var items []any
+				apiVersion, kind, revision := "v1", "List", ""
 				switch args[3] {
-				case "nodes":
+				case "nodes", "--raw=/api/v1/nodes":
 					nodeReads++
 					node["metadata"].(object)["resourceVersion"] = "heartbeat-" + string(rune('0'+nodeReads))
 					if scenario == "API changed" && nodeReads > 1 {
 						node["metadata"].(object)["uid"] = "replacement"
 					}
 					items = []any{node}
-				case "nodes.longhorn.io":
+					if strings.HasPrefix(args[3], "--raw=") {
+						kind, revision = "NodeList", "123"
+					}
+				case "nodes.longhorn.io", "--raw=/apis/longhorn.io/v1beta2/namespaces/longhorn-system/nodes":
 					items = []any{storage}
-				case "replicas.longhorn.io":
+					if strings.HasPrefix(args[3], "--raw=") {
+						apiVersion, kind, revision = "longhorn.io/v1beta2", "NodeList", "123"
+					}
+				case "replicas.longhorn.io", "--raw=/apis/longhorn.io/v1beta2/namespaces/longhorn-system/replicas":
 					items = []any{replicas[0]}
+					if strings.HasPrefix(args[3], "--raw=") {
+						apiVersion, kind, revision = "longhorn.io/v1beta2", "ReplicaList", "123"
+					}
 				default:
 					t.Fatal("unreviewed resource requested")
 				}
-				return json.Marshal(object{"metadata": object{"resourceVersion": "123"}, "items": items})
+				// kubectl's ordinary JSON printer produces a generic List and
+				// removes the collection revision. A native raw response keeps it.
+				return json.Marshal(object{"apiVersion": apiVersion, "kind": kind, "metadata": object{"resourceVersion": revision}, "items": items})
 			}}
 			reader := &replicaReaderFixture{changeListing: scenario == "disk changed", changeBoot: scenario == "boot changed"}
 			closed := false

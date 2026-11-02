@@ -166,6 +166,14 @@ func decodeInventory(data []byte) ([]object, error) {
 	return items, nil
 }
 
+func decodeInventoryCollection(data []byte, apiVersion, kind string) ([]object, error) {
+	var envelope object
+	if len(data) > 16<<20 || json.Unmarshal(data, &envelope) != nil || text(envelope, "apiVersion") != apiVersion || text(envelope, "kind") != kind {
+		return nil, errInventory
+	}
+	return decodeInventory(data)
+}
+
 func authorizeInventory(getenv func(string) string, target string) error {
 	if !inventoryTarget.MatchString(target) || getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "inventory-replicas" {
 		return errors.New("the explicit permanent-worker inventory operation is required")

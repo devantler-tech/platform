@@ -82,6 +82,32 @@ func TestInventoryCollectionRequiresCompleteBoundedJSONAndObjectReceipts(t *test
 	}
 }
 
+func TestInventoryNativeEnvelopeMustMatchRequestedAPI(t *testing.T) {
+	n, _, _ := inventoryFixture()
+	valid := object{"apiVersion": "v1", "kind": "NodeList", "metadata": object{"resourceVersion": "123"}, "items": []any{n}}
+	for _, change := range []func(object){
+		func(v object) { v["kind"] = "List" },
+		func(v object) { v["apiVersion"] = "longhorn.io/v1beta2" },
+		func(v object) { delete(v, "kind") },
+		func(v object) { delete(v, "apiVersion") },
+	} {
+		data, _ := json.Marshal(valid)
+		var altered object
+		if err := json.Unmarshal(data, &altered); err != nil {
+			t.Fatal(err)
+		}
+		change(altered)
+		data, _ = json.Marshal(altered)
+		if _, err := decodeInventoryCollection(data, "v1", "NodeList"); err == nil {
+			t.Fatal("foreign or reformatted envelope accepted")
+		}
+	}
+	data, _ := json.Marshal(valid)
+	if _, err := decodeInventoryCollection(data, "v1", "NodeList"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestInventoryAuthorizationCannotReachMutationOperations(t *testing.T) {
 	env := dispatchFixture()
 	env["LONGHORN_V2_OPERATION"] = "inventory-replicas"
