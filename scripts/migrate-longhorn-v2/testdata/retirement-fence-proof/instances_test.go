@@ -16,7 +16,7 @@ func instanceCases(phase string) []decisionCase {
 		name := "scratch-" + resource
 		child := &unstructured.Unstructured{Object: map[string]any{
 			"apiVersion": "longhorn.io/v1beta2", "kind": kind,
-			"metadata": map[string]any{"name": name, "namespace": "longhorn-system", "uid": "uid-" + name, "resourceVersion": "1",
+			"metadata": map[string]any{"name": name, "namespace": "longhorn-system", "uid": "uid-" + name, "resourceVersion": "1", "finalizers": []any{"longhorn.io"},
 				"ownerReferences": []any{map[string]any{"apiVersion": "longhorn.io/v1beta2", "kind": "Volume", "name": "scratch-backend", "uid": "uid-scratch-backend"}},
 				"annotations":     map[string]any{"storage.platform.devantler.tech/retirement-checkpoint": "5678-" + strings.Repeat("a", 32)}},
 			"spec":   map[string]any{"volumeName": "scratch-backend", "dataEngine": phase, "desireState": "stopped", "nodeID": "prod-worker-1"},

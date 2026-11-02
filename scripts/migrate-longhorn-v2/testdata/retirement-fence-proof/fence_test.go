@@ -12,6 +12,7 @@ import (
 	v1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -119,6 +120,13 @@ func TestNativeOriginalReferenceFences(t *testing.T) {
 					hooks := []validating.PolicyHook{{Policy: &policy, Bindings: []*validating.PolicyBinding{binding}, Evaluator: validator}}
 					for _, tc := range cases {
 						t.Run(tc.name, func(t *testing.T) {
+							if strings.Contains(tc.name, "native finalizer removal") {
+								before, oldErr := apimeta.Accessor(tc.old)
+								after, newErr := apimeta.Accessor(tc.current)
+								if oldErr != nil || newErr != nil || len(before.GetFinalizers()) == 0 || len(after.GetFinalizers()) != 0 {
+									t.Fatal("finalizer-removal probe must exercise an actual removal")
+								}
+							}
 							caseGVK, caseGVR := gvk, gvr
 							if tc.resource != "" {
 								caseGVR.Resource = tc.resource
