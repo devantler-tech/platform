@@ -67,23 +67,23 @@ expect() {
   rm -rf -- "$work/before"
   passed=$((passed + 1))
 }
-expect fail 'go mod tidy'
+expect fail 'diff current/go.mod tidy/go.mod'
 cp "$work/clean.mod" "$fixture/go.mod"
 expect pass 'CHECKED 2 tidy Go modules'
 
 # A sum-only change and a missing sum must both fail without writing a repair.
 printf 'example.com/unused v1.0.0 h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\n' >>"$fixture/go.sum"
-expect fail 'module .'
+expect fail 'diff current/go.sum tidy/go.sum'
 cp "$work/clean.sum" "$fixture/go.sum"
 rm "$fixture/go.sum"
-expect fail 'go mod tidy'
+expect fail 'diff current/go.sum tidy/go.sum'
 test ! -e "$fixture/go.sum"
 cp "$work/clean.sum" "$fixture/go.sum"
 
 # A newly indexed nested module is discovered without a hard-coded inventory.
 new_module 'another/nested module' third
 go -C "$fixture/another/nested module" mod edit -require=example.com/unused@v1.0.0
-expect fail 'module another/nested module'
+expect fail 'diff current/go.mod tidy/go.mod'
 go -C "$fixture/another/nested module" mod tidy
 expect pass 'CHECKED 3 tidy Go modules'
 
