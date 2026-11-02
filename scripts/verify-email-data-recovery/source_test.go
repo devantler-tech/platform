@@ -67,10 +67,18 @@ func TestReviewedProxyProfilePreservesServingIdentity(t *testing.T) {
 func TestUnreviewedOrUnreadyServingProfilesRefuseRecovery(t *testing.T) {
 	mutations := map[string]func(object){
 		"unknown-container": func(p object) {
-			child(p, "spec")["containers"] = append(child(p, "spec")["containers"].([]any), object{"name": "unknown", "image": fixtureImage})
+			items(child(p, "spec"), "containers")[0]["name"] = "unknown"
+			items(child(p, "status"), "containerStatuses")[0]["name"] = "unknown"
 		},
 		"duplicate-container": func(p object) {
-			child(p, "spec")["containers"] = append(child(p, "spec")["containers"].([]any), items(child(p, "spec"), "containers")[0])
+			child(p, "spec")["containers"].([]any)[1] = items(child(p, "spec"), "containers")[0]
+		},
+		"missing-main": func(p object) {
+			child(p, "spec")["containers"] = child(p, "spec")["containers"].([]any)[1:]
+			child(p, "status")["containerStatuses"] = child(p, "status")["containerStatuses"].([]any)[1:]
+		},
+		"duplicate-status": func(p object) {
+			child(p, "status")["containerStatuses"].([]any)[1] = items(child(p, "status"), "containerStatuses")[0]
 		},
 		"missing-status":     func(p object) { delete(child(p, "status"), "containerStatuses") },
 		"unknown-status":     func(p object) { items(child(p, "status"), "containerStatuses")[0]["name"] = "unknown" },
@@ -82,7 +90,7 @@ func TestUnreviewedOrUnreadyServingProfilesRefuseRecovery(t *testing.T) {
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
-			p, c, v := servingFixture()
+			p, c, v := proxyServingFixture()
 			mutate(p)
 			if _, err := proveServingSource(p, c, v, fixtureImage); err == nil {
 				t.Fatal("unsafe serving profile accepted")
