@@ -757,7 +757,7 @@ deployed_tag() {
     local exact_matches exact_count exact_sha
     exact_matches=''
     for candidate in "$version" "v${version}"; do
-      printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
+      grep -qxF -- "$candidate" <<<"$tags" || continue
       exact_matches="${exact_matches}${candidate}"$'\n'
     done
     # `|| true`: `grep -c` exits 1 on a zero count, and a command substitution's status
@@ -798,7 +798,7 @@ deployed_tag() {
     # published Git tag v2.0.0 as OCI tag 2.0.0, but a manifest that literally pins
     # v2.0.0 still asks the registry for v2.0.0 and must not be cleared by the other spelling.
     registry_version="$version"
-    if ! printf '%s\n' "$registry_tags" | grep -qxF -- "$registry_version"; then
+    if ! grep -qxF -- "$registry_version" <<<"$registry_tags"; then
       printf 'tag %s has a successful publish run but exact registry tag %s from the manifest no longer exists in GHCR package %s; it may have been deleted or published under a different spelling, and neither accepting it nor walking backward is deployment evidence\n' \
         "$candidate" "$registry_version" "$registry_package" >&2
       return 1
@@ -925,8 +925,8 @@ deployed_tag() {
     raw_variants="$(printf '%s\n' "$tags" | grep -E "^v?${core_re}(\+[0-9A-Za-z.-]+)?$" | sort -u || true)"
     while IFS= read -r stripped; do
       [ -n "$stripped" ] || continue
-      if printf '%s\n' "$raw_variants" | grep -qxF -- "$stripped" &&
-        printf '%s\n' "$raw_variants" | grep -qxF -- "v${stripped}"; then
+      if grep -qxF -- "$stripped" <<<"$raw_variants" &&
+        grep -qxF -- "v${stripped}" <<<"$raw_variants"; then
         dual="$stripped"
         break
       fi
@@ -984,7 +984,7 @@ deployed_tag() {
     # only because these repositories use it.
     local walk_sha
     for candidate in "v${variants}" "$variants"; do
-      printf '%s\n' "$tags" | grep -qxF -- "$candidate" || continue
+      grep -qxF -- "$candidate" <<<"$tags" || continue
       plausible_ref "$candidate" || continue
       # A `break` here would leave the OUTER loop free to step to an older version, so a
       # transient commit lookup failure was reported as that older release's signing
@@ -1004,7 +1004,7 @@ deployed_tag() {
       fi
       if [ "$walk_pub" -eq 0 ]; then
         registry_version="$(registry_tag_for_git_tag "$candidate")"
-        if ! printf '%s\n' "$registry_tags" | grep -qxF -- "$registry_version"; then
+        if ! grep -qxF -- "$registry_version" <<<"$registry_tags"; then
           printf 'tag %s has a successful publish run but registry tag %s no longer exists in GHCR package %s; it may have been deleted, and walking backward would attribute an older release to what Flux resolves today\n' \
             "$candidate" "$registry_version" "$registry_package" >&2
           return 1
@@ -1193,7 +1193,7 @@ identity_floor() {
   local noun="$1" registry="$2" found="$3" expected discovered e known missing="" unregistered=""
   shift 3
   for expected in "$@"; do
-    printf '%s\n' "$found" | grep -qxF -- "$expected" || missing="${missing} ${expected}"
+    grep -qxF -- "$expected" <<<"$found" || missing="${missing} ${expected}"
   done
   while IFS= read -r discovered; do
     [ -n "$discovered" ] || continue
