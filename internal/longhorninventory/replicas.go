@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"os"
 	"slices"
 	"strings"
 	"unicode"
@@ -46,29 +45,14 @@ type Report struct {
 // backup coverage, historical recoverability or authorization to erase data.
 func Analyze(listing Listing, replicas []Replica) (Report, error) {
 	invalid := errors.New("native replica inventory is incomplete or ambiguous")
-	if !listing.Complete || len(listing.Entries) == 0 || len(listing.Entries) > MaxEntries || len(replicas) > MaxEntries {
+	if len(replicas) > MaxEntries {
 		return Report{}, invalid
 	}
-	entries := slices.Clone(listing.Entries)
+	entries, metadataBytes, entryErr := normalizedEntries(listing)
+	if entryErr != nil {
+		return Report{}, entryErr
+	}
 	refs := slices.Clone(replicas)
-	seen := make(map[string]bool, len(entries))
-	metadataBytes := 0
-	for _, entry := range entries {
-		metadataBytes += len(entry.Name) + 32
-		mode := os.FileMode(entry.Mode)
-		if (!baseName(entry.Name) && entry.Name != ".") || seen[entry.Name] ||
-			entry.Size < 0 || entry.Modified < 0 || mode.IsDir() != entry.IsDir ||
-			(mode.Type() != 0 && mode.Type() != os.ModeDir) || metadataBytes > MaxMetadataBytes {
-			return Report{}, invalid
-		}
-		if entry.Name == "." && !entry.IsDir {
-			return Report{}, invalid
-		}
-		seen[entry.Name] = true
-	}
-	if !seen["."] {
-		return Report{}, invalid
-	}
 	owners := make(map[string]bool, len(refs))
 	names := make(map[string]bool, len(refs))
 	uids := make(map[string]bool, len(refs))
