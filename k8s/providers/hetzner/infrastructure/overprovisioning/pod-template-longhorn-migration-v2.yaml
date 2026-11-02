@@ -1,9 +1,14 @@
 # Virtual native demand for the fixed V2 pool; no Pod is instantiated.
+# longhorn-system because a CapacityBuffer's replicas are limited by its namespace's
+# ResourceQuota even though it creates no Pod: overprovisioning's generated quota
+# is fully used by the V1 buffer, which limited this one to zero and requested no
+# node (#5655). longhorn-system is exempt from add-ns-quota, and Kyverno refuses
+# changing that exemption list on the live generate rule.
 apiVersion: v1
 kind: PodTemplate
 metadata:
   name: longhorn-migration-v2
-  namespace: overprovisioning
+  namespace: longhorn-system
   annotations:
     checkov.io/skip1: "CKV_K8S_8=virtual scheduling placeholder, never instantiated"
     checkov.io/skip2: "CKV_K8S_9=virtual scheduling placeholder, never instantiated"
