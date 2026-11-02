@@ -2,7 +2,7 @@
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
-  name: restrict-github-team-external-identity-members-provider-update
+  name: restrict-github-team-external-identity-update-cleared
 policies:
   - >-
     ../../../k8s/bases/infrastructure/cluster-policies/best-practices/restrict-github-team-external-identity.yaml
@@ -12,8 +12,7 @@ variables: values.yaml
 userinfo: user-info.yaml
 results:
   - policy: restrict-github-team-external-identity
-    rule: teammemberships-external-name-matches-declared-member
     resources:
-      - github-config/provider-recorded
-    kind: TeamMembership
-    result: skip
+      - github-config/maintainers
+    kind: Team
+    result: pass

@@ -9,7 +9,7 @@
 #
 # WHAT IT DOES. It persists nothing: every write it sends carries `--dry-run=server`, so the API
 # server runs the request through admission and then discards it.
-#   1. `get clusterpolicy`          — the policy must be Ready and set to Enforce.
+#   1. `get validatingpolicy`       — the policy must be Ready and set to Deny.
 #   2. `get teams` in github-config — the Team objects and the identity each one carries.
 #   3. `get pods` in crossplane-system — the ServiceAccount the GitHub provider runs as.
 #   4. For every Team, as the github-config applier (impersonated):
@@ -126,17 +126,14 @@ read_json() {
 # 1. The policy must be installed, Ready and enforcing. A policy in Audit admits everything, so
 #    every "must be refused" probe would fail for a reason that is not a defect in the rule.
 # ---------------------------------------------------------------------------
-read_json "${work_dir}/policy.json" clusterpolicy "${policy}" ||
+read_json "${work_dir}/policy.json" validatingpolicy "${policy}" ||
   inconclusive 'the policy could not be read.'
-jq -e '[.status.conditions[]? | select(.type == "Ready") | .status] == ["True"]' \
+jq -e '.status.conditionStatus.ready == true' \
   "${work_dir}/policy.json" >/dev/null 2>&1 ||
   inconclusive 'the policy is not Ready.'
-jq -e '
-  (.spec.rules // []) as $rules
-  | ($rules | length) > 0
-    and all($rules[]; (.validate.failureAction // "") == "Enforce")' \
+jq -e '.spec.validationActions == ["Deny"]' \
   "${work_dir}/policy.json" >/dev/null 2>&1 ||
-  inconclusive 'the policy is not set to Enforce on every rule.'
+  inconclusive 'the policy is not set to Deny.'
 
 # ---------------------------------------------------------------------------
 # 2. The Team objects. Every one must carry a numeric identity: without it there is no
@@ -161,7 +158,7 @@ while IFS=$'\t' read -r name identity; do
   # provider created anew carries an identity that is not listed until a reviewed change adds
   # it, and its adoption probe would then be refused by design, not by a defect.
   jq -e --arg pair "'${name}/${identity}'" \
-    '[.spec.rules[]?.validate.deny | .. | strings] | any(contains($pair))' \
+    '[.spec.validations[]?.expression] | any(contains($pair))' \
     "${work_dir}/policy.json" >/dev/null 2>&1 ||
     inconclusive "Team ${name} carries an identity the policy does not list as approved yet."
 done <"${work_dir}/teams.tsv"
