@@ -205,6 +205,7 @@ func (m management) objects(ctx context.Context, object string, properties []str
 	return objects, nil
 }
 
+// resolved maps creation references in values and map keys to native IDs.
 func resolved(v any, ids map[string]string) any {
 	switch x := v.(type) {
 	case string:

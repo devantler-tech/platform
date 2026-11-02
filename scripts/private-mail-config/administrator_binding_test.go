@@ -57,7 +57,7 @@ func TestRebuildVerifiesTheDeclaredAdministratorBinding(t *testing.T) {
 			plan := []byte(`{"@type":"upsert","object":"Role","matchOn":["description"],"value":{"email-admin":{"description":"Declared Email Administrator","memberTenantId":null,"roleIds":{},"enabledPermissions":{"authenticate":true,"sysAccountQuery":true},"disabledPermissions":{}}}}
 {"@type":"update","object":"Authentication","value":{"defaultAdminRoleIds":{"#email-admin":true},"defaultUserRoleIds":{}}}
 `)
-			m := management{url: server.URL, password: "synthetic-fixture-only", client: server.Client()}
+			m := management{url: server.URL, password: t.Name(), client: server.Client()}
 			err := m.verify(context.Background(), plan)
 			if (err == nil) != tc.valid {
 				t.Fatal("administrator binding was rejected or undeclared administration was accepted")
