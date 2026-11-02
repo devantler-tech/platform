@@ -14,7 +14,6 @@ results:
   # The apps layer must keep the paved road for placing platform-owned routes in
   # a managed tenant namespace, even on a hostname the tenant itself may not use.
   - policy: restrict-tenant-route-hostnames
-    rule: wedding-app-approved-hostnames
     resources:
       - wedding-app/platform-applied-route
     kind: HTTPRoute
