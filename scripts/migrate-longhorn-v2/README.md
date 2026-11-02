@@ -18,8 +18,10 @@ huge-page settings are loaded. Worker preparation is below and is dormant; enabl
 capacity follows in its own change.
 
 Dispatch only the merged workflow on `main`. Run `refresh-clients` promptly after
-`talos/workers/enable-longhorn-v2.yaml` deploys: the hosts then hold the pages, but kubelet
-still counts them as free memory, so an unrelated kubelet restart could reject Pods.
+`talos/workers/enable-longhorn-v2.yaml` deploys. That configuration requests the pages;
+the refresh must prove the actual allocation before changing kubelet capacity. Until
+capacity is refreshed, kubelet can still count reserved pages as free memory, so an
+unrelated kubelet restart could reject Pods.
 Select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and that each kernel module is usable, loaded or built in,
 restarts only kubelet where capacity is stale, and requires every worker to report
