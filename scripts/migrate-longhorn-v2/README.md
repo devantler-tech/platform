@@ -1,5 +1,14 @@
 # Prepare Longhorn V2 workers
 
+`inspect-host-memory` is a read-only diagnostic for a fixed permanent worker,
+confirmed with `inspect-longhorn-v2-host-memory-<worker>`. It reads only the native
+huge-page allocation and selected `/proc/meminfo` counters, bracketed by unchanged
+Kubernetes, storage, hardware and kernel-boot identity and the current reviewed
+source. Its observation-only receipt contains counters and commitments, never raw
+host text or private identities. An allocation shortfall is reported as observed;
+it grants no reset, reboot, restart or V2-activation clearance. Incomplete reads,
+changing allocation, identity changes and close failures produce no success receipt.
+
 The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 

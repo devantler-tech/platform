@@ -18,6 +18,8 @@ func main() {
 		authorization = authorizeBenchmark(os.Getenv, operation[len("benchmark-"):])
 	case "inventory-replicas":
 		authorization = authorizeInventory(os.Getenv, target)
+	case "inspect-host-memory":
+		authorization = authorizeHostMemory(os.Getenv, target)
 	default:
 		authorization = authorizeRefresh(os.Getenv)
 	}
@@ -27,6 +29,13 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "inspect-host-memory" {
+		if err := runHostMemory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
+			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
+			os.Exit(1)
+		}
+		return
+	}
 	if operation == "inventory-replicas" {
 		if err := runReplicaInventory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))

@@ -47,12 +47,14 @@ const (
 	stageSourceBefore
 	stageSourceAfter
 	stageOutput
+	stageHostMemoryCounters
+	stageHostMemoryAllocationChanged
 )
 
 func (stage inventoryStage) Error() string {
 	names := [...]string{"unknown", "deadline", "projection-before", "client", "host-before", "boot-before", "listing-before",
 		"ownership-before", "listing-after", "projection-after", "api-consistency", "host-after", "boot-after", "ownership-after",
-		"listing-consistency", "close", "source-before", "source-after", "output"}
+		"listing-consistency", "close", "source-before", "source-after", "output", "host-memory-counters", "host-memory-allocation-changed"}
 	if int(stage) >= len(names) {
 		stage = stageUnknown
 	}
