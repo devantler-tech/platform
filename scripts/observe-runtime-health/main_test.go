@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -43,6 +45,45 @@ func TestObservation(t *testing.T) {
 	}
 	if s.FullAcceptanceVerified {
 		t.Fatal("a scoped API observation claimed full platform acceptance")
+	}
+}
+
+func TestCorootAbsoluteWindowUsesMilliseconds(t *testing.T) {
+	// Coroot v1.28.1's utils.ParseTime divides absolute query integers by 1,000.
+	// Decode requests as the server does, rather than accepting any query string.
+	now := time.Date(2026, time.November, 2, 21, 0, 0, 123456789, time.FixedZone("offset", 3600))
+	seen := 0
+	serverWindows := map[string]time.Time{}
+	reader := func(ctx context.Context, path string) ([]byte, error) {
+		if strings.Contains(path, "/overview/") || strings.Contains(path, "/alerts?") {
+			u, err := url.ParseRequestURI(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for key, want := range map[string]time.Time{"from": now.Add(-time.Hour), "to": now} {
+				value, err := strconv.ParseInt(u.Query().Get(key), 10, 64)
+				if err != nil {
+					t.Fatalf("invalid %s: %v", key, err)
+				}
+				serverTime := time.Unix(value/1000, 0)
+				if !serverTime.Equal(want.Truncate(time.Second)) {
+					t.Errorf("%s %s addresses %s, want %s", u.Path, key, serverTime.UTC(), want.UTC().Truncate(time.Second))
+				}
+				serverWindows[key] = serverTime
+			}
+			seen++
+		}
+		return fixtureReader(nil)(ctx, path)
+	}
+	s, err := observe(context.Background(), reader, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen != 3 || s.WindowTo.Sub(s.WindowFrom) != time.Hour {
+		t.Fatalf("query surfaces=%d window=%s", seen, s.WindowTo.Sub(s.WindowFrom))
+	}
+	if !s.WindowFrom.Equal(serverWindows["from"]) || !s.WindowTo.Equal(serverWindows["to"]) {
+		t.Fatal("the reported window differs from Coroot's interpreted interval")
 	}
 }
 
