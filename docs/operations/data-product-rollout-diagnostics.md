@@ -5,6 +5,11 @@ settle within its shared deadline. A failed receipt reports `complete: false` an
 keeps the original `failure` classification. Diagnostics do not extend the
 deadline, grant a retry, or relax an acceptance check.
 
+One failed resource read is read once more inside the shared deadline, because it
+says nothing about the rollout. An accepted receipt counts these in `readRetries`,
+as it counts dropped public connections in `publicRetries`. A second failure of the
+same read refuses with `read_incomplete`.
+
 For snapshot failures, `phase` identifies `initial_readiness` or
 `rollout_stability`. `role` names a fixed resource role or check group, and
 `reason` distinguishes:
