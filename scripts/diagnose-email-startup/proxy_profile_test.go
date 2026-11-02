@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // proxyFixture admits the declared public adapter, without company data or credentials.
@@ -29,13 +31,22 @@ func proxyFixture(t *testing.T) ([]byte, []byte) {
 			"state": map[string]any{"running": map[string]any{"startedAt": "2026-10-27T00:00:00Z"}},
 		})
 	})
-	config, err := os.ReadFile("../../k8s/bases/apps/private-mail-proxy-identity/Caddyfile")
+	source, err := os.ReadFile("../../k8s/bases/apps/private-mail-proxy-identity/kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var bundle struct {
+		ConfigMapGenerator []struct {
+			Literals []string `yaml:"literals"`
+		} `yaml:"configMapGenerator"`
+	}
+	if err := yaml.Unmarshal(source, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	config := strings.TrimPrefix(bundle.ConfigMapGenerator[0].Literals[0], "Caddyfile=")
 	cm, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{"name": "email-client-proxy-kkm788c4m9", "namespace": "private-mail", "uid": "00000000-0000-0000-0000-000000000004", "resourceVersion": "9"},
-		"data":     map[string]string{"Caddyfile": string(config)},
+		"data":     map[string]string{"Caddyfile": config},
 	})
 	if err != nil {
 		t.Fatal(err)
