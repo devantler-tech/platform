@@ -18,7 +18,11 @@ admissionregistration.k8s.io/v1|MutatingAdmissionPolicy||gateway-receiver 29a4c2
 
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||gateway-receiver 02e679b3bede26c8ef6793955787d34b266667cafe41636288c87e1fcb83d339
 
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicyBinding||longhorn-benchmark-delete 33d9144f35086ed96a084f303f90c44c22cc5e19f47a16752a1b871c6de8b04e
+
 admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||gateway-receiver c22536e4b66d2287780a0126fe46bb8e9b409f932f8844cf1e55cd3b9cf707e2
+
+admissionregistration.k8s.io/v1|ValidatingAdmissionPolicy||longhorn-benchmark-delete c762dfaf739eba36be7b0dca44a3e308fc814ea4be9098ff5bc0c6d969452a78
 
 helm.toolkit.fluxcd.io/v2|HelmRelease|actual-budget|actual-budget 36855100be6e3611947d34ce120822158db269cdf860c23ebce11ad9ae76b197
 
