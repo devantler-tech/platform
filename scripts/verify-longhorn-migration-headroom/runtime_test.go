@@ -4,9 +4,30 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 )
+
+func TestCountHoldReportsOnlyAggregatesWithoutReceipt(t *testing.T) {
+	for _, counts := range [][2]int{{9, 8}, {8, 9}, {7, 7}} {
+		t.Run(fmt.Sprintf("provider%d-node%d", counts[0], counts[1]), func(t *testing.T) {
+			servers, nodes := roster(t, true)
+			servers = append(servers, server{Name: "private-unmatched-server"})[:counts[0]]
+			nodes = append(nodes, node{})[:counts[1]]
+			body := providerResponse(t, func(response map[string]any) {
+				response["servers"] = servers
+				response["meta"].(map[string]any)["pagination"].(map[string]any)["total_entries"] = counts[0]
+			})
+			read := func(context.Context) ([]byte, error) { return nodeResponse(t, nodes), nil }
+			n, err := observe(context.Background(), providerClient(t, body, 200), "private-test-token", read, false)
+			want := fmt.Sprintf("inventory count gate failed: provider_servers=%d kubernetes_nodes=%d expected_equal=true permitted_nodes=8..9", counts[0], counts[1])
+			if n != 0 || err == nil || err.Error() != want {
+				t.Fatalf("count failure must expose only aggregates and no receipt: receipt=%d error=%v want=%q", n, err, want)
+			}
+		})
+	}
+}
 
 func nodeResponse(t *testing.T, n []node) []byte {
 	t.Helper()
