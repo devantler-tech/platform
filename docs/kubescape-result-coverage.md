@@ -170,14 +170,20 @@ namespaces; finding the same name somewhere else does not make the reference val
 
 The chart's default kubevuln v0.3.430 publishes the workload namespace in these references.
 Upstream [#946](https://github.com/kubescape/kubevuln/pull/946) fixes that and refreshes cached
-summaries after image changes. The explicit v0.3.566 digest includes those fixes and
+summaries after image changes. The explicit v0.3.574 digest includes those fixes and
 [#1170](https://github.com/kubescape/kubevuln/pull/1170), which preserves node-agent SBOMs when
 local generation is disabled. It is bound to source
-`45099c097fe5470b4a177520eac7de9ee3bfdd80`, with its signature verified against the upstream
-main release workflow, GitHub OIDC issuer and that exact source revision before adoption (#5403).
-The chart, storage image and existing profile APIs do not change with this scanner pin. The
-scanner still uses the served vulnerability-manifest, summary, SBOM, VEX and container-profile
-endpoints; it does not require removing the retained application/network profile APIs.
+`5e312eec38548cd81e4d3a758b1a283fd6b32bb4`, with its signature verified against the pinned
+upstream shared release workflow, GitHub OIDC issuer, repository, main ref and that exact source
+revision before adoption (#5403). It also removes the affected RAR decoder and includes the
+bounded ELF pre-filter from the Syft fork. Dependency audit records and their call-path
+dispositions remain tracked separately in #5553; a valid signature alone is not a clean audit.
+The chart and existing profile APIs remain in place. Syft 1.55 inventories also require the
+source and package metadata support added in upstream storage #471; an unchanged storage pin
+does not establish this compatibility. Keep adoption held under #5553 until the scanner client
+and the deployed compatibility storage build preserve those types without losing the existing
+storage repairs. The scanner still uses vulnerability-manifest, summary, SBOM, VEX and
+container-profile endpoints; retaining application/network profile APIs remains necessary.
 
 The newer scanner invalidates exception label caches through workload and namespace informers.
 The Helm post-renderer supplies the matching list/watch permissions for the nine already-readable

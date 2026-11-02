@@ -83,11 +83,12 @@ fi
 # propagation, first released in v0.3.404. Its chart-default v0.3.430 still
 # publishes manifest references in the workload namespace even though the
 # manifests live in the scanner namespace, and skips cached-summary refreshes
-# after image updates. Upstream #946 fixes both; v0.3.566 includes that fix and
-# retains node-agent SBOMs when local generation is disabled (#1170).
+# after image updates. Upstream #946 fixes both; v0.3.574 retains that fix,
+# preserves node-agent SBOMs when local generation is disabled (#1170), and
+# includes the parser repairs reviewed under #5553.
 # Bind the rendered scanner to the verified upstream release digest, so chart
 # defaults or a mutable tag cannot silently restore either failure (#5403).
-readonly kubevuln_tag='v0.3.566@sha256:7fce339ce129227da00d32d7deb4dc2fa35284acf48cc3db433d853fa75ee97d'
+readonly kubevuln_tag='v0.3.574@sha256:0a1f421ea6c35419617c836a2fd50bbd230c84a7668cb343d03b4d5ee24b1402'
 
 keep_local="$(yq -er '
   .spec.values.kubescapeScheduler.requestBody.commands[] |

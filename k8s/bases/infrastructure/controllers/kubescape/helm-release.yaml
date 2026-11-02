@@ -341,12 +341,13 @@ spec:
     kubevuln:
       image:
         # Upstream #946 fixes cross-namespace manifest references and refreshes
-        # cached summaries after image changes. v0.3.566 also preserves existing
-        # node-agent SBOMs when local generation is disabled (#1170). This digest
-        # is signed by the upstream main release workflow at source 45099c0;
+        # cached summaries after image changes. v0.3.574 preserves existing
+        # node-agent SBOMs when local generation is disabled (#1170), and carries
+        # the RAR/ELF parser repairs reviewed under #5553. This digest is signed
+        # by the pinned upstream release workflow at source 5e312ee;
         # retain the chart and compatibility storage/profile APIs (#5403).
         repository: quay.io/kubescape/kubevuln
-        tag: "v0.3.566@sha256:7fce339ce129227da00d32d7deb4dc2fa35284acf48cc3db433d853fa75ee97d"
+        tag: "v0.3.574@sha256:0a1f421ea6c35419617c836a2fd50bbd230c84a7668cb343d03b4d5ee24b1402"
       resources:
         requests:
           cpu: 50m
