@@ -63,10 +63,16 @@ func main() {
 	fmt.Println("EMAIL_PROVIDER_SMTP=VERIFIED scope=hosting-node-no-message cleanup=verified")
 }
 
-type kubectl struct{}
+// The guarded production entrypoint always uses the default context. Tests may
+// select an existing read-only context to evaluate source GETs independently.
+type kubectl struct{ context string }
 
-func (kubectl) call(ctx context.Context, input []byte, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context=admin@prod", "--request-timeout=20s"}, args...)...)
+func (k kubectl) call(ctx context.Context, input []byte, args ...string) ([]byte, error) {
+	contextName := k.context
+	if contextName == "" {
+		contextName = "admin@prod"
+	}
+	cmd := exec.CommandContext(ctx, "kubectl", append([]string{"--context=" + contextName, "--request-timeout=20s"}, args...)...)
 	cmd.Stdin = strings.NewReader(string(input))
 	// Output is examined privately. Stderr can contain topology and is discarded.
 	return cmd.Output()
