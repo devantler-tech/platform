@@ -36,6 +36,10 @@ func readNamespace(ctx context.Context, kubeContext, namespace, kind, name strin
 	return result, nil
 }
 func collect(ctx context.Context, kubeContext string) (binding, error) {
+	return collectExpected(ctx, kubeContext, false)
+}
+
+func collectExpected(ctx context.Context, kubeContext string, wantProxy bool) (binding, error) {
 	s, err := read(ctx, kubeContext, "service", "cilium-gateway-platform")
 	if err != nil {
 		return binding{}, err
@@ -44,7 +48,7 @@ func collect(ctx context.Context, kubeContext string) (binding, error) {
 	if err != nil {
 		return binding{}, err
 	}
-	return derive(s, g)
+	return deriveExpectedTransport(s, g, wantProxy, false)
 }
 func plaintext(b binding) ([]byte, error) {
 	return json.Marshal(map[string]any{"apiVersion": "v1", "kind": "Secret", "metadata": map[string]string{"name": "variables-gateway-receiver", "namespace": "flux-system"}, "type": "Opaque", "stringData": map[string]string{"gateway_receiver_source_cidr": b.CIDR, "gateway_receiver_service_uid": b.ServiceUID, "gateway_receiver_gateway_uid": b.GatewayUID}})
@@ -183,26 +187,23 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
 	if apply {
-		rendered, err := renderLayer(ctx)
-		selected, wrote := false, false
-		if err == nil {
-			selected, err = fenceSelected(rendered)
-		}
-		if err == nil && selected {
-			wrote, err = applySelected(ctx, kubeContext)
+		profile, err := renderTransportProfile(ctx)
+		wrote := false
+		if err == nil && profile.Fence {
+			wrote, err = applyTransportProfile(ctx, kubeContext, profile)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_FENCE=UNVERIFIED stage=%s\n", err.Error())
 			os.Exit(2)
 		}
-		fmt.Printf("GATEWAY_RECEIVER_FENCE=VERIFIED selected=%t wrote=%t\n", selected, wrote)
+		fmt.Printf("GATEWAY_RECEIVER_FENCE=VERIFIED selected=%t wrote=%t\n", profile.Fence, wrote)
 		return
 	}
 	if restore {
-		rendered, err := renderLayer(ctx)
+		profile, err := renderTransportProfile(ctx)
 		selected := false
 		if err == nil {
-			selected, err = restoreBaseline(rendered, func() error { return restoreDisabled(ctx, kubeContext) })
+			selected, err = restoreBaseline(profile, func() error { return restoreDisabled(ctx, kubeContext) })
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_DISABLED=UNVERIFIED stage=%s\n", err.Error())
@@ -216,19 +217,15 @@ func main() {
 		return
 	}
 	if verify {
-		rendered, err := renderLayer(ctx)
-		selected := false
+		profile, err := renderTransportProfile(ctx)
 		if err == nil {
-			selected, err = fenceSelected(rendered)
-		}
-		if err == nil {
-			err = verifyDeployed(ctx, kubeContext, selected)
+			err = verifyTransportProfile(ctx, kubeContext, profile)
 		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "GATEWAY_RECEIVER_SOURCE=UNVERIFIED stage=%s\n", err.Error())
 			os.Exit(2)
 		}
-		fmt.Printf("GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=%t\n", selected)
+		fmt.Printf("GATEWAY_RECEIVER_SOURCE=VERIFIED public_probes=4 fence_selected=%t\n", profile.Fence)
 		return
 	}
 	if err := prepare(ctx, kubeContext, outputPath); err != nil {

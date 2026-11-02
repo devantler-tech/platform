@@ -1,0 +1,16 @@
+# Let an ordinary compute node retire with a Kyverno replica on it (#5655). The
+# autoscaler refused the overflow node over the admission controller's emptyDir.
+# It holds a re-fetchable Sigstore cache; disruption budgets still apply.
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: kyverno
+  namespace: kyverno
+spec:
+  values:
+    admissionController:
+      podAnnotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sigstore
+    reportsController:
+      podAnnotations:
+        cluster-autoscaler.kubernetes.io/safe-to-evict-local-volumes: sigstore

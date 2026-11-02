@@ -11,7 +11,7 @@ spec:
   hostnames:
     - harbour-data.${domain}
   rules:
-    # Root paths preserve the independently served UI assets and OpenAPI paths.
+    # Root paths preserve the independently served API and OpenAPI paths.
     - matches:
         - path:
             type: PathPrefix

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testing.T) {
@@ -28,7 +29,8 @@ func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testin
 				setReady()
 			}
 			restarts := 0
-			run := func(_ context.Context, _ []byte, program string, args ...string) ([]byte, error) {
+			boundedNodeReads, boundedHostReads := 0, 0
+			run := func(callCtx context.Context, _ []byte, program string, args ...string) ([]byte, error) {
 				switch program {
 				case "git":
 					return []byte(strings.Repeat("1", 40) + "\trefs/heads/main\n"), nil
@@ -36,9 +38,23 @@ func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testin
 					if slices.Contains(args, "pods") {
 						return json.Marshal(object{"items": []object{podOnWorker(text(n, "metadata", "name"), "1Gi")}})
 					}
+					if restarts > 0 {
+						deadline, ok := callCtx.Deadline()
+						if !ok || deadline.After(time.Now().Add(16*time.Minute)) {
+							t.Fatal("capacity read escaped the bounded readiness callback")
+						}
+						boundedNodeReads++
+					}
 					return json.Marshal(n)
 				case "talosctl":
 					if len(args) == 5 && args[2] == "systeminformation" {
+						if restarts > 0 {
+							deadline, ok := callCtx.Deadline()
+							if !ok || deadline.After(time.Now().Add(16*time.Minute)) {
+								t.Fatal("hardware read escaped recovery deadline")
+							}
+							boundedHostReads++
+						}
 						return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": "machine-uuid"}})
 					}
 					if reflect.DeepEqual(args, []string{"--nodes=10.0.99.4", "read", "/proc/sys/vm/nr_hugepages"}) {
@@ -67,6 +83,9 @@ func TestHugepageRefreshRestartsOnlyKubeletAndRequiresPositiveReadback(t *testin
 			}
 			if restarts != want {
 				t.Fatalf("restart count %d, expected %d", restarts, want)
+			}
+			if !alreadyReady && (boundedNodeReads == 0 || boundedHostReads == 0) {
+				t.Fatal("post-restart identity reads were not observed")
 			}
 		})
 	}

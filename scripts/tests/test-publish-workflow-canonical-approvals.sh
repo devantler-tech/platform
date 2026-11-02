@@ -574,6 +574,8 @@ while IFS=$'\t' read -r profile file selector; do
   subject="$(yq -er "$selector" "$REPO_ROOT/$file")"
   if [[ "$profile" == generic-tenant ]]; then subject="$(tenant_source_default_subject "$REPO_ROOT/$file" "$subject")"; fi
   while IFS=$'\t' read -r expected identity; do
+    # The product documentation consumer has no approval for the v19.0.5 row (#5404).
+    if [[ "$profile" == product-docs && "$identity" == *@af042c540ce8db4d64add98c34b5c57691e0e812 ]]; then expected=reject; fi
     result=reject
     if printf '%s\n' "$identity" | grep -Eq -- "$subject"; then result=accept; fi
     if [ "$result" = "$expected" ]; then
@@ -583,15 +585,17 @@ while IFS=$'\t' read -r profile file selector; do
     fi
   done <<'IDENTITIES'
 accept	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df9004d4ab43b6c9af5b0c5f55712f7211328
-accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+accept	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@467f07582436a26b62cf4aa756423512f85ba0c0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v7.23.0
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@v19.0.5
 reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@main
-reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3
-reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b-extra
-reject	https://github.com/devantler-tech/xgithub/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
-reject	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
-reject	https://github.com/another-org/.github/.github/workflows/publish-app.yaml@0c7b6c3509b73adbc7537e030935bb01987e625b
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c5
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812-extra
+reject	https://github.com/devantler-tech/xgithub/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+reject	https://github.com/devantler-tech/.github/.github/workflows/publish-manifests.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
+reject	https://github.com/another-org/.github/.github/workflows/publish-app.yaml@af042c540ce8db4d64add98c34b5c57691e0e812
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@ea4df90
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@v13.10.12
 reject	https://github.com/devantler-tech/actions/.github/workflows/publish-app.yaml@main

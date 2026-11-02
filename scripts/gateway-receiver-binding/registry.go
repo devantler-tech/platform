@@ -82,9 +82,10 @@ func executeReceiver(ctx context.Context, input []byte, args ...string) ([]byte,
 }
 
 type receiverClient struct {
-	context string
-	command receiverCommand
-	pause   func(context.Context, time.Duration) error
+	context  string
+	command  receiverCommand
+	pause    func(context.Context, time.Duration) error
+	expected *receiverObservation
 }
 
 func (c receiverClient) wait(ctx context.Context, d time.Duration) error {

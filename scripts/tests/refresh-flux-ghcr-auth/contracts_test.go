@@ -699,6 +699,35 @@ func TestTalosRegistryAuthUsesSupportedTalosDocument(t *testing.T) {
 	requireNotContains(t, registryAuth, "\n---\n")
 }
 
+// TestImageVerificationPolicyHasNoFoldedBlockWithIndentedLines keeps the deployed
+// policy equal to the candidate the no-write path compares it with. kustomize
+// doubles the line break before a more-indented line of a folded block and yq does
+// not, so such a block makes that comparison fail on every deploy (#5650).
+func TestImageVerificationPolicyHasNoFoldedBlockWithIndentedLines(t *testing.T) {
+	policy := readRepositoryFile(
+		t,
+		"k8s/bases/infrastructure/cluster-policies/best-practices/verify-app-images.yaml",
+	)
+	indentOf := func(line string) int { return len(line) - len(strings.TrimLeft(line, " ")) }
+	folded, parentIndent, blockIndent := false, 0, 0
+	for number, line := range strings.Split(policy, "\n") {
+		if folded && strings.TrimSpace(line) != "" {
+			switch indent := indentOf(line); {
+			case indent <= parentIndent:
+				folded = false
+			case blockIndent == 0:
+				blockIndent = indent
+			case indent > blockIndent:
+				t.Errorf("line %d: more-indented line in a folded block; use a literal block", number+1)
+			}
+		}
+		if trimmed := strings.TrimRight(line, " "); strings.HasSuffix(trimmed, ": >-") ||
+			strings.HasSuffix(trimmed, ": >") {
+			folded, parentIndent, blockIndent = true, indentOf(line), 0
+		}
+	}
+}
+
 // TestImageVerificationUsesOneSlowFailClosedPolicy binds each dedicated publisher
 // to its exact repository while retaining the shared policy's fail-closed limits.
 func TestImageVerificationUsesOneSlowFailClosedPolicy(t *testing.T) {

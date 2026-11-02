@@ -8,7 +8,7 @@ import (
 type object = map[string]any
 
 type inventory struct {
-	nodes, storageNodes, volumes, replicas, engines, pods []object
+	nodes, storageNodes, volumes, replicas, engines, pods, orphans []object
 }
 
 func value(o object, path ...string) any {
@@ -67,6 +67,52 @@ func diskReady(n, replica object) bool {
 		}
 	}
 	return false
+}
+
+// A successful drain alone cannot authorize wiping storage: Longhorn replicas
+// can remain on an empty node, and a stopped retained volume has no running
+// engine to report redundancy. Verify every volume against the actual replica,
+// node and disk identities. Call again immediately before the reset request.
+func verifyEvacuated(target string, s inventory) error {
+	if target == "" || len(s.volumes) == 0 {
+		return errors.New("target and complete volume inventory are required")
+	}
+	nodes, err := indexed(s.nodes)
+	if err != nil || nodes[target] == nil {
+		return errors.New("kubernetes node inventory is incomplete")
+	}
+	if _, err = indexed(s.orphans); err != nil {
+		return err
+	}
+	for _, orphan := range s.orphans {
+		if node := text(orphan, "spec", "nodeID"); node == "" || node == target {
+			return errors.New("unregistered Longhorn data needs a recovery decision before resetting this worker")
+		}
+	}
+	for _, r := range s.replicas {
+		if text(r, "spec", "nodeID") == target {
+			return errors.New("replica still references the reset target")
+		}
+	}
+	for _, e := range s.engines {
+		if text(e, "spec", "nodeID") == target && text(e, "status", "currentState") != "stopped" {
+			return errors.New("engine still references the reset target")
+		}
+	}
+	for _, p := range s.pods {
+		phase := text(p, "status", "phase")
+		if text(p, "spec", "nodeName") != target || phase == "Succeeded" || phase == "Failed" {
+			continue
+		}
+		volumes, _ := value(p, "spec", "volumes").([]any)
+		for _, raw := range volumes {
+			v, ok := raw.(map[string]any)
+			if ok && value(v, "persistentVolumeClaim") != nil {
+				return errors.New("claim consumer remains on the reset target")
+			}
+		}
+	}
+	return verifyRedundancy(s)
 }
 
 func verifyRedundancy(s inventory) error {
@@ -136,7 +182,7 @@ func verifyRedundancy(s inventory) error {
 			copies[node] = true
 		}
 		if len(copies) < 3 {
-			return errors.New("three healthy copies on distinct nodes are not proven for every volume")
+			return errors.New("three healthy copies on distinct other nodes are not proven for every volume")
 		}
 	}
 	return nil

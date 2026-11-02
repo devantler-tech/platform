@@ -5,6 +5,16 @@ import (
 	"regexp"
 )
 
+func authorize(getenv func(string) string, target string) error {
+	if !regexp.MustCompile(`^prod-worker-[123]$`).MatchString(target) {
+		return errors.New("only permanent storage workers may be prepared")
+	}
+	if getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "prepare-worker" {
+		return errors.New("the selected worker preparation operation is required")
+	}
+	return authorizeWorkflow(getenv, "prepare-longhorn-v2-"+target)
+}
+
 func authorizeWorkflow(getenv func(string) string, confirmation string) error {
 	for key, expected := range map[string]string{
 		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main",

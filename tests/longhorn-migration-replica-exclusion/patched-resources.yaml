@@ -1,0 +1,44 @@
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-cx43-0123456789abcdef
+  namespace: longhorn-system
+spec:
+  allowScheduling: false
+  evictionRequested: true
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-cx43-1123456789abcdef
+  namespace: longhorn-system
+  labels:
+    storage.platform.devantler.tech/migration-enabled: "true"
+spec:
+  allowScheduling: false
+  evictionRequested: true
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-longhorn-v1-0123456789abcdef
+  namespace: longhorn-system
+spec:
+  allowScheduling: false
+  evictionRequested: true
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-longhorn-v10-0123456789abcdef
+  namespace: longhorn-system
+  labels:
+    storage.platform.devantler.tech/migration-enabled: "true"
+spec:
+  allowScheduling: false
+  evictionRequested: true
+  disks: {}

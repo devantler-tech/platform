@@ -289,7 +289,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	}
 	pod := created["Pod"]
 	var claim, pv, volume object
-	if err = waitReady(ctx, func() error {
+	if err = waitReady(ctx, func(ctx context.Context) error {
 		current, err := c.get(ctx, "pod", tag, "fio", false)
 		if err != nil || text(current, "status", "phase") != "Running" {
 			return errors.New("benchmark consumer is not running")
@@ -361,7 +361,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	}
 	// The Pod's own deadline ends the trials first, and it reports Failed when it does.
 	sampled, unproven := time.Now(), 0
-	if err = waitReadyWithin(ctx, benchmarkCompletionLimit, func() error {
+	if err = waitReadyWithin(ctx, benchmarkCompletionLimit, func(ctx context.Context) error {
 		p, err := c.get(ctx, "pod", tag, "fio", false)
 		if err != nil {
 			return err
@@ -404,7 +404,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 		return err
 	}
 	// Kubernetes now detaches the finished Pod's volume, so give that transition time.
-	if err = waitReady(ctx, func() error {
+	if err = waitReady(ctx, func(ctx context.Context) error {
 		fresh, err := c.snapshot(ctx)
 		if err != nil {
 			return err

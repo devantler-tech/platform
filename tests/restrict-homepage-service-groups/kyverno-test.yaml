@@ -16,6 +16,7 @@ results:
     rule: declared-service-group
     resources:
       - observability/declared-group
+      - longhorn-system/storage-group
       - github-config/infrastructure-as-code-group
       - client-site/business-and-clients-group
       - personal-site/personal-group

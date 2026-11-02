@@ -354,7 +354,7 @@ func (c client) movePod(ctx context.Context, pod object, pods []object) error {
 	if err != nil {
 		return errors.New("moving " + namespace + "/" + name + " was refused, so no kubelet restart was requested")
 	}
-	return waitReady(ctx, func() error {
+	return waitReady(ctx, func(ctx context.Context) error {
 		live, listErr := c.list(ctx, "pods", namespace)
 		if listErr != nil {
 			return listErr

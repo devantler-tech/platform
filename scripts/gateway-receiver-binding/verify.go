@@ -49,12 +49,15 @@ func probePublicWithClient(ctx context.Context, client *http.Client) error {
 	}
 	return nil
 }
-func verifyDeployed(ctx context.Context, kubeContext string, selected bool) error {
-	before, err := collect(ctx, kubeContext)
+func verifyTransportProfile(ctx context.Context, kubeContext string, profile transportProfile) error {
+	if profile.Proxy && !profile.Fence {
+		return errors.New("transport-profile")
+	}
+	before, err := collectExpected(ctx, kubeContext, profile.Proxy)
 	if err != nil {
 		return err
 	}
-	return withProviderBaseline(ctx, before, readProvider, func() error {
+	return withProviderMode(ctx, before, profile.Proxy, readProvider, func() error {
 		for sample := 0; sample < 2; sample++ {
 			secret, err := readNamespace(ctx, kubeContext, "flux-system", "secret", "variables-gateway-receiver")
 			if err != nil || !secretMatches(secret, before) {
@@ -64,7 +67,7 @@ func verifyDeployed(ctx context.Context, kubeContext string, selected bool) erro
 			if err := c.policies(ctx, before); err != nil {
 				return err
 			}
-			if err := c.receiverState(ctx, before, selected); err != nil {
+			if err := c.receiverProfile(ctx, before, profile); err != nil {
 				return err
 			}
 			if err = probePublic(ctx, before.PublicIPv4); err != nil {
@@ -78,10 +81,34 @@ func verifyDeployed(ctx context.Context, kubeContext string, selected bool) erro
 				}
 			}
 		}
-		after, err := collect(ctx, kubeContext)
+		after, err := collectExpected(ctx, kubeContext, profile.Proxy)
 		if err != nil || after != before {
 			return errors.New("source-changed")
 		}
 		return nil
 	})
+}
+
+func (c receiverClient) receiverProfile(ctx context.Context, b binding, profile transportProfile) error {
+	if !profile.Proxy {
+		return c.receiverState(ctx, b, profile.Fence)
+	}
+	if !profile.Fence {
+		return errors.New("transport-profile")
+	}
+	if err := c.bindingsSelected(ctx, b); err != nil {
+		return err
+	}
+	raw, err := c.read(ctx, "ciliumenvoyconfig", "kube-system", "cilium-gateway-platform")
+	if err != nil {
+		return err
+	}
+	if err = c.receiverObserved(raw, b); err != nil {
+		return err
+	}
+	state, err := inspectReceiver(raw, b)
+	if err != nil || state.Mode != receiverFencedActive {
+		return errors.New("receiver-not-active")
+	}
+	return nil
 }

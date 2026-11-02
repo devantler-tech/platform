@@ -16,14 +16,16 @@ import (
 
 type chartSource struct {
 	directory, name, namespace, url string
+	// A release may follow its source in a later Flux layer.
+	releaseDirectory string
 }
 
 var chartSources = []chartSource{
-	{"k8s/bases/infrastructure/controllers/flux-operator", "flux-operator", "flux-system", "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator"},
-	{"k8s/bases/infrastructure/controllers/kro", "kro", "kro-system", "oci://registry.k8s.io/kro/charts/kro"},
-	{"k8s/bases/apps/homepage", "homepage", "homepage", "oci://ghcr.io/m0nsterrr/helm-charts/homepage"},
-	{"k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer", "origin-ca-issuer", "cert-manager", "oci://ghcr.io/cloudflare/origin-ca-issuer-charts/origin-ca-issuer"},
-	{"k8s/bases/infrastructure/controllers/ksail-operator", "ksail-operator", "ksail-operator", "oci://ghcr.io/devantler-tech/charts/ksail-operator"},
+	{"k8s/bases/infrastructure/controllers/flux-operator", "flux-operator", "flux-system", "oci://ghcr.io/controlplaneio-fluxcd/charts/flux-operator", ""},
+	{"k8s/bases/infrastructure/controllers/kro", "kro", "kro-system", "oci://registry.k8s.io/kro/charts/kro", ""},
+	{"k8s/bases/apps/homepage", "homepage", "homepage", "oci://ghcr.io/m0nsterrr/helm-charts/homepage", ""},
+	{"k8s/providers/hetzner/infrastructure/controllers/origin-ca-issuer", "origin-ca-issuer", "cert-manager", "oci://ghcr.io/cloudflare/origin-ca-issuer-charts/origin-ca-issuer", ""},
+	{"k8s/bases/infrastructure/controllers/ksail-operator", "ksail-operator", "ksail-operator", "oci://ghcr.io/devantler-tech/charts/ksail-operator", "k8s/bases/infrastructure/ksail-operator"},
 }
 
 func repositoryRoot(t *testing.T) string {
@@ -97,8 +99,12 @@ func TestCheckedInOCIChartSources(t *testing.T) {
 	for _, expected := range chartSources {
 		t.Run(expected.name, func(t *testing.T) {
 			directory := filepath.Join(root, expected.directory)
+			releaseDirectory := directory
+			if expected.releaseDirectory != "" {
+				releaseDirectory = filepath.Join(root, expected.releaseDirectory)
+			}
 			source := readDocument(t, filepath.Join(directory, "oci-repository.yaml"))
-			release := readDocument(t, filepath.Join(directory, "helm-release.yaml"))
+			release := readDocument(t, filepath.Join(releaseDirectory, "helm-release.yaml"))
 			if err := validateSource(source, release, expected); err != nil {
 				t.Fatal(err)
 			}

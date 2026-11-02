@@ -469,6 +469,18 @@ API. It reaches the wider distribution manager only through KSail's vCluster
 provisioner and the vCluster packages it imports, which the Talos path never calls.
 This audit changes no cluster configuration or vulnerability exception.
 
+**7.206.5**, commit `39c185897f2d581578a90498b2dcc2871c4399a6`, is audited
+against 7.205.3; 7.206.0 has the inputs audited at 7.205.3. The configuration
+manager, Talos generator and charts are byte-identical. `pkg/apis` adds an
+unexported `pendingLiveValidation` field and an `AwaitsLiveValidationOn` reader for
+the generated support matrix; validation, `spec.cluster.talos`, names, types and
+defaults are unchanged. `go.mod` and `go.sum` change one module, `wailsapp/wails/v3`
+from v3.0.0-beta.30 to v3.0.0-beta.31. Talos machinery stays at v1.14.0-alpha.2 and
+the YAML encoders are unchanged. At this tag `go list -deps` finds the module in
+neither the Talos configuration manager, generator nor cluster API; the same read
+finds the machinery packages. This audit changes no cluster configuration or
+vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

@@ -1600,6 +1600,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-repository-guards,
+        validate-independent-guards,
         test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
@@ -1619,6 +1620,7 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-repository-guards,
+        validate-independent-guards,
         test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,

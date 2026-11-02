@@ -763,7 +763,8 @@ for proxy_enabled in true false; do
     --max-time 3 http://127.0.0.1:18081/healthz/ready >"$scratch/proxy-direct.out" 2>"$scratch/proxy-direct.err" || direct_status=$?
   [ "$direct_status" != 0 ] || { echo 'FAIL: native proxy listener accepted a request without its transport envelope' >&2; exit 1; }
 
-  cp "$root/k8s/bases/apps/private-mail-proxy-identity/Caddyfile" "$scratch/ClientProxy.Caddyfile"
+  yq -r '.configMapGenerator[0].literals[0] | sub("^Caddyfile=", "")' "$root/k8s/bases/apps/private-mail-proxy-identity/kustomization.yaml" >"$scratch/ClientProxy.Caddyfile"
+  [ -s "$scratch/ClientProxy.Caddyfile" ] || { echo 'FAIL: the client proxy configuration could not be read' >&2; exit 1; }
   proxy_started=1
   docker run --detach --name "$proxy_name" --network "container:$name" --read-only \
     --user "$fixture_user" --cpus 0.1 --memory 64m --cap-drop ALL \

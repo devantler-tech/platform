@@ -260,28 +260,27 @@ func TestReceiverStateFollowsTheSourceSelection(t *testing.T) {
 }
 
 func TestRestoreBaselineNeverRemovesASelectedFence(t *testing.T) {
-	policies := []string{mutatingPolicy, validatingPolicy}
-	unselected := renderedResources(policies...)
 	for name, tc := range map[string]struct {
-		rendered []byte
+		profile  transportProfile
 		restored bool
 		selected bool
 		fails    bool
 	}{
-		"selected":   {rendered: renderedResources(append(policies, mutatingBinding, validBinding)...), selected: true},
-		"unselected": {rendered: unselected, restored: true},
-		"unreadable": {rendered: nil, fails: true},
+		"selected":        {profile: transportProfile{Fence: true}, selected: true},
+		"active":          {profile: transportProfile{Fence: true, Proxy: true}, selected: true},
+		"unselected":      {restored: true},
+		"unfenced-active": {profile: transportProfile{Proxy: true}, fails: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			restored := false
-			got, err := restoreBaseline(tc.rendered, func() error { restored = true; return nil })
+			got, err := restoreBaseline(tc.profile, func() error { restored = true; return nil })
 			if (err != nil) != tc.fails || got != tc.selected || restored != tc.restored {
 				t.Fatalf("selected=%v restored=%v err=%v", got, restored, err)
 			}
 		})
 	}
 	failure := errors.New("restore")
-	if _, err := restoreBaseline(unselected, func() error { return failure }); !errors.Is(err, failure) {
+	if _, err := restoreBaseline(transportProfile{}, func() error { return failure }); !errors.Is(err, failure) {
 		t.Fatal("a failed restore was not reported")
 	}
 }

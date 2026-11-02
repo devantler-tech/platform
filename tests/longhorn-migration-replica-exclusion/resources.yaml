@@ -1,0 +1,78 @@
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-cx43-0123456789abcdef
+  namespace: longhorn-system
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-cx43-1123456789abcdef
+  namespace: longhorn-system
+  labels:
+    storage.platform.devantler.tech/migration-enabled: "true"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-longhorn-v1-0123456789abcdef
+  namespace: longhorn-system
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-longhorn-v1-1123456789abcdef
+  namespace: longhorn-system
+  labels:
+    storage.platform.devantler.tech/migration-enabled: "true"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-longhorn-v2-2123456789abcdef
+  namespace: longhorn-system
+  labels:
+    storage.platform.devantler.tech/migration-enabled: "true"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: autoscale-longhorn-v10-0123456789abcdef
+  namespace: longhorn-system
+  labels:
+    storage.platform.devantler.tech/migration-enabled: "true"
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}
+---
+apiVersion: longhorn.io/v1beta2
+kind: Node
+metadata:
+  name: prod-worker-1
+  namespace: longhorn-system
+spec:
+  allowScheduling: true
+  evictionRequested: false
+  disks: {}

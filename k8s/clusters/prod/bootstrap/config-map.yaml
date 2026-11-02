@@ -98,7 +98,7 @@ data:
   snapshot_controller_replicas: "2"
   # --- Longhorn distributed storage ---
   # All 3 static workers carry Longhorn disks (labeled with
-  # node.longhorn.io/create-default-disk=true). Replica count matches the
+  # node.longhorn.io/create-default-disk=config). Replica count matches the
   # worker count (3), so every volume is fully replicated across all storage
   # nodes.
   longhorn_replica_count: "3"

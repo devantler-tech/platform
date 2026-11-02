@@ -7,12 +7,14 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // proxyFixture admits the declared public adapter, without company data or credentials.
 func proxyFixture(t *testing.T) ([]byte, []byte) {
 	t.Helper()
-	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
+	image := "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:3c83be721743e85c455eaacb82d6db0ad442496c9d8c2d54b509430489ec9f82"
 	p := changePod(t, fixturePod(t), func(p map[string]any) {
 		spec := p["spec"].(map[string]any)
 		containers := spec["containers"].([]any)
@@ -29,13 +31,22 @@ func proxyFixture(t *testing.T) ([]byte, []byte) {
 			"state": map[string]any{"running": map[string]any{"startedAt": "2026-10-27T00:00:00Z"}},
 		})
 	})
-	config, err := os.ReadFile("../../k8s/bases/apps/private-mail-proxy-identity/Caddyfile")
+	source, err := os.ReadFile("../../k8s/bases/apps/private-mail-proxy-identity/kustomization.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var bundle struct {
+		ConfigMapGenerator []struct {
+			Literals []string `yaml:"literals"`
+		} `yaml:"configMapGenerator"`
+	}
+	if err := yaml.Unmarshal(source, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	config := strings.TrimPrefix(bundle.ConfigMapGenerator[0].Literals[0], "Caddyfile=")
 	cm, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{"name": "email-client-proxy-kkm788c4m9", "namespace": "private-mail", "uid": "00000000-0000-0000-0000-000000000004", "resourceVersion": "9"},
-		"data":     map[string]string{"Caddyfile": string(config)},
+		"data":     map[string]string{"Caddyfile": config},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -65,9 +76,9 @@ func TestProxyObservationRejectsUnboundExecution(t *testing.T) {
 					case "unreviewed-image":
 						proxy["image"] = "unreviewed"
 					case "retired-serving-image":
-						spec["containers"].([]any)[0].(map[string]any)["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
+						spec["containers"].([]any)[0].(map[string]any)["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
 					case "retired-proxy-image":
-						proxy["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:7c9f16c880b26765ac0501781b44915e36e94aa7c454dcd1787d0edc18eef57d"
+						proxy["image"] = "ghcr.io/devantler-tech/platform-private-mail-bootstrap@sha256:1d812772d101dbb1499c23319b0b8dfe77dc8079f4e45ab046b77dd2ac244376"
 					case "injected-environment":
 						proxy["env"] = []any{map[string]any{"name": "PRIVATE_SENTINEL", "value": "unreviewed"}}
 					case "secret-mount":
