@@ -4,11 +4,8 @@
   "restrict-arc-openbao-listener/public-listener-settings-only": "Enforce",
   "require-baseline-workers-for-hcloud-volumes": "Enforce",
   "report-hcloud-claim-lookup-failure": "Audit",
-  "audit-privileged-rbac/privileged-rules": "Enforce",
+  "audit-privileged-rbac": "Enforce",
   "disallow-latest-tag": "Audit",
-  "restrict-github-team-external-identity/teammemberships-external-name-matches-declared-member": "Enforce",
-  "restrict-github-team-external-identity/teamrepositories-external-name-matches-declared-grant": "Enforce",
-  "restrict-github-team-external-identity/teams-external-name-is-an-approved-identity": "Enforce",
   "restrict-github-team-management/teams-allow-listed": "Enforce",
   "restrict-github-team-management/teams-bind-provider-identity-to-object-name": "Enforce",
   "restrict-github-team-management/teams-not-nested-or-directory-linked": "Enforce",
@@ -46,5 +43,6 @@
   "restrict-arc-retirement/fence-retired-secret": "Enforce",
   "restrict-arc-retirement/preserve-retirement-journal": "Enforce",
   "restrict-arc-retirement/preserve-retiring-namespace": "Enforce",
-  "restrict-arc-openbao-listener-settings": "Enforce"
+  "restrict-arc-openbao-listener-settings": "Enforce",
+  "restrict-github-team-external-identity": "Enforce"
 }

@@ -210,6 +210,7 @@ jobs:
               - 'scripts/tests/kyverno-auth-reviews/**'
               - 'scripts/tests/test-tenant-webapp-boundary.sh'
               - 'scripts/tests/test-arc-listener-admission.sh'
+              - 'scripts/tests/test-github-team-identity-admission.sh'
               - 'scripts/tests/tenant-webapp-admission/**'
               - 'scripts/tests/test-umami-rendered-placement.sh'
               - 'scripts/tests/test-reloader-rendered-placement.sh'
@@ -1955,6 +1956,8 @@ jobs:
           # Reuse the same pinned native compiler build within this job.
           shellcheck scripts/tests/test-arc-listener-admission.sh
           bash scripts/tests/test-arc-listener-admission.sh
+          shellcheck scripts/tests/test-github-team-identity-admission.sh
+          bash scripts/tests/test-github-team-identity-admission.sh
           shellcheck scripts/tests/test-restrict-tenant-secret-stores.sh
           bash scripts/tests/test-restrict-tenant-secret-stores.sh
           shellcheck scripts/tests/test-tenant-controller-namespace-coverage.sh
