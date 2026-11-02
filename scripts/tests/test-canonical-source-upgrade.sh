@@ -57,7 +57,17 @@ jq -n --argjson binding "$old_record" '{apiVersion:"v1",kind:"List",metadata:{},
  status:{observedGeneration:2,artifact:{revision:$binding.sourceIdentity.digest},conditions:[
  {type:"Ready",status:"True",observedGeneration:2},{type:"SourceVerified",status:"True",observedGeneration:2}]}}]}' >"$upgrade_test_work/inventory.json"
 cp "$upgrade_test_work/inventory.json" "$upgrade_test_work/original-inventory.json"
-business_site_manifest_evidence() { cat "$upgrade_test_work/receipt.json"; }
+business_site_manifest_evidence() {
+  business_manifest_publishers "$CANONICAL_APPROVALS_FILE" >"$upgrade_test_work/verified-publishers.json" || return 1
+  if [ "${approval_after_verification_race:-0}" = 1 ]; then
+    # A valid unrelated approval changes after the verifier has consumed policy.
+    # It must not become the policy used for preparing this candidate.
+    awk -F '\t' 'BEGIN {OFS=FS} $1=="aws" {$4="1111111111111111111111111111111111111111"} {print}' \
+      "$tree/scripts/publish-workflow-canonical-approvals.tsv" >"$upgrade_test_work/unverified-approvals.tsv"
+    mv "$upgrade_test_work/unverified-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
+  fi
+  cat "$upgrade_test_work/receipt.json"
+}
 kubectl() {
   if [ -n "${input_race:-}" ]; then
     if [ -e "$upgrade_test_work/read-once" ]; then
@@ -94,6 +104,13 @@ for value in '[.bindings[0].publication.publisherIdentity]' '[]'; do
     exit 1
   fi
 done
+approval_after_verification_race=1
+if prepare >"$upgrade_test_work/result" 2>&1; then
+  echo 'approval change after verification was accepted' >&2;exit 1
+fi
+test ! -e "$upgrade_test_work/candidate"
+cp "$upgrade_test_work/original-approvals.tsv" "$tree/scripts/publish-workflow-canonical-approvals.tsv"
+approval_after_verification_race=0
 observed_business_tuple() {
   local file="$1" tag="$2" digest="$3" publisher="$4"
   awk -F '\t' -v tag="$tag" -v digest="$digest" -v publisher="$publisher" '
