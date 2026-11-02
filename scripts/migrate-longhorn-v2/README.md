@@ -4,9 +4,9 @@ The `Prepare Longhorn V2 Migration` workflow runs guarded steps towards
 platform#5582. It does not migrate a claim, enable V2, disable V1 or remove iSCSI.
 
 This tool lands in stages (platform#5655). Today it has `refresh-clients`, `prepare-worker` and the
-benchmarks. `refresh-clients` holds until the V2 migration pool is in
-`ksail.prod.yaml`, the fixed migration workers are Ready and the host huge-page
-settings are loaded. Worker preparation is below and is dormant; temporary capacity follows in its own change.
+benchmarks. `refresh-clients` holds until the fixed migration workers are Ready and the host
+huge-page settings are loaded. Worker preparation is below and is dormant; enabling temporary
+capacity follows in its own change.
 
 Dispatch only the merged workflow on `main`. Select `refresh-clients` with
 `refresh-longhorn-v2-clients`. It verifies the live host allocation and modules,
@@ -77,8 +77,7 @@ Kubernetes worker before host configuration can be trusted or a host command can
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
 that worker's `EPHEMERAL` partition, so it is the one destructive step in this tool. Nothing on the
-cluster enables it yet: it holds with no write until the V2 pool is in `ksail.prod.yaml`, the
-temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
+cluster enables it yet: it holds with no write until the temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
 on the Node, huge pages are ready and Longhorn's V2 engine is on. Those land in later changes
 (platform#5655).
 
