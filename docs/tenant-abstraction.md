@@ -191,6 +191,21 @@ a new production revocation mechanism.
 and `kubectl`-native with CRD-schema validation; no Helm/overlay stacking; the isolation posture is
 templated verbatim.
 
+### Public business-site staging hold
+
+The platform installs `business-site-staging-hold` before enabling the public
+business application. Tenant writers cannot create, update or delete that named
+Cilium policy in `business-site`, including through reconciliation or pruning.
+The existing trusted platform-controller carve-outs remain; a controller name
+in a tenant namespace does not grant the same authority. Other policy names and
+the same name in other namespaces retain their ordinary admission rules.
+
+Reserved policy names do not inherit an exception for an already noncompliant
+old object: platform creation is not permission for a tenant's later update.
+This ownership boundary is separate from the hold's actual traffic effect.
+Routing, projection and live hold/serve/isolate/recover acceptance remain under
+#5247 before exposure; the source-only baseline does not enable an application.
+
 ### Public business-site configuration identity
 
 The maintained `vault-config` Job declares the `business-site` Kubernetes auth
