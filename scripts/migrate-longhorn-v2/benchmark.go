@@ -13,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
 const benchmarkOwner = "storage.platform.devantler.tech/benchmark-owner"
@@ -20,6 +22,9 @@ const benchmarkOwner = "storage.platform.devantler.tech/benchmark-owner"
 type benchmarkMachine struct{ ProviderID, SystemUUID, OSImage, Architecture string }
 type benchmarkResource struct{ Name, Namespace, UID string }
 type benchmarkRecord struct {
+	Recovery                                                                  *benchmarkRecoveryOwner `json:",omitempty"`
+	PendingCreate                                                             string                  `json:",omitempty"`
+	TagNodes                                                                  map[string]string       `json:",omitempty"`
 	Resources                                                                 map[string]benchmarkResource
 	Version                                                                   int
 	Phase, Source, Run, Image, Workload, Namespace, NamespaceUID, CompletedAt string
@@ -87,7 +92,22 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 		return cm, benchmarkRecord{}, err
 	}
 	var record benchmarkRecord
-	d := json.NewDecoder(strings.NewReader(text(cm, "data", "record")))
+	raw := text(cm, "data", "record")
+	fields := map[string][]string{
+		"":         {"Recovery", "PendingCreate", "TagNodes", "Resources", "Version", "Phase", "Source", "Run", "Image", "Workload", "Namespace", "NamespaceUID", "CompletedAt", "Machines", "Measurements", "Cleaned", "CPU"},
+		"Recovery": {"Source", "Run", "JournalUID", "Deletes"},
+	}
+	for _, kind := range []string{"Namespace", "NetworkPolicy", "Pod", "PersistentVolumeClaim", "StorageClass", "PersistentVolume", "LonghornVolume"} {
+		fields["Resources."+kind] = []string{"Name", "Namespace", "UID"}
+		fields["Recovery.Deletes."+kind] = []string{"Name", "Namespace", "UID"}
+	}
+	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
+		fields["Machines."+name] = []string{"ProviderID", "SystemUUID", "OSImage", "Architecture"}
+	}
+	if len(raw) > 1024*1024 || strictjson.Validate([]byte(raw), fields) != nil {
+		return nil, record, errors.New("benchmark journal is incomplete or ambiguous")
+	}
+	d := json.NewDecoder(strings.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&record) != nil {
 		return nil, record, errors.New("benchmark journal is malformed")
@@ -108,6 +128,16 @@ func readBenchmark(ctx context.Context, c client, phase string) (object, benchma
 	}
 	if err = validateBenchmarkResources(record); err != nil {
 		return nil, record, err
+	}
+	if record.Recovery != nil && (!validBenchmarkOwner(record.Recovery.Run, record.Recovery.Source) || record.Recovery.Run == record.Run || record.Recovery.JournalUID != text(cm, "metadata", "uid") || record.Cleaned) {
+		return nil, record, errors.New("benchmark recovery ownership is invalid")
+	}
+	if record.Recovery != nil {
+		for kind, intent := range record.Recovery.Deletes {
+			if (kind != "Pod" && kind != "NetworkPolicy") || intent.UID == "" || record.Resources[kind] != intent {
+				return nil, record, errors.New("benchmark deletion intent lacks its original UID receipt")
+			}
+		}
 	}
 	return cm, record, nil
 }
@@ -156,9 +186,28 @@ func (c client) create(ctx context.Context, source string, o object) (object, er
 	return created, nil
 }
 
-func benchmarkTags(ctx context.Context, c client, source, tag string, adding bool) error {
+func benchmarkTagNodes(nodes []object) (map[string]string, error) {
+	indexedNodes, err := indexed(nodes)
+	if err != nil {
+		return nil, err
+	}
+	result, seen := map[string]string{}, map[string]bool{}
 	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
-		if err := c.setBenchmarkTag(ctx, source, tag, name, adding); err != nil {
+		uid := text(indexedNodes[name], "metadata", "uid")
+		if uid == "" || seen[uid] {
+			return nil, errors.New("benchmark tag nodes need three distinct Longhorn UIDs")
+		}
+		result[name], seen[uid] = uid, true
+	}
+	return result, nil
+}
+
+func benchmarkTags(ctx context.Context, c client, source, tag string, nodes map[string]string, adding bool) error {
+	if len(nodes) != 3 {
+		return errors.New("benchmark tag node receipts are incomplete")
+	}
+	for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
+		if err := c.setBenchmarkTag(ctx, source, tag, name, nodes[name], adding); err != nil {
 			return err
 		}
 	}
@@ -167,7 +216,10 @@ func benchmarkTags(ctx context.Context, c client, source, tag string, adding boo
 
 // setBenchmarkTag judges every attempt from a fresh read. A node's resource version moves
 // often, and an unretried patch would strand a finished run with no way to recover it.
-func (c client) setBenchmarkTag(ctx context.Context, source, tag, name string, adding bool) error {
+func (c client) setBenchmarkTag(ctx context.Context, source, tag, name, expectedUID string, adding bool) error {
+	if expectedUID == "" {
+		return errors.New("benchmark tag requires its recorded Longhorn node UID")
+	}
 	var err error
 	for attempt := range refreshAttempts {
 		if attempt > 0 {
@@ -178,6 +230,9 @@ func (c client) setBenchmarkTag(ctx context.Context, source, tag, name string, a
 		var n object
 		if n, err = c.get(ctx, "nodes.longhorn.io", "longhorn-system", name, false); err != nil {
 			continue
+		}
+		if text(n, "metadata", "uid") != expectedUID {
+			return errors.New("benchmark Longhorn node was replaced")
 		}
 		owner := text(n, "metadata", "annotations", benchmarkOwner)
 		old, _ := value(n, "spec", "tags").([]any)
@@ -260,32 +315,26 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err != nil {
 		return err
 	}
-	record := benchmarkRecord{Version: 2, Phase: phase, Source: source, Run: runID, Image: fioImage, Workload: benchmarkWorkload(), Namespace: tag, Machines: machines}
+	tagNodes, err := benchmarkTagNodes(s.storageNodes)
+	if err != nil {
+		return err
+	}
+	record := benchmarkRecord{Version: 2, Phase: phase, Source: source, Run: runID, Image: fioImage, Workload: benchmarkWorkload(), Namespace: tag, Machines: machines, TagNodes: tagNodes}
 	body, _ := json.Marshal(record)
 	cm, err := c.create(ctx, source, object{"apiVersion": "v1", "kind": "ConfigMap", "metadata": object{"name": "longhorn-v2-benchmark-" + phase, "namespace": "longhorn-system"}, "data": object{"record": string(body)}})
 	if err != nil {
 		return err
 	}
-	if err = benchmarkTags(ctx, c, source, tag, true); err != nil {
+	if err = benchmarkTags(ctx, c, source, tag, record.TagNodes, true); err != nil {
 		return err
 	}
 	created := map[string]object{}
 	for _, o := range objects {
-		actual, err := c.create(ctx, source, o)
+		actual, err := createBenchmarkScratch(ctx, c, &record, o)
 		if err != nil {
 			return fmt.Errorf("benchmark scratch %s could not be created; preserve the journal: %w", text(o, "kind"), err)
 		}
 		created[text(o, "kind")] = actual
-		if record.Resources == nil {
-			record.Resources = map[string]benchmarkResource{}
-		}
-		record.Resources[text(o, "kind")] = benchmarkIdentity(actual)
-		if text(o, "kind") == "Namespace" {
-			record.NamespaceUID = text(actual, "metadata", "uid")
-		}
-		if err = saveBenchmarkProgress(ctx, c, source, runID, record); err != nil {
-			return err
-		}
 	}
 	pod := created["Pod"]
 	var claim, pv, volume object
@@ -427,7 +476,7 @@ func runBenchmark(ctx context.Context, c client, source, runID, phase string) er
 	if err = cleanupBenchmark(ctx, c, source, tag, created, pv, volume); err != nil {
 		return err
 	}
-	if err = benchmarkTags(ctx, c, source, tag, false); err != nil {
+	if err = benchmarkTags(ctx, c, source, tag, record.TagNodes, false); err != nil {
 		return err
 	}
 	record.NamespaceUID, record.Cleaned, record.CompletedAt = text(created["Namespace"], "metadata", "uid"), true, time.Now().UTC().Format(time.RFC3339)
@@ -504,7 +553,27 @@ func benchmarkIdentity(o object) benchmarkResource {
 }
 
 func validateBenchmarkResources(record benchmarkRecord) error {
+	if record.TagNodes != nil {
+		if len(record.TagNodes) != 3 {
+			return errors.New("benchmark tag node identity is incomplete")
+		}
+		seen := map[string]bool{}
+		for _, name := range []string{"prod-worker-1", "prod-worker-2", "prod-worker-3"} {
+			uid := record.TagNodes[name]
+			if uid == "" || seen[uid] {
+				return errors.New("benchmark tag node identity is invalid")
+			}
+			seen[uid] = true
+		}
+	}
 	names := map[string]string{"Namespace": record.Namespace, "NetworkPolicy": "fio-default-deny", "Pod": "fio", "PersistentVolumeClaim": "fio-data", "StorageClass": "lh-benchmark-" + record.Phase + "-" + record.Run, "PersistentVolume": "", "LonghornVolume": ""}
+	if record.PendingCreate != "" {
+		_, known := names[record.PendingCreate]
+		_, recorded := record.Resources[record.PendingCreate]
+		if !known || record.PendingCreate == "PersistentVolume" || record.PendingCreate == "LonghornVolume" || recorded || record.Cleaned {
+			return errors.New("benchmark pending creation is invalid")
+		}
+	}
 	if record.Cleaned && len(record.Resources) != len(names) {
 		return errors.New("completed benchmark scratch identities are incomplete")
 	}
@@ -532,8 +601,11 @@ func saveBenchmarkProgress(ctx context.Context, c client, source, runID string, 
 	if err != nil {
 		return err
 	}
-	if cm == nil || previous.Source != source || previous.Run != runID || previous.Cleaned {
+	if cm == nil || previous.Source != source || previous.Run != runID || previous.Cleaned || previous.Recovery != nil || record.Recovery != nil {
 		return errors.New("benchmark journal ownership changed")
+	}
+	if !reflect.DeepEqual(previous.TagNodes, record.TagNodes) {
+		return errors.New("benchmark tag node identities changed")
 	}
 	for kind, old := range previous.Resources {
 		if record.Resources[kind] != old {

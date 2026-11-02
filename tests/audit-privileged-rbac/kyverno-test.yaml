@@ -9,11 +9,13 @@ resources:
   - resources.yaml
 results:
   - policy: audit-privileged-rbac
-    rule: privileged-rules
     kind: ClusterRole
     result: pass
     resources:
       - read-only-rbac
+      # An excluded ClusterRole is a current pass, whatever it grants. The control in
+      # scripts/tests/test-audit-privileged-rbac.sh proves the list is what passes it.
+      - crossplane-rbac-manager
       - application-manager
       - read-all
       - inert-custom-group-verb
@@ -24,7 +26,6 @@ results:
       - null-rules
       - non-resource-health-reader
   - policy: audit-privileged-rbac
-    rule: privileged-rules
     kind: ClusterRole
     result: fail
     resources:
@@ -48,18 +49,7 @@ results:
       - resource-name-constrained
       # A name that only extends an excluded name is not excluded.
       - crossplane-rbac-manager-lookalike
-  # An excluded ClusterRole is a current skip (a false precondition), whatever it
-  # grants. kyverno test also reports a rule that never matched as skip, so this row
-  # alone cannot tell the two apart: the policy report in
-  # scripts/tests/test-audit-privileged-rbac.sh is what proves the precondition skipped it.
   - policy: audit-privileged-rbac
-    rule: privileged-rules
-    kind: ClusterRole
-    result: skip
-    resources:
-      - crossplane-rbac-manager
-  - policy: audit-privileged-rbac
-    rule: privileged-rules
     kind: Role
     result: pass
     resources:
@@ -69,14 +59,13 @@ results:
       - sample/inert-namespaced-auth-impersonation
       - sample/inert-namespaced-clusterrole-escalation
   - policy: audit-privileged-rbac
-    rule: privileged-rules
     kind: Role
     result: fail
     resources:
       - sample/namespaced-wildcard
       - sample/impersonate-serviceaccounts
       - sample/namespaced-clusterrole-bind
-  # Not listed here: the Role exclusion velero/velero-server (a current skip) and the
+  # Not listed here: the Role exclusion velero/velero-server (a current pass) and the
   # two same-name lookalikes, the Role sample/velero-server and the ClusterRole
   # velero-server (both fail). kyverno test pairs a row by name alone, ignoring
   # namespace and kind, so it cannot tell those three apart;

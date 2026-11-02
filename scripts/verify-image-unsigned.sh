@@ -103,6 +103,14 @@ esac
 command -v curl >/dev/null 2>&1 || fail_unknown 'curl is not installed'
 command -v jq >/dev/null 2>&1 || fail_unknown 'jq is not installed'
 
+# Older curl only enforces Content-Length, so an unknown-length response could
+# otherwise fill the private temporary filesystem before a post-read check.
+curl_version="$(curl --version 2>/dev/null)" || fail_unknown 'could not determine curl version'
+curl_version_re='^curl ([0-9]{1,3})\.([0-9]{1,3})\.'
+[[ "${curl_version}" =~ ${curl_version_re} ]] || fail_unknown 'could not determine curl version'
+(( 10#${BASH_REMATCH[1]} > 8 || (10#${BASH_REMATCH[1]} == 8 && 10#${BASH_REMATCH[2]} >= 4) )) ||
+  fail_unknown 'curl 8.4 or newer is required for bounded response streaming'
+
 work="$(mktemp -d)" || fail_unknown 'could not create a private working directory'
 readonly work
 trap 'rm -rf "${work}"' EXIT
@@ -123,11 +131,21 @@ conf_string() {
   printf '"%s"' "${value}"
 }
 
-# http <url> <accept> <output file> — prints the HTTP status, or 000 when no
-# response was received. Authentication comes only from the config file.
+# http <url> <accept> <output file> — prints a status only for a complete,
+# bounded transfer. Authentication comes only from the config file.
 http() {
-  local code
-  code="$(curl -sS --max-time 20 --config "${conf}" -H "Accept: $2" -o "$3" -w '%{http_code}' "$1" 2>/dev/null)" || true
+  local code size
+  if ! code="$(curl -sS --max-time 20 --max-filesize 2097152 --config "${conf}" -H "Accept: $2" -o "$3" -w '%{http_code}' "$1" 2>/dev/null)"; then
+    printf '000'
+    return
+  fi
+  if [[ "$3" != /dev/null ]]; then
+    size="$(wc -c <"$3")" || { printf '000'; return; }
+    if [[ ! "${size}" =~ ^[[:space:]]*[0-9]+[[:space:]]*$ ]] || (( size > 2097152 )); then
+      printf '000'
+      return
+    fi
+  fi
   [[ "${code}" =~ ^[0-9]{3}$ ]] || code='000'
   printf '%s' "${code}"
 }

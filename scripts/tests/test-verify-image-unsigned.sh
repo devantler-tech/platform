@@ -47,13 +47,18 @@ cat >"${fake_bin}/curl" <<'FAKE'
 set -uo pipefail
 dir="${FAKE_CURL_DIR}"
 printf '%s\n' "$*" >>"${dir}/argv.log"
+if [[ "${1:-}" == '--version' ]]; then
+  if [[ -f "${dir}/curl_version" ]]; then cat "${dir}/curl_version"; else printf 'curl 8.14.1 test\n'; fi
+  exit 0
+fi
 
-conf='' out='' fmt='' url=''
+conf='' out='' fmt='' url='' max_size='' transfer_kind=''
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --config) conf="$2"; shift ;;
     -o) out="$2"; shift ;;
     -w) fmt="$2"; shift ;;
+    --max-filesize) max_size="$2"; shift ;;
     -H | --max-time) shift ;;
     -*) ;;
     *) url="$1" ;;
@@ -81,11 +86,15 @@ value() {
 emit() {
   if [[ -n "${out}" ]]; then printf '%s' "${2:-}" >"${out}"; fi
   [[ "${fmt}" == '%{http_code}' ]] && printf '%s' "$1"
+  if [[ -f "${dir}/${transfer_kind}_transfer_exit" ]]; then
+    exit "$(cat "${dir}/${transfer_kind}_transfer_exit")"
+  fi
   exit 0
 }
 
 case "${url}" in
   */token'?'*)
+    transfer_kind=token
     [[ "${conf_text}" == *'user = "fake-user:fake-password"'* ]] || emit 401 '{}'
     emit "$(value token_status 200)" "$(value token_body '{"token":"fake-bearer-token"}')"
     ;;
@@ -95,12 +104,12 @@ esac
 [[ "${conf_text}" == *'Authorization: Bearer fake-bearer-token'* ]] || emit 401 ''
 
 case "${url}" in
-  */manifests/sha256:*) emit "$(value digest_status 200)" ;;
-  */manifests/sha256-*.sig) emit "$(value sig_status 404)" ;;
-  */manifests/sha256-*.att) emit "$(value att_status 404)" ;;
-  */manifests/sha256-*.sbom) emit "$(value sbom_status 404)" ;;
-  */manifests/sha256-*) emit "$(value tag_status 404)" ;;
-  */referrers/*) emit "$(value referrers_status 404)" "$(value referrers_body '')" ;;
+  */manifests/sha256:*) transfer_kind=digest; emit "$(value digest_status 200)" ;;
+  */manifests/sha256-*.sig) transfer_kind=sig; emit "$(value sig_status 404)" ;;
+  */manifests/sha256-*.att) transfer_kind=att; emit "$(value att_status 404)" ;;
+  */manifests/sha256-*.sbom) transfer_kind=sbom; emit "$(value sbom_status 404)" ;;
+  */manifests/sha256-*) transfer_kind=tag; emit "$(value tag_status 404)" ;;
+  */referrers/*) transfer_kind=referrers; emit "$(value referrers_status 404)" "$(value referrers_body '')" ;;
 esac
 emit 599 ''
 FAKE
@@ -155,6 +164,40 @@ stage referrers_status 200
 stage referrers_body '{"schemaVersion":2,"manifests":[]}'
 run_verify
 expect 'an empty referrers index is UNSIGNED' 0 'UNSIGNED:'
+
+# A received HTTP code never overrides an incomplete or unbounded transfer.
+for endpoint in token digest tag sig att sbom referrers; do
+  reset_state
+  stage "${endpoint}_transfer_exit" 18
+  run_verify
+  expect "${endpoint} status with an interrupted transfer is UNKNOWN" 3 'UNKNOWN:'
+done
+
+reset_state
+stage curl_version 'curl 8.3.0 test'
+run_verify
+expect 'curl without streaming size enforcement is UNKNOWN' 3 'UNKNOWN:'
+
+for endpoint in token referrers; do
+  reset_state
+  if [[ "${endpoint}" == token ]]; then
+    stage token_body '{"token":"fake-bearer-token"}'
+  else
+    stage referrers_status 200
+    stage referrers_body '{"manifests":[]}'
+  fi
+  head -c 2097153 /dev/zero | tr '\0' ' ' >>"${state}/${endpoint}_body"
+  run_verify
+  expect "oversized ${endpoint} body is UNKNOWN" 3 'UNKNOWN:'
+done
+
+reset_state
+run_verify
+[[ "${rc}" == 0 ]] || fail "bounded transfer case should succeed: ${out}"
+while IFS= read -r args; do
+  [[ "${args}" == '--version' || "${args}" == *'--max-filesize 2097152 '* ]] || fail 'a registry transfer omitted its byte bound'
+done <"${state}/argv.log"
+check 'every registry response has a two MiB transfer bound'
 
 # --- Secrets never reach curl's argv ---------------------------------------------
 reset_state

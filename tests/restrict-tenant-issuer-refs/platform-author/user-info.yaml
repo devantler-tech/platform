@@ -1,0 +1,11 @@
+---
+apiVersion: cli.kyverno.io/v1alpha1
+kind: UserInfo
+metadata:
+  name: platform-author
+userInfo:
+  username: system:serviceaccount:flux-system:kustomize-controller
+  groups:
+    - system:serviceaccounts
+    - system:serviceaccounts:flux-system
+    - system:authenticated
