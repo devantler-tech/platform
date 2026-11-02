@@ -9,6 +9,7 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   push:
     branches: [main]
@@ -18,6 +19,7 @@ on:
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
       - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
+      - k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
       - scripts/tests/test-kubescape-storage-hotfix.sh
   workflow_dispatch:
 
@@ -30,11 +32,12 @@ concurrency:
 env:
   KUBESCAPE_STORAGE_SOURCE_COMMIT: b35788b68337134fc2514574cde1ba7f1225fd43
   IMAGE: ghcr.io/devantler-tech/platform-kubescape-storage
-  IMAGE_TAG: v0.0.297-sqlite-contention.10-${{ github.sha }}
+  IMAGE_TAG: v0.0.297-sqlite-contention.11-${{ github.sha }}
   PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sqlite-contention.patch
   CLEANUP_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-scan-record-cleanup.patch
   SUMMARY_REPAIR_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-metadata-repair.patch
   NATIVE_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-summary-native-codec.patch
+  SBOM_CODEC_PATCH_PATH: k8s/bases/infrastructure/controllers/kubescape/storage-v0.0.297-sbom-forward-codec.patch
 
 jobs:
   verify:
@@ -75,6 +78,7 @@ jobs:
           CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
           NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
+          SBOM_CODEC_PATCH: ${{ github.workspace }}/${{ env.SBOM_CODEC_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -91,8 +95,18 @@ jobs:
           git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
           test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
           test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 3c27c5a8d6b583a1b314619c56bf03d2958a13ca
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = f9dd4f9c908002352e5e63990c9fb44303804879
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 84836b7818ac5812f4ffc1b41fba528f0c50c820
+          git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"
+          git apply --unidiff-zero "${SBOM_CODEC_PATCH}"
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 9543f961e697d8daa7ed54d1f42cb0b857f6f848
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = ea67fc8f1979614888f32ab632e03b509b31530f
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 2d85a42091d0512b6d3ccb23e9044b426abb25f2
+          test "$(git hash-object pkg/apis/softwarecomposition/packagemetadata/forward.go)" = 2414195cc561eeeb36770260d11d111472a9e2b8
+          test "$(git hash-object pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go)" = 7280eebef1916127dc21642e3f6663b19ca44a46
           git diff --check
-          go test -race ./pkg/registry/file
+          go test -race ./pkg/apis/softwarecomposition/... ./pkg/registry/file
 
       - name: Build compatibility image without publishing
         working-directory: upstream
@@ -141,6 +155,7 @@ jobs:
           CLEANUP_PATCH: ${{ github.workspace }}/${{ env.CLEANUP_PATCH_PATH }}
           SUMMARY_REPAIR_PATCH: ${{ github.workspace }}/${{ env.SUMMARY_REPAIR_PATCH_PATH }}
           NATIVE_CODEC_PATCH: ${{ github.workspace }}/${{ env.NATIVE_CODEC_PATCH_PATH }}
+          SBOM_CODEC_PATCH: ${{ github.workspace }}/${{ env.SBOM_CODEC_PATCH_PATH }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${EXPECTED_SOURCE_COMMIT}"
@@ -157,6 +172,16 @@ jobs:
           git apply --unidiff-zero "${NATIVE_CODEC_PATCH}"
           test "$(git hash-object pkg/registry/file/summary_metadata_repair.go)" = 8e0b39495ccf9d24de543443fec7169b36cadc5a
           test "$(git hash-object pkg/registry/file/summary_metadata_repair_test.go)" = 24ef7781d710ce92453fed46ec92b0dd52830f89
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 3c27c5a8d6b583a1b314619c56bf03d2958a13ca
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = f9dd4f9c908002352e5e63990c9fb44303804879
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 84836b7818ac5812f4ffc1b41fba528f0c50c820
+          git apply --check --unidiff-zero "${SBOM_CODEC_PATCH}"
+          git apply --unidiff-zero "${SBOM_CODEC_PATCH}"
+          test "$(git hash-object pkg/apis/softwarecomposition/syfttypes.go)" = 9543f961e697d8daa7ed54d1f42cb0b857f6f848
+          test "$(git hash-object pkg/apis/softwarecomposition/v1beta1/syfttypes.go)" = ea67fc8f1979614888f32ab632e03b509b31530f
+          test "$(git hash-object pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go)" = 2d85a42091d0512b6d3ccb23e9044b426abb25f2
+          test "$(git hash-object pkg/apis/softwarecomposition/packagemetadata/forward.go)" = 2414195cc561eeeb36770260d11d111472a9e2b8
+          test "$(git hash-object pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go)" = 7280eebef1916127dc21642e3f6663b19ca44a46
           git diff --check
 
       - name: Set up Buildx container driver
