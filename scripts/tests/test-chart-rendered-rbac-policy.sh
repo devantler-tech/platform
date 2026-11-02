@@ -4,7 +4,7 @@
 # before admission: a chart bump that renames an excluded role, broadens one, or adds
 # a privileged one would pass its own PR and then fail or silently widen the cluster.
 # This test renders each chart the way production does: from the production
-# controllers overlay, with the production Flux substitutions, at the production
+# infrastructure layers, with the production Flux substitutions, at the production
 # Kubernetes version, as both an install and an upgrade. It checks the rendered RBAC
 # four ways:
 #   1. the Enforce policy passes every role it evaluates;
@@ -23,7 +23,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/audit-privileged-rbac.yaml"
-overlay="${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
+overlays=(
+  "${repo_root}/k8s/providers/hetzner/infrastructure/controllers"
+  "${repo_root}/k8s/providers/hetzner/infrastructure"
+)
 baseline="${repo_root}/tests/chart-rendered-rbac-policy/excluded-role-grants.json"
 builtin_baseline="${repo_root}/tests/chart-rendered-rbac-policy/builtin-aggregate-contributors.json"
 prod_config="${repo_root}/ksail.prod.yaml"
@@ -127,7 +130,15 @@ substitute() {
     }' "${scratch}/variables.tsv" "$1"
 }
 
-kubectl kustomize "$overlay" >"${scratch}/overlay-raw.yaml"
+# A release can follow its chart source in the next Flux layer. Preserve both
+# effective production compositions; the exact-one release/source checks below
+# still refuse omissions and duplicates rather than selecting the first match.
+{
+  for overlay in "${overlays[@]}"; do
+    printf -- '---\n'
+    kubectl kustomize "$overlay"
+  done
+} >"${scratch}/overlay-raw.yaml"
 
 for name in "${releases[@]}"; do
   unexpected="$(yq -o=json "select(.kind == \"HelmRelease\" and .metadata.name == \"${name}\")" \
@@ -180,7 +191,7 @@ render() {
   yq -o=json "select(.kind == \"HelmRelease\" and .metadata.name == \"${name}\")" \
     "${scratch}/overlay.yaml" >"${work}/release.json"
   [ "$(jq -s length "${work}/release.json")" -eq 1 ] ||
-    fail "${name}: expected exactly one HelmRelease in the production controllers overlay"
+    fail "${name}: expected exactly one HelmRelease in the production infrastructure layers"
 
   bash "${repo_root}/scripts/tests/resolve-rendered-chart.sh" \
     "${work}/release.json" "${scratch}/overlay.yaml" >"${work}/chart.json"

@@ -158,6 +158,8 @@ spec:
             - "https://hubble.${domain}:443/oauth2/callback"
             - "https://ksail.${domain}/oauth2/callback"
             - "https://ksail.${domain}:443/oauth2/callback"
+            - "https://longhorn.${domain}/oauth2/callback"
+            - "https://longhorn.${domain}:443/oauth2/callback"
             - "https://observability.${domain}/oauth2/callback"
             - "https://observability.${domain}:443/oauth2/callback"
             - "https://policy-reporter.${domain}/oauth2/callback"

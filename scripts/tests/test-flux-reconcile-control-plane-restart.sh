@@ -176,7 +176,7 @@ run_case partial 1 2 "1 0" 0 3
 #     moment this deploy may be restarting the API server's clients — so an
 #     unbounded read would hang the deploy rather than fail it. Structural,
 #     because the fake kubectl cannot observe a real client-side timeout.
-snapshot_queries="$(grep -c -- '--request-timeout="${kubectl_request_timeout}"' "${script}")"
+snapshot_queries="$(grep -Fc -- "--request-timeout=\"\${kubectl_request_timeout}\"" "${script}")"
 [[ "${snapshot_queries}" -eq 2 ]] ||
   fail "both generation queries must bound their read (found ${snapshot_queries} of 2)"
 grep -Eq '^readonly kubectl_request_timeout=.*:-[0-9]+[smh]\}"$' "${script}" ||
@@ -267,5 +267,47 @@ capture_env_path='.runs.steps[] | select(.run | test("--snapshot-baseline")) | .
 capture_baseline="$(yq -r "${capture_env_path}" "${deploy_action}")"
 [[ "${capture_baseline}" == "${reconcile_baseline}" ]] ||
   fail "the capture and the read must name the SAME baseline file (capture=${capture_baseline}, reconcile=${reconcile_baseline})"
+
+# The reviewed mail recovery is allowed one reconcile only after it positively
+# verifies replacement readiness and retained storage. No other result buys one.
+mkdir -p "$tmp_dir/mail-tools"
+cat >"$tmp_dir/mail-tools/go" <<'MAIL_GO'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ "$*" == "run ./scripts/recover-private-mail-probes" ]] || exit 92
+printf 'recovery\n' >>"$MAIL_RECOVERY_LOG"
+exit "$MAIL_RECOVERY_RESULT"
+MAIL_GO
+chmod +x "$tmp_dir/mail-tools/go"
+prior_path="$PATH"
+export PATH="$tmp_dir/mail-tools:$PATH"
+export MAIL_PROBE_ROLLOUT_DIGEST="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+export MAIL_RECOVERY_LOG="$tmp_dir/mail-recovery-calls"
+export MAIL_RECOVERY_RESULT=0
+: >"$MAIL_RECOVERY_LOG"
+run_case mail_recovered 1 1 "1 0"
+[[ "$case_status" -eq 0 && "$case_calls" -eq 2 ]] || fail 'verified mail replacement must permit exactly one full reconcile'
+[[ "$(wc -l <"$MAIL_RECOVERY_LOG" | tr -d ' ')" -eq 1 ]] || fail 'mail replacement must be attempted exactly once'
+
+for recovery_result in 10 2; do
+  export MAIL_RECOVERY_RESULT="$recovery_result"
+  : >"$MAIL_RECOVERY_LOG"
+  run_case "mail_refused_$recovery_result" 1 1 "1 0"
+  [[ "$case_status" -ne 0 && "$case_calls" -eq 1 ]] || fail 'unproved or refused replacement must not retry reconciliation'
+  [[ "$(wc -l <"$MAIL_RECOVERY_LOG" | tr -d ' ')" -eq 1 ]] || fail 'refused replacement must not be retried'
+done
+export MAIL_RECOVERY_RESULT=0
+: >"$MAIL_RECOVERY_LOG"
+run_case mail_persistent 1 1 "1 1 0"
+[[ "$case_status" -ne 0 && "$case_calls" -eq 2 ]] || fail 'a remaining failure must survive the one mail recovery attempt'
+: >"$MAIL_RECOVERY_LOG"
+run_case mail_happy 1 1 "0"
+[[ "$case_status" -eq 0 && "$case_calls" -eq 1 && ! -s "$MAIL_RECOVERY_LOG" ]] || fail 'successful reconciliation must never replace a Pod'
+export PATH="$prior_path"
+unset MAIL_PROBE_ROLLOUT_DIGEST MAIL_RECOVERY_RESULT MAIL_RECOVERY_LOG
+
+digest_env_path='.runs.steps[] | select(.id == "reconcile") | .env.MAIL_PROBE_ROLLOUT_DIGEST // "MISSING"'
+recovery_digest="$(yq -r "$digest_env_path" "$deploy_action")"
+[[ "$recovery_digest" == "\${{ steps.publish_platform_manifest.outputs.digest }}" ]] || fail 'recovery must receive the digest verified and promoted by this deploy'
 
 printf 'PASS: %s\n' "${0##*/}"

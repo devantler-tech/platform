@@ -35,9 +35,10 @@
 #
 # CONTROLLER PROFILE. --flux-version is an explicit, audited offline profile, not live version
 # discovery. Flux 2.9.6 (helm-controller 1.6.5) embeds Helm 4.2.4. Its default postRenderStrategy
-# is `combined`, which also post-renders hooks; this guard renders regular manifests only, so every
-# post-rendered release must set `postRenderStrategy: nohooks` explicitly and any other value, or none,
-# is refused. Other profiles are UNKNOWN until audited. A matching
+# is `combined`, which post-renders hooks and ordinary manifests in one stream.
+# This guard models explicit `nohooks` and `combined` strategies; an omitted
+# strategy or the separate-stream strategy is UNKNOWN until explicitly modeled.
+# Other profiles are UNKNOWN until audited. A matching
 # 2.9.x selector does not prove the running patch: production delivery still needs OIDC readback.
 #
 # ⚠️ WHAT THIS DOES NOT SEE. The chart renders without a cluster, so a template that branches on
@@ -167,6 +168,10 @@ ensure_controller_renderer() {
     die 'cannot read the controller SDK renderer metadata'
   [ "$metadata" = 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ] ||
     die 'the controller SDK renderer has unaudited capability metadata'
+  # Capture Helm's real input to a post-renderer. The final `helm template`
+  # output has already lost transient annotations that a patch may inspect.
+  bash "$(dirname "${BASH_SOURCE[0]}")/prepare-helm-render-input-capture.sh" "$HELM_PLUGINS" ||
+    die 'cannot prepare the private capture plugin'
   controller_helm_checked=1
 }
 
@@ -377,7 +382,7 @@ collect() { # <k8s-root> <out> <kube-version>
       *) die "cluster '$cluster' selector '$selector' does not admit audited Flux $flux_version" ;;
     esac
     profile="$(jq -n --arg flux "$flux_version" --arg helm "$helm_version" --arg kube "$kube_version" --arg selector "$selector" \
-      '{flux: $flux, helm: $helm, kube: $kube, selector: $selector, hooks: "nohooks"}')"
+      '{flux: $flux, helm: $helm, kube: $kube, selector: $selector, hooks: ["nohooks", "combined"]}')"
     while IFS="$tab" read -r doc rendered path; do
       releases="$(yq ea -o=json -I=0 "[. | $post_rendered] | map(select(. != null))" "$rendered.resolved.yaml" 2>"$rendered.releases.err")" ||
         die "cannot parse the substituted HelmReleases rendered from '$path': $(head -c 500 "$rendered.releases.err")"
@@ -451,7 +456,7 @@ apply_post_renderers() { # <record> <stream.yaml> <dir>
 # Flux does.
 check_release() { # <record> <work>
   local record="$1" work="$2" label pull ref repo version chart_desc tgz release namespace
-  local mode error rendered value_ref target value hash dependency pending inspected=0
+  local mode error rendered wire_input value_ref target value hash dependency pending hook_strategy inspected=0
   local value_args=()
   label="$(jq -r '"\(.cluster): HelmRelease \(.release.metadata.namespace)/\(.release.metadata.name)"' "$record")"
   mkdir -p "$work" || die "cannot create '$work'"
@@ -461,8 +466,9 @@ check_release() { # <record> <work>
       (((.kustomize // {}).patches // []) | all(.[]; keys - ["patch", "target"] | length == 0)))' \
     "$record" >/dev/null ||
     die "$label: a post-renderer is not a kustomize patches/images renderer, which is all Flux's Kustomize post-renderer applies — this guard cannot execute it"
-  jq -e '.release.spec.postRenderStrategy == "nohooks"' "$record" >/dev/null ||
-    die "$label: spec.postRenderStrategy must be nohooks; Flux $flux_version otherwise post-renders hooks too, which this guard does not model"
+  jq -e '.release.spec.postRenderStrategy | IN("nohooks", "combined")' "$record" >/dev/null ||
+    die "$label: spec.postRenderStrategy must be explicit nohooks or combined; omitted and separate-stream strategies are not modeled"
+  hook_strategy="$(jq -r '.release.spec.postRenderStrategy' "$record")" || die "$label: cannot read its post-render strategy"
   jq -e '.release.spec.upgrade.preserveValues != true' "$record" >/dev/null ||
     die "$label: spec.upgrade.preserveValues needs historical release values this offline guard cannot read"
   jq -e '((.release.spec.chart.spec.valuesFiles // []) | length == 0) and (.release.spec.chart.spec.valuesFile == null)' \
@@ -573,6 +579,7 @@ check_release() { # <record> <work>
 
   for mode in install upgrade; do
     rendered="$work/$mode.yaml"
+    wire_input="$work/$mode.postrender-input.yaml"
     if [ "$mode" = upgrade ]; then
       set -- --is-upgrade
     else
@@ -581,17 +588,24 @@ check_release() { # <record> <work>
     if [ -n "$kube_version" ]; then
       set -- "$@" --kube-version "$kube_version"
     fi
-    "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
+    HELM_GUARD_CAPTURE="$wire_input" "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
+      --post-renderer guard-input-capture \
       >"$rendered" 2>"$rendered.err" ||
       die "$label: cannot assemble its values or render $chart_desc as an $mode: $(head -c 500 "$rendered.err")"
-    yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$rendered" >"$work/$mode.manifests.yaml" ||
-      die "$label: cannot split the $mode render of $chart_desc into hooks and manifests"
+    [ -s "$wire_input" ] || die "$label: the SDK did not capture the $mode post-renderer input"
+    if [ "$hook_strategy" = nohooks ]; then
+      yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$wire_input" >"$work/$mode.manifests.yaml" ||
+        die "$label: cannot split the $mode render of $chart_desc into hooks and manifests"
+    else
+      yq 'select(tag == "!!map")' "$wire_input" >"$work/$mode.manifests.yaml" ||
+        die "$label: cannot collect the combined $mode render of $chart_desc"
+    fi
       error="$(apply_post_renderers "$record" "$work/$mode.manifests.yaml" "$work/$mode.manifests")"
       case $? in
         0) ;;
         1)
           printf '%s: its post-renderers do not apply to the %s render of %s (%s): %s\n' \
-            "$label" "$mode" "$chart_desc" manifests "$error" >>"$scratch/findings"
+            "$label" "$mode" "$chart_desc" "$hook_strategy" "$error" >>"$scratch/findings"
           return 0
           ;;
         *) exit 2 ;;

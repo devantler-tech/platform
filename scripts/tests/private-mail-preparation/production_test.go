@@ -5,12 +5,13 @@ import (
 	"testing"
 )
 
+// TestProductionAdministrationUsesEncryptedSettings checks the production configuration boundary.
 func TestProductionAdministrationUsesEncryptedSettings(t *testing.T) {
 	objects := render(t, "k8s/providers/hetzner/apps")
 	sts := object(t, objects, "StatefulSet", "private-mail")
 	pod := mapping(t, mapping(t, mapping(t, sts["spec"])["template"])["spec"])
-	if len(sequence(t, pod["initContainers"])) != 1 || len(sequence(t, pod["containers"])) != 1 {
-		t.Fatal("production must initialize before normal administration serving")
+	if len(sequence(t, pod["initContainers"])) != 1 || len(sequence(t, pod["containers"])) != 2 {
+		t.Fatal("production must initialize before serving administration through the client proxy")
 	}
 	secret := object(t, objects, "Secret", "private-mail-settings")
 	if mapping(t, secret["metadata"])["namespace"] != "private-mail" || secret["data"] != nil {
@@ -31,8 +32,8 @@ func TestProductionAdministrationUsesEncryptedSettings(t *testing.T) {
 	}
 	route := object(t, objects, "HTTPRoute", "private-mail")
 	annotations := mapping(t, mapping(t, route["metadata"])["annotations"])
-	if annotations["gethomepage.dev/name"] != "Stalwart" || annotations["gethomepage.dev/group"] != "Personal" {
-		t.Fatal("production must register the Stalwart Homepage entry")
+	if annotations["gethomepage.dev/name"] != "Stalwart" || annotations["gethomepage.dev/group"] != "Email" || annotations["gethomepage.dev/icon"] != "stalwart.svg" {
+		t.Fatal("production must register Stalwart with its logo in the Email section")
 	}
 	for _, o := range objects {
 		m, _ := o["metadata"].(map[string]any)

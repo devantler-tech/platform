@@ -16,7 +16,7 @@
 # WHAT IS SCOPED, AND WHAT IS DELIBERATELY NOT
 # Prose, spelling and link checkers are scoped off k8s/ and .agents/: they have no useful opinion
 # about Kubernetes manifests, and .agents/skills/** is machine-synced daily from
-# devantler-tech/agent-skills by .github/workflows/update-skills.yaml, so findings there cannot be
+# devantler-tech/agent-plugins by .github/workflows/update-skills.yaml, so findings there cannot be
 # fixed here — the next sync overwrites them.
 #
 # The SECURITY scanners are NOT scoped off k8s/, and that is deliberate. It is tempting to argue
@@ -46,7 +46,7 @@ EXCLUDED_DIRECTORIES:
 # be turned off from here — and then stages EVERYTHING (`file_pattern: .`) to push the fixes back.
 # Two things must therefore never be reachable by a fixer, or CI commits them:
 #   * megalinter-reports/ — also in .gitignore now, after it put 182 report files in a branch.
-#   * .agents/ — machine-synced daily from devantler-tech/agent-skills; any fix here is discarded
+#   * .agents/ — machine-synced daily from devantler-tech/agent-plugins; any fix here is discarded
 #     by the next sync, so rewriting those 87 files was pure churn.
 #   * *.enc.yaml — SOPS-encrypted. SOPS writes its own canonical 4-space layout and owns these
 #     files; prettier re-indented `k8s/bases/bootstrap/secret.enc.yaml` to 2 spaces, which the next

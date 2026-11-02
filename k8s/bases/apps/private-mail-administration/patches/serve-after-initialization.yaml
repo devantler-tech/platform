@@ -22,6 +22,8 @@ spec:
         - name: configure
           image: ghcr.io/devantler-tech/platform-private-mail-bootstrap
           imagePullPolicy: IfNotPresent
+          # Rollback overrides a retained encrypted activation setting.
+          args: ["--proxy-client-ip=false"]
           resources:
             requests:
               cpu: 50m
@@ -66,19 +68,60 @@ spec:
             - name: management
               containerPort: 8080
           startupProbe:
-            httpGet:
-              path: /healthz/live
-              port: management
+            # Self-checks use the local process path; client-address security
+            # state must not restart an otherwise healthy serving process.
+            exec:
+              command:
+                - /usr/bin/env
+                - -i
+                - /bin/bash
+                - --noprofile
+                - --norc
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  code=$(/usr/bin/curl --disable --noproxy '*' --http1.1 \
+                    --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                    --connect-timeout 1 --max-time 1 http://127.0.0.1:8080/healthz/live)
+                  [[ "$code" == 200 ]]
+            timeoutSeconds: 2
             periodSeconds: 5
             failureThreshold: 24
           readinessProbe:
-            httpGet:
-              path: /healthz/ready
-              port: management
+            exec:
+              command:
+                - /usr/bin/env
+                - -i
+                - /bin/bash
+                - --noprofile
+                - --norc
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  code=$(/usr/bin/curl --disable --noproxy '*' --http1.1 \
+                    --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                    --connect-timeout 1 --max-time 1 http://127.0.0.1:8080/healthz/ready)
+                  [[ "$code" == 200 ]]
+            timeoutSeconds: 2
           livenessProbe:
-            httpGet:
-              path: /healthz/live
-              port: management
+            exec:
+              command:
+                - /usr/bin/env
+                - -i
+                - /bin/bash
+                - --noprofile
+                - --norc
+                - -euo
+                - pipefail
+                - -c
+                - |
+                  code=$(/usr/bin/curl --disable --noproxy '*' --http1.1 \
+                    --silent --show-error --output /dev/null --write-out '%{http_code}' \
+                    --connect-timeout 1 --max-time 1 http://127.0.0.1:8080/healthz/live)
+                  [[ "$code" == 200 ]]
+            timeoutSeconds: 2
           resources:
             requests:
               cpu: 50m

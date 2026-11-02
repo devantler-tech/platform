@@ -54,7 +54,7 @@ func TestPlanPreservesIdentitiesAndRestrictsLocalRecipients(t *testing.T) {
 		t.Fatal("configuration families missing")
 	}
 	for _, want := range []string{
-		`"matchOn":["name","domainId"]`, `"@type":"Replace"`,
+		`"@type":"Replace"`,
 		`"jmapEmailGet":true`, `"mustMatchSender":{"else":"true","match":{}}`,
 		`"tlsImplicit":true`, `"useTls":true`,
 		`authenticated_as == 'agents@example.test'`, `rcpt == 'maintainer@example.test'`,
@@ -64,7 +64,22 @@ func TestPlanPreservesIdentitiesAndRestrictsLocalRecipients(t *testing.T) {
 			t.Fatalf("missing policy %s", want)
 		}
 	}
-	for _, forbidden := range []string{`"jmapEmailCreate":true`, `"jmapEmailUpdate":true`, `"jmapEmailDestroy":true`, `"jmapEmailImport":true`, `"jmapEmailSubmissionCreate":true`, `"emailTtl"`, `"autoExpunge"`} {
+	var servicePermissions map[string]any
+	for _, op := range operations {
+		if op["object"] == "Account" && op["id"] == "#agents" {
+			servicePermissions = op["value"].(map[string]any)["permissions"].(map[string]any)
+		}
+	}
+	if servicePermissions["@type"] != "Replace" {
+		t.Fatal("service identity retained inherited permissions")
+	}
+	enabled := servicePermissions["enabledPermissions"].(map[string]any)
+	for _, forbidden := range []string{"jmapEmailCreate", "jmapEmailUpdate", "jmapEmailDestroy", "jmapEmailImport", "jmapEmailSubmissionCreate", "sysAccountUpdate", "sysAppPasswordCreate"} {
+		if _, present := enabled[forbidden]; present {
+			t.Fatalf("unsafe service permission %s", forbidden)
+		}
+	}
+	for _, forbidden := range []string{`"emailTtl"`, `"autoExpunge"`} {
 		if strings.Contains(string(b), forbidden) {
 			t.Fatalf("unsafe permission or personal retention %s", forbidden)
 		}

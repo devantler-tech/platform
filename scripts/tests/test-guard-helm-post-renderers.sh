@@ -381,6 +381,41 @@ pr_job_leaf_add() {
 EOF
 }
 
+# A lifecycle patch on an exact hook Job, with its existing annotation map.
+pr_job_hook_cleanup() {
+  cat <<'EOF'
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              group: batch
+              version: v1
+              kind: Job
+              name: flux-operator-migrate
+            patch: |
+              - op: add
+                path: /metadata/annotations/helm.sh~1hook-delete-policy
+                value: before-hook-creation,hook-succeeded
+EOF
+}
+
+# Helm adds this transient annotation before invoking a post-renderer and
+# removes it afterward. A guard must evaluate the actual input to the patch.
+pr_renderer_filename_is() {
+  cat <<'EOF'
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: flux-operator
+            patch: |
+              - op: test
+                path: /metadata/annotations/postrenderer.helm.sh~1postrender-filename
+                value: flux-operator/templates/deployment.yaml
+EOF
+}
+
 # A JSON-6902 test that the rendered replica count is the given number.
 pr_replicas_are() { # <count>
   cat <<EOF
@@ -556,15 +591,35 @@ assert_rc 'nohooks leaves hooks out of post-rendering' 0
   pr_job_leaf_add
 } | RELEASE_STRATEGY=combined release
 run_guard "$TREE"
-assert_rc 'combined post-renders hooks, which this guard does not model' 2
-assert_contains 'the combined strategy is refused' 'must be nohooks'
+assert_rc 'combined detects a patch beneath an absent hook field' 1
+assert_contains 'the hook participates in the install render' 'do not apply to the install render'
+{
+  printf '%s\n' '  values:' '    hook: true'
+  pr_job_hook_cleanup
+} | RELEASE_STRATEGY=combined release
+run_guard "$TREE"
+assert_rc 'combined applies a lifecycle patch to the real hook stream' 0
+assert_contains 'both hook modes are checked' 'install and upgrade'
+pr_renderer_filename_is | RELEASE_STRATEGY=combined release
+run_guard "$TREE"
+assert_rc 'combined evaluates Helm temporary annotations before cleanup' 0
+pr_renderer_filename_is | release
+run_guard "$TREE"
+assert_rc 'nohooks also evaluates the real post-renderer input' 0
+{
+  printf '%s\n' '  values:' '    hook: true'
+  pr_job_hook_cleanup
+} | RELEASE_STRATEGY=separate release
+run_guard "$TREE"
+assert_rc 'separate remains unsupported until its two streams are modeled' 2
+assert_contains 'the separate strategy is refused' 'explicit nohooks or combined'
 {
   printf '%s\n' '  values:' '    hook: true'
   pr_job_leaf_add
 } | RELEASE_STRATEGY='' release
 run_guard "$TREE"
 assert_rc 'an omitted strategy defaults to combined on Flux 2.9.6' 2
-assert_contains 'the omitted strategy is refused' 'must be nohooks'
+assert_contains 'the omitted strategy is refused' 'explicit nohooks or combined'
 
 new_tree
 cat <<'EOF' | release

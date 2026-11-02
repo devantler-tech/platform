@@ -1,0 +1,3 @@
+- op: add
+  path: /metadata/annotations/external-dns.kubernetes.io~1cloudflare-proxied
+  value: "false"

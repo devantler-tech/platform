@@ -1,0 +1,12 @@
+# Temporary native scale-up demand for #5582. The pool's minimum prevents
+# voluntary removal but does not itself provision an empty node group.
+# Remove this buffer after the nodes have been pinned for storage migration.
+apiVersion: autoscaling.x-k8s.io/v1beta1
+kind: CapacityBuffer
+metadata:
+  name: longhorn-migration
+  namespace: overprovisioning
+spec:
+  replicas: 2
+  podTemplateRef:
+    name: longhorn-migration

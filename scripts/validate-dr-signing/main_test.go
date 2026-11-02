@@ -1600,6 +1600,8 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-repository-guards,
+        validate-independent-guards,
+        test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
@@ -1618,6 +1620,8 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
       [
         changes,
         validate-repository-guards,
+        validate-independent-guards,
+        test-publish-release-recovery,
         validate-publication-generator,
         validate-go-regressions,
         validate-webapp-compiler,
@@ -1631,7 +1635,13 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
         validate-rgd-templates-merge-group,
         validate-ghcr-fanout-merge-group,
       ]`
-		healNeeds = "    needs: [changes, deploy-prod, validate-publication-contract, merge-group-queue-membership]"
+		healNeeds = `    needs:
+      [
+        changes,
+        deploy-prod,
+        validate-publication-contract,
+        merge-group-queue-membership,
+      ]`
 	)
 
 	for name, arm := range map[string]struct {

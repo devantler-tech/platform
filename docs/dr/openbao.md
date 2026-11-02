@@ -6,7 +6,7 @@ OpenBao runs as a raft (Integrated Storage) cluster. Three artifacts make it
 recoverable:
 
 1. **Raft snapshots** — the `vault-snapshot` CronJob saves a
-   `bao operator raft snapshot` to the `vault-snapshots` PVC daily (newest 14
+   `bao operator raft snapshot` daily (newest 14
    kept) and mirrors them to the S3 backup target under `openbao-snapshots/`
    (Cloudflare R2 in prod, MinIO locally). The mirror exists because Velero's
    file-system backup only captures volumes mounted by *running* pods —
@@ -30,6 +30,36 @@ installed before it starts. It selects the newest `.snap` object by name and
 downloads only that object. Missing projected credentials or an empty or
 unreachable mirror listing leave the scratch volume empty. When recovery needs
 a snapshot and none is available, the restore guard refuses re-initialization.
+
+## Snapshot storage and verification
+
+Production's initial and scheduled snapshot jobs use the retained
+`vault-snapshots-recovery` claim. The original `vault-snapshots` claim remains
+protected and unmodified. Local deployments keep their original claim. Active
+claims must bind; the temporary preparation marker no longer bypasses readiness.
+
+The snapshot container completes before the mirror starts. The mirror copies
+without remote removal, then downloads each nonempty snapshot and compares its
+SHA-256 with the local bytes. A failed or partial GET fails the run, including a
+GET that delivers a complete body and then returns an error. Production requires
+the projected backup credentials; an empty source also fails. Fresh local
+bootstrap can report `VAULT_SNAPSHOT_REMOTE=UNSEEDED` until credentials arrive.
+
+The fixed `VAULT_SNAPSHOT_REMOTE=VERIFIED count=N` verdict requires matching
+downloaded bytes for every snapshot and successful age-based retention. Retention
+starts after upload and readback; the mirror never uses `--remove`. Credentials,
+client configuration and copied static tools use bounded memory-backed volumes.
+The existing concurrency exclusion, execution deadlines and snapshot resources
+remain in place.
+
+Only the snapshot init container receives the explicitly projected Kubernetes
+token used for its existing OpenBao login. Automatic token mounting is disabled;
+the static-tool installer and remote mirror receive no Kubernetes identity.
+
+Complete recovery acceptance with an isolated restore of the new off-cluster
+snapshot and verification of its credential records using the matching recovery
+keys. Keep #5376 open until that native restore proof is observed, before moving
+Email credentials or retiring legacy custody.
 
 ## Recovery Scenarios
 
@@ -181,6 +211,27 @@ comes first so the claims can be deleted and then recreated empty. A
 `kubectl rollout restart` cannot stand in for these steps: the production
 StatefulSet uses the `OnDelete` update strategy, so a restart changes the
 pod template but recreates no pod.
+
+## Prove recovery before moving Email credentials
+
+After the snapshot repair has deployed and its replacement-storage job has
+completed, dispatch **Verify OpenBao Backup Recovery** from current `main`.
+The confirmation input must be exactly `verify-openbao-backup-recovery`.
+It uses the protected production environment and the shared deployment lock.
+
+The workflow downloads a fresh, complete snapshot from the existing independent
+backup store and binds that download to the listed object. It reads the three
+original Email credential records, then ends its production connection before
+restoring in a disposable, non-root, network-disabled server. It verifies all
+record fields and a fresh unseal with the retained recovery key. Production
+storage, credentials and backup objects are never changed by this verification.
+Private inputs and diagnostic logs stay in temporary RAM storage; the workflow
+publishes only a fixed verdict and removes its owned runtime resources.
+
+Only `OPENBAO_BACKUP_RESTORE=PASS records=3 version=2.6.3` establishes this
+three-record proof. A missing, stale, truncated, changed or mismatched backup
+refuses success. This proof must be expanded before retiring additional records;
+it does not by itself authorize credential migration or legacy-copy removal.
 
 ## References
 

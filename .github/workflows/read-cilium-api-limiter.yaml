@@ -1,0 +1,73 @@
+name: Read Cilium API Limiter
+
+# Finite read-only evidence for #4329. The runner starts only the fixed `cilium-dbg metrics
+# list` command in current cilium-agent containers. It changes no listener, setting or policy.
+# KUBE_CONFIG has the established admin@prod pipeline identity; the agent's reader cannot
+# reach this surface. Reviewed main code, fixed targets/command, a typed confirmation and
+# sanitized output bound this job. No raw metrics, pod identities or kubectl errors are uploaded.
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: read-production-cilium-api-limiter"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: prod-deploy
+  cancel-in-progress: false
+  queue: max
+
+jobs:
+  read:
+    name: Read Cilium endpoint creation timing
+    runs-on: ubuntu-latest
+    timeout-minutes: 65
+    environment: prod
+    permissions:
+      contents: read
+    steps:
+      - name: Require the reviewed main branch
+        shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          [[ "${RUN_REF}" == refs/heads/main ]] || { printf 'Dispatch from reviewed main.\n' >&2; exit 1; }
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Require explicit confirmation
+        shell: bash
+        env:
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [[ "${CONFIRM}" == read-production-cilium-api-limiter ]] || { printf 'Confirmation did not match.\n' >&2; exit 1; }
+
+      - name: Restore kubeconfig
+        shell: bash
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p ~/.kube
+          printf '%s' "${KUBE_CONFIG}" > ~/.kube/config
+          chmod 600 ~/.kube/config
+
+      - name: Select stable prod API endpoint
+        shell: bash
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: ./scripts/use-prod-stable-api-endpoint.sh >/dev/null
+
+      - name: Read bounded limiter samples
+        shell: bash
+        run: ./scripts/read-cilium-api-limiter.sh --context admin@prod

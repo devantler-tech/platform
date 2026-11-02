@@ -6,13 +6,13 @@ set -euo pipefail
 # using the named release's published checksums. A version-only Renovate bump
 # fails closed; a downloaded checksum never replaces a reviewed local pin.
 # renovate: datasource=github-releases depName=sigstore/cosign extractVersion=^v(?<version>.+)$
-COSIGN_VERSION="3.1.3"
+COSIGN_VERSION="3.1.4"
 # cosign_checksums.txt: cosign-linux-amd64
-COSIGN_SHA256="4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71"
+COSIGN_SHA256="424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa"
 # renovate: datasource=github-releases depName=anchore/syft extractVersion=^v(?<version>.+)$
-SYFT_VERSION="1.54.1"
-# syft_1.54.1_checksums.txt: syft_1.54.1_linux_amd64.tar.gz
-SYFT_SHA256="c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47"
+SYFT_VERSION="1.55.0"
+# syft_1.55.0_checksums.txt: syft_1.55.0_linux_amd64.tar.gz
+SYFT_SHA256="bb65249542db5fedeeb4d3f9b018b75e7264dbfbbb10486f044581a92f90490d"
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 ]]; then
   echo '::error::Supply-chain tool pins support Linux x86_64 runners. Add reviewed release digests before using another platform.' >&2

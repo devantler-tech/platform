@@ -1,0 +1,8 @@
+---
+# Synthetic admission input: empty-data.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: arc-openbao-listener
+  namespace: openbao
+data: {}

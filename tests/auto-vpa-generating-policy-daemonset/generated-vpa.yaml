@@ -4,6 +4,11 @@ kind: VerticalPodAutoscaler
 metadata:
   name: shared-daemonset
   namespace: apps-ns
+  ownerReferences:
+    - apiVersion: apps/v1
+      kind: DaemonSet
+      name: shared
+      uid: 00000000-0000-4000-8000-000000000003
 spec:
   targetRef:
     apiVersion: apps/v1

@@ -32,9 +32,9 @@
   "restrict-tenant-webapps": "Enforce",
   "restrict-webapp-child-ownership": "Enforce",
   "restrict-webapp-child-deletion": "Enforce",
-  "restrict-unifi-management-policies/apply-without-delete": "Enforce",
-  "restrict-unifi-management-policies/observe-only-is-observe": "Enforce",
-  "restrict-unifi-management-policies/prune-only-without-delete": "Enforce",
+  "restrict-unifi-apply-management-policies": "Enforce",
+  "restrict-unifi-observe-only": "Enforce",
+  "restrict-unifi-prune-management-policies": "Enforce",
   "validate-host-restrictions": "Enforce",
   "validate-pdb-drain-safe": "Audit",
   "validate-pod-security": "Enforce",
@@ -48,5 +48,6 @@
   "restrict-arc-retirement/fence-credential-recreation": "Enforce",
   "restrict-arc-retirement/fence-retired-secret": "Enforce",
   "restrict-arc-retirement/preserve-retirement-journal": "Enforce",
-  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce"
+  "restrict-arc-retirement/preserve-retiring-namespace": "Enforce",
+  "restrict-arc-openbao-listener-settings": "Enforce"
 }

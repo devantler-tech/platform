@@ -1,17 +1,11 @@
 ---
-# ADOPTED from devantler-tech/kyverno-policies
-# policies/best-practices/auto-vpa-generating-policy.yaml at 44ed118 (#5130), which
-# registers three GeneratingPolicy objects in one file. The platform keeps one
-# resource per file, so it is split into auto-vpa-deployment.yaml (which also
-# carries the catalog's own header), auto-vpa-statefulset.yaml and
-# auto-vpa-daemonset.yaml. Each policy is copied verbatim except for one marked
-# PLATFORM ADDITION: a namespaceSelector that keeps it out of the system
-# namespaces, where prod runs static VPAs of its own. The generate
-# expressions must stay byte-for-byte the catalog's (whitespace aside): both static
-# producer guards pin them (scripts/guard-consumer-discovery-conservation.sh and
-# scripts/tests/crossplane-egress-policy-rules.yaml). The catalog's classic
-# ClusterPolicy form names its VPAs <name>, not <name>-<kind>, so it must never run
-# beside these: every workload would get two VPAs.
+# Ownership metadata backported from devantler-tech/kyverno-policies
+# policies/best-practices/auto-vpa-generating-policy.yaml at
+# 8a36995dcf62df42448f494e024681533ebbe48a (#5408).
+# Keep this consumer's existing <name>-daemonset naming and namespace exclusion.
+# The upstream required-UID expression is inlined so the existing closed producer
+# contract still permits no CEL variables. Sizing and update modes are unchanged.
+# Both consumer-discovery guards pin the complete resulting expression.
 apiVersion: policies.kyverno.io/v1
 kind: GeneratingPolicy
 metadata:
@@ -62,8 +56,14 @@ spec:
               "apiVersion": dyn("autoscaling.k8s.io/v1"),
               "kind": dyn("VerticalPodAutoscaler"),
               "metadata": dyn({
-                "name": string(object.metadata.name) + "-daemonset",
-                "namespace": string(object.metadata.namespace)
+                "name": dyn(string(object.metadata.name) + "-daemonset"),
+                "namespace": dyn(string(object.metadata.namespace)),
+                "ownerReferences": dyn([{
+                  "apiVersion": "apps/v1",
+                  "kind": "DaemonSet",
+                  "name": string(object.metadata.name),
+                  "uid": string([object.metadata.uid].filter(uid, type(uid) == string && size(uid) > 0)[0])
+                }])
               }),
               "spec": dyn({
                 "targetRef": dyn({

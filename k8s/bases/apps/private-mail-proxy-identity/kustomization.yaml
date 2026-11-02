@@ -1,0 +1,97 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../private-mail-administration
+configMapGenerator:
+  - name: email-client-proxy
+    namespace: private-mail
+    # KSail publishes only YAML and JSON files, so a separate Caddyfile would not
+    # reach production. Keeping it here retains the generator's content-hashed name.
+    literals:
+      - |
+        Caddyfile={
+          admin off
+          persist_config off
+          auto_https off
+          log default {
+            level WARN
+            format filter {
+              wrap json
+              fields {
+                request delete
+              }
+            }
+          }
+          servers {
+            trusted_proxies static private_ranges
+            # The gateway sends one address, not a proxy chain. Chain traversal would
+            # skip legitimate private clients as though they were another proxy.
+            client_ip_headers X-Forwarded-For
+            protocols h1
+          }
+        }
+        http://:8081 {
+          # This network check supplements the required gateway-only Cilium identity.
+          # Other private pods still have no network-policy access to this listener.
+          @untrusted not remote_ip private_ranges
+          respond @untrusted 403
+          # The placeholder joins duplicate fields. Equality to the parsed canonical
+          # client rejects a missing/malformed address, a chain and duplicate values.
+          @invalid not expression {header.X-Forwarded-For} == {client_ip}
+          respond @invalid 400
+          reverse_proxy http://127.0.0.1:18081 {
+            header_up -Forwarded
+            header_up -X-Forwarded-For
+            header_up -X-Real-IP
+            transport http {
+              proxy_protocol v2
+              # A connection carries one client's identity. Never pool it across users.
+              keepalive off
+              versions 1.1
+              dial_timeout 1s
+              response_header_timeout 60s
+              network_proxy none
+            }
+          }
+        }
+# The adapter uses the same signed bootstrap publication as the native process.
+# Inheriting a parent image transformer alone does not pin a newly added sidecar.
+replacements:
+  - source:
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+      fieldPath: spec.template.spec.containers.[name=private-mail].image
+    targets:
+      - select:
+          kind: StatefulSet
+          name: private-mail
+          namespace: private-mail
+        fieldPaths:
+          - spec.template.spec.containers.[name=client-proxy].image
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: StatefulSet
+      name: private-mail
+      namespace: private-mail
+    path: patches/configure-proxy-transport.yaml
+  - path: patches/add-client-proxy.yaml
+  - path: patches/isolate-client-proxy.yaml
+  - target:
+      version: v1
+      kind: Service
+      name: private-mail
+      namespace: private-mail
+    path: patches/target-client-proxy.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/trusted-client-header.yaml
+  - target:
+      kind: HTTPRoute
+      name: private-mail
+      namespace: private-mail
+    path: patches/use-direct-email-dns.yaml

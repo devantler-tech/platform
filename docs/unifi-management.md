@@ -7,7 +7,7 @@ state lives in its own repository,
 [`provider-upjet-unifi`](https://github.com/devantler-tech/provider-upjet-unifi)
 provider). On the cluster, a Flux `Kustomization` pulls the repo and applies the
 resources into the `unifi` namespace, and the Crossplane provider continuously
-reconciles each one against the controller API. The Managed Resource *is* the
+reconciles each one against the controller API. The Managed Resource _is_ the
 state (observed status in `.status.atProvider`); there is no Terraform and no
 separate state store.
 
@@ -26,12 +26,12 @@ Broadening coverage (VLANs/WLANs/firewall) and a cross-resource reference for
 
 ## Where it lives
 
-| Piece | Path |
-| --- | --- |
-| Provider install (prod): `Provider` + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy` | `k8s/providers/hetzner/infrastructure/crossplane/` |
-| Tenant (ns, SA/RBAC, netpol, namespaced `SecretStore`, `ProviderConfig`, credential + WireGuard `ExternalSecret`s, `GitRepository`, Flux `Kustomization`) | `k8s/providers/hetzner/apps/unifi/` |
-| OpenBao read policy (`infra-unifi-readonly`) + dedicated `unifi` auth role + placeholder seeding (Job) | `k8s/bases/infrastructure/vault-config/job.yaml` |
-| Registered in the apps overlay | `k8s/providers/hetzner/apps/kustomization.yaml` |
+| Piece                                                                                                                                                     | Path                                               |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------- |
+| Provider install (prod): `Provider` + `DeploymentRuntimeConfig` + `ManagedResourceActivationPolicy`                                                       | `k8s/providers/hetzner/infrastructure/crossplane/` |
+| Tenant (ns, SA/RBAC, netpol, namespaced `SecretStore`, `ProviderConfig`, credential + WireGuard `ExternalSecret`s, `GitRepository`, Flux `Kustomization`) | `k8s/providers/hetzner/apps/unifi/`                |
+| OpenBao read policy (`infra-unifi-readonly`) + dedicated `unifi` auth role + placeholder seeding (Job)                                                    | `k8s/bases/infrastructure/vault-config/job.yaml`   |
+| Registered in the apps overlay                                                                                                                            | `k8s/providers/hetzner/apps/kustomization.yaml`    |
 
 It is a **regular tenant in the apps layer**, reconciled by the shared `apps`
 Flux Kustomization like wedding-app/github-config; the provider itself installs in
@@ -78,6 +78,7 @@ credentials: the Job writes placeholders **only when the path is absent**, so a
 later Job re-run never clobbers the real value. No SOPS, no PushSecret.
 
 **Gate:** overwrite the placeholders in place via the **OpenBao UI** (or CLI):
+
 - `secret/infrastructure/unifi/controller` — `api_url` (controller base URL,
   **without** the `/api` path) and `api_key` (Limited Admin, Local Access Only;
   UniFi OS ≥ 9.0.108).
@@ -104,7 +105,7 @@ create a duplicate:
    a `.status.atProvider` matching the live object. **Only then** remove the annotation
    to manage it. The annotation is what counts: the Platform replaces a
    tenant-declared `spec.managementPolicies` on every managed resource (see
-   *Deletion* below), so `["Observe"]` declared without the annotation is widened.
+   _Deletion_ below), so `["Observe"]` declared without the annotation is widened.
    Declaring both, as the tenant runbook does, is harmless. Set the annotation on
    the resource itself: one added through `commonAnnotations` or a transformer lands
    after the Platform's patches and is refused at admission.
@@ -122,7 +123,7 @@ for the full procedure and how to find a live object's `_id`.
 > `deletionPolicy: Orphan`), so removing a resource from the tenant repository
 > deletes the Managed Resource and leaves the live UniFi object in place,
 > unmanaged. Those patches run at render time inside the tenant's kustomization,
-> so the `restrict-unifi-management-policies` Kyverno policy enforces the same
+> so the separate UniFi apply, observe-only and prune ValidatingPolicy guards enforce the same
 > outcome at admission: the `unifi` ServiceAccount cannot apply a Managed Resource
 > with `Delete` or `*`, nor prune one whose live policies still have them. A source
 > compromise or an accidental removal therefore cannot delete network config; it

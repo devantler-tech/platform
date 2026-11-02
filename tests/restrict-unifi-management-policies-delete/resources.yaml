@@ -35,3 +35,48 @@ metadata:
 spec:
   managementPolicies: [Observe, Delete]
   forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: empty
+  namespace: unifi
+spec:
+  managementPolicies: []
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: null-list
+  namespace: unifi
+spec:
+  managementPolicies: null
+  forProvider: {}
+---
+apiVersion: vpn.unifi.m.crossplane.io/v1beta1
+kind: Client
+metadata:
+  name: beta-wildcard
+  namespace: unifi
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Client
+metadata:
+  name: wrong-group
+  namespace: unifi
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}
+---
+apiVersion: dns.unifi.m.crossplane.io/v1alpha1
+kind: Record
+metadata:
+  name: other-namespace
+  namespace: other
+spec:
+  managementPolicies: ["*"]
+  forProvider: {}

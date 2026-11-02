@@ -52,7 +52,7 @@
 # ⚠️ CANNOT-CHECK IS NEVER CLEAN. A budget nothing rendered satisfies, in a namespace holding a
 # HelmRelease this guard cannot render the way Flux does, is exit 2: a chart source that needs
 # credentials or is not a HelmRepository or OCIRepository, a `valuesFrom` entry without a
-# `targetPath`, `valuesFiles`, `upgrade.preserveValues`, a `postRenderStrategy` other than `nohooks`
+# `targetPath`, `valuesFiles`, `upgrade.preserveValues`, an unsupported post-render strategy
 # (or none on a post-rendered release), a post-renderer that is not a kustomize `patches`/`images`
 # renderer or does not apply, or a chart that fails to pull or render. A chart pull is tried
 # PDB_GUARD_PULL_ATTEMPTS times (default 3), waiting
@@ -162,6 +162,8 @@ ensure_renderer() {
   fi
   [ -x "$controller_helm" ] || die "the controller renderer '$controller_helm' is not executable"
   "$controller_helm" version >/dev/null 2>&1 || die "the controller renderer '$controller_helm' does not run"
+  bash "$script_dir/prepare-helm-render-input-capture.sh" "$HELM_PLUGINS" ||
+    die 'cannot prepare the private capture plugin'
   controller_helm_checked=1
 }
 
@@ -531,7 +533,7 @@ pull_chart() { # <reason-file> <ref> <repo-url or ""> <version or "">
 # <work>/reason, when the release cannot be rendered the way Flux does.
 render_release() { # <resolved.json> <namespace> <name> <work>
   local resolved="$1" ns="$2" name="$3" work="$4" record pull error ref repo version tgz release namespace
-  local mode value_ref target value hash count index
+  local mode value_ref target value hash count index hook_strategy
   local value_args=()
   mkdir -p "$work" || die "cannot create '$work'"
   record="$work/record.json"
@@ -546,14 +548,16 @@ render_release() { # <resolved.json> <namespace> <name> <work>
     cannot "a post-renderer is not a kustomize patches/images renderer"
     return 1
   fi
-  # Only regular manifests are post-rendered here. Flux 2.9 post-renders hooks too unless a
-  # post-rendered release sets nohooks, so any other strategy, or none, is not modelled.
-  if ! jq -e '(.release.spec.postRenderStrategy == "nohooks") or
+  # Combined evaluates hooks in the same stream, then excludes lifecycle hooks
+  # from the ordinary workloads a budget can protect. Missing strategies stay
+  # unknown when a post-renderer exists; separate streams are not modeled.
+  if ! jq -e '(.release.spec.postRenderStrategy | IN("nohooks", "combined")) or
       (.release.spec.postRenderStrategy == null and ((.release.spec.postRenderers // []) | length == 0))' \
     "$record" >/dev/null; then
-    cannot "spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks)"
+    cannot "spec.postRenderStrategy is not modelled (a post-rendered release must set explicit nohooks or combined)"
     return 1
   fi
+  hook_strategy="$(jq -r '.release.spec.postRenderStrategy // "nohooks"' "$record")" || die 'cannot read the post-render strategy'
   if ! jq -e '.release.spec.upgrade.preserveValues != true' "$record" >/dev/null; then
     cannot "spec.upgrade.preserveValues needs historical release values"
     return 1
@@ -644,16 +648,25 @@ render_release() { # <resolved.json> <namespace> <name> <work>
     if [ -n "$kube_version" ]; then
       set -- "$@" --kube-version "$kube_version"
     fi
-    if ! "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
+    if ! HELM_GUARD_CAPTURE="$work/$mode.postrender-input.yaml" "$controller_helm" template "$release" "$tgz" --namespace "$namespace" "${value_args[@]}" "$@" \
+      --post-renderer guard-input-capture \
       >"$work/$mode.rendered.yaml" 2>"$work/$mode.err"; then
       cannot "its chart does not render as an $mode: $(tr '\n' ' ' <"$work/$mode.err" | head -c 300)"
       return 1
     fi
-    # Hooks are not part of the release's manifest, and Flux does not post-render them under nohooks.
+    if [ ! -s "$work/$mode.postrender-input.yaml" ]; then
+      cannot "the SDK did not capture its $mode post-renderer input"
+      return 1
+    fi
     mkdir -p "$work/$mode" || die "cannot create '$work/$mode'"
-    yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode.rendered.yaml" \
-      >"$work/$mode/resources.yaml" 2>"$work/$mode.err" ||
-      die "HelmRelease $ns/$name: cannot read its $mode render: $(head -c 500 "$work/$mode.err")"
+    if [ "$hook_strategy" = combined ]; then
+      yq 'select(tag == "!!map")' "$work/$mode.postrender-input.yaml" >"$work/$mode/resources.yaml" ||
+        die "HelmRelease $ns/$name: cannot collect its combined $mode render"
+    else
+      yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode.postrender-input.yaml" \
+        >"$work/$mode/resources.yaml" 2>"$work/$mode.err" ||
+        die "HelmRelease $ns/$name: cannot read its $mode render: $(head -c 500 "$work/$mode.err")"
+    fi
     index=0
     while [ "$index" -lt "$count" ]; do
       jq --argjson i "$index" '{apiVersion: "kustomize.config.k8s.io/v1beta1", kind: "Kustomization",
@@ -666,7 +679,12 @@ render_release() { # <resolved.json> <namespace> <name> <work>
       mv "$work/$mode.next.yaml" "$work/$mode/resources.yaml" || die "cannot stage the output of post-renderer $((index + 1))"
       index=$((index + 1))
     done
-    cp "$work/$mode/resources.yaml" "$work/$mode.yaml" || die "cannot keep the $mode render of HelmRelease $ns/$name"
+    if [ "$hook_strategy" = combined ]; then
+      yq 'select(tag == "!!map") | select(.metadata.annotations["helm.sh/hook"] == null)' "$work/$mode/resources.yaml" >"$work/$mode.yaml" ||
+        die "cannot retain the ordinary $mode workloads of HelmRelease $ns/$name"
+    else
+      cp "$work/$mode/resources.yaml" "$work/$mode.yaml" || die "cannot keep the $mode render of HelmRelease $ns/$name"
+    fi
   done
 }
 

@@ -1,0 +1,745 @@
+diff --git a/go.mod b/go.mod
+index e2016bd..d5ee233 100644
+--- a/go.mod
++++ b/go.mod
+@@ -404 +404 @@ require (
+-	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772 // indirect
++	google.golang.org/genproto/googleapis/api v0.0.0-20260727163830-6c54dddc4772
+diff --git a/pkg/controllers/report/resource/controller.go b/pkg/controllers/report/resource/controller.go
+index b692ecb..1a90bf1 100644
+--- a/pkg/controllers/report/resource/controller.go
++++ b/pkg/controllers/report/resource/controller.go
+@@ -4,0 +5 @@ import (
++	"errors"
+@@ -12,0 +14 @@ import (
++	celpolicies "github.com/kyverno/kyverno/pkg/cel/policies"
+@@ -400,2 +402,6 @@ func (c *controller) startWatcher(ctx context.Context, logger logr.Logger, gvr s
+-func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchResources, autogenMatchConstraints []*admissionregistrationv1.MatchResources, restMapper meta.RESTMapper) []string {
+-	kinds := admissionpolicy.GetKinds(matchConstraints, restMapper)
++func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchResources, autogenMatchConstraints []*admissionregistrationv1.MatchResources, restMapper meta.RESTMapper, conditions ...string) ([]string, error) {
++	kinds, err := getWatchKinds(matchConstraints, restMapper, conditions...)
++	var resolutionErrors []error
++	if err != nil {
++		resolutionErrors = append(resolutionErrors, err)
++	}
+@@ -403 +409,7 @@ func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchRe
+-		kinds = append(kinds, admissionpolicy.GetKinds(autogenMatchConstraint, restMapper)...)
++		// Autogen targets retain their own expanded kinds; a parent kind equality
++		// must never remove generated controller or custom-resource targets.
++		autogenKinds, err := getWatchKinds(autogenMatchConstraint, restMapper)
++		if err != nil {
++			resolutionErrors = append(resolutionErrors, err)
++		}
++		kinds = append(kinds, autogenKinds...)
+@@ -405 +417 @@ func kindsFromPolicyAndAutogen(matchConstraints *admissionregistrationv1.MatchRe
+-	return kinds
++	return kinds, errors.Join(resolutionErrors...)
+@@ -419 +431,2 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-	kinds := utils.BuildKindSet(logger, utils.RemoveNonValidationPolicies(append(clusterPolicies, policies...)...)...)
++	var watchErrors []error
++	kinds := utils.BuildKindSet(logger, utils.RemoveNonValidationPolicies(utils.RemoveNonBackgroundPolicies(append(clusterPolicies, policies...)...)...)...)
+@@ -423 +436,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++		if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++			watchErrors = append(watchErrors, err)
++		}
+@@ -436 +451,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := admissionpolicy.GetKinds(policy.Spec.MatchConstraints, restMapper)
++			kinds, err := getWatchKinds(policy.Spec.MatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -439 +457,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -450 +470,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := admissionpolicy.GetKinds(converted, restMapper)
++			kinds, err := getWatchKinds(converted, restMapper, betaMatchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -453 +476,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -464 +489,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := admissionpolicy.GetKinds(converted, restMapper)
++			kinds, err := getWatchKinds(converted, restMapper, betaMatchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -467 +495,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -486 +516,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := admissionpolicy.GetKinds(converted, restMapper)
++			kinds, err := getWatchKinds(converted, restMapper, alphaMatchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -489 +522,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -499 +534 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		for _, policy := range vpols {
++		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(vpols) {
+@@ -504 +539,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -507 +545,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -517 +557 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		for _, policy := range vpols {
++		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(vpols) {
+@@ -522 +562,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -525 +568,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -535 +580 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		for _, policy := range mpols {
++		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(mpols) {
+@@ -540 +585,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -543 +591,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -553 +603 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		for _, policy := range mpols {
++		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(mpols) {
+@@ -558 +608,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -561 +614,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -571 +626 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		for _, policy := range ivpols {
++		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(ivpols) {
+@@ -576 +631,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -579 +637,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -589 +649 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-		for _, policy := range ivpols {
++		for _, policy := range celpolicies.RemoveNoneBackgroundPolicies(ivpols) {
+@@ -594 +654,4 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-			kinds := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(policy.Spec.MatchConstraints, autogenMatchConstraints, restMapper, matchConditionExpressions(policy.Spec.MatchConditions)...)
++			if err != nil {
++				watchErrors = append(watchErrors, err)
++			}
+@@ -597 +660,3 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-				c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr)
++				if err := c.addGVKToGVRMapping(group, version, kind, subresource, gvkToGvr); err != nil {
++					watchErrors = append(watchErrors, err)
++				}
+@@ -610,0 +676 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
++				watchErrors = append(watchErrors, fmt.Errorf("start watcher for %s: %w", gvr, err))
+@@ -626 +692 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-	return nil
++	return errors.Join(watchErrors...)
+@@ -629 +695 @@ func (c *controller) updateDynamicWatchers(ctx context.Context) error {
+-func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string, gvrMap map[schema.GroupVersionKind]schema.GroupVersionResource) {
++func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string, gvrMap map[schema.GroupVersionKind]schema.GroupVersionResource) error {
+@@ -630,0 +697 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
++	var mappingErrors []error
+@@ -633,14 +700,14 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
+-	} else {
+-		for gvrs, api := range gvrss {
+-			if gvrs.SubResource == "" {
+-				gvk := schema.GroupVersionKind{Group: gvrs.Group, Version: gvrs.Version, Kind: gvrs.Kind}
+-				if !reportutils.IsGvkSupported(gvk) {
+-					logger.V(2).Info("kind is not supported", "gvk", gvk)
+-				} else {
+-					if slices.Contains(api.Verbs, "list") && slices.Contains(api.Verbs, "watch") {
+-						gvrMap[gvk] = gvrs.GroupVersionResource()
+-					} else {
+-						logger.V(2).Info("list/watch not supported for kind", "kind", kind)
+-					}
+-				}
+-			}
++		mappingErrors = append(mappingErrors, err)
++	}
++	for gvrs, api := range gvrss {
++		if gvrs.SubResource != "" {
++			continue
++		}
++		gvk := schema.GroupVersionKind{Group: gvrs.Group, Version: gvrs.Version, Kind: gvrs.Kind}
++		if !reportutils.IsGvkSupported(gvk) {
++			logger.V(2).Info("kind is not supported", "gvk", gvk)
++			continue
++		}
++		if !slices.Contains(api.Verbs, "list") || !slices.Contains(api.Verbs, "watch") {
++			mappingErrors = append(mappingErrors, fmt.Errorf("list/watch not supported for background kind %s", kind))
++			continue
+@@ -647,0 +715 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
++		gvrMap[gvk] = gvrs.GroupVersionResource()
+@@ -648,0 +717 @@ func (c *controller) addGVKToGVRMapping(group, version, kind, subresource string
++	return errors.Join(mappingErrors...)
+diff --git a/pkg/controllers/report/resource/controller_test.go b/pkg/controllers/report/resource/controller_test.go
+index 80d5966..2a7cb97 100644
+--- a/pkg/controllers/report/resource/controller_test.go
++++ b/pkg/controllers/report/resource/controller_test.go
+@@ -48 +48 @@ func TestKindsFromPolicyAndAutogen(t *testing.T) {
+-			wantKinds:               []string{"v1/Pod"},
++			wantKinds:               []string{"/v1/Pod/"},
+@@ -57 +57 @@ func TestKindsFromPolicyAndAutogen(t *testing.T) {
+-			wantKinds: []string{"v1/Pod", "apps/v1/Deployment", "apps/v1/StatefulSet"},
++			wantKinds: []string{"/v1/Pod/", "apps/v1/Deployment/", "apps/v1/StatefulSet/"},
+@@ -63 +63,2 @@ func TestKindsFromPolicyAndAutogen(t *testing.T) {
+-			kinds := kindsFromPolicyAndAutogen(tt.matchConstraints, tt.autogenMatchConstraints, restMapper)
++			kinds, err := kindsFromPolicyAndAutogen(tt.matchConstraints, tt.autogenMatchConstraints, restMapper)
++			assert.NilError(t, err)
+diff --git a/pkg/controllers/report/resource/watch_kinds.go b/pkg/controllers/report/resource/watch_kinds.go
+new file mode 100644
+index 0000000..a484da5
+--- /dev/null
++++ b/pkg/controllers/report/resource/watch_kinds.go
+@@ -0,0 +1,164 @@
++package resource
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++
++	"github.com/google/cel-go/cel"
++	"github.com/google/cel-go/common/operators"
++	exprpb "google.golang.org/genproto/googleapis/api/expr/v1alpha1"
++	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
++	admissionregistrationv1alpha1 "k8s.io/api/admissionregistration/v1alpha1"
++	admissionregistrationv1beta1 "k8s.io/api/admissionregistration/v1beta1"
++	"k8s.io/apimachinery/pkg/api/meta"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/util/sets"
++)
++
++// requiredWatchKind recognizes only an entire equality between object.kind and
++// a string constant. Match conditions are conjunctive, so this is a necessary
++// condition for a resource to match. Arbitrary CEL is never guessed at or run.
++func requiredWatchKind(expressions []string) (string, bool, bool, error) {
++	if len(expressions) == 0 {
++		return "", false, true, nil
++	}
++	env, err := cel.NewEnv(cel.OptionalTypes())
++	if err != nil {
++		return "", false, false, err
++	}
++	var required string
++	constrained := false
++	for _, expression := range expressions {
++		parsed, issues := env.Parse(expression)
++		if issues.Err() != nil {
++			return "", false, false, issues.Err()
++		}
++		call := parsed.Expr().GetCallExpr()
++		if call.GetFunction() != operators.Equals || call.GetTarget() != nil || len(call.GetArgs()) != 2 {
++			continue
++		}
++		for _, pair := range [][2]*exprpb.Expr{{call.Args[0], call.Args[1]}, {call.Args[1], call.Args[0]}} {
++			selected := pair[0].GetSelectExpr()
++			constant := pair[1].GetConstExpr()
++			if selected.GetField() != "kind" || selected.GetTestOnly() ||
++				selected.GetOperand().GetIdentExpr().GetName() != "object" || constant == nil {
++				continue
++			}
++			literal, ok := constant.ConstantKind.(*exprpb.Constant_StringValue)
++			if !ok {
++				continue
++			}
++			if constrained && required != literal.StringValue {
++				return "", true, false, nil
++			}
++			required, constrained = literal.StringValue, true
++		}
++	}
++	if constrained && strings.ContainsAny(required, "*/?[]") {
++		return "", false, false, fmt.Errorf("kind equality is not a literal discovery kind")
++	}
++	return required, constrained, true, nil
++}
++
++func watchKindSelector(group, version, kind, subresource string) string {
++	// Four components avoid the legacy selector parser's ambiguity between a
++	// wildcard group and version. Keep the empty core group and root subresource.
++	return strings.Join([]string{group, version, kind, subresource}, "/")
++}
++
++// getWatchKinds resolves wildcard API versions through the RESTMapper's partial
++// lookup, retaining exact core-group and resource constraints. Whole-resource
++// wildcards remain discovery selectors, optionally bounded by a proven kind
++// equality. Discovery and permission errors are handled by the caller, never
++// converted into successful empty coverage.
++func getWatchKinds(match *admissionregistrationv1.MatchResources, mapper meta.RESTMapper, expressions ...string) ([]string, error) {
++	if match == nil {
++		return nil, nil
++	}
++	required, constrained, possible, err := requiredWatchKind(expressions)
++	if err != nil {
++		return nil, err
++	}
++	if !possible || constrained && required == "" {
++		return nil, nil
++	}
++	kinds := sets.New[string]()
++	var planningErrors []error
++	for _, rule := range match.ResourceRules {
++		if len(rule.APIGroups) == 0 || len(rule.APIVersions) == 0 || len(rule.Resources) == 0 {
++			planningErrors = append(planningErrors, fmt.Errorf("incomplete resource rule in background watch plan"))
++			continue
++		}
++		for _, group := range rule.APIGroups {
++			for _, version := range rule.APIVersions {
++				for _, resource := range rule.Resources {
++					parent, subresource, _ := strings.Cut(resource, "/")
++					if parent == "*" {
++						kind := "*"
++						if constrained {
++							kind = required
++						}
++						kinds.Insert(watchKindSelector(group, version, kind, subresource))
++						continue
++					}
++					lookup := schema.GroupVersionResource{Group: group, Version: version, Resource: parent}
++					if group == "*" {
++						lookup.Group = ""
++					}
++					if version == "*" {
++						lookup.Version = ""
++					}
++					resources, err := mapper.ResourcesFor(lookup)
++					if err != nil {
++						planningErrors = append(planningErrors, fmt.Errorf("resolve background resource %s/%s/%s: %w", group, version, resource, err))
++						continue
++					}
++					matched := false
++					for _, resolved := range resources {
++						if group != "*" && resolved.Group != group || version != "*" && resolved.Version != version || resolved.Resource != parent {
++							continue
++						}
++						matched = true
++						gvk, err := mapper.KindFor(resolved)
++						if err != nil {
++							planningErrors = append(planningErrors, err)
++							continue
++						}
++						if !constrained || gvk.Kind == required {
++							kinds.Insert(watchKindSelector(gvk.Group, gvk.Version, gvk.Kind, subresource))
++						}
++					}
++					if !matched {
++						planningErrors = append(planningErrors, fmt.Errorf("no exact discovery match for background resource %s/%s/%s", group, version, resource))
++					}
++				}
++			}
++		}
++	}
++	return sets.List(kinds), errors.Join(planningErrors...)
++}
++
++func matchConditionExpressions(conditions []admissionregistrationv1.MatchCondition) []string {
++	expressions := make([]string, 0, len(conditions))
++	for _, condition := range conditions {
++		expressions = append(expressions, condition.Expression)
++	}
++	return expressions
++}
++
++func betaMatchConditionExpressions(conditions []admissionregistrationv1beta1.MatchCondition) []string {
++	expressions := make([]string, 0, len(conditions))
++	for _, condition := range conditions {
++		expressions = append(expressions, condition.Expression)
++	}
++	return expressions
++}
++
++func alphaMatchConditionExpressions(conditions []admissionregistrationv1alpha1.MatchCondition) []string {
++	expressions := make([]string, 0, len(conditions))
++	for _, condition := range conditions {
++		expressions = append(expressions, condition.Expression)
++	}
++	return expressions
++}
+diff --git a/pkg/controllers/report/resource/watch_plan_test.go b/pkg/controllers/report/resource/watch_plan_test.go
+new file mode 100644
+index 0000000..0c1b3b1
+--- /dev/null
++++ b/pkg/controllers/report/resource/watch_plan_test.go
+@@ -0,0 +1,339 @@
++package resource
++
++import (
++	"context"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"testing"
++
++	policiesv1beta1 "github.com/kyverno/api/api/policies.kyverno.io/v1beta1"
++	kyvernov1 "github.com/kyverno/kyverno/api/kyverno/v1"
++	kyvernov1listers "github.com/kyverno/kyverno/pkg/client/listers/kyverno/v1"
++	policiesv1beta1listers "github.com/kyverno/kyverno/pkg/client/listers/policies.kyverno.io/v1beta1"
++	"github.com/kyverno/kyverno/pkg/clients/dclient"
++	"github.com/stretchr/testify/require"
++	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
++	apierrors "k8s.io/apimachinery/pkg/api/errors"
++	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
++	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
++	"k8s.io/apimachinery/pkg/runtime"
++	"k8s.io/apimachinery/pkg/runtime/schema"
++	"k8s.io/apimachinery/pkg/types"
++	"k8s.io/apimachinery/pkg/watch"
++	dynamicfake "k8s.io/client-go/dynamic/fake"
++	kubefake "k8s.io/client-go/kubernetes/fake"
++	clienttesting "k8s.io/client-go/testing"
++	"k8s.io/client-go/tools/cache"
++)
++
++type watchPlanDiscovery struct{ dclient.IDiscovery }
++
++func (d watchPlanDiscovery) FindResources(group, version, kind, subresource string) (map[dclient.TopLevelApiDescription]metav1.APIResource, error) {
++	resources, err := d.IDiscovery.FindResources(group, version, kind, subresource)
++	for key, resource := range resources {
++		resource.Verbs = metav1.Verbs{"get", "list", "watch"}
++		resources[key] = resource
++	}
++	return resources, err
++}
++
++func classicWatchPolicy(t *testing.T, name, kind string, background bool) *kyvernov1.ClusterPolicy {
++	t.Helper()
++	operation := "CREATE"
++	if !background {
++		operation = "DELETE"
++	}
++	data := fmt.Sprintf(`{"apiVersion":"kyverno.io/v1","kind":"ClusterPolicy","metadata":{"name":%q,"resourceVersion":"1","annotations":{"pod-policies.kyverno.io/autogen-controllers":"none"}},"spec":{"background":%t,"rules":[{"name":"check","match":{"any":[{"resources":{"kinds":[%q],"operations":[%q]}}]},"validate":{"message":"A checked label is required.","pattern":{"metadata":{"labels":{"checked":"yes"}}}}}]}}`, name, background, kind, operation)
++	var policy kyvernov1.ClusterPolicy
++	require.NoError(t, json.Unmarshal([]byte(data), &policy))
++	return &policy
++}
++
++func newWatchPlanController(t *testing.T, policies ...*kyvernov1.ClusterPolicy) (*controller, *dynamicfake.FakeDynamicClient) {
++	t.Helper()
++	return newWatchPlanControllerWithResources(t, nil, policies...)
++}
++
++func newWatchPlanControllerWithResources(t *testing.T, additional map[schema.GroupVersionResource]string, policies ...*kyvernov1.ClusterPolicy) (*controller, *dynamicfake.FakeDynamicClient) {
++	t.Helper()
++	pods := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
++	helmReleases := schema.GroupVersionResource{Group: "helm.toolkit.fluxcd.io", Version: "v2", Resource: "helmreleases"}
++	listKinds := map[schema.GroupVersionResource]string{
++		pods:                                                     "PodList",
++		helmReleases:                                             "HelmReleaseList",
++		{Version: "v1", Resource: "configmaps"}:                  "ConfigMapList",
++		{Version: "v1", Resource: "endpoints"}:                   "EndpointsList",
++		{Version: "v1", Resource: "namespaces"}:                  "NamespaceList",
++		{Version: "v1", Resource: "resourcequotas"}:              "ResourceQuotaList",
++		{Version: "v1", Resource: "secrets"}:                     "SecretList",
++		{Version: "v1", Resource: "serviceaccounts"}:             "ServiceAccountList",
++		{Group: "apps", Version: "v1", Resource: "daemonsets"}:   "DaemonSetList",
++		{Group: "apps", Version: "v1", Resource: "deployments"}:  "DeploymentList",
++		{Group: "apps", Version: "v1", Resource: "statefulsets"}: "StatefulSetList",
++	}
++	allowed := map[schema.GroupVersionResource]string{pods: "Pod", helmReleases: "HelmRelease"}
++	for gvr, kind := range additional {
++		allowed[gvr] = kind
++		listKinds[gvr] = kind + "List"
++	}
++	dynamic := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(), listKinds)
++	dynamic.PrependReactor("list", "*", func(action clienttesting.Action) (bool, runtime.Object, error) {
++		kind, ok := allowed[action.GetResource()]
++		if !ok {
++			return true, nil, apierrors.NewForbidden(action.GetResource().GroupResource(), "", errors.New("fixture read denied"))
++		}
++		uid := action.GetResource().Group + "-" + action.GetResource().Resource + "-uid"
++		if action.GetResource() == pods {
++			uid = "sample-uid"
++		} else if action.GetResource() == helmReleases {
++			uid = "helm-uid"
++		}
++		return true, &unstructured.UnstructuredList{
++			Object: map[string]any{"metadata": map[string]any{"resourceVersion": "1"}},
++			Items: []unstructured.Unstructured{{Object: map[string]any{
++				"apiVersion": action.GetResource().GroupVersion().String(), "kind": kind,
++				"metadata": map[string]any{"name": "sample", "namespace": "sample", "uid": uid, "resourceVersion": "1"},
++			}}},
++		}, nil
++	})
++	dynamic.PrependWatchReactor("*", func(clienttesting.Action) (bool, watch.Interface, error) {
++		return true, watch.NewRaceFreeFake(), nil
++	})
++	registrations := make([]schema.GroupVersionResource, 0, len(allowed))
++	for gvr := range allowed {
++		registrations = append(registrations, gvr)
++	}
++	discovery := dclient.NewFakeDiscoveryClient(registrations)
++	for gvr, kind := range allowed {
++		discovery.AddGVRToGVKMapping(gvr, schema.GroupVersionKind{Group: gvr.Group, Version: gvr.Version, Kind: kind})
++	}
++	clusterIndexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	for _, policy := range policies {
++		require.NoError(t, clusterIndexer.Add(policy))
++	}
++	c := &controller{
++		client:          dclient.NewFakeClientWithDisco(dynamic, kubefake.NewSimpleClientset(), watchPlanDiscovery{discovery}),
++		cpolLister:      kyvernov1listers.NewClusterPolicyLister(clusterIndexer),
++		polLister:       kyvernov1listers.NewPolicyLister(cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc})),
++		dynamicWatchers: map[schema.GroupVersionResource]*watcher{},
++		watchDeathChan:  make(chan schema.GroupVersionResource, 100),
++	}
++	t.Cleanup(c.stopDynamicWatchers)
++	return c, dynamic
++}
++
++func TestWatchPlanExcludesAdmissionOnlyWildcard(t *testing.T) {
++	t.Parallel()
++	c, dynamic := newWatchPlanController(t,
++		classicWatchPolicy(t, "admission-fence", "*", false),
++		classicWatchPolicy(t, "background-pods", "Pod", true),
++	)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	for _, action := range dynamic.Actions() {
++		require.Equal(t, "pods", action.GetResource().Resource, "admission-only policy must not cause a resource read")
++	}
++	require.Len(t, c.dynamicWatchers, 1)
++	resource, _, _, exists := c.GetResourceHash("sample-uid")
++	require.True(t, exists, "eligible background resources must remain in the cache")
++	require.Equal(t, "sample", resource.Name)
++}
++
++func TestWatchPlanReportsEligibleReadFailure(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t, classicWatchPolicy(t, "background-secret", "Secret", true))
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.Error(t, c.Warmup(ctx), "denied background observations must not be reported as complete")
++	require.Empty(t, c.dynamicWatchers)
++}
++
++func TestWatchPlanExcludesAdmissionOnlyCEL(t *testing.T) {
++	t.Parallel()
++	c, dynamic := newWatchPlanController(t, classicWatchPolicy(t, "background-pods", "Pod", true))
++	var policy policiesv1beta1.ValidatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"admission-only","resourceVersion":"1"},"spec":{"evaluation":{"background":{"enabled":false}},"matchConstraints":{"resourceRules":[{"apiGroups":[""],"apiVersions":["v1"],"operations":["CREATE"],"resources":["secrets"]}]}}}`), &policy))
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.vpolLister = policiesv1beta1listers.NewValidatingPolicyLister(indexer)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	for _, action := range dynamic.Actions() {
++		require.Equal(t, "pods", action.GetResource().Resource)
++	}
++	require.Len(t, c.dynamicWatchers, 1)
++}
++
++func TestWatchPlanResolvesWildcardVersion(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t)
++	var policy policiesv1beta1.ValidatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"background-pods","resourceVersion":"1"},"spec":{"evaluation":{"background":{"enabled":true}},"matchConstraints":{"resourceRules":[{"apiGroups":[""],"apiVersions":["*"],"operations":["CREATE"],"resources":["pods"]}]}}}`), &policy))
++	policy.Spec.MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "optional-label", Expression: "object.metadata.?labels[?'checked'].orValue('') != 'exempt'"}}
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.vpolLister = policiesv1beta1listers.NewValidatingPolicyLister(indexer)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	require.Len(t, c.dynamicWatchers, 1, "wildcard versions must retain eligible resource coverage")
++	_, _, _, exists := c.GetResourceHash("sample-uid")
++	require.True(t, exists)
++}
++
++func TestWatchPlanRetainsKindConstrainedWildcard(t *testing.T) {
++	t.Parallel()
++	c, dynamic := newWatchPlanController(t)
++	var policy policiesv1beta1.MutatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"background-helm","resourceVersion":"1"},"spec":{"matchConditions":[{"name":"helm-kind","expression":"object.kind == 'HelmRelease'"}],"matchConstraints":{"resourceRules":[{"apiGroups":["*"],"apiVersions":["*"],"operations":["CREATE","UPDATE"],"resources":["*"]}]}}}`), &policy))
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.mpolLister = policiesv1beta1listers.NewMutatingPolicyLister(indexer)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	require.Len(t, c.dynamicWatchers, 1)
++	for _, action := range dynamic.Actions() {
++		require.Equal(t, "helmreleases", action.GetResource().Resource)
++	}
++	_, _, _, exists := c.GetResourceHash("helm-uid")
++	require.True(t, exists, "the policy must keep reporting without unrelated reads")
++}
++
++func TestWatchPlanRejectsUnknownEligibleKind(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t, classicWatchPolicy(t, "missing-kind", "NotRegistered", true))
++	require.Error(t, c.Warmup(t.Context()), "failed discovery must not masquerade as an empty watch plan")
++}
++
++func TestWatchPlanPreservesKindOnlyCrossGroupCoverage(t *testing.T) {
++	t.Parallel()
++	other := schema.GroupVersionResource{Group: "example.test", Version: "v1", Resource: "releases"}
++	c, dynamic := newWatchPlanControllerWithResources(t, map[schema.GroupVersionResource]string{other: "HelmRelease"})
++	var policy policiesv1beta1.MutatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"kind-only","resourceVersion":"1"},"spec":{"matchConditions":[{"name":"helm-kind","expression":"'HelmRelease' == object.kind"}],"matchConstraints":{"resourceRules":[{"apiGroups":["*"],"apiVersions":["*"],"operations":["CREATE"],"resources":["*"]}]}}}`), &policy))
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.mpolLister = policiesv1beta1listers.NewMutatingPolicyLister(indexer)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	require.Len(t, c.dynamicWatchers, 2, "both API groups and their different plurals must remain covered")
++	for _, action := range dynamic.Actions() {
++		require.Contains(t, []string{"releases", "helmreleases"}, action.GetResource().Resource)
++	}
++}
++
++func TestWatchPlanDoesNotGuessKindFromOtherExpressions(t *testing.T) {
++	t.Parallel()
++	for _, expression := range []string{
++		"object.kind == 'HelmRelease' || true",
++		"object.kind != 'Pod'",
++		"object.metadata.name == 'HelmRelease'",
++	} {
++		t.Run(expression, func(t *testing.T) {
++			t.Parallel()
++			c, _ := newWatchPlanController(t)
++			var policy policiesv1beta1.MutatingPolicy
++			require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"unbounded","resourceVersion":"1"},"spec":{"matchConstraints":{"resourceRules":[{"apiGroups":["*"],"apiVersions":["*"],"operations":["CREATE"],"resources":["*"]}]}}}`), &policy))
++			policy.Spec.MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "condition", Expression: expression}}
++			indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++			require.NoError(t, indexer.Add(&policy))
++			c.mpolLister = policiesv1beta1listers.NewMutatingPolicyLister(indexer)
++			ctx, cancel := context.WithCancel(t.Context())
++			defer cancel()
++			require.Error(t, c.Warmup(ctx), "an unbounded eligible policy still requires denied resources and must remain incomplete")
++		})
++	}
++}
++
++func TestWatchPlanPreservesCoreGroupConstraint(t *testing.T) {
++	t.Parallel()
++	other := schema.GroupVersionResource{Group: "example.test", Version: "v1", Resource: "pods"}
++	c, dynamic := newWatchPlanControllerWithResources(t, map[schema.GroupVersionResource]string{other: "Pod"})
++	var policy policiesv1beta1.ValidatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"core-pods","resourceVersion":"1"},"spec":{"matchConstraints":{"resourceRules":[{"apiGroups":[""],"apiVersions":["*"],"operations":["CREATE"],"resources":["pods"]}]}}}`), &policy))
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.vpolLister = policiesv1beta1listers.NewValidatingPolicyLister(indexer)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	require.Len(t, c.dynamicWatchers, 1)
++	for _, action := range dynamic.Actions() {
++		require.Empty(t, action.GetResource().Group, "a core-only policy must not watch a lookalike in another group")
++	}
++}
++
++func TestWatchPlanFailureRetainsSuccessfulCoverage(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t,
++		classicWatchPolicy(t, "background-pods", "Pod", true),
++		classicWatchPolicy(t, "background-secret", "Secret", true),
++	)
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.Error(t, c.Warmup(ctx))
++	require.Len(t, c.dynamicWatchers, 1)
++	_, _, _, exists := c.GetResourceHash("sample-uid")
++	require.True(t, exists, "a denied sibling must not discard an established eligible watcher")
++}
++
++func TestWatchPlanStopsRemovedPolicyWatcher(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t, classicWatchPolicy(t, "background-pods", "Pod", true))
++	ctx, cancel := context.WithCancel(t.Context())
++	defer cancel()
++	require.NoError(t, c.Warmup(ctx))
++	c.cpolLister = kyvernov1listers.NewClusterPolicyLister(cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{}))
++	stopped := make(chan types.UID, 1)
++	c.AddEventHandler(func(event EventType, uid types.UID, _ schema.GroupVersionKind, _ Resource) {
++		if event == Stopped {
++			stopped <- uid
++		}
++	})
++	require.NoError(t, c.Warmup(ctx))
++	require.Empty(t, c.dynamicWatchers)
++	require.Empty(t, c.GetAllResourceKeys())
++	select {
++	case uid := <-stopped:
++		require.EqualValues(t, "sample-uid", uid)
++	default:
++		t.Fatal("removed policy watcher did not emit its lifecycle event")
++	}
++}
++
++func TestWatchPlanDiscoveryFailureReconcilesHealthyCoverage(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t, classicWatchPolicy(t, "removed-helm", "helm.toolkit.fluxcd.io/v2/HelmRelease", true))
++	require.NoError(t, c.Warmup(t.Context()))
++	_, _, _, existed := c.GetResourceHash("helm-uid")
++	require.True(t, existed)
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(classicWatchPolicy(t, "healthy-pods", "Pod", true)))
++	require.NoError(t, indexer.Add(classicWatchPolicy(t, "unavailable-kind", "NotRegistered", true)))
++	c.cpolLister = kyvernov1listers.NewClusterPolicyLister(indexer)
++	require.Error(t, c.Warmup(t.Context()), "incomplete discovery must remain an error")
++	_, _, _, present := c.GetResourceHash("sample-uid")
++	require.True(t, present, "healthy policies must still start their watchers")
++	_, _, _, retained := c.GetResourceHash("helm-uid")
++	require.False(t, retained, "removed policies must still release obsolete watchers")
++	require.Len(t, c.dynamicWatchers, 1)
++}
++
++func TestWatchPlanMixedPolicyKeepsResolvedResources(t *testing.T) {
++	t.Parallel()
++	c, _ := newWatchPlanController(t)
++	var policy policiesv1beta1.ValidatingPolicy
++	require.NoError(t, json.Unmarshal([]byte(`{"metadata":{"name":"mixed-policy","resourceVersion":"1"},"spec":{"evaluation":{"background":{"enabled":true}},"matchConstraints":{"resourceRules":[{"apiGroups":[""],"apiVersions":["v1"],"operations":["CREATE"],"resources":["notregistered","pods"]}]}}}`), &policy))
++	indexer := cache.NewIndexer(cache.MetaNamespaceKeyFunc, cache.Indexers{})
++	require.NoError(t, indexer.Add(&policy))
++	c.vpolLister = policiesv1beta1listers.NewValidatingPolicyLister(indexer)
++	require.Error(t, c.Warmup(t.Context()), "the unresolved resource must remain an error")
++	_, _, _, present := c.GetResourceHash("sample-uid")
++	require.True(t, present, "resolved resources in the same policy must still be watched")
++	require.Len(t, c.dynamicWatchers, 1)
++}

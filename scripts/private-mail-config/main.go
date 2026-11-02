@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 )
 
+// privateInput reads a bounded input without including its contents in errors.
 func privateInput(dir, name string, limit int64) (data []byte, result error) {
 	// Projected Kubernetes Secrets use symlinks; require the resolved target to
 	// remain under the private input directory rather than rejecting projections.
@@ -46,6 +47,7 @@ func privateInput(dir, name string, limit int64) (data []byte, result error) {
 	return b, nil
 }
 
+// loadInputs validates the settings and credential files needed for configuration.
 func loadInputs(dir string) (inputs, error) {
 	var v inputs
 	fail := func() (inputs, error) { return inputs{}, errConfiguration }
@@ -66,6 +68,19 @@ func loadInputs(dir string) (inputs, error) {
 			return fail()
 		}
 		seen[name] = true
+		if name == "useForwardedClientIP" || name == "useProxyClientIP" {
+			value, decodeErr := d.Token()
+			forwarded, valid := value.(bool)
+			if decodeErr != nil || !valid {
+				return fail()
+			}
+			if name == "useForwardedClientIP" {
+				v.UseForwardedClientIP = forwarded
+			} else {
+				v.UseProxyClientIP = forwarded
+			}
+			continue
+		}
 		if name == "maintainerAliases" {
 			var value json.RawMessage
 			if d.Decode(&value) != nil || bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &v.MaintainerAliases) != nil || v.MaintainerAliases == nil {
@@ -115,6 +130,7 @@ func loadInputs(dir string) (inputs, error) {
 	return v, nil
 }
 
+// command handles the Email configuration CLI without echoing private input values.
 func command(args []string, log io.Writer) int {
 	if len(args) > 0 && args[0] == "bootstrap" {
 		return bootstrapCommand(args[1:], log)
@@ -123,6 +139,8 @@ func command(args []string, log io.Writer) int {
 	f.SetOutput(io.Discard)
 	dir := f.String("input-dir", "", "private mounted configuration")
 	output := f.String("output-file", "", "new private plan in memory-backed storage")
+	var proxy proxyOption
+	f.Var(&proxy, "proxy-client-ip", "explicit deployment transport override")
 	fail := func() int { _, _ = fmt.Fprintln(log, errConfiguration); return 2 }
 	if f.Parse(args) != nil || f.NArg() != 0 || !filepath.IsAbs(*dir) || !filepath.IsAbs(*output) {
 		return fail()
@@ -131,12 +149,19 @@ func command(args []string, log io.Writer) int {
 	if err != nil {
 		return fail()
 	}
-	b, err := render(v)
-	if err != nil {
-		return fail()
+	if proxy.value != nil {
+		v.UseProxyClientIP = *proxy.value
 	}
 	inventory, err := privateInput(*dir, "listener-inventory.json", 65536)
 	if err != nil || validateInventory(inventory) != nil || validateRecipientOwnership(inventory, v) != nil {
+		return fail()
+	}
+	v.accountIDs, err = managedAccountIDs(inventory, v)
+	if err != nil {
+		return fail()
+	}
+	b, err := render(v)
+	if err != nil {
 		return fail()
 	}
 	parent, err := os.Stat(filepath.Dir(*output))
@@ -153,10 +178,11 @@ func command(args []string, log io.Writer) int {
 		_ = os.Remove(*output)
 		return fail()
 	}
-	if _, err = fmt.Fprintln(log, "Private mail plan prepared; activation is separate."); err != nil {
+	if _, err = fmt.Fprintln(log, "Email plan prepared; activation is separate."); err != nil {
 		return 2
 	}
 	return 0
 }
 
+// main preserves the configuration command's exit status.
 func main() { os.Exit(command(os.Args[1:], os.Stderr)) }

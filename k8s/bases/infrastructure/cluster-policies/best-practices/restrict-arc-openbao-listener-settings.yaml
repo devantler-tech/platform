@@ -1,0 +1,67 @@
+apiVersion: policies.kyverno.io/v1
+kind: ValidatingPolicy
+metadata:
+  name: restrict-arc-openbao-listener-settings
+  annotations:
+    policies.kyverno.io/title: Keep the ARC OpenBao Listener Configuration Public
+    policies.kyverno.io/category: Security
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: ConfigMap
+    policies.kyverno.io/minversion: 1.19.1
+spec:
+  failurePolicy: Fail
+  validationActions: [Deny]
+  evaluation:
+    background:
+      enabled: true
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["*"]
+        operations: ["*"]
+        resources: ["configmaps"]
+        resourceNames: ["arc-openbao-listener"]
+  matchConditions:
+    # Enforce-mode ClusterPolicy validation permits an UPDATE when both the
+    # stored and submitted objects already violate the rule. The same validity
+    # predicate appears here because match conditions cannot use variables.
+    # Distinct old/new admission controls pin it against the validation below.
+    - name: not-grandfathered-update
+      expression: >-
+        oldObject == null || !has(oldObject.metadata) ||
+        object == null || !has(object.metadata) ||
+        [oldObject, object].exists(resource,
+          resource.metadata.?namespace.orValue('') == 'openbao' &&
+          has(resource.data) && resource.data != null && resource.data.size() == 1 &&
+          resource.data[?'listener.hcl'].orValue('') == (
+            "listener \"tcp\" {\n" +
+            "  address = \"0.0.0.0:8204\"\n" +
+            "  cluster_address = \"127.0.0.1:8205\"\n" +
+            "  tls_cert_file = \"/openbao/arc-tls/tls.crt\"\n" +
+            "  tls_key_file = \"/openbao/arc-tls/tls.key\"\n" +
+            "  tls_min_version = \"tls12\"\n" +
+            "  tls_disable_client_certs = true\n" +
+            "}\n"
+          ) &&
+          (!has(resource.binaryData) || resource.binaryData == null || resource.binaryData.size() == 0))
+  variables:
+    # DELETE evaluates the stored object; background scans need no admission-only
+    # request variables. The native engine represents absent objects as {} too.
+    - name: target
+      expression: "object == null || !has(object.metadata) ? oldObject : object"
+  validations:
+    - expression: >-
+        variables.target.metadata.?namespace.orValue('') == 'openbao' &&
+        has(variables.target.data) && variables.target.data != null && variables.target.data.size() == 1 &&
+        variables.target.data[?'listener.hcl'].orValue('') == (
+          "listener \"tcp\" {\n" +
+          "  address = \"0.0.0.0:8204\"\n" +
+          "  cluster_address = \"127.0.0.1:8205\"\n" +
+          "  tls_cert_file = \"/openbao/arc-tls/tls.crt\"\n" +
+          "  tls_key_file = \"/openbao/arc-tls/tls.key\"\n" +
+          "  tls_min_version = \"tls12\"\n" +
+          "  tls_disable_client_certs = true\n" +
+          "}\n"
+        ) &&
+        (!has(variables.target.binaryData) || variables.target.binaryData == null || variables.target.binaryData.size() == 0)
+      message: This listener ConfigMap may contain only audited public settings and Secret-mounted file paths.

@@ -17,8 +17,11 @@ data:
     iam.aws.m.upbound.io	v1beta1	Role	roles
     repo.github.m.upbound.io	v1alpha1	BranchProtection	branchprotections
     repo.github.m.upbound.io	v1alpha1	DefaultBranch	defaultbranches
+    repo.github.m.upbound.io	v1alpha1	Environment	environments
+    repo.github.m.upbound.io	v1alpha1	EnvironmentDeploymentPolicy	environmentdeploymentpolicies
     repo.github.m.upbound.io	v1alpha1	IssueLabels	issuelabels
     repo.github.m.upbound.io	v1alpha1	Repository	repositories
+    repo.github.m.upbound.io	v1alpha1	RepositoryCustomProperty	repositorycustomproperties
     repo.github.m.upbound.io	v1alpha1	RepositoryRuleset	repositoryrulesets
     route.unifi.m.crossplane.io	v1alpha1	TrafficRoute	trafficroutes
     team.github.m.upbound.io	v1alpha1	Team	teams
@@ -242,6 +245,44 @@ data:
         - groupVersionKind:
             group: repo.github.m.upbound.io
             version: v1alpha1
+            kind: Environment
+          metricNamePrefix: crossplane
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metrics:
+            - name: managed_resource_condition
+              help: "Crossplane managed resource condition status (1 = True, 0 = False)."
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition: [type]
+                    reason: [reason]
+                  valueFrom: [status]
+        - groupVersionKind:
+            group: repo.github.m.upbound.io
+            version: v1alpha1
+            kind: EnvironmentDeploymentPolicy
+          metricNamePrefix: crossplane
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metrics:
+            - name: managed_resource_condition
+              help: "Crossplane managed resource condition status (1 = True, 0 = False)."
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition: [type]
+                    reason: [reason]
+                  valueFrom: [status]
+        - groupVersionKind:
+            group: repo.github.m.upbound.io
+            version: v1alpha1
             kind: IssueLabels
           metricNamePrefix: crossplane
           labelsFromPath:
@@ -262,6 +303,25 @@ data:
             group: repo.github.m.upbound.io
             version: v1alpha1
             kind: Repository
+          metricNamePrefix: crossplane
+          labelsFromPath:
+            name: [metadata, name]
+            namespace: [metadata, namespace]
+          metrics:
+            - name: managed_resource_condition
+              help: "Crossplane managed resource condition status (1 = True, 0 = False)."
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, conditions]
+                  labelsFromPath:
+                    condition: [type]
+                    reason: [reason]
+                  valueFrom: [status]
+        - groupVersionKind:
+            group: repo.github.m.upbound.io
+            version: v1alpha1
+            kind: RepositoryCustomProperty
           metricNamePrefix: crossplane
           labelsFromPath:
             name: [metadata, name]

@@ -1406,10 +1406,59 @@ new_tree
 pdb demo web "$both"
 release demo web <<'EOT'
   postRenderStrategy: combined
+  values:
+    hook: true
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: web-hook
+            patch: |
+              - op: test
+                path: /metadata/name
+                value: web-hook
 EOT
 run_guard "$TREE"
-assert_rc 'a strategy other than nohooks is not modelled' 2
-assert_contains 'says postRenderStrategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks))'
+assert_rc 'combined evaluates hooks before checking released workloads' 0
+yq -i '(select(.kind == "HelmRelease") | .spec.postRenderers[0].kustomize.patches[0].patch) = "- op: test\n  path: /metadata/name\n  value: wrong-hook\n"' "$TREE/k8s/apps/test/objects.yaml"
+run_guard "$TREE"
+assert_rc 'a failing hook patch cannot be skipped by the budget check' 2
+assert_contains 'the real hook patch was evaluated' 'testing value /metadata/name failed'
+
+new_tree
+pdb demo web '{matchLabels: {app: hook}}'
+release demo web <<'EOT'
+  postRenderStrategy: combined
+  values:
+    hook: true
+  postRenderers:
+    - kustomize:
+        images:
+          - name: example/web
+            newTag: patched
+EOT
+run_guard "$TREE"
+assert_rc 'combined hooks still never satisfy a released-workload budget' 1
+assert_not_contains 'the hook is excluded after post-rendering' 'web-hook'
+
+new_tree
+pdb demo web "$both"
+release demo web <<'EOT'
+  postRenderStrategy: nohooks
+  postRenderers:
+    - kustomize:
+        patches:
+          - target:
+              kind: Deployment
+              name: web
+            patch: |
+              - op: add
+                path: /metadata/annotations/guard-proof
+                value: evaluated
+EOT
+run_guard "$TREE"
+assert_rc 'ordinary patches see the transient annotation map Helm supplies' 0
 
 new_tree
 pdb demo web "$both"
@@ -1422,7 +1471,7 @@ release demo web <<'EOT'
 EOT
 run_guard "$TREE"
 assert_rc 'a post-rendered release without a strategy (Flux 2.9 defaults to combined) is not modelled' 2
-assert_contains 'says the omitted strategy is not modelled' 'HelmRelease demo/web cannot be rendered (spec.postRenderStrategy is not modelled (a post-rendered release must set nohooks))'
+assert_contains 'says the omitted strategy is not modelled' 'explicit nohooks or combined'
 
 new_tree
 pdb demo web "$both"

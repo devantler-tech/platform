@@ -2,11 +2,12 @@
 # The platform's copy of the catalog's auto-vpa GeneratingPolicy adds one thing:
 # a namespaceSelector that keeps it out of the system namespaces, where prod
 # ships static VPAs (k8s/providers/hetzner/infrastructure/vertical-pod-autoscalers/).
-# A generated VPA there would put a second VPA on the same pods. A kyverno test
-# cannot assert that a GeneratingPolicy generates nothing, so this script does
-# it: for each policy and each excluded namespace, a test that expects a VPA
-# there must fail with "Not found". The same test with the selector removed must
-# pass, so a probe that could never see a generation cannot read as excluded
+# A generated VPA there would put a second VPA on the same pods. Each scoped
+# fixture must deliberately exclude its trigger; removing the selector must
+# generate the exact expected VPA. The fixture-evaluation guard checks both
+# results, so an empty, invalid or excluded generation control cannot pass.
+# Kyverno 1.19.2 reports exclusion as Pass/Excluded, not a missing-object failure.
+# Keep the selector-removal control that makes this a real exclusion proof
 # (platform#5130).
 set -euo pipefail
 
@@ -66,37 +67,36 @@ EOF
     for variant in scoped unscoped; do
       if [[ "${variant}" == scoped ]]; then
         under_test="${policy}"
+        expected=skip
       else
         under_test="${work}/${kind}-unscoped.yaml"
+        expected=pass
       fi
+      cp "${under_test}" "${case_dir}/policy.yaml"
       cat >"${case_dir}/kyverno-test.yaml" <<EOF
 apiVersion: cli.kyverno.io/v1alpha1
 kind: Test
 metadata:
   name: ${name}-${ns}-${variant}
 policies:
-  - ${under_test}
+  - policy.yaml
 resources:
   - resources.yaml
 variables: values.yaml
 results:
   - policy: ${name}
+    rule: ${name}
     resources:
       - ${ns}/shared
-    generatedResource: generated-vpa.yaml
     kind: $(yq -N '.kind' "${case_dir}/resources.yaml")
-    result: pass
+    result: ${expected}
 EOF
-      status=0
-      kyverno test "${case_dir}" >"${case_dir}/${variant}.log" 2>&1 || status=$?
-      if [[ "${variant}" == scoped ]]; then
-        if [[ "${status}" -eq 0 ]] || ! grep -q 'Not found' "${case_dir}/${variant}.log"; then
-          echo "FAIL: ${name} generated a VPA in ${ns}:" >&2
-          cat "${case_dir}/${variant}.log" >&2
-          exit 1
-        fi
-      elif [[ "${status}" -ne 0 ]]; then
-        echo "FAIL: control: ${name} without its selector generated nothing in ${ns}, so the probe proves nothing:" >&2
+      if [[ "${variant}" == unscoped ]]; then
+        printf '    generatedResource: generated-vpa.yaml\n' >>"${case_dir}/kyverno-test.yaml"
+      fi
+      if ! bash "${repo_root}/scripts/validate-kyverno-fixture-evaluation.sh" "${case_dir}" \
+        >"${case_dir}/${variant}.log" 2>&1; then
+        echo "FAIL: ${name} did not prove ${variant} ${expected} behavior in ${ns}:" >&2
         cat "${case_dir}/${variant}.log" >&2
         exit 1
       fi

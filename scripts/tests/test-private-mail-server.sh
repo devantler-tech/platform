@@ -25,7 +25,7 @@ trap cleanup EXIT
 # Scan preparation and administration explicitly with the same reviewed
 # exceptions as the platform gate, including the shared bundle in isolation.
 go -C "$root" run ./scripts/generate-kubescape-exceptions -o "$scratch/exceptions.json"
-for bundle in private-mail private-mail-administration; do
+for bundle in private-mail private-mail-administration private-mail-proxy-identity; do
   ksail workload validate "$root/k8s/bases/apps/$bundle" --strict --ignore-missing-schemas=false
   kubectl kustomize "$root/k8s/bases/apps/$bundle" >"$scratch/$bundle.yaml"
   ksail workload scan "$scratch/$bundle.yaml" --no-render --framework nsa,mitre \

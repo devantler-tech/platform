@@ -35,11 +35,11 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 		t.Fatal("credential synchronizer must receive the seed/read policy")
 	}
 	_, policy := captureBaoWrite(t, "bao", "policy", "write", "vault-seed-write")
-	entries := regexp.MustCompile(`(?s)path\s+"(secret/(?:data|metadata)/apps/private-mail/[^\"]+)"\s*\{\s*capabilities\s*=\s*(\[[^\]]+\])\s*\}`).FindAllStringSubmatch(policy, -1)
+	entries := regexp.MustCompile(`(?s)path\s+"(secret/(?:data|metadata)/infrastructure/email/[^\"]+)"\s*\{\s*capabilities\s*=\s*(\[[^\]]+\])\s*\}`).FindAllStringSubmatch(policy, -1)
 	want := map[string]bool{}
 	for _, kind := range []string{"data", "metadata"} {
 		for _, account := range []string{"admin", "maintainer", "agent"} {
-			want["secret/"+kind+"/apps/private-mail/"+account] = true
+			want["secret/"+kind+"/infrastructure/email/"+account] = true
 		}
 	}
 	if len(entries) != len(want) {
@@ -58,6 +58,27 @@ func TestPrivateMailCredentialsHaveExactSeedAndReadAuthorization(t *testing.T) {
 		if !reflect.DeepEqual(capabilities, []string{"create", "read", "update"}) {
 			t.Fatal("mail credential grant must seed and read without list or delete authority")
 		}
+	}
+	if strings.Contains(policy, "apps/private-mail/") {
+		t.Fatal("the synchronizer must no longer write retained legacy credentials")
+	}
+	for _, account := range []string{"admin", "maintainer", "agent"} {
+		directory := "k8s/bases/apps/private-mail-administration/"
+		if account == "admin" {
+			directory = "k8s/bases/apps/private-mail/"
+		}
+		read := readYAML(t, directory+"external-secret-"+account+".yaml")
+		seed := readYAML(t, directory+"push-secret-"+account+".yaml")
+		readData := mailField[[]any](t, read, "spec", "data")
+		seedData := mailField[[]any](t, seed, "spec", "data")
+		equal(t, len(readData), 1)
+		equal(t, len(seedData), 1)
+		equal(t, mailField[string](t, readData[0], "remoteRef", "key"), "infrastructure/email/"+account)
+		equal(t, mailField[string](t, seedData[0], "match", "remoteRef", "remoteKey"), "infrastructure/email/"+account)
+		equal(t, mailField[string](t, read, "spec", "target", "name"), "private-mail-"+account)
+		equal(t, mailField[string](t, seed, "spec", "selector", "secret", "name"), "private-mail-generated-"+account)
+		equal(t, mailField[string](t, seed, "spec", "updatePolicy"), "IfNotExists")
+		equal(t, mailField[string](t, seed, "spec", "deletionPolicy"), "None")
 	}
 }
 

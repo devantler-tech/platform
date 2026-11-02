@@ -2,9 +2,62 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestResourceStreamPreservesOriginalIDs(t *testing.T) {
+	input := `metadata:
+  id: 0008
+  namespace: security
+  phase: running
+  owner: security.ImageVerificationConfigController
+spec:
+  imagePattern: registry.example/eighth
+  skip: false
+  deny: true
+---
+metadata:
+  id: 0010
+  namespace: security
+  phase: running
+  owner: security.ImageVerificationConfigController
+spec:
+  imagePattern: registry.example/tenth
+  skip: false
+  deny: false
+  keylessVerifier:
+    issuer: https://issuer.example
+    subjectRegex: ^release$
+`
+	var out, diagnostic bytes.Buffer
+	if got := run([]string{"resources", "imageverificationrules.security.talos.dev"}, strings.NewReader(input), &out, &diagnostic); got != 0 {
+		t.Fatalf("status = %d, want 0: %s", got, &diagnostic)
+	}
+	var resources []struct {
+		ID   string         `json:"id"`
+		Spec map[string]any `json:"spec"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &resources); err != nil {
+		t.Fatal(err)
+	}
+	if len(resources) != 2 || resources[0].ID != "0008" || resources[1].ID != "0010" {
+		t.Fatalf("original ID spelling lost: %s", &out)
+	}
+	if resources[1].Spec["imagePattern"] != "registry.example/tenth" || resources[1].Spec["deny"] != false {
+		t.Fatalf("native decisions changed: %s", &out)
+	}
+	if resources[1].Spec["keylessVerifier"].(map[string]any)["subjectRegex"] != "^release$" {
+		t.Fatal("native signer decision lost")
+	}
+	for _, bad := range []string{strings.Replace(input, "0010", "0008", 1), strings.Replace(input, "id: 0010", "id: ''", 1), input + "---\nmetadata: [\n"} {
+		out.Reset()
+		if got := run([]string{"resources", "imageverificationrules.security.talos.dev"}, strings.NewReader(bad), &out, &diagnostic); got != 2 || out.Len() != 0 {
+			t.Fatalf("invalid stream accepted or partially emitted: status=%d output=%s", got, &out)
+		}
+	}
+}
 
 const keylessPolicy = `apiVersion: v1alpha1
 kind: ImageVerificationConfig
