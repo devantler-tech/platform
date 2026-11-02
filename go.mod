@@ -99,7 +99,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
-	github.com/kopia/kopia v0.16.0
+	github.com/kopia/kopia v0.23.1
 	github.com/minio/minio-go/v7 v7.0.97
 	github.com/opencontainers/runtime-spec v1.3.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
