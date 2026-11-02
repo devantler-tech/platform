@@ -327,7 +327,7 @@ else
       $7 != n || $8 != "2026-04-04" { bad = 1 } END { exit bad }'; then
     pass 'a new release re-stamps both publishing workflows'
   else
-    fail 'a new release did not move both publishing workflows'; cat "$out12"
+    fail 'a new release did not move both publishing workflows'; cat "$WORK/log13" "$out12"
   fi
 fi
 
