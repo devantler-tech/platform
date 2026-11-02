@@ -469,5 +469,6 @@ spec:
     gatewayAPI:
       enabled: true
       enableAlpn: true
-      # Keep the receiving side explicit for a verified rollback baseline.
+      # Off unless a provider's load balancer sends PROXY traffic; the Hetzner
+      # overlay turns it on. Keep it explicit for a verified rollback baseline.
       enableProxyProtocol: false
