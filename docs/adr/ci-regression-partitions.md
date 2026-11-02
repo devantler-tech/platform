@@ -60,6 +60,26 @@ production verifier and all fixture assertions and real deadlines stay intact.
 
 ## Evidence and alternatives
 
+`Measure CI Runtime` is a manual comparison on one immutable dispatch revision.
+Run `measure-ci-runtime.yaml` on `main` with confirmation `measure current main`.
+It runs the existing complete Go suite with four and eight test workers, then
+the complete nine publication fixtures with two and four workers. Only one
+standard runner is used at a time; each arm has its own checkout and Go setup
+with cache restoration disabled, read-only contents permission, the approved native tools, and a finite
+30-minute job limit. The complete Go command retains its 20-minute deadline.
+The normal required CI and deployment jobs keep their existing commands.
+
+Compare each suite's two arms only when source, runner image, architecture, CPU
+count and tool versions agree and both arms complete with the same test coverage.
+Check the benchmark's tool pins against current CI before interpreting the result.
+Keep failed, skipped or incomplete arms as adverse evidence, never a speedup.
+Logs retain Go's native JSON results, every publication fixture's own result,
+and the standard wall/user/system timing. A measured validation gain still
+requires separate comparable protected-pipeline and production verification
+under #5495; the experiment does not deploy anything. GitHub documents
+[manual dispatch](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch)
+and [bounded matrix concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/run-job-variations).
+
 Successful protected run [41312932796](https://github.com/devantler-tech/platform/actions/runs/41312932796)
 spent 675 seconds in repository guards before deployment started. The seven
 contiguous publication-report, consumer-discovery, signer-membership, regeneration
