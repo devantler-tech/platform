@@ -5,13 +5,14 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd "${script_dir}/../.." && pwd)"
 policy="${repo_root}/k8s/bases/infrastructure/cluster-policies/best-practices/restrict-tenant-network-policies.yaml"
 tests="${repo_root}/tests/restrict-tenant-network-policies"
-output_file="$(mktemp)"
-trap 'rm -f "${output_file}"' EXIT
+work="$(mktemp -d)"
+output_file="${work}/output"
+trap 'rm -rf "${work}"' EXIT
 
-# `kyverno test` treats a rule that matches nothing as Excluded, and an Excluded
-# row satisfies `result: fail` too — so the declarative test can pass vacuously
-# if a rule silently stops matching. Exercise the policy directly as a second
-# gate, asserting the exact allow/deny counts rather than an exit code.
+# `kyverno test` treats a resource the policy does not evaluate as Excluded, and an
+# Excluded row satisfies `result: fail` too — so the declarative test can pass
+# vacuously if the policy silently stops matching. Exercise the policy directly as a
+# second gate, asserting the exact allow/deny counts rather than an exit code.
 apply() {
   local resources="$1" values="$2" userinfo="$3"
   kyverno apply "${policy}" \
@@ -34,7 +35,7 @@ expect_summary() {
 #    additive allow-lists admitted. A drop in the fail count means a shape that
 #    used to be refused now admits.
 apply "${tests}/resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 309, fail: 78, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 18, fail: 78, warn: 0, error: 0, skip: 0" \
   "tenant CiliumNetworkPolicy boundary"
 
 # 2. Carve-out: kyverno's background controller owns the generated floor. These
@@ -42,77 +43,164 @@ expect_summary "pass: 309, fail: 78, warn: 0, error: 0, skip: 0" \
 #    regression here would block the platform from creating its own default-deny.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/kyverno-author/user-info.yaml"
-expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 3" \
   "generated default-deny/allow-dns/allow-cnpg-operator must remain creatable by kyverno"
 
 # 3. CONTROL for 2: the identical bodies, in the identical namespace, submitted
-#    by the TENANT. Only the applying identity differs. Without this the zero
-#    above is indistinguishable from the policy simply not matching. All three
-#    bodies fail the reserved-name rule; allow-dns ALSO fails the egress rule,
-#    because it reaches CoreDNS by naming kube-system through the namespace
-#    label, and allow-cnpg-operator ALSO fails the ingress rule for naming
-#    cnpg-system — the cross-namespace selector a tenant is refused (#3399,
-#    #3655). default-deny ALSO fails both the ingress and the egress rule: its
-#    one empty rule per direction names no source or destination, which those
-#    rules refuse because a sourceless rule WITH toPorts allows every peer on
-#    that port. Without toPorts, as here, Cilium allows nothing (#3501), so the
-#    refusal is conservative, not a hole. The generated floor is exempt from all
-#    of that only through its applying identity, which is the point.
+#    by the TENANT. Only the applying identity differs, and all three are refused.
+#    Besides the reserved name, allow-dns reaches CoreDNS by naming kube-system
+#    through the namespace label and allow-cnpg-operator names cnpg-system, the
+#    cross-namespace selector a tenant is refused (#3399, #3655). default-deny's
+#    one empty rule per direction names no source or destination, which is refused
+#    because a sourceless rule WITH toPorts allows every peer on that port. Without
+#    toPorts, as here, Cilium allows nothing (#3501), so the refusal is conservative,
+#    not a hole. The generated floor is exempt only through its applying identity.
 apply "${tests}/kyverno-author/resources.yaml" \
   "${tests}/kyverno-author/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 8, fail: 7, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 0, fail: 3, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to author the reserved generated names"
 
 # 4. Carve-out: platform-authored policies applied by flux-system's
 #    kustomize-controller stay permitted even when broad.
 apply "${tests}/platform-author/resources.yaml" \
   "${tests}/platform-author/values.yaml" "${tests}/platform-author/user-info.yaml"
-expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 0, fail: 0, warn: 0, error: 0, skip: 1" \
   "platform-authored policies must stay permitted"
 
-# 5. CONTROL for 4: the identical broad body submitted by the TENANT is refused
-#    by both the ingress and the egress rule.
+# 5. CONTROL for 4: the identical broad body submitted by the TENANT is refused.
 apply "${tests}/platform-author/resources.yaml" \
   "${tests}/platform-author/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 2, fail: 2, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 0, fail: 1, warn: 0, error: 0, skip: 0" \
   "control: a tenant must NOT be able to submit the broad platform body"
 
 # 6. Node/provider fields are forbidden even when empty beside a valid rule.
 apply "${tests}/node-group-resources.yaml" "${tests}/values.yaml" "${tests}/user-info.yaml"
-expect_summary "pass: 48, fail: 16, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 0, fail: 16, warn: 0, error: 0, skip: 0" \
   "tenant node/provider selectors must remain forbidden"
 
 # 7. The day-one policy platform-tenant-template ships must stay admissible
 #    under the tenant's own identity. Tightening this boundary has made a freshly
 #    generated tenant inadmissible three times, each found only by the
-#    template's scheduled run (#3652); this makes the next one fail here. Four
-#    rules evaluate it, and none may refuse it.
+#    template's scheduled run (#3652); this makes the next one fail here.
 apply "${tests}/tenant-scaffold/resources.yaml" \
   "${tests}/tenant-scaffold/values.yaml" "${tests}/tenant-scaffold/user-info.yaml"
-expect_summary "pass: 4, fail: 0, warn: 0, error: 0, skip: 0" \
+expect_summary "pass: 1, fail: 0, warn: 0, error: 0, skip: 0" \
   "the platform-tenant-template scaffold must be admissible on day one"
 
-# 8. Static action guard. Every count above is a RULE result; none of them says
-#    what admission actually does on a violation. Enforcement lives in each
-#    rule's own `failureAction`, because the deprecated top-level
-#    spec.validationFailureAction defaults an action-less rule to Audit — which
-#    would admit every shape the counts above prove is "denied", with the whole
-#    suite still green. Assert the action itself, not just the verdicts.
-rule_count="$(yq '.spec.rules | length' "${policy}")"
-enforced="$(yq '[.spec.rules[] | select(.validate.failureAction == "Enforce")] | length' "${policy}")"
-top_level="$(yq '.spec.validationFailureAction // "absent"' "${policy}")"
-if [[ "${rule_count}" -lt 1 ]]; then
-  echo "::error::no rules found in ${policy}"
+# 8. Static action guard. Every count above is a policy verdict; none of them says
+#    what admission does on a violation. Audit would admit every shape the counts
+#    above prove is refused, with the whole suite still green.
+if ! yq -o=json '.' "${policy}" | jq -e '
+  .kind == "ValidatingPolicy" and .spec.failurePolicy == "Fail" and
+  .spec.validationActions == ["Deny"] and .spec.evaluation.background.enabled == false and
+  .spec.matchConstraints.resourceRules == [{
+    apiGroups: ["cilium.io"], apiVersions: ["*"], operations: ["CREATE", "UPDATE", "DELETE"],
+    resources: ["ciliumnetworkpolicies"]}]
+' >/dev/null; then
+  echo "::error::scope, operations or fail-closed disposition of ${policy} changed"
   exit 1
 fi
-if [[ "${enforced}" != "${rule_count}" ]]; then
-  echo "::error::only ${enforced}/${rule_count} rules set validate.failureAction: Enforce"
+
+# 9. One result per resource cannot say which check refused it, and a resource can
+#    fail more than one. Run each check alone against the rows recorded for it in
+#    per-check.yaml, and require those rows to go red when it accepts everything.
+checks=(
+  cnp-ingress-sources-must-be-constrained
+  cnp-egress-destinations-must-be-constrained
+  cnp-must-not-opt-out-of-default-deny
+  cnp-generated-policy-names-are-reserved
+  cnp-must-use-the-singular-spec-container
+)
+if [[ "$(yq '.spec.validations | length' "${policy}")" != "${#checks[@]}" ]]; then
+  echo "::error::the policy's checks and the ${#checks[@]} names here differ"
   exit 1
 fi
-if [[ "${top_level}" != "absent" ]]; then
-  echo "::error::spec.validationFailureAction is deprecated; enforcement must be rule-level"
-  exit 1
-fi
+for index in "${!checks[@]}"; do
+  check="${checks[${index}]}"
+  fail_rows=0
+  for rows_file in "${tests}/per-check.yaml" "${tests}"/*/per-check.yaml; do
+    fixture="$(dirname "${rows_file}")"
+    case_dir="${work}/${index}-$(basename "${fixture}")"
+    mkdir -p "${case_dir}"
+    CHECK="${check}" yq -o=json '.results | map(select(.rule == strenv(CHECK)))' "${rows_file}" \
+      >"${case_dir}/rows.json"
+    [[ "$(jq 'length' "${case_dir}/rows.json")" -gt 0 ]] || continue
+    refused="$(jq '[.[] | select(.result == "fail") | .resources[]] | length' "${case_dir}/rows.json")"
+    fail_rows=$((fail_rows + refused))
+    yq -o=json '{"resources": .resources, "variables": .variables, "userinfo": .userinfo}' "${rows_file}" \
+      >"${case_dir}/inputs.json"
+    for variant in kept weakened; do
+      target="${case_dir}/${variant}"
+      mkdir -p "${target}"
+      find "${fixture}" -maxdepth 1 -type f -name '*.yaml' ! -name 'kyverno-test.yaml' ! -name 'per-check.yaml' \
+        -exec cp {} "${target}/" \;
+      if [[ "${variant}" == kept ]]; then
+        INDEX="${index}" yq '.spec.validations = [.spec.validations[env(INDEX)]]' "${policy}" >"${target}/policy.yaml"
+      else
+        INDEX="${index}" yq '.spec.validations = [.spec.validations[env(INDEX)] | .expression = "true"]' \
+          "${policy}" >"${target}/policy.yaml"
+      fi
+      jq --slurpfile inputs "${case_dir}/inputs.json" \
+        '{apiVersion: "cli.kyverno.io/v1alpha1", kind: "Test", metadata: {name: "check"},
+          policies: ["policy.yaml"], resources: $inputs[0].resources,
+          variables: $inputs[0].variables, userinfo: $inputs[0].userinfo,
+          results: map(del(.rule))}' "${case_dir}/rows.json" >"${target}/kyverno-test.yaml"
+    done
+    if ! kyverno test "${case_dir}/kept" --remove-color >"${case_dir}/kept.log" 2>&1; then
+      cat "${case_dir}/kept.log"
+      echo "::error::${check}: its rows in ${rows_file} do not hold when it runs alone"
+      exit 1
+    fi
+    if [[ "${refused}" -gt 0 ]] && kyverno test "${case_dir}/weakened" --remove-color >"${case_dir}/weakened.log" 2>&1; then
+      echo "::error::${check}: its fail rows in ${rows_file} still hold with the check removed"
+      exit 1
+    fi
+  done
+  if [[ "${fail_rows}" -eq 0 ]]; then
+    echo "::error::${check}: no fixture proves this check refuses anything"
+    exit 1
+  fi
+  echo "ok: ${check} (${fail_rows} refused)"
+done
+
+# 10. The CLI cannot send a DELETE or an UPDATE's old object, so these go through the
+#     pinned admission engine. A tenant holds delete on CiliumNetworkPolicy, so
+#     without the DELETE rows a tenant could remove the generated floor.
+tenant='system:serviceaccount:tenant-ns:tenant'
+kyverno_sa='system:serviceaccount:kyverno:kyverno-background-controller'
+flux_sa='system:serviceaccount:flux-system:kustomize-controller'
+cnp() {
+  jq -cn --arg name "$1" '{apiVersion: "cilium.io/v2", kind: "CiliumNetworkPolicy",
+    metadata: {name: $name, namespace: "tenant-ns"},
+    spec: {endpointSelector: {}, ingress: [{fromEndpoints: [{matchLabels: {app: "web"}}]}]}}'
+}
+control() {
+  local label="$1" actor="$2" operation="$3" name="$4" expected="$5" object='null' old='null'
+  [[ "${operation}" == DELETE ]] || object="$(cnp "${name}")"
+  [[ "${operation}" == CREATE ]] || old="$(cnp "${name}")"
+  jq -cn --arg label "${label}" --arg actor "${actor}" --arg operation "${operation}" \
+    --arg expected "${expected}" --argjson object "${object}" --argjson old "${old}" '
+    {label: $label, policy: "restrict-tenant-network-policies", actor: $actor, operation: $operation,
+     expected: $expected, namespaces: [{metadata: {name: "tenant-ns", labels: {"app.kubernetes.io/managed-by": "ksail"}}}]}
+    + (if $object == null then {} else {object: $object} end)
+    + (if $old == null then {} else {oldObject: $old} end)'
+}
+{
+  control tenant-deletes-own-policy "${tenant}" DELETE allow-web pass
+  for reserved in default-deny allow-dns allow-cnpg-operator; do
+    control "tenant-deletes-${reserved}" "${tenant}" DELETE "${reserved}" fail
+    control "tenant-updates-${reserved}" "${tenant}" UPDATE "${reserved}" fail
+    control "kyverno-deletes-${reserved}" "${kyverno_sa}" DELETE "${reserved}" skip
+    control "flux-deletes-${reserved}" "${flux_sa}" DELETE "${reserved}" skip
+  done
+  control tenant-updates-own-policy "${tenant}" UPDATE allow-web pass
+} >"${work}/controls.jsonl"
+(
+  cd "${repo_root}/scripts/tests/tenant-webapp-admission"
+  go test -mod=readonly -count=1 -timeout 60s ./...
+  go build -mod=readonly -o "${work}/admission" .
+)
+"${work}/admission" "${policy}" <"${work}/controls.jsonl"
 
 echo "Tenant CiliumNetworkPolicy policy enforced the expected boundary, and both"
 echo "platform carve-outs were proven to depend on the applying identity."

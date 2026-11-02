@@ -26,7 +26,7 @@ done <<'CASES'
 restrict-tenant-secret-stores	5	7
 restrict-tenant-issuer-refs	4	3
 restrict-tenant-route-hostnames	3	13
-restrict-tenant-network-policies	309	78
+restrict-tenant-network-policies	18	78
 CASES
 [[ "$failures" == 0 ]] || exit 1
 echo 'PASS: all four tenant admission families evaluate their full controls under ksail and kro ownership'
