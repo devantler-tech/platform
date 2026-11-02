@@ -1,0 +1,42 @@
+# Append rather than replace the release's existing hardening post-renderers.
+- op: add
+  path: /spec/postRenderers/-
+  value:
+    kustomize:
+      patches:
+        - target:
+            group: kubescape.io
+            version: v1
+            kind: Rules
+            name: default-rules
+          # Retain the vendor's definition without copying its implementation.
+          # The index is pinned to chart 1.40.5; the test fails closed on a move.
+          patch: |-
+            - op: test
+              path: /spec/rules/27/id
+              value: R2001
+            - op: copy
+              from: /spec/rules/27
+              path: /spec/portForwardBaseline
+            - op: replace
+              path: /spec/rules
+              value: []
+            - op: move
+              from: /spec/portForwardBaseline
+              path: /spec/rules/-
+        - target:
+            group: kubescape.io
+            version: v1
+            kind: RuntimeRuleAlertBinding
+            name: all-rules-all-pods
+          patch: |-
+            - op: test
+              path: /metadata/name
+              value: all-rules-all-pods
+            - op: add
+              path: /metadata/labels/devantler.tech~1runtime-rule-stage
+              value: port-forward-baseline
+            - op: replace
+              path: /spec/rules
+              value:
+                - ruleID: R2001
