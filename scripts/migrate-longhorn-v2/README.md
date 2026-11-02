@@ -94,6 +94,11 @@ must still match. The only reset selector is `EPHEMERAL`; there is no disk-name 
 drain. Recovery requires a changed `EPHEMERAL` UUID and separate, unlocked, state-locked encrypted
 partitions of the reviewed sizes.
 
+Every disk-removal retry rereads the owned storage node and requires the same disabled original
+disk map and evacuation fence. A changed map or fence stops the procedure; an already empty map
+needs no further write. Readiness callbacks and their host/API requests share the recovery
+deadline, and a callback cannot establish readiness after that deadline expires.
+
 A held preparation's own cordon does not fail the production deployment's node readback while its
 journal names that exact worker and Node UID. The worker must still be Ready and on the desired
 image, and any other cordon fails the deployment, so a deploy that may carry the recovery fix is not
