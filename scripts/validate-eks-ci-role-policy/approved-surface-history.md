@@ -4026,27 +4026,3 @@ existing entry, HelmRelease kyverno/kyverno, from
 `2586f7b07844eaab117a75a736e6670dbdf58ab3ef54ec10f614b309d170f547`.
 No authorization resource is added or removed. This approval records the
 declared flag change; whether it stops the timeout is a separate runtime check.
-
-## 2026-11-02 — Accept the reviewed v19.0.8 organization settings publisher
-
-For #5740, the canonical approvals for the `.github` manifest consumer move to
-`devantler-tech/.github@0966f4b015e85ef14be37411d424a7028a858550` (v19.0.8) next
-to the current signer `bd24a3e1bbbf6aba2d7afd58a2fd8a3d67bebe6b` (v19.0.3), and
-retire `0f390329b590404c02565b27a263ee841fa02bce` (v10.0.3), because a consumer
-accepts at most two canonical commits. The current release, 19.0.8, was signed by
-v19.0.3, so v19.0.3 stays accepted until the first publication by v19.0.8 is verified.
-
-`publish-manifests.yaml`, `require-unpublished-version.sh` and
-`recover-manifests-version.sh` have the same blobs at v19.0.3 and v19.0.8, so no
-signing, permission or identity step changes.
-
-Against the current main, the authorization ledger changes exactly one entry,
-with nothing added or removed:
-
-- OCIRepository github-config/github-config moves from
-  `4e8335871f17fb3b08946d6698e25db9d5b2e3e26df27c9c55293bd29b6731a0` to
-  `5e2570ecd66d38074bbdf8f3f5861cf39999bc112db64ab4c5f29ad4d27e7406`.
-
-No artifact URL, RBAC, IAM policy, credential or permission grant changes. This
-record does not establish deployed acceptance or a successful publication by the
-new signer. Deploy this acceptance before `.github` moves to v19.0.8.
