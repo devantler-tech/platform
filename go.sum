@@ -183,6 +183,8 @@ github.com/planetscale/vtprotobuf v0.6.1-0.20260702190614-8ae5a48058df h1:x2ymdo
 github.com/planetscale/vtprotobuf v0.6.1-0.20260702190614-8ae5a48058df/go.mod h1:araspv2uYKozbi5lrKaqpv1/Uei7eQSml8JCw2A3IRg=
 github.com/project-velero/kopia v0.0.0-20251230033609-d946b1e75197 h1:iGkfuELGvFCqW+zcrhf2GsOwNH1nWYBsC69IOc57KJk=
 github.com/project-velero/kopia v0.0.0-20251230033609-d946b1e75197/go.mod h1:RL4KehCNKEIDNltN7oruSa3ldwBNVPmQbwmN3Schbjc=
+github.com/project-velero/kopia v0.19.0-velero.1 h1:dLtKI8pr7Bu/i1H6NAnIUAm5P9Y1XVrxnt7jHYtA01w=
+github.com/project-velero/kopia v0.19.0-velero.1/go.mod h1:/HYpuL787Xbqz9zjo9WcPKbPBVKvfLQlB9Qnr8AQXn0=
 github.com/prometheus/client_golang v1.23.2 h1:Je96obch5RDVy3FDMndoUsjAhG5Edi49h0RJWRi/o0o=
 github.com/prometheus/client_golang v1.23.2/go.mod h1:Tb1a6LWHB3/SPIzCoaDXI4I8UHKeFTEQ1YCr+0Gyqmg=
 github.com/prometheus/client_model v0.6.2 h1:oBsgwpGs7iVziMvrGhE53c/GrLUsZdHnqNwqPLxwZyk=
