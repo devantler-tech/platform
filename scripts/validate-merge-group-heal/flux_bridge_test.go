@@ -138,30 +138,60 @@ func TestFluxBridgeBoundaryRejectsBypasses(t *testing.T) {
 	}
 }
 
-// TestFluxBridgeIndependent checks the registered execution boundary and the
-// complete package invocation, rather than a duplicated source-file inventory.
+// TestFluxBridgeIndependent keeps the selected shell controls independent. The
+// unconditional full Go job already covers the expensive bridge package; running
+// it here as well consumes a second runner without adding coverage.
 func TestFluxBridgeIndependent(t *testing.T) {
 	jobs := readFluxBridgeJobs(t)
 	if err := fluxBridgeBoundary(jobs); err != nil {
 		t.Fatal(err)
 	}
-	const suite = "go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth"
-	invocations := 0
-	for name, job := range jobs {
-		for _, step := range job.Steps {
-			for _, line := range strings.Split(step.Run, "\n") {
-				if strings.TrimSpace(line) != suite {
-					continue
-				}
-				invocations++
-				if name != "validate-flux-bridge" || step.If != "" || step.Continue != nil {
-					t.Fatal("bridge suite is serialized, conditional or failure-suppressed")
-				}
+	for _, step := range jobs["validate-flux-bridge"].Steps {
+		for _, line := range strings.Split(step.Run, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "go test ") {
+				t.Fatal("the selected bridge job repeats tests owned by the required complete Go suite")
 			}
 		}
 	}
-	if invocations != 1 {
-		t.Fatalf("complete bridge invocations = %d, want exactly one", invocations)
+	for _, command := range []string{
+		"bash scripts/tests/test-use-prod-stable-api-endpoint.sh",
+		"bash scripts/tests/test-wait-for-prod-api-stability.sh",
+		"bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh",
+	} {
+		invocations := 0
+		for name, job := range jobs {
+			for _, step := range job.Steps {
+				for _, line := range strings.Split(step.Run, "\n") {
+					if strings.TrimSpace(line) != command {
+						continue
+					}
+					invocations++
+					if name != "validate-flux-bridge" || step.If != "" || step.Continue != nil {
+						t.Fatalf("bridge shell control is conditional, moved or failure-suppressed: %s", command)
+					}
+				}
+			}
+		}
+		if invocations != 1 {
+			t.Fatalf("bridge shell control invocations = %d, want exactly one: %s", invocations, command)
+		}
+	}
+	// Ask Go for the real full-suite package set. A new nested module could
+	// otherwise silently move these tests outside the root ./... invocation.
+	list := exec.Command("go", "list", "./...")
+	list.Dir = "../.."
+	output, err := list.Output()
+	if err != nil {
+		t.Fatalf("discover complete Go suite: %v", err)
+	}
+	covered := false
+	for _, name := range strings.Fields(string(output)) {
+		if strings.HasSuffix(name, "/scripts/tests/refresh-flux-ghcr-auth") {
+			covered = true
+		}
+	}
+	if !covered {
+		t.Fatal("the required complete Go suite does not cover the bridge regression package")
 	}
 }
 
