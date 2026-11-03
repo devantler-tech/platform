@@ -388,4 +388,6 @@ spec:
       # compile, which it reports as a missing schema. So stay on the revision
       # just before it, in both configs. Remove once the catalogue compiles again.
       schemaLocations:
+        # Generated one-field correction from the pinned Kubescape Rules CRD.
+        - schemas/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
         - https://raw.githubusercontent.com/datreeio/CRDs-catalog/6ec4c804fcb9b0a90fec9dd468aa57b984be150a/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json
