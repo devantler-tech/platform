@@ -54,7 +54,7 @@ func observeBoundDeployment(ctx context.Context, namespace string, expected Poli
 	if err != nil || !contextActive(ctx) {
 		return Catalogue{}, observationFailure{"deployment-bind-after"}
 	}
-	if before.digest != after.digest {
+	if !sameDeployment(before, after) {
 		return Catalogue{}, observationFailure{"deployment-changed"}
 	}
 	return result, nil
