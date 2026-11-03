@@ -106,6 +106,22 @@ Each Kubernetes patch tests the observed UID and resource version, and Pod evict
 carry a UID precondition. Talos reads must report the same hardware UUID as the selected
 Kubernetes worker before host configuration can be trusted or a host command can run.
 
+## Benchmark retirement safeguards
+
+Recovery builds per-run admission policies from all seven original resource UID receipts. One
+protects the retained PV's original claim and backend handle; one keeps the original backend
+detached after its Kubernetes status clears naturally; and one keeps the recorded engines,
+replicas, frontends and attachment objects stopped under a fresh recovery checkpoint. These
+policies permit normal stopped-state and finalizer updates, and reject replacement identities,
+new attachments, restarts and changes to the original ownership chain.
+
+The builders return unbound policies. A recovery workflow still needs complete dependency
+inventories, activation proof on every serving API server, UID/resource-version checkpoint
+writes, and direct instance-manager observations under stable controller and process identities.
+The instance-manager registry is an observation of native runtime state, not an independent
+disk or kernel audit. The builders and stopped-state checks alone do not authorize backend
+retirement. Complete that recovery path before dispatching a benchmark.
+
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
@@ -146,13 +162,18 @@ a rerun. A prepared receipt is revalidated against live state.
 Prepared means the worker and its encrypted disk layout passed these checks. V2 activation, a
 canary, backup and restore, and application acceptance remain separate gates.
 
-Run offline checks with:
+Run the local checks with:
 
 ```sh
 go test -race ./scripts/migrate-longhorn-v2 ./internal/longhornmigration ./internal/longhorninventory
 actionlint .github/workflows/prepare-longhorn-v2-node.yaml
 zizmor --offline .github/workflows/prepare-longhorn-v2-node.yaml
 ```
+
+The Go checks make no cluster calls, but a clean module cache needs network access to the
+configured Go module proxy and checksum database. This includes the native admission proof's
+nested module at `testdata/retirement-fence-proof`; its committed `go.sum` is required. Populate
+both modules' dependencies before running in a network-restricted environment.
 
 The workflow's read-only test job runs on PRs and merge groups. Production credentials are
 restored only for a confirmed manual dispatch from main. Host configuration and provider
