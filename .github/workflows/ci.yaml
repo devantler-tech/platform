@@ -1896,8 +1896,8 @@ jobs:
           shellcheck scripts/tests/test-production-authorization-rules.sh
           bash scripts/tests/test-production-authorization-rules.sh
 
-      - name: 🚦 Validate Actual Budget user-namespace pilot
-        # Exercise the active component and its rollback on both the PR and the
+      - name: 🚦 Validate Actual Budget user namespaces
+        # Exercise the permanent setting and its rollback on both the PR and the
         # speculative merge-group revision before deploy-prod can publish it.
         timeout-minutes: 5
         run: |

@@ -8,13 +8,16 @@ app with an optional self-hosted sync server.
 
 ## User namespaces
 
-Production runs a [stateful user-namespace pilot](../../../providers/hetzner/apps/actual-budget/components/user-namespaces/README.md)
-whose runtime verdict is recorded on
-[#3604](https://github.com/devantler-tech/platform/issues/3604). Its component
-pairs the pod setting with the existing admission policy and preserves the
-database volume, both containers' identities and mounts, and the single-writer
-deployment strategy. The guide covers offline validation, the runtime verdict,
-and rollback. Local app opt-in keeps the shared defaults.
+In production the pod runs in its own user namespace (`hostUsers: false`). The
+stateful pilot passed on
+[#3604](https://github.com/devantler-tech/platform/issues/3604) and is permanent
+since [#3605](https://github.com/devantler-tech/platform/issues/3605). Two
+production patches pair the pod setting with the existing admission policy. They
+preserve the database volume, both containers' identities and mounts, and the
+single-writer deployment strategy. The
+[production guide](../../../providers/hetzner/apps/actual-budget/README.md)
+covers offline validation and rollback. Local app opt-in keeps the shared
+defaults.
 
 ## Bank sync (Enable Banking)
 
