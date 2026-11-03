@@ -63,9 +63,14 @@ jobs:
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
   validate-go-lint:
-    name: 🧹 Validate Complete Go Lint
+    name: 🧹 Validate Complete Go Lint (${{ matrix.partition }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        partition: [part-0, part-1]
     permissions:
       contents: read
     steps:
@@ -96,7 +101,9 @@ jobs:
 
       - name: 🧹 Lint every tracked Go source module
         timeout-minutes: 10
-        run: bash scripts/check-go-modules-lint.sh
+        env:
+          LINT_PARTITION: ${{ matrix.partition }}
+        run: bash scripts/check-go-modules-lint.sh "$LINT_PARTITION"
 
   validate-go-regressions:
     name: 🧪 Validate Complete Go Regressions

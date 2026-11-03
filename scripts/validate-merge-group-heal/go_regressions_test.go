@@ -25,7 +25,13 @@ type regressionWorkflow struct {
 		Needs          []string              `yaml:"needs"`
 		Continue       any                   `yaml:"continue-on-error"`
 		Permissions    map[string]string     `yaml:"permissions"`
-		Steps          []struct {
+		Strategy       struct {
+			FailFast    *bool               `yaml:"fail-fast"`
+			MaxParallel int                 `yaml:"max-parallel"`
+			Matrix      map[string][]string `yaml:"matrix"`
+		} `yaml:"strategy"`
+		Steps []struct {
+			TimeoutMinutes   int               `yaml:"timeout-minutes"`
 			Name             string            `yaml:"name"`
 			Uses             string            `yaml:"uses"`
 			With             map[string]any    `yaml:"with"`
@@ -47,6 +53,9 @@ func TestGoLintIsAnUnconditionalReadOnlyGate(t *testing.T) {
 	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
 		t.Fatal("the lint runner needs only read-only checkout permission")
 	}
+	if !completeLintPartitions(workflow) {
+		t.Fatal("complete lint requires both fixed partitions, two workers and no early cancellation")
+	}
 	for _, name := range []string{"deploy-prod", "ci-required-checks"} {
 		if !slices.Contains(workflow.Jobs[name].Needs, "validate-go-lint") {
 			t.Fatalf("%s must wait for complete Go lint", name)
@@ -61,12 +70,12 @@ func TestGoLintIsAnUnconditionalReadOnlyGate(t *testing.T) {
 			}
 			install = index
 		case strings.TrimSpace(step.Run) == "bash scripts/tests/test-go-modules-lint.sh":
-			if control >= 0 || step.If != "" || step.Continue != nil || step.WorkingDirectory != "" {
+			if control >= 0 || step.If != "" || step.Continue != nil || step.WorkingDirectory != "" || step.TimeoutMinutes != 5 {
 				t.Fatal("real linter negative controls must run unconditionally from the root")
 			}
 			control = index
-		case strings.TrimSpace(step.Run) == "bash scripts/check-go-modules-lint.sh":
-			if lint >= 0 || step.If != "" || step.Continue != nil || step.WorkingDirectory != "" {
+		case strings.TrimSpace(step.Run) == `bash scripts/check-go-modules-lint.sh "$LINT_PARTITION"`:
+			if lint >= 0 || step.If != "" || step.Continue != nil || step.WorkingDirectory != "" || step.TimeoutMinutes != 10 || step.Env["LINT_PARTITION"] != "${{ matrix.partition }}" {
 				t.Fatal("complete module lint must run unconditionally from the root")
 			}
 			lint = index
@@ -74,6 +83,52 @@ func TestGoLintIsAnUnconditionalReadOnlyGate(t *testing.T) {
 	}
 	if install < 0 || control <= install || lint <= control {
 		t.Fatal("independent lint must install the linter, verify its real controls, then lint the tracked modules")
+	}
+}
+
+func completeLintPartitions(workflow regressionWorkflow) bool {
+	strategy := workflow.Jobs["validate-go-lint"].Strategy
+	parts := append([]string(nil), strategy.Matrix["partition"]...)
+	slices.Sort(parts)
+	return strategy.FailFast != nil && !*strategy.FailFast && strategy.MaxParallel == 2 && len(strategy.Matrix) == 1 &&
+		slices.Equal(parts, []string{"part-0", "part-1"})
+}
+
+func TestGoLintPartitionsRejectIncompleteRouting(t *testing.T) {
+	t.Run("extra axis", func(t *testing.T) {
+		workflow := readRegressionWorkflow(t)
+		job := workflow.Jobs["validate-go-lint"]
+		job.Strategy.Matrix["extra"] = []string{"ignored"}
+		workflow.Jobs["validate-go-lint"] = job
+		if completeLintPartitions(workflow) {
+			t.Fatal("accepted an extra lint routing axis")
+		}
+	})
+	for _, test := range []struct {
+		name     string
+		parts    []string
+		workers  int
+		failFast *bool
+	}{
+		{"missing", []string{"part-0"}, 2, new(false)},
+		{"duplicate", []string{"part-0", "part-0"}, 2, new(false)},
+		{"unknown", []string{"part-0", "other"}, 2, new(false)},
+		{"extra", []string{"part-0", "part-1", "all"}, 2, new(false)},
+		{"unbounded", []string{"part-0", "part-1"}, 0, new(false)},
+		{"overflow", []string{"part-0", "part-1"}, 3, new(false)},
+		{"early cancellation", []string{"part-0", "part-1"}, 2, new(true)},
+		{"default cancellation", []string{"part-0", "part-1"}, 2, nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := readRegressionWorkflow(t)
+			job := workflow.Jobs["validate-go-lint"]
+			job.Strategy.Matrix = map[string][]string{"partition": test.parts}
+			job.Strategy.MaxParallel, job.Strategy.FailFast = test.workers, test.failFast
+			workflow.Jobs["validate-go-lint"] = job
+			if completeLintPartitions(workflow) {
+				t.Fatal("accepted incomplete or unbounded lint routing")
+			}
+		})
 	}
 }
 

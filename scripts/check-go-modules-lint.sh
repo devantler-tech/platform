@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # Lint first-party packages in every indexed module, without fixing source.
 set -euo pipefail
+[ "$#" -le 1 ] || {
+  echo 'usage: check-go-modules-lint.sh [all|part-0|part-1]' >&2
+  exit 2
+}
+partition=-1
+case "${1:-all}" in
+  all) ;;
+  part-0) partition=0 ;;
+  part-1) partition=1 ;;
+  *)
+    echo 'unknown Go lint partition' >&2
+    exit 2
+    ;;
+esac
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 work="$(mktemp -d)"
 trap 'rm -rf -- "$work"' EXIT
@@ -27,8 +41,12 @@ done <"$work/modules"
 golangci-lint --version | grep -Eq 'has version 2[.]14[.]0( |$)'
 export GOENV=off GOFLAGS='' GOWORK=off GOTOOLCHAIN=local
 printf 'Go lint target %s/%s\n' "$(go env GOOS)" "$(go env GOARCH)"
-checked=0 tooling=0
+checked=0 tooling=0 index=0
+printf 'Go lint selection %s\n' "${1:-all}"
 while IFS= read -r -d '' directory && IFS= read -r -d '' module_root; do
+  assigned=$((index % 2))
+  index=$((index + 1))
+  if [ "$partition" -ne -1 ] && [ "$assigned" -ne "$partition" ]; then continue; fi
   printf 'Checking Go lint module %s\n' "$directory"
   if ! go -C "$module_root" list -mod=readonly -e -json ./... >"$work/packages" ||
     ! jq -se 'all(.Error == null and ((.DepsErrors // []) | length == 0))' "$work/packages" >/dev/null; then
