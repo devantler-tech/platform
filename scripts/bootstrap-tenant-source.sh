@@ -204,7 +204,8 @@ bootstrap_tenant_source() (
     }
     return 0
   fi
-  local source_root="$REPO_ROOT" source_file='' tag='' output="$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json"
+  # OUTPUT is the sourced approval ledger; this separate path holds the candidate.
+  local source_root="$REPO_ROOT" source_file='' tag='' publication_output="$REPO_ROOT/scripts/publish-workflow-bootstrap-publications.json"
   while [ "$#" -gt 0 ]; do
     [ "$#" -ge 2 ] || {
       echo 'expected --source-file, --tag, --source-root or --output and a value' >&2
@@ -214,7 +215,7 @@ bootstrap_tenant_source() (
     --source-file) source_file="$2" ;;
     --tag) tag="$2" ;;
     --source-root) source_root="$2" ;;
-    --output) output="$2" ;;
+    --output) publication_output="$2" ;;
     *)
       echo 'unknown bootstrap argument' >&2
       return 2
@@ -230,7 +231,7 @@ bootstrap_tenant_source() (
   case "/$source_file/" in *'/../'* | *'/./'* | *'//'*) return 2 ;; esac
   source_root="$(cd "$source_root" && pwd -P)" || return 2
   [ "$(realpath "$source_root/$source_file" 2>/dev/null)" = "$source_root/$source_file" ] || return 2
-  [ ! -L "$output" ] || return 2
+  [ ! -L "$publication_output" ] || return 2
   # This is a FIRST-consumer path, never an alternative to ordinary observation.
   [ -r "$OUTPUT" ] && [ ! -L "$OUTPUT" ] || return 1
   [ "$(head -n1 "$OUTPUT")" = "$HEADER" ] || return 1
@@ -359,8 +360,8 @@ bootstrap_tenant_source() (
     rm -rf "$work"
     return 1
   }
-  if [ -e "$output" ]; then
-    previous="$(read_bound_publications "$source_root" "$output")" || {
+  if [ -e "$publication_output" ]; then
+    previous="$(read_bound_publications "$source_root" "$publication_output")" || {
       rm -rf "$work"
       return 1
     }
@@ -375,7 +376,7 @@ bootstrap_tenant_source() (
     return 0
   fi
   local staged
-  staged="$(mktemp "${output}.tmp.XXXXXX")" || {
+  staged="$(mktemp "${publication_output}.tmp.XXXXXX")" || {
     rm -rf "$work"
     return 1
   }
@@ -386,7 +387,7 @@ bootstrap_tenant_source() (
   chmod 0644 "$staged"
   # POSIX link creates this exact destination atomically. Unlike ln, it cannot
   # interpret a concurrently created directory (or directory symlink) as a target.
-  link "$staged" "$output" || {
+  link "$staged" "$publication_output" || {
     rm -f "$staged"
     return 1
   }

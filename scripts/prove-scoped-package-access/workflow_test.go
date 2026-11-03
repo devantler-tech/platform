@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -55,8 +56,8 @@ func TestWorkflowKeepsTheProofManualAndTheCandidateReadOnly(t *testing.T) {
 			continue
 		}
 		mints++
-		if step.With["owner"] != "devantler-tech" || step.With["repositories"] != "wedding-app" {
-			t.Fatal("candidate repository scope widened")
+		if err := candidateRepositoryScope(step.With); err != nil {
+			t.Fatal(err)
 		}
 		if step.With["permission-packages"] != "read" {
 			t.Fatal("candidate needs explicit packages read only")
@@ -72,5 +73,35 @@ func TestWorkflowKeepsTheProofManualAndTheCandidateReadOnly(t *testing.T) {
 	}
 	if mints != 1 {
 		t.Fatal("exactly one candidate token is required")
+	}
+}
+
+// The pinned action defaults an omitted owner to GITHUB_REPOSITORY_OWNER while
+// preserving its explicit repository list. An owner input also triggers the
+// singular/plural input bug in zizmor 1.25.0; never work around it by dropping
+// the repository list or granting a different owner.
+func candidateRepositoryScope(inputs map[string]string) error {
+	if _, present := inputs["owner"]; present {
+		return errors.New("candidate must use the current repository owner default")
+	}
+	if inputs["repositories"] != "wedding-app" {
+		return errors.New("candidate repository scope widened or absent")
+	}
+	return nil
+}
+
+func TestCandidateScopeRefusesMissingOrBroaderRepositorySelection(t *testing.T) {
+	for name, inputs := range map[string]map[string]string{
+		"missing repositories": {},
+		"empty repositories":   {"repositories": ""},
+		"extra repository":     {"repositories": "wedding-app,platform"},
+		"different owner":      {"owner": "other-owner", "repositories": "wedding-app"},
+		"empty owner input":    {"owner": "", "repositories": "wedding-app"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := candidateRepositoryScope(inputs); err == nil {
+				t.Fatal("unsafe candidate scope was accepted")
+			}
+		})
 	}
 }
