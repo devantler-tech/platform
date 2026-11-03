@@ -1,0 +1,35 @@
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: longhorn-benchmark-delete
+spec:
+  failurePolicy: Fail
+  paramKind:
+    apiVersion: v1
+    kind: ConfigMap
+  matchConstraints:
+    matchPolicy: Exact
+    namespaceSelector:
+      matchLabels:
+        storage.platform.devantler.tech/benchmark-delete-guard: v1
+    resourceRules:
+      - apiGroups: ["*"]
+        apiVersions: ["*"]
+        operations: [DELETE]
+        resources: ["*"]
+        scope: Namespaced
+  matchConditions:
+    - name: benchmark-namespace
+      expression: request.namespace.matches('^longhorn-benchmark-(v1|v2)-[1-9][0-9]{0,18}$')
+  validations:
+    # The native 1.36 Namespace CEL declaration spells UID differently from
+    # its JSON activation. Read the wire field dynamically; native compiler
+    # tests prove both the allowed UID pair and the adverse cases.
+    - expression: >-
+        oldObject != null && params != null && namespaceObject != null &&
+        has(oldObject.metadata) && has(oldObject.metadata.uid) &&
+        oldObject.metadata.uid != '' && has(params.data) &&
+        oldObject.metadata.uid in params.data &&
+        params.data[oldObject.metadata.uid] != '' &&
+        params.data[oldObject.metadata.uid] == dyn(namespaceObject.metadata).uid
+      message: Only explicitly recorded benchmark objects may be deleted.

@@ -138,7 +138,7 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	first, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, stageListingBefore
+		return inventoryReceipt{}, errors.Join(stageListingBefore, err)
 	}
 	firstReport, err := longhorninventory.Analyze(first, before.Replicas)
 	if err != nil {
@@ -146,7 +146,7 @@ func observeReplicaInventory(ctx context.Context, c client, target string, facto
 	}
 	second, err := reader.ListReplicas(ctx)
 	if err != nil {
-		return inventoryReceipt{}, stageListingAfter
+		return inventoryReceipt{}, errors.Join(stageListingAfter, err)
 	}
 	after, node, err := c.inventoryProjection(ctx, target)
 	if err != nil {
