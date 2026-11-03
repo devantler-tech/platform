@@ -3645,7 +3645,7 @@ jobs:
           persist-credentials: false
 
       - name: ⚙️ Setup Go
-        # Runs the complete offline credential-bridge regression family.
+        # Supplies the reviewed YAML parser for the selected shell controls.
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -3687,7 +3687,9 @@ jobs:
           bash scripts/tests/test-use-prod-stable-api-endpoint.sh
           bash scripts/tests/test-wait-for-prod-api-stability.sh
           bash scripts/tests/test-refresh-flux-ghcr-auth-safety.sh
-          go test -timeout=20m ./scripts/tests/refresh-flux-ghcr-auth
+          # The unconditional validate-go-regressions job runs the complete
+          # refresh-flux-ghcr-auth package via ./... on this same checkout.
+          # Required CI rejects every non-success result from either job.
 
   naming:
     name: 🏷️ Validate Naming Conventions

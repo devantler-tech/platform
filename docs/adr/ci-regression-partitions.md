@@ -60,6 +60,22 @@ production verifier and all fixture assertions and real deadlines stay intact.
 
 ## Evidence and alternatives
 
+The selected Flux bridge job retains its shell syntax, lint and behavioral
+controls, while the unconditional complete Go job owns the credential-refresh
+Go package. Both jobs check out the same event revision and remain required.
+The Go package is no longer repeated in the selected job. Real `go list ./...`
+discovery protects its inclusion in the full suite; the existing aggregate
+controls reject a missing, skipped, cancelled or failed full-suite result.
+
+In successful PR run
+[41661620291](https://github.com/devantler-tech/platform/actions/runs/41661620291),
+the full Go regression step took 440 seconds and the selected bridge step took
+408 seconds. Both invoked the credential-refresh package. Removing that duplicate
+targets occupied runner time and contention; it does not establish a matching
+reduction in merge-queue latency. The merge-group Go suite, production validation,
+deployment and recovery remain mandatory. Compare hosted feedback and occupied
+runner time separately under #5495 after delivery.
+
 `Measure CI Runtime` compares settings on one immutable event revision.
 Run `measure-ci-runtime.yaml` on `main` with confirmation `measure current main`.
 Changes to that workflow also run the comparison as PR validation, before it is
