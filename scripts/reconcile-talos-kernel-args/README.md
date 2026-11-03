@@ -481,6 +481,15 @@ neither the Talos configuration manager, generator nor cluster API; the same rea
 finds the machinery packages. This audit changes no cluster configuration or
 vulnerability exception.
 
+**7.206.23**, commit `00da4dba076374a13a6f3c6e299f5be01ee9db83`, is audited
+against 7.206.5. The configuration manager, Talos generator, cluster API and
+charts are byte-identical. `go.mod` and `go.sum` change one module,
+`wailsapp/wails/v3` from v3.0.0-beta.31 to v3.0.0-beta.33. Talos machinery stays
+at v1.14.0-alpha.2 and the YAML encoders are unchanged. At this tag `go list -deps`
+finds the module in neither the Talos configuration manager, generator nor
+cluster API; the same read finds the machinery packages. This audit changes no
+cluster configuration or vulnerability exception.
+
 ```bash
 go run ./scripts/reconcile-talos-kernel-args --check-pins
 go run ./scripts/reconcile-talos-kernel-args ksail.prod.yaml controlplane.yaml worker.yaml

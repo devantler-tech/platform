@@ -52,6 +52,15 @@ cleanup before removing retained resources. Do not delete storage keys while a
 restore operation or encrypted backend may still need them. A workflow rerun is
 refused; diagnose before a new confirmed dispatch.
 
+The confirmed `Observe Retained Email Recovery` workflow performs a read-only
+diagnosis of invocation `41561215415`. Its target is fixed in reviewed code. It
+binds the namespace, reader UID and declared workload, samples readiness without
+authentication, and only then reads the existing account credential to check a
+JMAP session. It performs no mailbox write, new restore or cleanup. A successful
+observation does not establish message recovery. Its output contains only a
+status code and closed stage names. Future recovery failures distinguish reader
+forwarding, readiness, session and message checks instead of grouping them.
+
 The pass receipt covers message recovery, encrypted disposable storage, source
 retention and disposal of the restored copy. It does not establish an independent
 cluster rebuild, archive migration, transport delivery, OIDC, or production

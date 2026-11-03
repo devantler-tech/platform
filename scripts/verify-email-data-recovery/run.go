@@ -232,7 +232,7 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	d.stage = "mailbox-proof"
+	d.stage = "reader-forward"
 	endpoint, stopReader, err := d.forward(ctx, d.i.namespace, "reader", reader.uid)
 	if err != nil {
 		return err
@@ -243,6 +243,7 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 		return err
 	}
 	recovered.account = original.account
+	d.stage = "reader-readiness"
 	err = waitRecovery(ctx, 90*time.Second, func() (bool, error) {
 		_, e := recovered.request(ctx, "GET", "/healthz/ready", "", nil)
 		return e == nil, nil
@@ -250,9 +251,11 @@ func (d *recoveryDriver) execute(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	d.stage = "reader-session"
 	if err = recovered.session(ctx); err != nil {
 		return err
 	}
+	d.stage = "reader-message"
 	if _, err = recovered.verifyMessage(ctx, marker.identity); err != nil {
 		return err
 	}

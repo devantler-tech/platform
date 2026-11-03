@@ -14,9 +14,9 @@ import (
 )
 
 type inventoryProjection struct {
-	Address, BootID, Digest string
-	Replicas                []longhorninventory.Replica
-	Registered              bool
+	Address, BootID, Digest, StorageUID string
+	Replicas                            []longhorninventory.Replica
+	Registered                          bool
 }
 
 var errInventory = errors.New("replica inventory identity, placement or completeness is unproven")
@@ -78,8 +78,11 @@ func inventoryFailureMessage(err error) string {
 	return stageUnknown.Error()
 }
 
+// projectInventory validates the observed node, disk registrations and replica
+// bindings before committing their identities. Unregistered temporary nodes must
+// retain the reviewed pool identity and an explicitly empty, fenced storage view.
 func projectInventory(target string, node, storage object, replicas []object) (inventoryProjection, error) {
-	p := inventoryProjection{BootID: text(node, "status", "nodeInfo", "bootID")}
+	p := inventoryProjection{BootID: text(node, "status", "nodeInfo", "bootID"), StorageUID: text(storage, "metadata", "uid")}
 	if (!inventoryTarget.MatchString(target) && !inventoryTemporaryNode.MatchString(target)) || !inventoryBoot.MatchString(p.BootID) ||
 		text(node, "metadata", "uid") == "" || text(node, "metadata", "resourceVersion") == "" ||
 		text(node, "spec", "providerID") == "" || text(node, "status", "nodeInfo", "systemUUID") == "" ||

@@ -326,8 +326,11 @@ spec:
         # same-identity payload exactly one version ahead. Payload bytes stay
         # intact; creation-time identity is compared at metadata JSON precision.
         # Unproven or concurrently changed state is refused (#5419).
+        # Revision 11 also preserves newer SBOM metadata through the legacy
+        # storage codec and updates the executable dependencies. Its immutable
+        # publication and both shipped executables were verified under #5553.
         repository: ghcr.io/devantler-tech/platform-kubescape-storage
-        tag: "v0.0.297-sqlite-contention.10-f90df920acce50d6af7a3df0f95a00c02639a173@sha256:09e5868c8a20a958587ec57755c3e447fb25f3d46945e4f0da40788fd3f5ec96"
+        tag: "v0.0.297-sqlite-contention.11-ee02c6f9678b9332aed7af2bcc8c7a6686eb3552@sha256:cf539713a84613e00cd3cf9fa4c8c4f68eeb0719299fbb6ac91bca1d215e005b"
         pullPolicy: IfNotPresent
     # Hetzner CSI provisions a minimum 10Gi volume; match the PVC request
     # to avoid Helm upgrade failures from PVC shrink rejection.

@@ -46,7 +46,7 @@ func observeHostMemory(ctx context.Context, c client, target string, factory inv
 	if !active() || !inventoryTarget.MatchString(target) {
 		return hostMemoryReceipt{}, stageDeadline
 	}
-	before, node, err := c.inventoryProjection(ctx, target)
+	before, node, err := c.hostMemoryProjection(ctx, target)
 	if err != nil {
 		return hostMemoryReceipt{}, stageProjectionBefore
 	}
@@ -87,7 +87,7 @@ func observeHostMemory(ctx context.Context, c client, target string, factory inv
 	if err != nil || !bytes.Equal(pages, second) {
 		return hostMemoryReceipt{}, stageHostMemoryAllocationChanged
 	}
-	after, node, err := c.inventoryProjection(ctx, target)
+	after, node, err := c.hostMemoryProjection(ctx, target)
 	if err != nil || before.Digest != after.Digest {
 		return hostMemoryReceipt{}, stageAPIConsistency
 	}
