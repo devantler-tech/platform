@@ -6,7 +6,7 @@ COPY front/ ./
 RUN npm run build-prod
 
 FROM docker.io/library/golang:1.27.3-bookworm@sha256:fea12ba16096adec0f699ce1c4da2154d320450e56c1f63671f95d2a3551c77b AS builder
-RUN apt-get update && apt-get install --yes --no-install-recommends liblz4-dev && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install --yes --no-install-recommends liblz4-dev=1.9.4-1 && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -18,4 +18,8 @@ RUN go build -mod=readonly -ldflags "-X main.version=$VERSION" -o /out/coroot .
 
 FROM ghcr.io/coroot/coroot:1.29.1@sha256:7f5aa2982ff789f95d8326b35cafad3d127bb44669eed94a90a6baa563c342af
 COPY --from=builder --chmod=0755 /out/coroot /usr/bin/coroot
+# Restate the upstream image's own non-root identity; its config User is 65534:65534.
+USER 65534:65534
+# Kubernetes never runs an image health check, so this image declares none.
+HEALTHCHECK NONE
 RUN ["/usr/bin/coroot", "--help"]
