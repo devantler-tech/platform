@@ -2,6 +2,9 @@ package main
 
 import (
 	"os"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	policiesv1beta1 "github.com/kyverno/api/api/policies.kyverno.io/v1beta1"
@@ -10,14 +13,43 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
+// osvIgnoredID matches an [[IgnoredVulns]] id in osv-scanner.toml. An entry in
+// any other form is not matched, so the lists differ and the test fails closed.
+var osvIgnoredID = regexp.MustCompile(`(?m)^\s*id\s*=\s*"([^"]+)"\s*$`)
+
+// readOptional returns a file's contents, or nothing when the file is absent.
+func readOptional(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(name)
+	if os.IsNotExist(err) {
+		return ""
+	} else if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
 // These acceptances adjudicate overbroad database ranges, not an unpatched
 // runtime. A dependency update must re-read the upstream ranges before carrying
 // them forward. Removing the acceptances after database correction is allowed.
+// govulncheck and osv-scanner each read their own list, so both must name the
+// same advisories.
 func TestAdvisoryAcceptancePinsReviewedRelease(t *testing.T) {
-	if _, err := os.Stat(".govulncheck-allow.txt"); os.IsNotExist(err) {
+	var accepted, ignored []string
+	for _, line := range strings.Split(readOptional(t, ".govulncheck-allow.txt"), "\n") {
+		line, _, _ = strings.Cut(line, "#")
+		accepted = append(accepted, strings.Fields(line)...)
+	}
+	for _, match := range osvIgnoredID.FindAllStringSubmatch(readOptional(t, "osv-scanner.toml"), -1) {
+		ignored = append(ignored, match[1])
+	}
+	slices.Sort(accepted)
+	slices.Sort(ignored)
+	if !slices.Equal(accepted, ignored) {
+		t.Fatalf("osv-scanner.toml ignores %v but .govulncheck-allow.txt accepts %v", ignored, accepted)
+	}
+	if len(accepted) == 0 {
 		return
-	} else if err != nil {
-		t.Fatal(err)
 	}
 	data, err := os.ReadFile("go.mod")
 	if err != nil {
