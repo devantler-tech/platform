@@ -265,6 +265,8 @@ github.com/siderolabs/protoenc v0.2.4 h1:D3Fpn2nQSQOhl8ZlAxijZAf7K6F8CM1uZq0afIG
 github.com/siderolabs/protoenc v0.2.4/go.mod h1:i5XLHjfv5vyi7LhQrSEo19HCA+lYtDd7CWxsoWp9XE8=
 github.com/siderolabs/talos/pkg/machinery v1.14.4 h1:reYNIV4XTbUcOSVzlAqkM6psdOlO9U+HYc2AeuvAzfI=
 github.com/siderolabs/talos/pkg/machinery v1.14.4/go.mod h1:PEzCUOIG+87NIqBsONm/eQEQQfgoOwWL+r5ANhCrQGU=
+github.com/siderolabs/talos/pkg/machinery v1.14.5 h1:s7tKS2fe2TjD8mVfD4NG2mF6GMJn5THhsgt4/x5+eUM=
+github.com/siderolabs/talos/pkg/machinery v1.14.5/go.mod h1:PEzCUOIG+87NIqBsONm/eQEQQfgoOwWL+r5ANhCrQGU=
 github.com/spf13/pflag v1.0.10 h1:4EBh2KAYBwaONj6b2Ye1GiHfwjqyROoF4RwYO+vPwFk=
 github.com/spf13/pflag v1.0.10/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
