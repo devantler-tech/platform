@@ -1,5 +1,18 @@
 # Prepare Longhorn V2 workers
 
+`observe-database` is a protected, read-only PostgreSQL observation for
+platform#5842. Select one of the three fixed databases with `database`, leave
+`node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
+It requires three healthy, owned instances with stable primary and archive
+state. Fixed SQL reads physical database identity, timeline and WAL positions;
+the primary's captured flush position must be replayed by both standbys.
+Complete namespace Pod inventories and process identities bracket the reads,
+including a final whole-cluster read after the last SQL command. The operation
+prints only a success summary, with no application rows, credentials or physical
+identities. Changed source, cluster, process or replication evidence holds the
+operation. This observation neither proves backup recovery nor authorizes
+replacement, promotion, storage retirement or application cutover.
+
 `inventory-storage-layout` adds read-only native block metadata to the storage-root
 observation for a fixed temporary worker. Confirm it with
 `inventory-longhorn-storage-layout-<selection>`. Two complete, bounded native volume

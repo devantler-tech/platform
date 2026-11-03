@@ -27,6 +27,8 @@ func main() {
 		authorization = authorizeHostMemory(os.Getenv, target)
 	case "reboot-host-for-hugepages":
 		authorization = authorizeHostReboot(os.Getenv, target)
+	case "observe-database":
+		authorization = authorizeCNPGObservation(os.Getenv)
 	case "inventory-storage-root":
 		authorization = authorizeStorageRoot(os.Getenv, target)
 	case "inventory-storage-layout":
@@ -40,6 +42,16 @@ func main() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 110*time.Minute)
 	defer cancel()
+	if operation == "observe-database" {
+		observationContext, stop := context.WithTimeout(ctx, 5*time.Minute)
+		defer stop()
+		if _, err := observeCNPGMigration(observationContext, client{run: execute, context: "admin@prod"}, os.Getenv("LONGHORN_V2_DATABASE"), os.Getenv("GITHUB_SHA")); err != nil {
+			fmt.Fprintln(os.Stderr, "Database migration observation held:", err)
+			os.Exit(1)
+		}
+		fmt.Println("CNPG_MIGRATION_OBSERVATION=PASS databases=1 instances=3 writes=0")
+		return
+	}
 	if operation == "inventory-storage-layout" {
 		if err := runStorageLayoutInventory(ctx, target, os.Getenv("GITHUB_SHA"), os.Getenv("GITHUB_RUN_ID")); err != nil {
 			fmt.Fprintln(os.Stderr, inventoryFailureMessage(err))
