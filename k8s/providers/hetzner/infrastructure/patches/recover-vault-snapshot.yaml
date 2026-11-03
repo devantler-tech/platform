@@ -2,13 +2,13 @@
 # A pod-template change makes Flux replace this immutable, force-enabled Job.
 # Retaining the completed Job (no TTL) prevents repeated volume attachments;
 # the daily CronJob remains the normal backup schedule.
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: vault-snapshot-init
-  namespace: openbao
-spec:
-  template:
-    metadata:
-      annotations:
-        backup.devantler.tech/recovery-id: "2026-09-08-csi-metadata"
+#
+# JSON patch (not strategic merge), with the target in kustomization.yaml: a
+# partial Job manifest is scanned by Checkov and Trivy as if it were a workload
+# with no containers or security context, although the rendered Job is
+# unchanged in those respects. An operation list is not a workload manifest.
+# The base pod template has no annotations, so `add` creates them.
+- op: add
+  path: /spec/template/metadata/annotations
+  value:
+    backup.devantler.tech/recovery-id: "2026-09-08-csi-metadata"

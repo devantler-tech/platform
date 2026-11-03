@@ -458,6 +458,9 @@ jobs:
               # The vault-backup KSV-0020 disposition rests on the same per-container identity,
               # and its guard also asserts that KSV-0021 stays UNdispositioned there.
               - 'scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh'
+              # The private-mail KSV-0020/KSV-0021 disposition rests on Stalwart's image-baked
+              # identity per container, so the entry and its premises test move together.
+              - 'scripts/tests/test-trivyignore-private-mail-identity-boundary.sh'
               # The first-party RBAC dispositions and the roles they describe are one
               # contract: the disposition is only valid while the role stays bound and
               # scoped the way it was reviewed. The roles themselves are already covered
@@ -2275,6 +2278,16 @@ jobs:
         run: |
           shellcheck scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
           bash scripts/tests/test-trivyignore-vault-backup-identity-boundary.sh
+
+      - name: 🧱 Validate private-mail identity disposition boundary
+        if: needs.changes.outputs.k8s == 'true'
+        # Every private-mail container runs at uid/gid 2000, the stalwart identity the pinned
+        # Stalwart digest defines and the bootstrap image restates. The path-scoped entry would
+        # also hide a container added later at another low identity, so the guard asserts the
+        # identity per container and the measured digest, and keeps an identical probe reported.
+        run: |
+          shellcheck scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
+          bash scripts/tests/test-trivyignore-private-mail-identity-boundary.sh
 
       - name: 🧱 Validate first-party RBAC disposition premises
         if: needs.changes.outputs.k8s == 'true'
