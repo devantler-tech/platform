@@ -45,7 +45,7 @@ require (
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.4
 	github.com/google/go-github/v88 v88.0.0
-	k8s.io/client-go v0.37.2
+	k8s.io/client-go v11.0.0+incompatible
 )
 
 require (
