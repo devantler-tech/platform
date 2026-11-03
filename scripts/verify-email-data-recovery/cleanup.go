@@ -7,12 +7,15 @@ import (
 )
 
 // Failed or uncertain runs retain the diagnostic namespace and its storage key.
-// This path runs only after the recovered message and source cleanup both pass.
+// Callers must first verify the copy's diagnostic and preserve the source.
 func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 	if d.uncertain || d.volumeName == "" || d.volumeUID == "" || d.pvUID == "" {
 		return errors.New("cleanup-retained")
 	}
 	if err := d.observeRestoredStorage(ctx); err != nil {
+		return err
+	}
+	if err := d.cleanupPreflight(ctx); err != nil {
 		return err
 	}
 	reader, err := d.ref("Pod", "reader", d.i.namespace)
@@ -23,6 +26,9 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 		return err
 	}
 	if err = d.observeRestoredStorage(ctx); err != nil {
+		return err
+	}
+	if err = d.sourceRetained(ctx); err != nil {
 		return err
 	}
 	claim, err := d.ref("PersistentVolumeClaim", "data", d.i.namespace)
@@ -81,6 +87,18 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 		return err
 	}
 	for _, ref := range []ownedReference{{kind: "Secret", name: "test-authentication", namespace: d.i.namespace}, {kind: "Secret", name: "storage-key", namespace: d.i.namespace}, {kind: "ConfigMap", name: "datastore", namespace: d.i.namespace}, {kind: "CiliumNetworkPolicy", name: "isolation", namespace: d.i.namespace}, {kind: "StorageClass", name: d.i.namespace}, {kind: "Namespace", name: d.i.namespace}} {
+		if ref.kind == "Namespace" {
+			if err = d.namespaceInventory(ctx); err != nil {
+				return err
+			}
+		}
+		if ref.kind == "Secret" && ref.name == "storage-key" {
+			for _, backend := range []ownedReference{{kind: "PersistentVolume", name: d.volumeName}, {kind: "volumes.longhorn.io", name: d.volumeName, namespace: "longhorn-system"}} {
+				if _, found, err := d.lookup(ctx, backend.kind, backend.name, backend.namespace); err != nil || found {
+					return errors.New("cleanup-backend-reappeared")
+				}
+			}
+		}
 		actual, e := d.ref(ref.kind, ref.name, ref.namespace)
 		if e != nil {
 			return e
@@ -112,6 +130,49 @@ func (d *recoveryDriver) cleanupRestore(ctx context.Context) error {
 	return d.sourceRetained(ctx)
 }
 
+// Check the entire disposal graph before deleting even the reader. Recheck the
+// inventory and backup later as well; neither first-read evidence nor labels
+// permit adopting a replacement after disposal has begun.
+func (d *recoveryDriver) cleanupPreflight(ctx context.Context) error {
+	if err := d.sourceRetained(ctx); err != nil {
+		return err
+	}
+	for _, ref := range d.refs {
+		if _, err := d.owned(ctx, ref); err != nil {
+			return err
+		}
+	}
+	for _, descriptor := range []ownedReference{
+		{kind: "DataDownload", name: d.i.namespace + "-download", namespace: "velero"},
+		{kind: "Backup", name: d.i.namespace + "-backup", namespace: "velero"},
+	} {
+		ref, err := d.ref(descriptor.kind, descriptor.name, descriptor.namespace)
+		if err != nil {
+			return err
+		}
+		live, err := d.owned(ctx, ref)
+		if err != nil {
+			return err
+		}
+		if text(child(live, "status"), "phase") != "Completed" || child(live, "metadata")["deletionTimestamp"] != nil {
+			return errors.New("cleanup-controller-unverified")
+		}
+		if ref.kind == "Backup" {
+			expires, err := time.Parse(time.RFC3339, text(child(live, "status"), "expiration"))
+			if err != nil || !expires.After(time.Now().Add(15*time.Minute)) || text(child(live, "spec"), "ttl") != "24h0m0s" {
+				return errors.New("cleanup-backup-retention")
+			}
+		} else {
+			for _, helper := range []ownedReference{{kind: "Pod", name: ref.name, namespace: "velero"}, {kind: "PersistentVolumeClaim", name: ref.name, namespace: "velero"}, {kind: "PersistentVolumeClaim", name: ref.name + "-cache", namespace: "velero"}} {
+				if _, found, err := d.lookup(ctx, helper.kind, helper.name, helper.namespace); err != nil || found {
+					return errors.New("cleanup-transfer-helper")
+				}
+			}
+		}
+	}
+	return d.namespaceInventory(ctx)
+}
+
 func (d *recoveryDriver) namespaceInventory(ctx context.Context) error {
 	namespace, err := d.ref("Namespace", d.i.namespace, "")
 	if err != nil || len(d.namespacePolicies) != 4 {
@@ -119,6 +180,11 @@ func (d *recoveryDriver) namespaceInventory(ctx context.Context) error {
 	}
 	if _, err = d.owned(ctx, namespace); err != nil {
 		return err
+	}
+	if d.completeNamespaceInventory != nil {
+		if err = d.completeNamespaceInventory(ctx); err != nil {
+			return err
+		}
 	}
 	resources, err := d.list(ctx, "pods,persistentvolumeclaims,secrets,configmaps,services,serviceaccounts,deployments.apps,statefulsets.apps,daemonsets.apps,jobs.batch,cronjobs.batch,ciliumnetworkpolicies.cilium.io,networkpolicies.networking.k8s.io", d.i.namespace, "")
 	if err != nil {
