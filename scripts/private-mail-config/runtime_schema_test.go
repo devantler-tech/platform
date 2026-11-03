@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// TestSelectedRuntimeEmitsItsNativeSchema protects policy and asset selection across both APIs.
 func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 	for _, version := range []string{"0.16.27", "1.0.2"} {
 		t.Run(version, func(t *testing.T) {
@@ -105,6 +106,7 @@ func TestSelectedRuntimeEmitsItsNativeSchema(t *testing.T) {
 	}
 }
 
+// TestRuntimeVersionRefusesUnknownOrAmbiguousInputs prevents unsafe selector fallbacks.
 func TestRuntimeVersionRefusesUnknownOrAmbiguousInputs(t *testing.T) {
 	for _, member := range []string{`"runtimeVersion":""`, `"runtimeVersion":null`, `"runtimeVersion":1`, `"runtimeVersion":"1.0.3"`, `"runtimeVersion":"1.0.2","runtimeVersion":"0.16.27"`} {
 		input, output := aliasInputs(t, strings.Replace(aliasesSettings, "{", "{"+member+",", 1), receivingInventory(nil, nil))
@@ -117,6 +119,7 @@ func TestRuntimeVersionRefusesUnknownOrAmbiguousInputs(t *testing.T) {
 	}
 }
 
+// TestSchemaSelectionRefusesForeignOrMixedListenerFields rejects cross-version TLS declarations.
 func TestSchemaSelectionRefusesForeignOrMixedListenerFields(t *testing.T) {
 	for _, version := range []string{"0.16.27", "1.0.2"} {
 		for _, mixed := range []bool{false, true} {
@@ -139,6 +142,7 @@ func TestSchemaSelectionRefusesForeignOrMixedListenerFields(t *testing.T) {
 	}
 }
 
+// TestSchemaSelectionRefusesForeignNullFields prevents null values from hiding mixed schemas.
 func TestSchemaSelectionRefusesForeignNullFields(t *testing.T) {
 	for _, version := range []string{"0.16.27", "1.0.2"} {
 		for _, family := range []string{"listener", "application"} {
@@ -150,7 +154,11 @@ func TestSchemaSelectionRefusesForeignNullFields(t *testing.T) {
 				delete(l, "tlsImplicit")
 				app["enable"] = true
 				delete(app, "enabled")
-				app["resourceUrl"] = "https://github.com/stalwartlabs/webui/releases/download/v2.0.4/webui.zip"
+				app["resourceUrl"] = "https://github.com/stalwartlabs/webui/releases/download/v2/webui.zip"
+			}
+			baseline, err := json.Marshal(inventory)
+			if err != nil || validateInventoryFor(baseline, version) != nil {
+				t.Fatalf("%s %s positive control refused before adding a foreign field", version, family)
 			}
 			if family == "listener" {
 				field := "implicitTls"
@@ -176,6 +184,7 @@ func TestSchemaSelectionRefusesForeignNullFields(t *testing.T) {
 	}
 }
 
+// TestNewRuntimeChecksMatchedToolsBeforeOpeningTheDatastore fences incompatible native binaries.
 func TestNewRuntimeChecksMatchedToolsBeforeOpeningTheDatastore(t *testing.T) {
 	for _, tc := range []struct {
 		server, cli string
@@ -220,6 +229,7 @@ func TestNewRuntimeChecksMatchedToolsBeforeOpeningTheDatastore(t *testing.T) {
 	}
 }
 
+// TestNewRuntimeReceivingAliasesStayWithTheirOwner prevents alias reassignment and ambiguous readback.
 func TestNewRuntimeReceivingAliasesStayWithTheirOwner(t *testing.T) {
 	for _, wrong := range []bool{false, true} {
 		alias := map[string]any{"name": "former-a", "domainId": "domain", "enable": true, "description": nil}
@@ -256,6 +266,7 @@ func TestNewRuntimeReceivingAliasesStayWithTheirOwner(t *testing.T) {
 	}
 }
 
+// TestNativeInventoryAndClientIdentityFollowTheSelectedSchema preserves explicit identity trust.
 func TestNativeInventoryAndClientIdentityFollowTheSelectedSchema(t *testing.T) {
 	for _, version := range []string{"0.16.27", "1.0.2"} {
 		request, err := inventoryRequestFor(version)
@@ -309,6 +320,7 @@ func TestNativeInventoryAndClientIdentityFollowTheSelectedSchema(t *testing.T) {
 	}
 }
 
+// TestNewRuntimeAcceptsItsNativeFactoryInterface permits the verified fresh-server baseline.
 func TestNewRuntimeAcceptsItsNativeFactoryInterface(t *testing.T) {
 	app := applicationInventoryFixture()
 	app["enable"] = true

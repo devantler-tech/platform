@@ -65,6 +65,7 @@ func canonicalReceivingAliasesFor(raw any, enabledField string) ([]receivingAlia
 	return aliases, nil
 }
 
+// receivingAliasesMatch compares complete receiving sets in the desired plan's schema.
 func receivingAliasesMatch(want, actual any) bool {
 	// Domain aliases are a string-set, whereas Account aliases are EmailAlias
 	// objects. Neither collection may silently accept additional identities.
