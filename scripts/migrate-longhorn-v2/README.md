@@ -23,8 +23,11 @@ permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
 reservation, unused native huge pages, disabled V2, the complete fixed migration roster, all V1
 volumes fully redundant, and all three database clusters healthy. It records the
 original node, hardware, boot, encrypted EPHEMERAL partition, storage disks and
-database identities before an owned cordon and an eviction-based drain. Two fresh
-checks of complete redundancy, databases and original storage precede durable
+database identities before an owned cordon and an eviction-based drain. After
+drain, the unchanged database quorum has up to 20 minutes to finish replacement
+startup. Changed identities, lost quorum or other safety evidence stop the wait;
+a timeout preserves the cordon without requesting a reboot. Two fresh checks of
+complete redundancy, databases and original storage still precede durable
 reboot intent. The single reboot request has no reset or disk-wipe selector.
 An unfinished or unreadable peer journal, another worker's cordon, or lost proof
 of a peer's recorded recovery prevents starting the next worker.
