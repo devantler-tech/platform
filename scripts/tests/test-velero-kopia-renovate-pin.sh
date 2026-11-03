@@ -11,6 +11,7 @@ readonly root_dir
 readonly renovate_config="${RENOVATE_CONFIG:-${root_dir}/.github/renovate.json}"
 readonly go_mod="${GO_MOD:-${root_dir}/go.mod}"
 readonly ci_workflow="${CI_WORKFLOW:-${root_dir}/.github/workflows/ci.yaml}"
+readonly upstream='github.com/kopia/kopia'
 readonly module='github.com/project-velero/kopia'
 
 fail() {
@@ -36,8 +37,8 @@ if grep -Eq '^[[:space:]]+if:' <<<"${step}"; then
   fail 'the Kopia pin test must run unconditionally, on pull requests and merge groups alike'
 fi
 
-replacement="$(awk -v module="${module}" '$1 == "replace" && $4 == module { print $5 }' "${go_mod}")"
-[[ -n "${replacement}" ]] || fail "go.mod must replace github.com/kopia/kopia with ${module}"
+replacement="$(awk -v upstream="${upstream}" -v module="${module}" '$1 == "replace" && $2 == upstream && $4 == module { print $5 }' "${go_mod}")"
+[[ -n "${replacement}" ]] || fail "go.mod must replace ${upstream} with ${module}"
 [[ "${replacement}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?[.-][0-9]{14}-[0-9a-f]{12}$ ]] ||
   fail "the ${module} replacement ${replacement} is no longer a pseudo-version: remove this rule and test"
 
@@ -49,6 +50,8 @@ rules="$(jq -c --arg module "${module}" '
   fail "Renovate must define exactly one package rule for ${module}, found $(jq -r 'length' <<<"${rules}")"
 [[ "$(jq -c '.[0].matchManagers // []' <<<"${rules}")" == '["gomod"]' ]] ||
   fail "the ${module} rule must match the gomod manager only"
+[[ "$(jq -r --arg upstream "${upstream}" '.[0].matchPackageNames | index($upstream) != null' <<<"${rules}")" == 'true' ]] ||
+  fail "the ${module} rule must also name ${upstream}: its require version is never the code we build"
 [[ "$(jq -r '.[0].enabled' <<<"${rules}")" == 'false' ]] ||
   fail "the ${module} rule must disable updates: every tag ranks above the pin"
 extra="$(jq -r '.[0] | keys - ["description", "enabled", "matchManagers", "matchPackageNames"] | join(",")' <<<"${rules}")"
@@ -63,4 +66,4 @@ later="$(jq -r --arg module "${module}" '
 ' "${renovate_config}")"
 [[ "${later}" == '0' ]] || fail "a later package rule re-enables updates and may undo the ${module} rule"
 
-printf 'PASS: Renovate does not offer %s while go.mod pins %s\n' "${module}" "${replacement}"
+printf 'PASS: Renovate does not offer %s or %s while go.mod pins %s\n' "${upstream}" "${module}" "${replacement}"
