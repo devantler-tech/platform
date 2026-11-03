@@ -69,7 +69,7 @@ func rawMigrationFixture(t *testing.T) (*fakeAPI, engine, object, object, object
 		if i == 2 {
 			role = "v2"
 		}
-		binding := object{"selection": selection, "name": fmt.Sprintf("autoscale-longhorn-%s-%016x", role, i+1), "nodeUID": fmt.Sprintf("node-%d", i), "providerID": fmt.Sprintf("hcloud://%d", i+1), "machineUUID": fmt.Sprintf("machine-%d", i), "bootID": "11111111-1111-1111-1111-111111111111", "osImage": "Talos (v1.13.12)", "longhornUID": fmt.Sprintf("longhorn-%d", i), "ephemeralUUID": fmt.Sprintf("ephemeral-%d", i), "rawPartitionUUID": fmt.Sprintf("22222222-2222-2222-2222-%012d", i+1)}
+		binding := object{"selection": selection, "name": fmt.Sprintf("autoscale-longhorn-%s-%016x", role, i+1), "nodeUID": fmt.Sprintf("node-%d", i), "providerID": fmt.Sprintf("hcloud://%d", i+1), "machineUUID": fmt.Sprintf("machine-%d", i), "bootID": "11111111-1111-1111-1111-111111111111", "osImage": "Talos (fixture)", "longhornUID": fmt.Sprintf("longhorn-%d", i), "ephemeralUUID": fmt.Sprintf("ephemeral-%d", i), "rawPartitionUUID": fmt.Sprintf("22222222-2222-2222-2222-%012d", i+1)}
 		if i < 2 {
 			binding["preparationUID"] = fmt.Sprintf("preparation-%d", i)
 		}
