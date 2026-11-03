@@ -1,3 +1,4 @@
+---
 name: Verify Wedding Shared Backup Coverage
 
 # Prove that the dedicated Wedding backup bucket covers everything the stale copy
@@ -13,7 +14,7 @@ name: Verify Wedding Shared Backup Coverage
 #
 # READ ONLY. The proof lists both buckets and reads the objects it has to hash.
 # It never writes to or deletes from either bucket.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:

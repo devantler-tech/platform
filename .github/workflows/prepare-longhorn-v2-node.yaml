@@ -1,6 +1,7 @@
+---
 name: Prepare Longhorn V2 Migration
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

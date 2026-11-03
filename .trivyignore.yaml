@@ -1,3 +1,4 @@
+---
 # Trivy misconfiguration checks skipped on this repository, with the reason each one is skipped.
 #
 # The bar here is the same one .mega-linter.yml applies: a skip names a technical reason that

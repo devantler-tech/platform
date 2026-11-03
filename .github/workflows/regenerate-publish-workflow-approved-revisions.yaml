@@ -1,3 +1,4 @@
+---
 name: Regenerate Approved Publish Revisions
 
 # Regenerate the approved set and its four consumer matchers together. Every
@@ -20,7 +21,7 @@ name: Regenerate Approved Publish Revisions
 # request — never the installation's blanket grant. A pull request opened with
 # GITHUB_TOKEN would also never trigger this repository's required CI.
 
-on:
+"on":
   workflow_dispatch:
   schedule:
     - cron: "20 6 * * *" # Daily at 06:20 UTC, after the 06:00 agent-skills update
@@ -75,7 +76,10 @@ jobs:
           # the contract test reads that file and fails if one is added there and not
           # here. READ ONLY: contents for each consumer's cd.yaml, actions for the
           # `📦 CD` run that signed the applied tag. Nothing else.
-          owner: ${{ github.repository_owner }}
+          # zizmor 1.25.0 (MegaLinter v10.1.0) flags `owner` unless a singular `repository`
+          # input exists, which this action does not have; `repositories` scopes the token
+          # (zizmorcore/zizmor#2011, fixed in zizmor 1.25.1).
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app]
           repositories: |
             .github
             ascoachingogvaner
@@ -94,8 +98,9 @@ jobs:
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
           # THIS repository only: the checkout, the branch push and the pull request
           # all happen here. Scoping the write token to one repository is what keeps
-          # the consumer half above read-only.
-          owner: ${{ github.repository_owner }}
+          # the consumer half above read-only. The zizmor 1.25.0 false positive is the
+          # one described on the consumer-read token above.
+          owner: ${{ github.repository_owner }} # zizmor: ignore[github-app]
           repositories: |
             platform
           permission-contents: write
@@ -203,16 +208,16 @@ jobs:
         run: ./scripts/guard-publish-workflow-approved-revisions.sh
 
       - name: 📦 Open or update the regeneration pull request
-      # DELIBERATELY NOT gated on `moved`. When a consumer's rollout is reverted the
-      # set returns to what is committed, `moved` is false, and a gated step would
-      # skip — leaving the pull request opened by the earlier run standing with the
-      # superseded set, still mergeable, after this workflow has established it is no
-      # longer current. Running unconditionally lets the action reconcile that: with
-      # nothing staged there is nothing to propose, and `delete-branch` retires the
-      # fixed branch rather than leaving a superseded draft standing.
-      #
-      # A failure still stops it: there is no `if: always()`, so a red generator or a
-      # red guard means this step never runs, which the contract test pins.
+        # DELIBERATELY NOT gated on `moved`. When a consumer's rollout is reverted the
+        # set returns to what is committed, `moved` is false, and a gated step would
+        # skip — leaving the pull request opened by the earlier run standing with the
+        # superseded set, still mergeable, after this workflow has established it is no
+        # longer current. Running unconditionally lets the action reconcile that: with
+        # nothing staged there is nothing to propose, and `delete-branch` retires the
+        # fixed branch rather than leaving a superseded draft standing.
+        #
+        # A failure still stops it: there is no `if: always()`, so a red generator or a
+        # red guard means this step never runs, which the contract test pins.
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # Exactly the set and matcher outputs. `add-paths` is the second fence behind

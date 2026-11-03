@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# generate-publish-workflow-approved-revisions.sh â derive, per consumer of the shared
+# generate-publish-workflow-approved-revisions.sh — derive, per consumer of the shared
 # publish workflows, the two revisions its OCIRepository cosign matcher must accept, and
 # commit them as a reviewable data file (#3550, first child of #3308).
 #
@@ -14,13 +14,13 @@
 # pattern form (APPROVED_REVISIONS_ENFORCE) flips with the narrowing itself.
 #
 # THE TWO INPUTS
-#   applied  â the artifact revision Flux has verified and applied, read from the consumer's
+#   applied  — the artifact revision Flux has verified and applied, read from the consumer's
 #              OCIRepository `status.artifact.revision` (`<tag>@sha256:<digest>`) on the
 #              cluster named by PUBLISH_KUBE_CONTEXT; the revision that SIGNED it is the shared
-#              workflow revision recorded on the `ð CD` run that published exactly that tag
+#              workflow revision recorded on the `🚀 CD` run that published exactly that tag
 #              (`referenced_workflows[].sha`), which is the same fact the OIDC
 #              `job_workflow_ref` claim is minted from and needs no package read.
-#   pin      â `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
+#   pin      — `.jobs[].uses` of the consumer's cd.yaml at its default branch, via the report's
 #              `pin_at_ref`.
 # For canonical publications, these current observations retain the full
 # repository/workflow identity in publish-workflow-approved-revisions.identities.tsv.
@@ -45,8 +45,8 @@
 # guard can diff the committed file against a fresh run.
 #
 # SEAMS (tests substitute these; production leaves them unset)
-#   APPROVED_REVISION_OBSERVER      <repo> <workflow> â "<applied-tag>\t<sha256:digest>\t<signer-sha>"
-#   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> â "<pin-sha>"
+#   APPROVED_REVISION_OBSERVER      <repo> <workflow> → "<applied-tag>\t<sha256:digest>\t<signer-sha>"
+#   APPROVED_REVISION_PIN_RESOLVER  <repo> <workflow> → "<pin-sha>"
 #   APPROVED_REVISION_RELEASE_RESOLVER  <workflow> -> "<release-candidate-sha>"
 #   APPROVED_REVISIONS_FILE         output path (default scripts/publish-workflow-approved-revisions.tsv)
 #   APPROVED_REVISIONS_OBSERVED_ON  YYYY-MM-DD stamped on rows whose tuple changed (default: today, UTC)
@@ -167,7 +167,7 @@ applied_revision() {
 # The git tag whose publish produced one registry tag. The shared workflows strip a leading
 # `v` and spell `+` as `_`, so the translation is not invertible: BOTH `v1.2.3` and `1.2.3`
 # would publish as `1.2.3`. Exactly one existing git tag may translate to the applied tag,
-# or the signer cannot be attributed to one commit â the same refusal the report makes.
+# or the signer cannot be attributed to one commit — the same refusal the report makes.
 git_tag_for_registry_tag() {
   local repo="$1" registry_tag="$2" tags matches count
   tags="$(gh_retry api --paginate "repos/devantler-tech/${repo}/tags?per_page=100" --jq '.[].name')" || return 1

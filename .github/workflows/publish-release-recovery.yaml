@@ -1,3 +1,4 @@
+---
 name: 🩹 Publish Release Recovery
 
 # Platform-owned recovery for the captured tag-only incidents (#4839).
@@ -5,7 +6,7 @@ name: 🩹 Publish Release Recovery
 # The boundary test and generated offline fixture guard this wrapper.
 # The rollout switch was retired after both protected recoveries and no-write proof (.github#603).
 # confirm-publication remains permanent, default-false operator consent.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm-publication:
@@ -125,7 +126,10 @@ jobs:
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: devantler-tech
+          # zizmor 1.25.0 (MegaLinter v10.1.0) flags `owner` unless a singular `repository`
+          # input exists, which this action does not have; `repositories` scopes the token
+          # (zizmorcore/zizmor#2011, fixed in zizmor 1.25.1).
+          owner: devantler-tech # zizmor: ignore[github-app]
           repositories: ${{ steps.admit.outputs.name }}
           permission-contents: read
           permission-actions: read
@@ -200,7 +204,8 @@ jobs:
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
-          owner: devantler-tech
+          # Same zizmor 1.25.0 false positive as the read-only token above.
+          owner: devantler-tech # zizmor: ignore[github-app]
           repositories: ${{ steps.admit.outputs.name }}
           permission-contents: write
           permission-actions: read

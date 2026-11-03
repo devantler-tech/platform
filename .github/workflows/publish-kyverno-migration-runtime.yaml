@@ -1,6 +1,7 @@
+---
 name: Publish Kyverno Migration Runtime
 
-on:
+"on":
   pull_request:
     branches: [main]
     paths:

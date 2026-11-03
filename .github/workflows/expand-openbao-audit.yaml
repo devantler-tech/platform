@@ -1,6 +1,7 @@
+---
 name: Expand OpenBao Audit Capacity
 
-on:
+"on":
   workflow_dispatch:
     inputs:
       mode:

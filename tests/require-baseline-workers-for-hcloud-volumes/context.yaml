@@ -1,3 +1,4 @@
+---
 # The Kyverno CLI has no API server, so the claims the policies list are
 # supplied here. Every claim a Pod in resources.yaml mounts uses the hcloud
 # class; the sibling longhorn-claim/ fixture proves a non-hcloud claim is not

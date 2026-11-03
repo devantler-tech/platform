@@ -1,3 +1,4 @@
+---
 name: Validate Main
 
 # ci.yaml runs the authorization gate on `pull_request` and `merge_group` only,
@@ -15,7 +16,7 @@ name: Validate Main
 # authorization surface, which a change anywhere in the overlays (or in the
 # validator itself) can move; a paths filter here would recreate a narrower
 # version of the same blind spot.
-on:
+"on":
   push:
     branches: [main]
   # Validate a trusted prospective revision with the original read-only jobs.

@@ -1,7 +1,8 @@
+---
 name: Observe Runtime Health Read Only
 
 # Observation only: no object, alert, exception or configuration is changed.
-on:
+"on":
   workflow_dispatch:
     inputs:
       confirm:
