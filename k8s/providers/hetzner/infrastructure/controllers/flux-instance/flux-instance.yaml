@@ -18,7 +18,7 @@ metadata:
     kustomize.toolkit.fluxcd.io/prune: disabled
 spec:
   distribution:
-    version: "2.9.x"
+    version: "2.10.0"
     registry: "ghcr.io/fluxcd"
   components:
     - source-controller

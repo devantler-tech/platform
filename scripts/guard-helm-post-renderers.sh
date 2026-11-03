@@ -34,12 +34,12 @@
 # every release is checked instead.
 #
 # CONTROLLER PROFILE. --flux-version is an explicit, audited offline profile, not live version
-# discovery. Flux 2.9.6 (helm-controller 1.6.5) embeds Helm 4.2.4. Its default postRenderStrategy
+# discovery. Flux 2.10.0 (helm-controller 1.7.1) embeds Helm 4.3.1. Its default postRenderStrategy
 # is `combined`, which post-renders hooks and ordinary manifests in one stream.
 # This guard models explicit `nohooks` and `combined` strategies; an omitted
 # strategy or the separate-stream strategy is UNKNOWN until explicitly modeled.
 # Other profiles are UNKNOWN until audited. A matching
-# 2.9.x selector does not prove the running patch: production delivery still needs OIDC readback.
+# declared selector does not prove the running patch: production delivery still needs OIDC readback.
 #
 # ⚠️ WHAT THIS DOES NOT SEE. The chart renders without a cluster, so a template that branches on
 # `.Capabilities.APIVersions` or on a `lookup` renders as if those APIs and objects were absent.
@@ -54,14 +54,14 @@
 # kustomize `patches`/`images` renderer, a chart that fails to pull or render, or an unresolved
 # `${...}` in the chart source. Historical preserveValues and revision-dependent templates are
 # also UNKNOWN: helm template --is-upgrade still renders revision 1, not the deployed revision.
-# Rendering uses the unmodified Helm 4.2.4 command built with Go 1.26.8 and no version linker
+# Rendering uses the unmodified Helm 4.3.1 command built with Go 1.27.3 and no version linker
 # flags, matching the controller's complete embedded-SDK build metadata. The official release
-# CLI is used only to pull charts: it injects v4.2.4 rather than the controller's v4.2 capability.
+# CLI is used only to pull charts: it injects v4.3.1 rather than the controller's v4.3 capability.
 # No cluster overlay, or an overlay that names no Flux
 # Kustomization, or a tree that renders no HelmRelease at all, is exit 2 as well: a selector that
 # matched nothing is indistinguishable from a clean tree.
 #
-# Usage: guard-helm-post-renderers.sh --flux-version 2.9.6 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
+# Usage: guard-helm-post-renderers.sh --flux-version 2.10.0 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>
 #
 # Exit codes:
 #   0  every checked HelmRelease's post-renderers apply to its chart's rendered output
@@ -76,7 +76,7 @@ die() {
   exit 2
 }
 
-usage="usage: $0 --flux-version 2.9.6 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
+usage="usage: $0 --flux-version 2.10.0 [--release <namespace/name>] [--base <git-revision>] [--kube-version <version> [--base-kube-version <version>]] <k8s-root>"
 base=''
 kube_version=''
 base_kube_version=''
@@ -120,7 +120,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 [ "$#" -eq 1 ] || die "$usage"
-[ "$flux_version" = 2.9.6 ] || die "an audited --flux-version 2.9.6 profile is required"
+[ "$flux_version" = 2.10.0 ] || die "an audited --flux-version 2.10.0 profile is required"
 if [ -n "$base" ] && [ -n "$kube_version" ]; then
   [ -n "$base_kube_version" ] || die "--base-kube-version is required when comparing an explicit Kubernetes profile"
 fi
@@ -151,7 +151,7 @@ export HELM_CACHE_HOME="$scratch/helm/cache" HELM_CONFIG_HOME="$scratch/helm/con
   HELM_DATA_HOME="$scratch/helm/data" HELM_REGISTRY_CONFIG="$scratch/helm/registry.json" \
   DOCKER_CONFIG="$scratch/docker" HELM_PLUGINS="$scratch/helm/plugins"
 helm_version="$(helm version --template '{{.Version}}')" || die "cannot read the Helm version"
-[ "$helm_version" = v4.2.4 ] || die "Flux $flux_version requires Helm v4.2.4, not '$helm_version'"
+[ "$helm_version" = v4.3.1 ] || die "Flux $flux_version requires Helm v4.3.1, not '$helm_version'"
 
 controller_helm="${CONTROLLER_HELM:-}"
 controller_helm_checked=0
@@ -166,7 +166,7 @@ ensure_controller_renderer() {
   local metadata
   metadata="$("$controller_helm" version --template '{{ printf "%#v" . }}')" ||
     die 'cannot read the controller SDK renderer metadata'
-  [ "$metadata" = 'version.BuildInfo{Version:"v4.2", GitCommit:"", GitTreeState:"", GoVersion:"go1.26.8", KubeClientVersion:"v1.36"}' ] ||
+  [ "$metadata" = 'version.BuildInfo{Version:"v4.3", GitCommit:"", GitTreeState:"", GoVersion:"go1.27.3", KubeClientVersion:"v1.37"}' ] ||
     die 'the controller SDK renderer has unaudited capability metadata'
   # Capture Helm's real input to a post-renderer. The final `helm template`
   # output has already lost transient annotations that a patch may inspect.
@@ -378,7 +378,7 @@ collect() { # <k8s-root> <out> <kube-version>
       | if length == 1 then .[0] else error("missing or conflicting FluxInstance selectors") end' "$work/resolved.json")" ||
       die "cluster '$cluster' has no unique FluxInstance distribution selector"
     case $selector in
-      2.9.x | 2.9.6 | v2.9.6) ;;
+      2.10.0 | v2.10.0) ;;
       *) die "cluster '$cluster' selector '$selector' does not admit audited Flux $flux_version" ;;
     esac
     profile="$(jq -n --arg flux "$flux_version" --arg helm "$helm_version" --arg kube "$kube_version" --arg selector "$selector" \
@@ -600,16 +600,16 @@ check_release() { # <record> <work>
       yq 'select(tag == "!!map")' "$wire_input" >"$work/$mode.manifests.yaml" ||
         die "$label: cannot collect the combined $mode render of $chart_desc"
     fi
-      error="$(apply_post_renderers "$record" "$work/$mode.manifests.yaml" "$work/$mode.manifests")"
-      case $? in
-        0) ;;
-        1)
-          printf '%s: its post-renderers do not apply to the %s render of %s (%s): %s\n' \
-            "$label" "$mode" "$chart_desc" "$hook_strategy" "$error" >>"$scratch/findings"
-          return 0
-          ;;
-        *) exit 2 ;;
-      esac
+    error="$(apply_post_renderers "$record" "$work/$mode.manifests.yaml" "$work/$mode.manifests")"
+    case $? in
+      0) ;;
+      1)
+        printf '%s: its post-renderers do not apply to the %s render of %s (%s): %s\n' \
+          "$label" "$mode" "$chart_desc" "$hook_strategy" "$error" >>"$scratch/findings"
+        return 0
+        ;;
+      *) exit 2 ;;
+    esac
   done
   printf '  ok  %s: %s post-renderer(s) apply to %s (install and upgrade)\n' \
     "$label" "$(jq '.release.spec.postRenderers | length' "$record")" "$chart_desc"

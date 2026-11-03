@@ -54,10 +54,7 @@
                                       "x-kubernetes-list-type": "atomic"
                                     }
                                   },
-                                  "required": [
-                                    "key",
-                                    "operator"
-                                  ],
+                                  "required": ["key", "operator"],
                                   "type": "object"
                                 },
                                 "type": "array",
@@ -115,10 +112,7 @@
                                       "x-kubernetes-list-type": "atomic"
                                     }
                                   },
-                                  "required": [
-                                    "key",
-                                    "operator"
-                                  ],
+                                  "required": ["key", "operator"],
                                   "type": "object"
                                 },
                                 "type": "array",
@@ -148,9 +142,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "topologyKey"
-                        ],
+                        "required": ["topologyKey"],
                         "type": "object"
                       },
                       "weight": {
@@ -159,10 +151,7 @@
                         "type": "integer"
                       }
                     },
-                    "required": [
-                      "podAffinityTerm",
-                      "weight"
-                    ],
+                    "required": ["podAffinityTerm", "weight"],
                     "type": "object"
                   },
                   "type": "array",
@@ -198,10 +187,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -259,10 +245,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -292,9 +275,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "topologyKey"
-                    ],
+                    "required": ["topologyKey"],
                     "type": "object"
                   },
                   "type": "array",
@@ -339,10 +320,7 @@
                                       "x-kubernetes-list-type": "atomic"
                                     }
                                   },
-                                  "required": [
-                                    "key",
-                                    "operator"
-                                  ],
+                                  "required": ["key", "operator"],
                                   "type": "object"
                                 },
                                 "type": "array",
@@ -400,10 +378,7 @@
                                       "x-kubernetes-list-type": "atomic"
                                     }
                                   },
-                                  "required": [
-                                    "key",
-                                    "operator"
-                                  ],
+                                  "required": ["key", "operator"],
                                   "type": "object"
                                 },
                                 "type": "array",
@@ -433,9 +408,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "topologyKey"
-                        ],
+                        "required": ["topologyKey"],
                         "type": "object"
                       },
                       "weight": {
@@ -444,10 +417,7 @@
                         "type": "integer"
                       }
                     },
-                    "required": [
-                      "podAffinityTerm",
-                      "weight"
-                    ],
+                    "required": ["podAffinityTerm", "weight"],
                     "type": "object"
                   },
                   "type": "array",
@@ -483,10 +453,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -544,10 +511,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -577,9 +541,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "topologyKey"
-                    ],
+                    "required": ["topologyKey"],
                     "type": "object"
                   },
                   "type": "array",
@@ -625,10 +587,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -656,10 +615,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -675,10 +631,7 @@
                         "type": "integer"
                       }
                     },
-                    "required": [
-                      "preference",
-                      "weight"
-                    ],
+                    "required": ["preference", "weight"],
                     "type": "object"
                   },
                   "type": "array",
@@ -714,10 +667,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -745,10 +695,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -762,9 +709,7 @@
                       "x-kubernetes-list-type": "atomic"
                     }
                   },
-                  "required": [
-                    "nodeSelectorTerms"
-                  ],
+                  "required": ["nodeSelectorTerms"],
                   "type": "object",
                   "x-kubernetes-map-type": "atomic"
                 }
@@ -841,10 +786,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "inheritFromAzureAD": {
@@ -863,10 +805,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "storageKey": {
@@ -881,10 +820,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "storageSasToken": {
@@ -899,10 +835,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "useDefaultAzureCredentials": {
@@ -924,20 +857,12 @@
                     },
                     "compression": {
                       "description": "Compress a backup file (a tar file per tablespace) while streaming it\nto the object store. Available options are empty string (no\ncompression, default), `gzip`, `bzip2`, `lz4`, and `snappy`.",
-                      "enum": [
-                        "bzip2",
-                        "gzip",
-                        "lz4",
-                        "snappy"
-                      ],
+                      "enum": ["bzip2", "gzip", "lz4", "snappy"],
                       "type": "string"
                     },
                     "encryption": {
                       "description": "Whenever to force the encryption of files (if the bucket is\nnot already configured for that).\nAllowed options are empty string (use the bucket policy, default),\n`AES256` and `aws:kms`",
-                      "enum": [
-                        "AES256",
-                        "aws:kms"
-                      ],
+                      "enum": ["AES256", "aws:kms"],
                       "type": "string"
                     },
                     "immediateCheckpoint": {
@@ -977,10 +902,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "key",
-                    "name"
-                  ],
+                  "required": ["key", "name"],
                   "type": "object"
                 },
                 "endpointURL": {
@@ -1002,10 +924,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "gkeEnvironment": {
@@ -1037,10 +956,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "inheritFromIAMRole": {
@@ -1059,10 +975,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "secretAccessKey": {
@@ -1077,10 +990,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "sessionToken": {
@@ -1095,10 +1005,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     }
                   },
@@ -1127,22 +1034,12 @@
                     },
                     "compression": {
                       "description": "Compress a WAL file before sending it to the object store. Available\noptions are empty string (no compression, default), `gzip`, `bzip2`,\n`lz4`, `snappy`, `xz`, and `zstd`.",
-                      "enum": [
-                        "bzip2",
-                        "gzip",
-                        "lz4",
-                        "snappy",
-                        "xz",
-                        "zstd"
-                      ],
+                      "enum": ["bzip2", "gzip", "lz4", "snappy", "xz", "zstd"],
                       "type": "string"
                     },
                     "encryption": {
                       "description": "Whenever to force the encryption of files (if the bucket is\nnot already configured for that).\nAllowed options are empty string (use the bucket policy, default),\n`AES256` and `aws:kms`",
-                      "enum": [
-                        "AES256",
-                        "aws:kms"
-                      ],
+                      "enum": ["AES256", "aws:kms"],
                       "type": "string"
                     },
                     "maxParallel": {
@@ -1161,9 +1058,7 @@
                   "type": "object"
                 }
               },
-              "required": [
-                "destinationPath"
-              ],
+              "required": ["destinationPath"],
               "type": "object"
             },
             "retentionPolicy": {
@@ -1174,10 +1069,7 @@
             "target": {
               "default": "prefer-standby",
               "description": "The policy to decide which instance should perform backups. Available\noptions are empty string, which will default to `prefer-standby` policy,\n`primary` to have backups run always on primary instances, `prefer-standby`\nto have backups run preferably on the most updated standby, if available.",
-              "enum": [
-                "primary",
-                "prefer-standby"
-              ],
+              "enum": ["primary", "prefer-standby"],
               "type": "string"
             },
             "volumeSnapshot": {
@@ -1228,11 +1120,7 @@
                 "snapshotOwnerReference": {
                   "default": "none",
                   "description": "SnapshotOwnerReference indicates the type of owner reference the snapshot should have",
-                  "enum": [
-                    "none",
-                    "cluster",
-                    "backup"
-                  ],
+                  "enum": ["none", "cluster", "backup"],
                   "type": "string"
                 },
                 "tablespaceClassName": {
@@ -1353,25 +1241,16 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "externalCluster"
-                      ],
+                      "required": ["externalCluster"],
                       "type": "object"
                     },
                     "type": {
                       "description": "The import type. Can be `microservice` or `monolith`.",
-                      "enum": [
-                        "microservice",
-                        "monolith"
-                      ],
+                      "enum": ["microservice", "monolith"],
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "databases",
-                    "source",
-                    "type"
-                  ],
+                  "required": ["databases", "source", "type"],
                   "type": "object"
                 },
                 "locale": {
@@ -1425,10 +1304,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "type": "array"
@@ -1447,10 +1323,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "type": "array"
@@ -1482,10 +1355,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "type": "array"
@@ -1504,10 +1374,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "type": "array"
@@ -1539,10 +1406,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "type": "array"
@@ -1561,10 +1425,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "type": "array"
@@ -1580,9 +1441,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "name"
-                  ],
+                  "required": ["name"],
                   "type": "object"
                 },
                 "walSegmentSize": {
@@ -1627,9 +1486,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "name"
-                  ],
+                  "required": ["name"],
                   "type": "object"
                 },
                 "source": {
@@ -1638,9 +1495,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "source"
-              ],
+              "required": ["source"],
               "type": "object"
             },
             "recovery": {
@@ -1661,10 +1516,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "key",
-                        "name"
-                      ],
+                      "required": ["key", "name"],
                       "type": "object"
                     },
                     "name": {
@@ -1672,9 +1524,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "name"
-                  ],
+                  "required": ["name"],
                   "type": "object"
                 },
                 "database": {
@@ -1731,9 +1581,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "name"
-                  ],
+                  "required": ["name"],
                   "type": "object"
                 },
                 "source": {
@@ -1759,10 +1607,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "kind",
-                        "name"
-                      ],
+                      "required": ["kind", "name"],
                       "type": "object",
                       "x-kubernetes-map-type": "atomic"
                     },
@@ -1783,10 +1628,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "kind",
-                          "name"
-                        ],
+                        "required": ["kind", "name"],
                         "type": "object",
                         "x-kubernetes-map-type": "atomic"
                       },
@@ -1809,17 +1651,12 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "kind",
-                        "name"
-                      ],
+                      "required": ["kind", "name"],
                       "type": "object",
                       "x-kubernetes-map-type": "atomic"
                     }
                   },
-                  "required": [
-                    "storage"
-                  ],
+                  "required": ["storage"],
                   "type": "object"
                 }
               },
@@ -1904,9 +1741,7 @@
                         "type": "boolean"
                       }
                     },
-                    "required": [
-                      "key"
-                    ],
+                    "required": ["key"],
                     "type": "object",
                     "x-kubernetes-map-type": "atomic"
                   },
@@ -1922,9 +1757,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "fieldPath"
-                    ],
+                    "required": ["fieldPath"],
                     "type": "object",
                     "x-kubernetes-map-type": "atomic"
                   },
@@ -1949,11 +1782,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "key",
-                      "path",
-                      "volumeName"
-                    ],
+                    "required": ["key", "path", "volumeName"],
                     "type": "object",
                     "x-kubernetes-map-type": "atomic"
                   },
@@ -1982,9 +1811,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "resource"
-                    ],
+                    "required": ["resource"],
                     "type": "object",
                     "x-kubernetes-map-type": "atomic"
                   },
@@ -2005,9 +1832,7 @@
                         "type": "boolean"
                       }
                     },
-                    "required": [
-                      "key"
-                    ],
+                    "required": ["key"],
                     "type": "object",
                     "x-kubernetes-map-type": "atomic"
                   }
@@ -2015,9 +1840,7 @@
                 "type": "object"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object"
           },
           "type": "array"
@@ -2105,10 +1928,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "kind",
-                        "name"
-                      ],
+                      "required": ["kind", "name"],
                       "type": "object",
                       "x-kubernetes-map-type": "atomic"
                     },
@@ -2132,10 +1952,7 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "kind",
-                        "name"
-                      ],
+                      "required": ["kind", "name"],
                       "type": "object"
                     },
                     "resources": {
@@ -2201,10 +2018,7 @@
                                 "x-kubernetes-list-type": "atomic"
                               }
                             },
-                            "required": [
-                              "key",
-                              "operator"
-                            ],
+                            "required": ["key", "operator"],
                             "type": "object"
                           },
                           "type": "array",
@@ -2241,9 +2055,7 @@
                   "type": "object"
                 }
               },
-              "required": [
-                "spec"
-              ],
+              "required": ["spec"],
               "type": "object"
             }
           },
@@ -2304,10 +2116,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "inheritFromAzureAD": {
@@ -2326,10 +2135,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "storageKey": {
@@ -2344,10 +2150,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "storageSasToken": {
@@ -2362,10 +2165,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "useDefaultAzureCredentials": {
@@ -2387,20 +2187,12 @@
                       },
                       "compression": {
                         "description": "Compress a backup file (a tar file per tablespace) while streaming it\nto the object store. Available options are empty string (no\ncompression, default), `gzip`, `bzip2`, `lz4`, and `snappy`.",
-                        "enum": [
-                          "bzip2",
-                          "gzip",
-                          "lz4",
-                          "snappy"
-                        ],
+                        "enum": ["bzip2", "gzip", "lz4", "snappy"],
                         "type": "string"
                       },
                       "encryption": {
                         "description": "Whenever to force the encryption of files (if the bucket is\nnot already configured for that).\nAllowed options are empty string (use the bucket policy, default),\n`AES256` and `aws:kms`",
-                        "enum": [
-                          "AES256",
-                          "aws:kms"
-                        ],
+                        "enum": ["AES256", "aws:kms"],
                         "type": "string"
                       },
                       "immediateCheckpoint": {
@@ -2440,10 +2232,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "key",
-                      "name"
-                    ],
+                    "required": ["key", "name"],
                     "type": "object"
                   },
                   "endpointURL": {
@@ -2465,10 +2254,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "gkeEnvironment": {
@@ -2500,10 +2286,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "inheritFromIAMRole": {
@@ -2522,10 +2305,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "secretAccessKey": {
@@ -2540,10 +2320,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       },
                       "sessionToken": {
@@ -2558,10 +2335,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "key",
-                          "name"
-                        ],
+                        "required": ["key", "name"],
                         "type": "object"
                       }
                     },
@@ -2602,10 +2376,7 @@
                       },
                       "encryption": {
                         "description": "Whenever to force the encryption of files (if the bucket is\nnot already configured for that).\nAllowed options are empty string (use the bucket policy, default),\n`AES256` and `aws:kms`",
-                        "enum": [
-                          "AES256",
-                          "aws:kms"
-                        ],
+                        "enum": ["AES256", "aws:kms"],
                         "type": "string"
                       },
                       "maxParallel": {
@@ -2624,9 +2395,7 @@
                     "type": "object"
                   }
                 },
-                "required": [
-                  "destinationPath"
-                ],
+                "required": ["destinationPath"],
                 "type": "object"
               },
               "connectionParameters": {
@@ -2657,9 +2426,7 @@
                     "type": "boolean"
                   }
                 },
-                "required": [
-                  "key"
-                ],
+                "required": ["key"],
                 "type": "object",
                 "x-kubernetes-map-type": "atomic"
               },
@@ -2688,9 +2455,7 @@
                     "type": "object"
                   }
                 },
-                "required": [
-                  "name"
-                ],
+                "required": ["name"],
                 "type": "object"
               },
               "sslCert": {
@@ -2710,9 +2475,7 @@
                     "type": "boolean"
                   }
                 },
-                "required": [
-                  "key"
-                ],
+                "required": ["key"],
                 "type": "object",
                 "x-kubernetes-map-type": "atomic"
               },
@@ -2733,9 +2496,7 @@
                     "type": "boolean"
                   }
                 },
-                "required": [
-                  "key"
-                ],
+                "required": ["key"],
                 "type": "object",
                 "x-kubernetes-map-type": "atomic"
               },
@@ -2756,16 +2517,12 @@
                     "type": "boolean"
                   }
                 },
-                "required": [
-                  "key"
-                ],
+                "required": ["key"],
                 "type": "object",
                 "x-kubernetes-map-type": "atomic"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object"
           },
           "type": "array"
@@ -2796,11 +2553,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "kind",
-            "major",
-            "name"
-          ],
+          "required": ["kind", "major", "name"],
           "type": "object",
           "x-kubernetes-map-type": "atomic",
           "x-kubernetes-validations": [
@@ -2832,9 +2585,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object"
           },
           "type": "array"
@@ -2871,13 +2622,7 @@
         "logLevel": {
           "default": "info",
           "description": "The instances' log level, one of the following values: error, warning, info (default), debug, trace",
-          "enum": [
-            "error",
-            "warning",
-            "info",
-            "debug",
-            "trace"
-          ],
+          "enum": ["error", "warning", "info", "debug", "trace"],
           "type": "string"
         },
         "managed": {
@@ -2917,10 +2662,7 @@
                   "ensure": {
                     "default": "present",
                     "description": "Ensure the role is `present` or `absent` - defaults to \"present\"",
-                    "enum": [
-                      "present",
-                      "absent"
-                    ],
+                    "enum": ["present", "absent"],
                     "type": "string"
                   },
                   "inRoles": {
@@ -2951,9 +2693,7 @@
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "name"
-                    ],
+                    "required": ["name"],
                     "type": "object"
                   },
                   "replication": {
@@ -2970,9 +2710,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "name"
-                ],
+                "required": ["name"],
                 "type": "object"
               },
               "type": "array"
@@ -2987,11 +2725,7 @@
                     "properties": {
                       "selectorType": {
                         "description": "SelectorType specifies the type of selectors that the service will have.\nValid values are \"rw\", \"r\", and \"ro\", representing read-write, read, and read-only services.",
-                        "enum": [
-                          "rw",
-                          "r",
-                          "ro"
-                        ],
+                        "enum": ["rw", "r", "ro"],
                         "type": "string"
                       },
                       "serviceTemplate": {
@@ -3135,9 +2869,7 @@
                                       "x-kubernetes-int-or-string": true
                                     }
                                   },
-                                  "required": [
-                                    "port"
-                                  ],
+                                  "required": ["port"],
                                   "type": "object"
                                 },
                                 "type": "array",
@@ -3197,17 +2929,11 @@
                       "updateStrategy": {
                         "default": "patch",
                         "description": "UpdateStrategy describes how the service differences should be reconciled",
-                        "enum": [
-                          "patch",
-                          "replace"
-                        ],
+                        "enum": ["patch", "replace"],
                         "type": "string"
                       }
                     },
-                    "required": [
-                      "selectorType",
-                      "serviceTemplate"
-                    ],
+                    "required": ["selectorType", "serviceTemplate"],
                     "type": "object"
                   },
                   "type": "array"
@@ -3216,11 +2942,7 @@
                   "description": "DisabledDefaultServices is a list of service types that are disabled by default.\nValid values are \"r\", and \"ro\", representing read, and read-only services.",
                   "items": {
                     "description": "ServiceSelectorType describes a valid value for generating the service selectors.\nIt indicates which type of service the selector applies to, such as read-write, read, or read-only",
-                    "enum": [
-                      "rw",
-                      "r",
-                      "ro"
-                    ],
+                    "enum": ["rw", "r", "ro"],
                     "type": "string"
                   },
                   "type": "array"
@@ -3260,10 +2982,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "key",
-                  "name"
-                ],
+                "required": ["key", "name"],
                 "type": "object"
               },
               "type": "array"
@@ -3282,10 +3001,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "key",
-                  "name"
-                ],
+                "required": ["key", "name"],
                 "type": "object"
               },
               "type": "array"
@@ -3499,9 +3215,7 @@
                 "type": "object"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object"
           },
           "type": "array"
@@ -3521,9 +3235,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "type": "object"
             },
             "fsGroup": {
@@ -3587,9 +3299,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "type": "object"
             },
             "supplementalGroups": {
@@ -3619,10 +3329,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "name",
-                  "value"
-                ],
+                "required": ["name", "value"],
                 "type": "object"
               },
               "type": "array",
@@ -3689,10 +3396,7 @@
                           "x-kubernetes-list-type": "atomic"
                         }
                       },
-                      "required": [
-                        "key",
-                        "operator"
-                      ],
+                      "required": ["key", "operator"],
                       "type": "object"
                     },
                     "type": "array",
@@ -3710,16 +3414,11 @@
                 "x-kubernetes-map-type": "atomic"
               }
             },
-            "required": [
-              "name",
-              "selector"
-            ],
+            "required": ["name", "selector"],
             "type": "object"
           },
           "type": "array",
-          "x-kubernetes-list-map-keys": [
-            "name"
-          ],
+          "x-kubernetes-list-map-keys": ["name"],
           "x-kubernetes-list-type": "map"
         },
         "postgresGID": {
@@ -3777,16 +3476,11 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "name",
-                        "value"
-                      ],
+                      "required": ["name", "value"],
                       "type": "object"
                     },
                     "type": "array",
-                    "x-kubernetes-list-map-keys": [
-                      "name"
-                    ],
+                    "x-kubernetes-list-map-keys": ["name"],
                     "x-kubernetes-list-type": "map"
                   },
                   "extension_control_path": {
@@ -3825,15 +3519,11 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "name"
-                ],
+                "required": ["name"],
                 "type": "object"
               },
               "type": "array",
-              "x-kubernetes-list-map-keys": [
-                "name"
-              ],
+              "x-kubernetes-list-map-keys": ["name"],
               "x-kubernetes-list-type": "map"
             },
             "ldap": {
@@ -3881,9 +3571,7 @@
                           "type": "boolean"
                         }
                       },
-                      "required": [
-                        "key"
-                      ],
+                      "required": ["key"],
                       "type": "object",
                       "x-kubernetes-map-type": "atomic"
                     },
@@ -3904,10 +3592,7 @@
                 },
                 "scheme": {
                   "description": "LDAP schema to be used, possible options are `ldap` and `ldaps`",
-                  "enum": [
-                    "ldap",
-                    "ldaps"
-                  ],
+                  "enum": ["ldap", "ldaps"],
                   "type": "string"
                 },
                 "server": {
@@ -3969,9 +3654,7 @@
                   "type": "array"
                 }
               },
-              "required": [
-                "enabled"
-              ],
+              "required": ["enabled"],
               "type": "object"
             },
             "synchronous": {
@@ -3979,10 +3662,7 @@
               "properties": {
                 "dataDurability": {
                   "description": "If set to \"required\", data durability is strictly enforced. Write operations\nwith synchronous commit settings (`on`, `remote_write`, or `remote_apply`) will\nblock if there are insufficient healthy replicas, ensuring data persistence.\nIf set to \"preferred\", data durability is maintained when healthy replicas\nare available, but the required number of instances will adjust dynamically\nif replicas become unavailable. This setting relaxes strict durability enforcement\nto allow for operational continuity. This setting is only applicable if both\n`standbyNamesPre` and `standbyNamesPost` are unset (empty).",
-                  "enum": [
-                    "required",
-                    "preferred"
-                  ],
+                  "enum": ["required", "preferred"],
                   "type": "string"
                 },
                 "failoverQuorum": {
@@ -3995,10 +3675,7 @@
                 },
                 "method": {
                   "description": "Method to select synchronous replication standbys from the listed\nservers, accepting 'any' (quorum-based synchronous replication) or\n'first' (priority-based synchronous replication) as values.",
-                  "enum": [
-                    "any",
-                    "first"
-                  ],
+                  "enum": ["any", "first"],
                   "type": "string"
                 },
                 "number": {
@@ -4026,10 +3703,7 @@
                   "type": "array"
                 }
               },
-              "required": [
-                "method",
-                "number"
-              ],
+              "required": ["method", "number"],
               "type": "object",
               "x-kubernetes-validations": [
                 {
@@ -4078,19 +3752,13 @@
         "primaryUpdateMethod": {
           "default": "restart",
           "description": "Method to follow to upgrade the primary server during a rolling\nupdate procedure, after all replicas have been successfully updated:\nit can be with a switchover (`switchover`) or in-place (`restart` - default).\nNote: when using `switchover`, the operator will reject updates that change both\nthe image name and PostgreSQL configuration parameters simultaneously to avoid\nconfiguration mismatches during the switchover process.",
-          "enum": [
-            "switchover",
-            "restart"
-          ],
+          "enum": ["switchover", "restart"],
           "type": "string"
         },
         "primaryUpdateStrategy": {
           "default": "unsupervised",
           "description": "Deployment strategy to follow to upgrade the primary server during a rolling\nupdate procedure, after all replicas have been successfully updated:\nit can be automated (`unsupervised` - default) or manual (`supervised`)",
-          "enum": [
-            "unsupervised",
-            "supervised"
-          ],
+          "enum": ["unsupervised", "supervised"],
           "type": "string"
         },
         "priorityClassName": {
@@ -4205,11 +3873,7 @@
                 },
                 "type": {
                   "description": "The probe strategy",
-                  "enum": [
-                    "pg_isready",
-                    "streaming",
-                    "query"
-                  ],
+                  "enum": ["pg_isready", "streaming", "query"],
                   "type": "string"
                 }
               },
@@ -4263,11 +3927,7 @@
                 },
                 "type": {
                   "description": "The probe strategy",
-                  "enum": [
-                    "pg_isready",
-                    "streaming",
-                    "query"
-                  ],
+                  "enum": ["pg_isready", "streaming", "query"],
                   "type": "string"
                 }
               },
@@ -4322,10 +3982,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -4364,9 +4021,7 @@
                         "type": "integer"
                       }
                     },
-                    "required": [
-                      "path"
-                    ],
+                    "required": ["path"],
                     "type": "object"
                   },
                   "configMap": {
@@ -4396,10 +4051,7 @@
                               "type": "integer"
                             }
                           },
-                          "required": [
-                            "key",
-                            "path"
-                          ],
+                          "required": ["key", "path"],
                           "type": "object"
                         },
                         "type": "array",
@@ -4438,9 +4090,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "fieldPath"
-                              ],
+                              "required": ["fieldPath"],
                               "type": "object",
                               "x-kubernetes-map-type": "atomic"
                             },
@@ -4478,9 +4128,7 @@
                                   "type": "string"
                                 }
                               },
-                              "required": [
-                                "resource"
-                              ],
+                              "required": ["resource"],
                               "type": "object",
                               "x-kubernetes-map-type": "atomic"
                             },
@@ -4490,9 +4138,7 @@
                               "type": "integer"
                             }
                           },
-                          "required": [
-                            "path"
-                          ],
+                          "required": ["path"],
                           "type": "object"
                         },
                         "type": "array",
@@ -4542,10 +4188,7 @@
                         "type": "object"
                       }
                     },
-                    "required": [
-                      "keyType",
-                      "signerName"
-                    ],
+                    "required": ["keyType", "signerName"],
                     "type": "object"
                   },
                   "secret": {
@@ -4575,10 +4218,7 @@
                               "type": "integer"
                             }
                           },
-                          "required": [
-                            "key",
-                            "path"
-                          ],
+                          "required": ["key", "path"],
                           "type": "object"
                         },
                         "type": "array",
@@ -4619,9 +4259,7 @@
                         "type": "integer"
                       }
                     },
-                    "required": [
-                      "path"
-                    ],
+                    "required": ["path"],
                     "type": "object"
                   }
                 },
@@ -4662,9 +4300,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "source"
-          ],
+          "required": ["source"],
           "type": "object"
         },
         "replicationSlots": {
@@ -4715,9 +4351,7 @@
                   "type": "array"
                 }
               },
-              "required": [
-                "enabled"
-              ],
+              "required": ["enabled"],
               "type": "object"
             },
             "updateInterval": {
@@ -4746,15 +4380,11 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "name"
-                ],
+                "required": ["name"],
                 "type": "object"
               },
               "type": "array",
-              "x-kubernetes-list-map-keys": [
-                "name"
-              ],
+              "x-kubernetes-list-map-keys": ["name"],
               "x-kubernetes-list-type": "map"
             },
             "limits": {
@@ -4808,9 +4438,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "type"
-          ],
+          "required": ["type"],
           "type": "object"
         },
         "securityContext": {
@@ -4832,9 +4460,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "type": "object"
             },
             "capabilities": {
@@ -4921,9 +4547,7 @@
                   "type": "string"
                 }
               },
-              "required": [
-                "type"
-              ],
+              "required": ["type"],
               "type": "object"
             },
             "windowsOptions": {
@@ -4991,9 +4615,7 @@
               "type": "object"
             }
           },
-          "required": [
-            "metadata"
-          ],
+          "required": ["metadata"],
           "type": "object"
         },
         "smartShutdownTimeout": {
@@ -5044,10 +4666,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "name"
-                  ],
+                  "required": ["kind", "name"],
                   "type": "object",
                   "x-kubernetes-map-type": "atomic"
                 },
@@ -5071,10 +4690,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "name"
-                  ],
+                  "required": ["kind", "name"],
                   "type": "object"
                 },
                 "resources": {
@@ -5140,10 +4756,7 @@
                             "x-kubernetes-list-type": "atomic"
                           }
                         },
-                        "required": [
-                          "key",
-                          "operator"
-                        ],
+                        "required": ["key", "operator"],
                         "type": "object"
                       },
                       "type": "array",
@@ -5203,9 +4816,7 @@
               "type": "string"
             }
           },
-          "required": [
-            "name"
-          ],
+          "required": ["name"],
           "type": "object"
         },
         "switchoverDelay": {
@@ -5262,10 +4873,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "kind",
-                          "name"
-                        ],
+                        "required": ["kind", "name"],
                         "type": "object",
                         "x-kubernetes-map-type": "atomic"
                       },
@@ -5289,10 +4897,7 @@
                             "type": "string"
                           }
                         },
-                        "required": [
-                          "kind",
-                          "name"
-                        ],
+                        "required": ["kind", "name"],
                         "type": "object"
                       },
                       "resources": {
@@ -5358,10 +4963,7 @@
                                   "x-kubernetes-list-type": "atomic"
                                 }
                               },
-                              "required": [
-                                "key",
-                                "operator"
-                              ],
+                              "required": ["key", "operator"],
                               "type": "object"
                             },
                             "type": "array",
@@ -5419,10 +5021,7 @@
                 "type": "boolean"
               }
             },
-            "required": [
-              "name",
-              "storage"
-            ],
+            "required": ["name", "storage"],
             "type": "object"
           },
           "type": "array"
@@ -5457,10 +5056,7 @@
                           "x-kubernetes-list-type": "atomic"
                         }
                       },
-                      "required": [
-                        "key",
-                        "operator"
-                      ],
+                      "required": ["key", "operator"],
                       "type": "object"
                     },
                     "type": "array",
@@ -5512,11 +5108,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "maxSkew",
-              "topologyKey",
-              "whenUnsatisfiable"
-            ],
+            "required": ["maxSkew", "topologyKey", "whenUnsatisfiable"],
             "type": "object"
           },
           "type": "array"
@@ -5551,10 +5143,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "name"
-                  ],
+                  "required": ["kind", "name"],
                   "type": "object",
                   "x-kubernetes-map-type": "atomic"
                 },
@@ -5578,10 +5167,7 @@
                       "type": "string"
                     }
                   },
-                  "required": [
-                    "kind",
-                    "name"
-                  ],
+                  "required": ["kind", "name"],
                   "type": "object"
                 },
                 "resources": {
@@ -5647,10 +5233,7 @@
                             "x-kubernetes-list-type": "atomic"
                           }
                         },
-                        "required": [
-                          "key",
-                          "operator"
-                        ],
+                        "required": ["key", "operator"],
                         "type": "object"
                       },
                       "type": "array",
@@ -5703,9 +5286,7 @@
           "type": "object"
         }
       },
-      "required": [
-        "instances"
-      ],
+      "required": ["instances"],
       "type": "object",
       "x-kubernetes-validations": [
         {
@@ -5731,10 +5312,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "goArch",
-              "hash"
-            ],
+            "required": ["goArch", "hash"],
             "type": "object"
           },
           "type": "array"
@@ -5813,11 +5391,7 @@
               },
               "status": {
                 "description": "status of the condition, one of True, False, Unknown.",
-                "enum": [
-                  "True",
-                  "False",
-                  "Unknown"
-                ],
+                "enum": ["True", "False", "Unknown"],
                 "type": "string"
               },
               "type": {
@@ -5932,9 +5506,7 @@
                 "type": "integer"
               }
             },
-            "required": [
-              "isPrimary"
-            ],
+            "required": ["isPrimary"],
             "type": "object"
           },
           "description": "The reported state of the instances during the last reconciliation loop",
@@ -6071,16 +5643,11 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "name",
-                        "value"
-                      ],
+                      "required": ["name", "value"],
                       "type": "object"
                     },
                     "type": "array",
-                    "x-kubernetes-list-map-keys": [
-                      "name"
-                    ],
+                    "x-kubernetes-list-map-keys": ["name"],
                     "x-kubernetes-list-type": "map"
                   },
                   "extension_control_path": {
@@ -6119,9 +5686,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "name"
-                ],
+                "required": ["name"],
                 "type": "object"
               },
               "type": "array"
@@ -6135,10 +5700,7 @@
               "type": "integer"
             }
           },
-          "required": [
-            "image",
-            "majorVersion"
-          ],
+          "required": ["image", "majorVersion"],
           "type": "object"
         },
         "phase": {
@@ -6209,10 +5771,7 @@
                 "type": "array"
               }
             },
-            "required": [
-              "name",
-              "version"
-            ],
+            "required": ["name", "version"],
             "type": "object"
           },
           "type": "array"
@@ -6234,15 +5793,11 @@
                 "type": "string"
               }
             },
-            "required": [
-              "name"
-            ],
+            "required": ["name"],
             "type": "object"
           },
           "type": "array",
-          "x-kubernetes-list-map-keys": [
-            "name"
-          ],
+          "x-kubernetes-list-map-keys": ["name"],
           "x-kubernetes-list-type": "map"
         },
         "poolerIntegrations": {
@@ -6382,10 +5937,7 @@
                 "type": "string"
               }
             },
-            "required": [
-              "name",
-              "state"
-            ],
+            "required": ["name", "state"],
             "type": "object"
           },
           "type": "array"
@@ -6429,16 +5981,11 @@
                           "type": "string"
                         }
                       },
-                      "required": [
-                        "name",
-                        "value"
-                      ],
+                      "required": ["name", "value"],
                       "type": "object"
                     },
                     "type": "array",
-                    "x-kubernetes-list-map-keys": [
-                      "name"
-                    ],
+                    "x-kubernetes-list-map-keys": ["name"],
                     "x-kubernetes-list-type": "map"
                   },
                   "extension_control_path": {
@@ -6477,9 +6024,7 @@
                     "type": "string"
                   }
                 },
-                "required": [
-                  "name"
-                ],
+                "required": ["name"],
                 "type": "object"
               },
               "type": "array"
@@ -6493,10 +6038,7 @@
               "type": "integer"
             }
           },
-          "required": [
-            "image",
-            "majorVersion"
-          ],
+          "required": ["image", "majorVersion"],
           "type": "object"
         },
         "targetPrimary": {
@@ -6552,9 +6094,6 @@
       "type": "object"
     }
   },
-  "required": [
-    "metadata",
-    "spec"
-  ],
+  "required": ["metadata", "spec"],
   "type": "object"
 }
