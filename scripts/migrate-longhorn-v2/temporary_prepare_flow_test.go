@@ -233,6 +233,51 @@ func TestUncertainTemporaryResetIsNeverReplayed(t *testing.T) {
 	}
 }
 
+func TestUnusedTemporaryCapacityHoldPrecedesJournalAndCordon(t *testing.T) {
+	for _, kind := range []string{"logical", "actual"} {
+		t.Run(kind, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			if kind == "logical" {
+				// Below the individual disk size, but above its allocation budget.
+				f.base.s.volumes[0]["spec"].(object)["size"] = fmt.Sprint(87 << 30)
+			} else {
+				f.base.s.volumes[0]["status"].(object)["actualSize"] = float64(63 << 30)
+			}
+			if p.prepare(context.Background()) == nil || f.base.cm != nil || f.base.resets != 0 || value(f.base.node, "spec", "unschedulable") == true {
+				t.Fatal("insufficient capacity was accepted or preparation mutated the worker before holding")
+			}
+		})
+	}
+}
+
+func TestUnusedTemporaryCapacityIsRecheckedInBothPostDrainObservations(t *testing.T) {
+	for _, growthAt := range []int{1, 2} {
+		t.Run(fmt.Sprint(growthAt), func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			run := p.c.run
+			drained, observations := false, 0
+			p.c.run = func(ctx context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if program == "kubectl" && len(args) > 3 {
+					if drained && len(args) == 5 && args[2] == "get" && args[3] == "nodes" && args[4] == "--output=json" {
+						observations++
+						if observations == growthAt {
+							f.base.s.volumes[0]["status"].(object)["actualSize"] = float64(63 << 30)
+						}
+					}
+				}
+				out, err := run(ctx, input, program, args...)
+				if err == nil && program == "kubectl" && len(args) > 2 && args[2] == "drain" {
+					drained = true
+				}
+				return out, err
+			}
+			if p.prepare(context.Background()) == nil || !drained || observations != growthAt || f.base.resets != 0 || p.j.Phase == "reset-requested" || p.j.Phase == "prepared" {
+				t.Fatal("post-drain storage growth reached reset intent or was not observed")
+			}
+		})
+	}
+}
+
 func TestTemporaryPreparationRebindsIdentityAndStorageBeforeResumingWrites(t *testing.T) {
 	for _, scenario := range []string{"storage enabled", "node replaced", "unexpected reboot"} {
 		t.Run(scenario, func(t *testing.T) {

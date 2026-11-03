@@ -85,6 +85,9 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 }
 
 func (p temporaryPreparation) unusedCapacity(s inventory, pinned bool) error {
+	if err := verifyRebuildBudget(p.target, s); err != nil {
+		return err
+	}
 	nodes := s.nodes
 	for _, n := range nodes {
 		if text(n, "metadata", "name") == p.target && value(n, "spec", "unschedulable") == true {
