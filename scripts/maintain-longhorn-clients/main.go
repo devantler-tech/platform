@@ -472,7 +472,7 @@ func (e engine) clientsReady(ctx context.Context) (bool, error) {
 			if l == nil {
 				return false, nil
 			}
-			eligible, proofErr := e.migrationStorageEligible(n, l)
+			eligible, proofErr := e.migrationStorageEligible(ctx, n, l)
 			if proofErr != nil {
 				return false, proofErr
 			}

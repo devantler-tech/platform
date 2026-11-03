@@ -100,6 +100,12 @@ it revalidates all three native bindings and every remaining prerequisite.
 Completion requires three independent ready raw disks and all qualified clients;
 it grants no application cutover or original-disk reset authority.
 
+The two rebuilt workers retain their original `migration-pool=v1` allocation
+label. The shared publication and replica-exclusion checks recognize their raw
+disks only with the completed activation journal, its matching ownership UID,
+and the unchanged Kubernetes, provider, hardware and Longhorn node identities.
+An ordinary later reboot or OS upgrade does not revoke this registration.
+
 Run `canary-v2` with `verify-longhorn-v2-restore` for filesystem backup recovery,
 then `canary-csi-v2` with `verify-longhorn-v2-csi-restore` for CSI snapshot data
 movement. Each has a distinct journal and confirmation. Both first revalidate the

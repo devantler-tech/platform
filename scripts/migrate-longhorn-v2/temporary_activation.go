@@ -6,25 +6,15 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/longhornmigration"
 )
 
-type temporaryV2Binding struct {
-	Selection        string `json:"selection"`
-	Name             string `json:"name"`
-	NodeUID          string `json:"nodeUID"`
-	ProviderID       string `json:"providerID"`
-	MachineUUID      string `json:"machineUUID"`
-	BootID           string `json:"bootID"`
-	OSImage          string `json:"osImage"`
-	LonghornUID      string `json:"longhornUID"`
-	EphemeralUUID    string `json:"ephemeralUUID"`
-	RawPartitionUUID string `json:"rawPartitionUUID"`
-	PreparationUID   string `json:"preparationUID,omitempty"`
-}
+type temporaryV2Binding = longhornmigration.ActivationBinding
 
 var errTemporaryActivation = errors.New("temporary raw storage identity or registration ownership is unproven")
 
-const temporaryActivationOwner = "storage.platform.devantler.tech/v2-activation"
+const temporaryActivationOwner = longhornmigration.ActivationOwner
 
 // authorizeTemporaryActivation requires a distinct confirmation for registering
 // the fixed three-disk pool through the protected first-attempt main workflow.

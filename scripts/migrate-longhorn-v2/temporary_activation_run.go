@@ -26,7 +26,7 @@ func (a temporaryV2Activation) read(ctx context.Context) (object, temporaryActiv
 // persist conditionally writes the plan on current main, then verifies the
 // same journal identity and complete record through a fresh native read.
 func (a temporaryV2Activation) persist(ctx context.Context, cm object, record temporaryActivationRecord) (object, error) {
-	if record.validate() != nil || record.Source != a.source || record.OwnerRun != a.owner {
+	if record.Validate() != nil || record.Source != a.source || record.OwnerRun != a.owner {
 		return nil, errTemporaryActivation
 	}
 	data, err := json.Marshal(record)

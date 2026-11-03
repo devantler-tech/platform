@@ -28,7 +28,7 @@ func eligibilityFixture(role string) (Object, Object) {
 func TestOnlyReviewedPinnedMigrationPoolsAreStorageExceptions(t *testing.T) {
 	for _, role := range []string{"v1", "v2"} {
 		n, lh := eligibilityFixture(role)
-		if ok, err := Eligible(sourceFixture(), n, lh); !ok || err != nil {
+		if ok, err := Eligible(sourceFixture(), n, lh, nil); !ok || err != nil {
 			t.Fatalf("verified %s pool rejected: %v", role, err)
 		}
 	}
@@ -55,7 +55,7 @@ func TestOnlyReviewedPinnedMigrationPoolsAreStorageExceptions(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			n, lh := eligibilityFixture("v1")
 			mutate(n, lh)
-			if ok, err := Eligible(sourceFixture(), n, lh); ok || err == nil {
+			if ok, err := Eligible(sourceFixture(), n, lh, nil); ok || err == nil {
 				t.Fatal("unverified storage exception accepted")
 			}
 		})
@@ -74,11 +74,11 @@ func TestFixedPoolMinimumCannotBeRemovedWhileStorageIsAuthorized(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := Eligible(b, n, lh); ok || err == nil {
+	if ok, err := Eligible(b, n, lh, nil); ok || err == nil {
 		t.Fatal("a zero-minimum pool retained its storage exception")
 	}
 	delete(lh["metadata"].(Object)["labels"].(Object), EnabledLabel)
-	if ok, err := Eligible(nil, n, lh); ok || err != nil {
+	if ok, err := Eligible(nil, n, lh, nil); ok || err != nil {
 		t.Fatal("ordinary compute classification depends on temporary migration source")
 	}
 }

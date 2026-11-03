@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/longhornmigration"
 )
 
 type activationAPI struct {
@@ -251,6 +253,20 @@ func TestTemporaryActivationRegistersOnlyThreeJournalOwnedRawDisks(t *testing.T)
 	}
 	if err = a.run(t.Context()); err != nil || f.writes != 3 {
 		t.Fatal("completed activation repeated a registration:", err)
+	}
+	for _, node := range f.s.nodes {
+		if text(node, "metadata", "labels", longhornmigration.PoolLabel) == "" {
+			continue
+		}
+		var storage object
+		for _, lh := range f.s.storageNodes {
+			if text(lh, "metadata", "name") == text(node, "metadata", "name") {
+				storage = lh
+			}
+		}
+		if eligible, err := longhornmigration.Eligible(poolConfigFixture(), node, storage, f.record); !eligible || err != nil {
+			t.Fatal("actual registration output blocks the shared publication gate:", err)
+		}
 	}
 }
 
