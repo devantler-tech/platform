@@ -20,6 +20,7 @@ type hostRebootFixture struct {
 	desired                    string
 	drainError                 bool
 	afterDrain, afterReboot    func()
+	afterDatabaseRead          func()
 	previousLive               bool
 }
 
@@ -139,6 +140,9 @@ func (f *hostRebootFixture) run(ctx context.Context, input []byte, program strin
 			return nil, nil
 		}
 		if args[2] == "get" && args[3] == "clusters.postgresql.cnpg.io" {
+			if f.drains > 0 && f.afterDatabaseRead != nil {
+				f.afterDatabaseRead()
+			}
 			return json.Marshal(object{"items": f.databases})
 		}
 		if args[2] == "drain" {
@@ -171,6 +175,78 @@ func TestHostRebootRequiresPositiveRecoveryAndPreservesEveryDisk(t *testing.T) {
 				t.Fatal("completed recovery replayed the reboot:", err)
 			}
 		})
+	}
+}
+
+func TestHostRebootWaitsForTheOriginalDatabaseQuorumAfterDrain(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	reads := 0
+	f.afterDrain = func() {
+		f.databases[0]["status"].(object)["readyInstances"] = float64(2)
+		f.afterDatabaseRead = func() {
+			reads++
+			if reads == 2 {
+				f.databases[0]["status"].(object)["readyInstances"] = float64(3)
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := h.run(ctx); err != nil {
+		t.Fatal("ordinary asynchronous database replacement aborted the guarded reboot:", err)
+	}
+	if reads < 2 || f.reboots != 1 || value(f.base.node, "spec", "unschedulable") == true {
+		t.Fatal("database recovery was not observed before reboot and scheduling recovery")
+	}
+}
+
+func TestHostRebootPreservesItsCordonWhenDrainRecoveryTimesOut(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	f.afterDrain = func() { f.databases[0]["status"].(object)["readyInstances"] = float64(2) }
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := h.run(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || f.drains != 1 || f.reboots != 0 || value(f.base.node, "spec", "unschedulable") != true {
+		t.Fatal("unproven post-drain recovery did not stop at its deadline with maintenance retained:", err)
+	}
+}
+
+func TestHostRebootDrainRecoveryDoesNotRetryChangedIdentityOrLostQuorum(t *testing.T) {
+	for name, change := range map[string]func(object){
+		"cluster identity": func(db object) { db["metadata"].(object)["uid"] = "replacement" },
+		"system identity":  func(db object) { db["status"].(object)["systemID"] = "987654321" },
+		"lost quorum":      func(db object) { db["status"].(object)["readyInstances"] = float64(1) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, h := hostRebootAPI(t)
+			reads := 0
+			f.afterDrain = func() {
+				f.databases[0]["status"].(object)["readyInstances"] = float64(2)
+				change(f.databases[0])
+			}
+			f.afterDatabaseRead = func() { reads++ }
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			err := h.run(ctx)
+			if !errors.Is(err, errReadinessTerminal) || reads != 1 || f.reboots != 0 {
+				t.Fatal("an invalid recovery state was retried or allowed a reboot:", err)
+			}
+		})
+	}
+}
+
+func TestHostRebootDrainRecoveryRejectsAnUnreadablePeerDuringDatabaseStartup(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	f.afterDrain = func() {
+		f.databases[0]["status"].(object)["readyInstances"] = float64(2)
+		f.peerJournal = resource("longhorn-v2-host-memory-prod-worker-2")
+		f.peerJournal["metadata"].(object)["namespace"] = "longhorn-system"
+		f.peerJournal["data"] = object{"record": "invalid"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := h.run(ctx); !errors.Is(err, errReadinessTerminal) || f.reboots != 0 {
+		t.Fatal("database startup hid an unreadable peer maintenance record:", err)
 	}
 }
 

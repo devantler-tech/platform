@@ -52,6 +52,8 @@ type hostDatabaseIdentity struct{ UID, SystemID string }
 
 var hostSystemID = regexp.MustCompile(`^[1-9][0-9]{0,19}$`)
 
+var errHostDatabasesRecovering = errors.New("the original database quorum is still recovering after eviction")
+
 // identity supplies the existing worker validator with immutable bindings; the
 // reboot record retains its own operation phases and storage-preservation proof.
 func (r hostRebootRecord) identity() journal {
@@ -206,20 +208,52 @@ func (h hostMemoryReboot) databases(ctx context.Context, expected map[string]hos
 		return nil, errHostMemory
 	}
 	result := map[string]hostDatabaseIdentity{}
+	recovering := false
 	for _, db := range items {
 		key := text(db, "metadata", "namespace") + "/" + text(db, "metadata", "name")
 		if key != "observability/coroot-db" && key != "umami/umami-db" && key != "wedding-app/wedding-db" || result[key].UID != "" ||
 			text(db, "metadata", "uid") == "" || text(db, "metadata", "resourceVersion") == "" || value(db, "metadata", "deletionTimestamp") != nil ||
-			value(db, "spec", "instances") != float64(3) || value(db, "status", "readyInstances") != float64(3) ||
-			text(db, "status", "phase") != "Cluster in healthy state" || !hostSystemID.MatchString(text(db, "status", "systemID")) {
+			value(db, "spec", "instances") != float64(3) || !hostSystemID.MatchString(text(db, "status", "systemID")) {
 			return nil, errHostMemory
 		}
 		result[key] = hostDatabaseIdentity{UID: text(db, "metadata", "uid"), SystemID: text(db, "status", "systemID")}
+		ready := value(db, "status", "readyInstances")
+		phase := text(db, "status", "phase")
+		if (ready != float64(2) && ready != float64(3)) || phase == "" {
+			return nil, errHostMemory
+		}
+		recovering = recovering || ready != float64(3) || phase != "Cluster in healthy state"
 	}
 	if expected != nil && !reflect.DeepEqual(result, expected) {
 		return nil, errHostMemory
 	}
+	if recovering {
+		return nil, errHostDatabasesRecovering
+	}
 	return result, nil
+}
+
+// waitDrainRecovery gives an unchanged database quorum a bounded startup window
+// after eviction. Changed ownership, source, target identity, peer maintenance or
+// other safety evidence fails immediately; the final two fresh checks still run.
+func (h hostMemoryReboot) waitDrainRecovery(ctx context.Context, r hostRebootRecord) error {
+	return waitReadyWithin(ctx, 20*time.Minute, func(ctx context.Context) error {
+		if _, err := h.owned(ctx, r); err != nil {
+			return errors.Join(errReadinessTerminal, err)
+		}
+		n, _, err := h.targetState(ctx, r)
+		if err != nil || text(n, "status", "nodeInfo", "bootID") != r.OriginalBootID || value(n, "spec", "unschedulable") != true || text(n, "metadata", "annotations", fenceAnnotation) != h.name() {
+			return errors.Join(errReadinessTerminal, errHostMemory)
+		}
+		s, _, err := h.healthy(ctx, r.Databases)
+		if err != nil && !errors.Is(err, errHostDatabasesRecovering) {
+			return errors.Join(errReadinessTerminal, err)
+		}
+		if peerErr := h.peersClear(ctx, s.nodes); peerErr != nil {
+			return errors.Join(errReadinessTerminal, peerErr)
+		}
+		return err
+	})
 }
 
 // healthy gates this pre-V2 operation on the full migration roster, complete V1
@@ -383,6 +417,9 @@ func (h hostMemoryReboot) run(ctx context.Context) error {
 		}
 		if _, err = h.c.kubectl(ctx, nil, "drain", h.target, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=40m"); err != nil {
 			return errors.New("host memory maintenance drain was blocked; no reboot was requested")
+		}
+		if err = h.waitDrainRecovery(ctx, r); err != nil {
+			return err
 		}
 		// Keep the existing full redundancy floor: no request while a copy or
 		// database is still recovering from the eviction.
