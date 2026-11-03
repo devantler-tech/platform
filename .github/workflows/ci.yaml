@@ -27,7 +27,7 @@ jobs:
       - name: ⚙️ Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version-file: scripts/tests/webapp-compiler/go.mod
+          go-version-file: go.mod
           cache: false
       - name: 📌 Install reviewed YAML parser
         env:
@@ -105,6 +105,10 @@ jobs:
           LINT_PARTITION: ${{ matrix.partition }}
         run: bash scripts/check-go-modules-lint.sh "$LINT_PARTITION"
 
+      - name: 🧹 Lint the generated negative-control source privately
+        timeout-minutes: 5
+        run: bash scripts/check-go-negative-control.sh --lint
+
   validate-go-package-style:
     name: 🧹 Validate Complete Go Package Style
     runs-on: ubuntu-latest
@@ -139,6 +143,9 @@ jobs:
 
       - name: 🧹 Lint every tracked Go source with package context
         run: go run ./scripts/check-go-package-style
+
+      - name: 🧹 Validate generated negative-control source privately
+        run: bash scripts/check-go-negative-control.sh --style
 
   validate-go-regressions:
     name: 🧪 Validate Complete Go Regressions (${{ matrix.suite }})
@@ -177,6 +184,11 @@ jobs:
 
       - name: 🧪 Exercise complete regression routing offline
         run: bash scripts/tests/test-run-go-regressions.sh
+
+      - name: 🧾 Validate the registered control factory and private module metadata
+        run: |
+          bash scripts/tests/test-go-negative-control.sh
+          bash scripts/check-go-negative-control.sh --tidy
 
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
@@ -2121,7 +2133,7 @@ jobs:
         if: matrix.suite == 'services'
         timeout-minutes: 5
         env:
-          CONTRACT_PROBE_IMAGE_NATIVE_TEST: '1'
+          CONTRACT_PROBE_IMAGE_NATIVE_TEST: "1"
         run: |
           set -euo pipefail
           go test -count=1 -timeout 4m -json ./scripts/tests/contract-probe-image |
@@ -3658,13 +3670,13 @@ jobs:
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          VAULT_BACKUP_TOOLING_NATIVE_TEST: '1'
+          VAULT_BACKUP_TOOLING_NATIVE_TEST: "1"
         run: go test -count=1 -v ./scripts/tests/vault-backup-recovery
       - name: 🔒 Prove Longhorn dashboard read-only routing
         if: matrix.suite == 'native'
         timeout-minutes: 5
         env:
-          LONGHORN_UI_NATIVE_TEST: '1'
+          LONGHORN_UI_NATIVE_TEST: "1"
         run: go test -race -count=1 -v ./scripts/tests/longhorn-ui-readonly
       - name: 🐤 Validate staged OpenBao standby repair
         if: matrix.suite == 'contracts'

@@ -91,4 +91,17 @@ for index in "${!paths[@]}"; do
   payload "$rule" "$value" >"$directory/neighbor.txt"
   scan "$directory" "$config" 1 "$rule"
 done
+# The native MegaLinter exclusions are applied directly, without an inheritance
+# layer that drops Betterleaks 1.7.3's targeted rule dispositions.
+for excluded in .agents .jscpd .megalinter_github_conf megalinter-reports report; do
+  for prefix in '' nested/; do
+    directory="$work/exclusions"
+    rm -rf -- "$directory"
+    mkdir -p "$directory/$prefix$excluded"
+    payload generic-api-key 'ZGVkaWNhdGVkLXNlY3JldA==' >"$directory/$prefix$excluded/probe.txt"
+    scan "$directory" "$config" 0 generic-api-key
+    mv "$directory/$prefix$excluded" "$directory/$prefix$excluded-neighbor"
+    scan "$directory" "$config" 1 generic-api-key
+  done
+done
 echo 'PASS: native Betterleaks defaults, exact fixture values, changed values and neighboring paths'

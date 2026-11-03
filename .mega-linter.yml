@@ -44,6 +44,10 @@ GO_REVIVE_CLI_EXECUTABLE:
   - bash
   - scripts/revive-package-context.sh
 
+# Betterleaks 1.7.3 attaches targeted allowlists only at config depth zero.
+# Its source config preserves the same native directory exclusions directly.
+REPOSITORY_BETTERLEAKS_FORWARD_EXCLUDED_DIRECTORIES: false
+
 # Prove the exact fixture boundaries with the same installed native engines.
 # Fail before linting when a version, inherited default or refusal proof drifts.
 PRE_COMMANDS:
@@ -430,6 +434,15 @@ REPOSITORY_TRIVY_ARGUMENTS:
   # unexpected registry. Omitting this argument silently restores those 27.
   - --config-data
   - .trivy/data
+
+# Retain the complete native scanner and every reviewed source/data input.
+# The wrapper verifies all 580 current policy modules and changes only the
+# audited KSV-0040 applicability predicate in a private complete bundle. Native
+# invalid-quota and unrelated-finding controls precede every full scan; unknown
+# bundles, missing checks, embedded fallback and compiler errors fail closed.
+REPOSITORY_TRIVY_CLI_EXECUTABLE:
+  - bash
+  - scripts/trivy-resource-quota.sh
 
 # zizmor aborts with "fatal: no audit was performed" because MegaLinter strips GITHUB_TOKEN and its
 # artipacked audit then 401s against the GitHub API. Handing it the token makes the audit run

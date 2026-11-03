@@ -59,3 +59,8 @@ condition = "AND"
 paths = ['''^k8s/bases/infrastructure/controllers/kyverno/background-v1\.19\.2-downstream-cleanup\.patch$''']
 regexTarget = "secret"
 regexes = ['''^(LiyJx32VU3cwQfLchn/513qKhc25hq0pEANYJoWNnnI=|eMw0Xo\+IfbbMlKmW7aHvpyQRv9RCXuWx/vs8AD\+0x9A=)$''']
+
+# Preserve MegaLinter's existing directory exclusions without another config layer.
+[[allowlists]]
+description = "Directories already excluded by MegaLinter native forwarding"
+paths = ['''(^|/)(\.agents|\.jscpd|\.megalinter_github_conf|megalinter-reports|report)/''']

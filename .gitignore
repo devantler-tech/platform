@@ -67,3 +67,4 @@ __pycache__/
 /scripts/*/main
 /scripts/*/*.exe
 /scripts/*/*.test
+/.govulncheck-negative-control/

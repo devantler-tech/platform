@@ -28,12 +28,35 @@ func TestMegaLinterKeepsNativePackageStyleEnabled(t *testing.T) {
 	}
 }
 
+func TestMegaLinterRequiresTheCompleteNativeTrivyPolicyGuard(t *testing.T) {
+	data, err := os.ReadFile("../../.mega-linter.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config struct {
+		Executable []string `yaml:"REPOSITORY_TRIVY_CLI_EXECUTABLE"`
+		Arguments  []string `yaml:"REPOSITORY_TRIVY_ARGUMENTS"`
+		Disabled   []string `yaml:"DISABLE_LINTERS"`
+		Advisory   []string `yaml:"DISABLE_ERRORS_LINTERS"`
+	}
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(config.Executable, []string{"bash", "scripts/trivy-resource-quota.sh"}) || slices.Contains(config.Disabled, "REPOSITORY_TRIVY") || slices.Contains(config.Advisory, "REPOSITORY_TRIVY") {
+		t.Fatal("complete native vulnerability and misconfiguration scanning must require the policy guard")
+	}
+	if !slices.Equal(config.Arguments, []string{"--ignorefile", ".trivyignore.yaml", "--skip-dirs", "tests", "--config-data", ".trivy/data"}) {
+		t.Fatal("native scanners, source scope and reviewed data/ignore inputs must be preserved")
+	}
+}
+
 func TestMegaLinterRequiresNativeFixtureRefusals(t *testing.T) {
 	data, err := os.ReadFile("../../.mega-linter.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
 	var config struct {
+		Forward  *bool `yaml:"REPOSITORY_BETTERLEAKS_FORWARD_EXCLUDED_DIRECTORIES"`
 		Commands []struct {
 			Command  string `yaml:"command"`
 			CWD      string `yaml:"cwd"`
@@ -44,6 +67,9 @@ func TestMegaLinterRequiresNativeFixtureRefusals(t *testing.T) {
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		t.Fatal(err)
+	}
+	if config.Forward == nil || *config.Forward {
+		t.Fatal("native Betterleaks must read the source config at depth zero, preserving all targeted rules")
 	}
 	for _, command := range []string{"bash scripts/tests/test-betterleaks-fixture-boundary.sh", "bash scripts/tests/test-secretlint-fixture-boundary.sh"} {
 		count := 0
@@ -85,6 +111,35 @@ func TestNativeCNPGSchemaBoundaryIsRequired(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatal("require one pinned native CNPG schema proof and complete schema provenance check")
+	}
+}
+
+func TestNegativeControlDataRetainsAllRequiredValidation(t *testing.T) {
+	workflow := readRegressionWorkflow(t)
+	for jobName, mode := range map[string]string{"validate-go-lint": "--lint", "validate-go-package-style": "--style", "validate-go-regressions": "--tidy"} {
+		job := workflow.Jobs[jobName]
+		if job.If != "" || job.Continue != nil {
+			t.Fatalf("control validation must be unconditional in %s", jobName)
+		}
+		for _, consumer := range []string{"deploy-prod", "ci-required-checks"} {
+			if !slices.Contains(workflow.Jobs[consumer].Needs, jobName) {
+				t.Fatalf("%s can bypass private control validation", consumer)
+			}
+		}
+		count := 0
+		for _, step := range job.Steps {
+			for _, line := range strings.Split(step.Run, "\n") {
+				if strings.TrimSpace(line) == "bash scripts/check-go-negative-control.sh "+mode {
+					if step.If != "" || step.Continue != nil || step.WorkingDirectory != "" || len(step.Env) != 0 {
+						t.Fatalf("control source validation can be redirected or skipped in %s", jobName)
+					}
+					count++
+				}
+			}
+		}
+		if count != 1 {
+			t.Fatalf("require one complete private control validation per %s", jobName)
+		}
 	}
 }
 
