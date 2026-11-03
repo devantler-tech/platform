@@ -381,7 +381,7 @@ func (h hostMemoryReboot) run(ctx context.Context) error {
 	recovery, cancel := context.WithTimeout(ctx, 20*time.Minute)
 	defer cancel()
 	var recovered object
-	if err = waitReady(recovery, func(ctx context.Context) error {
+	if err = waitReadyWithin(recovery, 20*time.Minute, func(ctx context.Context) error {
 		n, _, err := h.targetState(ctx, r)
 		boot := text(n, "status", "nodeInfo", "bootID")
 		if err != nil || !inventoryBoot.MatchString(boot) || boot == r.OriginalBootID || r.RecoveredBootID != "" && boot != r.RecoveredBootID || !hugepagesReady(n) {

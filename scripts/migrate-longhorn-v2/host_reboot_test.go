@@ -174,6 +174,40 @@ func TestHostRebootRequiresPositiveRecoveryAndPreservesEveryDisk(t *testing.T) {
 	}
 }
 
+func TestHostRebootRecoveryProbeGetsTheDeclaredWindowAndParentDeadline(t *testing.T) {
+	for _, parentLimit := range []time.Duration{0, 2 * time.Minute} {
+		t.Run(parentLimit.String(), func(t *testing.T) {
+			f, h := hostRebootAPI(t)
+			ctx := context.Background()
+			if parentLimit > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, parentLimit)
+				defer cancel()
+			}
+			want := 20 * time.Minute
+			if parentLimit > 0 {
+				want = parentLimit
+			}
+			observed := false
+			inspect := h.inspect
+			h.inspect = func(ctx context.Context) (hostMemoryReport, error) {
+				if f.rebooted {
+					deadline, bounded := ctx.Deadline()
+					remaining := time.Until(deadline)
+					if !bounded || remaining > want || remaining < want-time.Minute {
+						t.Fatalf("recovery probe got an incorrect deadline: remaining=%v want=%v bounded=%v", remaining, want, bounded)
+					}
+					observed = true
+				}
+				return inspect(ctx)
+			}
+			if err := h.run(ctx); err != nil || !observed {
+				t.Fatal("recovery never completed its bounded native observation:", err)
+			}
+		})
+	}
+}
+
 func TestHostRebootHoldsBeforeRequestOnLostSafetyEvidence(t *testing.T) {
 	for _, mode := range []string{"source", "desired pages", "foreign cordon", "database", "replica", "drain", "identity after drain", "source after drain", "V2 flag", "setting scope", "storage scope after drain"} {
 		t.Run(mode, func(t *testing.T) {
@@ -258,7 +292,10 @@ func TestHostRebootCannotStartWhileAnotherWorkerHasAnUnfinishedJournal(t *testin
 	if r.validate("prod-worker-2") != nil {
 		t.Fatal("peer fixture did not represent a valid pending request")
 	}
-	encoded, _ := json.Marshal(r)
+	encoded, err := json.Marshal(r)
+	if err != nil {
+		t.Fatal(err)
+	}
 	f.peerJournal = resource("longhorn-v2-host-memory-prod-worker-2")
 	f.peerJournal["metadata"].(object)["namespace"] = "longhorn-system"
 	f.peerJournal["data"] = object{"record": string(encoded)}
