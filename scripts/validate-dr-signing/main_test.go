@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func repoFile(t *testing.T, rel string) string {
@@ -1596,54 +1598,6 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		validatorLine = "          go run ./scripts/validate-dr-signing .github/workflows/dr-rebuild.yaml ksail.prod.yaml\n"
 		testLine      = "          go test ./scripts/validate-dr-signing\n"
 		gateJobHeader = "  validate-publication-contract:\n"
-		deployNeeds   = `    needs:
-      [
-        changes,
-        validate-repository-guards,
-        validate-independent-guards,
-        test-publish-release-recovery,
-        validate-publication-generator,
-        validate-go-regressions,
-        validate-go-package-style,
-        validate-webapp-compiler,
-        validate-consumer-discovery,
-        validate-floating-image-tags,
-        validate-helm-post-renderers,
-        validate-eks-authorization,
-        validate-publication-contract,
-        validate-matcher-efficacy,
-        validate-talos,
-        validate-root-verify-merge-group,
-        validate-rgd-templates-merge-group,
-        validate-ghcr-fanout-merge-group,
-      ]`
-		deployNeedsWithoutGate = `    needs:
-      [
-        changes,
-        validate-repository-guards,
-        validate-independent-guards,
-        test-publish-release-recovery,
-        validate-publication-generator,
-        validate-go-regressions,
-        validate-go-package-style,
-        validate-webapp-compiler,
-        validate-consumer-discovery,
-        validate-floating-image-tags,
-        validate-helm-post-renderers,
-        validate-eks-authorization,
-        validate-matcher-efficacy,
-        validate-talos,
-        validate-root-verify-merge-group,
-        validate-rgd-templates-merge-group,
-        validate-ghcr-fanout-merge-group,
-      ]`
-		healNeeds = `    needs:
-      [
-        changes,
-        deploy-prod,
-        validate-publication-contract,
-        merge-group-queue-membership,
-      ]`
 	)
 
 	for name, arm := range map[string]struct {
@@ -1715,13 +1669,13 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 		// are not redundant.
 		"deploy-prod no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, deployNeeds, deployNeedsWithoutGate, 1)
+				return withoutProductionGateNeed(t, s, "deploy-prod")
 			},
 			"does not require validate-publication-contract",
 		},
 		"heal-prod-on-failure no longer requires the gate job": {
 			func(s string) string {
-				return strings.Replace(s, healNeeds, "    needs: [changes, deploy-prod, merge-group-queue-membership]", 1)
+				return withoutProductionGateNeed(t, s, "heal-prod-on-failure")
 			},
 			"does not require validate-publication-contract",
 		},
@@ -1767,8 +1721,8 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 			"which is not one of the setup actions this gate may contain",
 		},
 	} {
+		ablated := arm.ablate(ci)
 		t.Run(name, func(t *testing.T) {
-			ablated := arm.ablate(ci)
 			if ablated == ci {
 				t.Fatal("ablation changed nothing; re-aim it rather than trusting the result")
 			}
@@ -1781,6 +1735,46 @@ func TestMergeQueueContractGateIsEnforced(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Remove only the named production job's publication dependency. Unrelated
+// prerequisite changes must not turn a refusal control into a no-op.
+func withoutProductionGateNeed(t *testing.T, source, jobName string) string {
+	t.Helper()
+	var document map[string]any
+	if err := yaml.Unmarshal([]byte(source), &document); err != nil {
+		t.Fatal(err)
+	}
+	jobs, ok := document["jobs"].(map[string]any)
+	if !ok {
+		t.Fatal("fixture has no jobs mapping")
+	}
+	job, ok := jobs[jobName].(map[string]any)
+	if !ok {
+		t.Fatalf("fixture has no job %q", jobName)
+	}
+	needs, ok := job["needs"].([]any)
+	if !ok {
+		t.Fatalf("fixture job %q has no dependency sequence", jobName)
+	}
+	kept := make([]any, 0, len(needs))
+	removed := 0
+	for _, dependency := range needs {
+		if dependency == "validate-publication-contract" {
+			removed++
+		} else {
+			kept = append(kept, dependency)
+		}
+	}
+	if removed != 1 {
+		t.Fatalf("fixture job %q must lose exactly one publication dependency, got %d", jobName, removed)
+	}
+	job["needs"] = kept
+	mutated, err := yaml.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(mutated)
 }
 
 // TestPublicationActionIgnoresNonExecutableText pins the half of the contract

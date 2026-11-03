@@ -62,6 +62,49 @@ jobs:
 
   # Full suites produce no path outputs. Run them independently, but require
   # their success before production access and the final merge verdict.
+  validate-go-lint:
+    name: 🧹 Validate Complete Go Lint (${{ matrix.partition }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        partition: [part-0, part-1]
+    permissions:
+      contents: read
+    steps:
+      - name: 📑 Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: ⚙️ Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: ⚙️ Install the catalogue-aligned Go linter
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.14.0
+          install-only: true
+
+      - name: 🧹 Check Go lint scripts
+        run: shellcheck scripts/check-go-modules-lint.sh scripts/tests/test-go-modules-lint.sh
+
+      - name: 🧪 Prove real Go lint refusals
+        timeout-minutes: 5
+        run: bash scripts/tests/test-go-modules-lint.sh
+
+      - name: 🧹 Lint every tracked Go source module
+        timeout-minutes: 10
+        env:
+          LINT_PARTITION: ${{ matrix.partition }}
+        run: bash scripts/check-go-modules-lint.sh "$LINT_PARTITION"
+
   validate-go-package-style:
     name: 🧹 Validate Complete Go Package Style
     runs-on: ubuntu-latest
@@ -4296,6 +4339,7 @@ jobs:
         validate-independent-guards,
         test-publish-release-recovery,
         validate-publication-generator,
+        validate-go-lint,
         validate-go-regressions,
         validate-go-package-style,
         validate-webapp-compiler,
@@ -4669,6 +4713,7 @@ jobs:
         test-publish-release-recovery-disabled,
         validate-publication-generator,
         validate-manifest-regressions,
+        validate-go-lint,
         validate-go-regressions,
         validate-go-package-style,
         validate-webapp-compiler,
@@ -4776,6 +4821,7 @@ jobs:
             ${{ needs.test-publish-release-recovery-disabled.result }}
             ${{ needs.validate-publication-generator.result }}
             ${{ needs.validate-manifest-regressions.result }}
+            ${{ needs.validate-go-lint.result }}
             ${{ needs.validate-go-regressions.result }}
             ${{ needs.validate-go-package-style.result }}
             ${{ needs.validate-webapp-compiler.result }}
@@ -4837,6 +4883,15 @@ jobs:
             exit 1
             ;;
           esac
+
+      - name: 🧹 Require complete Go lint
+        env:
+          LINT_RESULT: ${{ needs.validate-go-lint.result }}
+        run: |
+          if [[ "$LINT_RESULT" != success ]]; then
+            echo "The unconditional Go lint job must succeed, got: $LINT_RESULT" >&2
+            exit 1
+          fi
 
       - name: 🧪 Require complete Go regressions
         env:

@@ -21,6 +21,35 @@ Start with [contributor guidance](../CONTRIBUTING.md#validation). The complete
 [validation contract](../AGENTS.md#validation) covers affected Go/Bash tests and
 CI path filters.
 
+## Go lint
+
+The required `validate-go-lint` job installs golangci-lint v2.14.0 using
+the Go toolchain from `go.mod`. It lints every tracked module's loadable
+first-party packages for the runner's target, including tests, with the standard
+linter policy. A tools-only module with no packages is reported separately;
+its upstream tool's source is not claimed as linted. An empty source module,
+unreadable package graph or missing module boundary fails validation.
+
+Complete lint and the complete Go regression suite run in independent read-only
+jobs. Production deployment and the required CI aggregate wait for both; the
+aggregate rejects failed, cancelled, missing or skipped lint results. Lint has a
+15-minute job bound. Their separation avoids adding their execution times to
+one serial path; it does not guarantee runner availability or whole-PR latency.
+
+With that linter installed, run:
+
+```bash
+bash scripts/check-go-modules-lint.sh
+bash scripts/tests/test-go-modules-lint.sh
+```
+
+The check ignores ambient workspace and Go configuration, disables automatic
+toolchain downloads and source fixes, and loads dependencies read-only. Its real
+controls reject unchecked errors in root, nested and newly indexed modules and
+check that a missing nested manifest cannot fall back to its parent. Update the
+workflow's tool pin, the script's version check and the regression contract
+together when adopting a reviewed linter release.
+
 ## Go module files
 
 The required Go regression job checks every tracked `go.mod`, including nested

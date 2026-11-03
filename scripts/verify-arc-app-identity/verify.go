@@ -243,8 +243,8 @@ func doRequest(ctx context.Context, client *http.Client, method, endpoint string
 	if err != nil {
 		return 0, failTransport
 	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK && !(target == nil && response.StatusCode == http.StatusNoContent) {
+	defer func() { _ = response.Body.Close() }() // The bounded read below owns response validity.
+	if response.StatusCode != http.StatusOK && (target != nil || response.StatusCode != http.StatusNoContent) {
 		return response.StatusCode, failAPI
 	}
 	if target == nil {

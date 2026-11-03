@@ -140,7 +140,7 @@ func TestTransportHealthRejectsTLSBypassesRedirectsAndPartialReads(t *testing.T)
 						t.Error(err)
 						return
 					}
-					defer connection.Close()
+					defer func() { _ = connection.Close() }() // Deliberately truncated-response fixture.
 					_, _ = io.WriteString(connection, "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{\"initialized\":true,\"sealed\":false}")
 					return
 				}

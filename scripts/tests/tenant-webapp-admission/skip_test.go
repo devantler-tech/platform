@@ -99,7 +99,7 @@ func TestAllSkippedBatchIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }() // Read-only fixture input.
 	oldArgs, oldInput := os.Args, os.Stdin
 	os.Args, os.Stdin = []string{"admission-driver", policyPath}, reader
 	defer func() { os.Args, os.Stdin = oldArgs, oldInput }()
