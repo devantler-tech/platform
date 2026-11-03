@@ -126,6 +126,10 @@ func (a temporaryV2Activation) targets(ctx context.Context, s inventory, journal
 		}
 		role := text(nodes[name], "metadata", "labels", migrationPoolLabel)
 		binding, err := a.readBinding(ctx, selection, nodes[name], storage[name], a.pools[role])
+		if err != nil {
+			return nil, errTemporaryActivation
+		}
+		binding, err = a.prepared(ctx, binding)
 		if err != nil || expected != nil && expected[selection] != binding {
 			return nil, errTemporaryActivation
 		}

@@ -22,6 +22,9 @@ func temporaryActivationRecordFixture(t *testing.T) temporaryActivationRecord {
 		b.NodeUID, b.ProviderID, b.MachineUUID = fmt.Sprintf("node-%d", i), fmt.Sprintf("hcloud://%d", 100+i), fmt.Sprintf("hardware-%d", i)
 		b.LonghornUID, b.EphemeralUUID = fmt.Sprintf("longhorn-%d", i), fmt.Sprintf("ephemeral-%d", i)
 		b.RawPartitionUUID = fmt.Sprintf("12345678-1234-4234-8234-%012x", i+10)
+		if selection != "temporary-v2-1" {
+			b.PreparationUID = fmt.Sprintf("preparation-%d", i)
+		}
 		record.Targets[selection] = b
 	}
 	return record
@@ -37,6 +40,16 @@ func TestTemporaryActivationRecordRequiresThreeDistinctCompleteBindings(t *testi
 		"unreviewed source":  func(r *temporaryActivationRecord) { r.Source = "unknown" },
 		"missing owner":      func(r *temporaryActivationRecord) { r.OwnerRun = "" },
 		"missing third disk": func(r *temporaryActivationRecord) { delete(r.Targets, "temporary-v2-1") },
+		"missing preparation identity": func(r *temporaryActivationRecord) {
+			b := r.Targets["temporary-v1-1"]
+			b.PreparationUID = ""
+			r.Targets["temporary-v1-1"] = b
+		},
+		"duplicated preparation identity": func(r *temporaryActivationRecord) {
+			b := r.Targets["temporary-v1-2"]
+			b.PreparationUID = r.Targets["temporary-v1-1"].PreparationUID
+			r.Targets["temporary-v1-2"] = b
+		},
 		"wrong target pool": func(r *temporaryActivationRecord) {
 			b := r.Targets["temporary-v2-1"]
 			b.Name = r.Targets["temporary-v1-1"].Name

@@ -20,6 +20,8 @@ type activationAPI struct {
 	writes              int
 	lostResponse        bool
 	priorLive           bool
+	preparations        map[string]object
+	preparationFailed   bool
 }
 
 func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
@@ -55,6 +57,29 @@ func newActivationAPI(t *testing.T) (*activationAPI, temporaryV2Activation) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.preparations = map[string]object{}
+	for ordinal, selection := range []string{"temporary-v1-1", "temporary-v1-2"} {
+		name, _, err := resolveTemporaryInventoryTarget(selection, s.nodes, pools)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, node := range s.nodes {
+			if text(node, "metadata", "name") != name {
+				continue
+			}
+			var lh object
+			for _, storage := range s.storageNodes {
+				if text(storage, "metadata", "name") == name {
+					lh = storage
+				}
+			}
+			binding := temporaryV2Binding{Selection: selection, Name: name, NodeUID: text(node, "metadata", "uid"), ProviderID: text(node, "spec", "providerID"),
+				MachineUUID: text(node, "status", "nodeInfo", "systemUUID"), LonghornUID: text(lh, "metadata", "uid")}
+			cm := temporaryPreparedFixture(t, binding)
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `"ownerRun":"7777"`, fmt.Sprintf(`"ownerRun":"%d"`, 7777+ordinal), 1)
+			f.preparations[selection] = cm
+		}
+	}
 	a := temporaryV2Activation{c: client{context: "fixture", run: f.run}, source: strings.Repeat("a", 40), owner: "456", pools: pools}
 	a.reader = func(_ context.Context, address string) (nativeReplicaReader, func() error, error) {
 		for _, node := range f.s.nodes {
@@ -77,13 +102,18 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 	if program == "gh" && len(args) == 2 && args[0] == "api" {
 		source := strings.Repeat("1", 40)
 		status := "completed"
-		if !strings.Contains(args[1], "/5678/") {
+		conclusion := "success"
+		if strings.Contains(args[1], "/7777/") || strings.Contains(args[1], "/7778/") {
+			if f.preparationFailed {
+				conclusion = "failure"
+			}
+		} else if !strings.Contains(args[1], "/5678/") {
 			source = strings.Repeat("a", 40)
 			if f.priorLive {
 				status = "in_progress"
 			}
 		}
-		return json.Marshal(object{"status": status, "head_sha": source, "head_branch": "main", "event": "workflow_dispatch", "run_attempt": 1, "path": ".github/workflows/prepare-longhorn-v2-node.yaml"})
+		return json.Marshal(object{"status": status, "conclusion": conclusion, "head_sha": source, "head_branch": "main", "event": "workflow_dispatch", "run_attempt": 1, "path": ".github/workflows/prepare-longhorn-v2-node.yaml"})
 	}
 	if program == "talosctl" && len(args) == 5 && args[1] == "get" && args[4] == "--output=json" {
 		for i, node := range f.s.nodes {
@@ -123,6 +153,14 @@ func (f *activationAPI) run(_ context.Context, input []byte, program string, arg
 		}
 		name := args[2]
 		if kind == "configmap" {
+			for selection, prepared := range f.preparations {
+				if name == "longhorn-v2-prepare-"+selection {
+					if prepared == nil {
+						return nil, nil
+					}
+					return json.Marshal(prepared)
+				}
+			}
 			if name == temporaryActivationJournal {
 				if f.record == nil {
 					return nil, nil
@@ -216,6 +254,26 @@ func TestTemporaryActivationRegistersOnlyThreeJournalOwnedRawDisks(t *testing.T)
 	}
 }
 
+func TestTemporaryActivationHoldsBeforeWritesWithoutSuccessfulPreparation(t *testing.T) {
+	for _, mode := range []string{"missing preparation", "failed preparation", "unfinished preparation"} {
+		t.Run(mode, func(t *testing.T) {
+			f, a := newActivationAPI(t)
+			switch mode {
+			case "missing preparation":
+				f.preparations["temporary-v1-1"] = nil
+			case "failed preparation":
+				f.preparationFailed = true
+			case "unfinished preparation":
+				cm := f.preparations["temporary-v1-1"]
+				cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `"phase":"prepared"`, `"phase":"reset-requested"`, 1)
+			}
+			if err := a.run(t.Context()); err == nil || f.writes != 0 || f.record != nil {
+				t.Fatal("activation wrote before successful native preparation was bound:", err)
+			}
+		})
+	}
+}
+
 func TestTemporaryActivationResumesItsUncertainWriteWithoutAdoptingForeignStorage(t *testing.T) {
 	f, a := newActivationAPI(t)
 	f.lostResponse = true
@@ -249,7 +307,7 @@ func TestCanaryRequiresCompletedStillOwnedTemporaryActivation(t *testing.T) {
 	if a.accepted(t.Context()) == nil || f.writes != 0 {
 		t.Fatal("an unregistered pool authorized the canary")
 	}
-	for _, mode := range []string{"valid", "journal replaced", "worker changed", "workflow live", "disk fenced"} {
+	for _, mode := range []string{"valid", "journal replaced", "worker changed", "workflow live", "disk fenced", "preparation replaced"} {
 		t.Run(mode, func(t *testing.T) {
 			f, a := newActivationAPI(t)
 			if err := a.run(t.Context()); err != nil {
@@ -264,6 +322,8 @@ func TestCanaryRequiresCompletedStillOwnedTemporaryActivation(t *testing.T) {
 				f.priorLive = true
 			case "disk fenced":
 				f.s.storageNodes[3]["spec"].(object)["allowScheduling"] = false
+			case "preparation replaced":
+				f.preparations["temporary-v1-1"]["metadata"].(object)["uid"] = "replacement-preparation"
 			}
 			before, _ := json.Marshal(f.record)
 			err := a.accepted(t.Context())

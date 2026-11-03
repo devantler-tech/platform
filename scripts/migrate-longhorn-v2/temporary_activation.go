@@ -19,6 +19,7 @@ type temporaryV2Binding struct {
 	LonghornUID      string `json:"longhornUID"`
 	EphemeralUUID    string `json:"ephemeralUUID"`
 	RawPartitionUUID string `json:"rawPartitionUUID"`
+	PreparationUID   string `json:"preparationUID,omitempty"`
 }
 
 var errTemporaryActivation = errors.New("temporary raw storage identity or registration ownership is unproven")

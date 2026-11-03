@@ -1,0 +1,63 @@
+package main
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
+
+func temporaryPreparedFixture(t *testing.T, binding temporaryV2Binding) object {
+	t.Helper()
+	j := journal{Schema: 2, Target: binding.Name, Source: strings.Repeat("1", 40), OwnerRun: "7777", Phase: "prepared",
+		NodeUID: binding.NodeUID, ProviderID: binding.ProviderID, MachineUUID: binding.MachineUUID, LonghornUID: binding.LonghornUID,
+		EphemeralUUID: "original-ephemeral", OriginalDisks: object{}, TemporarySelection: binding.Selection,
+		NativeEmptyDigest: strings.Repeat("c", 64), OriginalBootID: "12345678-1234-4234-8234-000000000099", RawVolumeAbsent: true}
+	data, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := resource("longhorn-v2-prepare-" + binding.Selection)
+	cm["metadata"].(object)["namespace"] = "longhorn-system"
+	cm["data"] = object{"record": string(data)}
+	return cm
+}
+
+func TestTemporaryActivationRequiresTheCompletedPreparationIdentity(t *testing.T) {
+	n, lh, raw, eph, pool := temporaryRawBindingFixture()
+	binding, err := projectTemporaryV2Binding("temporary-v1-1", n, lh, raw, eph, pool, text(n, "status", "nodeInfo", "bootID"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cm := temporaryPreparedFixture(t, binding)
+	if _, err = preparedTemporaryBinding(cm, binding); err != nil {
+		t.Fatal("completed matching preparation was refused:", err)
+	}
+	for name, change := range map[string]func(object){
+		"foreign scope":    func(cm object) { cm["metadata"].(object)["namespace"] = "other" },
+		"missing identity": func(cm object) { delete(cm["metadata"].(object), "uid") },
+		"pending deletion": func(cm object) { cm["metadata"].(object)["deletionTimestamp"] = "2026-11-03T09:00:00Z" },
+		"unfinished preparation": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `"phase":"prepared"`, `"phase":"reset-requested"`, 1)
+		},
+		"replaced worker": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), binding.NodeUID, "other-node", 1)
+		},
+		"unchanged boot": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), "12345678-1234-4234-8234-000000000099", binding.BootID, 1)
+		},
+		"unchanged ephemeral partition": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), "original-ephemeral", binding.EphemeralUUID, 1)
+		},
+		"ambiguous phase": func(cm object) {
+			cm["data"].(object)["record"] = strings.Replace(text(cm, "data", "record"), `"phase":"prepared"`, `"phase":"reset-requested","phase":"prepared"`, 1)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cm := temporaryPreparedFixture(t, binding)
+			change(cm)
+			if _, err := preparedTemporaryBinding(cm, binding); err == nil {
+				t.Fatal("incomplete or foreign preparation authorized raw storage")
+			}
+		})
+	}
+}

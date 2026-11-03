@@ -28,7 +28,7 @@ func decodeTemporaryActivationRecord(data []byte) (temporaryActivationRecord, er
 		return temporaryActivationRecord{}, errTemporaryActivation
 	}
 	canonical := map[string][]string{"": {"version", "source", "ownerRun", "targets", "completed"}}
-	fields := []string{"selection", "name", "nodeUID", "providerID", "machineUUID", "bootID", "osImage", "longhornUID", "ephemeralUUID", "rawPartitionUUID"}
+	fields := []string{"selection", "name", "nodeUID", "providerID", "machineUUID", "bootID", "osImage", "longhornUID", "ephemeralUUID", "rawPartitionUUID", "preparationUID"}
 	for _, selection := range temporaryV2Selections {
 		canonical["targets."+selection] = fields
 	}
@@ -52,6 +52,7 @@ func (r temporaryActivationRecord) validate() error {
 		return errTemporaryActivation
 	}
 	seen := [7]map[string]bool{}
+	preparations := map[string]bool{}
 	for i := range seen {
 		seen[i] = map[string]bool{}
 	}
@@ -63,6 +64,16 @@ func (r temporaryActivationRecord) validate() error {
 			!inventoryBoot.MatchString(b.BootID) || b.OSImage == "" || b.LonghornUID == "" || b.EphemeralUUID == "" ||
 			!inventoryBoot.MatchString(strings.ToLower(b.RawPartitionUUID)) || strings.EqualFold(b.RawPartitionUUID, b.EphemeralUUID) {
 			return errTemporaryActivation
+		}
+		if selection == "temporary-v2-1" {
+			if b.PreparationUID != "" {
+				return errTemporaryActivation
+			}
+		} else {
+			if b.PreparationUID == "" || preparations[b.PreparationUID] {
+				return errTemporaryActivation
+			}
+			preparations[b.PreparationUID] = true
 		}
 		for i, identity := range []string{b.Name, b.NodeUID, b.ProviderID, strings.ToLower(b.MachineUUID), b.LonghornUID, strings.ToLower(b.EphemeralUUID), strings.ToLower(b.RawPartitionUUID)} {
 			if seen[i][identity] {

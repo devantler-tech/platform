@@ -86,8 +86,13 @@ maintenance, and ready V2 clients on all six workers before its first write.
 
 The journal `longhorn-v2-temporary-activation` binds each temporary selection to
 the node, provider, hardware, boot, encrypted EPHEMERAL and raw GPT partition
-identities. Complete native reads bracket the partition observations. Each
-conditional Longhorn Node update registers only the canonical raw disk and adds
+identities. Complete native reads bracket the partition observations. Each rebuilt
+worker also binds its completed preparation journal UID and the successful
+first-attempt main workflow that produced it. A prepared-looking disk without that
+record, a replaced journal or a failed preparation workflow cannot authorize
+registration. The V2-born worker has no reset operation and requires its native
+encrypted raw-layout proof. Each conditional Longhorn Node update registers only
+the canonical raw disk and adds
 the journal UID as its ownership annotation. Matching unowned disks are refused.
 An uncertain response stops the run. A new first-attempt main dispatch may resume
 an owned partial registration only after the previous workflow is terminal, and
