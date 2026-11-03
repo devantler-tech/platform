@@ -8,7 +8,6 @@ import (
 	"io"
 	"reflect"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -77,7 +76,7 @@ func (r hostRebootRecord) validate(target string) error {
 		if r.RecoveredBootID != "" {
 			return errHostMemory
 		}
-	case "recovered":
+	case "returning", "recovered":
 		if !inventoryBoot.MatchString(r.RecoveredBootID) || r.RecoveredBootID == r.OriginalBootID {
 			return errHostMemory
 		}
@@ -275,6 +274,9 @@ func (h hostMemoryReboot) healthy(ctx context.Context, expected map[string]hostD
 			return inventory{}, nil, errHostMemory
 		}
 	}
+	if err = h.drainRuntime(ctx, s); err != nil {
+		return inventory{}, nil, err
+	}
 	databases, err := h.databases(ctx, expected)
 	return s, databases, err
 }
@@ -415,7 +417,7 @@ func (h hostMemoryReboot) run(ctx context.Context) error {
 		if _, err = h.owned(ctx, r); err != nil {
 			return err
 		}
-		if _, err = h.c.kubectl(ctx, nil, "drain", h.target, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=40m"); err != nil {
+		if _, err = h.c.kubectl(ctx, nil, "drain", h.target, "--ignore-daemonsets", "--delete-emptydir-data", "--timeout=40m", hostApplicationDrainSelector); err != nil {
 			return errors.New("host memory maintenance drain was blocked; no reboot was requested")
 		}
 		if err = h.waitDrainRecovery(ctx, r); err != nil {
@@ -448,46 +450,5 @@ func (h hostMemoryReboot) run(ctx context.Context) error {
 		// is never retried: recovery must prove a new boot and intact storage.
 		_, _ = h.c.talosCommand(ctx, 15*time.Minute, address, "reboot", "--wait", "--timeout=15m")
 	}
-	recovery, cancel := context.WithTimeout(ctx, 20*time.Minute)
-	defer cancel()
-	var recovered object
-	if err = waitReadyWithin(recovery, 20*time.Minute, func(ctx context.Context) error {
-		n, _, err := h.targetState(ctx, r)
-		boot := text(n, "status", "nodeInfo", "bootID")
-		if err != nil || !inventoryBoot.MatchString(boot) || boot == r.OriginalBootID || r.RecoveredBootID != "" && boot != r.RecoveredBootID || !hugepagesReady(n) {
-			return errHostMemory
-		}
-		memory, err := h.memory(ctx)
-		if err != nil || memory.PersistentPages != 1024 || memory.TotalPages != 1024 || memory.PageSizeKiB != 2048 {
-			return errHostMemory
-		}
-		if _, _, err = h.healthy(ctx, r.Databases); err != nil {
-			return err
-		}
-		recovered = n
-		return nil
-	}); err != nil {
-		return err
-	}
-	if _, err = h.owned(ctx, r); err != nil {
-		return err
-	}
-	if text(recovered, "metadata", "annotations", fenceAnnotation) == h.name() {
-		if err = h.c.patch(ctx, "node", "", recovered, object{"op": "add", "path": "/spec/unschedulable", "value": false}, object{"op": "remove", "path": "/metadata/annotations/" + strings.ReplaceAll(fenceAnnotation, "/", "~1")}); err != nil {
-			return err
-		}
-	}
-	released, _, err := h.targetState(ctx, r)
-	if err != nil || value(released, "spec", "unschedulable") == true || text(released, "metadata", "annotations", fenceAnnotation) != "" || text(released, "status", "nodeInfo", "bootID") != text(recovered, "status", "nodeInfo", "bootID") {
-		return errHostMemory
-	}
-	if r.Phase == "recovered" {
-		return nil
-	}
-	cm, err = h.owned(ctx, r)
-	if err != nil {
-		return err
-	}
-	r.Phase, r.RecoveredBootID = "recovered", text(recovered, "status", "nodeInfo", "bootID")
-	return h.write(ctx, cm, r)
+	return h.recover(ctx, r)
 }

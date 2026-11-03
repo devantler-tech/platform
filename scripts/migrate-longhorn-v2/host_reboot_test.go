@@ -21,7 +21,11 @@ type hostRebootFixture struct {
 	drainError                 bool
 	afterDrain, afterReboot    func()
 	afterDatabaseRead          func()
+	afterScheduling            func()
 	previousLive               bool
+	managers                   []object
+	drainPolicy                string
+	evictUnfilteredRuntime     bool
 }
 
 func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
@@ -52,7 +56,19 @@ func hostRebootAPI(t *testing.T) (*hostRebootFixture, hostMemoryReboot) {
 	}
 	b.node["status"].(object)["capacity"] = object{"hugepages-2Mi": "0"}
 	b.node["status"].(object)["allocatable"] = object{"hugepages-2Mi": "0", "memory": "14980Mi"}
-	f := &hostRebootFixture{base: b, desired: "1024"}
+	f := &hostRebootFixture{base: b, desired: "1024", drainPolicy: "block-if-contains-last-replica"}
+	im := resource("instance-manager-host-fixture")
+	im["metadata"].(object)["namespace"] = "longhorn-system"
+	im["spec"] = object{"nodeID": "prod-worker-1", "dataEngine": "v1"}
+	im["status"] = object{"currentState": "running"}
+	f.managers = []object{im}
+	pod := resource(text(im, "metadata", "name"))
+	pod["metadata"].(object)["namespace"] = "longhorn-system"
+	pod["metadata"].(object)["labels"] = object{"longhorn.io/component": "instance-manager"}
+	pod["metadata"].(object)["ownerReferences"] = []any{object{"apiVersion": "longhorn.io/v1beta2", "kind": "InstanceManager", "name": text(im, "metadata", "name"), "uid": text(im, "metadata", "uid"), "controller": true}}
+	pod["spec"] = object{"nodeName": "prod-worker-1"}
+	pod["status"] = object{"phase": "Running", "conditions": readyConditions()}
+	b.s.pods = append(b.s.pods, pod)
 	for i, selected := range []struct{ namespace, name string }{{"observability", "coroot-db"}, {"umami", "umami-db"}, {"wedding-app", "wedding-db"}} {
 		db := resource(selected.name)
 		db["metadata"].(object)["namespace"] = selected.namespace
@@ -118,6 +134,15 @@ func (f *hostRebootFixture) run(ctx context.Context, input []byte, program strin
 		return json.Marshal(object{"status": status, "head_sha": text(record, "source"), "head_branch": "main", "event": "workflow_dispatch", "run_attempt": 1, "path": ".github/workflows/prepare-longhorn-v2-node.yaml"})
 	}
 	if program == "kubectl" && len(args) > 3 {
+		if len(args) > 4 && args[2] == "get" && args[3] == "settings.longhorn.io" && args[4] == "node-drain-policy" {
+			setting := resource("node-drain-policy")
+			setting["metadata"].(object)["namespace"] = "longhorn-system"
+			setting["value"] = f.drainPolicy
+			return json.Marshal(setting)
+		}
+		if args[2] == "get" && args[3] == "instancemanagers.longhorn.io" {
+			return json.Marshal(object{"items": f.managers})
+		}
 		if len(args) > 4 && args[2] == "get" && args[3] == "settings.longhorn.io" && args[4] == "v2-data-engine" {
 			data, err := f.base.run(ctx, input, program, args...)
 			if err != nil {
@@ -147,6 +172,17 @@ func (f *hostRebootFixture) run(ctx context.Context, input []byte, program strin
 		}
 		if args[2] == "drain" {
 			f.drains++
+			filtered := false
+			for _, arg := range args {
+				filtered = filtered || arg == "--pod-selector=longhorn.io/component!=instance-manager"
+			}
+			if f.evictUnfilteredRuntime && !filtered {
+				for _, replica := range f.base.s.replicas {
+					if text(replica, "spec", "nodeID") == "prod-worker-1" {
+						replica["status"].(object)["currentState"] = "stopped"
+					}
+				}
+			}
 			if f.afterDrain != nil {
 				f.afterDrain()
 			}
@@ -155,7 +191,118 @@ func (f *hostRebootFixture) run(ctx context.Context, input []byte, program strin
 			}
 		}
 	}
-	return f.base.run(ctx, input, program, args...)
+	wasCordoned := value(f.base.node, "spec", "unschedulable") == true
+	output, err := f.base.run(ctx, input, program, args...)
+	if err == nil && program == "kubectl" && len(args) > 3 && args[2] == "patch" && args[3] == "node" && f.rebooted && wasCordoned && value(f.base.node, "spec", "unschedulable") == false && f.afterScheduling != nil {
+		f.afterScheduling()
+	}
+	return output, err
+}
+
+func TestHostRebootRestoresSchedulingBeforeWaitingForTheStorageController(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	originalStates := map[string]string{}
+	for _, replica := range f.base.s.replicas {
+		originalStates[text(replica, "metadata", "name")] = text(replica, "status", "currentState")
+	}
+	f.afterReboot = func() {
+		f.managers[0]["status"].(object)["currentState"] = "starting"
+		for _, replica := range f.base.s.replicas {
+			if text(replica, "spec", "nodeID") == h.target {
+				replica["status"].(object)["currentState"] = "stopped"
+			}
+		}
+	}
+	f.afterScheduling = func() {
+		var record hostRebootRecord
+		if json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &record) != nil || record.Phase != "returning" || record.RecoveredBootID == "" || text(f.base.node, "metadata", "annotations", fenceAnnotation) != h.name() {
+			t.Fatal("scheduling resumed without durable recovered-host proof and retained maintenance ownership")
+		}
+		f.managers[0]["status"].(object)["currentState"] = "running"
+		for _, replica := range f.base.s.replicas {
+			if text(replica, "spec", "nodeID") == h.target {
+				replica["status"].(object)["currentState"] = originalStates[text(replica, "metadata", "name")]
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if err := h.run(ctx); err != nil || f.reboots != 1 {
+		t.Fatal("storage runtime could not restart after positively verified host recovery:", err)
+	}
+}
+
+func TestHostRebootDoesNotResumeSchedulingWithoutTwoIntactPeerCopies(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	f.afterReboot = func() {
+		for _, replica := range f.base.s.replicas {
+			if text(replica, "spec", "nodeID") == "prod-worker-2" {
+				replica["status"].(object)["currentState"] = "stopped"
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if h.run(ctx) == nil || f.reboots != 1 || value(f.base.node, "spec", "unschedulable") != true {
+		t.Fatal("scheduling resumed without two intact peer copies")
+	}
+}
+
+func TestReturningHostKeepsItsMarkerUntilFullRecoveryWithoutRepeatingTheReboot(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	f.afterReboot = func() { f.managers[0]["status"].(object)["currentState"] = "starting" }
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	err := h.run(ctx)
+	var record hostRebootRecord
+	if !errors.Is(err, context.DeadlineExceeded) || json.Unmarshal([]byte(text(f.base.cm, "data", "record")), &record) != nil || record.Phase != "returning" || f.reboots != 1 || value(f.base.node, "spec", "unschedulable") != false || text(f.base.node, "metadata", "annotations", fenceAnnotation) != h.name() {
+		t.Fatal("unfinished storage recovery lost its durable ownership or was accepted:", err)
+	}
+	f.managers[0]["status"].(object)["currentState"] = "running"
+	if err = h.run(t.Context()); err != nil || f.reboots != 1 || text(f.base.node, "metadata", "annotations", fenceAnnotation) != "" {
+		t.Fatal("resuming storage recovery repeated the reboot or failed to finish:", err)
+	}
+}
+
+func TestHostRebootDrainsApplicationsWithoutEvictingProvenStorageRuntime(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	f.evictUnfilteredRuntime = true
+	if err := h.run(t.Context()); err != nil || f.reboots != 1 {
+		t.Fatal("ordinary instance-manager eviction prevented the controlled reboot:", err)
+	}
+}
+
+func TestHostRebootRefusesUnknownDrainPolicyOrExcludedWorkloads(t *testing.T) {
+	for name, change := range map[string]func(*hostRebootFixture){
+		"unknown policy":      func(f *hostRebootFixture) { f.drainPolicy = "always-allow" },
+		"missing policy":      func(f *hostRebootFixture) { f.drainPolicy = "" },
+		"unproven controller": func(f *hostRebootFixture) { f.managers[0]["metadata"].(object)["uid"] = "replacement" },
+		"missing runtime":     func(f *hostRebootFixture) { f.managers = nil },
+		"unready runtime":     func(f *hostRebootFixture) { f.managers[0]["status"].(object)["currentState"] = "starting" },
+		"unrelated excluded workload": func(f *hostRebootFixture) {
+			pod := resource("unrelated-workload")
+			pod["metadata"].(object)["namespace"] = "application"
+			pod["metadata"].(object)["labels"] = object{"longhorn.io/component": "instance-manager"}
+			pod["spec"] = object{"nodeName": "prod-worker-1"}
+			f.base.s.pods = append(f.base.s.pods, pod)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, h := hostRebootAPI(t)
+			change(f)
+			if h.run(t.Context()) == nil || f.drains != 0 || f.reboots != 0 {
+				t.Fatal("unproven storage runtime or policy reached maintenance")
+			}
+		})
+	}
+}
+
+func TestHostRebootRebindsTheExcludedRuntimeAfterDrain(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	f.afterDrain = func() { f.managers[0]["metadata"].(object)["uid"] = "replacement" }
+	if h.run(t.Context()) == nil || f.drains != 1 || f.reboots != 0 {
+		t.Fatal("changed excluded runtime reached the reboot request")
+	}
 }
 
 func TestHostRebootRequiresPositiveRecoveryAndPreservesEveryDisk(t *testing.T) {
@@ -353,7 +500,7 @@ func TestUncertainHostRebootCannotBeRepeated(t *testing.T) {
 }
 
 func TestHostRebootCannotStartWhileAnotherWorkerHasAnUnfinishedJournal(t *testing.T) {
-	for _, phase := range []string{"draining", "reboot-requested"} {
+	for _, phase := range []string{"draining", "reboot-requested", "returning"} {
 		t.Run(phase, func(t *testing.T) {
 			f, h := hostRebootAPI(t)
 			if _, err := h.initialize(context.Background()); err != nil {
@@ -367,6 +514,9 @@ func TestHostRebootCannotStartWhileAnotherWorkerHasAnUnfinishedJournal(t *testin
 			r.Target, r.Phase = "prod-worker-2", phase
 			r.NodeUID, r.ProviderID, r.MachineUUID = text(peer, "metadata", "uid"), text(peer, "spec", "providerID"), text(peer, "status", "nodeInfo", "systemUUID")
 			r.OriginalBootID, r.LonghornUID, r.OriginalDiskUUID = text(peer, "status", "nodeInfo", "bootID"), text(storage, "metadata", "uid"), hostRegisteredDiskUUID(storage)
+			if phase == "returning" {
+				r.RecoveredBootID = "12345678-1234-4234-8234-000000000099"
+			}
 			if r.validate("prod-worker-2") != nil {
 				t.Fatal("peer fixture did not represent a valid pending request")
 			}

@@ -116,6 +116,18 @@ func verifyEvacuated(target string, s inventory) error {
 }
 
 func verifyRedundancy(s inventory) error {
+	return verifyHealthyCopies(s, 3, "")
+}
+
+// verifyHealthyCopies preserves the normal three-copy floor. Its only other
+// profile proves two copies outside the single rebooted worker before returning
+// that verified host to scheduling; it never establishes maintenance completion.
+func verifyHealthyCopies(s inventory, required int, excludedNode string) error {
+	fullRedundancy := required == 3 && excludedNode == ""
+	returningHost := required == 2 && inventoryTarget.MatchString(excludedNode)
+	if !fullRedundancy && !returningHost {
+		return errors.New("unsupported storage redundancy profile")
+	}
 	if len(s.volumes) == 0 {
 		return errors.New("complete volume inventory is required")
 	}
@@ -170,6 +182,9 @@ func verifyRedundancy(s inventory) error {
 				continue
 			}
 			node := text(r, "spec", "nodeID")
+			if node == excludedNode {
+				continue
+			}
 			nodeStatus, _ := value(nodes[node], "status").(map[string]any)
 			if !ready(nodeStatus) || !diskReady(storage[node], r) {
 				continue
@@ -181,8 +196,8 @@ func verifyRedundancy(s inventory) error {
 			}
 			copies[node] = true
 		}
-		if len(copies) < 3 {
-			return errors.New("three healthy copies on distinct other nodes are not proven for every volume")
+		if len(copies) < required {
+			return errors.New("the required healthy copies on distinct eligible nodes are not proven for every volume")
 		}
 	}
 	return nil

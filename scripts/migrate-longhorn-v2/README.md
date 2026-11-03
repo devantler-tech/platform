@@ -23,7 +23,11 @@ permanent worker with `reboot-longhorn-v2-host-<worker>`. It requires the loaded
 reservation, unused native huge pages, disabled V2, the complete fixed migration roster, all V1
 volumes fully redundant, and all three database clusters healthy. It records the
 original node, hardware, boot, encrypted EPHEMERAL partition, storage disks and
-database identities before an owned cordon and an eviction-based drain. After
+database identities before an owned cordon and an eviction-based application drain.
+The live `block-if-contains-last-replica` policy and target V1 instance-manager
+ownership are verified on each health read. Only that ready storage Pod is kept
+running during drain; a workload impersonating its selector label fails admission.
+Application evictions keep the normal disruption-budget checks. After
 drain, the unchanged database quorum has up to 20 minutes to finish replacement
 startup. Changed identities, lost quorum or other safety evidence stop the wait;
 a timeout preserves the cordon without requesting a reboot. Two fresh checks of
@@ -35,7 +39,12 @@ of a peer's recorded recovery prevents starting the next worker.
 Recovery never repeats an uncertain reboot. It requires a changed boot with the
 same node, hardware, OS, encrypted partition, registered disks and database system
 identities, 1,024 native 2 MiB pages, matching 2 GiB Kubernetes capacity, clear node
-pressure and full V1 redundancy. Only its own cordon is released and read back.
+pressure and two intact copies outside the target before restoring scheduling.
+The verified new boot is journaled as `returning`, and only the owned cordon is
+released so Longhorn can recreate its instance manager. The maintenance marker
+and unfinished journal remain until full V1 redundancy and database health return;
+a timeout at this stage leaves the node schedulable under that retained marker.
+Only then is the marker removed and recovery recorded. Both release steps are read back.
 Dispatch each worker separately and verify platform recovery before the next one.
 An interrupted run keeps its journal and cordon; a new first-attempt main dispatch
 may adopt it only after the previous run has ended. This operation enables no V2

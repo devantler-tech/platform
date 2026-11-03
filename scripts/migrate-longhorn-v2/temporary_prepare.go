@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"strings"
 
 	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
@@ -58,7 +59,7 @@ func (p *temporaryPreparation) prepare(ctx context.Context) error {
 		}
 		fence := text(n, "metadata", "annotations", fenceAnnotation)
 		if fence == p.name && value(n, "spec", "unschedulable") == true {
-			if err = p.mutate(ctx, "node", "", n, object{"op": "add", "path": "/spec/unschedulable", "value": false}, object{"op": "remove", "path": "/metadata/annotations/storage.platform.devantler.tech~1longhorn-v2-preparation"}); err != nil {
+			if err = p.mutate(ctx, "node", "", n, object{"op": "add", "path": "/spec/unschedulable", "value": false}, object{"op": "remove", "path": "/metadata/annotations/" + strings.ReplaceAll(fenceAnnotation, "/", "~1")}); err != nil {
 				return err
 			}
 		} else if fence != "" || value(n, "spec", "unschedulable") == true {
