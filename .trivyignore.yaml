@@ -29,6 +29,24 @@ misconfigurations:
       LimitRange is namespace-scoped but this check evaluates each file independently, including
       resources that cannot carry a LimitRange and the LimitRange manifests themselves.
 
+  # KSV-0040 "resource quota usage" — 579 findings on this tree, all LOW, first reported when
+  # MegaLinter 10.1.0 (trivy 0.74.0) began scanning it with the current checks bundle.
+  #
+  # The same per-FILE evaluation as KSV-0039, for a namespace's ResourceQuota instead of its
+  # LimitRange. The check's input selector names ResourceQuota, but `trivy fs` applies it to every
+  # Kubernetes file, so each file that is not a ResourceQuota fails it — the firing set is
+  # 47 cilium-network-policy.yaml, 45 helm-release.yaml, 32 helm-repository.yaml,
+  # 24 pod-disruption-budget.yaml, 15 oci-repository.yaml and so on. The one ResourceQuota on this
+  # tree, k8s/providers/hetzner/apps/world-at-ruin/resource-quota.yaml, sets all four hard fields and
+  # passes. No per-file edit can satisfy the rest, so this is not a deferral either.
+  #
+  # ⚠️ The cost is the same as KSV-0039's: a ResourceQuota added later without the four hard fields is
+  # not reported here.
+  - id: KSV-0040
+    statement: >-
+      ResourceQuota is namespace-scoped but this check evaluates each file independently, so every
+      resource that is not a ResourceQuota fails it; the repository's only ResourceQuota passes.
+
   # KSV-0037 "user resources should not be placed in kube-system namespace" — 47 of trivy's 157
   # findings on this tree (30%), all MEDIUM.
   #
@@ -68,14 +86,20 @@ misconfigurations:
   # input-derived namespace expression —
   # `${tenantNamespace.metadata.name}` in Tenant or `${schema.spec.name}` in WebApp. Their only
   # kube-system references are RBAC grants naming the shared Gateway, not workload placement.
+  #
+  # The kube-system LimitRange has since moved to k8s/bases/bootstrap/limit-ranges/, where the
+  # bootstrap layer applies it before anything else. It is listed by its exact path rather than by
+  # widening a glob over the bootstrap tree, which also holds the shared Flux variables.
   - id: KSV-0037
     paths:
       - k8s/bases/infrastructure/**
       - k8s/providers/*/infrastructure/**
+      - k8s/bases/bootstrap/limit-ranges/kube-system.yaml
     statement: >-
       These are cluster infrastructure components that belong in kube-system by construction — CNI,
       DNS, CSI, cloud-controller-manager and their namespace-local VerticalPodAutoscalers,
-      PodDisruptionBudgets and Gateway material. Application trees remain covered by this check.
+      PodDisruptionBudgets and Gateway material, plus kube-system's own default LimitRange.
+      Application trees remain covered by this check.
 
   # KSV-0109 matches identifier text rather than secret material at both sites below. Keep the
   # dispositions separate so each path carries the reason that was checked against its content.
@@ -665,3 +689,165 @@ misconfigurations:
       primary gid, so the split costs no access. Because trivy scopes by path rather than by
       resource, scripts/tests/test-trivyignore-vault-config-identity-boundary.sh asserts that per
       container so this entry cannot silently cover a future low-GID container.
+
+  # The private-mail StatefulSet runs Stalwart at the identity its own image defines, measured
+  # against the pinned DIGEST ghcr.io/stalwartlabs/stalwart@sha256:c429b311c93d…885836c rather than
+  # the tag: the image config's User is `stalwart`, and its layers carry `stalwart:x:2000:2000` in
+  # /etc/passwd and `stalwart:x:2000` in /etc/group. The platform bootstrap image is built FROM that
+  # same digest and ends with `USER 2000:2000` (scripts/private-mail-config/Dockerfile), so every
+  # container here — Stalwart, the configure init container and the Caddy client-proxy — restates
+  # the identity its image runs as. The mail store on the data volume is owned by it as well, so a
+  # different UID would also lose write access to existing data.
+  #
+  # The two patches are fragments of the same StatefulSet: serve-after-initialization replaces its
+  # pod spec, and add-client-proxy adds the client-proxy container, which inherits that pod's
+  # securityContext. Both are scanned on their own, so each reports the identity it carries or
+  # inherits.
+  #
+  # ⚠️ Path-scoped like the openbao entries above, so a container added to one of these files at
+  # another low identity would be suppressed too.
+  # scripts/tests/test-trivyignore-private-mail-identity-boundary.sh asserts per container that
+  # nothing but 2000:2000 runs here and that the images are still the measured digest.
+  - id: KSV-0020
+    paths:
+      - k8s/bases/apps/private-mail/stateful-set.yaml
+      - k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml
+      - k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml
+    statement: >-
+      UID 2000 is the stalwart user the digest-pinned Stalwart image defines and runs as; the
+      bootstrap image is built from that digest with USER 2000:2000, and the mail store on the data
+      volume is owned by that identity. The boundary test asserts every container in these files
+      runs at it and that the measured image digest is unchanged.
+  - id: KSV-0021
+    paths:
+      - k8s/bases/apps/private-mail/stateful-set.yaml
+      - k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml
+      - k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml
+    statement: >-
+      GID 2000 is the stalwart group the same digest-pinned image defines (/etc/group
+      stalwart:x:2000) and that the UID entry above runs with; fsGroup 2000 owns the mail store.
+      The same boundary test asserts it per container.
+
+  # Stalwart's binary carries an effective NET_BIND_SERVICE file capability, and a binary with an
+  # effective file capability cannot be executed while that capability is outside the container's
+  # bounding set, even when it binds only an unprivileged port (recovery mode serves 8080). Both
+  # containers that exec it drop every capability and add back only this one. The Caddy
+  # client-proxy, which binds only 8081, had the capability removed from its binary at image build
+  # (`setcap -r` in scripts/private-mail-config/Dockerfile) and adds nothing.
+  - id: KSV-0022
+    paths:
+      - k8s/bases/apps/private-mail/stateful-set.yaml
+      - k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml
+    statement: >-
+      The Stalwart binary's effective file capability requires NET_BIND_SERVICE in the bounding
+      set for it to execute at all; each container drops every other capability and runs as the
+      non-root image identity.
+
+  # KSV-0013 "image tag" on two StatefulSet patch fragments. Each names only the repository of the
+  # platform bootstrap image: private-mail-administration/kustomization.yaml pins it by digest with
+  # its images transformer, and private-mail-proxy-identity copies that same reference onto the
+  # client-proxy container with a replacement, so every rendered container is digest-pinned. Writing
+  # the digest into the fragments as well would leave two copies to keep in step.
+  - id: KSV-0013
+    paths:
+      - k8s/bases/apps/private-mail-administration/patches/serve-after-initialization.yaml
+      - k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml
+    statement: >-
+      The fragments name only the image repository; the kustomization's images transformer and
+      replacement pin every rendered container to the signed bootstrap image digest.
+
+  # KSV-0118 "default security context" on the add-client-proxy fragment. The fragment adds one
+  # container and carries that container's full securityContext; the pod securityContext
+  # (runAsNonRoot, 2000:2000, fsGroup and RuntimeDefault seccomp) comes from the
+  # serve-after-initialization pod spec this overlay builds on.
+  - id: KSV-0118
+    paths:
+      - k8s/bases/apps/private-mail-proxy-identity/patches/add-client-proxy.yaml
+    statement: >-
+      This patch adds a hardened container to a StatefulSet whose pod securityContext is set by
+      serve-after-initialization; the rendered pod does not use the default security context.
+
+  # KSV-0036 reads automountServiceAccountToken from the WORKLOAD's own spec — a Deployment, Job or
+  # CronJob spec, which has no such field — and otherwise fires on any container that mounts the
+  # conventional token path. Each of these pods sets automountServiceAccountToken: false and instead
+  # projects a short-lived token, through an explicit volume, into the one container that
+  # authenticates with it: the vault-backup snapshot container logs in to OpenBao through its
+  # Kubernetes auth method (the checkov.io/skip1 CKV_K8S_38 annotation on both workloads records
+  # the same reason), and the security-progress collector reads its scan results through the API.
+  - id: KSV-0036
+    paths:
+      - k8s/bases/infrastructure/vault-backup/job.yaml
+      - k8s/bases/infrastructure/vault-backup/cron-job.yaml
+      - k8s/bases/infrastructure/coroot/components/security-progress/deployment.yaml
+    statement: >-
+      The pods disable token automounting and project a short-lived token only into the container
+      that authenticates with it; the check cannot see the pod-level setting.
+
+  # The three Longhorn retrofit roles have the same shape as the umami Kyverno role above: a
+  # namespaced Role in longhorn-system, bound to the Kyverno background controller, whose one rule is
+  # pinned by resourceNames to the workloads its mutate-existing policy names, with verbs get, patch
+  # and update. No create, no delete, and no other Deployment or DaemonSet in the namespace.
+  - id: KSV-0048
+    paths:
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-csi-sidecars.yaml
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-csi-plugin.yaml
+      - k8s/providers/hetzner/infrastructure/controllers/longhorn/role-kyverno-mutate-longhorn-engine-image.yaml
+    statement: >-
+      Namespaced longhorn-system Roles for the Kyverno background controller, each pinned by
+      resourceNames to the workloads one mutate-existing policy retrofits, with get, patch and update
+      only; they can neither create nor delete a workload nor reach any other.
+
+  # The prune-protected orphan alert's only write: get and patch on its own first-seen record, one
+  # ConfigMap by resourceNames. `create` is deliberately absent because Flux creates the object.
+  - id: KSV-0049
+    paths:
+      - k8s/bases/infrastructure/controllers/prune-protected-orphan-alert/role.yaml
+    statement: >-
+      A namespaced Role whose single rule grants get and patch on exactly one ConfigMap by
+      resourceNames — the detector's own state record — with no create, delete or wider reach.
+
+  # The World at Ruin zone trial's operator role: pods/exec and pods/portforward create in the
+  # world-at-ruin namespace, bound to the owner's own OIDC user and nothing else. The role's header
+  # records the decision and its retirement condition: it goes before player accounts, authoritative
+  # persistence or production zone credentials exist. The namespace has no Secret API or workload
+  # write grant for this user.
+  - id: KSV-0053
+    paths:
+      - k8s/providers/hetzner/apps/world-at-ruin/role-operator.yaml
+    statement: >-
+      An owner-only, namespaced exception for the private zone trial, bound to the owner's OIDC user
+      and retired before the zone holds player accounts, persistent state or production credentials.
+
+  # KSV-01010 matches `key:`, `email:`, SHA1 and similar TEXT anywhere in a ConfigMap. In the
+  # homepage layout it matched the `Email:` dashboard group heading; in the generated
+  # security-progress ConfigMap it matched jq source that builds `{key, value}` entries. Neither
+  # holds credential material. The security-progress match for KSV-0109 is the prose comment
+  # "never a clean pass" in the embedded scripts/check-kubescape-result-coverage.sh. Both files'
+  # matched sets are pinned by scripts/tests/test-trivyignore-configmap-content-boundary.sh.
+  - id: KSV-01010
+    paths:
+      - k8s/bases/apps/homepage/config-map.yaml
+    statement: >-
+      The match is the Email service group heading in the Homepage layout, not a credential.
+  - id: KSV-01010
+    paths:
+      - k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml
+    statement: >-
+      The ConfigMap is generated from reviewed scripts and dashboards; Trivy matches jq identifiers
+      named key, not credential values.
+  - id: KSV-0109
+    paths:
+      - k8s/bases/infrastructure/coroot/components/security-progress/config-map.yaml
+    statement: >-
+      The match is the word pass in an embedded script comment, not secret material.
+
+  # DS-0002 "no non-root USER" on the Coroot node-agent hotfix image. The node agent loads eBPF
+  # programs and reads every host process, so it keeps the upstream image's root identity (the
+  # upstream config User is empty) rather than naming a non-root USER. The Dockerfile carries the
+  # matching resource-scoped checkov skip for CKV_DOCKER_3. The other hotfix images restate their
+  # upstream non-root identity with an explicit USER.
+  - id: DS-0002
+    paths:
+      - k8s/bases/infrastructure/coroot/CorootNodeAgent.Dockerfile
+    statement: >-
+      The eBPF node agent runs as root by design, inheriting the upstream image's identity.
