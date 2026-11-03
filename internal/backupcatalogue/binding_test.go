@@ -36,11 +36,8 @@ func TestDeploymentBindingPreservesExactVeleroScope(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if binding.policy.Prefix != "velero/prod/kopia/"+namespace+"/" || binding.accessKey != "fixture-access" || binding.secretKey != "fixture-secret" || binding.password != "fixture-password" || binding.digest == "" {
+			if binding.policy.Prefix != "velero/prod/kopia/"+namespace+"/" || binding.accessKey != "fixture-access" || binding.secretKey != "fixture-secret" || binding.password != "fixture-password" || len(binding.state) != 4 {
 				t.Fatal("wrong repository or credential binding")
-			}
-			if strings.Contains(binding.digest, "fixture-password") {
-				t.Fatal("credential in binding receipt")
 			}
 		})
 	}
@@ -158,16 +155,64 @@ func TestDeploymentBindingRejectsWrongOrAmbiguousEvidence(t *testing.T) {
 }
 
 func TestDeploymentBindingDetectsCredentialOrIdentityChanges(t *testing.T) {
-	p, docs := bindingFixture(t, "wedding-app")
-	before, err := bindDeployment("wedding-app", p, docs)
-	if err != nil {
-		t.Fatal(err)
+	for _, changed := range []string{"repository password", "fixture-access", "fixture-secret"} {
+		t.Run(changed, func(t *testing.T) {
+			p, docs := bindingFixture(t, "wedding-app")
+			before, err := bindDeployment("wedding-app", p, docs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if changed == "repository password" {
+				docs.RepositorySecret = changeBinding(t, docs.RepositorySecret, func(v map[string]any) {
+					v["data"] = map[string]any{"repository-password": base64.StdEncoding.EncodeToString([]byte("rotated-password"))}
+				})
+			} else {
+				docs.CloudSecret = changeBinding(t, docs.CloudSecret, func(v map[string]any) {
+					data := v["data"].(map[string]any)
+					cloud, decodeErr := base64.StdEncoding.DecodeString(data["cloud"].(string))
+					if decodeErr != nil {
+						t.Fatal(decodeErr)
+					}
+					data["cloud"] = base64.StdEncoding.EncodeToString([]byte(strings.Replace(string(cloud), changed, changed+"-rotated", 1)))
+				})
+			}
+			after, err := bindDeployment("wedding-app", p, docs)
+			if err != nil || sameDeployment(before, after) {
+				t.Fatal("credential change not bound")
+			}
+		})
 	}
-	docs.RepositorySecret = changeBinding(t, docs.RepositorySecret, func(v map[string]any) {
-		v["data"] = map[string]any{"repository-password": base64.StdEncoding.EncodeToString([]byte("rotated-password"))}
-	})
-	after, err := bindDeployment("wedding-app", p, docs)
-	if err != nil || before.digest == after.digest {
-		t.Fatal("credential change not bound")
+}
+
+func TestBindingKeepsEachObjectIdentityWhileAllowingResourceVersionChurn(t *testing.T) {
+	for index, name := range []string{"location", "repository", "cloud credentials", "repository credentials"} {
+		t.Run(name, func(t *testing.T) {
+			policy, docs := bindingFixture(t, "wedding-app")
+			before, err := bindDeployment("wedding-app", policy, docs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target := []*[]byte{&docs.Location, &docs.Repository, &docs.CloudSecret, &docs.RepositorySecret}[index]
+			*target = changeBinding(t, *target, func(v map[string]any) {
+				v["metadata"].(map[string]any)["resourceVersion"] = "124"
+			})
+			heartbeat, err := bindDeployment("wedding-app", policy, docs)
+			if err != nil || !sameDeployment(before, heartbeat) {
+				t.Fatal("resource version alone invalidated an unchanged binding")
+			}
+			*target = changeBinding(t, *target, func(v map[string]any) {
+				v["metadata"].(map[string]any)["uid"] = "replacement-fixture-uid"
+			})
+			replaced, err := bindDeployment("wedding-app", policy, docs)
+			if err != nil || sameDeployment(replaced, before) {
+				t.Fatal("replacement identity was not bound")
+			}
+			*target = changeBinding(t, *target, func(v map[string]any) {
+				delete(v["metadata"].(map[string]any), "resourceVersion")
+			})
+			if _, err := bindDeployment("wedding-app", policy, docs); err == nil {
+				t.Fatal("an incomplete native response qualified")
+			}
+		})
 	}
 }

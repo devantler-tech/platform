@@ -1,0 +1,221 @@
+diff --git a/pkg/apis/softwarecomposition/syfttypes.go b/pkg/apis/softwarecomposition/syfttypes.go
+--- a/pkg/apis/softwarecomposition/syfttypes.go
++++ b/pkg/apis/softwarecomposition/syfttypes.go
+@@ -362 +362 @@
+-		// capture unknown metadata as a generic struct
++		// preserve unknown metadata without rounding large integer values
+@@ -364 +364 @@
+-			var val interface{}
++			var val json.RawMessage
+@@ -385 +385 @@
+-	encoded, err := json.Marshal(metadata)
++	encoded, err := packagemetadata.MarshalPreservingFields(unpacker.Metadata, metadata)
+diff --git a/pkg/apis/softwarecomposition/v1beta1/syfttypes.go b/pkg/apis/softwarecomposition/v1beta1/syfttypes.go
+--- a/pkg/apis/softwarecomposition/v1beta1/syfttypes.go
++++ b/pkg/apis/softwarecomposition/v1beta1/syfttypes.go
+@@ -365 +365 @@
+-		// capture unknown metadata as a generic struct
++		// preserve unknown metadata without rounding large integer values
+@@ -367 +367 @@
+-			var val interface{}
++			var val json.RawMessage
+@@ -388 +388 @@
+-	encoded, err := json.Marshal(metadata)
++	encoded, err := packagemetadata.MarshalPreservingFields(unpacker.Metadata, metadata)
+diff --git a/pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go b/pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go
+--- a/pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go
++++ b/pkg/apis/softwarecomposition/sourcemetadata/sourcemetadata.go
+@@ -3,0 +4 @@
++	"encoding/json"
+@@ -13,0 +15,3 @@
++	// These newer source types are opaque to this compatibility server. Keep
++	// their object fields for clients that understand them, without a Syft bump.
++	reflect.TypeOf(map[string]json.RawMessage{}): {"snap", "oci-model"},
+diff --git a/pkg/apis/softwarecomposition/packagemetadata/forward.go b/pkg/apis/softwarecomposition/packagemetadata/forward.go
+new file mode 100644
+--- /dev/null
++++ b/pkg/apis/softwarecomposition/packagemetadata/forward.go
+@@ -0,0 +1,30 @@
++package packagemetadata
++
++import (
++	"bytes"
++	"encoding/json"
++)
++
++// MarshalPreservingFields retains metadata added by newer scanners after the
++// caller validates recognized fields with its existing metadata type.
++func MarshalPreservingFields(original json.RawMessage, decoded any) (json.RawMessage, error) {
++	known, err := json.Marshal(decoded)
++	if err != nil {
++		return nil, err
++	}
++	original = bytes.TrimSpace(original)
++	if len(original) == 0 || original[0] != '{' || len(known) == 0 || known[0] != '{' {
++		return known, nil
++	}
++	var fields, canonical map[string]json.RawMessage
++	if err := json.Unmarshal(original, &fields); err != nil {
++		return nil, err
++	}
++	if err := json.Unmarshal(known, &canonical); err != nil {
++		return nil, err
++	}
++	for key, value := range canonical {
++		fields[key] = value
++	}
++	return json.Marshal(fields)
++}
+diff --git a/pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go b/pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go
+new file mode 100644
+--- /dev/null
++++ b/pkg/apis/softwarecomposition/metadata_forward_compatibility_test.go
+@@ -0,0 +1,148 @@
++package softwarecomposition_test
++
++import (
++	"encoding/json"
++	"reflect"
++	"testing"
++
++	sc "github.com/kubescape/storage/pkg/apis/softwarecomposition"
++	v1 "github.com/kubescape/storage/pkg/apis/softwarecomposition/v1beta1"
++)
++
++func TestForwardPackageMetadataKeepsGoSymbols(t *testing.T) {
++	for _, api := range []struct {
++		name       string
++		newPackage func() any
++	}{
++		{"internal", func() any { return &sc.SyftPackage{} }},
++		{"versioned", func() any { return &v1.SyftPackage{} }},
++	} {
++		t.Run(api.name, func(t *testing.T) {
++			input := []byte(`{"id":"fixture","name":"fixture","version":"1","type":"go-module","metadataType":"go-module-buildinfo-entry","metadata":{"goCompiledVersion":"go1.26.10","symbols":{"example.invalid/fixture":["CompatibilityFixture"]}}}`)
++			document := api.newPackage()
++			if err := json.Unmarshal(input, document); err != nil {
++				t.Fatal(err)
++			}
++			encoded, err := json.Marshal(document)
++			if err != nil {
++				t.Fatal(err)
++			}
++			var got struct {
++				Metadata struct {
++					Version string              `json:"goCompiledVersion"`
++					Symbols map[string][]string `json:"symbols"`
++				} `json:"metadata"`
++			}
++			if err = json.Unmarshal(encoded, &got); err != nil {
++				t.Fatal(err)
++			}
++			if got.Metadata.Version != "go1.26.10" {
++				t.Fatalf("existing build metadata lost: %q", got.Metadata.Version)
++			}
++			want := map[string][]string{"example.invalid/fixture": {"CompatibilityFixture"}}
++			if !reflect.DeepEqual(got.Metadata.Symbols, want) {
++				t.Fatalf("forward symbol metadata lost: got %#v", got.Metadata.Symbols)
++			}
++		})
++	}
++}
++
++func TestForwardSourceMetadataRoundTrip(t *testing.T) {
++	for _, api := range []struct {
++		name      string
++		newSource func() any
++	}{
++		{"internal", func() any { return &sc.SyftSource{} }},
++		{"versioned", func() any { return &v1.SyftSource{} }},
++	} {
++		t.Run(api.name, func(t *testing.T) {
++			for _, fixture := range []struct{ kind, metadata string }{
++				{"snap", `{"summary":"compatibility fixture","base":"core22","grade":"stable"}`},
++				{"oci-model", `{"userInput":"example.invalid/model:fixture","imageID":"sha256:fixture"}`},
++			} {
++				t.Run(fixture.kind, func(t *testing.T) {
++					input := []byte(`{"id":"fixture","type":"` + fixture.kind + `","metadata":` + fixture.metadata + `}`)
++					document := api.newSource()
++					if err := json.Unmarshal(input, document); err != nil {
++						t.Fatalf("supported source rejected: %v", err)
++					}
++					encoded, err := json.Marshal(document)
++					if err != nil {
++						t.Fatal(err)
++					}
++					var got struct {
++						Metadata map[string]any `json:"metadata"`
++					}
++					var want map[string]any
++					if err = json.Unmarshal(encoded, &got); err != nil {
++						t.Fatal(err)
++					}
++					if err = json.Unmarshal([]byte(fixture.metadata), &want); err != nil {
++						t.Fatal(err)
++					}
++					if !reflect.DeepEqual(got.Metadata, want) {
++						t.Fatalf("source metadata changed: got %#v want %#v", got.Metadata, want)
++					}
++				})
++			}
++		})
++	}
++}
++
++func TestForwardMetadataKeepsValidation(t *testing.T) {
++	for _, api := range []struct {
++		name                  string
++		newSource, newPackage func() any
++	}{
++		{"internal", func() any { return &sc.SyftSource{} }, func() any { return &sc.SyftPackage{} }},
++		{"versioned", func() any { return &v1.SyftSource{} }, func() any { return &v1.SyftPackage{} }},
++	} {
++		t.Run(api.name, func(t *testing.T) {
++			for _, input := range []string{
++				`{"type":"unsupported-future-type","metadata":{}}`,
++				`{"type":"snap","metadata":[]}`,
++				`{"type":"oci-model","metadata":"invalid"}`,
++			} {
++				if err := json.Unmarshal([]byte(input), api.newSource()); err == nil {
++					t.Fatalf("invalid source accepted: %s", input)
++				}
++			}
++			if err := json.Unmarshal([]byte(`{"metadataType":"go-module-buildinfo-entry","metadata":{"goCompiledVersion":false}}`), api.newPackage()); err == nil {
++				t.Fatal("invalid known field accepted")
++			}
++		})
++	}
++}
++
++func TestForwardUnknownPackageMetadataKeepsNumbers(t *testing.T) {
++	for _, api := range []struct {
++		name       string
++		newPackage func() any
++	}{
++		{"internal", func() any { return &sc.SyftPackage{} }},
++		{"versioned", func() any { return &v1.SyftPackage{} }},
++	} {
++		t.Run(api.name, func(t *testing.T) {
++			input := []byte(`{"metadataType":"new-upstream-metadata","metadata":{"counter":9007199254740993}}`)
++			document := api.newPackage()
++			if err := json.Unmarshal(input, document); err != nil {
++				t.Fatal(err)
++			}
++			encoded, err := json.Marshal(document)
++			if err != nil {
++				t.Fatal(err)
++			}
++			var got struct {
++				Metadata struct {
++					Counter json.Number `json:"counter"`
++				} `json:"metadata"`
++			}
++			if err = json.Unmarshal(encoded, &got); err != nil {
++				t.Fatal(err)
++			}
++			if got.Metadata.Counter.String() != "9007199254740993" {
++				t.Fatalf("unknown metadata rounded: %s", got.Metadata.Counter)
++			}
++		})
++	}
++}

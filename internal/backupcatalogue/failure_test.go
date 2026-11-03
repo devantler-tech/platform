@@ -22,7 +22,7 @@ func TestFailureStageReportsOnlyFixedPhasesAndDiscardsPrivateErrors(t *testing.T
 					return DeploymentDocuments{}, nil
 				}
 				if phase == "deployment-changed" && loads == 2 {
-					docs.Repository = changeBinding(t, docs.Repository, func(v map[string]any) { v["metadata"].(map[string]any)["resourceVersion"] = "124" })
+					docs.Repository = changeBinding(t, docs.Repository, func(v map[string]any) { v["metadata"].(map[string]any)["uid"] = "replacement-repository-uid" })
 				}
 				return docs, nil
 			}

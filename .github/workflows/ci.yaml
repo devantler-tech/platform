@@ -80,6 +80,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🔍 Lint module tidiness guards
+        run: shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh
+
+      - name: 🧪 Exercise module tidiness refusals offline
+        run: bash scripts/tests/test-go-modules-tidy.sh
+
+      - name: 🧹 Verify every tracked Go module is tidy
+        run: bash scripts/check-go-modules-tidy.sh
+
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
         shell: bash
@@ -1858,7 +1867,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3090,7 +3099,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3524,7 +3533,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4517,7 +4526,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.23"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -4648,7 +4657,8 @@ jobs:
         deploy-prod,
       ]
     if: always()
-    permissions: {}
+    permissions:
+      actions: read
     steps:
       - name: 🧩 Require complete selected WebApp compilation
         env:
@@ -4721,8 +4731,9 @@ jobs:
           fi
 
       - name: 📊 Evaluate job results
-        uses: devantler-tech/.github/actions/aggregate-job-checks@0966f4b015e85ef14be37411d424a7028a858550 # v19.0.8
+        uses: devantler-tech/.github/actions/aggregate-job-checks@15e2fb1af4b5525ff96202661ca4b87d6affade0 # v19.1.1
         with:
+          check-workflow-startup: "true"
           job-results: >-
             ${{ needs.changes.result }}
             ${{ needs.validate-repository-guards.result }}

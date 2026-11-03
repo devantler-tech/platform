@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cosi-project/runtime/api/v1alpha1"
+
 	"github.com/devantler-tech/platform/internal/longhorninventory"
 	talos "github.com/siderolabs/talos/pkg/machinery/client"
 	talosconfig "github.com/siderolabs/talos/pkg/machinery/client/config"
@@ -121,6 +123,13 @@ func inventoryExecuteCommand(ctx context.Context, program string, args ...string
 }
 
 func newInventoryReader(ctx context.Context, address string) (nativeReplicaReader, func() error, error) {
+	return openInventoryReader(ctx, address, "")
+}
+
+// openInventoryReader opens a node-bound native client using the protected
+// workflow's memory-backed credentials and bounded block API. The unused-worker
+// profile additionally verifies its original partition before directory reads.
+func openInventoryReader(ctx context.Context, address, unusedEphemeralUUID string) (nativeReplicaReader, func() error, error) {
 	directory := os.Getenv("LONGHORN_V2_CREDENTIAL_DIR")
 	if !regexp.MustCompile(`^/dev/shm/longhorn-v2\.[A-Za-z0-9]+$`).MatchString(directory) || os.Getenv("TALOSCONFIG") != filepath.Join(directory, "talosconfig") {
 		return nil, nil, errInventory
@@ -158,7 +167,12 @@ func newInventoryReader(ctx context.Context, address string) (nativeReplicaReade
 	if err != nil {
 		return nil, nil, errInventory
 	}
-	return longhorninventory.Native{API: connection.MachineClient, Target: address}, connection.Close, nil
+	blocks := longhorninventory.BoundedBlocks{API: v1alpha1.NewStateClient(connection.Conn()), Target: address}
+	var reader nativeReplicaReader = longhorninventory.Native{API: connection.MachineClient, Target: address, Blocks: blocks}
+	if unusedEphemeralUUID != "" {
+		reader = unusedTemporaryReader{nativeReplicaReader: reader, blocks: blocks, address: address, ephemeralUUID: unusedEphemeralUUID}
+	}
+	return reader, connection.Close, nil
 }
 
 func runReplicaInventory(ctx context.Context, target, source, runID string) error {

@@ -29,6 +29,7 @@ type Files interface {
 type Native struct {
 	API    Files
 	Target string
+	Blocks BlockCollections
 }
 
 const maxMessageBytes = 64 << 10

@@ -32,7 +32,30 @@ type inventoryReceipt struct {
 	Report              longhorninventory.Report `json:"report"`
 }
 
+// inventoryProjection binds a complete Kubernetes storage observation to the
+// selected physical node and reviewed pool roster. A preparation journal permits
+// only its own identity-bound cordon in the observation view.
 func (c client) inventoryProjection(ctx context.Context, target string) (inventoryProjection, object, error) {
+	return c.storageProjection(ctx, target, true)
+}
+
+// hostMemoryProjection binds counters to the selected host and registered disk,
+// independently of replica scheduling. It grants no replica-accounting proof.
+// Reboot recovery separately proves two peer copies before restoring scheduling.
+func (c client) hostMemoryProjection(ctx context.Context, target string) (inventoryProjection, object, error) {
+	if !inventoryTarget.MatchString(target) {
+		return inventoryProjection{}, nil, errInventory
+	}
+	projection, node, err := c.storageProjection(ctx, target, false)
+	if err != nil || !projection.Registered {
+		return inventoryProjection{}, nil, errInventory
+	}
+	return projection, node, nil
+}
+
+// storageProjection shares node, hardware, disk and endpoint identity checks.
+// Only the replica observer includes the complete replica ownership graph.
+func (c client) storageProjection(ctx context.Context, target string, includeReplicas bool) (inventoryProjection, object, error) {
 	var nodes, storage, replicas []object
 	for _, query := range []struct {
 		path, apiVersion, kind string
@@ -42,6 +65,9 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 		{inventoryStorageNodes, "longhorn.io/v1beta2", "NodeList", &storage},
 		{inventoryReplicas, "longhorn.io/v1beta2", "ReplicaList", &replicas},
 	} {
+		if query.path == inventoryReplicas && !includeReplicas {
+			continue
+		}
 		// Ordinary kubectl printing flattens the typed list and discards its
 		// collection revision. Preserve the server envelope with a fixed raw GET.
 		data, err := c.kubectl(ctx, nil, "get", "--raw="+query.path)
@@ -54,12 +80,20 @@ func (c client) inventoryProjection(ctx context.Context, target string) (invento
 		}
 	}
 	selectionDigest := ""
+	var projectionErr error
+	nodes, projectionErr = temporaryInventoryNodes(nodes, c.inventoryPreparation)
+	if projectionErr != nil {
+		return inventoryProjection{}, nil, projectionErr
+	}
 	if !inventoryTarget.MatchString(target) {
 		var err error
 		target, selectionDigest, err = resolveTemporaryInventoryTarget(target, nodes, c.inventoryPools)
 		if err != nil {
 			return inventoryProjection{}, nil, err
 		}
+	}
+	if c.inventoryPreparation != nil && target != c.inventoryPreparation.Target {
+		return inventoryProjection{}, nil, errInventory
 	}
 	var node, lh object
 	for _, item := range nodes {

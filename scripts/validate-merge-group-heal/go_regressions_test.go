@@ -65,12 +65,15 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 	}
 	// Keep the bounded test concurrency and explicit per-package timeout in
 	// the pinned command without allowing package filters or skipped results.
+	positions := make(map[string]int)
 	for _, command := range []string{
+		"bash scripts/tests/test-go-modules-tidy.sh",
+		"bash scripts/check-go-modules-tidy.sh",
 		"go test -parallel 8 -timeout 20m ./...",
 	} {
 		found := false
 		for name, candidate := range workflow.Jobs {
-			for _, step := range candidate.Steps {
+			for index, step := range candidate.Steps {
 				if strings.TrimSpace(step.Run) != command {
 					continue
 				}
@@ -90,11 +93,16 @@ func TestFullGoRegressionsRunIndependently(t *testing.T) {
 					t.Fatalf("duplicate complete-suite invocation: %s", command)
 				}
 				found = true
+				positions[command] = index
 			}
 		}
 		if !found {
 			t.Fatalf("complete suite was removed or narrowed: %s", command)
 		}
+	}
+	if positions["bash scripts/tests/test-go-modules-tidy.sh"] >= positions["bash scripts/check-go-modules-tidy.sh"] ||
+		positions["bash scripts/check-go-modules-tidy.sh"] >= positions["go test -parallel 8 -timeout 20m ./..."] {
+		t.Fatal("module refusal controls and all-module guard must pass before the full Go suite")
 	}
 	for _, name := range []string{"deploy-prod", "ci-required-checks"} {
 		if !slices.Contains(workflow.Jobs[name].Needs, "validate-go-regressions") {
