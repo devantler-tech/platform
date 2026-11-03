@@ -116,6 +116,15 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: 🔍 Lint module tidiness guards
+        run: shellcheck scripts/check-go-modules-tidy.sh scripts/tests/test-go-modules-tidy.sh
+
+      - name: 🧪 Exercise module tidiness refusals offline
+        run: bash scripts/tests/test-go-modules-tidy.sh
+
+      - name: 🧹 Verify every tracked Go module is tidy
+        run: bash scripts/check-go-modules-tidy.sh
+
       - name: ⚙️ Initialize the approved kubectl for native regressions
         timeout-minutes: 5
         shell: bash
@@ -1354,6 +1363,13 @@ jobs:
           shellcheck scripts/tests/test-controller-helm-sdk-renovate-pin.sh
           bash scripts/tests/test-controller-helm-sdk-renovate-pin.sh
 
+      # The Kopia reader follows Velero's own fork pin, a pseudo-version that
+      # semver ranks below every older tag, so Renovate must not offer it.
+      - name: 📌 Validate the Velero Kopia Renovate pin
+        run: |
+          shellcheck scripts/tests/test-velero-kopia-renovate-pin.sh
+          bash scripts/tests/test-velero-kopia-renovate-pin.sh
+
       # The web-app compiler check requires the KRO Go module to match the
       # controller's chart tag, so Renovate must move both together (#5204).
       - name: 📌 Validate the KRO Renovate group
@@ -1886,7 +1902,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.15"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 
@@ -3118,7 +3134,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.15"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -3552,7 +3568,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.15"
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           .github/scripts/setup-ksail.sh
@@ -4546,7 +4562,7 @@ jobs:
         shell: bash
         env:
           # renovate: datasource=github-releases depName=devantler-tech/ksail extractVersion=^v(?<version>.+)$
-          KSAIL_VERSION: "7.206.14"
+          KSAIL_VERSION: "7.206.15"
           GITHUB_TOKEN: ${{ github.token }}
         run: .github/scripts/setup-ksail.sh
 

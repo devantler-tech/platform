@@ -304,7 +304,9 @@ func readAlerts(data json.RawMessage, s *snapshot) error {
 }
 
 func observe(ctx context.Context, read readFunc, now time.Time) (snapshot, error) {
-	s := snapshot{ObservedAt: now.UTC(), WindowFrom: now.Add(-time.Hour).UTC(), WindowTo: now.UTC()}
+	// Coroot parses absolute milliseconds at whole-second resolution.
+	windowEnd := now.UTC().Truncate(time.Second)
+	s := snapshot{ObservedAt: now.UTC(), WindowFrom: windowEnd.Add(-time.Hour), WindowTo: windowEnd}
 	body, err := read(ctx, corootProxy+"/api/user")
 	if err != nil {
 		return s, errors.New("project-discovery")
@@ -331,7 +333,7 @@ func observe(ctx context.Context, read readFunc, now time.Time) (snapshot, error
 	if project == "" {
 		return s, errors.New("project-discovery")
 	}
-	query := url.Values{"from": {strconv.FormatInt(s.WindowFrom.Unix(), 10)}, "to": {strconv.FormatInt(s.WindowTo.Unix(), 10)}}.Encode()
+	query := url.Values{"from": {strconv.FormatInt(s.WindowFrom.UnixMilli(), 10)}, "to": {strconv.FormatInt(s.WindowTo.UnixMilli(), 10)}}.Encode()
 	prefix := corootProxy + "/api/project/" + url.PathEscape(project) + "/overview/"
 	alerts := map[string]int{}
 	data, err := readEnvelope(ctx, read, prefix+"applications?"+query, &s, alerts)
