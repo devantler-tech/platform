@@ -20,7 +20,8 @@ func TestRetainedDisposalCommandRefusesForeignDispatchBeforeAccess(t *testing.T)
 		return
 	}
 	command := exec.Command(os.Args[0], "-test.run=^TestRetainedDisposalCommandRefusesForeignDispatchBeforeAccess$")
-	command.Env = []string{"EMAIL_DISPOSAL_CHILD=1", "PATH=/nonexistent"}
+	// Keep coverage-runtime output separate without weakening exact CLI output.
+	command.Env = []string{"EMAIL_DISPOSAL_CHILD=1", "PATH=/nonexistent", "GOCOVERDIR=" + t.TempDir()}
 	output, err := command.CombinedOutput()
 	exit, ok := err.(*exec.ExitError)
 	if !ok || exit.ExitCode() != 2 || string(output) != "EMAIL_RETAINED_DISPOSAL=UNVERIFIED stage=dispatch cleanup=NOT_STARTED\n" {
