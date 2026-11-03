@@ -45,7 +45,7 @@ func tenantControllerMetadataError(objects map[string]*unstructured.Unstructured
 
 // Exercise the pinned SSA implementation against the isolated real API server.
 // The competing writer uses the actual Kyverno generate body, not its controller.
-func assertTenantNetworkFloor(t *testing.T, ctx context.Context, config *rest.Config, root string, objects map[string]*unstructured.Unstructured) {
+func assertTenantNetworkFloor(ctx context.Context, t *testing.T, config *rest.Config, root string, objects map[string]*unstructured.Unstructured) {
 	t.Helper()
 	t.Run("network-floor-settles-with-competing-generator", func(t *testing.T) {
 		clients, err := kroclient.NewSet(kroclient.Config{RestConfig: rest.CopyConfig(config)})

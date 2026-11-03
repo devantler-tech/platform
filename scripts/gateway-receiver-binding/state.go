@@ -113,11 +113,11 @@ func inspectReceiver(raw []byte, b binding) (receiverState, error) {
 			}
 		}
 	}
-	copy, err := json.Marshal(body)
+	encoded, err := json.Marshal(body)
 	if err != nil {
 		return bad()
 	}
-	if _, err = disabledPatch(copy, b); err != nil {
+	if _, err = disabledPatch(encoded, b); err != nil {
 		return bad()
 	}
 	annotations, _ := meta["annotations"].(map[string]any)
