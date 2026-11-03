@@ -1,3 +1,4 @@
+// Package main validates the enforcement actions of platform policies.
 package main
 
 import (

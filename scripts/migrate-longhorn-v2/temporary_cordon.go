@@ -27,11 +27,11 @@ func temporaryInventoryNodes(nodes []object, record *journal) ([]object, error) 
 			return nil, errInventory
 		}
 		found = true
-		copy := maps.Clone(node)
+		cloned := maps.Clone(node)
 		spec := maps.Clone(valueObject(node, "spec"))
 		spec["unschedulable"] = false
-		copy["spec"] = spec
-		result[i] = copy
+		cloned["spec"] = spec
+		result[i] = cloned
 	}
 	if !found {
 		return nil, errInventory

@@ -1,3 +1,4 @@
+// Package main runs explicitly authorized Longhorn migration operations.
 package main
 
 import (

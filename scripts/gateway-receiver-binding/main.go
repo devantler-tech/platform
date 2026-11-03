@@ -1,3 +1,4 @@
+// Package main binds and verifies gateway receiver profiles.
 package main
 
 import (

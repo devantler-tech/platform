@@ -1,3 +1,4 @@
+// Package main verifies guarded email backup and recovery operations.
 package main
 
 import (

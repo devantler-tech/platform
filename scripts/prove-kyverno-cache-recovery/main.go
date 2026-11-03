@@ -1,3 +1,4 @@
+// Package main verifies Kyverno cache recovery through guarded probes.
 package main
 
 import (

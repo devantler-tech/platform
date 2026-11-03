@@ -1,3 +1,4 @@
+// Package main validates compatibility between the pinned Talos and Kubernetes versions.
 package main
 
 import (

@@ -1,3 +1,4 @@
+// Package main validates authored feature flags against the pinned schema.
 package main
 
 import (

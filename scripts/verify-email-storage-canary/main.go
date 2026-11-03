@@ -1,3 +1,4 @@
+// Package main verifies the email storage recovery canary.
 package main
 
 import (
