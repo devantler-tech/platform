@@ -123,6 +123,11 @@
 # exact namespace, including DELETE, without depending on namespace labels.
 # Reserved names refuse tenant UPDATE even when an old platform-authored body
 # already fails that rule for the tenant identity.
+# Existing ordinary policies can predate this guard. A metadata-only UPDATE
+# keeps the same identity and singular spec, so it adds no network access and
+# remains admissible while those policies are migrated (#5823). CREATE and any
+# changed invalid spec remain refused. Reserved names, plural specs and the
+# exact staging hold are checked independently of this compatibility case.
 #
 # General scope and carve-outs: generated tenant namespaces (labelled
 # app.kubernetes.io/managed-by: ksail or kro), plus the exact staging hold above,
@@ -197,6 +202,12 @@ spec:
         namespaceObject.?metadata.?labels[?'app.kubernetes.io/managed-by'].orValue('') in ['ksail', 'kro']
     - name: isDelete
       expression: "request.operation == 'DELETE'"
+    - name: isUnchangedPolicyUpdate
+      expression: >-
+        request.operation == 'UPDATE' && oldObject != null && object != null &&
+        object.metadata.name == oldObject.metadata.name &&
+        object.metadata.namespace == oldObject.metadata.namespace &&
+        has(object.spec) && has(oldObject.spec) && object.spec == oldObject.spec
     - name: policyName
       expression: "variables.isDelete ? oldObject.metadata.name : object.metadata.name"
     - name: spec
@@ -343,7 +354,7 @@ spec:
         (!('k8sServiceSelector' in service) || service.k8sServiceSelector.?namespace.orValue('') == request.namespace))
   validations:
     - expression: >-
-        !variables.isTenantNamespace ||
+        !variables.isTenantNamespace || variables.isUnchangedPolicyUpdate ||
         variables.fromEndpointsConstrained && variables.fromEndpointKeysAllowed &&
         variables.ingressRulesNameSources && variables.ingressOmitsNodesAndGroups &&
         variables.fromEntitiesAllowed && variables.fromCIDRSetsLiteral && variables.fromAddressesAllowed
@@ -368,7 +379,7 @@ spec:
         source removes this namespace's isolation regardless of the generated
         default-deny.
     - expression: >-
-        !variables.isTenantNamespace ||
+        !variables.isTenantNamespace || variables.isUnchangedPolicyUpdate ||
         variables.toEndpointsConstrained && variables.toEndpointKeysAllowed &&
         variables.egressRulesNameDestinations && variables.egressOmitsNodesAndGroups &&
         variables.toFQDNsNameADestination && variables.toEntitiesAllowed &&
@@ -394,7 +405,7 @@ spec:
         Service namespace matches Services across namespaces.
         Name the destinations this workload actually needs.
     - expression: >-
-        !variables.isTenantNamespace ||
+        !variables.isTenantNamespace || variables.isUnchangedPolicyUpdate ||
         variables.spec.?enableDefaultDeny.?ingress.orValue(true) != false &&
         variables.spec.?enableDefaultDeny.?egress.orValue(true) != false
       message: >-

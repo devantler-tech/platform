@@ -204,6 +204,21 @@ hold_control() {
       + (if $operation == "DELETE" then {} else {object: $resource} end)
       + (if $operation == "CREATE" then {} else {oldObject: $resource} end)'
 }
+existing_control() {
+  local label="$1" operation="$2" expected="$3" old="$4" object="$5"
+  jq -cn --arg label "${label}" --arg actor "${tenant}" --arg operation "${operation}" \
+    --arg expected "${expected}" --argjson old "${old}" --argjson object "${object}" '
+    {label: $label, policy: "restrict-tenant-network-policies", actor: $actor, operation: $operation,
+     expected: $expected, namespaces: [{metadata: {name: "tenant-ns", labels: {"app.kubernetes.io/managed-by": "ksail"}}}]}
+    + (if $object == null then {} else {object: $object} end)
+    + (if $old == null then {} else {oldObject: $old} end)'
+}
+existing="$(yq -o=json '.' "${tests}/platform-author/resources.yaml")"
+valid="$(cnp platform-allow-observability)"
+legacy_ingress="$(jq -c 'del(.spec.egress)' <<<"${existing}")"
+legacy_egress="$(jq -c 'del(.spec.ingress)' <<<"${existing}")"
+legacy_default_deny="$(jq -c '.spec.enableDefaultDeny.ingress = false' <<<"${valid}")"
+legacy_plural="$(jq -c '.specs = [.spec]' <<<"${existing}")"
 {
   control tenant-deletes-own-policy "${tenant}" DELETE allow-web pass
   for reserved in default-deny allow-dns allow-cnpg-operator; do
@@ -213,6 +228,32 @@ hold_control() {
     control "flux-deletes-${reserved}" "${flux_sa}" DELETE "${reserved}" skip
   done
   control tenant-updates-own-policy "${tenant}" UPDATE allow-web pass
+  # Existing tenant policies can predate the guard. Reconciliation may update
+  # metadata without changing their rules; that must neither create a new
+  # violating policy nor authorize a different invalid body. Reserved names,
+  # plural specs and the rollout hold retain their independent refusals.
+  existing_control legacy-policy-create CREATE fail null "${existing}"
+  existing_control legacy-policy-unchanged-update UPDATE pass "${existing}" "${existing}"
+  existing_control legacy-policy-metadata-update UPDATE pass "${existing}" \
+    "$(jq -c '.metadata.annotations.reconciled = "true"' <<<"${existing}")"
+  existing_control legacy-policy-changed-ingress UPDATE fail "${existing}" \
+    "$(jq -c '.spec.ingress = [{fromEntities: ["world"]}]' <<<"${existing}")"
+  existing_control legacy-policy-changed-egress UPDATE fail "${existing}" \
+    "$(jq -c '.spec.egress = [{toEntities: ["world"]}]' <<<"${existing}")"
+  existing_control valid-policy-cannot-become-invalid UPDATE fail "${valid}" "${existing}"
+  existing_control legacy-policy-can-be-repaired UPDATE pass "${existing}" "${valid}"
+  existing_control legacy-policy-needs-old-spec UPDATE fail \
+    "$(jq -c 'del(.spec)' <<<"${existing}")" "${existing}"
+  existing_control legacy-ingress-unchanged UPDATE pass "${legacy_ingress}" "${legacy_ingress}"
+  existing_control legacy-egress-unchanged UPDATE pass "${legacy_egress}" "${legacy_egress}"
+  existing_control legacy-default-deny-unchanged UPDATE pass "${legacy_default_deny}" "${legacy_default_deny}"
+  existing_control valid-policy-cannot-disable-default-deny UPDATE fail "${valid}" "${legacy_default_deny}"
+  existing_control legacy-plural-specs-still-refused UPDATE fail "${legacy_plural}" "${legacy_plural}"
+  existing_control legacy-policy-cannot-change-name UPDATE fail "${existing}" \
+    "$(jq -c '.metadata.name = "another-policy"' <<<"${existing}")"
+  existing_control legacy-policy-needs-same-namespace UPDATE fail \
+    "$(jq -c '.metadata.namespace = "other-tenant"' <<<"${existing}")" "${existing}"
+  existing_control legacy-policy-delete DELETE pass "${existing}" null
   # The committed rollout hold is protected independently of namespace labels.
   # UPDATE carries the same already-invalid old body; DELETE carries only oldObject.
   for managed in kro ''; do
@@ -242,6 +283,32 @@ hold_control() {
   go build -mod=readonly -o "${work}/admission" .
 )
 "${work}/admission" "${policy}" <"${work}/controls.jsonl"
+
+# Prove that the UPDATE compatibility does not swallow new violations or
+# borrow an unchanged spec from a different object. A compiler error is not a
+# successful negative control: require the corresponding wrong decision.
+for mutation in any-update missing-identity; do
+  if [[ "${mutation}" == any-update ]]; then
+    expression="request.operation == 'UPDATE'"
+    refused=legacy-policy-changed-ingress
+  else
+    expression='request.operation == "UPDATE" && oldObject != null && object != null && has(oldObject.spec) && has(object.spec) && object.spec == oldObject.spec'
+    refused=legacy-policy-cannot-change-name
+  fi
+  EXPRESSION="${expression}" yq \
+    '(.spec.variables[] | select(.name == "isUnchangedPolicyUpdate").expression) = strenv(EXPRESSION)' \
+    "${policy}" >"${work}/${mutation}.yaml"
+  if "${work}/admission" "${work}/${mutation}.yaml" <"${work}/controls.jsonl" >"${work}/${mutation}.log" 2>&1; then
+    echo "::error::${mutation}: the weakened UPDATE compatibility still passes its controls"
+    exit 1
+  fi
+  if ! grep -Fq "${refused}: expected fail, failed=false error=false" "${work}/${mutation}.log"; then
+    cat "${work}/${mutation}.log" >&2
+    echo "::error::${mutation}: did not demonstrate the intended wrong admission"
+    exit 1
+  fi
+  echo "ok: UPDATE compatibility refuses ${mutation} weakening"
+done
 
 echo "Tenant CiliumNetworkPolicy policy enforced the expected boundary, and both"
 echo "platform carve-outs were proven to depend on the applying identity."
