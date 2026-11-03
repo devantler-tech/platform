@@ -1,0 +1,124 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/devantler-tech/platform/internal/longhorninventory"
+)
+
+type storageRootReaderFixture struct {
+	temporaryNativeReader
+	calls, boots            int
+	change, partial, reboot bool
+}
+
+func (r *storageRootReaderFixture) ListStorageRoot(context.Context) (longhorninventory.Listing, error) {
+	r.calls++
+	entries := []longhorninventory.Entry{{Name: ".", Mode: uint32(os.ModeDir), IsDir: true}, {Name: "engine-binaries", Mode: uint32(os.ModeDir), IsDir: true}, {Name: "private-parent-canary", Mode: uint32(os.ModeDir), IsDir: true}}
+	if r.change && r.calls > 1 {
+		entries = append(entries, longhorninventory.Entry{Name: "new-parent-data", Mode: uint32(os.ModeDir), IsDir: true})
+	}
+	return longhorninventory.Listing{Complete: !r.partial, Entries: entries}, nil
+}
+func (r *storageRootReaderFixture) BootID(context.Context) (string, error) {
+	r.boots++
+	if r.reboot && r.boots > 1 {
+		return "12345678-1234-4234-8234-000000000099", nil
+	}
+	return r.boot, nil
+}
+
+func TestRootObserverBracketsNativeParentMetadataAndNeverGrantsResetClearance(t *testing.T) {
+	for _, scenario := range []string{"complete", "partial", "root changed", "peer changed", "boot changed", "close failed"} {
+		t.Run(scenario, func(t *testing.T) {
+			nodes := temporaryInventoryRoster()
+			pools, err := configuredMigrationPools(poolConfigFixture())
+			if err != nil {
+				t.Fatal(err)
+			}
+			reads := 0
+			c := client{context: "admin@prod", inventoryPools: pools, run: func(_ context.Context, input []byte, program string, args ...string) ([]byte, error) {
+				if input != nil || !inventoryReadAllowed(program, args...) {
+					t.Fatal("parent observer escaped fixed read scope")
+				}
+				if program == "talosctl" {
+					return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": text(nodes[0], "status", "nodeInfo", "systemUUID")}})
+				}
+				api, kind := "v1", "NodeList"
+				items := []any{}
+				switch args[3] {
+				case "--raw=" + inventoryKubeNodes:
+					reads++
+					if scenario == "peer changed" && reads > 1 {
+						nodes[2]["metadata"].(object)["uid"] = "replacement"
+					}
+					for _, n := range nodes {
+						items = append(items, n)
+					}
+				case "--raw=" + inventoryStorageNodes:
+					api = "longhorn.io/v1beta2"
+					_, lh := temporaryInventoryFixture()
+					lh["metadata"].(object)["name"] = text(nodes[0], "metadata", "name")
+					items = []any{lh}
+				case "--raw=" + inventoryReplicas:
+					api, kind = "longhorn.io/v1beta2", "ReplicaList"
+				default:
+					t.Fatal("unexpected API query")
+				}
+				return json.Marshal(object{"apiVersion": api, "kind": kind, "metadata": object{"resourceVersion": "1"}, "items": items})
+			}}
+			reader := &storageRootReaderFixture{temporaryNativeReader: temporaryNativeReader{boot: text(nodes[0], "status", "nodeInfo", "bootID")}, change: scenario == "root changed", partial: scenario == "partial", reboot: scenario == "boot changed"}
+			closed := false
+			receipt, err := observeStorageRoot(context.Background(), c, "temporary-v1-1", func(_ context.Context, address string) (nativeReplicaReader, func() error, error) {
+				projection, _, projectionErr := c.inventoryProjection(context.Background(), "temporary-v1-1")
+				if projectionErr != nil || address != projection.Address {
+					t.Fatal("parent observer selected another endpoint")
+				}
+				return reader, func() error {
+					closed = true
+					if scenario == "close failed" {
+						return errors.New("private-close-canary")
+					}
+					return nil
+				}, nil
+			})
+			if !closed || (err == nil) != (scenario == "complete") {
+				t.Fatal("incomplete or changed parent metadata was accepted:", err)
+			}
+			encoded, _ := json.Marshal(receipt)
+			if strings.Contains(string(encoded), "private-parent-canary") || strings.Contains(string(encoded), "private-close-canary") {
+				t.Fatal("private names reached the receipt")
+			}
+			if err != nil {
+				if receipt.Schema != 0 {
+					t.Fatal("failed observation retained a success receipt")
+				}
+				return
+			}
+			if receipt.Schema != 1 || !receipt.ObservationOnly || receipt.ResetClearance || receipt.Report.ReplicaEntryPresent || !receipt.Report.EngineBinariesPresent || receipt.Report.OtherEntries != 1 {
+				t.Fatal("parent metadata lost its scope or claimed reset clearance")
+			}
+		})
+	}
+}
+
+func TestParentInventoryRequiresItsOwnReadOnlyConfirmation(t *testing.T) {
+	env := dispatchFixture()
+	env["LONGHORN_V2_OPERATION"], env["LONGHORN_V2_NODE"], env["LONGHORN_V2_CONFIRM"] = "inventory-storage-root", "temporary-v1-1", "inventory-longhorn-storage-root-temporary-v1-1"
+	getenv := func(key string) string { return env[key] }
+	if err := authorizeStorageRoot(getenv, "temporary-v1-1"); err != nil {
+		t.Fatal("confirmed parent observation was rejected:", err)
+	}
+	if authorize(getenv, "temporary-v1-1") == nil || authorizeInventory(getenv, "temporary-v1-1") == nil || authorizeRefresh(getenv) == nil {
+		t.Fatal("parent observation authorized another operation")
+	}
+	env["LONGHORN_V2_CONFIRM"] = "inventory-longhorn-replicas-temporary-v1-1"
+	if authorizeStorageRoot(getenv, "temporary-v1-1") == nil {
+		t.Fatal("replica confirmation admitted a different read scope")
+	}
+}
