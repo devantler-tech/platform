@@ -21,9 +21,69 @@ func temporaryPartitionFixture() (cosiresource.List, cosiresource.List, string) 
 		EncryptionProvider: block.EncryptionProviderLUKS2, EncryptionLockedToState: true, ConfiguredEncryptionKeys: []string{"nodeID"}}
 	raw := block.NewVolumeStatus(block.NamespaceName, "r-longhorn")
 	raw.TypedSpec().Phase = block.VolumePhaseWaiting
+	raw.TypedSpec().Type = block.VolumeTypePartition
 	physical := block.NewDiscoveredVolume(block.NamespaceName, "sda6")
 	*physical.TypedSpec() = block.DiscoveredVolumeSpec{DevPath: "/dev/sda6", ParentDevPath: "/dev/sda", PartitionLabel: "EPHEMERAL", PartitionUUID: "partition-original", Size: 150 << 30}
 	return cosiresource.List{Items: []cosiresource.Resource{eph, raw}}, cosiresource.List{Items: []cosiresource.Resource{physical}}, eph.TypedSpec().UUID
+}
+
+func TestFailedTemporaryAllocationRequiresNeverLocatedStateAndNoPhysicalPartition(t *testing.T) {
+	for _, prior := range []block.VolumePhase{block.VolumePhaseWaiting, block.VolumePhaseMissing} {
+		s, d, uuid := temporaryPartitionFixture()
+		raw := s.Items[1].(*block.VolumeStatus).TypedSpec()
+		raw.Phase, raw.PreFailPhase = block.VolumePhaseFailed, prior
+		if err := verifyUnusedTemporaryPartition(s, d, uuid); err != nil {
+			t.Fatalf("complete never-allocated failure was rejected: prior=%v err=%v", prior, err)
+		}
+	}
+	for name, change := range map[string]func(*cosiresource.List, *cosiresource.List){
+		"previously located": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().PreFailPhase = block.VolumePhaseLocated
+		},
+		"previously provisioned": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().PreFailPhase = block.VolumePhaseProvisioned
+		},
+		"previously prepared": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().PreFailPhase = block.VolumePhasePrepared
+		},
+		"previously ready": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().PreFailPhase = block.VolumePhaseReady
+		},
+		"unknown prior phase": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().PreFailPhase = block.VolumePhase(99)
+		},
+		"wrong raw type": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().Type = block.VolumeTypeDisk
+		},
+		"allocated size":  func(s, _ *cosiresource.List) { s.Items[1].(*block.VolumeStatus).TypedSpec().Size = 96 << 30 },
+		"device location": func(s, _ *cosiresource.List) { s.Items[1].(*block.VolumeStatus).TypedSpec().Location = "/dev/sda7" },
+		"parent device": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().ParentLocation = "/dev/sda"
+		},
+		"mount location": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().MountLocation = "/dev/dm-1"
+		},
+		"filesystem identity": func(s, _ *cosiresource.List) { s.Items[1].(*block.VolumeStatus).TypedSpec().UUID = "existing-data" },
+		"partition identity": func(s, _ *cosiresource.List) {
+			s.Items[1].(*block.VolumeStatus).TypedSpec().PartitionUUID = "existing-partition"
+		},
+		"partition index": func(s, _ *cosiresource.List) { s.Items[1].(*block.VolumeStatus).TypedSpec().PartitionIndex = 7 },
+		"discovered raw partition": func(_, d *cosiresource.List) {
+			v := block.NewDiscoveredVolume(block.NamespaceName, "raw-device")
+			*v.TypedSpec() = block.DiscoveredVolumeSpec{DevPath: "/dev/sda7", ParentDevPath: "/dev/sda", PartitionLabel: "r-longhorn", Size: 96 << 30}
+			d.Items = append(d.Items, v)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, d, uuid := temporaryPartitionFixture()
+			raw := s.Items[1].(*block.VolumeStatus).TypedSpec()
+			raw.Phase, raw.PreFailPhase = block.VolumePhaseFailed, block.VolumePhaseWaiting
+			change(&s, &d)
+			if verifyUnusedTemporaryPartition(s, d, uuid) == nil {
+				t.Fatal("failed allocation hid a previous device, unknown state or discovered data")
+			}
+		})
+	}
 }
 
 func TestNativeTemporaryPartitionRequiresPositiveOriginalAndNoRawStorage(t *testing.T) {

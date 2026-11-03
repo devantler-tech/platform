@@ -84,7 +84,8 @@ func verifyUnusedTemporaryPartition(statuses, discovered cosiresource.List, ephe
 			original = spec
 		}
 		if strings.HasPrefix(id, "r-") || strings.HasPrefix(id, "u-") {
-			if id != "r-longhorn" || spec.Phase != block.VolumePhaseWaiting || spec.Location != "" || spec.MountLocation != "" || spec.ParentLocation != "" || spec.UUID != "" || spec.PartitionUUID != "" || spec.PartitionIndex != 0 || spec.Size != 0 {
+			unallocated := spec.Phase == block.VolumePhaseWaiting || spec.Phase == block.VolumePhaseFailed && (spec.PreFailPhase == block.VolumePhaseWaiting || spec.PreFailPhase == block.VolumePhaseMissing)
+			if id != "r-longhorn" || !unallocated || spec.Type != block.VolumeTypePartition || spec.Location != "" || spec.MountLocation != "" || spec.ParentLocation != "" || spec.UUID != "" || spec.PartitionUUID != "" || spec.PartitionIndex != 0 || spec.Size != 0 {
 				return errInventory
 			}
 		}

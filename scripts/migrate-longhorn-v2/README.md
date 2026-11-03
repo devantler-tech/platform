@@ -41,6 +41,12 @@ inventories, and no allocated raw partition. Only the recognized engine, metadat
 socket cache directories may remain; a replica entry, backing images, any file, unknown entry,
 incomplete read or changed identity holds the run. The original encrypted partition is checked
 before each parent listing. A missing replica-path error is never interpreted as empty storage.
+An allocation in `failed` state qualifies only when its previous phase was `waiting` or
+`missing`, its type is a partition, every allocation size, location and identity field is
+empty, and complete physical discovery contains no raw or other user partition. A failure
+after locating, provisioning or opening a device holds the run. Provider error messages do
+not establish absence. These checks accompany both parent reads and the unchanged API,
+hardware, boot and original-partition bindings; observation-only receipts grant no reset clearance.
 All three temporary workers receive owned scale-down protection before the selected worker is
 cordoned. Drain uses eviction and respects disruption budgets. Two fresh storage observations
 after drain precede the recorded reset intent.
