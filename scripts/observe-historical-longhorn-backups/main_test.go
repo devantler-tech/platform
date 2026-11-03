@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -108,7 +109,7 @@ func TestRunNeverPublishesPartialOrStaleMetadata(t *testing.T) {
 				}
 				return
 			}
-			if err != errHeld || len(result.Repositories) != 0 {
+			if !errors.Is(err, errHeld) || len(result.Repositories) != 0 {
 				t.Fatal("partial or stale receipt escaped")
 			}
 			if mode == "stale-before" && observations != 0 || mode == "stale-between" && observations != 1 {
@@ -142,7 +143,7 @@ func TestWallDeadlinePassingDuringFinalSourceReadDiscardsReceipt(t *testing.T) {
 		return backupcatalogue.Catalogue{MetadataOnly: true, Digest: strings.Repeat("c", 64), RepositoryDigest: strings.Repeat("d", 64)}, nil
 	}
 	result, err := run(ctx, func(k string) string { return env[k] }, execute, observe, backupcatalogue.Policy{}, t.TempDir())
-	if err != errHeld || len(result.Repositories) != 0 {
+	if !errors.Is(err, errHeld) || len(result.Repositories) != 0 {
 		t.Fatal("expired final source observation produced a receipt")
 	}
 }

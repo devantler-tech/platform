@@ -12,7 +12,7 @@ func TestBackupAndDownloadCannotRestoreBackedUpWorkloads(t *testing.T) {
 	}
 	namespaces, _ := spec["includedNamespaces"].([]any)
 	resources, _ := spec["includedResources"].([]any)
-	if len(namespaces) != 1 || namespaces[0] != "private-mail" || len(resources) != 1 || resources[0] != "pods" || text(child(child(spec, "labelSelector"), "matchLabels"), "statefulset.kubernetes.io/pod-name") != "private-mail-0" {
+	if len(namespaces) != 1 || namespaces[0] != "private-mail" || len(resources) != 2 || resources[0] != "pods" || resources[1] != "persistentvolumeclaims" || spec["includeClusterResources"] != false || text(child(child(spec, "labelSelector"), "matchLabels"), "statefulset.kubernetes.io/pod-name") != "private-mail-0" {
 		t.Fatal("backup can include unrelated sources or restore executable resources")
 	}
 	transfer := downloadManifest(i, "0123456789abcdef0123456789abcdef")

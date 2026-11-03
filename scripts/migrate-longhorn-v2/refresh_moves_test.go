@@ -206,8 +206,8 @@ func (f *refreshCluster) run(_ context.Context, input []byte, program string, ar
 			return json.Marshal(object{"metadata": object{"id": "systeminformation", "namespace": "hardware"}, "spec": object{"uuid": "machine-uuid"}})
 		case args[1] == "read" && args[2] == "/proc/sys/vm/nr_hugepages":
 			return []byte("1024\n"), nil
-		case args[1] == "read":
-			return []byte("nvme_tcp 1 0 - Live 0\nvfio_pci 1 0 - Live 0\nuio_pci_generic 1 0 - Live 0\n"), nil
+		case args[1] == "ls":
+			return nil, nil
 		case args[1] == "service":
 			f.events = append(f.events, "restart")
 			if f.onRestart != nil {
