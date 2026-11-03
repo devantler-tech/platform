@@ -10,7 +10,7 @@ RUN mkdir -p /usr/local/share/stalwart /usr/local/share/licenses/stalwart-webui 
     chmod 0755 /usr/local/share /usr/local/share/stalwart /usr/local/share/licenses /usr/local/share/licenses/stalwart-webui
 COPY --from=cli /usr/local/bin/stalwart-cli /usr/local/bin/stalwart-cli
 COPY --from=client-proxy --chmod=0755 /usr/bin/caddy /usr/local/bin/caddy
-ADD --chmod=0444 --checksum=sha256:cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 https://raw.githubusercontent.com/caddyserver/caddy/v2.11.7/LICENSE /usr/local/share/licenses/caddy/LICENSE
+COPY --chmod=0444 caddy.LICENSE /usr/local/share/licenses/caddy/LICENSE
 COPY --chmod=0755 private-mail-bootstrap /usr/local/bin/private-mail-bootstrap
 COPY --chmod=0444 webui.zip /usr/local/share/stalwart/webui.zip
 COPY --chmod=0444 webui.LICENSE /usr/local/share/licenses/stalwart-webui/LICENSE

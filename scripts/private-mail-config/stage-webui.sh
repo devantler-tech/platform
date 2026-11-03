@@ -4,7 +4,7 @@ umask 077
 [ "$#" = 1 ] && [ -d "$1" ] && [ ! -L "$1" ] || { echo 'An existing application build directory is required.' >&2; exit 2; }
 destination=$1
 case "$destination" in /*) ;; *) echo 'Application build directory must be absolute.' >&2; exit 2 ;; esac
-for name in webui.zip webui.LICENSE webui.SOURCE; do
+for name in webui.zip webui.LICENSE webui.SOURCE caddy.LICENSE; do
   if [ -e "$destination/$name" ] || [ -L "$destination/$name" ]; then
     echo 'Administration build artifacts already exist; refusing to replace them.' >&2
     exit 2
@@ -24,12 +24,15 @@ curl --disable --fail --silent --show-error --location --max-time 60 --max-files
   --output "$work/webui.zip" "$url"
 curl --disable --fail --silent --show-error --location --max-time 60 --max-filesize 65536 --proto '=https' --proto-redir '=https' \
   --output "$work/webui.LICENSE" "https://raw.githubusercontent.com/stalwartlabs/webui/v${version}/LICENSES/AGPL-3.0-only.txt"
-if ! printf '%s  %s\n%s  %s\n' "$digest" "$work/webui.zip" "$license_digest" "$work/webui.LICENSE" | shasum -a 256 --check >/dev/null 2>&1; then
+curl --disable --fail --silent --show-error --location --max-time 60 --max-filesize 65536 --proto '=https' --proto-redir '=https' \
+  --output "$work/caddy.LICENSE" https://raw.githubusercontent.com/caddyserver/caddy/v2.11.7/LICENSE
+if ! printf '%s  %s\n%s  %s\n%s  %s\n' "$digest" "$work/webui.zip" "$license_digest" "$work/webui.LICENSE" \
+  cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30 "$work/caddy.LICENSE" | shasum -a 256 --check >/dev/null 2>&1; then
   echo 'Administration asset integrity verification failed.' >&2
   exit 2
 fi
 printf 'Unmodified upstream source: https://github.com/stalwartlabs/webui/tree/v%s\n' "$version" >"$work/webui.SOURCE"
-for name in webui.zip webui.LICENSE webui.SOURCE; do
+for name in webui.zip webui.LICENSE webui.SOURCE caddy.LICENSE; do
   (set -C; cat "$work/$name" >"$destination/$name")
   chmod 0644 "$destination/$name"
 done
