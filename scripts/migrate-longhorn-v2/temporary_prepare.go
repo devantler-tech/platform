@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
 
 type temporaryPreparation struct {
@@ -198,7 +200,7 @@ func (p temporaryPreparation) observeUnused(ctx context.Context, owned bool) (st
 	if err != nil {
 		return "", err
 	}
-	if _, err = verifyNode(n, p.j, true); err != nil || before.BootID != p.j.OriginalBootID || before.StorageUID != p.j.LonghornUID {
+	if _, err = verifyNode(n, p.j, true); err != nil || before.Registered || len(before.Replicas) != 0 || before.BootID != p.j.OriginalBootID || before.StorageUID != p.j.LonghornUID {
 		return "", errInventory
 	}
 	factory := p.reader
@@ -207,18 +209,32 @@ func (p temporaryPreparation) observeUnused(ctx context.Context, owned bool) (st
 			return openInventoryReader(ctx, address, p.j.EphemeralUUID)
 		}
 	}
-	receipt, err := observeReplicaInventory(ctx, c, p.temporarySelection, factory)
+	receipt, err := observeStorageLayout(ctx, c, p.temporarySelection, factory)
 	if err != nil {
-		return "", err
+		return "", errors.New(inventoryFailureMessage(err))
 	}
-	if receipt.APIProjectionDigest != before.Digest || receipt.Registered || !receipt.Report.EmptyAndAccounted {
+	if receipt.APIProjectionDigest != before.Digest || !unusedParentAbsent(receipt.Report) || receipt.BlockLayout == nil {
 		return "", errInventory
 	}
 	if err = sourceCurrent(ctx, p.c.run, p.source); err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256([]byte(receipt.APIProjectionDigest + ":" + receipt.Report.Digest))
+	digest := sha256.Sum256([]byte(receipt.APIProjectionDigest + ":" + receipt.Report.Digest + ":" + receipt.BlockLayout.Digest))
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// Only recognized non-volume cache directories may remain on this fixed,
+// unregistered temporary worker. The native wrapper separately binds the
+// original encrypted partition and rejects any allocated raw or user volume.
+func unusedParentAbsent(report longhorninventory.StorageRootReport) bool {
+	known := 0
+	for _, present := range []bool{report.EngineBinariesPresent, report.MetadataPresent, report.LogsPresent, report.SocketDirectoryPresent} {
+		if present {
+			known++
+		}
+	}
+	return len(report.Digest) == 64 && report.Files == 0 && report.OtherEntries == 0 &&
+		!report.ReplicaEntryPresent && !report.ReplicaDirectoryPresent && !report.BackingImagesPresent && report.Directories == known
 }
 
 func (p temporaryPreparation) protectUnusedCapacity(ctx context.Context) error {

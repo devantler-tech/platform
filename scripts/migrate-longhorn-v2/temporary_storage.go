@@ -22,21 +22,47 @@ type unusedTemporaryReader struct {
 // boot bracket on EACH file observation. A partial resource list never clears
 // a reset, even when its returned prefix happens to contain the original disk.
 func (r unusedTemporaryReader) ListReplicas(ctx context.Context) (longhorninventory.Listing, error) {
+	if err := r.verifyPartition(ctx); err != nil {
+		return longhorninventory.Listing{}, err
+	}
+	return r.nativeReplicaReader.ListReplicas(ctx)
+}
+
+func (r unusedTemporaryReader) ListStorageRoot(ctx context.Context) (longhorninventory.Listing, error) {
+	if err := r.verifyPartition(ctx); err != nil {
+		return longhorninventory.Listing{}, err
+	}
+	reader, ok := r.nativeReplicaReader.(nativeStorageRootReader)
+	if !ok {
+		return longhorninventory.Listing{}, errInventory
+	}
+	return reader.ListStorageRoot(ctx)
+}
+
+func (r unusedTemporaryReader) ListBlockLayout(ctx context.Context) (longhorninventory.BlockLayoutReport, error) {
+	reader, ok := r.nativeReplicaReader.(nativeBlockLayoutReader)
+	if !ok {
+		return longhorninventory.BlockLayoutReport{}, errInventory
+	}
+	return reader.ListBlockLayout(ctx)
+}
+
+func (r unusedTemporaryReader) verifyPartition(ctx context.Context) error {
 	address, addressErr := netip.ParseAddr(r.address)
 	if ctx.Err() != nil || r.blocks == nil || r.nativeReplicaReader == nil || r.ephemeralUUID == "" || addressErr != nil || address.String() != r.address || !netip.MustParsePrefix("10.0.0.0/16").Contains(address) {
-		return longhorninventory.Listing{}, errInventory
+		return errInventory
 	}
 	ctx, cancel := context.WithTimeout(talos.WithNode(ctx, r.address), 20*time.Second)
 	defer cancel()
 	statuses, err := r.blocks.List(ctx, block.NewVolumeStatus(block.NamespaceName, "").Metadata())
 	if err != nil || ctx.Err() != nil {
-		return longhorninventory.Listing{}, errInventory
+		return errInventory
 	}
 	discovered, err := r.blocks.List(ctx, block.NewDiscoveredVolume(block.NamespaceName, "").Metadata())
 	if err != nil || ctx.Err() != nil || verifyUnusedTemporaryPartition(statuses, discovered, r.ephemeralUUID) != nil {
-		return longhorninventory.Listing{}, errInventory
+		return errInventory
 	}
-	return r.nativeReplicaReader.ListReplicas(ctx)
+	return nil
 }
 
 // Check the complete native block-resource inventory, never a CLI error string.

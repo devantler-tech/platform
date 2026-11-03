@@ -35,9 +35,12 @@ reviewed two-member V1 pool and one-member V2 pool. The fresh V2 pool has no res
 
 This operation wipes **only the selected temporary worker's EPHEMERAL partition** and reboots
 it. Its separate journal binds the original node UID, provider and hardware identities, boot,
-encrypted partition UUID, and native empty-storage receipt. It requires unregistered, fenced
-Longhorn storage, complete native replica listings and block-resource inventories, and no
-allocated raw partition. Unaccounted replica-root entries, incomplete reads or changed identities hold the run.
+encrypted partition UUID, and native storage commitments. It requires unregistered, fenced
+Longhorn storage with no placed replicas, complete native parent-directory and block-resource
+inventories, and no allocated raw partition. Only the recognized engine, metadata, log and
+socket cache directories may remain; a replica entry, backing images, any file, unknown entry,
+incomplete read or changed identity holds the run. The original encrypted partition is checked
+before each parent listing. A missing replica-path error is never interpreted as empty storage.
 All three temporary workers receive owned scale-down protection before the selected worker is
 cordoned. Drain uses eviction and respects disruption budgets. Two fresh storage observations
 after drain precede the recorded reset intent.
@@ -133,7 +136,7 @@ Kubernetes worker before host configuration can be trusted or a host command can
 ## Prepare a permanent worker
 
 `prepare-worker` rebuilds one permanent worker's local disk so it can hold V2 replicas. It wipes
-that worker's `EPHEMERAL` partition, so it is the one destructive step in this tool. Nothing on the
+that worker's `EPHEMERAL` partition and requires the separate permanent-worker safeguards. Nothing on the
 cluster enables it yet: it holds with no write until the temporary V1 pool accepts replicas, the worker layout is loaded by Talos, the raw-disk defaults are
 on the Node, huge pages are ready and Longhorn's V2 engine is on. Those land in later changes
 (platform#5655).

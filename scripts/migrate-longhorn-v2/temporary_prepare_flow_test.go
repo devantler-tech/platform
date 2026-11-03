@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/devantler-tech/platform/internal/longhorninventory"
 )
 
 type unusedPreparationFixture struct {
@@ -87,7 +90,11 @@ func unusedPreparationAPI(t *testing.T) (*unusedPreparationFixture, temporaryPre
 		if address != "10.0.99.7" {
 			t.Fatal("temporary inspection selected another endpoint")
 		}
-		return temporaryNativeReader{boot: text(base.node, "status", "nodeInfo", "bootID"), unmatched: f.badNativeAfter > 0 && f.nativeCalls >= f.badNativeAfter}, func() error { return nil }, nil
+		mode := "cache directories only"
+		if f.badNativeAfter > 0 && f.nativeCalls >= f.badNativeAfter {
+			mode = "foreign directory"
+		}
+		return &unusedParentReaderFixture{temporaryNativeReader: temporaryNativeReader{boot: text(base.node, "status", "nodeInfo", "bootID")}, mode: mode}, func() error { return nil }, nil
 	}
 	return f, p
 }
@@ -187,6 +194,76 @@ func TestUnusedTemporaryPreparationPreservesV1AndLeavesRawStorageFenced(t *testi
 	}
 	if err := p.prepare(context.Background()); err != nil || f.base.resets != 1 {
 		t.Fatal("prepared recovery replayed a reset:", err)
+	}
+}
+
+type unusedParentReaderFixture struct {
+	temporaryNativeReader
+	rootCalls int
+	mode      string
+}
+
+func (*unusedParentReaderFixture) ListReplicas(context.Context) (longhorninventory.Listing, error) {
+	return longhorninventory.Listing{}, errors.New("missing replica path is not an emptiness proof")
+}
+
+func (r *unusedParentReaderFixture) ListStorageRoot(context.Context) (longhorninventory.Listing, error) {
+	r.rootCalls++
+	entries := []longhorninventory.Entry{{Name: ".", Mode: uint32(os.ModeDir), IsDir: true}}
+	for _, name := range []string{"engine-binaries", "metadata", "logs", "unix-domain-socket"} {
+		entries = append(entries, longhorninventory.Entry{Name: name, Mode: uint32(os.ModeDir), IsDir: true})
+	}
+	switch r.mode {
+	case "replicas", "backing-images", "foreign directory":
+		entries = append(entries, longhorninventory.Entry{Name: r.mode, Mode: uint32(os.ModeDir), IsDir: true})
+	case "file":
+		entries = append(entries, longhorninventory.Entry{Name: "unexpected", Mode: 0o600})
+	case "changed":
+		if r.rootCalls > 1 {
+			entries = append(entries, longhorninventory.Entry{Name: "changed", Mode: uint32(os.ModeDir), IsDir: true})
+		}
+	case "error":
+		return longhorninventory.Listing{Complete: true, Entries: entries}, errors.New("private-parent-error")
+	}
+	return longhorninventory.Listing{Complete: r.mode != "partial", Entries: entries}, nil
+}
+
+func (*unusedParentReaderFixture) ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error) {
+	return longhorninventory.BlockLayoutReport{VolumeStatuses: 2, DiscoveredVolumes: 1, EphemeralPhase: "ready", RawPresent: true, RawPhase: "waiting", Digest: strings.Repeat("a", 64)}, nil
+}
+
+func TestUnusedPreparationQualifiesStableParentAbsenceWithoutAReplicaPath(t *testing.T) {
+	for _, mode := range []string{"cache directories only", "replicas", "backing-images", "foreign directory", "file", "partial", "changed", "error"} {
+		t.Run(mode, func(t *testing.T) {
+			f, p := unusedPreparationAPI(t)
+			var readers []*unusedParentReaderFixture
+			p.reader = func(context.Context, string) (nativeReplicaReader, func() error, error) {
+				f.nativeCalls++
+				r := &unusedParentReaderFixture{temporaryNativeReader: temporaryNativeReader{boot: text(f.base.node, "status", "nodeInfo", "bootID")}, mode: mode}
+				readers = append(readers, r)
+				return r, func() error { return nil }, nil
+			}
+			err := p.prepare(context.Background())
+			if mode == "cache directories only" {
+				if err != nil || f.base.resets != 1 || len(readers) < 3 {
+					t.Fatalf("positive stable parent absence did not reach the guarded reset: err=%v resets=%d observations=%d", err, f.base.resets, len(readers))
+				}
+				observations := 0
+				for _, r := range readers {
+					if r.rootCalls != 0 && r.rootCalls != 2 {
+						t.Fatal("reset skipped an independent parent observation")
+					}
+					if r.rootCalls == 2 {
+						observations++
+					}
+				}
+				if observations < 3 {
+					t.Fatal("reset lacked initial and two post-drain parent observations")
+				}
+			} else if err == nil || f.base.resets != 0 || strings.Contains(err.Error(), "private-parent-error") {
+				t.Fatal("unqualified parent inventory allowed reset or exposed provider details")
+			}
+		})
 	}
 }
 

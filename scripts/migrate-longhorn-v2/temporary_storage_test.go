@@ -126,6 +126,40 @@ func (r *temporaryFileReaderFixture) ListReplicas(context.Context) (longhorninve
 	return longhorninventory.Listing{Complete: true}, nil
 }
 
+func (r *temporaryFileReaderFixture) ListStorageRoot(context.Context) (longhorninventory.Listing, error) {
+	r.calls++
+	return longhorninventory.Listing{Complete: true}, nil
+}
+
+func TestTemporaryParentReadRequiresTheOriginalPhysicalPartition(t *testing.T) {
+	for _, scenario := range []string{"complete", "partial status", "partial discovery", "raw allocated", "original replaced"} {
+		t.Run(scenario, func(t *testing.T) {
+			s, d, uuid := temporaryPartitionFixture()
+			blocks := &temporaryBlockReaderFixture{t: t, statuses: s, discovered: d}
+			files := &temporaryFileReaderFixture{}
+			switch scenario {
+			case "partial status":
+				blocks.failAt = 1
+			case "partial discovery":
+				blocks.failAt = 2
+			case "raw allocated":
+				s.Items[1].(*block.VolumeStatus).TypedSpec().Phase = block.VolumePhaseReady
+			case "original replaced":
+				uuid = "another-partition"
+			}
+			reader := unusedTemporaryReader{nativeReplicaReader: files, blocks: blocks, address: "10.0.99.4", ephemeralUUID: uuid}
+			listing, err := reader.ListStorageRoot(context.Background())
+			if scenario == "complete" {
+				if err != nil || !listing.Complete || files.calls != 1 || blocks.calls != 2 {
+					t.Fatal("complete physical proof did not reach the parent read:", err)
+				}
+			} else if err == nil || listing.Complete || files.calls != 0 {
+				t.Fatal("unproven physical partition reached the parent read")
+			}
+		})
+	}
+}
+
 func TestTemporaryNativeProofStopsBeforeFilesOnPartialOrChangedStorage(t *testing.T) {
 	for _, scenario := range []string{"complete", "partial status", "partial discovery", "raw allocated between observations", "canceled", "missing original binding"} {
 		t.Run(scenario, func(t *testing.T) {
