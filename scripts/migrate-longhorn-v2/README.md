@@ -40,6 +40,8 @@ Recovery never repeats an uncertain reboot. It requires a changed boot with the
 same node, hardware, OS, encrypted partition, registered disks and database system
 identities, 1,024 native 2 MiB pages, matching 2 GiB Kubernetes capacity, clear node
 pressure and two intact copies outside the target before restoring scheduling.
+That intermediate check permits a degraded attached volume only with two live
+read-write peer replicas; final acceptance still requires healthy volumes and all three copies.
 The verified new boot is journaled as `returning`, and only the owned cordon is
 released so Longhorn can recreate its instance manager. The maintenance marker
 and unfinished journal remain until full V1 redundancy and database health return;

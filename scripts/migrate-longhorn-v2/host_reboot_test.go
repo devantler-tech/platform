@@ -207,6 +207,11 @@ func TestHostRebootRestoresSchedulingBeforeWaitingForTheStorageController(t *tes
 	}
 	f.afterReboot = func() {
 		f.managers[0]["status"].(object)["currentState"] = "starting"
+		for _, volume := range f.base.s.volumes {
+			if text(volume, "status", "state") == "attached" {
+				volume["status"].(object)["robustness"] = "degraded"
+			}
+		}
 		for _, replica := range f.base.s.replicas {
 			if text(replica, "spec", "nodeID") == h.target {
 				replica["status"].(object)["currentState"] = "stopped"
@@ -219,6 +224,11 @@ func TestHostRebootRestoresSchedulingBeforeWaitingForTheStorageController(t *tes
 			t.Fatal("scheduling resumed without durable recovered-host proof and retained maintenance ownership")
 		}
 		f.managers[0]["status"].(object)["currentState"] = "running"
+		for _, volume := range f.base.s.volumes {
+			if text(volume, "status", "state") == "attached" {
+				volume["status"].(object)["robustness"] = "healthy"
+			}
+		}
 		for _, replica := range f.base.s.replicas {
 			if text(replica, "spec", "nodeID") == h.target {
 				replica["status"].(object)["currentState"] = originalStates[text(replica, "metadata", "name")]
@@ -245,6 +255,29 @@ func TestHostRebootDoesNotResumeSchedulingWithoutTwoIntactPeerCopies(t *testing.
 	defer cancel()
 	if h.run(ctx) == nil || f.reboots != 1 || value(f.base.node, "spec", "unschedulable") != true {
 		t.Fatal("scheduling resumed without two intact peer copies")
+	}
+}
+
+func TestReturningHostStillRequiresTwoLivePeersAndFinalHealthyVolumes(t *testing.T) {
+	f, h := hostRebootAPI(t)
+	for _, volume := range f.base.s.volumes {
+		if text(volume, "status", "state") == "attached" {
+			volume["status"].(object)["robustness"] = "degraded"
+		}
+	}
+	if err := verifyHealthyCopies(f.base.s, 2, h.target); err != nil {
+		t.Fatal("two proven peer copies were rejected during return to scheduling:", err)
+	}
+	if verifyRedundancy(f.base.s) == nil {
+		t.Fatal("degraded volumes satisfied the final full-redundancy acceptance gate")
+	}
+	for _, replica := range f.base.s.replicas {
+		if text(replica, "spec", "nodeID") == "prod-worker-2" {
+			replica["status"].(object)["currentState"] = "stopped"
+		}
+	}
+	if verifyHealthyCopies(f.base.s, 2, h.target) == nil {
+		t.Fatal("the degraded label substituted for an intact live peer replica")
 	}
 }
 

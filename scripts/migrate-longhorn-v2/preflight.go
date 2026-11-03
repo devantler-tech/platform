@@ -150,7 +150,8 @@ func verifyHealthyCopies(s inventory, required int, excludedNode string) error {
 			return errors.New("volume engine or required redundancy is outside the migration contract")
 		}
 		state, health := text(v, "status", "state"), text(v, "status", "robustness")
-		suitable := state == "attached" && health == "healthy" || state == "detached" && (health == "healthy" || health == "unknown")
+		attached := state == "attached" && (health == "healthy" || returningHost && health == "degraded")
+		suitable := attached || state == "detached" && (health == "healthy" || health == "unknown")
 		if !suitable {
 			return errors.New("volume health is not suitable for node maintenance")
 		}
