@@ -94,10 +94,17 @@ func run() error {
 	if err != nil || !bytes.Contains(output, []byte("PROBE control-before 301\n")) || !bytes.Contains(output, []byte("PROBE control-after 301\n")) {
 		return fmt.Errorf("native controls failed: %v: %s", err, output)
 	}
+	attempts := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if strings.HasPrefix(line, "PROBE tls ") && !strings.HasPrefix(line, "PROBE tls 35 000 0.000000") && !strings.HasPrefix(line, "PROBE tls 56 000 0.000000") {
-			return fmt.Errorf("native TLS refusal: %s", line)
+		if strings.HasPrefix(line, "PROBE tls ") {
+			attempts++
+			if !strings.HasPrefix(line, "PROBE tls 35 000 0.000000") && !strings.HasPrefix(line, "PROBE tls 56 000 0.000000") {
+				return fmt.Errorf("native TLS refusal: %s", line)
+			}
 		}
+	}
+	if attempts != 2 {
+		return fmt.Errorf("native TLS attempt count is %d, want two", attempts)
 	}
 	for i := 0; i < 4; i++ {
 		select {
@@ -105,7 +112,7 @@ func run() error {
 			if err != nil {
 				return err
 			}
-		default:
+		case <-ctx.Done():
 			return fmt.Errorf("native request count below four")
 		}
 	}
