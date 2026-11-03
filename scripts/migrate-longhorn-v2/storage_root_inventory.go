@@ -13,15 +13,27 @@ import (
 type nativeStorageRootReader interface {
 	ListStorageRoot(context.Context) (longhorninventory.Listing, error)
 }
+type nativeBlockLayoutReader interface {
+	ListBlockLayout(context.Context) (longhorninventory.BlockLayoutReport, error)
+}
 type storageRootReceipt struct {
-	Schema              int                                 `json:"schema"`
-	ObservationOnly     bool                                `json:"observationOnly"`
-	ResetClearance      bool                                `json:"resetClearance"`
-	APIProjectionDigest string                              `json:"apiProjectionDigest"`
-	Report              longhorninventory.StorageRootReport `json:"report"`
+	Schema              int                                  `json:"schema"`
+	ObservationOnly     bool                                 `json:"observationOnly"`
+	ResetClearance      bool                                 `json:"resetClearance"`
+	APIProjectionDigest string                               `json:"apiProjectionDigest"`
+	Report              longhorninventory.StorageRootReport  `json:"report"`
+	BlockLayout         *longhorninventory.BlockLayoutReport `json:"blockLayout,omitempty"`
 }
 
-func observeStorageRoot(ctx context.Context, c client, target string, factory inventoryReaderFactory) (receipt storageRootReceipt, err error) {
+func observeStorageLayout(ctx context.Context, c client, target string, factory inventoryReaderFactory) (storageRootReceipt, error) {
+	return observeStorageRootScope(ctx, c, target, factory, true)
+}
+
+func observeStorageRoot(ctx context.Context, c client, target string, factory inventoryReaderFactory) (storageRootReceipt, error) {
+	return observeStorageRootScope(ctx, c, target, factory, false)
+}
+
+func observeStorageRootScope(ctx context.Context, c client, target string, factory inventoryReaderFactory, includeBlocks bool) (receipt storageRootReceipt, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	expires, _ := ctx.Deadline()
@@ -66,6 +78,21 @@ func observeStorageRoot(ctx context.Context, c client, target string, factory in
 	if err != nil {
 		return storageRootReceipt{}, stageOwnershipBefore
 	}
+	var blockLayout *longhorninventory.BlockLayoutReport
+	if includeBlocks {
+		blockReader, ok := reader.(nativeBlockLayoutReader)
+		if !ok {
+			return storageRootReceipt{}, stageClient
+		}
+		layout, layoutErr := blockReader.ListBlockLayout(ctx)
+		if layoutErr != nil {
+			return storageRootReceipt{}, errors.Join(stageBlockLayout, layoutErr)
+		}
+		if len(layout.Digest) != 64 || layout.VolumeStatuses <= 0 || layout.DiscoveredVolumes <= 0 {
+			return storageRootReceipt{}, stageBlockLayout
+		}
+		blockLayout = &layout
+	}
 	second, err := rootReader.ListStorageRoot(ctx)
 	if err != nil {
 		return storageRootReceipt{}, errors.Join(stageListingAfter, err)
@@ -94,7 +121,11 @@ func observeStorageRoot(ctx context.Context, c client, target string, factory in
 	if !active() {
 		return storageRootReceipt{}, stageDeadline
 	}
-	return storageRootReceipt{Schema: 1, ObservationOnly: true, ResetClearance: false, APIProjectionDigest: before.Digest, Report: report}, nil
+	schema := 1
+	if includeBlocks {
+		schema = 2
+	}
+	return storageRootReceipt{Schema: schema, ObservationOnly: true, ResetClearance: false, APIProjectionDigest: before.Digest, Report: report, BlockLayout: blockLayout}, nil
 }
 
 func authorizeStorageRoot(getenv func(string) string, target string) error {
@@ -105,6 +136,24 @@ func authorizeStorageRoot(getenv func(string) string, target string) error {
 }
 
 func runStorageRootInventory(ctx context.Context, target, source, runID string) error {
+	return runStorageInventoryScope(ctx, target, source, runID, false)
+}
+
+func authorizeStorageLayout(getenv func(string) string, target string) error {
+	if !inventoryTemporarySelection.MatchString(target) || getenv("LONGHORN_V2_NODE") != target || getenv("LONGHORN_V2_OPERATION") != "inventory-storage-layout" {
+		return errInventory
+	}
+	return authorizeWorkflow(getenv, "inventory-longhorn-storage-layout-"+target)
+}
+
+func runStorageLayoutInventory(ctx context.Context, target, source, runID string) error {
+	if !inventoryTemporarySelection.MatchString(target) {
+		return stageProjectionBefore
+	}
+	return runStorageInventoryScope(ctx, target, source, runID, true)
+}
+
+func runStorageInventoryScope(ctx context.Context, target, source, runID string, includeBlocks bool) error {
 	c := client{run: inventoryReadCommand, context: "admin@prod"}
 	if inventoryTemporarySelection.MatchString(target) {
 		config, err := os.ReadFile("ksail.prod.yaml")
@@ -119,7 +168,7 @@ func runStorageRootInventory(ctx context.Context, target, source, runID string) 
 	if err := sourceCurrent(ctx, c.run, source); err != nil {
 		return stageSourceBefore
 	}
-	receipt, err := observeStorageRoot(ctx, c, target, newInventoryReader)
+	receipt, err := observeStorageRootScope(ctx, c, target, newInventoryReader, includeBlocks)
 	if err != nil {
 		return err
 	}

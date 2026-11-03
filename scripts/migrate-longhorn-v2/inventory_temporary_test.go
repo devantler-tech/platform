@@ -251,6 +251,17 @@ func TestTemporaryInventoryNativeWorkflowGuardPreservesResetBoundary(t *testing.
 		operation, node, ref, attempt, confirm string
 		allowed                                bool
 	}{
+		{"inventory-storage-layout", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-storage-layout-temporary-v1-1", true},
+		{"inventory-storage-layout", "temporary-v2-1", "refs/heads/main", "1", "inventory-longhorn-storage-layout-temporary-v2-1", true},
+		{"inventory-storage-layout", "prod-worker-1", "refs/heads/main", "1", "inventory-longhorn-storage-layout-prod-worker-1", false},
+		{"inventory-storage-layout", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-temporary-v1-1", false},
+		{"inventory-storage-layout", "temporary-v1-1", "refs/heads/main", "2", "inventory-longhorn-storage-layout-temporary-v1-1", false},
+		{"inventory-storage-layout", "temporary-v1-1", "refs/heads/feature", "1", "inventory-longhorn-storage-layout-temporary-v1-1", false},
+		{"inspect-host-memory", "prod-worker-1", "refs/heads/main", "1", "inspect-longhorn-v2-host-memory-prod-worker-1", true},
+		{"inspect-host-memory", "temporary-v1-1", "refs/heads/main", "1", "inspect-longhorn-v2-host-memory-temporary-v1-1", false},
+		{"inspect-host-memory", "prod-worker-1", "refs/heads/feature", "1", "inspect-longhorn-v2-host-memory-prod-worker-1", false},
+		{"inspect-host-memory", "prod-worker-1", "refs/heads/main", "2", "inspect-longhorn-v2-host-memory-prod-worker-1", false},
+		{"inspect-host-memory", "prod-worker-1", "refs/heads/main", "1", "refresh-longhorn-v2-clients", false},
 		{"inventory-storage-root", "temporary-v1-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-temporary-v1-1", true},
 		{"inventory-storage-root", "temporary-v2-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-temporary-v2-1", true},
 		{"inventory-storage-root", "prod-worker-1", "refs/heads/main", "1", "inventory-longhorn-storage-root-prod-worker-1", true},
