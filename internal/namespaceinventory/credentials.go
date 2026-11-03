@@ -60,6 +60,44 @@ func LoadProtectedClient(getenv func(string) string) (*http.Client, *url.URL, er
 	return newProductionClient(config)
 }
 
+// LoadRetainedEmailClient shares credential validation, never authorization,
+// with the benchmark observer. The fixed Email disposal dispatch is separate.
+func LoadRetainedEmailClient(getenv func(string) string) (*http.Client, *url.URL, error) {
+	if err := AuthorizeRetainedEmailDispatch(getenv); err != nil {
+		return nil, nil, err
+	}
+	path := getenv("KUBECONFIG")
+	if !regexp.MustCompile(`^/dev/shm/email-retained-disposal\.[A-Za-z0-9]+/kubeconfig$`).MatchString(path) || filepath.Clean(path) != path {
+		return nil, nil, errors.New("fixed private Email kubeconfig is required")
+	}
+	raw, err := readPrivateKubeconfig(path)
+	if err != nil {
+		return nil, nil, err
+	}
+	config, err := clientcmd.Load(raw)
+	if err != nil {
+		return nil, nil, errors.New("protected Email kubeconfig could not be decoded")
+	}
+	return newProductionClient(config)
+}
+
+func AuthorizeRetainedEmailDispatch(getenv func(string) string) error {
+	for key, want := range map[string]string{
+		"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "devantler-tech/platform",
+		"GITHUB_RUN_ATTEMPT": "1", "RUNNER_ENVIRONMENT": "github-hosted", "GITHUB_ACTOR": "devantler",
+		"GITHUB_WORKFLOW_REF":         "devantler-tech/platform/.github/workflows/dispose-retained-email-copy.yaml@refs/heads/main",
+		"EMAIL_RETAINED_COPY_CONFIRM": "dispose-retained-email-copy",
+	} {
+		if getenv(key) != want {
+			return errors.New("protected Email disposal dispatch is unverified")
+		}
+	}
+	if !sourcePattern.MatchString(getenv("GITHUB_SHA")) || !runPattern.MatchString(getenv("GITHUB_RUN_ID")) {
+		return errors.New("email disposal source and run are required")
+	}
+	return nil
+}
+
 func readPrivateKubeconfig(path string) (raw []byte, err error) {
 	directory := filepath.Dir(path)
 	info, err := os.Lstat(directory)

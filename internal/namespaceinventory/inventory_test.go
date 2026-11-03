@@ -56,6 +56,11 @@ func TestObserveUsesEveryServedVersionAndMetadataOnly(t *testing.T) {
 	if err != nil || len(result.Bindings()) != 2 {
 		t.Fatalf("complete metadata inventory failed: count=%d error=%v", len(result.Bindings()), err)
 	}
+	for _, binding := range result.Bindings() {
+		if binding.Resource != map[string]string{"Widget": "widgets.example.io", "Secret": "secrets"}[binding.Kind] {
+			t.Fatal("group/resource identity was discarded or versioned")
+		}
+	}
 }
 
 func TestNativeEmptyMetadataListMayContainNullItems(t *testing.T) {
@@ -73,6 +78,22 @@ func TestFixedLonghornCalibrationReadsMetadataWithoutRetirementAuthority(t *test
 	result, err = observeFixtureInNamespace(t, "native empty list", "longhorn-system")
 	if err == nil || len(result.Bindings()) != 0 {
 		t.Fatal("empty production calibration accepted")
+	}
+}
+
+func TestRetainedEmailInventoryCoversAllServedKinds(t *testing.T) {
+	result, err := observeFixtureInNamespace(t, "", "email-data-recovery-41561215415")
+	if err != nil || len(result.Bindings()) != 2 {
+		t.Fatalf("fixed Email inventory failed: %v", err)
+	}
+	for _, failure := range []string{"continued list", "changed discovery", "namespace replaced", "full Secret response", "duplicate UID"} {
+		result, err = observeFixtureInNamespace(t, failure, "email-data-recovery-41561215415")
+		if err == nil || len(result.Bindings()) != 0 {
+			t.Fatalf("incomplete Email inventory accepted: %s", failure)
+		}
+	}
+	if result, err = Observe(context.Background(), nil, nil, "email-data-recovery-41561215416", "uid"); err == nil || len(result.Bindings()) != 0 {
+		t.Fatal("arbitrary Email namespace admitted by general benchmark API")
 	}
 }
 
@@ -250,9 +271,12 @@ func observeFixtureInNamespace(t *testing.T, failure, namespace string) (Invento
 	}
 	var result Inventory
 	var err error
-	if namespace == "longhorn-system" {
+	switch namespace {
+	case "longhorn-system":
 		result, err = CalibrateLonghornSystem(ctx, server.Client(), endpoint, "namespace-uid")
-	} else {
+	case "email-data-recovery-41561215415":
+		result, err = ObserveRetainedEmailRecovery(ctx, server.Client(), endpoint, "namespace-uid")
+	default:
 		result, err = Observe(ctx, server.Client(), endpoint, testNamespace, "namespace-uid")
 	}
 	server.Close()

@@ -16,6 +16,7 @@ type cleanupAPI struct {
 	paths        map[string]string
 	blockBackend bool
 	cancel       context.CancelFunc
+	onDelete     func(object)
 }
 
 func cleanupKey(kind, ns, name string) string { return kind + "/" + ns + "/" + name }
@@ -60,6 +61,9 @@ func (a *cleanupAPI) call(_ context.Context, input []byte, args ...string) ([]by
 		}
 		deleting := a.objects[key]
 		delete(a.objects, key)
+		if a.onDelete != nil {
+			a.onDelete(deleting)
+		}
 		if text(deleting, "kind") == "Namespace" {
 			for childKey, childObject := range a.objects {
 				if text(child(childObject, "metadata"), "namespace") == text(child(deleting, "metadata"), "name") {
@@ -162,6 +166,61 @@ func TestCleanupRetainsTheKeyUntilBothStorageObjectsAreAbsent(t *testing.T) {
 			t.Fatal("cleanup did not retain only the native backup")
 		}
 	})
+}
+
+func TestCleanupChecksEntireGraphBeforeFirstDeletion(t *testing.T) {
+	for _, failure := range []string{"missing-transfer", "unfinished-transfer", "expired-backup", "foreign-object"} {
+		t.Run(failure, func(t *testing.T) {
+			d, a, ctx := cleanupFixture(t, false)
+			switch failure {
+			case "missing-transfer":
+				delete(a.objects, cleanupKey("DataDownload", "velero", d.i.namespace+"-download"))
+			case "unfinished-transfer":
+				a.objects[cleanupKey("DataDownload", "velero", d.i.namespace+"-download")]["status"] = object{"phase": "InProgress"}
+			case "expired-backup":
+				child(a.objects[cleanupKey("Backup", "velero", d.i.namespace+"-backup")], "status")["expiration"] = time.Now().Add(-time.Hour).UTC().Format(time.RFC3339)
+			case "foreign-object":
+				a.objects[cleanupKey("Secret", d.i.namespace, "foreign")] = object{"kind": "Secret", "metadata": object{"name": "foreign", "namespace": d.i.namespace, "uid": "foreign"}}
+			}
+			if d.cleanupRestore(ctx) == nil {
+				t.Fatal("unverified graph accepted")
+			}
+			for _, key := range []string{cleanupKey("Pod", d.i.namespace, "reader"), cleanupKey("PersistentVolumeClaim", d.i.namespace, "data")} {
+				if _, present := a.objects[key]; !present {
+					t.Fatal("deletion preceded complete preflight")
+				}
+			}
+		})
+	}
+}
+
+func TestCleanupRebindsSourceBeforeClaimAndBackendBeforeKey(t *testing.T) {
+	for _, failure := range []string{"source-replaced", "backend-reappeared"} {
+		t.Run(failure, func(t *testing.T) {
+			d, a, ctx := cleanupFixture(t, false)
+			a.onDelete = func(o object) {
+				if failure == "source-replaced" && text(o, "kind") == "Pod" {
+					child(a.objects[cleanupKey("Pod", "private-mail", "private-mail-0")], "metadata")["uid"] = "replacement"
+				}
+				if failure == "backend-reappeared" && text(o, "kind") == "DataDownload" {
+					a.objects[cleanupKey("volumes.longhorn.io", "longhorn-system", d.volumeName)] = object{"metadata": object{"uid": "replacement"}}
+				}
+			}
+			if d.cleanupRestore(ctx) == nil {
+				t.Fatal("changed safety evidence accepted")
+			}
+			kind, name := "Secret", "storage-key"
+			if failure == "source-replaced" {
+				kind, name = "PersistentVolumeClaim", "data"
+			}
+			if _, present := a.objects[cleanupKey(kind, d.i.namespace, name)]; !present {
+				t.Fatal("safety evidence was not rebound before deletion")
+			}
+			if _, present := a.objects[cleanupKey("Namespace", "", d.i.namespace)]; !present {
+				t.Fatal("uncertain namespace removed")
+			}
+		})
+	}
 }
 
 func TestCleanupRetainsAnUnexpectedClaimAndItsNamespace(t *testing.T) {

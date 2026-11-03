@@ -8,12 +8,13 @@ import (
 	"net/url"
 	"reflect"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/devantler-tech/platform/internal/strictjson"
 )
 
-type Binding struct{ Name, Namespace, UID, Kind string }
+type Binding struct{ Name, Namespace, UID, Kind, Resource string }
 
 // Bindings remain private until a caller explicitly copies them into its private
 // journal. Default JSON serialization never publishes object identities.
@@ -97,12 +98,18 @@ func CalibrateLonghornSystem(ctx context.Context, client *http.Client, endpoint 
 	return result, nil
 }
 
+// ObserveRetainedEmailRecovery inventories only the fixed retained diagnostic
+// copy. A complete inventory alone never authorizes removing any resource.
+func ObserveRetainedEmailRecovery(ctx context.Context, client *http.Client, endpoint *url.URL, uid string) (Inventory, error) {
+	return observeNamespace(ctx, client, endpoint, "email-data-recovery-41561215415", uid)
+}
+
 func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.URL, namespace, uid string) (Inventory, error) {
 	if endpoint == nil {
 		return Inventory{}, errors.New("authenticated API root is required")
 	}
 	root := *endpoint
-	if client == nil || root.Scheme != "https" || root.Host == "" || root.Opaque != "" || root.ForceQuery || root.User != nil || root.RawQuery != "" || root.Fragment != "" || (root.Path != "" && root.Path != "/") || (!namespacePattern.MatchString(namespace) && namespace != "longhorn-system") || len(namespace) > 63 || uid == "" || len(uid) > 128 {
+	if client == nil || root.Scheme != "https" || root.Host == "" || root.Opaque != "" || root.ForceQuery || root.User != nil || root.RawQuery != "" || root.Fragment != "" || (root.Path != "" && root.Path != "/") || (!namespacePattern.MatchString(namespace) && namespace != "longhorn-system" && namespace != "email-data-recovery-41561215415") || len(namespace) > 63 || uid == "" || len(uid) > 128 {
 		return Inventory{}, errors.New("fixed benchmark namespace and authenticated API root are required")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
@@ -149,7 +156,15 @@ func observeNamespace(ctx context.Context, client *http.Client, endpoint *url.UR
 				return Inventory{}, errors.New("namespace child identity is incomplete")
 			}
 			seenItems[m.UID] = true
-			binding := Binding{m.Name, m.Namespace, m.UID, resource.kind}
+			group := ""
+			if strings.HasPrefix(resource.prefix, "/apis/") {
+				group = strings.Split(strings.TrimPrefix(resource.prefix, "/apis/"), "/")[0]
+			}
+			groupResource := resource.name
+			if group != "" {
+				groupResource += "." + group
+			}
+			binding := Binding{m.Name, m.Namespace, m.UID, resource.kind, groupResource}
 			if old, exists := result.bindings[m.UID]; exists && old != binding {
 				return Inventory{}, errors.New("namespace child UID has conflicting identities")
 			}
