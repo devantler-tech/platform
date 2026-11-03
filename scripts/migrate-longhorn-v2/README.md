@@ -5,7 +5,9 @@ platform#5842. Select one of the three fixed databases with `database`, leave
 `node` empty, and confirm with `observe-longhorn-v2-database-<database>`.
 It requires three healthy, owned instances with stable primary and archive
 state. Fixed SQL reads physical database identity, timeline and WAL positions;
-the primary's captured flush position must be replayed by both standbys.
+the primary's captured flush position must be replayed by both standbys. The
+client uses the Pod's fixed local socket with a cleared connection environment
+and fixed executable search path, rather than inheriting libpq overrides.
 Complete namespace Pod inventories and process identities bracket the reads,
 including a final whole-cluster read after the last SQL command. The operation
 prints only a success summary, with no application rows, credentials or physical

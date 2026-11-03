@@ -132,7 +132,9 @@ func (c client) observePostgres(ctx context.Context, cluster, pod object) (postg
 	if err = verifyPostgresPod(before, pod, cluster); err != nil {
 		return postgresState{}, err
 	}
-	raw, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+ns, "--container=postgres", "--pod-running-timeout=20s", "--", "psql", "--no-psqlrc", "--no-password", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+postgresStateSQL)
+	// Clear libpq service, host-address, options and executable overrides. The
+	// fixed local socket belongs to this Pod, not an environment-selected peer.
+	raw, err := c.kubectl(ctx, nil, "exec", name, "--namespace="+ns, "--container=postgres", "--pod-running-timeout=20s", "--", "/usr/bin/env", "-i", "PATH=/usr/lib/postgresql/18/bin:/usr/local/bin:/usr/bin:/bin", "PGCONNECT_TIMEOUT=10", "psql", "--host=/controller/run", "--port=5432", "--no-psqlrc", "--no-password", "--username=postgres", "--dbname=postgres", "--set=ON_ERROR_STOP=1", "--tuples-only", "--no-align", "--quiet", "--command="+postgresStateSQL)
 	if err != nil {
 		return postgresState{}, err
 	}
